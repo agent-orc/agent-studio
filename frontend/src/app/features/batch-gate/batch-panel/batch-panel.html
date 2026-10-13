@@ -7,6 +7,9 @@
   <div class="batch-panel__body">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
+      @if (data.gateSlots; as slots) {
+        <p data-testid="batch-gate-slot-usage">Gate slots: {{ slots.busy }}/{{ slots.total }} busy</p>
+      }
       <section aria-labelledby="batch-plan-title">
         <h3 id="batch-plan-title">Current plan</h3>
         <p><strong>{{ data.plan.decision }}</strong> · {{ data.plan.reason }}</p>

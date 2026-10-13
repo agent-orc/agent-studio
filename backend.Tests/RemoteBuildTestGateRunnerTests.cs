@@ -208,17 +208,51 @@ public sealed class RemoteBuildTestGateRunnerTests
     }
 
     [Fact]
+    public void Remote_gate_capacity_reads_slot_count_and_rejects_invalid_values()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:SshHost"] = "kori-gate",
+            ["RemoteGate:WorkerPath"] = "/srv/gate/OrchestratorApi.dll",
+            ["RemoteGate:ProcessorCount"] = "6",
+            ["RemoteGate:GateSlots"] = "3",
+        }).Build();
+        var options = RemoteGateOptions.Read(configuration);
+        Assert.Equal(3, options.GateSlots);
+        Assert.Equal(6, options.ProcessorCount);
+        configuration["RemoteGate:GateSlots"] = "0";
+        Assert.Throws<InvalidOperationException>(() => RemoteGateOptions.Read(configuration));
+    }
+
+    [Theory]
+    [InlineData(3, 6, 24, false)]
+    [InlineData(4, 6, 24, false)]
+    [InlineData(5, 6, 24, true)]
+    public void Capacity_warning_uses_slots_times_processors(int slots, int processors,
+        int cores, bool warning)
+        => Assert.Equal(warning, RemoteGateWorker.IsOversubscribed(slots, processors, cores));
+
+    [Fact]
     public void Invocation_roundtrip_preserves_verification_inputs_without_serializing_callbacks()
     {
-        var request = Request() with { OnMachineGateAcquired = () => { }, OnMachineGateWaiting = () => { } };
-        var invocation = Invocation(request);
+        var request = Request() with
+        {
+            OnMachineGateAcquired = () => { }, OnMachineGateWaiting = () => { },
+            OnMachineGateSlotAcquired = (_, _) => { },
+            OnMachineGateSlotWaiting = (_, _) => { },
+        };
+        var invocation = Invocation(request) with { GateSlots = 3, ProcessorCount = 6 };
         var json = JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json);
         var roundtrip = JsonSerializer.Deserialize<RemoteGateInvocation>(json, RemoteBuildTestGateRunner.Json)!;
         RemoteGateWorker.Validate(roundtrip, invocation.RunId);
         Assert.Null(roundtrip.Request.OnMachineGateAcquired);
         Assert.Null(roundtrip.Request.OnMachineGateWaiting);
+        Assert.Null(roundtrip.Request.OnMachineGateSlotAcquired);
+        Assert.Null(roundtrip.Request.OnMachineGateSlotWaiting);
         Assert.Equal(Sha, roundtrip.Request.ExpectedSha);
         Assert.Equal(invocation.TimeoutSeconds, roundtrip.TimeoutSeconds);
+        Assert.Equal(3, roundtrip.GateSlots);
+        Assert.Equal(6, roundtrip.ProcessorCount);
     }
 
     [Fact]

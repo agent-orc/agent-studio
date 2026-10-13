@@ -283,6 +283,10 @@ async function installRoutes(
         body: JSON.stringify({ updateStableEnabled: false, deleteE2EJobsEnabled: false }),
       });
     }
+    if (p === '/api/pipeline/accepted-integration-alert') {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ active: false, items: [], thresholdMinutes: 30 }) });
+    }
     if (p === '/api/orchestrator/global') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ session: null }) });
     }
@@ -299,6 +303,16 @@ async function installRoutes(
         contentType: 'application/json',
         body: JSON.stringify({ at: '2026-06-09T08:12:00Z', sections: [] }),
       });
+    }
+    if (p === '/api/usage/cockpit') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        snapshotVersion: 1, workspaceId: null, generatedAt: '2026-06-09T08:12:00Z',
+        timeZone: 'Europe/Berlin', weekStart: 1,
+        calendar: { timeZone: 'Europe/Berlin', weekStart: 1,
+          dayStartUtc: '2026-06-09T00:00:00Z', dayEndUtc: '2026-06-10T00:00:00Z',
+          weekStartUtc: '2026-06-08T00:00:00Z', weekEndUtc: '2026-06-15T00:00:00Z' },
+        clis: [], cost: null, runs: [], slots: [], sources: {},
+      }) });
     }
     if (p.startsWith('/api/runner') || p.startsWith('/api/v1/studio/runner')) {
       return route.fulfill({
@@ -432,7 +446,7 @@ test.describe('Post Processing lane identity', () => {
       currentProject: PROJECT,
       activeJobs: [
         { project: PROJECT, jobId: active.id, step: 'aspects', startedAt: '2026-07-23T11:58:00Z' },
-        { project: PROJECT, jobId: gateQueued.id, step: 'gate-queued', startedAt: '2026-07-23T11:52:00Z' },
+        { project: PROJECT, jobId: gateQueued.id, step: 'gate-queued:2/3', startedAt: '2026-07-23T11:52:00Z' },
       ],
     };
     await seedBoardTab(page);
@@ -446,7 +460,7 @@ test.describe('Post Processing lane identity', () => {
 
     await expect(activeCard.getByTestId('task-card-post-processing-activity')).toContainText('Aspects');
     await expect(waitingCard.getByTestId('task-card-post-processing-activity')).toContainText('waiting 2h 10m');
-    await expect(gateCard.getByTestId('task-card-post-processing-activity')).toContainText('Gate queued 8m');
+    await expect(gateCard.getByTestId('task-card-post-processing-activity')).toContainText('Waiting for a gate slot (2/3 busy) · 8m');
     const summary = lane.getByTestId('lane-post-processing-summary');
     await expect(summary).toContainText('1 active / 2 waiting');
     await expect(summary).toHaveAttribute('data-active-count', '1');
@@ -463,7 +477,7 @@ test.describe('Post Processing lane identity', () => {
     status.currentJob = waiting.id;
     status.activeJobs = [
       { project: PROJECT, jobId: waiting.id, step: 'grade', startedAt: now.toISOString() },
-      { project: PROJECT, jobId: gateQueued.id, step: 'gate-queued', startedAt: '2026-07-23T11:52:00Z' },
+      { project: PROJECT, jobId: gateQueued.id, step: 'gate-queued:2/3', startedAt: '2026-07-23T11:52:00Z' },
     ];
     await page.clock.fastForward(30_000);
 

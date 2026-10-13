@@ -28,6 +28,7 @@ public static class RemoteGateWorker
             await File.ReadAllTextAsync(requestPath), RemoteBuildTestGateRunner.Json)
             ?? throw new InvalidDataException("Remote gate invocation is empty.");
         Validate(invocation, Path.GetFileName(directory));
+        WarnIfOversubscribed(invocation.GateSlots, invocation.ProcessorCount);
         var repository = Path.Combine(directory, "source.git");
         var bundle = Path.Combine(directory, "source.bundle");
         var request = invocation.Request with
@@ -38,7 +39,12 @@ public static class RemoteGateWorker
             WatchPath = null,
             ToolchainIdentity = null,
             OnMachineGateWaiting = null,
+            OnMachineGateSlotWaiting = (busy, total) =>
+                Console.WriteLine($"REMOTE_GATE_WAITING {invocation.RunId} {busy}/{total}"),
+            OnMachineGateSlotAcquired = (slot, total) =>
+                Console.WriteLine($"REMOTE_GATE_SLOT {invocation.RunId} {slot}/{total}"),
             OnMachineGateAcquired = () => Console.WriteLine("REMOTE_GATE_ACQUIRED " + invocation.RunId),
+            GateSlots = invocation.GateSlots,
         };
         using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(invocation.OverallTimeoutSeconds));
         using var cancelWatcher = new CancellationTokenSource();
@@ -149,12 +155,39 @@ public static class RemoteGateWorker
             || invocation.OverallTimeoutSeconds < invocation.TimeoutSeconds
             || invocation.OverallTimeoutSeconds > 86400
             || invocation.Request.InfrastructureTimeout <= TimeSpan.Zero
+            || invocation.GateSlots is < 1 or > 64
+            || invocation.ProcessorCount is < 1 or > 64
             || (invocation.CachePath is { } cachePath
                 && (!Regex.IsMatch(cachePath, "^/[a-zA-Z0-9_./-]+/cache/[0-9a-f]{64}$")
                     || cachePath.Split('/').Any(part => part is "." or "..")))
             || invocation.Mode == PostStepMode.Off)
             throw new InvalidDataException("Remote gate invocation identity, subject, or budget is invalid.");
     }
+
+    private static void WarnIfOversubscribed(int slots, int processors)
+    {
+        var hostCores = Environment.ProcessorCount;
+        try
+        {
+            var online = File.ReadAllText("/sys/devices/system/cpu/online").Trim();
+            hostCores = online.Split(',').Sum(range =>
+            {
+                var limits = range.Split('-');
+                return limits.Length == 2 && int.TryParse(limits[0], out var first)
+                    && int.TryParse(limits[1], out var last) && last >= first
+                    ? last - first + 1 : 1;
+            });
+        }
+        catch (IOException exception)
+        {
+            Console.Error.WriteLine("Could not read online host cores: " + exception.Message);
+        }
+        if (IsOversubscribed(slots, processors, hostCores))
+            Console.WriteLine($"REMOTE_GATE_CAPACITY_WARNING slots={slots} processors={processors} host_cores={hostCores}");
+    }
+
+    internal static bool IsOversubscribed(int slots, int processors, int hostCores)
+        => (long)slots * processors > hostCores;
 
     private static async Task WatchCancellationAsync(string directory,
         CancellationTokenSource execution, CancellationToken ct)

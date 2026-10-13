@@ -28,6 +28,16 @@
       </header>
 
       <div class="operator-dashboard__metric-lines">
+        @if (throughput()?.gateSlots; as slots) {
+          <article class="operator-dashboard__metric-line" data-testid="project-overview-throughput">
+            <span class="operator-dashboard__metric-icon"><app-studio-icon name="cli" [size]="16" /></span>
+            <div class="operator-dashboard__metric-copy">
+              <strong>Gate slots</strong>
+              <span>Build and test capacity on the remote gate host</span>
+            </div>
+            <dl><div><dt>Busy</dt><dd data-testid="project-overview-gate-slots">{{ slots.busy }}/{{ slots.total }}</dd></div></dl>
+          </article>
+        }
         <article class="operator-dashboard__metric-line" data-testid="project-overview-tokens">
           <span class="operator-dashboard__metric-icon"><app-studio-icon name="cli" [size]="16" /></span>
           <div class="operator-dashboard__metric-copy">

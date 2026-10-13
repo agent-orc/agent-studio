@@ -35,24 +35,27 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly TimeProvider _time;
     private readonly string _localRoot;
     private readonly Action<string> _deleteDirectory;
+    private readonly GateSlotUsageTracker _slotUsage;
     private long _lastSweepTicks = NeverSwept;
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
-            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints)
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage)
     {
     }
 
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
-        TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory)
+        TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory,
+        GateSlotUsageTracker? slotUsage = null)
     {
         _configuration = configuration;
         _logger = logger;
         _time = timeProvider;
         _localRoot = localRoot;
         _deleteDirectory = deleteDirectory;
+        _slotUsage = slotUsage ?? new GateSlotUsageTracker();
     }
 
     public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
@@ -60,6 +63,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         PostStepMode mode, TimeSpan timeout, CancellationToken ct)
     {
         var options = RemoteGateOptions.Read(_configuration);
+        _slotUsage.Configure(options.GateSlots);
         var runId = Guid.NewGuid().ToString("N");
         var local = Path.Combine(_localRoot, runId);
         var remote = options.Root + "/" + runId;
@@ -77,7 +81,6 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         var remoteCreated = false;
         try
         {
-            request.OnMachineGateWaiting?.Invoke();
             long sourcePackKiB = 0;
             await Git(local, ["-C", Path.GetFullPath(request.RepositoryPath), "count-objects", "-v"], infra, ct,
                 line =>
@@ -136,8 +139,10 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                     InfrastructureTimeout = workerInfrastructureBudget,
                     OnMachineGateAcquired = null,
                     OnMachineGateWaiting = null,
+                    OnMachineGateSlotAcquired = null,
+                    OnMachineGateSlotWaiting = null,
                 }, changedFiles, profile, mode, checked((int)Math.Ceiling(timeout.TotalSeconds)), overallSeconds)
-            { CachePath = cache };
+            { CachePath = cache, GateSlots = options.GateSlots, ProcessorCount = options.ProcessorCount };
             await File.WriteAllTextAsync(Path.Combine(local, "request.json"),
                 JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json), ct);
             await Ssh(options, local,
@@ -164,8 +169,27 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 + " --remote-build-test-gate-worker " + Quote(remote + "/request.json");
             await Ssh(options, local, command, TimeSpan.FromSeconds(overallSeconds + 150), ct, line =>
             {
+                if (line.StartsWith("REMOTE_GATE_CAPACITY_WARNING ", StringComparison.Ordinal))
+                    _logger.LogWarning("remote_gate_capacity_warning host={Host} {Detail}", options.Host, line);
                 if (line == "REMOTE_GATE_ACQUIRED " + runId)
                     request.OnMachineGateAcquired?.Invoke();
+                if (line.StartsWith("REMOTE_GATE_SLOT " + runId + " ", StringComparison.Ordinal))
+                {
+                    var usage = line[("REMOTE_GATE_SLOT " + runId + " ").Length..].Split('/');
+                    if (usage.Length == 2 && int.TryParse(usage[0], out var slot)
+                        && int.TryParse(usage[1], out var total) && slot >= 0 && total > slot)
+                    {
+                        _slotUsage.Acquired(runId, total);
+                        request.OnMachineGateSlotAcquired?.Invoke(slot, total);
+                    }
+                }
+                if (line.StartsWith("REMOTE_GATE_WAITING " + runId + " ", StringComparison.Ordinal))
+                {
+                    var usage = line[("REMOTE_GATE_WAITING " + runId + " ").Length..].Split('/');
+                    if (usage.Length == 2 && int.TryParse(usage[0], out var busy)
+                        && int.TryParse(usage[1], out var total) && busy >= 0 && total > 0 && busy <= total)
+                        request.OnMachineGateSlotWaiting?.Invoke(busy, total);
+                }
             });
             await Scp(options, local, options.Host + ":" + remote + "/response.json", "response.json", infra, ct);
             var responsePath = Path.Combine(local, "response.json");
@@ -184,6 +208,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         }
         finally
         {
+            _slotUsage.Released(runId);
             if (remoteCreated)
             {
                 // Cancellation is a worker-owned marker, not an arbitrary PID
@@ -354,7 +379,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     internal static string Quote(string text) => "'" + text.Replace("'", "'\"'\"'") + "'";
 }
 
-internal sealed record RemoteGateOptions(string Host, string WorkerPath, string Root, int ProcessorCount)
+internal sealed record RemoteGateOptions(string Host, string WorkerPath, string Root, int ProcessorCount, int GateSlots)
 {
     internal static RemoteGateOptions Read(IConfiguration configuration)
     {
@@ -362,16 +387,17 @@ internal sealed record RemoteGateOptions(string Host, string WorkerPath, string 
         var worker = configuration["RemoteGate:WorkerPath"]?.Trim();
         var root = (configuration["RemoteGate:Root"] ?? "/var/tmp/agentstudio-remote-gates").TrimEnd('/');
         var processors = configuration.GetValue("RemoteGate:ProcessorCount", 2);
+        var slots = configuration.GetValue("RemoteGate:GateSlots", 1);
         if (host is null || !Regex.IsMatch(host, "^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,254}$")
             || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
             || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
             || host.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)
             || !SafeRemotePath(worker) || !SafeRemotePath(root)
             || root.Split('/', StringSplitOptions.RemoveEmptyEntries).Length < 2
-            || processors is < 1 or > 64)
+            || processors is < 1 or > 64 || slots is < 1 or > 64)
             throw new InvalidOperationException(
                 "Remote gate transport requires RemoteGate:SshHost and an absolute RemoteGate:WorkerPath on an approved remote host; local execution is disabled.");
-        return new(host, worker!, root, processors);
+        return new(host, worker!, root, processors, slots);
     }
 
     private static bool SafeRemotePath(string? value) => value is not null

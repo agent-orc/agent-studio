@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -79,7 +78,12 @@ public sealed record BuildTestGateRequest(
     [System.Text.Json.Serialization.JsonIgnore]
     public Action? OnMachineGateWaiting { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
+    public Action<int, int>? OnMachineGateSlotWaiting { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
     public Action? OnMachineGateAcquired { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Action<int, int>? OnMachineGateSlotAcquired { get; init; }
+    public int GateSlots { get; init; } = 1;
 
     /// <summary>
     /// Host requirements (capability keys) whose gate steps the reused Remote
@@ -300,7 +304,7 @@ internal enum BuildTestMachineGateMode
 
 /// <summary>
 /// Runs deterministic verification against one exact Git subject. Real command
-/// loops are serialized by one machine-wide lock without reducing coding slots.
+/// loops use bounded machine slots without reducing coding slots.
 /// The Task Server checkout only supplies Git objects and is never a command
 /// workspace.
 /// </summary>
@@ -313,13 +317,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     public const int MaxFailureExcerptChars = 2_000;
     internal const string DependencyCacheDirectoryName = ".dependency-cache";
 
-    private static readonly SemaphoreSlim ProcessGate = new(1, 1);
     internal static readonly string MachineGateLockPath = Path.Combine(
-        Path.GetTempPath(), "agentstudio-build-test-gate.lock");
+        Path.GetTempPath(), "agentstudio-build-test-gate");
     internal static readonly string ReviewWorkspaceRoot = Path.Combine(
         Path.GetTempPath(), "agentstudio-review-gates");
     internal static readonly string NpmCachePath = Path.Combine(
         Path.GetTempPath(), "agentstudio-dependency-cache", "npm");
+    private static string ActiveNpmCachePath => ActiveSlot.Value is { } slot
+        ? Path.Combine(NpmCachePath, "slot-" + slot) : NpmCachePath;
     internal static readonly string PreparationCacheRoot = Path.Combine(
         Path.GetTempPath(), "agentstudio-preparation-cache");
 
@@ -360,6 +365,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private readonly IHttpClientFactory? _failureHistoryClients;
     private readonly GitStaleLockGuard _staleLocks;
     private readonly BuildTestMachineGateMode _machineGateMode;
+    private readonly MachineGateSlots _machineSlots = new(MachineGateLockPath);
+    private readonly int _localGateSlots;
+    private static readonly AsyncLocal<int?> ActiveSlot = new();
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
     private readonly Func<CancellationToken, Task<bool>> _composeRenderHost = ComposeRenderHostProbe.IsAvailableAsync;
 
@@ -368,7 +376,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         ILoadThrottleGate? loadThrottle = null,
         IPipelineHealthSensor? health = null,
         IHttpClientFactory? failureHistoryClients = null,
-        GitStaleLockGuard? staleLocks = null)
+        GitStaleLockGuard? staleLocks = null,
+        IConfiguration? configuration = null)
     {
         _logger = logger;
         _loadThrottle = loadThrottle;
@@ -376,6 +385,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         _failureHistoryClients = failureHistoryClients;
         _staleLocks = staleLocks ?? new GitStaleLockGuard();
         _machineGateMode = BuildTestMachineGateMode.Shared;
+        _localGateSlots = configuration?.GetValue("LocalGate:GateSlots", 1) ?? 1;
+        if (_localGateSlots is < 1 or > 64)
+            throw new ArgumentOutOfRangeException(nameof(configuration), "LocalGate:GateSlots must be between 1 and 64.");
         _verdictCache = new GateResultCache();
     }
 
@@ -419,10 +431,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
-        using var verdictLease = !request.DisableVerdictCache
-            && request.RequireExactSubject && SafeSha.IsMatch(request.ExpectedSha ?? "")
-            ? await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false)
-            : null;
+        // A project-wide cache lease cannot span gate execution: it would
+        // serialize independent subjects even when machine slots are free.
+        // Entry writes are atomic; only brief cache reads and writes need a lease.
         string? toolchainIdentity = request.ToolchainIdentity;
         string? profileDigest = null;
         var gateRunId = Guid.NewGuid().ToString("N");
@@ -438,7 +449,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             request.ExpectedSha ?? "missing", request.AttemptChainId ?? "missing", request.Executor,
             (long)timeout.TotalMilliseconds, request.TimeoutBudgetSource ?? "unspecified");
 
-        MachineGateLease? machineLease = null;
+        MachineGateSlots.Lease? machineLease = null;
         ExactWorkspaceLease? workspaceLease = null;
         ProjectPreparationResult? projectPreparation = null;
         BuildTestGateResult? completed = null;
@@ -466,26 +477,37 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 }
                 else
                 {
-                    var acquisition = await AcquireMachineGateAsync(
-                        queueWaitTimeout, request.OnMachineGateWaiting, ct).ConfigureAwait(false);
-                    fallbackQueueWaitMs = acquisition.QueueWaitMs;
-                    fallbackCollision = acquisition.CollisionDetected;
-                    if (acquisition.Lease is null)
+                    var slots = request.GateSlots == 1 ? _localGateSlots : request.GateSlots;
+                    var queueWatch = Stopwatch.StartNew();
+                    var lease = await _machineSlots.AcquireAsync(slots, queueWaitTimeout,
+                        (busy, total) =>
+                        {
+                            fallbackCollision = true;
+                            request.OnMachineGateWaiting?.Invoke();
+                            request.OnMachineGateSlotWaiting?.Invoke(busy, total);
+                        }, ct).ConfigureAwait(false);
+                    fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
+                    if (lease is null)
                     {
+                        var budget = NewBudgetEvidence(
+                            "machine-gate-queue", queueWaitTimeout, queueWatch.Elapsed, "queue");
+                        var reason = BudgetFailureReason("machine build/test gate queue wait", budget);
                         completed = InfrastructureFailure(
                             BuildTestGateFailureKind.Timeout,
-                            acquisition.Reason,
-                            acquisition.Reason,
-                            acquisition.ViolatedBudget);
+                            reason, reason, budget);
                     }
                     else
                     {
-                        machineLease = acquisition.Lease;
+                        machineLease = lease;
+                        ActiveSlot.Value = lease.Slot;
+                        fallbackQueueWaitMs = lease.QueueWaitMs;
+                        fallbackCollision = lease.CollisionDetected;
                         request.OnMachineGateAcquired?.Invoke();
+                        request.OnMachineGateSlotAcquired?.Invoke(lease.Slot, lease.Count);
                         acquiredAtUtc = DateTime.UtcNow;
                         _logger.LogInformation(
-                            "build_test_gate_acquired gate_run_id={GateRunId} repository={Repository} collision={CollisionDetected} queue_wait_ms={QueueWaitMs}",
-                            gateRunId, repositoryPath, machineLease.CollisionDetected, machineLease.QueueWaitMs);
+                            "build_test_gate_acquired gate_run_id={GateRunId} repository={Repository} slot={Slot} gate_slots={GateSlots} collision={CollisionDetected} queue_wait_ms={QueueWaitMs}",
+                            gateRunId, repositoryPath, lease.Slot, lease.Count, lease.CollisionDetected, lease.QueueWaitMs);
                         if (HasHealthContext(request))
                         {
                             ReportGateAcquired(new PipelineGateContext(
@@ -585,7 +607,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
                                 request, profile, mode, preflightCommands, toolchainIdentity);
-                            var cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
+                            BuildTestGateResult? cached;
+                            using (await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false))
+                                cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
                             if (cached is not null)
                                 completed = cached with
                                 {
@@ -696,9 +720,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(commands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
                                 request, profile, mode, commands, toolchainIdentity);
-                            var cached = staged.Audit.UnmappedSourceDirectories.Count == 0
-                                ? _verdictCache.TryRead(cacheProject, testedSha!, profileDigest)
-                                : null;
+                            BuildTestGateResult? cached = null;
+                            if (staged.Audit.UnmappedSourceDirectories.Count == 0)
+                            {
+                                using (await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false))
+                                    cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
+                            }
                             if (cached is not null)
                             {
                                 completed = cached with
@@ -846,7 +873,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             };
             if (!request.DisableVerdictCache && profileDigest is not null
                 && completed.VerdictSource == GateVerdictSource.Executed)
-                completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
+            {
+                using (await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false))
+                    completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
+            }
             return completed;
         }
         finally
@@ -885,6 +915,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 DependencyCacheDecisionSummary(completed?.DependencyCacheDecision));
             machineLease?.Dispose();
             machineLease = null;
+            ActiveSlot.Value = null;
             if (acquiredAtUtc.HasValue && HasHealthContext(request))
             {
                 ReportGateCompleted(new PipelineGateCompletion(
@@ -1737,146 +1768,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         return derived > TimeSpan.Zero ? derived : TimeSpan.FromMinutes(2);
     }
 
-    private static async Task<MachineGateAcquisition> AcquireMachineGateAsync(
-        TimeSpan queueWaitTimeout,
-        Action? onWaiting,
-        CancellationToken ct)
-    {
-        var wait = Stopwatch.StartNew();
-        var collision = !await ProcessGate.WaitAsync(0, ct).ConfigureAwait(false);
-        if (collision) onWaiting?.Invoke();
-        var ownsProcessGate = !collision;
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        bounded.CancelAfter(queueWaitTimeout);
-        try
-        {
-            if (!ownsProcessGate)
-            {
-                await ProcessGate.WaitAsync(bounded.Token).ConfigureAwait(false);
-                ownsProcessGate = true;
-            }
-
-            while (true)
-            {
-                bounded.Token.ThrowIfCancellationRequested();
-                try
-                {
-                    var stream = new FileStream(
-                        MachineGateLockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
-                        OperatingSystem.IsWindows() ? FileShare.None : FileShare.ReadWrite,
-                        bufferSize: 1, FileOptions.None);
-                    if (!OperatingSystem.IsWindows() && !NativeFileLock.TryAcquireExclusive(stream))
-                    {
-                        stream.Dispose();
-                        if (!collision) onWaiting?.Invoke();
-                        collision = true;
-                        await Task.Delay(TimeSpan.FromMilliseconds(100), bounded.Token).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    wait.Stop();
-                    return MachineGateAcquisition.Acquired(
-                        new MachineGateLease(stream, wait.ElapsedMilliseconds, collision));
-                }
-                catch (IOException)
-                {
-                    collision = true;
-                    await Task.Delay(TimeSpan.FromMilliseconds(100), bounded.Token).ConfigureAwait(false);
-                }
-            }
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            if (ownsProcessGate) ProcessGate.Release();
-            wait.Stop();
-            return MachineGateAcquisition.TimedOut(wait.ElapsedMilliseconds, collision,
-                BudgetFailureReason(
-                    "machine build/test gate queue wait",
-                    NewBudgetEvidence(
-                        "machine-gate-queue",
-                        queueWaitTimeout,
-                        wait.Elapsed,
-                        "queue")),
-                queueWaitTimeout);
-        }
-        catch
-        {
-            if (ownsProcessGate) ProcessGate.Release();
-            throw;
-        }
-    }
-
-    private static class NativeFileLock
-    {
-        private const int LockExclusive = 2;
-        private const int LockNonBlocking = 4;
-
-        [DllImport("libc", EntryPoint = "flock", SetLastError = true)]
-        private static extern int Flock(int fileDescriptor, int operation);
-
-        public static bool TryAcquireExclusive(FileStream stream)
-        {
-            if (Flock(stream.SafeFileHandle.DangerousGetHandle().ToInt32(),
-                    LockExclusive | LockNonBlocking) == 0)
-                return true;
-            var error = Marshal.GetLastPInvokeError();
-            if (error is 4 or 11 or 35) return false;
-            throw new InvalidOperationException(
-                $"Could not acquire the build/test machine lock (flock errno {error}).");
-        }
-    }
-
-    private sealed record MachineGateAcquisition(
-        MachineGateLease? Lease,
-        long QueueWaitMs,
-        bool CollisionDetected,
-        string Reason,
-        BuildTestGateBudgetEvidence? ViolatedBudget)
-    {
-        public static MachineGateAcquisition Acquired(MachineGateLease lease)
-            => new(lease, lease.QueueWaitMs, lease.CollisionDetected, string.Empty, null);
-
-        public static MachineGateAcquisition TimedOut(
-            long waitMs,
-            bool collision,
-            string reason,
-            TimeSpan? limit = null)
-            => new(
-                null,
-                waitMs,
-                collision,
-                reason,
-                NewBudgetEvidence(
-                    "machine-gate-queue",
-                    limit ?? TimeSpan.FromMilliseconds(Math.Max(1, waitMs)),
-                    TimeSpan.FromMilliseconds(waitMs),
-                    "queue"));
-    }
-
-    private sealed class MachineGateLease : IDisposable
-    {
-        private readonly FileStream _stream;
-        private bool _disposed;
-
-        public MachineGateLease(FileStream stream, long queueWaitMs, bool collisionDetected)
-        {
-            _stream = stream;
-            QueueWaitMs = queueWaitMs;
-            CollisionDetected = collisionDetected;
-        }
-
-        public long QueueWaitMs { get; }
-        public bool CollisionDetected { get; }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            try { _stream.Dispose(); }
-            finally { ProcessGate.Release(); }
-        }
-    }
-
     private async Task<WorkspacePreparation> PrepareExactWorkspaceAsync(
         string repositoryPath,
         string? expectedSha,
@@ -2287,7 +2178,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             CreateNoWindow = true,
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        psi.Environment["NPM_CONFIG_CACHE"] = NpmCachePath;
+        var npmCache = ActiveNpmCachePath;
+        psi.Environment["NPM_CONFIG_CACHE"] = npmCache;
         // AGT-2820: gate builds are one-shot. A reused MSBuild node outlives the
         // gate that started it, is reparented to init when the backend or the
         // worker goes away, and accumulates - 26 such nodes held 2963 MB on one
@@ -2311,7 +2203,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         Process? process;
         try
         {
-            Directory.CreateDirectory(NpmCachePath);
+            Directory.CreateDirectory(npmCache);
             process = Process.Start(psi);
         }
         catch (Exception ex)

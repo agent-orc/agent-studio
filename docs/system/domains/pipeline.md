@@ -380,7 +380,11 @@ Operator configuration uses `RemoteGate:SshHost` and an absolute
 the remote host. Environment variables use double underscores, for example
 `RemoteGate__SshHost` and `RemoteGate__WorkerPath`. Optional
 `RemoteGate:Root` defaults to `/var/tmp/agentstudio-remote-gates`;
-`RemoteGate:ProcessorCount` defaults to 2. SSH must already have a trusted host
+`RemoteGate:ProcessorCount` defaults to 2 and `RemoteGate:GateSlots` defaults to
+1. The local gate equivalent is `LocalGate:GateSlots`, also defaulting to 1.
+Size slots times processors below host online cores; see the
+[execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
+SSH must already have a trusted host
 key and noninteractive credentials. Host-key checking and batch mode are
 mandatory. The worker is invoked explicitly with
 `--remote-build-test-gate-worker <request.json>` before the API host is created;

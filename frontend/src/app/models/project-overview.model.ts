@@ -5,6 +5,7 @@ export interface ProjectThroughputSummary {
   completedLast24h: number;
   completedLast7d: number;
   recentCompletions: ProjectCompletionSummary[];
+  gateSlots?: { busy: number; total: number } | null;
 }
 
 export interface ProjectCompletionSummary {

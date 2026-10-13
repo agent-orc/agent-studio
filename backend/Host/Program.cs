@@ -390,6 +390,7 @@ builder.Services.AddSingleton<FixtureMigrationService>();
 builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
 builder.Services.AddSingleton<ProjectThroughputService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
 builder.Services.AddSingleton<ProjectCycleTimeService>();
 builder.Services.AddSingleton<ProjectVisualEvidenceService>();
 builder.Services.AddSingleton<ProjectGraphDiscoveryService>();
