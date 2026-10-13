@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "git-facts-architecture",
   "title": "Git facts off the request path",
-  "summary": "Decision-ready architecture for Git facts in Agent Studio. Inventories the ten request paths that still spawn Git or walk history at 9e2526be5. The card list is Git-free; the card is not, because every switch loads provenance, commit files with the default diff, and a result history that walks all refs. Recommends a generation-keyed SQLite fact store with one writer per repository: interim on the backend, target tables in task-server.db fed by a fenced runner-host producer. Invalidation is by ref fingerprint and configuration generation, never by task event. Restored generations make a restart serve without Git, and transactional publish with a producer epoch covers crashes. Eight bounded slices, guardrails first, target card list and card detail under 200 ms with zero Git processes per read. D1 to D8 carry working recommendations; AGT-2954 is found integrated and AGT-3041 fixed.",
+  "summary": "Decision-ready architecture for Git facts in Agent Studio. Inventories the ten request paths that still spawn Git or walk history at 9e2526be5. The card list is Git-free; the card is not, because every switch loads provenance, commit files with the default diff, and a result history that walks all refs. Recommends a generation-keyed SQLite fact store with one writer per repository: interim on the backend, target tables in task-server.db fed by a fenced runner-host producer. Invalidation is by ref fingerprint and configuration generation, never by task event. Restored generations make a restart serve without Git, and transactional publish with a producer epoch covers crashes. Eight bounded slices, guardrails first, target card list and card detail under 200 ms with zero Git processes per read. D1 to D8 carry working recommendations; AGT-2954 is found integrated and AGT-3041 fixed. The brief asked for docs/operations/git-facts-architecture/; the Dossier is at docs/git-facts-architecture/ because the concept placement gate accepts only docs/<slug>/ (see Evidence, Dossier location).",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-10-13T02:30:00Z",
+  "updatedAt": "2026-10-13T05:30:00Z",
   "sourceTaskKeys": [
     "AGT-3044"
   ],
