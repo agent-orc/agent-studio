@@ -366,6 +366,15 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ContinuationRoundStarted = "continuation_round_started";
     /// <summary>
+    /// AGT-3056: a review fix round recorded the delivery the review graded as
+    /// the base of its next worktree. <see cref="TimelineEvent.Details"/>
+    /// carries the fenced result <c>ref</c> and <c>sha</c>, the
+    /// <c>review-fix-round</c> reason, the <c>reviewAttemptId</c> and the
+    /// entry point (<c>source</c>). Not a round of its own: the round budget
+    /// counts the round's receipt, never this row.
+    /// </summary>
+    public const string ContinuationBaseRecorded = "continuation_base_recorded";
+    /// <summary>
     /// AGT-3011: an operator sweep (<c>fix-rounds</c>, <c>gate-triage</c>,
     /// <c>salvage</c>) opened a round on this card. The receipt names the sweep
     /// and the exact failure (<c>subjectKey</c>) so the sweep never opens a

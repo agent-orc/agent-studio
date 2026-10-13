@@ -303,7 +303,11 @@ public sealed record RunnerClaimResponse(
     string? FreshRunReason = null,
     // v1 returns the admitted set, including project placement. The workstation
     // rechecks local roots and tools from this set before creating a worker.
-    IReadOnlyList<string>? RequiredCapabilities = null);
+    IReadOnlyList<string>? RequiredCapabilities = null,
+    // AGT-3056: why the server recorded the continuation base. A
+    // "review-fix-round" base must be used as given; the worktree never falls
+    // back to the integration branch for it.
+    string? ContinuationBaseReason = null);
 
 public static class RemoteChatWorkKinds
 {

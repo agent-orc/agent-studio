@@ -785,6 +785,86 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_fix_round_starts_on_the_reviewed_result_and_keeps_the_integration_branch_as_target()
+    {
+        await SeedOriginAsync();
+        var (resultRef, reviewedSha) = await PublishReviewedResultAsync("reviewed.txt", "graded delivery");
+        // The integration branch moved on after the review; the round must not start there.
+        var integrationTip = await PublishRemoteCommitAsync("main", "unrelated.txt", "later develop work", "later work");
+        var log = new List<string>();
+
+        var fixRound = CreateWorkspace(
+            log.Add,
+            sourceRunAttemptId: "run_fix",
+            fencingToken: 2,
+            continuationBaseRef: resultRef,
+            continuationBaseSha: reviewedSha,
+            continuationBaseReason: ContinuationBaseReasons.ReviewFixRound);
+        await fixRound.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal(reviewedSha, (await GitAsync(fixRound.RepoPath, "rev-parse", "HEAD")).StdOut);
+        Assert.Equal(reviewedSha, fixRound.BaseSha);
+        Assert.Equal("refs/heads/main", fixRound.IntegrationBranchRef);
+        Assert.Equal("graded delivery", await File.ReadAllTextAsync(Path.Combine(fixRound.RepoPath, "reviewed.txt")));
+        Assert.False(File.Exists(Path.Combine(fixRound.RepoPath, "unrelated.txt")));
+        Assert.NotEqual(integrationTip, reviewedSha);
+        Assert.Contains(log, line => line.StartsWith("worktree-continuation-base ", StringComparison.Ordinal)
+                                     && line.Contains("required=true", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(ContinuationBaseUnavailableException.Moved)]
+    [InlineData(ContinuationBaseUnavailableException.Missing)]
+    public async Task Review_fix_round_never_falls_back_to_the_integration_branch(string reasonCode)
+    {
+        await SeedOriginAsync();
+        var (resultRef, reviewedSha) = await PublishReviewedResultAsync("reviewed.txt", "graded delivery");
+        if (reasonCode == ContinuationBaseUnavailableException.Moved)
+            await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
+        else
+            await GitAsync(_origin, "update-ref", "-d", resultRef);
+        var log = new List<string>();
+
+        var fixRound = CreateWorkspace(
+            log.Add,
+            sourceRunAttemptId: "run_fix",
+            fencingToken: 2,
+            continuationBaseRef: resultRef,
+            continuationBaseSha: reviewedSha,
+            continuationBaseReason: ContinuationBaseReasons.ReviewFixRound);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => fixRound.PrepareAsync(CancellationToken.None));
+
+        Assert.Equal(reasonCode, failure.ReasonCode);
+        Assert.Equal(resultRef, failure.Ref);
+        Assert.Equal(reviewedSha, failure.ExpectedSha);
+        Assert.StartsWith(reasonCode + ":", failure.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(fixRound.RepoPath));
+        Assert.DoesNotContain(log, line => line.Contains("; starting from the integration branch", StringComparison.Ordinal));
+        Assert.Contains(log, line => line.StartsWith($"worktree-{reasonCode} ", StringComparison.Ordinal)
+                                     && line.EndsWith("; not starting from the integration branch", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    {
+        await SeedOriginAsync();
+        var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
+        await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
+        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
+
+        var continuation = CreateWorkspace(
+            sourceRunAttemptId: "run_next",
+            fencingToken: 2,
+            continuationBaseRef: resultRef,
+            continuationBaseSha: reviewedSha,
+            continuationBaseReason: "lost-worker-with-salvage");
+        await continuation.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+    }
+
+    [Fact]
     public async Task Retained_local_ahead_tip_fast_forwards_canonical_salvage_ref_and_starts_pickup()
     {
         await SeedOriginAsync();
@@ -917,7 +997,8 @@ public sealed class GitWorkspaceTests : IDisposable
         string? sourceRunAttemptId = null,
         long? fencingToken = null,
         string? continuationBaseRef = null,
-        string? continuationBaseSha = null)
+        string? continuationBaseSha = null,
+        string? continuationBaseReason = null)
         => new(new RunnerOptions
         {
             ServerUrl = "http://localhost",
@@ -936,7 +1017,8 @@ public sealed class GitWorkspaceTests : IDisposable
             sourceRunAttemptId: sourceRunAttemptId,
             fencingToken: fencingToken,
             continuationBaseRef: continuationBaseRef,
-            continuationBaseSha: continuationBaseSha);
+            continuationBaseSha: continuationBaseSha,
+            continuationBaseReason: continuationBaseReason);
 
     private GitWorkspace CreateProjectWorkspace(string? repositoryUrl, Action<string>? log = null)
         => new(new RunnerOptions
@@ -981,6 +1063,21 @@ public sealed class GitWorkspaceTests : IDisposable
         await CommitFileAsync(publisher, path, content, message);
         await GitAsync(publisher, "push", "origin", $"HEAD:refs/heads/{branch}");
         return (await GitAsync(publisher, "rev-parse", "HEAD")).StdOut;
+    }
+
+    /// <summary>
+    /// A reviewed delivery as a previous attempt's runner publishes it: one
+    /// commit on top of main under its fenced, immutable result ref.
+    /// </summary>
+    private async Task<(string Ref, string Sha)> PublishReviewedResultAsync(string path, string content)
+    {
+        const string staging = "reviewed-staging";
+        await GitAsync(_origin, "branch", staging, "main");
+        var sha = await PublishRemoteCommitAsync(staging, path, content, "reviewed delivery");
+        var resultRef = FencedGitRefs.ImmutableResult("run_reviewed", 1, sha);
+        await GitAsync(_origin, "update-ref", resultRef, sha);
+        await GitAsync(_origin, "branch", "-D", staging);
+        return (resultRef, sha);
     }
 
     private async Task<List<string>> CollisionRefsAsync(string branch)
