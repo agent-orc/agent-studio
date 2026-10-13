@@ -100,7 +100,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+        try { Directory.Delete(_workspace, recursive: true); }
+        catch (Exception ex) { SilentCatch.Note(ex, "Remote runner end-to-end cleanup is best-effort."); }
     }
 
     [Fact]
@@ -3766,7 +3767,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     private ReviewAttemptDto SeedReviewAttempt(
         IServiceProvider services,
         bool includeResultEnvelope,
-        string taskKey = TaskKey)
+        string taskKey = TaskKey,
+        Contract.ReviewPlanDto? plan = null)
     {
         const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
         const string baseSha = "4136f00d4136f00d4136f00d4136f00d4136f00d";
@@ -3813,10 +3815,31 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             "policy",
             [],
             "seed-review-attempt",
-            RepositoryUrl: repositoryUrl));
+            RepositoryUrl: repositoryUrl,
+            Plan: plan));
         Assert.True(created.Accepted);
         return created.ReviewAttempt!;
     }
+
+    /// <summary>
+    /// The review registration a current review host sends
+    /// (<c>RunnerCapabilityProbe.ReviewRegistrationCapabilities</c>). Since the
+    /// versioned review library, a plan built by <c>RemoteReviewPlanBuilder</c>
+    /// is sealed as library version 1, and only an executor that registered
+    /// <c>review:library-step:v1</c> plus the CLI and provider keys of its
+    /// semantic aspects (Codex by default) can claim it.
+    /// </summary>
+    private static readonly string[] ReviewExecutorCapabilities =
+    [
+        Contract.ReviewCapabilities.ReviewExecutor,
+        Contract.ReviewCapabilities.BaselineComparison,
+        Contract.ReviewCapabilities.DependencyPreparation,
+        Contract.ReviewCapabilities.GitMaterialization,
+        Contract.ReviewCapabilities.SemanticReview,
+        Contract.ReviewCapabilities.LibraryStepV1,
+        Contract.CapabilityProtocol.CliExecution(CliTypes.Codex),
+        Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
+    ];
 
     private static async Task RegisterReviewExecutorAsync(
         HttpClient http,
@@ -3831,14 +3854,40 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 instanceId,
                 "1.0.0",
                 Contract.TaskServerProtocol.Current,
-                [
-                    Contract.ReviewCapabilities.ReviewExecutor,
-                    Contract.ReviewCapabilities.BaselineComparison,
-                    Contract.ReviewCapabilities.DependencyPreparation,
-                    Contract.ReviewCapabilities.GitMaterialization,
-                    Contract.ReviewCapabilities.SemanticReview,
-                ]));
+                ReviewExecutorCapabilities));
         registration.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// One green candidate evidence row per sealed plan command. A Pass report
+    /// on a library-version-1 plan must account for every required step and
+    /// echo its envelope, or the report is refused as a step digest mismatch.
+    /// </summary>
+    private static Contract.ReviewCommandEvidenceDto[] SealedPlanEvidence(Contract.ReviewClaimResponse claim)
+    {
+        var lease = claim.Lease!;
+        var subject = claim.Subject!;
+        return subject.Plan.Commands
+            .Select(command => new Contract.ReviewCommandEvidenceDto(
+                command.StepId,
+                command.Aspect,
+                command.FileName,
+                command.Arguments,
+                subject.ExpectedResultSha,
+                subject.ExpectedResultSha,
+                new string('c', 40),
+                lease.AcquiredAt,
+                lease.AcquiredAt,
+                0,
+                null,
+                new string('d', 64),
+                new string('e', 64),
+                ExecutionKind: command.ExecutionKind,
+                ExecutorId: lease.ExecutorId,
+                HostId: lease.HostId,
+                AttemptId: lease.AttemptId,
+                LibraryStep: command.LibraryStep))
+            .ToArray();
     }
 
     [Fact]
@@ -5264,6 +5313,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             WorkingDirectory = cwd,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
@@ -5285,22 +5336,29 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     {
         const string reviewer = "review-classification";
         const string instance = "review-classification-host:4243";
+        const string citedPath = "backend/Features/Runner/ProjectRunner.cs";
         SeedTask(TaskStates.AutoReview, TaskKey, "Aspect classification", "Build and verify.");
         var now = DateTime.UtcNow;
         using var factory = BuildFactory(authorityNow: () => now);
         using var http = factory.CreateClient();
-        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        // AGT-2916: a semantic block charges the card only when its aspect is
+        // a planned agent aspect and its evidence cites a path the delivery
+        // changed. A plan-less subject has no semantic aspect, so its block
+        // carries no product diagnosis and the report settles as Pass.
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, plan: CodeQualityAspectPlan());
         await RegisterReviewExecutorAsync(http, reviewer, instance);
         using var client = new RClient(http, reviewer, usesDurableTaskServer: true);
         var claim = await client.ClaimReviewAsync(
             new Contract.ReviewClaimRequest(reviewer, instance, 120), CancellationToken.None);
         Assert.Equal("claimed", claim.Status);
-        var request = PassingV1ReviewReport(claim, "classification-report") with
+        var passing = PassingV1ReviewReport(claim, "classification-report");
+        var request = passing with
         {
             Outcome = "ProductFailure",
+            Workspace = passing.Workspace with { ChangedPaths = [citedPath] },
             Verdicts = [new Contract.ReviewVerdictDto(
                 "code-quality", "block", classification, summary,
-                "backend/Features/Runner/ProjectRunner.cs", "Preserve pending state.")],
+                citedPath, "Preserve pending state.")],
         };
 
         var response = await client.ReportReviewAsync(claim.Attempt!.AttemptId, request, CancellationToken.None);
@@ -5322,6 +5380,24 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             Assert.Equal(RunTriggers.ReviewFinding, ReviewConcernRoundStore.Read(task.FolderPath)!.RoundKind);
         }
     }
+
+    /// <summary>
+    /// The shape <c>RemoteReviewPlanBuilder</c> gives a current subject, cut to
+    /// the one semantic aspect the classification rows report on.
+    /// </summary>
+    private static Contract.ReviewPlanDto CodeQualityAspectPlan() => new(
+        [
+            new Contract.ReviewCommandDto(
+                "aspect-code-quality",
+                "code-quality",
+                CliTypes.Codex,
+                [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                Prompt: "Review the code quality of the delivery.",
+                CliType: CliTypes.Codex),
+        ],
+        ["code-quality"],
+        LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
 
     [Fact]
     public async Task Monolith_v1_review_plane_runs_one_concern_fix_round_then_accepts_pass_end_to_end()
@@ -5413,13 +5489,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 reviewInstance,
                 "1.0.0",
                 Contract.TaskServerProtocol.Current,
-                [
-                    Contract.ReviewCapabilities.ReviewExecutor,
-                    Contract.ReviewCapabilities.BaselineComparison,
-                    Contract.ReviewCapabilities.DependencyPreparation,
-                    Contract.ReviewCapabilities.GitMaterialization,
-                    Contract.ReviewCapabilities.SemanticReview,
-                ]),
+                ReviewExecutorCapabilities),
             ct);
         registration.EnsureSuccessStatusCode();
 
@@ -5476,7 +5546,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 "10.0",
                 new Dictionary<string, string>(),
                 new Dictionary<string, string>()),
-            [],
+            SealedPlanEvidence(claim),
             [],
             [new Contract.ReviewVerdictDto(
                 "code-quality",
@@ -5597,6 +5667,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var passRequest = PassingV1ReviewReport(secondClaim, "v1-review-pass") with
         {
             Summary = "The concern is fixed and the scoped review passed.",
+            Commands = SealedPlanEvidence(secondClaim),
             Verdicts =
             [
                 new Contract.ReviewVerdictDto(
@@ -5613,11 +5684,18 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             passRequest,
             ct);
         Assert.Equal("Pass", passReport.Outcome);
-        Assert.Equal(TaskStates.HumanReview, passReport.TaskState);
-        var humanFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
-        Assert.True(Directory.Exists(humanFolder));
+        // AGT-2920: the guarded delivery chain admits Human Review only with an
+        // integrated delivery. This fixture's result lives in no repository the
+        // merge runner can reach, so the accepted Pass waits in Auto Review in
+        // the integrating phase for the delivery-chain reconciler.
+        Assert.Equal(TaskStates.AutoReview, passReport.TaskState);
+        var integratingFolder = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
+        Assert.True(Directory.Exists(integratingFolder));
+        Assert.Equal(
+            LifecyclePhases.Integrating,
+            factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!.Phase);
         var settledRound = Assert.IsType<ReviewConcernRoundLedger>(
-            ReviewConcernRoundStore.Read(humanFolder));
+            ReviewConcernRoundStore.Read(integratingFolder));
         Assert.Equal(1, settledRound.Used);
         Assert.False(settledRound.StillOpen);
 
@@ -6936,10 +7014,13 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     /// <summary>
-    /// The bounded chain: three infrastructure retries, then Escalated. The
-    /// AGT-3089 row sends the AGT-3033 report of a worker that predates the
-    /// diagnosis contract once. A retry on the unchanged SHA would give the
-    /// same report, so it escalates at once and names the worker release.
+    /// The bounded chain: three infrastructure retries, then Escalated. Each
+    /// attempt fails for a different reason: three identical failures are one
+    /// cause, and AGT-W57's cause breaker parks the card on a cause card
+    /// instead of spending its retry budget. The AGT-3089 row sends the
+    /// AGT-3033 report of a worker that predates the diagnosis contract once.
+    /// A retry on the unchanged SHA would give the same report, so it escalates
+    /// at once and names the worker release.
     /// </summary>
     [Theory]
     [InlineData(false)]
@@ -6976,7 +7057,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                         claim,
                         reviewRunnerId,
                         reviewInstance,
-                        $"review-infra-{attemptNumber}"),
+                        $"review-infra-{attemptNumber}",
+                        DistinctInfrastructureCauses[attemptNumber - 1]),
                 CancellationToken.None);
             if (attemptNumber < reports)
             {
@@ -7039,6 +7121,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             StringComparison.Ordinal);
         Assert.DoesNotContain("exhausted its budget", reason, StringComparison.Ordinal);
     }
+
+    /// <summary>One retryable infrastructure class per attempt of the bounded chain.</summary>
+    private static readonly string[] DistinctInfrastructureCauses =
+        ["SnapshotUnavailable", "PreparationFailed", "BaselineUnavailable", "CommandStalled"];
 
     /// <summary>Release the AGT-3033 review host reported (commit of 27.09.).</summary>
     private const string PreDiagnosisWorkerRelease = "20260928T1211Z-v0.9.4-6759fe303";
