@@ -326,7 +326,7 @@
     <p class="kicker">Concept Dossier · Agent Studio</p>
     <h1>Git facts off the request path</h1>
     <p class="lede">A durable fact store with one writer per repository, invalidated by ref and configuration generations, so that the board and every card read published facts and never start Git.</p>
-    <div class="meta"><span><b>As of</b> 13 October 2026, code at <code>9e2526be5</code></span><span><b>Source</b> AGT-3044</span><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Revision</b> 2, replaces the 11 October draft <code>4c9cb6d88</code></span></div>
+    <div class="meta"><span><b>As of</b> 13 October 2026, code at <code>9e2526be5</code></span><span><b>Source</b> AGT-3044</span><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Revision</b> 2, replaces the 11 October draft <code>4c9cb6d88</code></span><span><b>Location</b> <code>docs/git-facts-architecture/</code>, see <a href="#dossier-location">Dossier location</a></span></div>
   </header>
 
   <p>Robert's requirement of 11 October is short. Cards must load instantly, work must run remotely, and the Git performance problem must not come back. Six incidents since July had the same shape. A Git or filesystem fact was computed on demand, on the Windows task server host, as a side effect of a read or of a task event, by spawning the <code>git</code> CLI at roughly 70 to 100 ms per process. Each incident got a local fix such as a debounce, a TTL or a bounded origin read. The next growth step reopened it: 120, then 180, then 235 live cards, plus 2,088 archived cards.</p>
@@ -615,6 +615,13 @@
       <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Generation-keyed SQLite store with one writer</b><small>Removes the three persistent conditions, and keeps the schema stable from B to C.</small></span></a>
     </div>
     <p class="dim">Evidence gap: no Stable telemetry was captured for this revision. The concept run must not start Stable or the dev backend outside a Playwright spec. The latency targets are therefore set as budgets, and S1 records the baseline before any later slice claims an improvement. The board figures of 235 and 2,088 cards are from the 11 October brief.</p>
+
+    <h3 id="dossier-location">Dossier location</h3>
+    <p>The brief names <code>docs/operations/git-facts-architecture/</code> as the output directory. This Dossier is delivered at <code>docs/git-facts-architecture/</code> on purpose, because the platform placement gate accepts a concept delivery only as <code>docs/&lt;slug&gt;/</code>. The 11 October draft <code>4c9cb6d88</code> used the brief's path, and revision 2 moves it. Publishing under <code>docs/operations/</code> after the decision stays possible. Like the other operations Dossiers, it would be a move outside the concept run.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="../../backend/Features/Pipeline/ConceptWorkbenchContract.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>A changed file under docs/operations/ resolves to the topic root docs/operations</b><small><code>ReviewChangedFiles</code> uses only the first path segment below <code>docs/</code> as the topic root (<code>:96-115</code>). For <code>docs/operations/git-facts-architecture/index.html</code> that root is <code>docs/operations</code>. <code>ReviewDirectory</code> then reviews it as Dossier <code>operations</code> (<code>:125-137</code>), and that directory has no <code>workbench.json</code>. The three-segment <code>docs/operations/&lt;slug&gt;</code> form is accepted only for existing legacy workbenches that are reviewed by directory (<code>:128-130</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Pipeline/ConceptWorkbenchPublisher.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Placement runs that check on the run's changed files</b><small><code>PublishAsync</code> passes the worktree status files to <code>ReviewChangedFiles</code> (<code>:57-62</code>) and stops before copying when the review is incomplete (<code>:63-64</code>).</small></span></a>
+    </div>
   </section>
 
   <section id="open-decisions" data-concept-section="open-decisions">
