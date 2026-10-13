@@ -13,6 +13,28 @@ internal sealed record CrashRecoveryGitFinding(
 /// <summary>Read-only worktree evidence used before offering a recovery commit.</summary>
 internal static class CrashRecoveryGitScan
 {
+    public static IReadOnlyList<string> ReadDirtyFiles(string root)
+    {
+        // NUL records preserve literal names, including Unicode, quotes and
+        // whitespace. Renames contain destination then source as two records.
+        var status = Git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all");
+        if (status.Code != 0) throw new IOException("Cannot read crash recovery worktree status.");
+        var records = status.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < records.Length; i++)
+        {
+            var record = records[i];
+            if (record.Length < 4) continue;
+            paths.Add(record[3..]);
+            if ((record[0] is 'R' or 'C' || record[1] is 'R' or 'C') && i + 1 < records.Length)
+            {
+                var source = records[++i];
+                if (record[0] == 'R' || record[1] == 'R') paths.Add(source);
+            }
+        }
+        return paths.OrderBy(path => path, StringComparer.Ordinal).ToArray();
+    }
+
     public static IReadOnlyList<string> ExpandUntrackedDirectories(string root, IReadOnlyList<string> files)
     {
         var directories = files.Where(file => Directory.Exists(Path.Combine(root, file))).ToArray();
@@ -116,10 +138,17 @@ internal static class CrashRecoveryGitScan
         var blobIds = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in includeBlobs ? files : [])
         {
-            var full = Path.GetFullPath(Path.Combine(root, file));
+            blobIds[file] = "unreadable";
+            string full;
+            try { full = Path.GetFullPath(Path.Combine(root, file)); }
+            catch (ArgumentException ex)
+            {
+                SilentCatch.Note(ex, "Crash recovery: invalid dirty path.");
+                continue;
+            }
             if (!full.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-                throw new InvalidDataException($"Recovery file escapes the worktree: {file}");
+                continue;
             if (!File.Exists(full))
             {
                 blobIds[file] = "deleted";
@@ -128,7 +157,7 @@ internal static class CrashRecoveryGitScan
             if (full.Contains('\n') || full.Contains('\r'))
             {
                 var hash = Git(root, "hash-object", "--", full);
-                if (hash.Code != 0) throw new IOException($"Cannot hash recovery file: {file}");
+                if (hash.Code != 0) continue;
                 blobIds[file] = hash.Output.Trim();
                 if (Git(root, "cat-file", "-e", blobIds[file] + "^{blob}").Code != 0)
                     unknown.Add(file);
@@ -141,9 +170,9 @@ internal static class CrashRecoveryGitScan
             try
             {
                 var paths = candidates.Select(file => Path.GetFullPath(Path.Combine(root, file))).ToArray();
-                var hashes = GitInput(root, string.Join('\n', paths) + "\n", "hash-object", "--stdin-paths").Output
-                    .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(hash => hash.Trim()).ToArray();
-                if (hashes.Length == paths.Length)
+                var hashResult = GitInput(root, string.Join('\n', paths.Select(QuoteHashPath)) + "\n", "hash-object", "--stdin-paths");
+                var hashes = hashResult.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(hash => hash.Trim()).ToArray();
+                if (hashResult.Code == 0 && hashes.Length == paths.Length)
                 {
                     for (var i = 0; i < hashes.Length; i++) blobIds[candidates[i]] = hashes[i];
                     var objects = GitInput(root, string.Join('\n', hashes) + "\n", "cat-file", "--batch-check").Output
@@ -166,7 +195,7 @@ internal static class CrashRecoveryGitScan
                 foreach (var file in candidates)
                 {
                     var hash = Git(root, "hash-object", "--", Path.Combine(root, file));
-                    if (hash.Code != 0) throw new IOException($"Cannot hash recovery file: {file}");
+                    if (hash.Code != 0) continue;
                     blobIds[file] = hash.Output.Trim();
                     if (Git(root, "cat-file", "-e", blobIds[file] + "^{blob}").Code != 0)
                         unknown.Add(file);
@@ -203,6 +232,9 @@ internal static class CrashRecoveryGitScan
         }
         return new(drift, branch, head, behind, unknown, added, deleted, indexLock, fingerprint);
     }
+
+    private static string QuoteHashPath(string path)
+        => "\"" + path.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
     private static (string Sha, long At)? LastReflog(string path)
     {
