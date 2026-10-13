@@ -1,7 +1,23 @@
 # Review Domain Map
 
-Version: 2026-10-08
+Version: 2026-10-12
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review host placement (D19 A, AGT-3069)
+
+Remote Review subjects retain the source coding host, and each claimed attempt
+retains its review host. A review claim on the coding host yields to another
+idle eligible review executor on a different host. When no such executor is
+idle, the same host claims immediately. Set
+`PUT /api/projects/{projectName}/review-host-requirement` with
+`{"required":true}` to require different hosts for that project. Its frozen
+review plan carries `requireDifferentHostFailureDomain`, so a same-host claim
+then waits even when it is the only executor. The empty claim reports
+`different-review-host-required` with the coding host and the wait cause.
+Setting `required` to `false` restores the default preference. Standalone
+subjects freeze this choice when created; the monolith also checks the current
+project requirement before claim. A lease already granted remains fenced to
+its chosen host.
 
 ## Quality Studio shadow evidence
 

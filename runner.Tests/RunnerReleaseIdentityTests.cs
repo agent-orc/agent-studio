@@ -104,6 +104,16 @@ public sealed class RunnerReleaseIdentityTests
     }
 
     [Fact]
+    public void Describe_reads_sha_prefixed_assembly_commit_and_rejects_placeholder()
+    {
+        var releaseId = "20260928T1211Z-v0.9.4-6759fe303";
+        Assert.Equal("6759fe303", RunnerReleaseIdentity.Describe(releaseId,
+            informationalVersion: "0.9.4+sha.6759fe303", configuredCommit: "").Commit);
+        Assert.Equal("6759fe303", RunnerReleaseIdentity.Describe(releaseId,
+            informationalVersion: "0.9.4+sha.unknown", configuredCommit: "sha").Commit);
+    }
+
+    [Fact]
     public void Describe_prefers_the_configured_commit_and_build_instant()
     {
         var identity = RunnerReleaseIdentity.Describe(

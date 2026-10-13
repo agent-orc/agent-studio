@@ -34,36 +34,37 @@
       } @else if (!projects().length) {
         <p class="deployment__action">No project is registered. Register its canonical origin and integration ref, then probe it from the selected host.</p>
       } @else {
-        @for (row of projects(); track row.project.projectId) {
+        @for (row of visibleProjects(); track row.project.projectId) {
           <div class="deployment__project" [attr.data-testid]="'deployment-project-' + row.project.projectId">
-            <strong>{{ row.project.name }} · {{ row.project.projectId }}</strong>
+            <strong [title]="row.project.projectId">{{ row.project.name }}</strong>
             @if (row.status; as status) {
-              <span><code>{{ status.registration.repositoryUrl }}</code> · integration {{ status.registration.integrationRef }}
-                @if (status.registration.releaseRef) { · release {{ status.registration.releaseRef }} }
-                · {{ status.registration.deliveryPolicy }}
+              <span class="deployment__project-detail" [title]="status.registration.repositoryUrl + ' · integration ' + status.registration.integrationRef">
+                {{ status.registration.repositoryUrl }}
               </span>
-              @if (latestProbes(status).length) {
-                @for (probe of latestProbes(status); track probe.runnerId) {
-                  <span [attr.data-proof-connected]="proofHostConnected(probe)">
-                    {{ hostName(probe.runnerId) }}: {{ proofLabel(probe) }}
-                    · {{ probe.observedAt | date:'short' }}
-                  </span>
-                }
-              } @else {
-                <span class="deployment__action">No host proof. Run the repository fetch and dry-run push probe from an enrolled host.</span>
-              }
+              <span [class.deployment__action]="!latestProbes(status).length"
+                    [title]="latestProbes(status).length ? proofLabel(latestProbes(status)[0]) : 'Run the repository probe from an enrolled host.'">
+                {{ latestProbes(status).length ? (latestProbes(status)[0].admitted ? 'Proof admitted' : 'Proof failed') : 'No host proof' }}
+              </span>
             } @else {
               <span class="deployment__action">{{ row.error }}</span>
             }
-            @if (row.placement; as placement) {
-              <span>Requires {{ placement.requiredCapabilities.length ? placement.requiredCapabilities.join(', ') : 'no capability class' }}
-                · {{ placement.maxParallelism }} project slot{{ placement.maxParallelism === 1 ? '' : 's' }}
-                @if (placement.pinnedRunnerId) { · pinned to {{ placement.pinnedRunnerId }} }
-              </span>
-            } @else {
-              <span class="deployment__action">{{ row.placementError }}</span>
-            }
+            <span [class.deployment__action]="!row.placement"
+                  [title]="placementTooltip(row)">
+              {{ row.placement ? 'Placement set' : 'Placement missing' }}
+            </span>
           </div>
+        }
+        @if (missingRepositories().length) {
+          <details class="deployment__problems" data-testid="deployment-missing-repositories">
+            <summary>{{ missingRepositories().length }} {{ missingRepositories().length === 1 ? 'project' : 'projects' }} without canonical repository</summary>
+            @for (row of missingRepositories(); track row.project.projectId) {
+              <div class="deployment__project" [attr.data-testid]="'deployment-project-' + row.project.projectId">
+                <strong [title]="row.project.projectId">{{ row.project.name }}</strong>
+                <span class="deployment__action">Repository missing</span>
+                <span [class.deployment__action]="!row.placement">{{ row.placement ? 'Placement set' : 'Placement missing' }}</span>
+              </div>
+            }
+          </details>
         }
       }
     </section>

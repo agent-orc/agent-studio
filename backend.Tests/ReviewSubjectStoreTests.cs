@@ -78,6 +78,30 @@ public sealed class ReviewSubjectStoreTests : IDisposable
             folder, subject, authority, out var error), error);
     }
 
+    [Fact]
+    public void CheckCurrentAttempt_RebuiltAuthorityStoreWithoutTheRunAttempt_IsNoCurrentRunAttempt()
+    {
+        var folder = Path.Combine(_root, "5-human-review", "lost-attempt");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), """{"key":"TE-40"}""");
+        var (_, subject) = CompletedSubject("TE-40");
+        var rebuiltRoot = Path.Combine(_root, "rebuilt");
+        var store = Path.Combine(rebuiltRoot, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(store)!);
+        File.WriteAllText(store, """{"authorityEpoch":2}""");
+        var rebuilt = new AttemptAuthorityService(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = rebuiltRoot })
+                .Build(),
+            NullLogger<AttemptAuthorityService>.Instance);
+
+        var check = ReviewSubjectStore.CheckCurrentAttempt(folder, subject, rebuilt, out var error);
+
+        Assert.Equal(ReviewSubjectAttemptCheck.NoCurrentRunAttempt, check);
+        Assert.Contains("no run attempt in the current authority epoch (2)", error, StringComparison.Ordinal);
+        Assert.False(ReviewSubjectStore.TryValidateCurrentAttempt(folder, subject, rebuilt, out _));
+    }
+
     private (AttemptAuthorityService Authority, ReviewSubjectRecord Subject) CompletedSubject(
         string taskKey, string? immutableRef = null)
     {

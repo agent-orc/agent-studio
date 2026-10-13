@@ -657,9 +657,14 @@ occur. It is not a claim about tunnel transfer time.
   uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
   the Orchestrator proxy and direct Task Server deployment share one frontend.
 - The Execution Hosts destination at `#/workspace/settings/execution-hosts`
-  uses one sortable machine row for status, load, activity, and exact release
-  identity. Coding and Review runner processes advertised with the same host id
-  are role sub-rows with their own slot ceilings and lifecycle actions. Retired
+  uses one sortable machine row for status, host CPU load, activity, and release
+  identity. Matching role releases appear once on the machine row; differing
+  releases appear on their role rows. Coding and Review runner processes
+  advertised with the same host id are role sub-rows with their own slot
+  ceilings and lifecycle actions. The Review row states CPU quota in cores and
+  throttled share separately from host CPU load. Narrow action columns use an
+  overflow menu. Installation checkpoints map active project registry records
+  and group projects without a canonical repository behind a disclosure. Retired
   roles are hidden until the compact history filter is enabled. The persisted
   machine disclosure opens first to one-line summaries for identity,
   connection, capabilities, capacity, project access, host work, and system
