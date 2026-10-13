@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -7,9 +8,11 @@ import {
   signal,
 } from '@angular/core';
 import { ConversationViewComponent } from 'coding-agent-chat/conversation';
-import type { ConversationEvent, SystemStatusEvent } from 'coding-agent-chat/core';
+import type { ConversationEvent, RawLineRange, SystemStatusEvent } from 'coding-agent-chat/core';
+import type { CliOutputLine } from '../../../../models/task.model';
 import { ActivityEventPresentationDirective } from './activity-event-presentation.directive';
 import { presentActivityEvents } from './activity-event-presentation';
+import { projectStructuredActivityContent } from './structured-activity-projection';
 
 @Component({
   selector: 'app-activity-event-presentation-directive-host',
@@ -110,7 +113,7 @@ describe('ActivityEventPresentationDirective — runner-group rendering', () => 
     expect(list).toBeTruthy();
     const labels = Array.from(list!.querySelectorAll('dt')).map((el) => el.textContent);
     expect(labels).toEqual(['Runner ready', 'Runner started', 'Runner config']);
-    const explanations = Array.from(list!.querySelectorAll('dd')).map((el) => el.textContent);
+    const explanations = Array.from(list!.querySelectorAll('[data-testid="runner-group-row-explanation"]')).map((el) => el.textContent);
     expect(explanations).toEqual([
       'Runner ready detail',
       'Runner started detail',
@@ -155,4 +158,100 @@ describe('ActivityEventPresentationDirective — runner-group rendering', () => 
     expect(rows[0].querySelectorAll('[data-testid="conversation-status-open-trace"]')).toHaveLength(1);
     fixture.destroy();
   });
+
+  it('names every runner fact from real runner lines and gives each nested row its own trace', async () => {
+    // Fixed clock: the real AGT-2814 cli-output.log lines from 06:12:33-34.
+    const at = (index: number) => new Date(Date.UTC(2026, 9, 12, 6, 12, 33, index * 100)).toISOString();
+    const lines: CliOutputLine[] = [
+      "[runner] working tree ready on branch 'develop'",
+      '[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt',
+      '[runner] spec cli=claude model=claude-sonnet-5 thinking=medium permission=yolo context=clean source=card',
+      '[runner] engine=car cli=claude model=claude-sonnet-5 thinking=medium permission=yolo context=clean',
+      "[runner] clean-context seeded task home '/home/agent/x'",
+      '[runner] Started claude CLI (PID 870444), model=claude-sonnet-5, thinking=medium',
+    ].map((text, index) => ({ timestamp: at(index), stream: 'system', text }));
+
+    const projected = projectStructuredActivityContent(lines, 'AGT-2814').events;
+    const fixture = await renderHost(presentActivityEvents(projected, 'AGT-2814', null));
+    const host: HTMLElement = fixture.nativeElement;
+
+    const groups = host.querySelectorAll<HTMLElement>(
+      '[data-testid="conversation-system-status"][data-category="runner-group"]',
+    );
+    expect(groups).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="conversation-system-status"]')).toHaveLength(1);
+    const group = groups[0];
+    expect(group.querySelector('.status-row__chip')?.textContent).toBe('Runner');
+    expect(group.querySelectorAll('[data-testid="conversation-status-open-trace"]')).toHaveLength(1);
+
+    const list = group.querySelector<HTMLElement>('[data-testid="runner-group-rows"]')!;
+    const labels = Array.from(list.querySelectorAll('dt')).map((el) => el.textContent);
+    expect(labels).toEqual([
+      'Runner ready',
+      'Framing',
+      'Runner config',
+      'Engine',
+      'Clean context',
+      'CLI started',
+    ]);
+    expect(new Set(labels).size).toBe(6);
+    expect(labels).not.toContain('Runner');
+
+    const view = fixture.debugElement.query(By.directive(ConversationViewComponent))
+      .componentInstance as ConversationViewComponent;
+    const opened: (RawLineRange | null)[] = [];
+    view.openTrace.subscribe((range) => opened.push(range));
+    const rowTraces = list.querySelectorAll<HTMLButtonElement>('[data-testid="runner-group-row-trace"]');
+    expect(rowTraces).toHaveLength(6);
+    expect(rowTraces[4].getAttribute('aria-label')).toBe('Open Clean context in Trace mode');
+    rowTraces.forEach((button) => button.click());
+    expect(opened).toEqual([1, 2, 3, 4, 5, 6].map((line) => ({ source: 'AGT-2814', start: line, end: line })));
+    fixture.destroy();
+  });
+
+  // Fixed clock: line shapes of a follow-up run (clean-context reused,
+  // claimed follow-up) and of a run tail (provider-auth, build server,
+  // worker envelope) as the runner emits them.
+  const realRunnerGroups: { name: string; lines: string[]; labels: string[] }[] = [
+    {
+      name: 'follow-up start-up',
+      lines: [
+        "[runner] working tree ready on branch 'runner/agent-runner-01/AGT-2814'",
+        '[runner] repository has no .agent-studio/project.yml; compatibility preparation remains active',
+        "[runner] claimed follow-up claim=32df22be mode=extend hash=32df22bedfaa7f54 delivered as this run's prompt",
+        '[runner] engine=car cli=claude model=claude-opus-5-5 thinking=medium permission=yolo context=clean',
+        "[runner] clean-context reused task home '/home/agent/.local/state/agent-studio/clean-context/claude/56716d68'",
+      ],
+      labels: ['Runner ready', 'Prepare', 'Framing', 'Engine', 'Clean context'],
+    },
+    {
+      name: 'run tail',
+      lines: [
+        '[runner] provider-auth state=retrying provider=claude; last-good capability retained',
+        '[runner] dotnet build-server shutdown unavailable: No such file or directory',
+        '[runner] worker-envelope attempt=att-7 applied=no cores=16 slots=4 coresPerSlot=4.00 cpuQuota=400% cpuWeight=100 tasksMax=4096; no per-worker cgroup on this host, so CPU seconds and peak tasks were not measured',
+      ],
+      labels: ['Provider auth', 'Build server', 'Worker envelope'],
+    },
+  ];
+
+  for (const run of realRunnerGroups) {
+    it(`names every ${run.name} runner fact from real runner lines, never the bare Runner`, async () => {
+      const at = (index: number) => new Date(Date.UTC(2026, 9, 13, 1, 50, 0, index * 100)).toISOString();
+      const lines: CliOutputLine[] = run.lines.map((text, index) => ({ timestamp: at(index), stream: 'system', text }));
+      const projected = projectStructuredActivityContent(lines, 'AGT-2814').events;
+      const fixture = await renderHost(presentActivityEvents(projected, 'AGT-2814', null));
+      const host: HTMLElement = fixture.nativeElement;
+
+      const groups = host.querySelectorAll<HTMLElement>('[data-category="runner-group"]');
+      expect(groups).toHaveLength(1);
+      expect(groups[0].querySelector('.status-row__chip')?.textContent).toBe('Runner');
+      const list = groups[0].querySelector<HTMLElement>('[data-testid="runner-group-rows"]')!;
+      const labels = Array.from(list.querySelectorAll('dt')).map((el) => el.textContent);
+      expect(labels).toEqual(run.labels);
+      expect(labels).not.toContain('Runner');
+      expect(list.querySelectorAll('[data-testid="runner-group-row-trace"]')).toHaveLength(run.labels.length);
+      fixture.destroy();
+    });
+  }
 });

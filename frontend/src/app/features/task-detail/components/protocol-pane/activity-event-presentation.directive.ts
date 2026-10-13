@@ -8,12 +8,14 @@ import {
   inject,
   input,
 } from '@angular/core';
+import { ConversationViewComponent } from 'coding-agent-chat/conversation';
 import type { ConversationEvent } from 'coding-agent-chat/core';
 import {
   isPresentedRunnerGroupEvent,
   isPresentedToolBurstEvent,
   type PresentedRunnerGroupEvent,
   type PresentedToolBurstEvent,
+  type RunnerGroupRow,
 } from './activity-event-presentation';
 import type { ArtifactGalleryMountController } from './artifact-gallery/artifact-gallery.lazy';
 
@@ -32,6 +34,7 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
   });
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly conversationView = inject(ConversationViewComponent, { self: true });
   private readonly applicationRef = inject(ApplicationRef);
   private readonly environmentInjector = inject(EnvironmentInjector);
   private galleryController: ArtifactGalleryMountController | null = null;
@@ -73,6 +76,10 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
    * repeating a "RUNNER"-styled row per fact with its own trace button. The
    * library's own trace button is left in place - its `rawRange` now spans
    * the whole group, so it stays the one trace affordance for the block.
+   * Inside the disclosure each fact gets a quiet per-row trace button that
+   * emits the row's own `rawRange` through the view's `openTrace`. The
+   * protocol pane listener currently opens Trace mode without focusing that
+   * range, so the title promises Trace mode, not the line itself.
    */
   private syncRunnerGroups(): void {
     const groups = this.events().filter(isPresentedRunnerGroupEvent);
@@ -116,18 +123,35 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
     const list = doc.createElement('dl');
     list.dataset['testid'] = 'runner-group-rows';
     list.style.cssText =
-      'display:grid;grid-template-columns:max-content 1fr;gap:2px 10px;margin:4px 0 0;font-size:11.5px;';
+      'display:grid;grid-template-columns:max-content 1fr auto;align-items:baseline;gap:2px 10px;margin:4px 0 0;font-size:11.5px;';
     for (const fact of event.runnerGroupRows) {
       const dt = doc.createElement('dt');
       dt.textContent = fact.label;
       dt.style.cssText = 'font-weight:600;white-space:nowrap;';
       const dd = doc.createElement('dd');
       dd.textContent = fact.explanation;
+      dd.dataset['testid'] = 'runner-group-row-explanation';
       dd.style.cssText = 'margin:0;color:color-mix(in srgb,currentColor 82%,transparent);';
-      list.append(dt, dd);
+      list.append(dt, dd, this.runnerRowTrace(doc, fact));
     }
     detail.append(list);
     row.append(detail);
+  }
+
+  private runnerRowTrace(doc: Document, fact: RunnerGroupRow): HTMLElement {
+    const cell = doc.createElement('dd');
+    cell.style.cssText = 'margin:0;';
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.textContent = 'trace';
+    button.dataset['testid'] = 'runner-group-row-trace';
+    button.setAttribute('aria-label', `Open ${fact.label} in Trace mode`);
+    button.title = 'Open Trace mode';
+    button.style.cssText =
+      'padding:0 5px;border-radius:4px;border:1px solid color-mix(in srgb,currentColor 18%,transparent);background:transparent;cursor:pointer;font:inherit;font-size:10.5px;color:color-mix(in srgb,currentColor 66%,transparent);';
+    button.addEventListener('click', () => this.conversationView.openTrace.emit(fact.rawRange));
+    cell.append(button);
+    return cell;
   }
 
   private async syncArtifactBlocks(): Promise<void> {

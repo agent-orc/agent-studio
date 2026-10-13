@@ -221,7 +221,7 @@ function detail() {
   };
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Promise<void> {
   await page.route('**/hubs/v1/studio/negotiate**', (route) => route.fulfill({
     json: {
       connectionId: 'activity-gallery-e2e',
@@ -239,6 +239,9 @@ async function installRoutes(page: Page): Promise<void> {
   const encodedId = encodeURIComponent(TARGET.id);
   await context.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  // The header usage cockpit expects an object, not the catch-all array.
+  await context.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
   await context.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -361,7 +364,7 @@ async function installRoutes(page: Page): Promise<void> {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(outputBuffer()),
+      body: JSON.stringify(output),
     }));
   await context.route(`**/api/tasks/${encodedId}/plan**`, (route) =>
     route.fulfill({
@@ -654,3 +657,56 @@ test('Activity, Task, and Result links bind task artifacts to the open card', as
     return value ? JSON.parse(value).openedRel : null;
   })).toBe('quality/angular-components.md');
 });
+
+function runnerFactsBuffer(): OutLine[] {
+  const t0 = Date.parse('2026-10-12T06:12:33.000Z');
+  return [
+    "[runner] working tree ready on branch 'develop'",
+    '[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt',
+    '[runner] spec cli=claude model=claude-sonnet-5 thinking=medium permission=yolo context=clean source=card',
+    '[runner] engine=car cli=claude model=claude-sonnet-5 thinking=medium permission=yolo context=clean',
+    "[runner] clean-context seeded task home '/home/agent/x'",
+    '[runner] Started claude CLI (PID 870444), model=claude-sonnet-5, thinking=medium',
+  ].map((text, index) => ({ timestamp: new Date(t0 + index * 200).toISOString(), stream: 'system', text }));
+}
+
+for (const theme of ['light', 'dark'] as const) {
+test(`Activity names each runner fact and gives each one its own trace in ${theme} theme`, async ({ page }) => {
+  await page.addInitScript((selectedTheme) => {
+    localStorage.setItem('atp.flag.nextGenChat', '1');
+    localStorage.setItem('atp.studio.theme', selectedTheme);
+  }, theme);
+  await installRoutes(page, runnerFactsBuffer());
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(
+    `/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`,
+  );
+  await page.getByTestId('inspector-tab-activity').click();
+
+  const panel = page.getByTestId('activity-panel');
+  const group = panel.locator('[data-testid="conversation-system-status"][data-category="runner-group"]');
+  await expect(group).toHaveCount(1);
+  await expect(group.locator('.status-row__chip')).toHaveText('Runner');
+  await expect(group.getByTestId('conversation-status-open-trace')).toHaveCount(1);
+
+  await group.getByTestId('runner-group-detail').locator('summary').click();
+  const rows = group.getByTestId('runner-group-rows');
+  await expect(rows.locator('dt')).toHaveText([
+    'Runner ready',
+    'Framing',
+    'Runner config',
+    'Engine',
+    'Clean context',
+    'CLI started',
+  ]);
+  const rowTraces = rows.getByTestId('runner-group-row-trace');
+  await expect(rowTraces).toHaveCount(6);
+  await group.screenshot({
+    path: path.join(SHOTS_DIR, `AGT-2814--runner-fact-labels-${theme}--mocked.png`),
+  });
+
+  await rows.getByRole('button', { name: 'Open Clean context in Trace mode' }).click();
+  await expect(panel.getByTestId('next-gen-chat-trace-banner')).toBeVisible();
+  await expect(group).toHaveCount(0);
+});
+}
