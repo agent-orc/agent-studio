@@ -51,6 +51,28 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__0__RootPath="${recovery_repo}"
     export WatchPaths__0__RepositoryPath="${recovery_repo}"
     ;;
+  ref-drift)
+    recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"
+    mkdir -p "${recovery_repo}"
+    git -C "${recovery_repo}" init -q
+    git -C "${recovery_repo}" config user.name 'Playwright Recovery'
+    git -C "${recovery_repo}" config user.email 'playwright-recovery@example.invalid'
+    printf 'before restart\n' > "${recovery_repo}/recovery-proof.txt"
+    git -C "${recovery_repo}" add .
+    git -C "${recovery_repo}" commit -qm 'test: recovery baseline'
+    old_head="$(git -C "${recovery_repo}" rev-parse HEAD)"
+    printf 'new committed content\n' > "${recovery_repo}/recovery-proof.txt"
+    printf 'committed addition\n' > "${recovery_repo}/added-in-commit.txt"
+    git -C "${recovery_repo}" add -A
+    advanced_tree="$(git -C "${recovery_repo}" write-tree)"
+    advanced="$(printf 'advanced\n' | git -C "${recovery_repo}" commit-tree "${advanced_tree}" -p "${old_head}")"
+    git -C "${recovery_repo}" reset --hard HEAD
+    branch="$(git -C "${recovery_repo}" symbolic-ref --short HEAD)"
+    git -C "${recovery_repo}" update-ref "refs/heads/${branch}" "${advanced}"
+    printf 'unique content\n' > "${recovery_repo}/unique-worktree.txt"
+    export WatchPaths__0__RootPath="${recovery_repo}"
+    export WatchPaths__0__RepositoryPath="${recovery_repo}"
+    ;;
   demo)
     node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
     export WatchPaths__0__Name='Demo App'

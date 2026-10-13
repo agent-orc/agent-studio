@@ -49,7 +49,7 @@ async function stubBackgroundApis(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
@@ -281,13 +281,16 @@ async function stubGroupedHostApis(page: Page) {
 
 test.describe('Execution Hosts settings section', () => {
   test.use({ serviceWorkers: 'block' });
+  // The dev-backend fixture may compile the API from a cold worktree.
+  test.describe.configure({ timeout: 480_000 });
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
     mkdirSync(SHOT_DIR, { recursive: true });
     await page.setViewportSize({ width: 1600, height: 950 });
-    // Force the legacy (modal) layout so the section renders in the modal-backed
-    // settings overlay (same choice as workspace-settings-home.spec).
-    await page.addInitScript(() => { try { localStorage.setItem('atp.flag.vsCodeLayout', '0'); } catch { /* ignore */ } });
+    // Most coverage uses the legacy modal; the scroll ownership regression
+    // exercises the editor tab that owns studio-editor__main.
+    const editorLayout = testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields';
+    await page.addInitScript((value) => { try { localStorage.setItem('atp.flag.vsCodeLayout', value); } catch { /* ignore */ } }, editorLayout ? '1' : '0');
     await stubBackgroundApis(page);
     await stubOnlineJobsHub(page);
     await page.goto('/');
@@ -318,7 +321,7 @@ test.describe('Execution Hosts settings section', () => {
       installationId: 'ins_demo_01', ownerBootstrapped: true, ownerBootstrapArmed: false,
     }));
     await page.route('**/api/v1/projects', json([{
-      projectId: 'demo-app', workspaceId: 'demo', name: 'Demo App',
+      id: 'demo-app', workspaceId: 'demo', displayName: 'Demo App', shortCode: 'DEM', archived: false,
     }]));
     await page.route('**/api/v1/projects/demo-app/repository', json({
       registration: { projectId: 'demo-app', repositoryUrl: 'https://example.invalid/demo-app.git',
@@ -499,6 +502,7 @@ test.describe('Execution Hosts settings section', () => {
       }),
     }));
     await page.goto('/#/workspace/settings/execution-hosts');
+    await dismissDevErrorDialog(page);
 
     await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.3.0');
     await expect(page.getByTestId('remote-hosts-release-behind')).toContainText('1 behind Stable');
@@ -506,13 +510,12 @@ test.describe('Execution Hosts settings section', () => {
     const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(machine.getByTestId('remote-host-release-drift')).toHaveText('19d behind');
     const coding = machine.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' });
-    await expect(coding.getByTestId('remote-host-role-release')).toContainText('0.2.7');
-    await expect(coding.getByTestId('remote-host-role-release-drift')).toHaveText('19d behind');
+    await expect(coding.getByTestId('remote-host-role-release')).toContainText('–');
     await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
-      .getByTestId('remote-host-role-release-drift')).toHaveText('19d behind');
+      .getByTestId('remote-host-role-release')).toContainText('–');
 
-    await expect(coding.getByTestId('remote-host-role-release-id')).toHaveText(oldRelease.releaseId);
-    const commit = coding.getByTestId('remote-host-role-release-commit');
+    await expect(machine.getByTestId('remote-host-release-id')).toHaveText(oldRelease.releaseId);
+    const commit = machine.getByTestId('remote-host-release-commit');
     await expect(commit).toHaveText('bbbbbbb');
     await page.evaluate(() => {
       Object.defineProperty(navigator.clipboard, 'writeText', {
@@ -520,6 +523,7 @@ test.describe('Execution Hosts settings section', () => {
         value: async (value: string) => { (window as unknown as { copiedCommit: string }).copiedCommit = value; },
       });
     });
+    await dismissDevErrorDialog(page);
     await commit.click();
     expect(await page.evaluate(() => (window as unknown as { copiedCommit: string }).copiedCommit))
       .toBe(oldRelease.commit);
@@ -532,7 +536,7 @@ test.describe('Execution Hosts settings section', () => {
         await setTheme(page, theme);
         if (width === 1600) {
           await expect(commit).toBeVisible();
-          await expect(coding.getByTestId('remote-host-role-release-id')).toBeVisible();
+          await expect(machine.getByTestId('remote-host-release-id')).toBeVisible();
           const cells = await coding.locator('td').evaluateAll(elements => elements.map(cell => cell.getBoundingClientRect().height));
           expect(Math.max(...cells) - Math.min(...cells)).toBeLessThan(1);
         } else {
@@ -571,6 +575,62 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-dark--mocked.png'), fullPage: false });
   });
 
+  test('keeps settings in one scroll owner and fits actions with real project response fields', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    const projects = Array.from({ length: 17 }, (_, index) => ({
+      id: `PROJ-${index + 1}`, displayName: `Project ${index + 1}`,
+      shortCode: `P${index + 1}`, workspaceId: 'workspace-1', archived: false,
+      storageLocation: `/tmp/projects/project-${index + 1}`,
+    }));
+    projects.push({ id: 'PROJ-OLD', displayName: 'Archived', shortCode: 'OLD', workspaceId: 'workspace-1',
+      archived: true, storageLocation: '/tmp/projects/archived' });
+    const undefinedRequests: string[] = [];
+    page.on('request', request => { if (request.url().includes('/api/v1/projects/undefined/')) undefinedRequests.push(request.url()); });
+    await page.route('**/api/v1/projects', route => route.fulfill({ json: projects }));
+    await page.route('**/api/v1/projects/*/repository', route => route.fulfill({ status: 404, json: {} }));
+    await page.route('**/api/v1/projects/*/placement', route => route.fulfill({ status: 404, json: {} }));
+    for (const viewport of [{ width: 1606, height: 1100 }, { width: 1834, height: 1960 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto('/#/workspace/settings/execution-hosts');
+      await dismissDevErrorDialog(page);
+      await expect(page.locator('.studio-editor__main')).toBeVisible();
+      await expect(page.getByTestId('deployment-missing-repositories')).toContainText('17 projects without canonical repository');
+      await page.getByTestId('deployment-missing-repositories').locator('summary').click();
+      await expect(page.getByTestId('deployment-project-PROJ-1')).toContainText('Project 1');
+      await page.getByTestId('deployment-missing-repositories').locator('summary').click();
+      await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
+      expect(undefinedRequests).toEqual([]);
+      const layout = await page.evaluate(() => {
+        const main = document.querySelector('.studio-editor__main') as HTMLElement;
+        const table = document.querySelector('.rh__table-wrap') as HTMLElement;
+        const row = document.querySelector('[data-testid="remote-host-role-row"]') as HTMLElement;
+        const release = row?.querySelector('.role__release') as HTMLElement | null;
+        const actions = row?.querySelector('.role__actions') as HTMLElement | null;
+        const wide = row?.querySelector('.role__actions-wide') as HTMLElement | null;
+        const menu = row?.querySelector('.role__overflow') as HTMLElement | null;
+        return {
+          outerScroll: main.scrollHeight - main.clientHeight,
+          tableWidth: table.clientWidth,
+          menuVisible: !!menu && getComputedStyle(menu).display !== 'none',
+          wideVisible: !!wide && getComputedStyle(wide).display !== 'none',
+          actionOverlap: !!release && !!actions && release.getBoundingClientRect().right > actions.getBoundingClientRect().left + 1,
+          wideOverflow: !!wide && !!actions && getComputedStyle(wide).display !== 'none'
+            && wide.getBoundingClientRect().left < actions.getBoundingClientRect().left - 1,
+        };
+      });
+      expect(layout.outerScroll).toBe(0);
+      expect(layout.actionOverlap).toBe(false);
+      expect(layout.wideOverflow).toBe(false);
+      if (layout.tableWidth <= 1280) expect(layout.menuVisible).toBe(true);
+      else expect(layout.wideVisible).toBe(true);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-layout-${viewport.width}-${theme}.png`), fullPage: false });
+      }
+    }
+  });
+
   test('shows the review plane quota, adopted ceiling, throttling, and remediation alarm', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
     await stubGroupedHostApis(page);
@@ -578,8 +638,8 @@ test.describe('Execution Hosts settings section', () => {
 
     const review = page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' });
     await expect(review.getByTestId('remote-host-review-plane'))
-      .toContainText('quota 400% · ceiling 2 · throttled 34%');
-    await expect(review.getByTestId('remote-host-review-throttled-share')).toHaveText('34%');
+      .toContainText('CPU quota 4 cores · 2 slot ceiling · throttled 34%');
+    await expect(review.locator('.role__load')).toHaveText('–');
     await expect(review.getByTestId('remote-host-review-plane-alarm'))
       .toContainText('Raise the review role quota or lower the review ceiling.');
 

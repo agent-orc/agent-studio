@@ -81,4 +81,24 @@ describe('generatedFileProvenance', () => {
   it('returns null when no provenance exists', () => {
     expect(generatedFileProvenance(null)).toBeNull();
   });
+
+  it('AGT-3045: adds the priced cost to the tooltip', () => {
+    const view = generatedFileProvenance({
+      file: 'status.md', kind: 'status', model: 'claude-sonnet-5', cli: 'claude',
+      tokensIn: 1_000_000, tokensOut: 100_000, cacheReadTokens: 1_000_000, cacheCreationTokens: 0,
+      tokensTotal: 2_100_000, durationMs: 0,
+    }, {
+      inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75,
+      currency: 'USD', validFrom: '2026-01-01', source: null, note: null, unconfirmed: false,
+    });
+    expect(view?.tooltip).toContain('Cost: $4.80');
+  });
+
+  it('AGT-3045: says "price unknown" for an unpriced model', () => {
+    const view = generatedFileProvenance({
+      file: 'status.md', kind: 'status', model: 'mystery-model', cli: 'claude',
+      tokensIn: 10, tokensOut: 5, tokensTotal: 15, durationMs: 0,
+    }, null);
+    expect(view?.tooltip).toContain('Cost: price unknown');
+  });
 });

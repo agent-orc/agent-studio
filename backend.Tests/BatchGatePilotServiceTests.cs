@@ -1325,6 +1325,38 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Empty(store.ListPending());
     }
 
+    [Fact]
+    public void Enqueue_admits_a_card_whose_slug_id_differs_from_its_reference_key()
+    {
+        // Production cards live in tasks/<bucket>/<KEY> with a slug id in
+        // task.json, while the attempt authority is keyed by the reference key.
+        // Looking the card up by its slug found no current attempts, and every
+        // passed deferred review failed admission as SupersededGeneration.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-SLUG", "docs/slug.md", settleReview: false);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claimed = authority.ClaimReview(member.ReviewAttemptId, "review-executor", "review-host", 600,
+            "claim-" + member.Key);
+        Assert.True(claimed.Accepted, claimed.Message);
+        var passed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(member.ReviewAttemptId, claimed.ReviewAttempt!.LastFence,
+                claimed.ReviewAttempt.AuthorityEpoch, "pass-" + member.Key),
+            member.ResultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(passed.Accepted, passed.Message);
+        var seeded = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
+        var flatLayoutCard = seeded with { Id = "doc-slug-documents-the-pilot", Key = member.Key };
+
+        var pending = factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(flatLayoutCard,
+            passed.ReviewAttempt!, authority.GetRun(member.RunAttemptId)!, _clock);
+
+        Assert.Equal(member.Key, pending.Subject.TaskKey);
+        Assert.True(pending.Subject.CurrentGeneration);
+        Assert.Equal(member.Key, Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListPending()).Subject.TaskKey);
+    }
+
     private sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);
 
     private SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,

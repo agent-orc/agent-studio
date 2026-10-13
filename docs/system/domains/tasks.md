@@ -729,14 +729,37 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   lane meanings are global.
 - Accept in Human Review confirms the already integrated result and records its
   delivery epoch, immutable result SHA, target branch, and target ref fingerprint.
-  A changed delivery or target ref makes the verdict stale and returns the card
-  to Auto Review. Archive checks the same integration truth centrally for
+  The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
+  A new delivery epoch or result SHA, or a delivery no longer integrated in the
+  published branch, makes the verdict stale and returns the card to Auto Review.
+  Older claims without these delivery fields remain accepted while Git reports
+  the delivery integrated. An explicit operator override remains accepted for
+  its recorded delivery; advancing the target branch does not reopen it.
+  The reconciler blocks the entire Delivered reopen batch and logs one warning
+  summary when more than 20 cards would leave Delivered in a pass. Archive checks
+  the same integration truth centrally for
   single moves, drag, batch moves, and management sweeps. An owner can override
   one card through the move API with a written reason; the audit and timeline
   retain the actor, time, delivery and target facts. Sweeps skip blocked cards
   and report each one. `requiresIntegration` may be configured on a card, but
   any actual repository change always requires integration. New coding cards
   cannot be created directly in a protected review or terminal lane.
+  This keeps the Delivery Chain Dossier's selected `integrated-only` review option;
+  the corrected freshness rule compares the accepted delivery and current Git
+  reachability instead of requiring an unchanged target HEAD.
+- The one-time `delivery-stale-repair-2026-10-11` management command restores
+  cards from the 2026-10-11 false bounce after the fixed backend is live. Run
+  `POST /api/v1/management/commands` with
+  `{ "kind": "delivery-stale-repair-2026-10-11", "dryRun": true, "idempotencyKey": "delivery-repair-preview" }`
+  first, authenticated as a management operator and with `X-Client-Id`.
+  Apply with `dryRun: false`,
+  `confirmation: "delivery-stale-repair-2026-10-11"`, and a new idempotency key.
+  The selector requires the exact Completed to Auto Review to Human Review
+  incident timeline on that date, no current completion claim, and either a
+  current integrated Git verdict or the recorded operator override with its
+  written reason. It refuses more than 250 candidates, records an
+  audited command, and restores the accepted claim without re-running the newer
+  content gate. Do not run the apply command before this fix is deployed.
 - `PUT /api/tasks/{jobId}/state` and `POST /api/tasks/{jobId}/move` accept
   `archiveOverride: true` only for a single move from `6-completed` to
   `7-archive`. The caller must be an owner and supply a usable written `reason`.
@@ -1080,6 +1103,23 @@ current/delivery/review brief versions, and content finding in the completion
 claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
+
+Human Review acceptance also matches the card's review subject against the
+attempt authority store (`AcceptanceAttemptLineagePolicy`, pure, matrix-tested;
+AGT-3076). A lineage mismatch is a refusal (HTTP 409), never a server error. When
+the store no longer holds the RunAttempt the subject names, for example after
+the store was rebuilt into a new authority epoch, the refusal is checked before
+the content gate, because the content verdict was lost with the run. It names
+the cause with code `run-attempt-missing` ("no run attempt in the current
+authority epoch"). A written `operatorOverride` accepts such a card against its
+remaining delivery evidence. The completion claim evidence states that no run
+attempt was available. An `accepted_without_run_attempt` timeline entry records
+the authority epoch, the subject's run attempt, integration status, branch and
+SHA, delivery ref, result SHA, and `task.json` commits. The integration check
+still applies, so an override does not accept an unintegrated delivery. A stale
+or mismatched subject stays refused even with an override, because a different
+delivery is current. The task detail projects `acceptanceAttemptGap`, and the
+delivery panel explains why acceptance needs an override.
 
 `GET /api/projects/{id}/completed-lane/content-review-gaps` is a read-only
 inventory of completed and archived cards whose accepted claim lacks a passed

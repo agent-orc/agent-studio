@@ -126,11 +126,7 @@ public static class TaskFilesEndpoints
             }
             catch (IOException ex)
             {
-                // File was locked by another process (editor, indexer, AV) for longer than
-                // the retry window. Surface a tidy 503 instead of a stack-trace modal.
-                return Results.Json(
-                    new { error = "File is temporarily locked by another process — try saving again in a moment.", detail = ex.Message },
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
+                return SaveFailureResult(ex);
             }
         });
 
@@ -243,6 +239,25 @@ public static class TaskFilesEndpoints
             http.Response.Headers.LastModified = thumbnail.LastModified.ToString("R");
             return Results.Bytes(thumbnail.Bytes, thumbnail.ContentType);
         });
+    }
+
+    /// <summary>
+    /// Status for a job-file save that failed on disk. A missing folder or file
+    /// means the task moved or vanished under the write (409, reload first);
+    /// only a remaining IO failure is the transient lock a client may retry.
+    /// </summary>
+    internal static IResult SaveFailureResult(IOException ex)
+    {
+        if (ex is DirectoryNotFoundException or FileNotFoundException)
+            return Results.Json(
+                new { error = "The task moved while saving. Reload it and save again.", detail = ex.Message },
+                statusCode: StatusCodes.Status409Conflict);
+
+        // File was locked by another process (editor, indexer, AV) for longer than
+        // the retry window. Surface a tidy 503 instead of a stack-trace modal.
+        return Results.Json(
+            new { error = "File is temporarily locked by another process — try saving again in a moment.", detail = ex.Message },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     private static bool TryStripOperationSuffix(string path, string suffix, out string filePath)

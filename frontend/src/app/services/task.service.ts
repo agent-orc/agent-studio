@@ -2328,9 +2328,9 @@ export class TaskService {
     );
   }
 
-  commitCrashRecovery(id: string) {
+  commitCrashRecovery(id: string, confirmLarge = false) {
     return this.http.post<CrashRecoveryActionResult>(
-      `${this.baseUrl}/crash-recovery/pending/${encodeURIComponent(id)}/commit`,
+      `${this.baseUrl}/crash-recovery/pending/${encodeURIComponent(id)}/commit${confirmLarge ? '?confirmLarge=true' : ''}`,
       {},
     );
   }

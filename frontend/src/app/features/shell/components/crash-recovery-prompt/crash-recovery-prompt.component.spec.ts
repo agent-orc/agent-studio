@@ -9,6 +9,39 @@ import { TaskService } from '../../../../services/task.service';
 import { CrashRecoveryPromptComponent } from './crash-recovery-prompt.component';
 
 describe('CrashRecoveryPromptComponent', () => {
+  it('shows ref drift evidence and leaves no commit action', async () => {
+    const drift = {
+      id: 'drift', projectName: 'Demo', jobId: null, repoRoot: '/repo',
+      reason: 'Checkout lags behind main by 1 commit (ref moved under the checkout).',
+      message: 'rescue', files: ['deleted.txt', 'unique.txt'], unknownBlobs: ['unique.txt'],
+      insertions: 2, deletions: 100, classification: 'ref-drift' as const,
+      createdAt: '2026-07-01T00:00:00Z', detectedAt: '2026-10-11T00:00:00Z',
+      indexLock: '.git/index.lock: 4 bytes, 30 seconds old',
+    };
+    const committed = vi.fn();
+    await TestBed.configureTestingModule({
+      imports: [CrashRecoveryPromptComponent],
+      providers: [provideZonelessChangeDetection(), provideRouter([]),
+        { provide: TaskService, useValue: {
+          getPendingCrashRecoveries: () => of({ pending: [drift] }),
+          commitCrashRecovery: committed,
+          dismissCrashRecovery: () => of({ status: 'dismissed' }),
+        } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CrashRecoveryPromptComponent);
+    fixture.detectChanges();
+    fixture.componentInstance.openRecovery();
+    fixture.detectChanges();
+    const dialog = document.querySelector('[data-testid="crash-recovery-prompt"]')!;
+    expect(dialog.textContent).toContain('Checkout lags behind main by 1 commit');
+    expect(dialog.textContent).toContain('2 files, 2 insertions, 100 deletions');
+    expect(dialog.textContent).toContain('unique.txt');
+    expect(dialog.textContent).toContain('Index lock found');
+    expect(dialog.querySelector('[data-testid="crash-recovery-commit"]')).toBeNull();
+    fixture.componentInstance.commit(drift);
+    expect(committed).not.toHaveBeenCalled();
+  });
   it('compiles and loads pending crash recovery items', async () => {
     await TestBed.configureTestingModule({
       imports: [CrashRecoveryPromptComponent],
