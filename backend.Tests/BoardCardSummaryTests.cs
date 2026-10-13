@@ -226,6 +226,21 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.False(root.TryGetProperty("epicId", out _));
     }
 
+    [Fact]
+    public void A_pending_intent_read_with_a_null_prompt_still_serializes()
+    {
+        // pending-intent.json is deserialized without a non-null check, so
+        // "prompt": null reaches the model despite its non-null default.
+        var job = Fixture() with { PendingIntent = new PendingIntent { Mode = "steer", Prompt = null! } };
+
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+
+        var intent = document.RootElement.GetProperty("pendingIntent");
+        Assert.Equal("steer", intent.GetProperty("mode").GetString());
+        Assert.False(intent.TryGetProperty("prompt", out _));
+        Assert.False(intent.TryGetProperty("promptTruncated", out _));
+    }
+
     [Theory]
     [InlineData(TaskStates.HumanReview, null, false)]
     [InlineData(TaskStates.Ready, null, false)]
