@@ -49,7 +49,7 @@ public sealed class ProjectRegistry
         IAtomicJsonFileWriter? fileWriter = null)
     {
         _logger = logger;
-        _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
+        _fileWriter = (fileWriter ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
         var raw = config["TaskRepository"];
         _taskRepositoryRoot = string.IsNullOrWhiteSpace(raw) ? null : raw;
     }

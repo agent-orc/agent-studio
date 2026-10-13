@@ -56,6 +56,13 @@ public sealed class AttemptAuthorityService
     public const string RelativePath = ".metadata/attempt-authority.json";
     public const int DefaultTerminalRetentionCount = 128;
     private static readonly TimeSpan TerminalRetentionAge = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Minimum spacing of routine compaction passes. Every pass that archives
+    /// records writes the shard of its UTC hour, so steady state produces at
+    /// most one archive write per hour instead of one per terminal transition.
+    /// </summary>
+    private static readonly TimeSpan CompactionInterval = TimeSpan.FromHours(1);
     public const int ReviewInfrastructureRetryBudget = 3;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
 
@@ -106,6 +113,16 @@ public sealed class AttemptAuthorityService
     private string? _recoverySource;
     private ImmutableDictionary<string, BoardReviewActivity> _boardReviewActivity =
         ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Task keys and delivery refs per archive shard, read from disk once on the
+    /// first history read. Shards this process writes afterwards are recorded in
+    /// <see cref="_archiveWrites"/>, so compaction never waits for the build.
+    /// </summary>
+    private readonly object _archiveIndexBuildGate = new();
+    private IReadOnlyDictionary<string, ArchiveIndexEntry>? _archiveIndexFromDisk;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ArchiveIndexEntry> _archiveWrites =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
@@ -183,7 +200,7 @@ public sealed class AttemptAuthorityService
     {
         _logger = logger;
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
-        _writer = writer ?? new AtomicJsonFileWriter();
+        _writer = (writer ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
         _useJournal = _writer is AtomicJsonFileWriter;
         var root = configuration["TaskRepository"];
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
@@ -2115,7 +2132,7 @@ public sealed class AttemptAuthorityService
         // disappearing between an earlier archive read and the live snapshot.
         if (includeArchived)
         {
-            var archives = LoadArchivesForHistory();
+            var archives = LoadArchivesForHistory(key);
             runs = runs
                 .Concat(archives
                     .SelectMany(archive => archive.RunAttempts)
@@ -2147,8 +2164,8 @@ public sealed class AttemptAuthorityService
 
     /// <summary>
     /// Returns delivery refs already known by attempt authority without
-    /// consulting Git. Archive files are loaded once for the whole project
-    /// snapshot instead of once per task.
+    /// consulting Git. Archived refs come from the in-memory archive index, so
+    /// no archive shard is deserialized per call.
     /// </summary>
     public IReadOnlyList<AttemptIndexedDeliveryRef> GetIndexedDeliveryRefs(
         IEnumerable<string> taskKeys,
@@ -2156,33 +2173,35 @@ public sealed class AttemptAuthorityService
     {
         var keys = taskKeys.Select(Normalize).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (keys.Count == 0) return [];
-        List<RunAttemptDto> runs;
-        List<ReviewAttemptDto> reviews;
+        List<AttemptIndexedDeliveryRef> refs;
         lock (_gate)
         {
-            runs = _state.RunAttempts
-                .Where(attempt => keys.Contains(attempt.TaskKey))
-                .Select(ToDto)
-                .ToList();
-            reviews = _state.ReviewAttempts
-                .Where(attempt => keys.Contains(attempt.TaskKey))
-                .Select(ToDto)
+            refs = DeliveryRefs(
+                    _state.RunAttempts.Where(attempt => keys.Contains(attempt.TaskKey)),
+                    _state.ReviewAttempts.Where(attempt => keys.Contains(attempt.TaskKey)))
                 .ToList();
         }
 
         if (includeArchived)
         {
-            var archives = LoadArchivesForHistory();
-            runs.AddRange(archives.SelectMany(archive => archive.RunAttempts)
-                .Where(attempt => keys.Contains(attempt.TaskKey))
-                .Select(ToDto));
-            reviews.AddRange(archives.SelectMany(archive => archive.ReviewAttempts)
-                .Where(attempt => keys.Contains(attempt.TaskKey))
-                .Select(ToDto));
+            refs.AddRange(ArchiveIndex().Values
+                .SelectMany(entry => entry.DeliveryRefs)
+                .Where(item => keys.Contains(item.TaskKey)));
         }
 
-        var indexed = runs
+        return refs
+            .DistinctBy(item => $"{item.TaskKey}\0{item.Ref}\0{item.ResultSha}",
+                StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(item => item.RecordedAt)
+            .ToList();
+    }
+
+    private static IEnumerable<AttemptIndexedDeliveryRef> DeliveryRefs(
+        IEnumerable<RunAttemptRecord> runs,
+        IEnumerable<ReviewAttemptRecord> reviews)
+        => runs
             .Where(run => run.ResultEnvelope?.ImmutableRemoteRef is { Length: > 0 })
+            .Select(ToDto)
             .Select(run => new AttemptIndexedDeliveryRef(
                 run.TaskKey,
                 run.ResultEnvelope!.ImmutableRemoteRef!,
@@ -2190,18 +2209,13 @@ public sealed class AttemptAuthorityService
                 run.TerminalAt ?? run.CreatedAt))
             .Concat(reviews
                 .Where(review => !string.IsNullOrWhiteSpace(review.Subject.ResultRef))
+                .Select(ToDto)
                 .Select(review => new AttemptIndexedDeliveryRef(
                     review.TaskKey,
                     review.Subject.ResultRef!,
                     review.Subject.ExpectedResultSha,
                     review.Subject.CreatedAt)))
-            .Where(item => ReviewSubjectStore.IsValidResultSha(item.ResultSha))
-            .DistinctBy(item => $"{item.TaskKey}\0{item.Ref}\0{item.ResultSha}",
-                StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(item => item.RecordedAt)
-            .ToList();
-        return indexed;
-    }
+            .Where(item => ReviewSubjectStore.IsValidResultSha(item.ResultSha));
 
     private AttemptWriteResult ValidateRunWriteLocked(
         AttemptWriteReference write,
@@ -2895,26 +2909,38 @@ public sealed class AttemptAuthorityService
                 protectedRunIds.Contains(run.AttemptId)))
             .ToList();
 
-        if (archivedRuns.Count > 0 || archivedReviews.Count > 0)
+        // Routine passes archive at most once per CompactionInterval. A burst
+        // that leaves more than one retention window of archivable records in
+        // the hot document compacts early; it merges into the same hourly
+        // shard. A pass with nothing to archive leaves the cadence alone.
+        var archivableCount = archivedRuns.Count + archivedReviews.Count;
+        if (!force
+            && (archivableCount == 0
+                || (_state.LastCompactedAt is { } lastCompactedAt
+                    && now - lastCompactedAt < CompactionInterval
+                    && archivableCount <= _terminalRetentionCount)))
+            return;
+
+        if (archivableCount > 0)
         {
-            var archivePath = ArchivePath(now, archivedRuns, archivedReviews);
+            var archivePath = ArchivePath(now);
             var archive = new AuthorityArchive
             {
                 SchemaVersion = ArchiveSchemaVersion,
                 ArchivedAt = now,
-                RunAttempts = archivedRuns
-                .OrderBy(run => run.CreatedAt)
-                .ToList(),
-                ReviewAttempts = archivedReviews
-                .OrderBy(review => review.CreatedAt)
-                .ToList(),
+                RunAttempts = archivedRuns,
+                ReviewAttempts = archivedReviews,
             };
-            // A same-day file can only precede the durable live-file update
-            // when an earlier rotation was interrupted. The live file still
-            // contains the complete retry set in that case, so atomically
-            // replacing the archive is both recoverable and avoids archive
-            // reads while a lease or report mutation holds the authority gate.
+            // The hourly shard already exists when an earlier pass of the same
+            // hour archived records, or when a rotation was interrupted before
+            // its live-file update. Merging by attempt id covers both: earlier
+            // records stay, and a retried record replaces its first copy.
+            if (File.Exists(archivePath))
+                archive = MergeArchives(LoadShardForMerge(archivePath), archive);
+            archive.RunAttempts = archive.RunAttempts.OrderBy(run => run.CreatedAt).ToList();
+            archive.ReviewAttempts = archive.ReviewAttempts.OrderBy(review => review.CreatedAt).ToList();
             _writer.Write(archivePath, JsonSerializer.Serialize(archive, JsonOptions));
+            _archiveWrites[archivePath] = IndexArchive(archive);
 
             var archivedRunIds = archivedRuns
                 .Select(run => run.AttemptId)
@@ -2940,44 +2966,110 @@ public sealed class AttemptAuthorityService
            && Terminal(state)
            && !retainedByCount;
 
-    private string ArchivePath(
-        DateTime archivedAt,
-        IReadOnlyList<RunAttemptRecord> runs,
-        IReadOnlyList<ReviewAttemptRecord> reviews)
+    private string ArchivePath(DateTime archivedAt)
     {
         var directory = Path.GetDirectoryName(_path)
             ?? throw new InvalidOperationException("Attempt authority path has no parent directory.");
-        var legacyDailyPath = Path.Combine(directory, $"attempt-authority.archive-{archivedAt:yyyy-MM-dd}.json");
-        if (File.Exists(legacyDailyPath))
-        {
-            try { _ = LoadArchive(legacyDailyPath); }
-            catch (InvalidDataException)
-            {
-                // A pre-sharding archive write may have stopped before its
-                // live-file update. The live records are still present here.
-                return legacyDailyPath;
-            }
-        }
-        var identities = runs.Select(run => "r:" + run.AttemptId)
-            .Concat(reviews.Select(review => "v:" + review.AttemptId))
-            .Order(StringComparer.Ordinal);
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', identities))))[..16]
-            .ToLowerInvariant();
-        return Path.Combine(directory, $"attempt-authority.archive-{archivedAt:yyyy-MM-dd}-{digest}.json");
+        return Path.Combine(
+            directory,
+            $"attempt-authority.archive-{archivedAt:yyyy-MM-dd-HH}.json");
     }
 
-    private IReadOnlyList<AuthorityArchive> LoadArchivesForHistory()
+    /// <summary>
+    /// Reads the existing hourly shard before a merge. A damaged shard is moved
+    /// aside under a name the archive pattern does not match, so the merge
+    /// cannot stop every later authority mutation; the operator keeps the file.
+    /// </summary>
+    private AuthorityArchive LoadShardForMerge(string archivePath)
     {
-        if (_path is null)
-            return [];
-        var directory = Path.GetDirectoryName(_path);
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-            return [];
-        return Directory.EnumerateFiles(directory, ArchiveFilePattern)
+        try
+        {
+            return LoadArchive(archivePath);
+        }
+        catch (InvalidDataException ex)
+        {
+            var quarantinedPath = $"{archivePath}.corrupt-{_utcNow():yyyyMMdd-HHmmss}-{Guid.NewGuid():N}";
+            File.Move(archivePath, quarantinedPath);
+            _logger.LogCritical(ex,
+                "attempt-authority-archive-quarantined archive={ArchivePath} quarantined={QuarantinedPath}",
+                archivePath, quarantinedPath);
+            return new AuthorityArchive();
+        }
+    }
+
+    private static AuthorityArchive MergeArchives(AuthorityArchive existing, AuthorityArchive added)
+    {
+        var runIds = added.RunAttempts.Select(run => run.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var reviewIds = added.ReviewAttempts.Select(review => review.AttemptId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return new AuthorityArchive
+        {
+            SchemaVersion = ArchiveSchemaVersion,
+            ArchivedAt = added.ArchivedAt,
+            RunAttempts = existing.RunAttempts.Where(run => !runIds.Contains(run.AttemptId))
+                .Concat(added.RunAttempts).ToList(),
+            ReviewAttempts = existing.ReviewAttempts.Where(review => !reviewIds.Contains(review.AttemptId))
+                .Concat(added.ReviewAttempts).ToList(),
+        };
+    }
+
+    /// <summary>
+    /// Loads only the archive shards that hold records of <paramref name="taskKey"/>.
+    /// The shard count grows with history; the index keeps a task read from
+    /// deserializing every shard.
+    /// </summary>
+    private IReadOnlyList<AuthorityArchive> LoadArchivesForHistory(string taskKey)
+        => ArchiveIndex()
+            .Where(entry => entry.Value.TaskKeys.Contains(taskKey))
+            .Select(entry => entry.Key)
+            .Where(File.Exists)
             .OrderBy(path => path, StringComparer.Ordinal)
             .Select(LoadArchive)
             .ToList();
+
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex()
+    {
+        var fromDisk = Volatile.Read(ref _archiveIndexFromDisk);
+        if (fromDisk is null)
+        {
+            lock (_archiveIndexBuildGate)
+            {
+                fromDisk = _archiveIndexFromDisk;
+                if (fromDisk is null)
+                {
+                    fromDisk = BuildArchiveIndexFromDisk();
+                    Volatile.Write(ref _archiveIndexFromDisk, fromDisk);
+                }
+            }
+        }
+        if (_archiveWrites.IsEmpty) return fromDisk;
+        var merged = new Dictionary<string, ArchiveIndexEntry>(fromDisk, StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, entry) in _archiveWrites)
+            merged[path] = entry;
+        return merged;
     }
+
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> BuildArchiveIndexFromDisk()
+    {
+        var index = new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        if (_path is null)
+            return index;
+        var directory = Path.GetDirectoryName(_path);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            return index;
+        // An unreadable shard fails the read closed and is retried on the next
+        // history read instead of being cached as empty.
+        foreach (var path in Directory.EnumerateFiles(directory, ArchiveFilePattern))
+            index[path] = IndexArchive(LoadArchive(path));
+        return index;
+    }
+
+    private static ArchiveIndexEntry IndexArchive(AuthorityArchive archive)
+        => new(
+            archive.RunAttempts.Select(run => run.TaskKey)
+                .Concat(archive.ReviewAttempts.Select(review => review.TaskKey))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            DeliveryRefs(archive.RunAttempts, archive.ReviewAttempts).ToList());
 
     private static AuthorityArchive LoadArchive(string path)
     {
@@ -3261,6 +3353,10 @@ public sealed class AttemptAuthorityService
         public List<RunAttemptRecord> RunAttempts { get; set; } = [];
         public List<ReviewAttemptRecord> ReviewAttempts { get; set; } = [];
     }
+
+    private sealed record ArchiveIndexEntry(
+        IReadOnlySet<string> TaskKeys,
+        IReadOnlyList<AttemptIndexedDeliveryRef> DeliveryRefs);
 
     private sealed record TerminalAttemptReference(
         string AttemptId,

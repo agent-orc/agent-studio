@@ -36,7 +36,7 @@ public sealed class ProjectGraphDiscoveryService
         _scanner = scanner;
         _registry = registry;
         _logger = logger;
-        _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
+        _fileWriter = (fileWriter ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
         var taskRepository = configuration["TaskRepository"];
         _snapshotRoot = !string.IsNullOrWhiteSpace(taskRepository)
             ? Path.Combine(taskRepository, ".metadata", "project-graph")

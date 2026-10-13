@@ -21,7 +21,7 @@ public sealed class TestRunStore
     public TestRunStore(IConfiguration configuration, IAtomicJsonFileWriter? writer = null)
     {
         _root = configuration["TaskRepository"];
-        _writer = writer ?? new AtomicJsonFileWriter();
+        _writer = (writer ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
     }
 
     public IReadOnlyList<TestRunRecord> List(string projectId)

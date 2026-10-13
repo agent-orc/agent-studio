@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -41,10 +42,39 @@ public interface IAtomicJsonFileWriter
     void ReplaceExisting(string path, string content) => Write(path, content);
 }
 
+/// <summary>Per-caller opt-in for the last-good <c>.bak</c> sibling.</summary>
+public static class AtomicJsonFileWriterBackups
+{
+    /// <summary>
+    /// Returns a writer that keeps the replaced version as <c>&lt;file&gt;.bak</c>.
+    /// Only runtime stores under the workspace <c>.metadata</c> opt in. A sibling
+    /// backup next to a file in a project repository (Dossier descriptors,
+    /// wiki pages) or a task folder is an untracked file: it dirties the
+    /// worktree and an agent's <c>git add -A</c> commits it. Test doubles are
+    /// returned unchanged so failure injection keeps working.
+    /// </summary>
+    public static IAtomicJsonFileWriter WithLastGoodBackup(this IAtomicJsonFileWriter writer)
+        => writer is AtomicJsonFileWriter ? AtomicJsonFileWriter.KeepingLastGoodBackup() : writer;
+}
+
 public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
 {
+    private readonly bool _keepLastGoodBackup;
+
+    public AtomicJsonFileWriter() : this(keepLastGoodBackup: false)
+    {
+    }
+
+    private AtomicJsonFileWriter(bool keepLastGoodBackup) => _keepLastGoodBackup = keepLastGoodBackup;
+
+    /// <summary>A writer that keeps <c>&lt;file&gt;.bak</c>; see
+    /// <see cref="AtomicJsonFileWriterBackups.WithLastGoodBackup"/>.</summary>
+    public static AtomicJsonFileWriter KeepingLastGoodBackup() => new(keepLastGoodBackup: true);
+
     /// <summary>Read a JSON document, falling back to the last flushed version.
-    /// The callback reports the exact source used to the owning service.</summary>
+    /// The callback reports the exact source used to the owning service. Without
+    /// a valid backup the primary failure is rethrown unchanged, so callers keep
+    /// their existing exception handling.</summary>
     public static string ReadAllTextWithBackup(string path, Action<string>? recovered = null)
     {
         Exception? primaryFailure = null;
@@ -77,12 +107,15 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
                 "JSON store recovered from backup: primary={0} source={1}", path, path + ".bak");
             return backup;
         }
-        catch (Exception backupFailure)
+        catch (Exception backupFailure) when (
+            backupFailure is IOException or UnauthorizedAccessException or JsonException)
         {
-            throw new InvalidDataException(
-                $"JSON store '{path}' and backup '{path}.bak' could not be loaded.",
-                new AggregateException(primaryFailure!, backupFailure));
+            if (backupFailure is not (FileNotFoundException or DirectoryNotFoundException))
+                System.Diagnostics.Trace.TraceWarning(
+                    "JSON store backup unusable: primary={0} error={1}", path, backupFailure.Message);
         }
+        ExceptionDispatchInfo.Throw(primaryFailure!);
+        throw primaryFailure!;
     }
 
     /// <summary>
@@ -131,7 +164,7 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
         Swap(path, content);
     }
 
-    private static void Swap(string path, string content)
+    private void Swap(string path, string content)
         => Swap(path, temporaryPath =>
         {
             using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
@@ -140,13 +173,13 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
             stream.Flush(flushToDisk: true);
         });
 
-    private static void Swap(string path, Action<string> writeTemporary)
+    private void Swap(string path, Action<string> writeTemporary)
     {
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
             writeTemporary(tempPath);
-            if (File.Exists(path))
+            if (_keepLastGoodBackup && File.Exists(path))
             {
                 var backupTemp = $"{path}.bak.{Guid.NewGuid():N}.tmp";
                 try

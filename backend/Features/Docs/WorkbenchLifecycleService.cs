@@ -200,7 +200,7 @@ public sealed class WorkbenchLifecycleService
 
     private static string? TryRead(string descriptorPath)
     {
-        try { return AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath); }
+        try { return File.ReadAllText(descriptorPath); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             SilentCatch.Note(ex, "Descriptor could not be re-read before the lifecycle write.");

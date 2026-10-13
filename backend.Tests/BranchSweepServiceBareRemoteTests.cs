@@ -211,6 +211,55 @@ public sealed class BranchSweepServiceBareRemoteTests : IDisposable
         Assert.True(Candidate(fixture, quarantine).Eligible);
     }
 
+    [Fact]
+    public void SalvageRefOfAnOpenCardStaysProtectedAfterItsAttemptMovedToTheArchive()
+    {
+        // The hot authority store keeps only recent terminal attempts. An
+        // earlier attempt of a card that is still open lives in an archive
+        // shard, and its salvage ref is still a recovery source.
+        var fixture = Seed();
+        const string salvage = "agent-studio/salvage/runner-1/DEM-2/attempt-0/fence-1/ddd";
+        Branch(fixture.Repo, salvage, "salvage.txt", Now.AddDays(-400));
+        RunGit(fixture.Repo, "fetch", "-q", "--prune", "origin");
+        var metadata = Path.Combine(_tempDir, "workspace", ".metadata");
+        Directory.CreateDirectory(metadata);
+        var salvageSha = TipSha(fixture.Repo, "origin/" + salvage);
+        File.WriteAllText(
+            Path.Combine(metadata, $"attempt-authority.archive-{Now.AddDays(-30):yyyy-MM-dd-HH}.json"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                archivedAt = Now.AddDays(-30).UtcDateTime,
+                runAttempts = new[]
+                {
+                    new
+                    {
+                        attemptId = "run-dem-2-salvaged",
+                        taskKey = "DEM-2",
+                        repositoryId = Project,
+                        state = AttemptLifecycleState.Failed,
+                        createdAt = Now.AddDays(-31).UtcDateTime,
+                        terminalAt = Now.AddDays(-31).UtcDateTime,
+                        resultEnvelope = new
+                        {
+                            repositoryId = Project,
+                            sourceRunAttemptId = "run-dem-2-salvaged",
+                            baseSha = salvageSha,
+                            resultSha = salvageSha,
+                            immutableRemoteRef = "refs/heads/" + salvage,
+                            artifactManifestDigest = "manifest",
+                        },
+                    },
+                },
+                reviewAttempts = Array.Empty<object>(),
+            }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+
+        var candidate = Candidate(fixture, salvage);
+
+        Assert.False(candidate.Eligible);
+        Assert.Equal(nameof(BranchRetentionDecision.TaskRefReferenced), candidate.Decision);
+    }
+
     private static BranchSweepCandidate Candidate(Fixture fixture, string reference)
         => fixture.Sweep.Plan(Project).Candidates.Single(candidate => candidate.Ref == reference);
 

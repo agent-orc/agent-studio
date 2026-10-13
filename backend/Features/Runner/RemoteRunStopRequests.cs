@@ -124,7 +124,7 @@ public sealed class RemoteRunStopRequestStore
     {
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
         _utcNow = utcNow;
-        _writer = writer ?? new AtomicJsonFileWriter();
+        _writer = (writer ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
         if (_path is null || (!File.Exists(_path) && !File.Exists(_path + ".bak"))) return;
         var loaded = JsonSerializer.Deserialize<List<RemoteRunStopRequest>>(
             AtomicJsonFileWriter.ReadAllTextWithBackup(_path), Json)

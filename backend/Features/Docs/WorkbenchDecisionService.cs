@@ -458,7 +458,7 @@ public sealed class WorkbenchDecisionService
     {
         try
         {
-            return AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath);
+            return File.ReadAllText(descriptorPath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
