@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
@@ -73,31 +74,12 @@ public static class SolutionQualityGate
     public static Decision Evaluate(AspectRunReport report, int priorReissues, int maxReissues)
     {
         var findings = ExtractFindings(report);
-        if (findings.Count == 0)
-        {
-            return new Decision();
-        }
-
-        if (findings.Count > MaxFindings)
-        {
-            findings = findings.Take(MaxFindings).ToList();
-        }
-
-        if (priorReissues >= maxReissues)
-        {
-            return new Decision
-            {
-                Action = SolutionQualityGateAction.Escalate,
-                Findings = findings,
-                Reason = $"Solution-quality gate could not clear {findings.Count} blocking concern(s) after {priorReissues} prior reissue(s); user attention required.",
-            };
-        }
-
+        var decision = GateTransitionPolicy.Solution(findings, priorReissues, maxReissues);
         return new Decision
         {
-            Action = SolutionQualityGateAction.Reissue,
-            Findings = findings,
-            Reason = $"Solution-quality gate found {findings.Count} blocking concern(s); reissuing instead of accepting with concerns.",
+            Action = Enum.Parse<SolutionQualityGateAction>(decision.Action.ToString()),
+            Findings = decision.Findings,
+            Reason = decision.Reason,
         };
     }
 

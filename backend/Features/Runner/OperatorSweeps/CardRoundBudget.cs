@@ -1,14 +1,5 @@
+using AgentStudio.Orchestration.Decisions;
 namespace AgentStudio.Runner;
-
-/// <param name="Used">Automatic rounds this card has already spent, across every review-attempt epoch.</param>
-/// <param name="Allowed">Rounds the card may spend in its lifetime.</param>
-public sealed record CardRoundBudgetState(int Used, int Allowed)
-{
-    public int Remaining => Math.Max(0, Allowed - Used);
-    public bool Exhausted => Used >= Allowed;
-}
-
-public enum CardRoundBudgetAction { OpenRound, DegradeToFollowUp, Escalate }
 
 /// <summary>The same receipt fields are written by every automatic-round owner.</summary>
 public static class CardRoundBudgetReceipt
@@ -95,25 +86,11 @@ public static class CardRoundBudget
 
     public static CardRoundBudgetAction Decide(
         CardRoundBudgetState budget, IEnumerable<string> blockingAspects)
-    {
-        if (!budget.Exhausted) return CardRoundBudgetAction.OpenRound;
-        var aspects = blockingAspects.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return aspects.Overlaps(["build-tests", "tests-and-evidence", "review-verification"])
-            ? CardRoundBudgetAction.Escalate
-            : CardRoundBudgetAction.DegradeToFollowUp;
-    }
+        => CardRoundBudgetPolicy.Decide(budget, blockingAspects);
 
-    /// <summary>
-    /// The review-plane question, shared by Remote Review and the local
-    /// orchestrator: a spent budget only intervenes when the review would open
-    /// another round, a block (finding round) or a concern round. A passing
-    /// report whose concerns open no round keeps its Pass without a follow-up.
-    /// </summary>
     public static CardRoundBudgetAction DecideForReview(
         CardRoundBudgetState budget, IReadOnlyCollection<string> blockingAspects, bool opensConcernRound)
-        => blockingAspects.Count > 0 || opensConcernRound
-            ? Decide(budget, blockingAspects)
-            : CardRoundBudgetAction.OpenRound;
+        => CardRoundBudgetPolicy.DecideForReview(budget, blockingAspects, opensConcernRound);
 
     public static int CountRoundsUsed(
         IEnumerable<ReviewDecisionRecord> journal,
@@ -122,25 +99,8 @@ public static class CardRoundBudget
     {
         ArgumentNullException.ThrowIfNull(journal);
         ArgumentNullException.ThrowIfNull(timeline);
-        var reissues = journal.Count(record =>
-            record.Kind == ReviewDecisionKind.Reissue
-            && string.Equals(record.JobId, jobId, StringComparison.Ordinal));
-        var timelineRounds = timeline.Count(IsTimelineOnlyRound);
-        return reissues + timelineRounds;
-    }
-
-    private static bool IsTimelineOnlyRound(TimelineEvent entry)
-    {
-        var details = entry.Details;
-        if (details is null) return false;
-        if (entry.Kind == TimelineEventKinds.QualityLoopReopened)
-        {
-            return details.TryGetValue("reviewAttemptId", out var attempt)
-                   && !string.IsNullOrWhiteSpace(attempt)
-                   && details.TryGetValue("cause", out var cause)
-                   && cause is "multi-aspect-block" or "multi-aspect-concern";
-        }
-        return entry.Kind == TimelineEventKinds.ContinuationRoundStarted
-               && details.GetValueOrDefault("automatic") == "true";
+        return AutomaticRoundPolicy.Count(
+            journal.Select(record => new RoundJournalFact(record.JobId, record.Kind.ToString())),
+            timeline.Select(entry => new RoundTimelineFact(entry.Kind, entry.Details)), jobId);
     }
 }

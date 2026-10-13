@@ -447,6 +447,12 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal("reissued", settled.Status);
         Assert.Equal(1, settled.ReissueAttempts);
         Assert.Equal("2-ready", (await TaskAsync(store, source.TaskId)).State);
+        var fixClaim = await store.ClaimAsync(
+            new ClaimRequest("coding-" + source.TaskId, "instance-" + source.TaskId), "test", default);
+        Assert.Equal("claimed", fixClaim.Status);
+        Assert.Equal(source.ResultRef, fixClaim.ContinuationBaseRef);
+        Assert.Equal(source.ExpectedResultSha, fixClaim.ContinuationBaseSha);
+        Assert.Equal(ContinuationBaseReasons.ReviewFixRound, fixClaim.ContinuationBaseReason);
     }
 
     [Fact]

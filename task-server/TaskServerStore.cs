@@ -1579,8 +1579,14 @@ public sealed partial class TaskServerStore
                 followUp = followUp with { ClaimId = runId };
             string? startingRef = null;
             string? startingSha = null;
+            var reviewedStartingPoint = false;
             await using (var startingCommand = Command(connection,
-                "SELECT result_ref, result_sha FROM task_starting_points WHERE task_id = $task;",
+                """
+                SELECT p.result_ref, p.result_sha, EXISTS (
+                    SELECT 1 FROM review_subjects s WHERE s.source_run_id = p.source_run_id
+                      AND s.result_ref = p.result_ref AND s.expected_result_sha = p.result_sha)
+                FROM task_starting_points p WHERE p.task_id = $task;
+                """,
                 transaction, ("$task", task.TaskId)))
             await using (var startingReader = await startingCommand.ExecuteReaderAsync(ct))
             {
@@ -1588,6 +1594,7 @@ public sealed partial class TaskServerStore
                 {
                     startingRef = startingReader.GetString(0);
                     startingSha = startingReader.GetString(1);
+                    reviewedStartingPoint = startingReader.GetBoolean(2);
                 }
             }
             await ExecuteAsync(connection, """
@@ -1604,11 +1611,12 @@ public sealed partial class TaskServerStore
                    SET state = 'stashed', run_id = $run
                  WHERE task_id = $task AND state = 'queued' AND $legacyFollowUp = 1;
                 UPDATE tasks SET state = '3-progress', version = version + 1, updated_at = $now WHERE id = $task;
-                DELETE FROM task_starting_points WHERE task_id = $task;
+                DELETE FROM task_starting_points WHERE task_id = $task AND $retainReviewedBase = 0;
                 """, ct, transaction,
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$codingHost", capabilityRunner.HostId),
+                ("$retainReviewedBase", reviewedStartingPoint ? 1 : 0),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)),
                 ("$legacyFollowUp", continuationIntent is null ? 1 : 0),
@@ -1664,7 +1672,8 @@ public sealed partial class TaskServerStore
                 MechanicalFreshRoute: mechanicalFreshRoute,
                 FollowUp: followUp,
                 PlacementReason: placementReason,
-                ContinuationIntent: continuationIntent);
+                ContinuationIntent: continuationIntent,
+                ContinuationBaseReason: reviewedStartingPoint ? ContinuationBaseReasons.ReviewFixRound : null);
         }, ct);
         return response!;
     }

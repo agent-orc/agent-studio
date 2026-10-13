@@ -328,7 +328,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 hasActiveReview,
                 hasActiveRun,
                 budget);
-            var decision = OperatorSweepPolicy.Decide(sweep, trigger, facts);
+            var decision = MonolithDecisionAdapter.Sweep(sweep, trigger, facts);
             if (decision.Action == OperatorSweepAction.Ignore) continue;
 
             if (decision.Action == OperatorSweepAction.Act && actedThisTick)

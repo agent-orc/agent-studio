@@ -154,10 +154,10 @@ public static class OperatorSweepPolicy
 
         if (sweep == OperatorSweepKinds.GateTriage)
         {
-            if (string.Equals(trigger.FailureDomain, AgentStudio.Pipeline.FailureDomains.Infrastructure,
+            if (string.Equals(trigger.FailureDomain, "infrastructure",
                     StringComparison.Ordinal))
                 return Hold(OperatorSweepReasons.EnvironmentFailure);
-            if (!string.Equals(trigger.FailureDomain, AgentStudio.Pipeline.FailureDomains.Product,
+            if (!string.Equals(trigger.FailureDomain, "product",
                     StringComparison.Ordinal))
                 return new(OperatorSweepAction.WaitForPerson, OperatorSweepReasons.UnclassifiedFailure);
         }

@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -888,8 +889,7 @@ public static class V1ReviewPlaneEndpoints
                     + "Inconclusive, or Cancellation."));
 
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
-            var batchDeferredAccepted = batchDeferred
-                && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
+            var batchDeferredAccepted = TransitionDecisionPolicy.DeferToBatch(batchDeferred, outcome.ToString());
             // A replay restores the journaled report, which already carries the
             // deferred verdict; appending it again would change the payload hash.
             if (batchDeferredAccepted && !request.Verdicts.Any(verdict =>
@@ -915,70 +915,27 @@ public static class V1ReviewPlaneEndpoints
             var previousRounds = projections.Read(preparedTask).Attempts
                 .Where(round => round.AttemptId != attemptId).ToArray();
             var roundSeed = ReviewRoundBudgetStore.Read(preparedTask.FolderPath, previousRounds);
-            var roundBudget = ReviewRoundBudgetPolicy.Decide(
-                roundSeed,
-                attemptId,
-                originalVerdicts.Where(verdict =>
-                        Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
-                    .Select(verdict => verdict.Aspect),
-                settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds,
-                ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
-                CountPriorAutomaticReissues(
-                    configuration["TaskRepository"], preparedTask.ProjectName, preparedTask.Id),
-                settings.Get(preparedTask.ProjectName).MaxAutoReissueAttempts
-                    ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2));
-            var blockingAspects = originalVerdicts
-                .Where(verdict => Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
-                .Select(verdict => verdict.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var cardBudget = CardRoundBudget.Evaluate(
                 ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, preparedTask.ProjectName),
                 timeline.ReadAll(preparedTask.FolderPath), preparedTask.Id,
                 CardRoundBudget.ResolveAllowed(configuration));
-            var opensConcernRound = outcome == ReviewTerminalOutcome.Pass
-                && Contract.ReviewFollowUpPolicy.Decide(
-                    originalVerdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
-                        verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
-                        verdict.Missing, verdict.Classification)),
-                    ReviewConcernRoundStore.Read(preparedTask.FolderPath)?.Used ?? 0,
-                    settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds).Action
-                    == Contract.ReviewFollowUpAction.ReviewConcernRound;
-            var cardAction = CardRoundBudget.DecideForReview(cardBudget, blockingAspects, opensConcernRound);
-            if (!acceptedReplay && outcome == ReviewTerminalOutcome.ProductFailure
-                && cardAction == CardRoundBudgetAction.DegradeToFollowUp)
-                roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
-                    roundBudget.MaximumRounds, blockingAspects, "card-round-budget");
-            var spentConcernRound = !acceptedReplay && opensConcernRound
-                && cardAction == CardRoundBudgetAction.DegradeToFollowUp;
-            if (spentConcernRound)
-                roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
-                    roundBudget.MaximumRounds,
-                    originalVerdicts.Where(verdict => !string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
-                        .Select(verdict => verdict.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-                    "card-round-budget");
-            var shouldDegrade = (!acceptedReplay
-                                 && outcome == ReviewTerminalOutcome.ProductFailure && roundBudget.Degrade)
-                                || spentConcernRound;
-            if (shouldDegrade)
-            {
-                request = ReviewRoundBudgetPolicy.ApplyRemoteReport(request, roundBudget);
-                if (string.Equals(request.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
-                    outcome = ReviewTerminalOutcome.Pass;
-            }
-            var preparedConcernLedger = ReviewConcernRoundStore.Read(preparedTask.FolderPath);
-            reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
-                request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
-                    verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
-                    verdict.Missing, verdict.Classification)),
-                preparedConcernLedger?.Used ?? 0,
-                settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds);
-            if (shouldDegrade && outcome == ReviewTerminalOutcome.Pass)
-                reviewFollowUp = ReviewRoundBudgetPolicy.ApplyFollowUp(reviewFollowUp, roundBudget);
-            var deliveredRound = outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
-                or ReviewTerminalOutcome.IntegrationBranchDefect
-                ? new DeliveredReviewRound(
-                    attemptId, blockingAspects, shouldDegrade ? roundBudget.DegradedAspects : [],
-                    SpentBy: roundBudget.SpentBy)
-                : null;
+            var roundSettings = settings.Get(preparedTask.ProjectName);
+            var preparation = MonolithDecisionAdapter.PrepareReview(request, roundSeed, cardBudget, attemptId,
+                CountPriorAutomaticReissues(configuration["TaskRepository"], preparedTask.ProjectName, preparedTask.Id),
+                ReviewConcernRoundStore.Read(preparedTask.FolderPath)?.Used ?? 0,
+                new ProjectDecisionSettings(roundSettings.MaxReviewConcernRounds,
+                    roundSettings.MaxDeliveredReviewRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
+                    roundSettings.MaxAutoReissueAttempts
+                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2)),
+                acceptedReplay);
+            var roundBudget = preparation.Budget;
+            var cardAction = preparation.CardAction;
+            var blockingAspects = preparation.BlockingAspects;
+            var shouldDegrade = preparation.ShouldDegrade;
+            request = preparation.Report;
+            TryOutcome(request.Outcome, out outcome);
+            reviewFollowUp = preparation.FollowUp;
+            var deliveredRound = preparation.DeliveredRound;
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
@@ -1414,9 +1371,9 @@ public static class V1ReviewPlaneEndpoints
             if (breakerEnabled && settled.ReviewAttempt.Outcome != ReviewTerminalOutcome.Pass)
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
-            var retry = infrastructureFailure && !aspectRetryExhausted && intervention is null
-                        && !probeFailed && !diagnosisContractUnsupported
-                        && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
+            var retry = TransitionDecisionPolicy.CanRetryInfrastructure(request.Outcome, aspectRetryExhausted,
+                intervention is not null, probeFailed, request.FailureClassification,
+                authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId));
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
                 : null;

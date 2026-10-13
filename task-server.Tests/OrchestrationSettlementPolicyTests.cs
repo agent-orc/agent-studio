@@ -84,7 +84,7 @@ public sealed class OrchestrationSettlementPolicyTests
     }
 
     [Fact]
-    public void Passing_build_with_same_requirement_fit_block_escalates_after_bounded_rounds()
+    public void Passing_build_with_same_requirement_fit_block_degrades_after_bounded_rounds()
     {
         var payload = JsonSerializer.Serialize(
             new ReviewOrchestrationPayloadDto(
@@ -111,11 +111,12 @@ public sealed class OrchestrationSettlementPolicyTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var diagnosis = RepeatedReviewBlockPolicy.Diagnose(
             payload,
-            [payload],
+            [payload, payload],
             OrchestrationDefaults.MaxIdenticalAspectBlockRounds);
 
         Assert.NotNull(diagnosis);
-        Assert.True(diagnosis!.MustEscalate);
+        Assert.True(diagnosis!.BudgetSpent);
+        Assert.False(diagnosis.MustEscalate);
         var decision = OrchestrationSettlementPolicy.Decide(
             OrchestrationAction.Reissue,
             Stages,
@@ -127,8 +128,9 @@ public sealed class OrchestrationSettlementPolicyTests
             currentTaskVersion: 7,
             repeatedBlock: diagnosis);
 
-        Assert.Equal("escalated", decision.RunStatus);
-        Assert.Equal("5e-escalated", decision.TaskState);
+        Assert.Equal("completed", decision.RunStatus);
+        Assert.Equal("5-human-review", decision.TaskState);
+        Assert.True(decision.RequiresLinkedFollowUp);
         Assert.Contains("requirement-fit", decision.SettlementReason);
         Assert.Contains("Required S1 slice left undelivered", decision.SettlementReason);
     }

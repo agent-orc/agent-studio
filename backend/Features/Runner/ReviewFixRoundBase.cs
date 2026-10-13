@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
 
@@ -41,23 +42,9 @@ public static class ReviewFixRoundBase
         string? resultSha,
         DateTime savedAtUtc)
     {
-        if (string.IsNullOrWhiteSpace(reviewAttemptId)) return null;
-        if (!ReviewSubjectStore.IsValidResultSha(resultSha)) return null;
-        var reference = (resultRef ?? string.Empty).Trim();
-        if (reference.StartsWith("origin/", StringComparison.Ordinal))
-            reference = reference["origin/".Length..];
-        if (reference.Length == 0
-            || (reference.StartsWith("refs/", StringComparison.Ordinal)
-                && !reference.StartsWith("refs/heads/", StringComparison.Ordinal)))
-            return null;
-        if (!reference.StartsWith("refs/heads/", StringComparison.Ordinal))
-            reference = "refs/heads/" + reference;
-        return new ContinuationBaseRecord(
-            reference,
-            resultSha!.Trim().ToLowerInvariant(),
-            Reason,
-            reviewAttemptId.Trim(),
-            savedAtUtc);
+        var basis = ReviewedDeliveryBasePolicy.Decide(reviewAttemptId, resultRef, resultSha);
+        return basis is null ? null : new ContinuationBaseRecord(
+            basis.Ref, basis.Sha, Reason, basis.ReviewAttemptId, savedAtUtc);
     }
 
     /// <summary>

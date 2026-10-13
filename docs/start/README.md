@@ -231,6 +231,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Integration push blocked on main lineage starves origin/develop, causing infinite reclaim loops (AGT-2688) | [common-problems/lineage-blocked-integration-push/](../operations/common-problems/lineage-blocked-integration-push/) |
 | Concurrent review workers deadlock on one host-shared .NET build server (AGT-2831) | [common-problems/review-parallelism-shared-build-server/](../operations/common-problems/review-parallelism-shared-build-server/) |
 | Gate tests fail only on the Studio machine because the child inherits the Studio's listener (AGT-2840) | [common-problems/gate-child-inherits-studio-listener/](../operations/common-problems/gate-child-inherits-studio-listener/) |
+| Pure orchestration transition library, action mapping and architecture guard (AGT-3057, I10) | [system/architecture/orchestration-decision-library.md](../system/architecture/orchestration-decision-library.md) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |
 | Operations Server authority boundary, outbound agent protocol, Task Server permits, delivery gates (AGT-2907) | [contracts/operations-backchannel.md](../system/contracts/operations-backchannel.md) |
 | Task integration & worktree/merge workflow | [concepts/task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md) |

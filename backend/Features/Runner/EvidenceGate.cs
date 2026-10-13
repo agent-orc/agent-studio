@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
@@ -285,33 +286,13 @@ public static class EvidenceGate
                 $"(no accept-with-concerns for failing build/tests or missing evidence): {summary}");
         }
 
-        if (findings.Count == 0)
-        {
-            return new Decision();
-        }
-
-        if (findings.Count > MaxFindings)
-        {
-            findings = findings.Take(MaxFindings).ToList();
-        }
-
-        if (priorReissues >= maxReissues)
-        {
-            return new Decision
-            {
-                Action = EvidenceGateAction.Escalate,
-                Findings = findings,
-                MissingVisualEvidence = missingVisual,
-                Reason = $"Evidence gate could not clear {findings.Count} unverified item(s) after {priorReissues} prior reissue(s); user attention required.",
-            };
-        }
-
+        var decision = GateTransitionPolicy.Evidence(findings, priorReissues, maxReissues);
         return new Decision
         {
-            Action = EvidenceGateAction.Reissue,
-            Findings = findings,
+            Action = Enum.Parse<EvidenceGateAction>(decision.Action.ToString()),
+            Findings = decision.Findings,
+            Reason = decision.Reason,
             MissingVisualEvidence = missingVisual,
-            Reason = $"Evidence gate found {findings.Count} unverified item(s); reissuing with a verification demand instead of accepting with concerns.",
         };
     }
 

@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
@@ -315,33 +316,9 @@ public static class CompletionGate
             HasApiDelivery: CompletionEvidencePolicy.DetectApiDelivery(statusMarkdown) || CompletionEvidencePolicy.DetectApiDelivery(recentLog),
             HasResultsArtifacts: hasResultsArtifacts,
             HasDocumentedVerification: CompletionEvidencePolicy.DetectDocumentedVerification(statusMarkdown)));
-        if (completionEvidence.AcceptAsCompleted)
-        {
-            return new Decision { Reason = completionEvidence.Reason };
-        }
+        return FromRuling(GateTransitionPolicy.Completion(completionEvidence.AcceptAsCompleted,
+            completionEvidence.Reason, ExtractFindings(statusMarkdown, recentLog), priorReissues, maxReissues));
 
-        var findings = ExtractFindings(statusMarkdown, recentLog);
-        if (findings.Count == 0)
-        {
-            return new Decision();
-        }
-
-        if (priorReissues >= maxReissues)
-        {
-            return new Decision
-            {
-                Action = CompletionGateAction.Escalate,
-                Findings = findings,
-                Reason = $"Completion gate found unfinished-work evidence after {priorReissues} prior orchestrator reissue(s); user attention required.",
-            };
-        }
-
-        return new Decision
-        {
-            Action = CompletionGateAction.Reissue,
-            Findings = findings,
-            Reason = $"Completion gate found {findings.Count} unfinished-work item(s); reissuing with the items foregrounded.",
-        };
     }
 
     public static string BuildFollowUp(
@@ -421,35 +398,21 @@ public static class CompletionGate
         int priorReissues,
         int maxReissues)
     {
-        if (record.Blockers.Count > 0)
-        {
-            return new Decision
-            {
-                Action = CompletionGateAction.Escalate,
-                Findings = record.Blockers.Select(b => $"{b.Kind}: {b.Reason} (source: {b.Source})").ToList(),
-                Reason = record.DecisionReason,
-            };
-        }
+        return FromRuling(GateTransitionPolicy.StructuredCompletion(
+            record.Blockers.Select(b => $"{b.Kind}: {b.Reason} (source: {b.Source})").ToArray(),
+            record.Lifecycle.TurnComplete, record.Lifecycle.ImplementationComplete,
+            record.Evidence.Where(e => !e.SupportsCompletion && e.Kind != "results-artifacts")
+                .Select(e => $"{e.Kind}: {e.Reason} (source: {e.Source})").ToArray(),
+            record.DecisionReason, priorReissues, maxReissues));
 
-        if (record.Lifecycle.TurnComplete && record.Lifecycle.ImplementationComplete)
-            return new Decision { Reason = record.DecisionReason };
-
-        var evidenceReasons = record.Evidence
-            .Where(e => !e.SupportsCompletion && e.Kind != "results-artifacts")
-            .Select(e => $"{e.Kind}: {e.Reason} (source: {e.Source})")
-            .ToList();
-        if (evidenceReasons.Count == 0)
-            evidenceReasons.Add("Structured turn or implementation completion evidence is absent.");
-
-        return new Decision
-        {
-            Action = priorReissues >= maxReissues ? CompletionGateAction.Escalate : CompletionGateAction.Reissue,
-            Findings = evidenceReasons,
-            Reason = priorReissues >= maxReissues
-                ? "Structured completion evidence remained incomplete after the bounded reissue budget."
-                : "Structured completion evidence is incomplete; reissuing with explicit evidence reasons.",
-        };
     }
+
+    private static Decision FromRuling(GateRuling ruling) => new()
+    {
+        Action = Enum.Parse<CompletionGateAction>(ruling.Action.ToString()),
+        Findings = ruling.Findings,
+        Reason = ruling.Reason,
+    };
 
     public static bool ExtractLatestRunCompleted(string? recentLog)
     {

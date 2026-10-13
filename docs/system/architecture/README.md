@@ -13,3 +13,5 @@ Architecture source material and decision records.
 | [backend-structure/](backend-structure/) | Backend feature-folder structure target and style guide. |
 | [runner-lanes/](runner-lanes/) | Architecture constraints for runner and lane writers. |
 | [maps/](maps/) | Sandboxed HTML maps and visual architecture pages. |
+
+- [Orchestration decision library](orchestration-decision-library.md): I10 policy ownership, action vocabulary and guard tests.

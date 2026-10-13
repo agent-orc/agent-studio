@@ -9,7 +9,7 @@ namespace TaskServer.Tests;
 public sealed class RepeatedReviewBlockStoreTests
 {
     [Fact]
-    public async Task Same_requirement_fit_block_escalates_task_wide_instead_of_reissuing_again()
+    public async Task Same_requirement_fit_block_degrades_to_one_linked_follow_up()
     {
         using var temp = new TempDirectory();
         var store = new TaskServerStore(
@@ -53,11 +53,18 @@ public sealed class RepeatedReviewBlockStoreTests
 
         var second = await SettleAsync(store, project.ProjectId, task.TaskId, payload, 2);
 
-        Assert.Equal("escalated", second.Status);
-        Assert.Equal(2, second.ReissueAttempts);
-        Assert.Equal(
-            "5e-escalated",
-            (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        Assert.Equal("reissued", second.Status);
+        var secondReady = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskId,
+            new UpdateTaskRequest(null, null, "4-auto-review", secondReady.Version), "test", default);
+        var third = await SettleAsync(store, project.ProjectId, task.TaskId, payload, 3);
+        Assert.Equal("completed", third.Status);
+        Assert.Equal(2, third.ReissueAttempts);
+        Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        var followUp = await store.GetTaskAsync(project.ProjectId, "review_budget_" + task.TaskId, default);
+        Assert.NotNull(followUp);
+        Assert.Equal("2-ready", followUp!.State);
+        Assert.Contains("Required S1 slice left undelivered", followUp.Body);
         var settlementAudit = (await store.ListAuditAsync(0, default))
             .Last(record => record.Action == "orchestration.stage-completed");
         Assert.Contains("SettlementReason", settlementAudit.DetailJson);

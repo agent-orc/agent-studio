@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -1521,11 +1522,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // recoverable by another sharpened prompt. Escalate it to
         // 5-human-review so it is not picked again automatically.
         var noProgressEvidence = InspectNoOpProgressSinceLastRecovery(pending);
-        if (prior > 0
-            && noProgressEvidence.SawNoOpRecoveryReissue
-            && noProgressEvidence.ToolCalls == 0
-            && noProgressEvidence.FileChanges == 0
-            && noProgressEvidence.AgentSubstanceChars == 0)
+        if (LoopTransitionPolicy.RepeatedNoOpWithoutProgress(prior, new NoOpProgressFacts(
+            noProgressEvidence.SawNoOpRecoveryReissue, noProgressEvidence.ToolCalls,
+            noProgressEvidence.FileChanges, noProgressEvidence.AgentSubstanceChars)))
         {
             var count = prior + 1;
             var reason =
@@ -1543,7 +1542,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // with the existing NEEDS_INPUT-driven reissues so a job that has
         // already been retried multiple times by either path doesn't get
         // double-spent here.
-        if (prior >= maxReissues)
+        if (LoopTransitionPolicy.BudgetSpent(prior, maxReissues))
         {
             var reason = $"NOOP after {prior} prior orchestrator reissue(s); user attention required.";
             await EscalateNoOpAsync(workspace, entry, pending, reason, ct);
@@ -1671,7 +1670,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Budget exhausted: stop looping and hand to a human. Crucially we do
         // not fall back to "accept as done" - the deterministic completion
         // signal never arrived, so a human must judge the work.
-        if (prior >= maxReissues)
+        if (LoopTransitionPolicy.BudgetSpent(prior, maxReissues))
         {
             var reason = $"Run finished without a terminal sentinel after {prior} prior orchestrator reissue(s); user attention required.";
             await EscalateNoCompletionSignalAsync(workspace, entry, pending, reason, ct);
@@ -2125,9 +2124,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return Task.CompletedTask;
         }
 
-        var targetState = verdict == ReviewDecisionKind.AcceptAsDone
-            ? TaskStates.HumanReview
-            : TaskStates.Escalated;
+        var targetState = LoopTransitionPolicy.StoredVerdictLane(verdict.ToString());
         var move = GuardedMoveJob(
             current.Id, targetState, entry.Path,
             transitionCause: verdict == ReviewDecisionKind.AcceptAsDone
@@ -2226,11 +2223,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 : "a primary artifact under results/";
             var gate = new CompletionGate.Decision
             {
-                Action = priorReissues >= maxReissues
-                    ? CompletionGate.CompletionGateAction.Escalate
-                    : CompletionGate.CompletionGateAction.Reissue,
+                Action = Enum.Parse<CompletionGate.CompletionGateAction>(
+                    LoopTransitionPolicy.BoundedRound(priorReissues, maxReissues).ToString()),
                 Findings = [$"Required report artifact is missing: {requiredArtifact}."],
-                Reason = priorReissues >= maxReissues
+                Reason = LoopTransitionPolicy.BudgetSpent(priorReissues, maxReissues)
                     ? $"The lightweight report pipeline still has no primary result after {priorReissues} prior orchestrator reissue(s)."
                     : $"The lightweight report pipeline requires {requiredArtifact} before handoff.",
             };
@@ -2381,9 +2377,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
             var dossierGate = new CompletionGate.Decision
             {
-                Action = priorReissues >= ConfiguredMaxReissues(entry.Name)
-                    ? CompletionGate.CompletionGateAction.Escalate
-                    : CompletionGate.CompletionGateAction.Reissue,
+                Action = Enum.Parse<CompletionGate.CompletionGateAction>(
+                    LoopTransitionPolicy.BoundedRound(priorReissues, ConfiguredMaxReissues(entry.Name)).ToString()),
                 Findings = dossierReview.Findings.ToList(),
                 Reason = "The referenced Dossier was not updated through its append-only implementation log.",
                 Source = CompletionGate.CompletionGateSource.DossierMaintenance,
@@ -2690,13 +2685,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             CardRoundBudget.ResolveAllowed(_configuration));
         var cardAction = CardRoundBudget.DecideForReview(cardBudget, blockedAspects,
             initialFollowUpDecision.Action == ReviewFollowUpAction.ReviewConcernRound);
-        if (cardAction == CardRoundBudgetAction.DegradeToFollowUp)
-            roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
-                roundBudget.MaximumRounds,
-                blockedAspects.Length > 0 ? blockedAspects : report.Verdicts
-                    .Where(verdict => verdict.Status == AspectStatus.Concerns)
-                    .Select(verdict => verdict.Aspect).ToArray(),
-                "card-round-budget");
+        roundBudget = ReviewPreparationPolicy.ApplyCardBudget(roundBudget, cardAction, blockedAspects,
+            report.Verdicts.Where(verdict => verdict.Status == AspectStatus.Concerns)
+                .Select(verdict => verdict.Aspect).ToArray());
         ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
             new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
                 SpentBy: roundBudget.SpentBy));
@@ -4041,8 +4032,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (automaticDisabled)
             gate = gate with { Reason = "Automatic failure continuations are disabled for this project. " + gate.Reason };
 
-        if (gate.Action == SolutionQualityGate.SolutionQualityGateAction.Escalate
-            || automaticDisabled)
+        if (LoopTransitionPolicy.EscalateGate(
+            gate.Action == SolutionQualityGate.SolutionQualityGateAction.Escalate, automaticDisabled))
         {
             ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
 
@@ -4542,9 +4533,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             WriteBuildTestGateLog(current.FolderPath, result, changedFiles);
             // A routing verdict (AGT-2981) names a requirement this host lacks;
             // repeating the gate here cannot change it.
-            if (!result.IsInfrastructureFailure
-                || result.UnmetRequirements.Count > 0
-                || infrastructureRetry >= PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries)
+            if (!LoopTransitionPolicy.RetryBuildInfrastructure(result.IsInfrastructureFailure,
+                result.UnmetRequirements.Count, infrastructureRetry, PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries))
                 break;
 
             var retryNumber = infrastructureRetry + 1;
@@ -6399,13 +6389,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             && string.Equals(r.GateId, result.GateId, StringComparison.Ordinal)
             && string.Equals(r.SubjectSha, result.ExpectedSha, StringComparison.OrdinalIgnoreCase)
             && string.Equals(r.FailureFingerprint, result.FailureFingerprint, StringComparison.Ordinal));
-        var taskReissueCeilingReached = CountPriorReissues(workspace, entry.Name, current.Id)
-            >= ConfiguredMaxReissues(entry.Name);
+        var taskReissueCeilingReached = LoopTransitionPolicy.BudgetSpent(
+            CountPriorReissues(workspace, entry.Name, current.Id), ConfiguredMaxReissues(entry.Name));
         var failureIdentity = BuildTestGateFailureIdentity(result);
         var lastGateCacheDecision = BuildTestGateRunner.DependencyCacheDecisionSummary(
             result.DependencyCacheDecision);
 
-        if (priorBuildGateReissues >= 1 || taskReissueCeilingReached)
+        if (LoopTransitionPolicy.EscalateBuildGate(priorBuildGateReissues, taskReissueCeilingReached))
         {
             var reason = priorBuildGateReissues >= 1
                 ? $"build-test gate failed twice for the same product retry identity ({failureIdentity}; {result.Reason}); " +
@@ -6579,7 +6569,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         && r.Reason != null
                         && r.Reason.StartsWith(LintScssReissueReasonPrefix, StringComparison.Ordinal));
 
-        if (priorLintReissues >= 1)
+        if (LoopTransitionPolicy.EscalateLint(priorLintReissues))
         {
             var reason = $"lint-scss failed twice in a row (exit {result.ExitCode}); escalating per ASS-46 infinite-spin guard.";
             var move = GuardedMoveJob(
@@ -8221,7 +8211,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _timeline?.ReadAll(current.FolderPath) ?? [],
             current.Id,
             CardRoundBudget.ResolveAllowed(_configuration));
-        if (!budget.Exhausted) return false;
+        if (!LoopTransitionPolicy.BudgetSpent(budget.Used, budget.Allowed)) return false;
 
         var openAspects = ReviewRoundBudgetStore.Read(current.FolderPath).Rounds
             .LastOrDefault()?.BlockingAspects ?? [];

@@ -58,7 +58,7 @@ public static class CompletionEvidencePolicy
         if (!inputs.HasTaskDoneSentinel || inputs.ExitCode != 0 && !inputs.RunStatusCompleted)
             return new Decision { Reason = "Run did not end with TASK_DONE and a successful process terminal." };
 
-        if (!CompletionGate.IsSuccessResultToken(inputs.StatusResultToken) || inputs.HasOpenItems)
+        if (!IsSuccessResultToken(inputs.StatusResultToken) || inputs.HasOpenItems)
             return new Decision { Reason = "Status is not a clean successful close-out." };
 
         var evidence = new List<EvidenceKind>(3);
@@ -80,6 +80,9 @@ public static class CompletionEvidencePolicy
             Reason = $"Successful non-commit run completed with {string.Join(", ", evidence)} evidence.",
         };
     }
+
+    public static bool IsSuccessResultToken(string? value)
+        => value?.Trim().ToLowerInvariant() is "success" or "succeeded" or "done" or "complete" or "completed" or "pass" or "passed";
 
     public static bool DetectApiDelivery(string? text)
         => !string.IsNullOrWhiteSpace(text) && ApiDeliveryRegex.IsMatch(text);

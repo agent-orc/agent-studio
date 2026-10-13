@@ -24,4 +24,7 @@
     <ProjectReference Include="..\task-server\TaskServer.csproj" Aliases="global,TaskServerAssembly" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../backend/OrchestratorApi.csproj" Aliases="Monolith" />
+  </ItemGroup>
 </Project>

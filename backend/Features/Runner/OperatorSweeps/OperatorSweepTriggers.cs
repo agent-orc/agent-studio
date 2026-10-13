@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -61,14 +62,9 @@ public static class OperatorSweepTriggers
         string? currentDeliverySha,
         IEnumerable<TimelineEvent> timeline)
     {
-        if (!string.Equals(lane, TaskStates.HumanReview, StringComparison.Ordinal)) return null;
-        if (latestReview is not { Outcome: ReviewTerminalOutcome.ProductFailure }) return null;
-        if (!string.IsNullOrWhiteSpace(currentDeliverySha)
-            && !string.IsNullOrWhiteSpace(latestReview.ExpectedResultSha)
-            && !string.Equals(currentDeliverySha, latestReview.ExpectedResultSha, StringComparison.OrdinalIgnoreCase))
-            return null;
-        var subject = "review:" + latestReview.AttemptId;
-        return new OperatorSweepTrigger(subject, HasReceipt(timeline, OperatorSweepKinds.FixRounds, subject));
+        return SweepTriggerPolicy.FixRound(lane, latestReview?.Outcome?.ToString(), latestReview?.AttemptId,
+            latestReview?.ExpectedResultSha, currentDeliverySha,
+            HasReceipt(timeline, OperatorSweepKinds.FixRounds, "review:" + latestReview?.AttemptId));
     }
 
     /// <summary>
@@ -82,13 +78,9 @@ public static class OperatorSweepTriggers
         OperatorSweepGateFailure? failure,
         IEnumerable<TimelineEvent> timeline)
     {
-        if (lane is not (TaskStates.HumanReview or TaskStates.Escalated)) return null;
-        if (failure is null || !IsGateFailure(failure)) return null;
-        var subject = $"gate:{failure.DeliverySha ?? "unknown"}:{failure.StepId}";
-        return new OperatorSweepTrigger(
-            subject,
-            HasReceipt(timeline, OperatorSweepKinds.GateTriage, subject),
-            ClassifyGateFailure(failure));
+        return SweepTriggerPolicy.Gate(lane, failure is not null && IsGateFailure(failure),
+            failure?.DeliverySha, failure?.StepId, failure is null ? null : ClassifyGateFailure(failure),
+            HasReceipt(timeline, OperatorSweepKinds.GateTriage, $"gate:{failure?.DeliverySha ?? "unknown"}:{failure?.StepId}"));
     }
 
     /// <summary>
@@ -102,10 +94,8 @@ public static class OperatorSweepTriggers
         OperatorSweepSalvageFacts? salvage,
         IEnumerable<TimelineEvent> timeline)
     {
-        if (!string.Equals(lane, TaskStates.Escalated, StringComparison.Ordinal)) return null;
-        if (salvage is null) return null;
-        var subject = "salvage:" + salvage.Salvage.CommitSha;
-        return new OperatorSweepTrigger(subject, HasReceipt(timeline, OperatorSweepKinds.Salvage, subject));
+        return SweepTriggerPolicy.Salvage(lane, salvage?.Salvage.CommitSha,
+            HasReceipt(timeline, OperatorSweepKinds.Salvage, "salvage:" + salvage?.Salvage.CommitSha));
     }
 
     /// <summary>The salvage of the card's latest finished run, when that run ended non-terminally.</summary>

@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Globalization;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
@@ -506,6 +507,10 @@ public sealed partial class TaskServerStore
                     priorDecisionPayloads,
                     OrchestrationDefaults.MaxIdenticalAspectBlockRounds);
             }
+            using var decisionPayload = JsonDocument.Parse(run.PayloadJson);
+            var decisionFacts = decisionPayload.RootElement.TryGetProperty("decisionFacts", out var factsElement)
+                ? factsElement.Deserialize<TransitionFacts>(new JsonSerializerOptions(JsonSerializerDefaults.Web)) : null;
+            var reviewDecision = decisionFacts is null ? null : TaskServerDecisionAdapter.Review(decisionFacts);
             var decision = OrchestrationSettlementPolicy.Decide(
                 request.Action,
                 stages,
@@ -515,8 +520,13 @@ public sealed partial class TaskServerStore
                 currentTaskState,
                 run.TaskVersion,
                 currentTaskVersion,
-                repeatedBlock);
+                repeatedBlock, reviewDecision);
             var completedAt = decision.IsTerminal ? now : (DateTime?)null;
+            if (decision.RequiresLinkedFollowUp)
+                await ApplyDecisionFollowUpAsync(connection, transaction, run, reviewDecision, actorId, ct);
+            if (decision.TaskState == "2-ready")
+                await ApplyReviewedStartingPointAsync(connection, transaction, run, ct);
+
 
             await ExecuteAsync(connection, """
                 UPDATE orchestration_runs

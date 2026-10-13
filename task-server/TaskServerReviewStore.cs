@@ -1,3 +1,5 @@
+using AgentStudio.Orchestration.Decisions;
+using AgentStudio.Runner;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -1972,13 +1974,43 @@ public sealed partial class TaskServerStore
             attempt.Summary,
             report.Verdicts,
             gates);
+        var priorPayloads = await ReadPriorDecisionPayloadsAsync(connection, transaction, attempt.TaskId, "", ct);
+        var priorReviews = priorPayloads.Select(ReadHistoricalReviewDecision)
+            .Where(row => row is not null && TransitionDecisionPolicy.IsDeliveredOutcome(row.ReviewOutcome))
+            .DistinctBy(row => row!.ReviewAttemptId).ToArray();
+        var priorRounds = priorReviews.Reverse().Select(row => new DeliveredReviewRound(row!.ReviewAttemptId,
+            row.Verdicts.Where(v => ReviewGradingPolicy.IsBlockingToken(v.Status)).Select(v => v.Aspect).ToArray(), [])).ToArray();
+        var usedRounds = Convert.ToInt32(await ScalarAsync(connection, """
+            SELECT count(*) FROM orchestration_runs WHERE task_id = $task AND status = 'reissued';
+            """, ct, transaction, ("$task", attempt.TaskId)) ?? 0L, CultureInfo.InvariantCulture);
+        var concernRounds = Convert.ToInt32(await ScalarAsync(connection, """
+            SELECT count(DISTINCT run.id) FROM orchestration_runs run
+            JOIN orchestration_stage_results result ON result.run_id = run.id
+            WHERE run.task_id = $task AND run.status = 'reissued'
+              AND (json_extract(result.output_json, '$.transition.Action') = $concern
+                OR (json_type(run.payload_json, '$.decisionFacts') IS NULL
+                    AND json_extract(run.payload_json, '$.reviewOutcome') = 'Pass'));
+            """, ct, transaction, ("$task", attempt.TaskId),
+            ("$concern", (int)TransitionAction.ConcernRound)) ?? 0L, CultureInfo.InvariantCulture);
+        var flow = await ReadFlowDefinitionAsync(connection, transaction, projectId, ct);
+        var facts = new TransitionFacts(new(attempt.TaskId, "4-auto-review"),
+            new(attempt.AttemptId, true, string.IsNullOrWhiteSpace(subject.ResultRef) ? null
+                : new(subject.ResultRef, subject.ExpectedResultSha, attempt.AttemptId)),
+            new(attempt.Outcome, report.Verdicts, subject.Plan, attempt.FailureClassification),
+            new(new(usedRounds, 4), new(priorRounds),
+                ConcernRoundsUsed: concernRounds,
+                AutomaticReissuesUsed: usedRounds),
+            new(MaximumAutomaticReissues: flow?.MaxReissueAttempts ?? OrchestrationDefaults.MaxReissueAttempts),
+            new());
+        var payloadNode = JsonSerializer.SerializeToNode(payload, ReviewJson)!;
+        payloadNode["decisionFacts"] = JsonSerializer.SerializeToNode(facts, ReviewJson);
         await CreateOrchestrationRunCoreAsync(
             connection,
             transaction,
             projectId,
             new CreateOrchestrationRunRequest(
                 attempt.TaskId,
-                JsonSerializer.Serialize(payload, ReviewJson),
+                payloadNode.ToJsonString(ReviewJson),
                 $"review-orchestration:{attempt.AttemptId}"),
             actorId,
             ct);

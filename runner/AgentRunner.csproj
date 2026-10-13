@@ -53,4 +53,7 @@
     <PackageReference Include="CodingAgentRunner" Version="[0.7.0]" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../orchestration-decisions/Orchestration.Decisions.csproj" />
+  </ItemGroup>
 </Project>

@@ -145,7 +145,8 @@ public sealed record ClaimResponse(
     MechanicalFreshRunRoute? MechanicalFreshRoute = null,
     FollowUpDeliveryDto? FollowUp = null,
     string? PlacementReason = null,
-    ContinuationIntentProjection? ContinuationIntent = null);
+    ContinuationIntentProjection? ContinuationIntent = null,
+    string? ContinuationBaseReason = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(
