@@ -37,10 +37,24 @@ export function formatCount(value: number | null | undefined): string | null {
 /** Window label for the selector and the summary line. */
 export function windowLabel(window: CycleTimeWindow): string {
   switch (window) {
+    case '1d': return 'Last 24 hours';
     case '7d': return 'Last 7 days';
     case '30d': return 'Last 30 days';
     case 'all': return 'All time';
   }
+}
+
+export function formatTokens(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '–';
+  if (Math.abs(value) >= 1_000_000_000) return `${trim(value / 1_000_000_000)}B`;
+  if (Math.abs(value) >= 1_000_000) return `${trim(value / 1_000_000)}M`;
+  if (Math.abs(value) >= 1000) return `${trim(value / 1000)}K`;
+  return String(Math.round(value));
+}
+
+export function formatUsd(value: number | null | undefined): string {
+  return value === null || value === undefined || !Number.isFinite(value)
+    ? '–' : `$${value.toFixed(2)}`;
 }
 
 /** Short ISO-like timestamp (`2026-08-21 06:44`) in the viewer's local time. */

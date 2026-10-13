@@ -1,0 +1,15 @@
+:host { display: block; min-width: 0; }
+.flow { color: var(--studio-fg); font-variant-numeric: tabular-nums; }
+.flow__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: var(--studio-spacing-3); }
+.flow__metric { display: grid; align-content: start; gap: var(--studio-spacing-1); padding-block: var(--studio-spacing-3); border-block: 1px solid var(--studio-border); }
+.flow__metric span { color: var(--studio-fg-dim); font-size: 11px; }
+.flow__metric strong { color: var(--studio-fg-strong); font-size: 21px; line-height: 1.2; }
+.flow__metric small { color: var(--studio-fg-muted); font-size: 10px; line-height: 1.35; }
+.flow__excluded { margin: var(--studio-spacing-3) 0; color: var(--studio-fg-dim); font-size: 11px; }
+.flow__tables { display: grid; gap: var(--studio-spacing-4); }
+.flow h3 { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.flow__scroll { overflow-x: auto; }
+.flow table { border-collapse: collapse; width: 100%; font-size: 11px; }
+.flow th, .flow td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); text-align: right; white-space: nowrap; }
+.flow th:first-child { text-align: left; }
+.flow thead th { color: var(--studio-fg-dim); font-weight: 600; }

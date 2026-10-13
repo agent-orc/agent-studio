@@ -1,29 +1,34 @@
 # Cycle-Time Stage Model
 
-Status: implemented (local build, 2026-08-23). Owner surface:
+Status: implemented (local build, 2026-10-13). Owner surface:
 `backend/Features/Projects/CycleTime/`, frontend feature
 `frontend/src/app/features/project-cycle-time/`.
 
-The Cycle Time rail of the project Deck answers one question per project: where
-does the time of a completed task go, stage by stage, and how much of it sits in
-the build/test gate and in integration. The view is a read model over evidence
-the platform already records; it adds no new writer.
+The Throughput & cycle time rail shows daily delivery counts, the machine cycle
+of each completed card, resource waits, runtime by step, tokens, cost, and the
+older additive lane stages. It is a read model over existing evidence and adds
+no writer, route, or scheduling decision.
 
 The evidence it reads is the task timeline ledger. For where that ledger sits
 among the platform's other signal streams, and for the still-open question of a
 cross-application event contract, see
 [`platform-architecture/telemetry-layer.md`](platform-architecture/telemetry-layer.md).
 
-Endpoint: `GET /api/projects/{project}/cycle-time?window=7d|30d|all`. The
+Endpoint: `GET /api/projects/{project}/cycle-time?window=1d|7d|30d|all`. The
 project handle accepts the watch-path name, the registry id (`PROJ-NNN`), or the
 short code. An invalid window returns `400`, an unknown project `404`.
 
 ## Which tasks count
 
 - Only terminal tasks (`6-completed` or `7-archive`) with a known completion
-  time. The completion time is the last `lane_changed` ledger row with
-  `to = 6-completed`; a `6-completed` card without that row falls back to
-  `enteredLaneAt` (`completionSource = lane-entry`).
+  time enter the completed-card rows. A ledger completion is a `lane_changed`
+  row whose `to` is `6-completed`. The first such row is real. A later one is
+  real only if an entry into `3-progress` occurred since the previous
+  completion. All others are re-acceptance artefacts. The last real completion
+  anchors the card; `completionKind` is `first` or `after-rework`, and
+  `reAcceptanceArtefacts` counts excluded entries. The `/throughput` endpoint
+  uses this same rule. A `6-completed` card without a ledger completion falls
+  back to `enteredLaneAt` (`completionSource = lane-entry`).
 - The window filters on the completion time (`since = now - window`); `all`
   takes every completed task. In-flight tasks are counted in the coverage block
   but never enter the aggregates, because cycle time is defined on completion.
@@ -49,9 +54,61 @@ short code. An invalid window returns `400`, an unknown project `404`.
   the next uncached read without a restart. Precedence per task: ledger,
   lane-entry, backfill.
 
+## Flow episode and throughput
+
+The episode begins at the first entry into Ready, Progress (including its
+sub-lanes), or Auto Review after the preceding completion. If the creation
+lane is already one of these, creation begins the episode. It ends at the
+last real completion. Every second belongs to one of five classes:
+`active`, `resourceWait`, `systemHold`, `humanWait`, or `dependencyWait`.
+`machineCycleSeconds` is active plus resource wait. The last active, resource,
+or system segment ends at `machineDoneAt`; later operator acceptance does not
+extend the machine cycle. Rows without an episode have null flow fields.
+
+| Evidence | Class and detail |
+|---|---|
+| Ready while a current or historically reconstructed `dependsOn` target is unfulfilled | `dependencyWait` |
+| Other Ready time | `resourceWait: codingSlot` |
+| Progress that delivers or escalates; other Progress | `active: coding`; `active: codingNoDelivery` |
+| Auto Review before a claim, including retry queue time | `resourceWait: reviewSlot` |
+| Claimed review attempt through its last activity | `active: reviewGate`, `reviewAspects`, `reviewOther`, or `reviewFailedAttempt` |
+| Local gate log queue; batch queue or execution queue | `resourceWait: gateHost` |
+| Batch execution, including a run with no verdict | `active: batchGate` or `batchGateNoVerdict` |
+| Review verdict to integration start; integration start to outcome | `resourceWait: integrationLane`; `active: integration` |
+| Infrastructure retry backoff or cause breaker parking | `systemHold: infraRetryBackoff` or `causeBreaker` |
+| LeaseExpired heartbeat to terminal detection | `systemHold: leaseExpiredTail` |
+| Batch paused or abandoned without a verdict, or deferred pass without a pending record | `systemHold: batchDefect` |
+| Review stay with no attempt or step and a machine exit | `systemHold: noReviewAttempt` |
+| Review activity to a human or machine lane move | `humanWait: operatorDecision` or `systemHold: machineTail` |
+| Human Review, Escalated, Backlog or Preparation in the episode | `humanWait: humanReview`, `escalated`, or `backlog` |
+| Orchestrator Prep | `active: orchestratorPrep` |
+| Unexplained remainder | `systemHold: unclassified`, with `wait-unclassified` data gap |
+
+Explicit work spans override holds and resource spans; the classifier sweeps
+their boundaries to avoid double counting. The per-task route includes the
+segments with timing, attempt, executor, tokens and stored cost. The list route
+omits their detailed array while retaining per-class totals. Flow statistics
+use `CycleTimeStatistics.Aggregate` over cards with an episode. Steps and
+resources use per-card totals for percentiles. Holds and human kinds are
+excluded from machine time.
+
+`throughputPerDay` has one UTC entry per window day. The `all` window shows
+its last 30 days. It counts deliveries into Auto Review, cards whose machine
+work ended, real completions, and excluded re-acceptances. A delivery can
+belong to a card that is still in flight.
+
+Token entries come from one `ITokenAggregator.WorkspacePerJob` snapshot per
+uncached project build. A coding participant's attempt id chooses its coding
+stay. A remote review participant's attempt id chooses the review aspects or
+failed attempt. Other support participants use `supporting`; unmatched calls
+within an episode use the containing segment. Calls outside the episode enter
+only the card total. Tokens sum input, output, cache reads and cache writes.
+Cost sums stored `EstimatedApiCostUsd`; an unpriced call adds zero cost and one
+`unpricedCalls` count. The reader never reprices a stored call.
+
 ## The stages
 
-Every instant between creation and the final completion belongs to exactly one
+Every instant between creation and the last real completion belongs to exactly one
 of the additive stages, so their per-task sum equals the lead time. The rollups
 overlap them and are reported separately.
 
@@ -64,11 +121,12 @@ overlap them and are reported separately.
 | `testGate` | Build/test gate executions inside the review run | `post_step_finished` rows with `pipelineStepId = post-build-test-gate` (`durationMs`, else finished minus started) | `pipeline-execution.json` step `post-build-test-gate` (`durationMs`, current and previous attempts) |
 | `reviewOther` | Remainder of the review run: aspect reviews, grade, decision, step overhead, idle time inside one attempt | review run minus `testGate` minus integration inside the stay | - |
 | `integration` | Delivery integration spans, wherever they occur | `integration_started` to `integration_succeeded` / `integration_failed` / `integration_overridden`; else the `post-merge-into-develop` (+ `-push`) step whose end lies within three minutes of the outcome row (each step pairs with one outcome). An acceptance outcome recorded after the completion move still belongs to the final stay when its start does; the span is clipped at completion | unknown duration is reported as `integration-duration-unknown`, the attempt still counts |
-| `humanReview` | Time in `5-human-review`, `5e-escalated`, and a non-final `6-completed` stay, minus integration spans inside it | `lane_changed` | - |
+| `humanReview` | Time in `5-human-review` and `5e-escalated`, minus integration spans inside them | `lane_changed` | - |
+| `completedBeforeReopen` | A completed stay before a genuine later coding rework and real completion | `lane_changed` | - |
 | `unattributed` | Lead-time remainder no lane interval explains | computed | whole lead time when the ledger is missing (`no-ledger`) |
 | `reviewRun` (rollup) | Review activity inside `4-auto-review`: from the first step of an attempt to the lane change; several attempts in one stay are summed, idle time between them is `reviewWait` | `post_step_*` rows grouped by `attemptId`, pipeline post steps grouped by pipeline attempt | - |
 | `leadTime` (rollup) | `prompt_created` (else `task.json.createdAt`) to final completion | ledger, `task.json` | - |
-| `cycleTime` (rollup) | First entry into `3-progress` to final completion | `lane_changed`; else `agent_run_started`; else `provenance.transitions` | null when never claimed |
+| `cycleTime` (rollup, labelled "Claim to completion") | First entry into `3-progress` to the real completion | `lane_changed`; else `agent_run_started`; else `provenance.transitions` | null when never claimed |
 
 Counts per task:
 
@@ -178,20 +236,36 @@ seconds. Over all time the July pickup flapping shows as thousands of
 ## Performance
 
 The service enumerates tasks through the index-cache-backed scanner
-(`ScanAllAutomationJobsWithArchive`, never a cold walk of its own), reads
-`logs/timeline.jsonl` and `pipeline-execution.json` once per task, and memoises
-the per-task row against both file stamps plus lane and `enteredLaneAt`. A
-bounded window skips terminal tasks whose `enteredLaneAt` (the terminal-lane
-entry, which follows completion) lies before the window. The per-project result
-is cached for 15 seconds per window (`7d`, `30d`, `all` each have their own
-entry, so the coverage counts of a window never depend on which window ran
-before). Measured on the Agent Studio store (1668 tasks, in-process): about
-1.2 s cold for `30d`, about 200 ms with warm per-task memos (two `FileInfo`
-probes per examined task, 3336 probes in 340 ms). A request through the live API
-can still take 1 to 3 s when it arrives while the shared task index cache is
-refreshing (read-through refresh, not a cost of this read model).
+(`ScanAllAutomationJobsWithArchive`, never a cold walk of its own). A bounded
+window skips terminal tasks whose `enteredLaneAt` predates the window. The
+per-task memo key covers the ledger, pipeline, local gate log directory,
+backfill, token summary, dependency targets, lane, and `enteredLaneAt`.
+Batch authority is read once per uncached project build and memoised by its
+newest file stamp. The project result is cached for 15 seconds per window.
+The earlier 2026-08-23 baseline on 1,668 tasks was about 1.2 s cold for 30d
+and 200 ms with warm per-task memos, before these new evidence sources. The
+AGT-3114 synthetic-store measurement is in that task's `results/` report.
 
 ## Known gaps
+
+- Slot waits can include an operator stop or a platform outage: neither has a
+  durable start/end fact. Host samples have no historical capacity, so coding
+  wait is not split into slots full and slots free.
+- Claim-block reasons retain only the latest rejection. Progress sub-phases
+  (quota, loop, steer) have no ledger transition and remain coding.
+- Prices are stored call estimates; price migration and repricing belong to
+  AGT-3037. Per-host rollups and live queue views remain separate surfaces.
+- Integration lane internals and gate economics depend on AGT-3070's separate
+  delivery lane event stream. This read model uses its existing ledger facts.
+- Gate log headers are bounded to 4 KB; malformed headers add
+  `gate-log-malformed` and do not break a card response. Batch authority is
+  an instance-local store, so historical evidence absent from that store
+  remains unclassified.
+- Review attempt creation and lease heartbeat state come from the live attempt
+  authority projection without archive I/O. An archived attempt absent from
+  the live projection can still leave a pre-claim or lease-expiry portion in
+  review-slot or machine-tail time. Older rows without a claim carry
+  `review-claim-unknown` in the flow classifier.
 
 - Tasks that predate the `lane_changed` ledger kind (roughly the first half of
   the Agent Studio archive) record no completion in the ledger;
@@ -204,12 +278,12 @@ refreshing (read-through refresh, not a cost of this read model).
   evidence date at or before `createdAt` (legacy timezone-less stamps); they
   are clamped, flagged `clock-skew`, and skipped by the lead-time aggregate's
   `> 0` filter.
-- The review claim is recorded since 2026-08-23: the claim routes write a
+- The review claim is recorded since 2026-08-25: the claim routes write a
   `review_attempt_claimed` row whose `ts` is the lease acquisition
   (`AttemptLeaseDto.AcquiredAt`; `runId` = attempt id, details carry lease,
-  executor, host, subject, source run). The reader still approximates the
-  attempt start by its first projected step row; consuming the claim row is
-  the remaining reader-side step, and rows before that date stay approximated.
+  executor, host, subject, source run). The flow classifier consumes it.
+  The older lane-stage `reviewRun` rollup still uses its first-step
+  approximation, and rows before that date remain approximate.
 - A gate step that is rerun inside one attempt is projected once (the final
   run); the earlier run lands in `reviewOther`. Projecting every execution, or
   the attempt's own start and end, would sharpen the gate number.
@@ -233,6 +307,13 @@ refreshing (read-through refresh, not a cost of this read model).
   backward moves over all time).
 
 ## Living knowledge log
+
+- 2026-10-13 (AGT-3114): the completion anchor now excludes same-work
+  re-acceptances from both cycle time and `/throughput`. Flow episodes partition
+  machine work, resource wait, system holds, human time and dependency time;
+  the project rail adds the daily and token/cost views. The measured 13 October
+  operator data had 204 re-acceptance artefacts by 07:58Z, so this rule is
+  essential before interpreting the 7-day lead-time median.
 
 - 2026-08-25 (backfill): the legacy coverage gap closed reader-side. A
   one-time, idempotent tool (`scripts/backfill-cycle-time-completions.mjs`)
