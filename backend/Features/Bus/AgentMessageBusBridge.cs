@@ -616,6 +616,27 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    /// <summary>Signals a blocked acceptance lane once per observed lane incident.</summary>
+    public Task EmitAcceptanceLaneBlockedAsync(string project, string branch, string? repository,
+        string deliverySha, string containment, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: project,
+            jobId: null,
+            topic: "acceptance-integration-lane-blocked",
+            summary: TruncateSummary($"Acceptance integration needs attention on {project}/{branch}"),
+            body: $"Branch: {branch}\nRepository: {repository ?? "(unavailable)"}\n"
+                  + $"Delivery: {deliverySha}\nPublished containment: {containment}\n"
+                  + "Completed cards with published deliveries remain completed. Inspect the integration lane and checkout status.",
+            payload: new { branch, repository, deliverySha, containment },
+            tags: ["acceptance-integration", $"branch:{branch}"]);
+        return EmitAsync(msg, ct);
+    }
+
     /// <summary>
     /// Emits one terminal operator-feed event for a host-owned provider sign-in.
     /// Device codes and credentials are intentionally absent from this contract.

@@ -73,6 +73,12 @@ removed before retrying the same marker.
      --tag "release/$(date -u +%Y%m%d-%H%M%SZ)"
    ```
 
+   After any operator candidate push that advances `develop`, open Project
+   Settings and use **Sync checkout** when the observed checkout is behind.
+   The action fetches origin and fast-forwards only a clean checkout. If the
+   checkout is dirty or locked, resolve that condition first. This also applies
+   when a candidate is pushed outside the promotion train.
+
    The command supplies a tagger identity for the annotated marker and does not
    depend on the host's Git identity. Override the defaults when an operator or
    automation-specific identity is required:

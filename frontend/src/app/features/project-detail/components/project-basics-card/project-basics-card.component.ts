@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
-import { HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
@@ -20,6 +20,15 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 
+interface CheckoutStatus {
+  status: string;
+  branch: string;
+  behind: number;
+  dirtyFiles: string[];
+  lockFile: string | null;
+  reason: string | null;
+}
+
 @Component({
   selector: 'app-project-basics-card',
   standalone: true,
@@ -32,11 +41,13 @@ export class ProjectBasicsCardComponent {
   readonly projectName = input.required<string>();
 
   private readonly tasks = inject(TaskService);
+  private readonly http = inject(HttpClient);
   private readonly catalog = inject(CliCatalogStore);
   private readonly notifications = inject(NotificationService);
   private readonly lookup = inject(ProjectLookupService);
   private readonly manager = inject(WorkspaceManagerService);
   private readonly overlays = inject(ProjectOverlaysService);
+  private checkoutRequestVersion = 0;
 
   readonly workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
   readonly project = signal<RegistryProjectSummary | null>(null);
@@ -45,6 +56,8 @@ export class ProjectBasicsCardComponent {
   readonly loadError = signal<string | null>(null);
   readonly saveError = signal<string | null>(null);
   readonly savedMessage = signal<string | null>(null);
+  readonly checkout = signal<CheckoutStatus | null>(null);
+  readonly syncingCheckout = signal(false);
 
   readonly workspaceId = signal('');
   readonly displayName = signal('');
@@ -106,6 +119,36 @@ export class ProjectBasicsCardComponent {
     effect(() => {
       const cli = this.cliDefault();
       this.catalog.ensure(cli).subscribe({ error: () => void 0 });
+    });
+  }
+
+  syncCheckout(): void {
+    const name = this.project()?.displayName;
+    if (!name || this.syncingCheckout()) return;
+    this.syncingCheckout.set(true);
+    const version = ++this.checkoutRequestVersion;
+    this.http.post<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/sync`, {}).subscribe({
+      next: (status) => {
+        if (version === this.checkoutRequestVersion) this.checkout.set(status);
+        this.syncingCheckout.set(false);
+      },
+      error: () => {
+        if (version === this.checkoutRequestVersion)
+          this.checkout.set({ status: 'error', branch: this.checkout()?.branch ?? '', behind: 0,
+            dirtyFiles: [], lockFile: null, reason: 'Could not sync the checkout.' });
+        this.syncingCheckout.set(false);
+      },
+    });
+  }
+
+  private loadCheckout(name: string): void {
+    this.checkout.set(null);
+    const version = ++this.checkoutRequestVersion;
+    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/status`).subscribe({
+      next: (status) => {
+        if (version === this.checkoutRequestVersion) this.checkout.set(status);
+      },
+      error: () => void 0,
     });
   }
 
@@ -182,6 +225,7 @@ export class ProjectBasicsCardComponent {
         )?.[1];
         this.remoteExecutionLocation.set(projectSettings?.executionLocation ?? null);
         this.seed(project);
+        this.loadCheckout(project.displayName);
         this.loading.set(false);
       },
       error: () => {

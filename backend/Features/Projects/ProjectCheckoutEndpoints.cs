@@ -10,9 +10,9 @@ public static class ProjectCheckoutEndpoints
     {
         app.MapGet("/api/projects/{projectName}/checkout/status", (
             string projectName, TaskScannerService scanner, ProjectRegistry registry,
-            ProjectSettingsService settings, GitService git) =>
+            ProjectSettingsService settings, GitService git, CancellationToken ct) =>
             Resolve(projectName, scanner, registry, settings, git) is { } target
-                ? Results.Ok(git.GetDeveloperCheckoutStatus(target.Path, target.Branch))
+                ? Results.Ok(git.ObserveDeveloperCheckoutStatus(target.Path, target.Branch, ct))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}' or repository unavailable." }));
 
         app.MapPost("/api/projects/{projectName}/checkout/sync", (
