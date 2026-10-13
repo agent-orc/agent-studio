@@ -15,12 +15,15 @@ count and latest short commit label, and the branch facts needed for the Git
 badge. They omit the full commit chain, provenance transitions, review
 projection, token call rows, and detailed test evidence. Opening a task loads
 full data through `GET /api/tasks/{id}/core` and the detail resources. The
-card's `references.dependsOnKeys` lists every dependency key,
-`references.dependsOnCount` gives the full count, and `references.dependsOn`
+card's `references.dependsOnKeys` lists every dependency key (its length is the
+full count), and `references.dependsOn`
 carries the object form of at most three edges, only when one of them is a
 release gate. The board dependency filter matches `dependsOnKeys` and never
 reads task detail; the detail reference editor always uses the full relation
-set. The `overview` resource supplies decision options, planning and concept
+set. To keep the card small, list and grouped cards leave out values a client
+can derive: `taskKey` when it equals `{watchPath}::{id}`, and
+`gitContext.branch` when it is `task/{id}`. The Studio task service restores
+both; other callers derive them the same way. The `overview` resource supplies decision options, planning and concept
 summaries, older brief offers, wiki links, creation and completion facts,
 parked blockers, needs-input text, the full pending intent and the full
 execution location (branch, worktree path, trust reason, activity stamp). The `git` resource supplies the full commit chain and
