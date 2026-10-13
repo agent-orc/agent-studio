@@ -1,8 +1,23 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Git;
 
 namespace AgentStudio.Pipeline;
+
+public enum BatchReplayDisposition
+{
+    Admit,
+    EjectUnattributable,
+    Pause,
+}
+
+/// <summary>The <see cref="BatchGateReplayRecord.Strategy"/> values.</summary>
+public static class BatchReplayStrategies
+{
+    public const string Linear = "linear";
+    public const string Merge = "merge";
+}
 
 public enum BatchExclusionReason
 {
@@ -228,6 +243,25 @@ public static class BatchGatePolicy
 
     public static bool CascadeGuard(int totalMembers, int conflicts, int consecutiveConflicts)
         => totalMembers > 0 && (conflicts * 4 > totalMembers || consecutiveConflicts >= 3);
+
+    /// <summary>
+    /// What assembly does with a replay that is not a conflict (AGT-3104).
+    /// A mapped success is admitted; a member that cannot be attributed, or a
+    /// success without a trustworthy mapping, is ejected alone; any other
+    /// failure is infrastructure and pauses the batch.
+    /// </summary>
+    public static BatchReplayDisposition ReplayDisposition(BatchReplayResult replay)
+    {
+        if (replay.Success)
+            return replay.TipSha is not null && replay.Replacements.Count > 0
+                   && replay.Replacements.All(x => !string.IsNullOrWhiteSpace(x.OriginalSha)
+                                                  && !string.IsNullOrWhiteSpace(x.RebasedSha))
+                ? BatchReplayDisposition.Admit
+                : BatchReplayDisposition.EjectUnattributable;
+        return replay.Failure == BatchReplayFailure.Unattributable
+            ? BatchReplayDisposition.EjectUnattributable
+            : BatchReplayDisposition.Pause;
+    }
 
     public static int DiagnosticRunsPerCycle(int memberCount)
         => memberCount <= 1 ? 0 : (int)Math.Ceiling(Math.Log2(memberCount));

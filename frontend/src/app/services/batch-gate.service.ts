@@ -184,5 +184,6 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
   return Object.values(value['members']).every(member => record(member) &&
     ['pending', 'in-batch', 'published', 'fallback'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&
-    optionalNumber(member['position']) && optionalNumber(member['size']));
+    optionalNumber(member['position']) && optionalNumber(member['size']) &&
+    optionalString(member['reason']) && optionalString(member['reasonDetail']));
 }

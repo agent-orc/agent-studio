@@ -65,9 +65,43 @@ batch green rate or answer the staging-lane decision in the
 `backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
 membership digest, append-only replay and member evidence records, bounded
 halving policy, coordinator lease, publication preconditions, and pilot metric
-projection. `GitService.ReplayBatchMember` exposes the existing conflict-free
-mechanical rebase through a disposable detached worktree; candidate refs use
+projection. `GitService.ReplayBatchMember` replays each member through a
+disposable detached worktree; candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
+
+Member replay routes (AGT-3104, chosen by the pure `BatchReplayPolicy`):
+
+| Delivery range from the candidate tip | Route | Attribution |
+|---|---|---|
+| Linear, already on the tip | identity fast-forward | every commit maps to itself |
+| Linear, behind the tip | conflict-free mechanical rebase | one replacement per original commit |
+| Contains a merge commit (a fix round that merged the integration branch) | `git merge --no-ff` of the untouched result commit | the result SHA maps to that one merge commit |
+| Result already contained in the tip | none | unattributable, member ejected |
+
+The merge route is the documented strategy for non-linear deliveries. It is
+the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
+the fix round's own merge included, stays an ancestor of the candidate and no
+commit of the card is rewritten. The merge is accepted only when its two
+parents are exactly the previous candidate tip and the result SHA; the replay
+record then carries `strategy: merge` and the single mapping from the result
+SHA to the merge commit. A linear rebase that still loses its one-to-one
+mapping (a commit became empty on the tip) takes the merge route as well.
+Member evidence, the curated mapping and the integration bookkeeping record
+use that merge commit; the card's commit chain is not superseded. Red
+isolation reassembles each diagnostic subset from the base with the same
+routes, so a merged member can be isolated or survive like any other.
+
+Assembly sorts a replay that is not a conflict into three outcomes
+(`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
+that cannot be attributed (its result ref does not resolve to the frozen SHA,
+the candidate already contains it, or the merge parents do not match) is
+ejected alone with replay outcome `unattributable` and a named reason; any
+other failure (fetch, worktree, or git read errors) is infrastructure and
+pauses the batch as before. An unattributable ejection does not count toward
+the conflict cascade guard. The batch state projection marks every conflict or
+unattributable ejection as `fallback` with `reason` and `reasonDetail`, and
+the card badge shows it, for example "Per-task fallback · unattributable
+history".
 The D10 prerequisite estimate is
 [recorded with its limits](../../operations/gates/d10-measurement.md).
 The Task Server gate subject can bind a combined candidate SHA, manifest digest,

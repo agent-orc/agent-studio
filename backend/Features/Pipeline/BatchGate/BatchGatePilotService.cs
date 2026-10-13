@@ -988,7 +988,7 @@ public sealed class BatchGatePilotService
                 }
                 return;
             }
-            var assembly = new BatchGateAssembler(_store, _git, repo)
+            var assembly = new BatchGateAssembler(_store, _git, repo, _time)
                 .Assemble(manifest.BatchId, lease.Fence);
             if (!RouteEnabled())
             {
@@ -1001,7 +1001,14 @@ public sealed class BatchGatePilotService
                 return;
             }
             foreach (var key in assembly.EjectedKeys)
-                _logger.LogWarning("batch-member-conflict batch={BatchId} task={TaskKey}", manifest.BatchId, key);
+            {
+                var ejection = _store.TryReadReplay(manifest.BatchId, key);
+                if (ejection?.Outcome == "unattributable")
+                    _logger.LogWarning("batch-member-unattributable batch={BatchId} task={TaskKey} reason={Reason}",
+                        manifest.BatchId, key, ejection.Reason);
+                else
+                    _logger.LogWarning("batch-member-conflict batch={BatchId} task={TaskKey}", manifest.BatchId, key);
+            }
             if (assembly.CascadeStopped)
                 _logger.LogWarning("batch-conflict-cascade batch={BatchId} deferred={Members}",
                     manifest.BatchId, string.Join(',', assembly.DeferredKeys));
@@ -1353,7 +1360,7 @@ public sealed class BatchGatePilotService
                     subset.ToArray(), [], subset.Select(item => item.TaskKey).ToArray(),
                     failedManifest.BatchId);
                 _store.CloseManifest(diagnostic);
-                var candidate = new BatchGateAssembler(_store, _git, repo)
+                var candidate = new BatchGateAssembler(_store, _git, repo, _time)
                     .Assemble(diagnostic.BatchId, lease.Fence);
                 if (candidate.EjectedKeys.Count > 0 || candidate.AdmittedKeys.Count != subset.Count)
                     return new BatchGateProbeResult(BatchGateFailureClass.InfrastructureRed,
@@ -1595,9 +1602,12 @@ public sealed class BatchGatePilotService
             throw new InvalidDataException("batch-gate-evidence-missing");
         var task = _scanner.FindJob(subject.TaskKey, pending.WatchPath);
         if (task is null || task.State != TaskStates.AutoReview) return;
-        var rewritten = replay.Replacements.Where(item =>
-            !string.Equals(item.OriginalSha, item.RebasedSha,
-                StringComparison.OrdinalIgnoreCase)).ToArray();
+        // A merged member rewrote no commit: every delivery SHA is an ancestor
+        // of the candidate, and the result maps to its merge commit below.
+        var rewritten = replay.Strategy == BatchReplayStrategies.Merge ? []
+            : replay.Replacements.Where(item =>
+                !string.Equals(item.OriginalSha, item.RebasedSha,
+                    StringComparison.OrdinalIgnoreCase)).ToArray();
         if (rewritten.Length > 0 && !_mutations.RecordMechanicalRebaseOnFolder(
                 task.FolderPath, rewritten))
             throw new InvalidDataException("Batch replacement SHA mapping could not be attributed.");

@@ -811,6 +811,100 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Fix_round_member_with_a_develop_merge_joins_the_batch_by_a_candidate_merge()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var oldBase = RemoteTip();
+        AdvanceOriginDevelop("docs/drift.md");
+        var linear = SeedMember(factory, "DOC-LINEAR", "docs/linear.md");
+        var fixRound = SeedMember(factory, "DOC-FIX-ROUND", "docs/fix-round.md",
+            parentSha: oldBase, mergeFrom: "refs/remotes/origin/develop");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        var publication = store.ReadPublication(manifest.BatchId)!;
+        Assert.Equal(publication.TestedCandidateSha, RemoteTip());
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Equal("linear", store.ReadReplay(manifest.BatchId, linear.Key).Strategy);
+        AssertMergedMember(store, manifest.BatchId, publication.BatchRunId, fixRound);
+        AssertLane(linear.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
+    public async Task Red_isolation_ejects_a_linear_offender_and_publishes_a_merged_fix_round_survivor()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var oldBase = RemoteTip();
+        AdvanceOriginDevelop("docs/drift.md");
+        var offender = SeedMember(factory, "DOC-OFFENDER", "docs/offender.md");
+        var fixRound = SeedMember(factory, "DOC-FIX-SURVIVOR", "docs/fix-survivor.md",
+            parentSha: oldBase, mergeFrom: "refs/remotes/origin/develop");
+        // Only a candidate that carries the offender's file is red.
+        _gate.Batch = request => TreeHas(request.ExpectedSha!, "docs/offender.md")
+            ? Red(request.ExpectedSha) : Green(request.ExpectedSha);
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var primary = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        AssertPhase(store, primary.BatchId, BatchPhase.Red);
+        var survivor = Assert.Single(store.ListManifests(), item =>
+            store.LatestState(item.BatchId).Phase == BatchPhase.Published);
+        Assert.Equal([fixRound.Key], survivor.Members.Select(member => member.TaskKey));
+        var publication = store.ReadPublication(survivor.BatchId)!;
+        Assert.Equal(publication.TestedCandidateSha, RemoteTip());
+        Assert.False(TreeHas(RemoteTip(), "docs/offender.md"));
+        AssertMergedMember(store, survivor.BatchId, publication.BatchRunId, fixRound);
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(offender.Key, TaskStates.Escalated);
+    }
+
+    // A merged member keeps every delivery SHA: the candidate merge has the
+    // tip before it and the untouched result SHA as its exact parents, so the
+    // result maps to that merge and no commit of the card is rewritten.
+    private void AssertMergedMember(BatchGateStore store, string batchId, string runId,
+        SeededMember member)
+    {
+        var replay = store.ReadReplay(batchId, member.Key);
+        Assert.Equal("admitted", replay.Outcome);
+        Assert.Equal("merge", replay.Strategy);
+        var replacement = Assert.Single(replay.Replacements);
+        Assert.Equal(member.ResultSha, replacement.OriginalSha);
+        Assert.Equal(replay.TipAfterSha, replacement.RebasedSha);
+        Assert.Equal($"{replay.TipAfterSha} {replay.TipBeforeSha} {member.ResultSha}",
+            Git(_repo, "rev-list", "--parents", "-n", "1", replay.TipAfterSha!));
+        Git(_origin, "merge-base", "--is-ancestor", member.ResultSha, "refs/heads/develop");
+        var record = store.TryReadMember(batchId, member.Key, runId);
+        Assert.NotNull(record);
+        Assert.Equal([replay.TipAfterSha!], record!.ReplacementShas);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var task = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            _watchPath, TaskStates.HumanReview, member.Key, "task.json"))).RootElement;
+        Assert.All(task.GetProperty("commits").EnumerateArray(), commit =>
+            Assert.False(commit.TryGetProperty("supersededBySha", out var by)
+                && by.ValueKind == JsonValueKind.String));
+        Assert.Contains(task.GetProperty("integrationRecords").EnumerateArray(), item =>
+            item.GetProperty("classification").GetString() == "curated-mapping"
+            && item.GetProperty("sourceSha").GetString() == member.ResultSha
+            && item.GetProperty("integrationSha").GetString() == replay.TipAfterSha);
+    }
+
+    private bool TreeHas(string sha, string path)
+        => Git(_repo, "ls-tree", "--name-only", sha, path).Length > 0;
+
+    [Fact]
     public async Task Broken_published_manifest_does_not_block_the_next_batch()
     {
         using var factory = BuildFactory();
@@ -1683,7 +1777,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     private SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,
         string changedFile, bool settleReview = true, string? parentSha = null,
         bool deferredPlan = true, string? taskId = null,
-        Contract.ReviewCommandDto? verificationCommand = null, string? content = null)
+        Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
+        string? mergeFrom = null)
     {
         var baseSha = Git(_repo, "rev-parse", "origin/develop");
         var resultRef = "refs/heads/agent-studio/results/" + key;
@@ -1692,6 +1787,10 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         File.WriteAllText(Path.Combine(_repo, changedFile), content ?? key + "\n");
         Git(_repo, "add", ".");
         Git(_repo, "commit", "-qm", key);
+        // A fix round told to "merge current origin/develop first" leaves a
+        // merge commit inside its delivery range.
+        if (mergeFrom is not null)
+            Git(_repo, "merge", "-q", "--no-ff", "--no-edit", mergeFrom);
         var resultSha = Git(_repo, "rev-parse", "HEAD");
         PublishResult(key, resultSha);
         Git(_repo, "checkout", "-q", "--detach", baseSha);

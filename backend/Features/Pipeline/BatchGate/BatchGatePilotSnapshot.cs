@@ -92,7 +92,8 @@ public static class BatchGatePilotSnapshotReader
         }
         var attempted = primary.SelectMany(item => item.Members).Count();
         var ejected = primary.Sum(item => item.Members.Count(member =>
-            store.TryReadReplay(item.BatchId, member.TaskKey)?.Outcome == "conflict"));
+            store.TryReadReplay(item.BatchId, member.TaskKey)?.Outcome
+                is "conflict" or "unattributable"));
         var green = primary.Count(item => store.ListRuns(item.BatchId).Any(run =>
             store.ReadVerdict(item.BatchId, run.BatchRunId)?.Outcome == "pass"));
         var withRun = primary.Count(item => store.ListRuns(item.BatchId).Count > 0);
