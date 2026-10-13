@@ -41,8 +41,14 @@ public sealed class SteeringFeedbackProjection
     }
 
     public TaskSteeringFeedback Build(TaskInfo task, bool includeArchived = true)
+        => Build(task, _attempts.GetTaskProjection(TaskIdentity.AuthorityKey(task), includeArchived));
+
+    /// <summary>
+    /// Builds the feedback from an authority projection the caller already
+    /// read for <paramref name="task"/>, so one request reads the archives once.
+    /// </summary>
+    public TaskSteeringFeedback Build(TaskInfo task, AttemptAuthorityProjection authority)
     {
-        var authority = _attempts.GetTaskProjection(TaskIdentity.AuthorityKey(task), includeArchived);
         var facts = new List<SteeringFeedbackFact>();
         var runs = authority.RunAttempts.ToDictionary(run => run.AttemptId, StringComparer.Ordinal);
         string Root(string id)

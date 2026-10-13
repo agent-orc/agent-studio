@@ -57,7 +57,7 @@ public sealed class TaskReader
         var cliOutputLines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(info.FolderPath));
         var ledger = _timeline.ReadAll(info.FolderPath);
         var runnerEvents = AgentStudio.Projection.RunnerEventSource.ReadRecords(info);
-        var runAttempts = _attempts.GetTaskProjection(TaskIdentity.AuthorityKey(info), includeArchived: true).RunAttempts;
+        var authority = _attempts.GetTaskProjection(TaskIdentity.AuthorityKey(info), includeArchived: true);
 
         return new TaskReadModel(
             detail,
@@ -66,7 +66,8 @@ public sealed class TaskReader
             ledger,
             nowUtc ?? DateTime.UtcNow,
             runnerEvents,
-            runAttempts);
+            authority.RunAttempts,
+            authority);
     }
 }
 
@@ -89,6 +90,12 @@ public sealed class TaskReadModel
     public DateTime NowUtc { get; }
     public IReadOnlyList<RunnerRecordedEvent> RunnerEvents { get; }
     public IReadOnlyList<RunAttemptDto> RunAttempts { get; }
+    /// <summary>
+    /// The archive-inclusive authority projection <see cref="RunAttempts"/> came
+    /// from. A surface that needs more of it (the steering receipts on
+    /// <c>/timeline</c>) reuses it instead of reading the archives again (AGT-3109).
+    /// </summary>
+    public AttemptAuthorityProjection? Authority { get; }
 
     public TaskReadModel(
         TaskDetail detail,
@@ -97,7 +104,8 @@ public sealed class TaskReadModel
         IReadOnlyList<TimelineEvent> ledger,
         DateTime nowUtc,
         IReadOnlyList<RunnerRecordedEvent>? runnerEvents = null,
-        IReadOnlyList<RunAttemptDto>? runAttempts = null)
+        IReadOnlyList<RunAttemptDto>? runAttempts = null,
+        AttemptAuthorityProjection? authority = null)
     {
         Detail = detail;
         SessionEvents = sessionEvents ?? [];
@@ -106,6 +114,7 @@ public sealed class TaskReadModel
         NowUtc = nowUtc;
         RunnerEvents = runnerEvents ?? [];
         RunAttempts = runAttempts ?? [];
+        Authority = authority;
     }
 
     /// <summary>

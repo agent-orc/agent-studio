@@ -287,7 +287,11 @@ public static class TaskRunnerEndpoints
             var model = reader.Read(jobId, watchPath);
             if (model == null) return Results.NotFound(new { error = "Job not found" });
             var ledger = model.BuildLedger();
-            var projection = feedback.Build(model.Info);
+            // AGT-3109: the steering receipts reuse the authority projection the
+            // reader already loaded, so one request reads the archives once.
+            var projection = model.Authority is { } authority
+                ? feedback.Build(model.Info, authority)
+                : feedback.Build(model.Info);
             var receipts = SteeringFeedbackProjection.Timeline(projection);
             var stoppedAttempts = projection.History.Where(fact => fact.Kind == "stop")
                 .Select(fact => fact.AttemptId).ToHashSet(StringComparer.Ordinal);

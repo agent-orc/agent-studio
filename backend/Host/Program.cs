@@ -551,6 +551,8 @@ builder.Services.AddSingleton<IntegrationLeaseService>();
 // back the productive /api/runner/lease API (§8.2C), the prepared successor to
 // the disk-backed .pickup-lock.json guard.
 builder.Services.AddSingleton<AttemptAuthorityService>();
+// AGT-3109: build the archive index after startup so no card-detail read pays for it.
+builder.Services.AddHostedService<AttemptArchiveIndexWarmupService>();
 builder.Services.AddSingleton<ReviewAttemptTaskLifecycleService>();
 builder.Services.AddSingleton<V1ReviewExecutorRegistry>();
 builder.Services.AddSingleton<ReviewClaimUnclaimableLog>();
