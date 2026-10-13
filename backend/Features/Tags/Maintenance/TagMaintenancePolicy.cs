@@ -6,8 +6,18 @@ namespace AgentStudio.Tags;
 
 public sealed record TagMaintenanceItem(string Project, string Kind, string Id, string Title,
     string[] Tags, string Text, bool Active, bool TerminologySource = false);
+/// <summary>An inventory entry the capture could not read: an invalid Dossier or an unavailable inventory.</summary>
+public sealed record TagMaintenanceUnreadableItem(string Project, string Kind, string Id, string Error);
 public sealed record TagMaintenanceSnapshot(List<TagRegistryEntry> Registry, List<string> AreaIds,
-    Dictionary<string, List<GlossaryTerm>> Glossaries, List<TagMaintenanceItem> Items);
+    Dictionary<string, List<GlossaryTerm>> Glossaries, List<TagMaintenanceItem> Items,
+    List<TagMaintenanceUnreadableItem>? Unreadable = null)
+{
+    public List<TagMaintenanceUnreadableItem> Unreadable { get; init; } = Unreadable ?? [];
+    /// <summary>Projects without a repository checkout: cards only, no Dossier, wiki or glossary inventory.</summary>
+    public List<string> WithoutCheckout { get; init; } = [];
+    /// <summary>Usage counts cover every item only when nothing in the inventory was unreadable.</summary>
+    public bool UsageComplete => Unreadable.Count == 0;
+}
 public sealed record TagMaintenanceProposal
 {
     public string Kind { get; init; } = "";
@@ -41,6 +51,13 @@ public sealed record TagMaintenanceRun
     public int TextOffset { get; set; }
     public int ExcerptLimit { get; init; } = 4000;
     public Dictionary<string, int> GlobalUsage { get; set; } = [];
+    /// <summary>Null, like <see cref="Unreadable"/>, when the run failed before the inventory capture finished.</summary>
+    public bool? UsageComplete { get; set; }
+    public List<TagMaintenanceUnreadableItem>? Unreadable { get; set; }
+    public List<string>? ProjectsWithoutCheckout { get; set; }
+    public int RetireProposalsSuppressed { get; set; }
+    /// <summary>Why synthesis was skipped although the run reported, or null when it ran.</summary>
+    public string? SynthesisSkipped { get; set; }
     public string? Error { get; set; }
     public List<string> Decisions { get; init; } = [];
     public TagGoldenSetReport GoldenSet { get; set; } = new();
@@ -50,6 +67,8 @@ public sealed record TagMaintenanceAudit(DateTimeOffset At, string DecisionId, s
 public sealed record TagMaintenanceState
 {
     public List<TagMaintenanceRun> Runs { get; init; } = [];
+    /// <summary>Rotation offset over eligible items; survives trimming of the run history.</summary>
+    public int? ItemsReviewedTotal { get; set; }
     public List<TagMaintenanceDecision> Decisions { get; init; } = [];
     public List<TagMaintenanceAudit> Audit { get; init; } = [];
 }
@@ -71,6 +90,21 @@ public static class TagMaintenancePolicy
             .OrderByDescending(run => run.StartedAt).FirstOrDefault();
         if (failedSinceSuccess != null) return now - failedSinceSuccess.StartedAt >= retryDelay;
         return successful == null || now - successful.StartedAt >= interval;
+    }
+
+    /// <summary>
+    /// Keeps the newest <paramref name="limit"/> runs. The latest successful run is always kept so the
+    /// cadence stays anchored while repeated failures are trimmed.
+    /// </summary>
+    public static void TrimRuns(TagMaintenanceState state, int limit)
+    {
+        if (limit < 2) throw new ArgumentOutOfRangeException(nameof(limit));
+        if (state.Runs.Count <= limit) return;
+        var ordered = state.Runs.OrderByDescending(run => run.StartedAt).ToList();
+        var keep = ordered.Take(limit).ToList();
+        var anchor = ordered.FirstOrDefault(run => run.Status == "reported");
+        if (anchor != null && !keep.Contains(anchor, ReferenceEqualityComparer.Instance)) keep[^1] = anchor;
+        state.Runs.RemoveAll(run => !keep.Contains(run, ReferenceEqualityComparer.Instance));
     }
 
     public static List<TagMaintenanceChange> Plan(string project, TagMaintenanceSnapshot snapshot,
@@ -108,6 +142,8 @@ public static class TagMaintenancePolicy
                 || proposal.Source is "orchestrator-moved" or "outcome-silent-finish")
                 throw new ArgumentException("Area ids and platform provenance tags cannot be retired or merged.");
             var uses = snapshot.Items.Where(item => item.Tags.Contains(proposal.Source)).ToList();
+            if (proposal.Kind == "retire" && !snapshot.UsageComplete)
+                throw new ArgumentException("Retirement requires complete usage counts; the inventory has unreadable items.");
             if (proposal.Kind == "retire" && uses.Count != 0)
                 throw new ArgumentException("Retirement requires zero uses, including history and other projects.");
             if (proposal.Kind == "merge")

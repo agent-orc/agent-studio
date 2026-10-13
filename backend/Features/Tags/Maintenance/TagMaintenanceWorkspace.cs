@@ -16,14 +16,23 @@ public interface ITagMaintenanceWorkspace
 /// <summary>Uses the existing application writers; no maintenance-specific task or Dossier storage.</summary>
 public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMutationService tasks,
     TagRegistryService tags, AreaRegistryService areas, AreaGlossaryService glossaries,
-    WorkbenchCatalogueService dossiers, WorkbenchTagService dossierTags, ProjectDocsService docs)
+    WorkbenchCatalogueService dossiers, WorkbenchTagService dossierTags, ProjectDocsService docs,
+    ProjectRegistry registry)
     : ITagMaintenanceWorkspace
 {
     public IReadOnlyList<string> Projects() => scanner.GetWatchPaths().Select(p => p.Name)
         .Distinct(StringComparer.Ordinal).ToArray();
 
+    /// <summary>
+    /// Workspace-wide capture for maintenance. Invalid Dossiers and unavailable inventories are skipped and
+    /// listed in <see cref="TagMaintenanceSnapshot.Unreadable"/>, which marks usage counts incomplete.
+    /// A project without a configured repository checkout has no Dossier, wiki or glossary files that could
+    /// carry a tag; it is listed in <see cref="TagMaintenanceSnapshot.WithoutCheckout"/> and is not unreadable.
+    /// A configured checkout that is missing on disk is unreadable.
+    /// </summary>
     public TagMaintenanceSnapshot Capture(string project) => CaptureCore(project, includeOtherProjects: true);
 
+    /// <summary>Project-only capture for classification; unavailable content still fails closed.</summary>
     public TagMaintenanceSnapshot CaptureForClassification(string project) =>
         CaptureCore(project, includeOtherProjects: false);
 
@@ -31,6 +40,17 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
     {
         if (!Projects().Contains(project)) throw new ArgumentException("Unknown project.");
         var items = new List<TagMaintenanceItem>();
+        var unreadable = new List<TagMaintenanceUnreadableItem>();
+        var checkouts = includeOtherProjects
+            ? Projects().ToDictionary(name => name, name => ProjectRepoResolver.ResolveForProject(name, scanner, registry))
+            : [];
+        var withoutCheckout = checkouts.Where(pair => pair.Value == null).Select(pair => pair.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        void Unreadable(string name, string kind, string id, string error)
+        {
+            if (!includeOtherProjects) throw new InvalidOperationException(error);
+            unreadable.Add(new(name, kind, id, error));
+        }
         foreach (var task in scanner.ScanAllJobsWithArchive().Where(task =>
             includeOtherProjects || task.ProjectName == project))
             items.Add(new(task.ProjectName, "card", task.Id, task.Title, [.. task.Tags ?? []],
@@ -40,34 +60,52 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
         foreach (var name in includeOtherProjects ? Projects() : [project])
         {
             areaIds.UnionWith(areas.List(name).Select(area => area.Id));
-            var catalogue = dossiers.List(name, includeHistory: true)
-                ?? throw new InvalidOperationException($"Dossier inventory unavailable for {name}.");
             var entryPaths = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var dossier in catalogue.Items)
+            if (checkouts.GetValueOrDefault(name) is { } root && !Directory.Exists(root))
+            {
+                // An empty listing of a missing checkout would otherwise look like zero references.
+                Unreadable(name, "checkout", "", $"Repository checkout missing for {name}.");
+                continue;
+            }
+            var catalogue = dossiers.List(name, includeHistory: true);
+            if (catalogue == null && !withoutCheckout.Contains(name))
+                Unreadable(name, "dossier-inventory", "", $"Dossier inventory unavailable for {name}.");
+            foreach (var dossier in catalogue?.Items ?? [])
             {
                 if (!dossier.Valid)
                 {
-                    if (includeOtherProjects) throw new InvalidOperationException($"Invalid Dossier: {name}/{dossier.Id}.");
+                    // Classification skips invalid Dossiers silently; maintenance reports them.
+                    if (includeOtherProjects)
+                        unreadable.Add(new(name, "dossier", dossier.Id, dossier.Error ?? $"Invalid Dossier: {name}/{dossier.Id}."));
                     continue;
                 }
                 entryPaths.Add(dossier.EntryPath.StartsWith("docs/") ? dossier.EntryPath[5..] : dossier.EntryPath);
+                var html = name == project ? dossiers.Read(name, dossier.Id)?.Html : "";
+                if (html == null)
+                {
+                    Unreadable(name, "dossier", dossier.Id, "Dossier content unavailable.");
+                    continue;
+                }
                 items.Add(new(name, "dossier", dossier.Id, dossier.Title, dossier.Tags,
-                    name == project ? TagMaintenancePolicy.Encode(dossier.Decision) + "\n" +
-                        (dossiers.Read(name, dossier.Id)?.Html
-                        ?? throw new InvalidOperationException("Dossier content unavailable.")) : "",
+                    name == project ? TagMaintenancePolicy.Encode(dossier.Decision) + "\n" + html : "",
                     dossier.LifecycleState != "archived" && dossier.Status != "archived",
                     dossier.Decision?.ConfirmedAt != null));
             }
             docs.InvalidateWikiContent(name);
-            var tree = docs.GetWikiTree(name)
-                ?? throw new InvalidOperationException($"Wiki inventory unavailable for {name}.");
+            var tree = docs.GetWikiTree(name);
+            if (tree == null)
+            {
+                if (!withoutCheckout.Contains(name))
+                    Unreadable(name, "wiki-inventory", "", $"Wiki inventory unavailable for {name}.");
+                continue;
+            }
             void Visit(WikiTreeNode node)
             {
                 if (node.Type != "folder" && node.RelPath is { } path && !entryPaths.Contains(path))
                 {
-                    var file = docs.ReadWikiFile(name, path)
-                        ?? throw new InvalidOperationException($"Wiki content unavailable: {name}/{path}.");
-                    items.Add(new(name, "wiki", path, node.Title, ProjectDocsService.FrontmatterTags(file.Content),
+                    var file = docs.ReadWikiFile(name, path);
+                    if (file == null) Unreadable(name, "wiki", path, $"Wiki content unavailable: {name}/{path}.");
+                    else items.Add(new(name, "wiki", path, node.Title, ProjectDocsService.FrontmatterTags(file.Content),
                         name == project ? file.Content : "", !path.StartsWith("archive/", StringComparison.Ordinal)
                             && !string.Equals(node.Classification?.Status, "archived", StringComparison.OrdinalIgnoreCase)
                             && (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
@@ -79,14 +117,19 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
             }
             foreach (var node in tree.Root) Visit(node);
         }
-        var glossary = areas.List(project).ToDictionary(area => area.Id, area =>
+        // Without a checkout there is no glossary page to read or write, so no proposal can be planned.
+        var glossary = withoutCheckout.Contains(project) ? [] : areas.List(project).ToDictionary(area => area.Id, area =>
         {
             var result = glossaries.Read(project, area.Id);
             if (!result.Success) throw new InvalidOperationException(result.Error);
             return result.Glossary!.Terms.ToList();
         });
         return new(tags.GetAll().ToList(), areaIds.Order().ToList(), glossary,
-            items.OrderBy(i => i.Project).ThenBy(i => i.Kind).ThenBy(i => i.Id).ToList());
+            items.OrderBy(i => i.Project).ThenBy(i => i.Kind).ThenBy(i => i.Id).ToList(),
+            unreadable.OrderBy(i => i.Project).ThenBy(i => i.Kind).ThenBy(i => i.Id).ToList())
+        {
+            WithoutCheckout = withoutCheckout.Order(StringComparer.Ordinal).ToList(),
+        };
     }
 
     public string CreateCard(string project, TagMaintenanceDecision decision)
@@ -145,6 +188,8 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                 {
                     // Check all projects again immediately before removing the shared handle.
                     var snapshot = Capture(change.Project);
+                    if (!snapshot.UsageComplete)
+                        throw new InvalidOperationException("The inventory has unreadable items; registry removal blocked.");
                     if (snapshot.AreaIds.Contains(change.Id) || snapshot.Items.Any(i => i.Tags.Contains(change.Id)))
                         throw new InvalidOperationException("Tag gained a reference or became an area; registry removal blocked.");
                     if (!tags.Delete(change.Id, requireDurable: true)) throw new InvalidOperationException("Tag deletion failed.");

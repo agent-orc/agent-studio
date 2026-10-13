@@ -1,6 +1,7 @@
 using AgentStudio.Areas;
 using AgentStudio.Tags;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -339,17 +340,236 @@ public sealed class TagMaintenanceTests : IDisposable
         Assert.False(restarted.Exists("incident"));
     }
 
+    [Fact]
+    public async Task InvalidDossierInSecondProjectIsListedAndRunReportsWithoutRetirement()
+    {
+        var (workspace, configuration) = RealWorkspace(otherHasInventory: true);
+        var other = Path.Combine(_root, "other", "docs", "operations", "broken");
+        Directory.CreateDirectory(other);
+        File.WriteAllText(Path.Combine(other, "workbench.json"), "{ not json");
+
+        var (run, state) = await RunRealAsync(workspace, configuration);
+
+        Assert.Equal("reported", run.Status);
+        Assert.False(run.UsageComplete);
+        var unreadable = Assert.Single(run.Unreadable!);
+        Assert.Equal(("Other", "dossier", "broken"), (unreadable.Project, unreadable.Kind, unreadable.Id));
+        Assert.False(string.IsNullOrWhiteSpace(unreadable.Error));
+        Assert.Equal(1, run.RetireProposalsSuppressed);
+        var decision = Assert.Single(state.Decisions);
+        Assert.Equal("glossary", decision.Proposal.Kind);
+        Assert.DoesNotContain(state.Decisions, d => d.Proposal.Kind == "retire");
+    }
+
+    [Fact]
+    public async Task CheckoutLessOtherProjectHasNoInventoryAndKeepsUsageCountsComplete()
+    {
+        var (workspace, configuration) = RealWorkspace(otherHasInventory: false);
+
+        var (run, state) = await RunRealAsync(workspace, configuration);
+
+        Assert.Equal("reported", run.Status);
+        Assert.True(run.UsageComplete);
+        Assert.Empty(run.Unreadable!);
+        Assert.Equal(["Other"], run.ProjectsWithoutCheckout);
+        Assert.Equal(0, run.RetireProposalsSuppressed);
+        Assert.Contains(state.Decisions, d => d.Proposal.Kind == "retire");
+    }
+
+    [Fact]
+    public async Task MissingCheckoutOfAnotherProjectIsListedAndRunReportsWithoutRetirement()
+    {
+        var (workspace, configuration) = RealWorkspace(otherHasInventory: false, otherRoot: Path.Combine(_root, "missing"));
+
+        var (run, state) = await RunRealAsync(workspace, configuration);
+
+        Assert.Equal("reported", run.Status);
+        Assert.False(run.UsageComplete);
+        var unreadable = Assert.Single(run.Unreadable!);
+        Assert.Equal(("Other", "checkout", "Repository checkout missing for Other."),
+            (unreadable.Project, unreadable.Kind, unreadable.Error));
+        Assert.Empty(run.ProjectsWithoutCheckout!);
+        Assert.Equal(1, run.RetireProposalsSuppressed);
+        Assert.Equal("glossary", Assert.Single(state.Decisions).Proposal.Kind);
+    }
+
+    [Fact]
+    public async Task CheckoutLessProjectOwnRunReportsWithoutSynthesis()
+    {
+        var (workspace, configuration) = RealWorkspace(otherHasInventory: false);
+        var synthesis = new FakeSynthesis();
+
+        var (run, state) = await RunRealAsync(workspace, configuration, "Other", synthesis);
+
+        Assert.Equal("reported", run.Status);
+        Assert.Contains("no repository checkout", run.SynthesisSkipped);
+        Assert.Equal(0, synthesis.Calls);
+        Assert.True(run.UsageComplete);
+        Assert.Empty(run.Unreadable!);
+        Assert.Equal(["Other"], run.ProjectsWithoutCheckout);
+        Assert.Empty(state.Decisions);
+    }
+
+    [Fact]
+    public async Task MergeAndRetireFailClosedBeforeAnyWriteWhileUsageCountsAreIncomplete()
+    {
+        var workspace = new FakeWorkspace(); var service = Service(workspace);
+        var id = (await service.RunAsync("Project"))!.Decisions.Single();
+        workspace.Snapshot.Unreadable.Add(new("Other", "dossier", "broken", "Invalid descriptor."));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DecideAsync("Project", id, "apply", "operator"));
+
+        Assert.Contains("Usage counts are incomplete", error.Message);
+        Assert.Empty(workspace.Writes);
+        var state = service.Read("Project");
+        Assert.Equal("pending", state.Decisions.Single().Status);
+        Assert.Empty(state.Audit);
+        workspace.Snapshot.Unreadable.Clear();
+        Assert.Equal("applied", (await service.DecideAsync("Project", id, "apply", "operator")).Status);
+    }
+
+    [Fact]
+    public async Task RunFailingBeforeCaptureLeavesCompletenessUnknown()
+    {
+        var workspace = new FakeWorkspace { CaptureFails = true };
+
+        var run = await Service(workspace).RunAsync("Project");
+
+        Assert.Equal("failed", run!.Status);
+        Assert.Null(run.UsageComplete);
+        Assert.Null(run.Unreadable);
+        Assert.Null(run.ProjectsWithoutCheckout);
+        var reportJson = File.ReadAllText(Path.Combine(_root, "tag-maintenance",
+            TagMaintenancePolicy.Fingerprint("Project") + ".json"));
+        Assert.Contains("\"usageComplete\":null", reportJson);
+    }
+
+    [Fact]
+    public async Task CompleteInventoryStillAllowsRetirement()
+    {
+        var (workspace, configuration) = RealWorkspace(otherHasInventory: true);
+
+        var (run, state) = await RunRealAsync(workspace, configuration);
+
+        Assert.Equal("reported", run.Status);
+        Assert.True(run.UsageComplete);
+        Assert.Empty(run.Unreadable!);
+        Assert.Contains(state.Decisions, d => d.Proposal.Kind == "retire");
+    }
+
+    [Fact]
+    public void RetirementIsRejectedWhileUsageCountsAreIncomplete()
+    {
+        var snapshot = Snapshot() with { Unreadable = [new("Other", "dossier", "broken", "Invalid descriptor.")] };
+        Assert.False(snapshot.UsageComplete);
+        Assert.Throws<ArgumentException>(() => TagMaintenancePolicy.Plan("Project", snapshot,
+            Merge() with { Kind = "retire", Source = "unused" }));
+        Assert.NotEmpty(TagMaintenancePolicy.Plan("Project", snapshot, Merge()));
+    }
+
+    [Fact]
+    public async Task RepeatedHourlyFailuresKeepTheRunHistoryBounded()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 12, 0, 0, 0, TimeSpan.Zero));
+        var synthesis = new FakeSynthesis();
+        var service = Service(new(), synthesis, clock, new() { ["TagMaintenance:RunHistoryLimit"] = "10" });
+        var success = await service.RunAsync("Project");
+        Assert.Equal("reported", success!.Status);
+        synthesis.Fail = true;
+        for (var hour = 0; hour < 30; hour++)
+        {
+            clock.Advance(TimeSpan.FromHours(1));
+            Assert.Equal("failed", (await service.RunAsync("Project", force: true))!.Status);
+        }
+        var runs = service.Read("Project").Runs;
+        Assert.Equal(10, runs.Count);
+        Assert.Contains(runs, run => run.Id == success.Id);
+        Assert.Equal(clock.GetUtcNow(), runs.Max(run => run.StartedAt));
+        // The kept success still anchors the cadence: after the retry delay the next attempt is due.
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.True(TagMaintenancePolicy.Due(service.Read("Project"), clock.GetUtcNow(),
+            TimeSpan.FromDays(7), TimeSpan.FromHours(1)));
+    }
+
+    private (TagMaintenanceWorkspace Workspace, IConfiguration Configuration) RealWorkspace(bool otherHasInventory, string? otherRoot = null)
+    {
+        var project = Path.Combine(_root, "project");
+        var other = Path.Combine(_root, "other");
+        Directory.CreateDirectory(project);
+        Directory.CreateDirectory(other);
+        var settings = new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "Project", ["WatchPaths:0:Path"] = project, ["WatchPaths:0:RootPath"] = project,
+            ["WatchPaths:1:Name"] = "Other", ["WatchPaths:1:Path"] = other,
+            ["TagMaintenance:GoldenSetPath"] = Path.Combine(_root, "no-golden-set.json"),
+        };
+        // Without a checkout root the other project has no Dossier inventory at all.
+        if (otherHasInventory) settings["WatchPaths:1:RootPath"] = other;
+        if (otherRoot != null) settings["WatchPaths:1:RootPath"] = otherRoot;
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), registry,
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
+        new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance).EnsureStateFoldersAndMigrate();
+        var tags = new TagRegistryService(NullLogger<TagRegistryService>.Instance, config);
+        var areas = new AreaRegistryService(tags, new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config));
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var glossaries = new AreaGlossaryService(areas, scanner, registry,
+            new ManagedRepositoryMutationService(git, logger: NullLogger<ManagedRepositoryMutationService>.Instance),
+            NullLogger<AreaGlossaryService>.Instance);
+        var docs = new ProjectDocsService(scanner, registry, NullLogger<ProjectDocsService>.Instance);
+        var catalogue = new WorkbenchCatalogueService(scanner, registry, git, configuration: config);
+        // An ADR in the own project is the glossary proposal's terminology source.
+        Directory.CreateDirectory(Path.Combine(project, "docs", "architecture", "decisions"));
+        File.WriteAllText(Path.Combine(project, "docs", "architecture", "decisions", "adr-1.md"), "# ADR 1\n\nRunner pool decision.");
+        return (new TagMaintenanceWorkspace(scanner, mutations, tags, areas, glossaries, catalogue,
+            new WorkbenchTagService(catalogue, areas, git), docs, registry), config);
+    }
+
+    private async Task<(TagMaintenanceRun Run, TagMaintenanceState State)> RunRealAsync(
+        TagMaintenanceWorkspace workspace, IConfiguration configuration, string project = "Project",
+        FakeSynthesis? synthesis = null)
+    {
+        synthesis ??= new FakeSynthesis
+        {
+            Proposals =
+            [
+                Merge() with { Kind = "retire", Source = "observability", Evidence = ["registry:observability"] },
+                Merge() with
+                {
+                    Kind = "glossary", Evidence = ["wiki:architecture/decisions/adr-1.md"],
+                    Terms = [new() { Term = "Runner pool", Definition = "The hosts that execute agent runs." }],
+                },
+            ],
+        };
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 12, 20, 0, 0, TimeSpan.Zero));
+        var service = new TagMaintenanceService(workspace, synthesis,
+            new TagGoldenSetEvaluator(new FakeClassifier(), configuration), configuration, clock);
+        var run = await service.RunAsync(project);
+        Assert.NotNull(run);
+        Assert.Null(run.Error);
+        return (run, service.Read(project));
+    }
+
     private sealed class FakeSynthesis : ITagMaintenanceSynthesis
     {
         public string Model => "test-sonnet";
         public bool Fail { get; set; }
         public bool Cancel { get; set; }
+        public int Calls { get; private set; }
         public TagMaintenanceProposal Proposal { get; init; } = Merge();
+        public List<TagMaintenanceProposal>? Proposals { get; init; }
         public Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string input, CancellationToken ct)
         {
+            Calls++;
             if (Cancel) throw new OperationCanceledException(ct);
             return Fail ? throw new InvalidOperationException("Model unavailable")
-                : Task.FromResult<IReadOnlyList<TagMaintenanceProposal>>([Proposal]);
+                : Task.FromResult<IReadOnlyList<TagMaintenanceProposal>>(Proposals ?? [Proposal]);
         }
     }
     private sealed class FakeClassifier : ITagGoldenSetClassifier
@@ -378,9 +598,11 @@ public sealed class TagMaintenanceTests : IDisposable
         public List<string> Cards { get; } = [];
         public string? FailOnce { get; set; }
         public string? ThrowReadAfterWriteOnce { get; set; }
+        public bool CaptureFails { get; set; }
         private string? _pendingVerificationReadFailure;
         public IReadOnlyList<string> Projects() => ["Project"];
-        public TagMaintenanceSnapshot Capture(string project) => Snapshot;
+        public TagMaintenanceSnapshot Capture(string project) =>
+            CaptureFails ? throw new InvalidOperationException("Simulated capture failure") : Snapshot;
         public string CreateCard(string project, TagMaintenanceDecision decision)
         { Cards.Add(TagMaintenancePolicy.Card(project, decision)); return "card-" + decision.Id; }
         public string Read(TagMaintenanceChange change)

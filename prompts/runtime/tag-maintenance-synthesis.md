@@ -10,7 +10,7 @@ Types:
 
 Preserve stable area ids and provenance tags. Every proposal has `kind`, `source`, `target`, `label`, `reason`, `evidence` (`kind:id`, such as `card:slug`, `dossier:id`, `wiki:path`, or `registry:id`), `area` (an existing glossary id), and `terms` (the complete resulting glossary list; entries have `term`, `definition`, and `synonyms`). Keep unrelated glossary entries. Explain consequences in `reason`.
 
-For a merge, use only sources whose references are all in this project. Registry facets are workspace-wide. A registry change does not authorize a cross-project rewrite. Use no proposal when evidence is insufficient. Retirement requires `globalUsage=0`. Document excerpts are bounded and a rotating subset, so do not infer absence from excerpts. Glossary evidence must cite a decision-bearing Dossier or an ADR.
+For a merge, use only sources whose references are all in this project. Registry facets are workspace-wide. A registry change does not authorize a cross-project rewrite. Use no proposal when evidence is insufficient. Retirement requires `globalUsage=0` and `usageComplete=true`; when `unreadable` lists items, usage counts are incomplete, so propose no retirement. Document excerpts are bounded and a rotating subset, so do not infer absence from excerpts. Glossary evidence must cite a decision-bearing Dossier or an ADR.
 
 Input:
 

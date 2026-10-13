@@ -76,17 +76,32 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                 decision.CardId = workspace.CreateCard(project, decision);
             var run = new TagMaintenanceRun { StartedAt = time.GetUtcNow(), Model = synthesis.Model };
             state.Runs.Add(run);
+            // Bounded history: repeated failures cannot grow the report file without limit.
+            TagMaintenancePolicy.TrimRuns(state, Math.Clamp(
+                configuration.GetValue<int?>("TagMaintenance:RunHistoryLimit") ?? 50, 10, 1000));
             Save(project, state);
             try
             {
                 var snapshot = workspace.Capture(project);
+                run.Unreadable = snapshot.Unreadable;
+                run.UsageComplete = snapshot.UsageComplete;
+                run.ProjectsWithoutCheckout = snapshot.WithoutCheckout;
                 run.GoldenSet = await goldenSets.EvaluateAsync(project, snapshot, ct);
                 var active = snapshot.Items.Where(item => item.Project == project && item.Active).ToArray();
-                var offset = state.Runs.Where(r => r.Status == "reported").Sum(r => r.ItemsReviewed);
+                run.EligibleItems = active.Length;
+                if (snapshot.WithoutCheckout.Contains(project))
+                {
+                    // Every proposal kind is planned against an area glossary page, which needs a checkout.
+                    run.SynthesisSkipped = "Project has no repository checkout, so it has no area glossary to plan a proposal against.";
+                    run.Status = "reported";
+                    Save(project, state);
+                    return run;
+                }
+                var offset = state.ItemsReviewedTotal
+                    ?? state.Runs.Where(r => r.Status == "reported").Sum(r => r.ItemsReviewed);
                 var selected = active.Length == 0 ? [] : Enumerable.Range(0, Math.Min(30, active.Length))
                     .Select(i => active[(offset + i) % active.Length]).ToArray();
                 run.ItemsReviewed = selected.Length;
-                run.EligibleItems = active.Length;
                 run.TextOffset = active.Length == 0 ? 0 : offset % active.Length;
                 run.GlobalUsage = snapshot.Registry.ToDictionary(t => t.Id,
                     t => snapshot.Items.Count(i => i.Tags.Contains(t.Id)));
@@ -94,6 +109,8 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                 {
                     project, snapshot.Registry, snapshot.AreaIds, snapshot.Glossaries,
                     globalUsage = run.GlobalUsage,
+                    usageComplete = snapshot.UsageComplete,
+                    unreadable = snapshot.Unreadable,
                     otherProjectUsage = snapshot.Registry.ToDictionary(t => t.Id,
                         t => snapshot.Items.Count(i => i.Project != project && i.Tags.Contains(t.Id))),
                     eligibleItems = active.Length, offset,
@@ -102,6 +119,12 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                 });
                 var proposals = await synthesis.ProposeAsync(project, input, ct);
                 if (proposals.Count > 20) throw new ArgumentException("Synthesis exceeded 20 proposals.");
+                // Incomplete usage counts cannot prove a tag unused; the other proposal kinds continue.
+                if (!snapshot.UsageComplete)
+                {
+                    run.RetireProposalsSuppressed = proposals.Count(p => p.Kind == "retire");
+                    proposals = proposals.Where(p => p.Kind != "retire").ToArray();
+                }
                 // Validate the whole response before any proposal card is persisted.
                 var planned = proposals.Select(proposal =>
                 {
@@ -121,6 +144,7 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                     decision.CardId = workspace.CreateCard(project, decision);
                     Save(project, state);
                 }
+                state.ItemsReviewedTotal = offset + selected.Length;
                 run.Status = "reported";
             }
             catch (OperationCanceledException)
@@ -168,6 +192,10 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                     throw new InvalidOperationException($"Stale proposal: {change.Kind}/{change.Id}. No further writes applied.");
             }
             var snapshot = workspace.Capture(project);
+            // Fail closed: incomplete counts cannot prove that every reference of the source tag is rewritten.
+            if (decision.Proposal.Kind is "merge" or "retire" && !snapshot.UsageComplete)
+                throw new InvalidOperationException(
+                    $"Usage counts are incomplete ({snapshot.Unreadable.Count} unreadable inventory items); a {decision.Proposal.Kind} cannot be applied. No writes applied.");
             if (decision.Proposal.Kind == "add" && snapshot.AreaIds.Contains(decision.Proposal.Target))
                 throw new InvalidOperationException("Proposed facet id became an area. Request a fresh proposal.");
             if (decision.Proposal.Kind is "merge" or "retire")

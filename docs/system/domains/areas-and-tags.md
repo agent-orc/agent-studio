@@ -246,7 +246,24 @@ leaves no run record. It uses a
 Sonnet-class synthesis route at high thinking over the closed registry,
 glossaries, global usage counts, and a rotating bounded sample of active cards,
 Dossiers, and wiki articles. Each run leaves a durable per-project report under
-the task repository. The step proposes at most 20 changes across four kinds:
+the task repository.
+
+The usage inventory spans every project. An invalid Dossier, an unavailable
+Dossier or wiki inventory, or unreadable Dossier or wiki content is skipped and
+listed in the run's `unreadable[]`. The run continues and still ends
+`reported`. With any unreadable item, usage counts are marked incomplete
+(`usageComplete: false`). Retirement proposals are then dropped and counted in
+`retireProposalsSuppressed`, and registry removal is blocked at application
+time. Merge, add, and glossary proposals continue, but applying a merge or
+retirement fails closed before its first write while counts are incomplete.
+A configured repository checkout that is missing on disk is unreadable
+(`kind: checkout`). A project without any configured checkout (no
+`RepositoryPath` or `RootPath` and no in-repo task storage) has no Dossier,
+wiki, or glossary files that could carry a tag. It contributes its cards only,
+is listed in `projectsWithoutCheckout`, and does not make counts incomplete.
+Its own run ends `reported` without a synthesis call and records the reason in
+`synthesisSkipped`, because every proposal kind is planned against an area
+glossary page. The step proposes at most 20 changes across four kinds:
 
 - retire a facet only when it has no references in any project or history,
 - merge near-duplicate facets only when every affected item belongs to the
@@ -283,12 +300,13 @@ status instead of a metric claim.
 The durable maintenance report for project `<project>` is
 `<TaskRepository>/tag-maintenance/<sha256(project)>.json`, where the digest is
 the lowercase hexadecimal SHA-256 of the exact project name. It is a JSON
-object with these arrays:
+object with these fields:
 
 | Field | Schema |
 |---|---|
-| `runs[]` | `id`, `startedAt`, `status` (`running`, `reported`, or `failed`), `model`, `thinkingLevel`, `itemsReviewed`, `eligibleItems`, `textOffset`, `excerptLimit`, `globalUsage` (tag-id to count), nullable `error`, `decisions[]` (decision ids), and `goldenSet` |
+| `runs[]` | `id`, `startedAt`, `status` (`running`, `reported`, or `failed`), `model`, `thinkingLevel`, `itemsReviewed`, `eligibleItems`, `textOffset`, `excerptLimit`, `globalUsage` (tag-id to count), `usageComplete`, `unreadable[]` (`project`, `kind` (`checkout`, `dossier`, `dossier-inventory`, `wiki`, or `wiki-inventory`), `id` (empty for a checkout or an inventory), `error`), `projectsWithoutCheckout[]`; these three are null when the run failed before the inventory capture finished; `retireProposalsSuppressed`, nullable `synthesisSkipped`, nullable `error`, `decisions[]` (decision ids), and `goldenSet` |
 | `decisions[]` | `id`, `cardId`, `proposal`, exact `changes[]` (`kind`, `project`, `id`, serialized `before`, serialized `after`), `status` (`pending`, `applying`, `partial`, `applied`, or `rejected`), and nullable `error` |
+| `itemsReviewedTotal` | Nullable rotation offset over eligible items, kept so that trimming `runs[]` does not reset the sample rotation |
 | `audit[]` | `at`, `decisionId`, `actor`, `outcome`, and `detail`; approval is written before mutations, every completed write is recorded, and partial/application outcomes are appended |
 
 Within a decision, `proposal` contains `kind`, `source`, `target`, `label`,
@@ -322,6 +340,7 @@ measured but is never represented as operator-approved ground truth.
 | `TagMaintenance:Projects:<project>:Enabled` | `true` | Enables the hosted sweep for one exact project name. `false` skips that project; the explicit run API remains available. |
 | `TagMaintenance:IntervalHours` | `168` | Cadence after the most recent successful (`reported`) run. Values are clamped to 1 through 8760 hours. |
 | `TagMaintenance:RetryDelayMinutes` | `60` | Delay after the most recent failed attempt since the last success. Values are clamped to 1 through 1440 minutes. Cancellation creates no run and does not alter due time. |
+| `TagMaintenance:RunHistoryLimit` | `50` | Maximum number of `runs[]` kept per project report; the oldest runs are dropped first, but the latest `reported` run is always kept to anchor the cadence. Values are clamped to 10 through 1000. |
 | `TagMaintenance:GoldenSetPath` | Agent Studio: shipped proposed set; other projects: `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
 
 `TaskRepository` is the required workspace root for reports and per-project
