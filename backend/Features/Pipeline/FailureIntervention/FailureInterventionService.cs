@@ -165,6 +165,11 @@ public sealed class FailureInterventionService
                         CreationSource = TimelineActors.Orchestrator,
                         CreatedBy = "Orchestrator",
                         TaskType = TaskTypes.Bug,
+                        // An operator may resolve a toolchain or configuration
+                        // incident without a repository delivery. Actual commits
+                        // still require integration under the acceptance policy.
+                        NoBranchExpected = true,
+                        RequiresIntegration = false,
                     })
                     : _decisionRequests!.Request(new DecisionCardRequest
                     {
@@ -215,6 +220,12 @@ public sealed class FailureInterventionService
                 var followUp = _scanner.FindJob(existing.FollowUpTaskId, ledgerWatchPath);
                 if (followUp is not null)
                 {
+                    // Older intervention cards were created as bug cards without
+                    // a code-free declaration. The ledger identifies their purpose.
+                    if (followUp.RequiresIntegration is null && !followUp.NoBranchExpected
+                        && !_mutations.SetJobRequiresIntegration(followUp.Id, false, ledgerWatchPath))
+                        throw new InvalidOperationException(
+                            "The orchestrator could not update the existing intervention task.");
                     UpdateFollowUpReferences(followUp, intervention.AffectedCards);
                     UpdateFollowUpPrompt(followUp, intervention);
                     AttachToDecision(followUp, origin);
@@ -344,6 +355,17 @@ public sealed class FailureInterventionService
             return records.Where(record => !openOnly || record.Status == "open")
                 .OrderByDescending(record => record.CreatedAt).ToArray();
         }
+    }
+
+    /// <summary>
+    /// The durable ledger identifies legacy follow-ups even if no failure is
+    /// raised again before an operator completes the card.
+    /// </summary>
+    public bool IsInterventionFollowUp(TaskInfo task)
+    {
+        lock (_gate)
+            return Read(task.WatchPath).Any(record =>
+                string.Equals(record.FollowUpTaskId, task.Id, StringComparison.OrdinalIgnoreCase));
     }
 
     private bool IsOpen(FailureInterventionRecord record, string watchPath)

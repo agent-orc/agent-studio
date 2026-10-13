@@ -161,6 +161,49 @@ public class CompletionContractPolicyTests
         Assert.Equal(CompletionRefusalCodes.UndeclaredDeliverable, decision.RefusalCode);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CodeFreeOperatorResolutionStoresTheReasonAsEvidence(bool guarded)
+    {
+        var decision = CompletionContractPolicy.Decide(new CompletionContractFacts(
+            IntegrationRequired: false, HasAttributedCommits: false, HasEffectiveCommits: false,
+            ContainmentStatus: CompletionContractPolicy.ContainmentUnknown,
+            OperatorOverride: true, OverrideReason: Reason, Actor: "human:operator"), guarded);
+
+        Assert.True(decision.Accepted);
+        Assert.Equal(CompletionClaimBases.DeliverableWithoutCode, decision.Claim!.Basis);
+        Assert.Equal(Reason, decision.Claim.Evidence);
+        Assert.Equal(Reason, decision.Claim.Reason);
+        Assert.Equal("human:operator", decision.Claim.Actor);
+    }
+
+    [Fact]
+    public void CodeFreeDeclarationCannotBypassAttributedDelivery()
+    {
+        var decision = CompletionContractPolicy.Decide(
+            Coding(IntegrationStatuses.Pending, operatorOverride: true, reason: Reason)
+                with { IntegrationRequired = false, DeliverablePath = "results/report.md" });
+
+        Assert.False(decision.Accepted);
+        Assert.Equal(CompletionRefusalCodes.UnintegratedDelivery, decision.RefusalCode);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(CompletionContractPolicy.ContainmentUnknown)]
+    [InlineData(IntegrationStatuses.NoBranch)]
+    public void MissingCodingDeliveryCannotBeOverriddenOrReportedAsUnknown(string? containment)
+    {
+        var decision = CompletionContractPolicy.Decide(Coding(containment,
+            hasCommits: false, hasEffective: false, operatorOverride: true, reason: Reason));
+
+        Assert.False(decision.Accepted);
+        Assert.Contains("no delivery to integrate", decision.Message!);
+        Assert.DoesNotContain("could not be determined", decision.Message!);
+        Assert.DoesNotContain("written reason", decision.Message!);
+    }
+
     /// <summary>
     /// A coding card that produced nothing is not a code-free deliverable. It
     /// is told so in its own words rather than through the integration wording.

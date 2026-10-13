@@ -2985,6 +2985,13 @@
           <td>Porcelain-v1 quoting was stripped without decoding; hash failures and dismissal cleanup writes could also escape the orphan phase.</td>
           <td>The boot sweep previously aborted without recovering later projects. Recovery now reads literal NUL-delimited paths, fingerprints unreadable paths with a sentinel, and records orphan-phase failures while continuing interrupted-run recovery and later projects. Regression coverage pins the Ready requeue and later orphan finding.</td>
         </tr>
+        <tr id="case-code-free-intervention-completion">
+          <td>2026-10-13</td>
+          <td><code>AGT-3101 / AGT-3122</code><br><span class="small">code-free-intervention-completion</span></td>
+          <td>Cause breaker <code>bdbed0786cad8dec</code> could not close through the product. Completing its intervention card from Preparation or Auto Review returned HTTP 409 despite a written operator reason.</td>
+          <td>The failure-intervention service created a bug card with an implicit code-delivery requirement. Its absent delivery was reported as unknown containment.</td>
+          <td>The observed card remained in Auto Review; the operator manually closed the breaker while Stable was stopped. New intervention and cause cards explicitly declare no code delivery. Ledger-backed existing cards also complete with a written operator resolution and no attributed commits. The claim is <code>deliverable-without-code</code>; the existing sweep closes the breaker as <code>cause-integrated</code>. Attributed code still requires integration.</td>
+        </tr>
       </tbody>
     </table>
 
