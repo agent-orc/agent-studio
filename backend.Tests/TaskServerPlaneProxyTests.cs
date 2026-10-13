@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -134,6 +135,8 @@ public sealed class TaskServerPlaneProxyTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Security:Profile"] = profile })
             .Build();
+        var clock = new FakeTimeProvider();
+        var now = clock.GetUtcNow().UtcDateTime;
         var context = new DefaultHttpContext();
         context.Request.Headers[CredentialViewProtocol.ActingRoleHeader] = StudioRoles.Owner;
         if (role is not null)
@@ -142,8 +145,8 @@ public sealed class TaskServerPlaneProxyTests
                 new StudioSession
                 {
                     Id = "ses", UserId = "usr", TokenHash = "redacted", CsrfHash = "redacted",
-                    CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
-                    ExpiresAt = DateTime.UtcNow.AddHours(1), AbsoluteExpiresAt = DateTime.UtcNow.AddHours(8),
+                    CreatedAt = now, LastSeenAt = now,
+                    ExpiresAt = now.AddHours(1), AbsoluteExpiresAt = now.AddHours(8),
                 });
 
         Assert.Equal(expected, TaskServerPlaneProxy.ActingRole(context, configuration));
