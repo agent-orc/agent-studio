@@ -24,6 +24,18 @@ public sealed partial class RemoteReviewAuthorityTests
     private const string RepositoryUrl = "https://example.invalid/product.git";
     private const string ReviewHttpToken = "review-http-token-000000000000000000000000000001";
 
+    [Theory]
+    [InlineData("host-a", "host-b", false, true, ReviewHostPlacementDecision.Admit)]
+    [InlineData("host-a", "host-a", false, false, ReviewHostPlacementDecision.Admit)]
+    [InlineData("host-a", "host-a", false, true, ReviewHostPlacementDecision.YieldToOtherHost)]
+    [InlineData("host-a", "host-a", true, false, ReviewHostPlacementDecision.WaitForRequiredHost)]
+    [InlineData("host-a", "host-b", true, false, ReviewHostPlacementDecision.Admit)]
+    public void Review_host_placement_policy_has_bounded_claim_decisions(
+        string codingHost, string reviewHost, bool required, bool otherIdle,
+        ReviewHostPlacementDecision expected)
+        => Assert.Equal(expected, ReviewHostPlacementPolicy.Decide(
+            codingHost, reviewHost, required, otherIdle));
+
     [Fact]
     public async Task Versioned_library_step_is_fenced_to_its_digest_on_either_review_host()
     {
@@ -1841,6 +1853,70 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
     }
 
+    /// <summary>
+    /// AGT-3089 (AGT-3033 shape): a worker that predates the diagnosis contract
+    /// reports ProductFailure with an undiagnosed failed verify command and no
+    /// clean repeat. Normalize rewrites the outcome first, so the store keeps
+    /// the classification Normalize set; a worker that ended with its own
+    /// infrastructure class keeps DiagnosisMissing.
+    /// </summary>
+    [Theory]
+    [InlineData("ProductFailure", null, ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported)]
+    [InlineData("ReviewInfra", "CommandStalled", "DiagnosisMissing")]
+    public async Task Undiagnosed_failure_without_clean_repeat_is_classified_by_the_worker_outcome(
+        string workerOutcome, string? workerClassification, string expected)
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 12, 17, 31, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-3",
+                "build-tests",
+                "dotnet",
+                ["test"],
+                CompareToBaseline: true)],
+            ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Outcome = workerOutcome,
+            FailureClassification = workerClassification,
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                BaselineSha = new string('c', 40),
+                BaselineExitCode = 1,
+                NewFailures = ["Tests.TestClockGuardTests.Test_files_do_not_read_the_wall_clock"],
+                PreExistingFailures = [],
+                RetryPerformed = true,
+            }).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "build-tests",
+                    "block",
+                    "NewTestFailures",
+                    "1 new failure; Step verify-3 is already exiting 1 on the merge base.")
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(expected, report.FailureClassification);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -2311,8 +2387,122 @@ public sealed partial class RemoteReviewAuthorityTests
             new ReviewClaimRequest("other-host-review", "instance-b"), "other-host-review", default);
 
         Assert.Equal("empty", refused.Status);
+        Assert.Equal(ReviewClaimEmptyReasons.DifferentHostRequired, refused.Reason);
+        Assert.Contains("host-a", refused.Message);
         Assert.Equal("claimed", accepted.Status);
         Assert.Equal("host-b", accepted.Lease!.HostId);
+    }
+
+    [Fact]
+    public async Task Review_prefers_idle_eligible_other_host_and_records_both_hosts()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(store, codingHost: "host-a");
+        await RegisterReviewerAsync(store, "same-host-review", "instance-a", "host-a");
+        await RegisterReviewerAsync(store, "other-host-review", "instance-b", "host-b");
+
+        var deferred = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("same-host-review", "instance-a"), "same-host-review", default);
+        Assert.Equal(ReviewClaimEmptyReasons.DifferentHostPreferred, deferred.Reason);
+        var claimed = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("other-host-review", "instance-b"), "other-host-review", default);
+
+        Assert.Equal("claimed", claimed.Status);
+        Assert.Equal("host-a", subject.CodingHostId);
+        Assert.Equal("host-a", claimed.Subject!.CodingHostId);
+        Assert.Equal("host-b", claimed.Attempt!.HostId);
+    }
+
+    [Fact]
+    public async Task Review_claims_on_the_coding_host_without_delay_when_it_is_the_only_host()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store, codingHost: "host-a");
+        await RegisterReviewerAsync(store, "same-host-review", "instance-a", "host-a");
+
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("same-host-review", "instance-a"), "same-host-review", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("host-a", claim.Attempt!.HostId);
+    }
+
+    [Fact]
+    public async Task Busy_other_host_does_not_hold_a_same_host_review_claim()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store, codingHost: "host-b");
+        await RegisterReviewerAsync(store, "other-host-review", "instance-b", "host-b", maxParallelism: 1);
+        var occupied = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("other-host-review", "instance-b"), "other-host-review", default);
+        Assert.Equal("claimed", occupied.Status);
+
+        await SeedReviewSubjectAsync(store, title: "Next review", codingHost: "host-a");
+        await RegisterReviewerAsync(store, "same-host-review", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("same-host-review", "instance-a"), "same-host-review", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("host-a", claim.Attempt!.HostId);
+    }
+
+    [Fact]
+    public async Task Hard_host_requirement_names_the_wait_with_only_one_host()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store, policyDifferentHost: true, codingHost: "host-a");
+        await RegisterReviewerAsync(store, "same-host-review", "instance-a", "host-a");
+
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("same-host-review", "instance-a"), "same-host-review", default);
+
+        Assert.Equal("empty", claim.Status);
+        Assert.Equal(ReviewClaimEmptyReasons.DifferentHostRequired, claim.Reason);
+        Assert.Contains("requires host separation", claim.Message);
+    }
+
+    [Fact]
+    public async Task Review_subject_rejects_a_coding_host_that_disagrees_with_the_source_run()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(store, codingHost: "host-a");
+        var request = new CreateReviewSubjectRequest(
+            subject.TaskId, subject.SourceRunId, subject.RepositoryId,
+            subject.RepositoryUrl, subject.ExpectedResultSha, subject.ResultRef,
+            subject.SourceBundleArtifactId, subject.SourceBundleSha256, "host-b",
+            subject.ReviewPolicyHash, subject.Plan, "different-subject-key");
+
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.CreateReviewSubjectAsync(request, "orchestrator", default));
+        Assert.Equal("coding-host-mismatch", conflict.Code);
+    }
+
+    [Fact]
+    public async Task Review_subject_replay_accepts_an_omitted_coding_host()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(store, codingHost: "host-a");
+        var replay = await store.CreateReviewSubjectAsync(new CreateReviewSubjectRequest(
+            subject.TaskId, subject.SourceRunId, subject.RepositoryId,
+            subject.RepositoryUrl, subject.ExpectedResultSha, subject.ResultRef,
+            subject.SourceBundleArtifactId, subject.SourceBundleSha256, null,
+            subject.ReviewPolicyHash, subject.Plan, $"subject-{subject.TaskId}"),
+            "orchestrator", default);
+
+        Assert.Equal(subject.SubjectId, replay.SubjectId);
+        Assert.Equal("host-a", replay.CodingHostId);
     }
 
     [Fact]
@@ -2621,7 +2811,8 @@ public sealed partial class RemoteReviewAuthorityTests
         TaskServerStore store,
         string id,
         string instance,
-        string host)
+        string host,
+        int maxParallelism = 2)
         => await store.RegisterRunnerAsync(
             id,
             new RegisterRunnerRequest(
@@ -2636,7 +2827,7 @@ public sealed partial class RemoteReviewAuthorityTests
                     ReviewCapabilities.LibraryStepV1,
                     CapabilityProtocol.CliExecution("codex"),
                     CapabilityProtocol.ProviderAuthentication("codex"),
-                ]),
+                ], BootstrapMaxParallelism: maxParallelism),
             id,
             default);
 

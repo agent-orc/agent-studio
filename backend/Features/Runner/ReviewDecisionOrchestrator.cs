@@ -733,7 +733,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 skipReason = reason;
         }
 
-        foreach (var pending in EnumeratePending(workspace, entry, NoteSkip))
+        // AGT-3083: classify only the requested card. Walking the whole lane
+        // cost one integration lookup per canonical card on every re-drive.
+        foreach (var pending in EnumeratePending(workspace, entry, NoteSkip, onlyJobId: jobId))
         {
             if (ct.IsCancellationRequested)
                 return PostProcessingCardResult.Deferred("cancelled");
@@ -2384,6 +2386,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     : CompletionGate.CompletionGateAction.Reissue,
                 Findings = dossierReview.Findings.ToList(),
                 Reason = "The referenced Dossier was not updated through its append-only implementation log.",
+                Source = CompletionGate.CompletionGateSource.DossierMaintenance,
             };
             await HandleCompletionGateAsync(workspace, entry, pending, current, dossierGate, ct);
             return;
@@ -4804,7 +4807,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         // Reissue: foreground the gate's findings so the next run finishes the
         // open work instead of restarting blind.
-        var followUp = CompletionGate.BuildFollowUp(gate.Findings);
+        var followUp = CompletionGate.BuildFollowUp(gate.Findings, source: gate.Source);
         var moved = MoveReissueToReadyTop(current, entry, "completion-gate", workspace);
         if (moved == null)
         {
@@ -4890,6 +4893,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// returned as unavailable evidence, so it never invents a work deficiency.
     /// An unavailable service, explicit disable, or condition
     /// mismatch records an honest skipped row rather than remaining Pending.
+    /// Within one open attempt, unchanged grade inputs reuse the earlier graded
+    /// report without side effects (<see cref="AgentStudio.Review.CodeReviewGradeReuse"/>).
     /// </summary>
     private async Task<AgentStudio.Review.CodeReviewStepReport?> RunCodeReviewGradePostStepAsync(
         WatchPathEntry entry,
@@ -4965,19 +4970,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             selectedThinkingLevel = thinkingLevel;
             selectedModelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
-            // Persist dispatch before the one-shot begins. A slow or interrupted
-            // reviewer now reads Running instead of the misleading Pending state.
-            _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
-            {
-                StepId = stepId,
-                Kind = StepKind.Orchestrator,
-                Status = PipelineStepStatus.Running,
-                StartedAt = startedAt,
-                Model = selectedModel,
-                ThinkingLevel = selectedThinkingLevel,
-                ModelSource = selectedModelSource,
-            });
-
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
 
             var request = new AgentStudio.Review.CodeReviewStepRequest(
@@ -4996,6 +4988,37 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
                 CardMode = ReviewCardMode.Describe(job.Mode),
             };
+            var inputKey = AgentStudio.Review.CodeReviewGradeReuse.ComputeInputKey(request);
+            request = request with { InputKey = inputKey };
+
+            // A deferred review re-drives the same open attempt on every tick.
+            // Unchanged inputs reuse that attempt's graded report with no side
+            // effects. Decided before the Running row, which would otherwise
+            // move the terminal row into earlierRuns.
+            var reused = TryReuseCodeReviewGrade(job.FolderPath, inputKey);
+            if (reused is not null)
+            {
+                _logger.LogInformation(
+                    "code-review-grade: reused project={Project} job={JobId} grade={Grade} inputKey={InputKey} file={File}",
+                    entry.Name, job.Id,
+                    AgentStudio.Review.CodeReviewGradeParsing.GradeToken(reused.Grade!.Value),
+                    AgentStudio.Review.CodeReviewGradeReuse.ShortKey(inputKey),
+                    reused.FileName);
+                return reused;
+            }
+
+            // Persist dispatch before the one-shot begins. A slow or interrupted
+            // reviewer now reads Running instead of the misleading Pending state.
+            _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = StepKind.Orchestrator,
+                Status = PipelineStepStatus.Running,
+                StartedAt = startedAt,
+                Model = selectedModel,
+                ThinkingLevel = selectedThinkingLevel,
+                ModelSource = selectedModelSource,
+            });
 
             var report = await _codeReviewStep.RunAsync(request, ct);
             if (!string.IsNullOrWhiteSpace(report.ExecutionError))
@@ -5080,6 +5103,31 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 selectedModelSource);
             return null;
         }
+    }
+
+    private AgentStudio.Review.CodeReviewStepReport? TryReuseCodeReviewGrade(
+        string jobFolderPath,
+        string inputKey)
+    {
+        var checkpoint = _pipelineLog?.ReadRestartCheckpoint(
+            jobFolderPath, PipelineCatalogue.CodeReviewGradeStepId);
+        if (checkpoint is null || string.IsNullOrWhiteSpace(checkpoint.EvidenceRef)) return null;
+
+        string? reportMarkdown = null;
+        try
+        {
+            var reportPath = Path.Combine(jobFolderPath, Path.GetFileName(checkpoint.EvidenceRef));
+            if (File.Exists(reportPath)) reportMarkdown = File.ReadAllText(reportPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex,
+                "code-review-grade: earlier report {File} is unreadable; grading afresh",
+                checkpoint.EvidenceRef);
+        }
+
+        return AgentStudio.Review.CodeReviewGradeReuse.TryReuse(
+            checkpoint, inputKey, reportMarkdown, jobFolderPath);
     }
 
     private void RecordCodeReviewGradeTerminal(
@@ -5741,7 +5789,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var repositoryRoot = string.IsNullOrWhiteSpace(entry.RepositoryPath)
                 ? entry.RootPath
                 : entry.RepositoryPath;
-            review = _dossierMaintenance.Review(entry.Name, repositoryRoot, current);
+            // A pure absence on the attributed range is re-checked on the run
+            // result or the integration tip: AGT-3049 was reopened because its
+            // attributed commits were superseded by unattributed fix rounds
+            // that had already landed the entry on develop.
+            var candidates = _dossierMaintenance.ResolveRevisionCandidates(
+                repositoryRoot,
+                current,
+                ReviewSubjectStore.Read(current.FolderPath)?.ResultSha,
+                _projectSettings?.Get(entry.Name)?.IntegrationBranch);
+            review = _dossierMaintenance.Review(entry.Name, repositoryRoot, current, candidates);
         }
         catch (Exception ex)
         {
@@ -7702,12 +7759,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// <param name="onSkipped">
     /// Optional probe invoked as <c>(jobId, reason)</c> whenever a card in the
     /// lane is passed over. The workspace sweep ignores it; the per-card path
-    /// uses it so a card that produced no decision can name why.
+    /// uses it so a card that produced no decision can name why. The
+    /// canonical-review wait is classified only when this probe is present:
+    /// without a listener the reason would reach nothing but a Debug line.
+    /// </param>
+    /// <param name="onlyJobId">
+    /// When set, every other card in the lane is passed over before any
+    /// classification, so the per-card path reads only its own card.
     /// </param>
     private IEnumerable<PendingDecision> EnumeratePending(
         string workspace,
         WatchPathEntry entry,
-        Action<string, string>? onSkipped = null)
+        Action<string, string>? onSkipped = null,
+        string? onlyJobId = null)
     {
         // ADR-0024: list 4-auto-review through the typed layer
         // instead of walking the lane directory by hand. The cache
@@ -7715,6 +7779,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // faster than the original folder-walk + ScanAllJobs FirstOrDefault.
         foreach (var info in _taskAccess.ListByLaneInWorkspace(entry.Path, TaskStates.AutoReview))
         {
+            if (onlyJobId is not null && !string.Equals(info.Id, onlyJobId, StringComparison.Ordinal))
+                continue;
             if (info.Fixture)
             {
                 onSkipped?.Invoke(info.Id, "fixture-card");
@@ -7741,12 +7807,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask);
             if (authorityKey is not null)
             {
+                if (onSkipped is null)
+                {
+                    _logger.LogDebug(
+                        "ReviewDecisionOrchestrator skipped canonical remote review {TaskKey}.",
+                        authorityKey);
+                    continue;
+                }
                 var canonicalWait = ClassifyCanonicalReviewWait(info, authorityKey);
                 _logger.LogDebug(
                     "ReviewDecisionOrchestrator skipped canonical remote review {TaskKey}; {Reason}.",
                     authorityKey,
                     canonicalWait);
-                onSkipped?.Invoke(info.Id, canonicalWait);
+                onSkipped(info.Id, canonicalWait);
                 continue;
             }
 

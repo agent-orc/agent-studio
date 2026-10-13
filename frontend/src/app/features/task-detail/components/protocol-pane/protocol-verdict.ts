@@ -159,6 +159,14 @@ function collectSignals(input: ProtocolVerdictInputs): RunOutcomeSignal[] {
         'Pipeline failure',
         `${failed.length} pipeline step${failed.length === 1 ? '' : 's'} failed: ${failed.map(step => step.stepId).join(', ')}.`,
       ));
+    } else if ((pipeline.steps ?? []).some(step => step.status === 'needsDecision')) {
+      // AGT-3045: a run parked on operator decisions (NeedsInput) is not a failure.
+      signals.push(signal(
+        'pipeline',
+        'needs-decision',
+        'Needs decision',
+        'The core run parked on open operator decisions.',
+      ));
     } else if (pipeline.completedAt) {
       signals.push(signal('pipeline', 'succeeded', 'Pipeline completed', 'All recorded pipeline steps completed without failure.'));
     } else if ((pipeline.steps ?? []).some(step => step.status === 'running' || step.status === 'pending')) {

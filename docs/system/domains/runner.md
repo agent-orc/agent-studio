@@ -45,6 +45,16 @@ preview links are bounded result artifacts. The Connector remains the browser
 edge, and the native host manager owns installation and service lifecycle. The
 Task Server remains the sole claim, lease, and report authority.
 
+### Scheduled coverage run
+
+`agent-host coverage-run` (`runner/CoverageRunCommand.cs`, AGT-3074) is an
+offline subcommand started by `agent-coverage-run.timer`. It never claims work
+from the Task Server. `CoverageRunPlanner` turns `.agent-studio/project.yml`
+into prepare, build and the `release`-category suites; `CoverageRunAdmission`
+skips the run while the host holds coding, review or gate claims or load, and
+measures each integration-branch commit once. `--dry-run` prints the commands.
+Setup: [Scheduled coverage run](../../operations/setup/linux-runner-host.md#scheduled-coverage-run).
+
 ### Claimable gate host and Task API
 
 `RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
@@ -390,6 +400,17 @@ rollout decision.
   the current boot's `bootId`, and `detectedAt`. A new boot may rediscover the
   same dirty files; these fields distinguish discovery from file age. Expiry
   never commits or discards recovered files.
+  Before queuing, the scan checks branch and HEAD reflogs, whether the index
+  tree matches a strict ancestor of HEAD, and whether staged changes mostly
+  reverse a recent ancestor diff. A moved branch ref produces a
+  `ref-drift` entry with commit count, changed-file counts, unique worktree
+  blobs, and any `.git/index.lock` age and size. The commit endpoint checks
+  drift again and refuses a reverse-diff commit; the operator can leave the
+  checkout as is. Unique blobs require an explicit backup or stash before a
+  future checkout sync. An unattributed orphan with more than 200 files or
+  deletions above three times insertions (and above 100 lines) requires a
+  second confirmation. The dialog uses `detectedAt` as the finding date and
+  labels `createdAt` as the oldest file change.
 - `backend/Services/Supervisor/*`: Layer 2 advisory loop, meta-cycle, and rare
   intervention primitives.
 - `runner/*`: the standalone `agent-host` daemon. A dependency-free console

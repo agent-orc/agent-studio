@@ -264,6 +264,55 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessCardAsync_ClassifiesOnlyTheRequestedCanonicalCard()
+    {
+        // AGT-3083: post-processing one card used to classify every canonical
+        // card in the lane, one integration lookup each, and drop all but one
+        // result. A deferral re-drive must cost exactly one lookup.
+        string[] keys = ["lane-a", "lane-b", "lane-c", "lane-d", "lane-e"];
+        foreach (var key in keys) SeedNoOpReviewJob(key);
+        var deps = BuildDeps(canonicalReviewTaskKeys: keys, withIntegrationStatus: true);
+
+        var result = await deps.Orchestrator.ProcessCardAsync(
+            _workspace, Project, "lane-c", _watchPath, CancellationToken.None);
+
+        Assert.Equal(PostProcessingCardStatus.Deferred, result.Status);
+        Assert.Equal(PostProcessingCardResult.AwaitingCanonicalReviewVerdict, result.Reason);
+        Assert.Equal(1, deps.Integration!.LookupCount);
+    }
+
+    [Fact]
+    public async Task ProcessCardAsync_CardOutsideTheLane_StaysNotPendingWithoutAnyLookup()
+    {
+        string[] keys = ["lane-a", "lane-b"];
+        foreach (var key in keys) SeedNoOpReviewJob(key);
+        var deps = BuildDeps(canonicalReviewTaskKeys: keys, withIntegrationStatus: true);
+
+        var result = await deps.Orchestrator.ProcessCardAsync(
+            _workspace, Project, "absent-card", _watchPath, CancellationToken.None);
+
+        Assert.Equal(PostProcessingCardStatus.Deferred, result.Status);
+        Assert.Equal("card-not-pending-in-auto-review", result.Reason);
+        Assert.Equal(0, deps.Integration!.LookupCount);
+    }
+
+    [Fact]
+    public async Task TickOnceAsync_DoesNotClassifyCanonicalCardsItOnlyLogs()
+    {
+        // The backstop tick passes no skip probe, so a classification would
+        // reach nothing but a Debug line.
+        string[] keys = ["tick-a", "tick-b", "tick-c", "tick-d", "tick-e"];
+        foreach (var key in keys) SeedNoOpReviewJob(key);
+        var deps = BuildDeps(canonicalReviewTaskKeys: keys, withIntegrationStatus: true);
+
+        await deps.Orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(0, deps.Integration!.LookupCount);
+        foreach (var key in keys)
+            Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, key)));
+    }
+
+    [Fact]
     public async Task ProcessCardAsync_WhenDecisionPathRuns_ReportsDecided()
     {
         // The counter-example: a card the engine does own still runs its
@@ -812,7 +861,8 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
 
     private Deps BuildDeps(
         bool reviewDecisionEnabled = true,
-        IReadOnlyCollection<string>? canonicalReviewTaskKeys = null)
+        IReadOnlyCollection<string>? canonicalReviewTaskKeys = null,
+        bool withIntegrationStatus = false)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -858,6 +908,11 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
         var attemptAuthority = canonicalReviewTaskKeys is { Count: > 0 }
             ? new AttemptAuthorityService(config, NullLogger<AttemptAuthorityService>.Instance)
             : null;
+        var integration = withIntegrationStatus
+            ? new TaskIntegrationStatusService(git, settings,
+                new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+                NullLogger<TaskIntegrationStatusService>.Instance)
+            : null;
         var orchestrator = new ReviewDecisionOrchestrator(
             scanner,
             stateMachine,
@@ -868,10 +923,11 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             new AutoReviewStatusSnapshot(),
             config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
-            attemptAuthority: attemptAuthority);
+            attemptAuthority: attemptAuthority,
+            integrationStatus: integration);
         orchestrator.CliRunner = (_, _, _, _, _) => Task.FromResult("");
 
-        return new Deps(config, scanner, mutations, new AutoReviewPostProcessingQueue(), orchestrator);
+        return new Deps(config, scanner, mutations, new AutoReviewPostProcessingQueue(), orchestrator, integration);
     }
 
     private void SeedNoOpReviewJob(string slug)
@@ -892,5 +948,6 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
         TaskScannerService Scanner,
         TaskMutationService Mutations,
         AutoReviewPostProcessingQueue Queue,
-        ReviewDecisionOrchestrator Orchestrator);
+        ReviewDecisionOrchestrator Orchestrator,
+        TaskIntegrationStatusService? Integration = null);
 }

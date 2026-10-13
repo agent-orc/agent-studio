@@ -726,14 +726,37 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   lane meanings are global.
 - Accept in Human Review confirms the already integrated result and records its
   delivery epoch, immutable result SHA, target branch, and target ref fingerprint.
-  A changed delivery or target ref makes the verdict stale and returns the card
-  to Auto Review. Archive checks the same integration truth centrally for
+  The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
+  A new delivery epoch or result SHA, or a delivery no longer integrated in the
+  published branch, makes the verdict stale and returns the card to Auto Review.
+  Older claims without these delivery fields remain accepted while Git reports
+  the delivery integrated. An explicit operator override remains accepted for
+  its recorded delivery; advancing the target branch does not reopen it.
+  The reconciler blocks the entire Delivered reopen batch and logs one warning
+  summary when more than 20 cards would leave Delivered in a pass. Archive checks
+  the same integration truth centrally for
   single moves, drag, batch moves, and management sweeps. An owner can override
   one card through the move API with a written reason; the audit and timeline
   retain the actor, time, delivery and target facts. Sweeps skip blocked cards
   and report each one. `requiresIntegration` may be configured on a card, but
   any actual repository change always requires integration. New coding cards
   cannot be created directly in a protected review or terminal lane.
+  This keeps the Delivery Chain Dossier's selected `integrated-only` review option;
+  the corrected freshness rule compares the accepted delivery and current Git
+  reachability instead of requiring an unchanged target HEAD.
+- The one-time `delivery-stale-repair-2026-10-11` management command restores
+  cards from the 2026-10-11 false bounce after the fixed backend is live. Run
+  `POST /api/v1/management/commands` with
+  `{ "kind": "delivery-stale-repair-2026-10-11", "dryRun": true, "idempotencyKey": "delivery-repair-preview" }`
+  first, authenticated as a management operator and with `X-Client-Id`.
+  Apply with `dryRun: false`,
+  `confirmation: "delivery-stale-repair-2026-10-11"`, and a new idempotency key.
+  The selector requires the exact Completed to Auto Review to Human Review
+  incident timeline on that date, no current completion claim, and either a
+  current integrated Git verdict or the recorded operator override with its
+  written reason. It refuses more than 250 candidates, records an
+  audited command, and restores the accepted claim without re-running the newer
+  content gate. Do not run the apply command before this fix is deployed.
 - `PUT /api/tasks/{jobId}/state` and `POST /api/tasks/{jobId}/move` accept
   `archiveOverride: true` only for a single move from `6-completed` to
   `7-archive`. The caller must be an owner and supply a usable written `reason`.
@@ -1077,6 +1100,23 @@ current/delivery/review brief versions, and content finding in the completion
 claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
+
+Human Review acceptance also matches the card's review subject against the
+attempt authority store (`AcceptanceAttemptLineagePolicy`, pure, matrix-tested;
+AGT-3076). A lineage mismatch is a refusal (HTTP 409), never a server error. When
+the store no longer holds the RunAttempt the subject names, for example after
+the store was rebuilt into a new authority epoch, the refusal is checked before
+the content gate, because the content verdict was lost with the run. It names
+the cause with code `run-attempt-missing` ("no run attempt in the current
+authority epoch"). A written `operatorOverride` accepts such a card against its
+remaining delivery evidence. The completion claim evidence states that no run
+attempt was available. An `accepted_without_run_attempt` timeline entry records
+the authority epoch, the subject's run attempt, integration status, branch and
+SHA, delivery ref, result SHA, and `task.json` commits. The integration check
+still applies, so an override does not accept an unintegrated delivery. A stale
+or mismatched subject stays refused even with an override, because a different
+delivery is current. The task detail projects `acceptanceAttemptGap`, and the
+delivery panel explains why acceptance needs an override.
 
 `GET /api/projects/{id}/completed-lane/content-review-gaps` is a read-only
 inventory of completed and archived cards whose accepted claim lacks a passed
@@ -1482,9 +1522,10 @@ their authoritative checks; display state never grants permission to mutate.
   state. A repository computation runs at most four Git children at once.
   One Git config command per index run supplies both the effective
   config signature and primary origin. The 45 s sweep checks effective config
-  separately. `TaskIntegrationStatusService` also memoizes origin once per
-  repository in authoritative action lookups, using Git's own config semantics.
-  Origin memoization and every path-keyed map in `TaskListGitProjectionCache`
+  separately. Both publish that capture into the process-wide `GitOriginStore`,
+  which `TaskIntegrationStatusService` reads the origin from, using Git's own
+  config semantics (AGT-3083).
+  The origin store and every path-keyed map in `TaskListGitProjectionCache`
   (repository snapshots, review-subject generations, sidecar stamps and read
   grouping) share `FileSystemPathComparer`: case-sensitive on Linux,
   case-insensitive on Windows and macOS. Case-distinct checkouts on Linux
@@ -1492,10 +1533,19 @@ their authoritative checks; display state never grants permission to mutate.
   board read that spans several repositories groups tasks by watch path and
   takes each task's facts only from its own repository's snapshot; a fact a
   snapshot carries for a task outside its group is never merged.
-- **Origin reads are bounded per integration lookup.** Delivered cards in one
-  lookup share one effective origin read per checkout root, including a missing
-  origin. The next lookup reads Git configuration again, so origin changes and
-  external includes remain visible without a persistent TTL cache.
+- **Origin reads come from one process-wide store (AGT-3083).** `GitOriginStore`
+  is a DI singleton keyed by the normalized checkout root. It holds the
+  `GitEffectiveConfig` Git resolved (`git config --includes --show-origin
+  --list`), and a lookup answers from it while every config file Git said
+  contributed is byte-identical. A changed or removed contributing file, an
+  unknown root, or a root the index does not cover resolves through Git once
+  and stores the result. A missing origin is stored like any other capture; a
+  failed capture (missing checkout, Git error) reads as no origin and is not
+  stored. A config source created after a capture, such as an include target
+  that did not exist yet, is not among the stamped files; the next index run or
+  45 s safety sweep publishes a fresh capture, so it becomes visible within one
+  sweep interval. Delivered cards in one lookup still share one origin read per
+  checkout root. There is no partial config parser and no TTL.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;
@@ -1522,7 +1572,10 @@ their authoritative checks; display state never grants permission to mutate.
   logs the slowest subcommand. `GitProcessTelemetry` (the same accounting used
   for every other `git-info` request) retains a rolling per-label window so
   `GET /api/admin/git-telemetry` can report p50/p95 and spawns/minute per
-  endpoint alongside each repository's index age, with a warning when
+  endpoint. Call counts and spawn totals come from per-minute buckets and
+  count every call in the window; p50/p95 come from a bounded reservoir of the
+  newest 2,000 calls, and `percentileSampleCount` says how many calls they
+  were taken from (AGT-3083). These appear alongside each repository's index age, with a warning when
   `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min. Repository
   entries also expose consecutive index failures, the last error, and when
   the failure streak began, and a warning names each failing repository. The

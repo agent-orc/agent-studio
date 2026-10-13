@@ -216,6 +216,33 @@ public static class ReviewClaimEmptyReasons
     public const string QuotaDeferred = "quota-deferred";
     public const string CapabilityAdmission = "capability-admission";
     public const string UnclaimablePlanRequirements = "unclaimable-plan-requirements";
+    public const string DifferentHostRequired = "different-review-host-required";
+    public const string DifferentHostPreferred = "different-review-host-preferred";
+}
+
+public enum ReviewHostPlacementDecision
+{
+    Admit,
+    WaitForRequiredHost,
+    YieldToOtherHost,
+}
+
+public static class ReviewHostPlacementPolicy
+{
+    public static ReviewHostPlacementDecision Decide(
+        string? codingHostId,
+        string reviewHostId,
+        bool requireDifferentHost,
+        bool hasIdleEligibleDifferentHost)
+    {
+        if (string.IsNullOrWhiteSpace(codingHostId)
+            || !string.Equals(codingHostId, reviewHostId, StringComparison.Ordinal))
+            return ReviewHostPlacementDecision.Admit;
+        if (requireDifferentHost) return ReviewHostPlacementDecision.WaitForRequiredHost;
+        return hasIdleEligibleDifferentHost
+            ? ReviewHostPlacementDecision.YieldToOtherHost
+            : ReviewHostPlacementDecision.Admit;
+    }
 }
 
 /// <summary>A pending attempt the claiming executor cannot take, and the keys it lacks.</summary>

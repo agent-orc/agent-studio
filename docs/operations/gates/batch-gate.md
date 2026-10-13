@@ -18,6 +18,18 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   deadline, urgent tags, operator close-now, and overlap policy. A separate
   overlap policy excludes cards touching a chosen member's files. Decisions
   are persisted for the state API. Pending reviews appear in the look-ahead.
+- Each card's paths and changed lines come from its result SHA, measured
+  from the merge base with `refs/remotes/origin/<branch>`, the ref the
+  planning tick fetches. A card whose diff cannot be computed scores at the
+  balanced limit and uses the per-task gate under `balanced` and
+  `conservative`.
+- The planner's risk score (`BatchGateRiskModel`) combines changed-path
+  count, merge-base changed lines, the number of infrastructure paths, and
+  the prior-red, flaky, and red-area history flags. It is a relative scale
+  tuned to the measured deliveries of 2026-10-12, not yet a calibrated red
+  probability: D10's historical per-card green rate after review is 57.9%,
+  and the batch report's observed green rate replaces it once enough batches
+  have run.
 - The bounded advisor can approve, adjust, or veto membership. It cannot change
   tests, and errors or timeouts use the deterministic plan.
 - Batch runs request the full test level and use the configured timeout, default

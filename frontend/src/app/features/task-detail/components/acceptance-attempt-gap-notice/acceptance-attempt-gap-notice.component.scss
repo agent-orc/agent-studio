@@ -1,0 +1,33 @@
+:host { display: block; min-width: 0; }
+
+// AGT-3076: a current, actionable acceptance block reads as a warn tint with
+// a status dot (R1: no accent bar).
+.attempt-gap {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-2) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, var(--studio-border));
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+
+.attempt-gap__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: var(--studio-spacing-1);
+  border-radius: 50%;
+  background: var(--studio-accent-warn);
+}
+
+.attempt-gap__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
+.attempt-gap__line,
+.attempt-gap__hint { margin: 0; overflow-wrap: anywhere; }
+.attempt-gap__line { color: var(--studio-fg-strong); font-weight: 600; }
+.attempt-gap__epoch { font-variant-numeric: tabular-nums; }
+.attempt-gap__hint { color: var(--studio-fg-muted); font-size: 0.72rem; }
+.attempt-gap__hint code { color: var(--studio-fg); }

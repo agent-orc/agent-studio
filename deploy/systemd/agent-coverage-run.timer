@@ -1,0 +1,13 @@
+[Unit]
+Description=Schedule the Agent Studio coverage run at night
+
+[Timer]
+# Three chances per night: a run skipped because the host is busy is retried,
+# and a commit that was already measured is skipped as unchanged.
+OnCalendar=*-*-* 01,03,05:15:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=agent-coverage-run.service
+
+[Install]
+WantedBy=timers.target

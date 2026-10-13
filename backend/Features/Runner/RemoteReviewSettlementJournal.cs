@@ -243,12 +243,20 @@ public static class RemoteReviewSettlementPolicy
     /// </summary>
     public static bool RestoreDeliverySidecar(TaskInfo task, RemoteReviewSettlementEntry entry)
     {
-        if (entry.Delivery is not { } delivery
-            || !string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal)
-            || RemoteDeliverySettlementStore.MatchesAttempt(
-                RemoteDeliverySettlementStore.Read(task.FolderPath), entry.AttemptId))
-            return false;
-        RemoteDeliverySettlementStore.Write(task.FolderPath, delivery);
+        if (!WouldRestoreDeliverySidecar(task, entry)) return false;
+        RemoteDeliverySettlementStore.Write(task.FolderPath, entry.Delivery!);
         return true;
     }
+
+    /// <summary>
+    /// True when <see cref="RestoreDeliverySidecar"/> would write for this
+    /// lane: the journal carries a delivery and the sidecar does not belong to
+    /// the entry's attempt. Callers on a lane snapshot re-read the card only
+    /// then (AGT-3091).
+    /// </summary>
+    public static bool WouldRestoreDeliverySidecar(TaskInfo task, RemoteReviewSettlementEntry entry)
+        => entry.Delivery is not null
+           && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal)
+           && !RemoteDeliverySettlementStore.MatchesAttempt(
+               RemoteDeliverySettlementStore.Read(task.FolderPath), entry.AttemptId);
 }

@@ -1592,10 +1592,11 @@ public sealed partial class TaskServerStore
             await ExecuteAsync(connection, """
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
-                    required_capabilities_json, canary_capabilities_json, brief_version)
+                    required_capabilities_json, canary_capabilities_json, brief_version,
+                    coding_host_id)
                 VALUES (
                     $run, $task, 'running', $runner, $fence, $now, $now,
-                    $requiredCapabilities, $canaryCapabilities, $briefVersion);
+                    $requiredCapabilities, $canaryCapabilities, $briefVersion, $codingHost);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
                 UPDATE pending_follow_ups
@@ -1606,6 +1607,7 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
+                ("$codingHost", capabilityRunner.HostId),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)),
                 ("$legacyFollowUp", continuationIntent is null ? 1 : 0),
@@ -3323,8 +3325,8 @@ public sealed partial class TaskServerStore
                 var runStatus = attempt.State == "leased" ? "process-unknown" : attempt.State;
                 await ExecuteAsync(connection, """
                     INSERT INTO runs(id, task_id, status, runner_id, fence, created_at, started_at,
-                                     finished_at, result_sha, repository_id)
-                    VALUES ($id, $task, $status, $runner, $fence, $created, $started, $finished, $sha, $repository)
+                                     finished_at, result_sha, repository_id, coding_host_id)
+                    VALUES ($id, $task, $status, $runner, $fence, $created, $started, $finished, $sha, $repository, $codingHost)
                     ON CONFLICT(id) DO NOTHING;
                     INSERT INTO fence_counters(task_id, last_fence) VALUES ($task, $fence)
                     ON CONFLICT(task_id) DO UPDATE SET last_fence = max(last_fence, excluded.last_fence);
@@ -3333,7 +3335,8 @@ public sealed partial class TaskServerStore
                     ("$runner", attempt.Lease?.ExecutorId), ("$fence", attempt.LastFence),
                     ("$created", Iso(attempt.CreatedAt)), ("$started", attempt.Lease is null ? null : Iso(attempt.Lease.AcquiredAt)),
                     ("$finished", attempt.TerminalAt is null ? null : Iso(attempt.TerminalAt.Value)),
-                    ("$sha", attempt.ResultSha), ("$repository", attempt.RepositoryId));
+                    ("$sha", attempt.ResultSha), ("$repository", attempt.RepositoryId),
+                    ("$codingHost", attempt.Lease?.HostId));
                 if (attempt.Lease is { } lease)
                 {
                     var leaseStatus = attempt.State == "leased" ? "process-unknown" : "completed";
@@ -3370,14 +3373,16 @@ public sealed partial class TaskServerStore
                 var subject = attempt.Subject;
                 await ExecuteAsync(connection, """
                     INSERT INTO review_subjects(id, task_id, source_run_id, repository_id, repository_url,
-                                                expected_result_sha, result_ref, review_policy_hash, plan_json,
+                                                expected_result_sha, result_ref, coding_host_id, review_policy_hash, plan_json,
                                                 idempotency_key, created_at)
-                    VALUES ($id, $task, $run, $repository, $url, $sha, $ref, $policy, $plan, $key, $created)
+                    VALUES ($id, $task, $run, $repository, $url, $sha, $ref, $codingHost, $policy, $plan, $key, $created)
                     ON CONFLICT(id) DO NOTHING;
                     """, ct, transaction,
                     ("$id", subject.SubjectId), ("$task", task.TaskId), ("$run", attempt.SourceRunAttemptId),
                     ("$repository", subject.RepositoryId), ("$url", subject.RepositoryUrl),
                     ("$sha", subject.ExpectedResultSha), ("$ref", subject.ResultRef),
+                    ("$codingHost", authority.CodingAttempts.FirstOrDefault(run =>
+                        string.Equals(run.AttemptId, attempt.SourceRunAttemptId, StringComparison.Ordinal))?.Lease?.HostId),
                     ("$policy", subject.ReviewPolicyHash), ("$plan", subject.PlanJson),
                     ("$key", $"legacy-review-subject:{subject.SubjectId}"), ("$created", Iso(subject.CreatedAt)));
                 var number = reviewNumberBySubject.GetValueOrDefault(subject.SubjectId) + 1;

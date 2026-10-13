@@ -109,6 +109,7 @@ public sealed record TaskCompletionClaim
     /// <summary>Immutable result and review epoch confirmed by this decision.</summary>
     public string? ResultSha { get; init; }
     public string? DeliveryEpoch { get; init; }
+    /// <summary>Published target HEAD at acceptance, retained for diagnosis only.</summary>
     public string? TargetRefFingerprint { get; init; }
 
     /// <summary>Integration branch the containment answer was computed against.</summary>

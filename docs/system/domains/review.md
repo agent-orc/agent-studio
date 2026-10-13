@@ -1,7 +1,23 @@
 # Review Domain Map
 
-Version: 2026-10-08
+Version: 2026-10-12
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review host placement (D19 A, AGT-3069)
+
+Remote Review subjects retain the source coding host, and each claimed attempt
+retains its review host. A review claim on the coding host yields to another
+idle eligible review executor on a different host. When no such executor is
+idle, the same host claims immediately. Set
+`PUT /api/projects/{projectName}/review-host-requirement` with
+`{"required":true}` to require different hosts for that project. Its frozen
+review plan carries `requireDifferentHostFailureDomain`, so a same-host claim
+then waits even when it is the only executor. The empty claim reports
+`different-review-host-required` with the coding host and the wait cause.
+Setting `required` to `false` restores the default preference. Standalone
+subjects freeze this choice when created; the monolith also checks the current
+project requirement before claim. A lease already granted remains fenced to
+its chosen host.
 
 ## Quality Studio shadow evidence
 
@@ -458,6 +474,18 @@ setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
 
+One class is never retried: `ReviewInfra/DiagnosisContractUnsupported`
+(AGT-3089). `ReviewReportDiagnosisPolicy.Normalize` sets it only when the worker
+did not end with `ReviewInfra` itself, a failed deterministic candidate command
+has no `Diagnosis`, and the report has no `clean-repeat` evidence. Only a worker
+that predates the AGT-2916 diagnosis contract sends that shape, and it would
+send it again on every retry of the unchanged SHA. The card escalates at once
+as `environmental`, without passing the cause breaker. The reason names the
+executor and `Environment.Worker.WorkerReleaseId` and asks the operator to
+upgrade the review host. A current worker's own infrastructure exits
+(`CommandStalled`, `NoCpuProgress`, `ToolUnavailable`, `TmpMountTornDown`)
+keep `DiagnosisMissing` and the bounded retry.
+
 Before that per-card retry runs, the fleet-wide cause breaker
 (`backend/Features/Runner/CauseBreaker/`, AGT-W57) counts the failure by its
 cause fingerprint: failure class (`ReviewInfra/<classification>`), normalised
@@ -528,6 +556,14 @@ Three rules keep a hit honest:
 - **Entries expire.** A result older than 24 hours is dropped and re-executed,
   and every baseline SHA the freshly fetched integration ref no longer contains
   is pruned before the first lookup of an attempt.
+- **Only a measured baseline is stored.** A `test-failures` baseline that
+  exits non-zero without a parsed failure name never ran its suite (for
+  example "The argument ... is invalid" from a `--no-build` run in an unbuilt
+  worktree). It ends the attempt as `ReviewInfra/BaselineUnavailable`, naming
+  the step, the exit code and the first output line, and is not cached. Reuse
+  rejects such an entry as well, and an entry recorded under another baseline
+  mode. Parser version 4 (AGT-3089) turned every older entry into a one-time
+  miss. `exit-status` entries with a non-zero exit stay reusable.
 - **Reuse is visible.** The verdict summary, the Markdown grade
   (`baselineReused`/`baselineReuse` frontmatter plus a `Baseline` column in the
   command evidence table), and `ReviewProjectionView.Attempts[].BaselineReused`

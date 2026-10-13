@@ -417,6 +417,54 @@ public static class V1ReviewPlaneEndpoints
             // leased, even when its plan or URL is only built at hand-out.
             var repositoryFacts = ClaimRepositoryFacts(
                 authority.ListOpenReviewTaskKeys(), scanner, projects, settings);
+            var activeByRunner = authority.ListActiveReviewAttempts()
+                .Where(review => review.Lease is not null)
+                .GroupBy(review => review.Lease!.ExecutorId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            var now = DateTime.UtcNow;
+            var alternativeHosts = registry.ListCapabilitySnapshots()
+                .Where(snapshot => !string.Equals(snapshot.RunnerId, runnerId, StringComparison.Ordinal)
+                    && now - snapshot.LastSeenAt <= V1ReviewExecutorRegistry.ReviewExecutorHeartbeatStaleAfter
+                    && snapshot.HostAdmission.AdmissionState == "open"
+                    && activeByRunner.GetValueOrDefault(snapshot.RunnerId)
+                        < (snapshot.EffectiveMaxParallelism ?? snapshot.RoleMaxParallelism ?? 1))
+                .Select(snapshot => (snapshot.HostId,
+                    Capabilities: registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)))
+                .Where(item => item.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+                .ToArray();
+            string? hostWaitReason = null;
+            bool AdmitHost(ReviewAttemptDto candidate)
+            {
+                var codingHost = candidate.Subject.CodingHostId
+                    ?? authority.GetRun(candidate.SourceRunAttemptId)?.Lease?.HostId;
+                if (string.IsNullOrWhiteSpace(codingHost)
+                    || !string.Equals(codingHost, executor.HostId, StringComparison.Ordinal)) return true;
+                var task = FindTask(scanner, candidate.TaskKey);
+                var required = task is not null && settings.Get(task.ProjectName).RequireDifferentReviewHost;
+                var otherIdle = alternativeHosts.Any(other =>
+                    !string.Equals(other.HostId, codingHost, StringComparison.Ordinal)
+                    && CanServeReviewPlanOnHost(candidate.Subject.Plan, other.Capabilities)
+                    // AGT-3077: a host without this repository's read key
+                    // skips a private review, so yielding to it strands it.
+                    && ReviewClaimRepositoryAccessPolicy.MissingCapabilities(
+                        candidate.Subject.Plan,
+                        candidate.Subject.RepositoryUrl,
+                        repositoryFacts.GetValueOrDefault(candidate.TaskKey),
+                        other.Capabilities).Count == 0);
+                var placement = Contract.ReviewHostPlacementPolicy.Decide(
+                    codingHost, executor.HostId,
+                    required || candidate.Subject.Plan?.RequireDifferentHostFailureDomain == true,
+                    otherIdle);
+                hostWaitReason = placement switch
+                {
+                    Contract.ReviewHostPlacementDecision.WaitForRequiredHost =>
+                        Contract.ReviewClaimEmptyReasons.DifferentHostRequired,
+                    Contract.ReviewHostPlacementDecision.YieldToOtherHost =>
+                        hostWaitReason ?? Contract.ReviewClaimEmptyReasons.DifferentHostPreferred,
+                    _ => hostWaitReason,
+                };
+                return placement == Contract.ReviewHostPlacementDecision.Admit;
+            }
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
@@ -424,9 +472,16 @@ public static class V1ReviewPlaneEndpoints
                 request.RequestedTtlSeconds,
                 executor.Capabilities,
                 heldByCauseBreaker,
+                AdmitHost,
                 repositoryFacts);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
+                if (hostWaitReason is not null)
+                    return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                        hostWaitReason,
+                        hostWaitReason == Contract.ReviewClaimEmptyReasons.DifferentHostRequired
+                            ? $"Review waits for an executor on a host other than coding host '{executor.HostId}' because this project requires host separation."
+                            : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
                 // AGT-2987: an empty queue and a queue this executor cannot
                 // serve used to read the same. Name the unclaimable attempts
                 // and the capability keys they need instead.
@@ -448,7 +503,8 @@ public static class V1ReviewPlaneEndpoints
                 settings,
                 remoteReviewPlans,
                 out var subjectTask,
-                out var baseline);
+                out var baseline,
+                authority);
             // AGT-3077: the queue filter judged this attempt from the same
             // project facts. Only a visibility or URL change between that
             // selection and this hand-out lands here; the deferred attempt is
@@ -834,7 +890,11 @@ public static class V1ReviewPlaneEndpoints
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
             var batchDeferredAccepted = batchDeferred
                 && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
-            if (batchDeferredAccepted)
+            // A replay restores the journaled report, which already carries the
+            // deferred verdict; appending it again would change the payload hash.
+            if (batchDeferredAccepted && !request.Verdicts.Any(verdict =>
+                    string.Equals(verdict.Aspect, "build-tests", StringComparison.Ordinal)
+                    && string.Equals(verdict.Classification, "DeferredToBatch", StringComparison.Ordinal)))
             {
                 request = request with
                 {
@@ -995,6 +1055,12 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Json(
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+
+            // Count the review-side build and test minutes before batch
+            // admission, so a failed admission still reports them. Replays
+            // find the fact written by the first settlement.
+            batchPilot.RecordReviewVerification(task.ProjectName, settled.ReviewAttempt,
+                request.Commands);
 
             // Record only accepted deliveries, keyed by the fenced attempt id.
             // A report replay repairs this projection without charging twice.
@@ -1180,6 +1246,11 @@ public static class V1ReviewPlaneEndpoints
                 request.Outcome,
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
+            // AGT-3089: a worker that predates the diagnosis contract gives the
+            // same report on every retry of the unchanged subject. It escalates
+            // at once instead of feeding the cause breaker or the retry budget.
+            var diagnosisContractUnsupported = infrastructureFailure
+                && !Contract.ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(request.FailureClassification);
             var probeFailed = false;
             FailureInterventionResult? intervention = null;
             CauseBreakerOutcome? causeBreaker = null;
@@ -1187,6 +1258,7 @@ public static class V1ReviewPlaneEndpoints
             var breakerEnabled = causeBreakers.IsEnabled(task.ProjectName);
             if (infrastructureFailure
                 && !aspectRetryExhausted
+                && !diagnosisContractUnsupported
                 && (breakerEnabled
                     || PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep)))
             {
@@ -1254,7 +1326,7 @@ public static class V1ReviewPlaneEndpoints
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
             var retry = infrastructureFailure && !aspectRetryExhausted && intervention is null
-                        && !probeFailed
+                        && !probeFailed && !diagnosisContractUnsupported
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
@@ -1680,7 +1752,8 @@ public static class V1ReviewPlaneEndpoints
                             ?? (sourceRun?.TerminalAt is { } terminalAt
                                 ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
                                 : DateTimeOffset.UtcNow),
-                        attemptId);
+                        attemptId,
+                        settled.ReviewAttempt.Subject.ExpectedResultSha);
                     // AGT-2860: the durable resume point. Everything from here
                     // to the lane move lives in this request and dies with the
                     // process; the aspect verdicts that decided the gate live
@@ -1852,13 +1925,15 @@ public static class V1ReviewPlaneEndpoints
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted
+                        : aspectRetryExhausted || diagnosisContractUnsupported
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
                         ?? (aspectRetryExhausted
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
-                            : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
+                            : diagnosisContractUnsupported
+                                ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
+                                : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,
@@ -2096,6 +2171,25 @@ public static class V1ReviewPlaneEndpoints
             });
     }
 
+    private static bool CanServeReviewPlanOnHost(
+        Contract.ReviewPlanDto? plan,
+        IReadOnlySet<string> capabilities)
+    {
+        if (!capabilities.Contains(Contract.ReviewCapabilities.GitMaterialization)
+            || !capabilities.Contains(Contract.ReviewCapabilities.BaselineComparison)
+            || !capabilities.Contains(Contract.ReviewCapabilities.DependencyPreparation))
+            return false;
+        if (plan is null) return true;
+        if (plan.RequiresVisualReview
+            && !capabilities.Contains(Contract.ReviewCapabilities.VisionReview))
+            return false;
+        if (plan.RequiredAspects.Any(aspect =>
+                aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence")
+            && !capabilities.Contains(Contract.ReviewCapabilities.SemanticReview))
+            return false;
+        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities);
+    }
+
     private static Contract.ReviewSubjectDto ToSubject(
         ReviewAttemptDto review,
         TaskScannerService scanner,
@@ -2103,7 +2197,8 @@ public static class V1ReviewPlaneEndpoints
         AgentStudio.Projects.ProjectSettingsService settings,
         RemoteReviewPlanBuilder remoteReviewPlans,
         out TaskInfo? subjectTask,
-        out ReviewBaselineBranchDecision? baseline)
+        out ReviewBaselineBranchDecision? baseline,
+        AttemptAuthorityService? authority = null)
     {
         var materializableRepository = MaterializableRepository(
             review, scanner, projects, settings);
@@ -2144,7 +2239,8 @@ public static class V1ReviewPlaneEndpoints
             review.Subject.ResultRef ?? review.Subject.ExpectedResultSha,
             null,
             null,
-            null,
+            review.Subject.CodingHostId
+                ?? authority?.GetRun(review.SourceRunAttemptId)?.Lease?.HostId,
             review.Subject.ReviewPolicyHash,
             plan,
             review.Subject.CreatedAt);

@@ -2191,7 +2191,9 @@ public class TaskMutationService
                 stream.Write(bytes, 0, bytes.Length);
                 return;
             }
-            catch (IOException ex) when (attempt < maxAttempts - 1)
+            // A missing folder is a moved task, not a lock; waiting cannot fix it.
+            catch (IOException ex) when (attempt < maxAttempts - 1
+                && ex is not DirectoryNotFoundException and not FileNotFoundException)
             {
                 last = ex;
                 Thread.Sleep(50 * (attempt + 1));

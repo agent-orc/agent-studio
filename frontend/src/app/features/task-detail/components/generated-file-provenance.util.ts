@@ -1,4 +1,6 @@
 import type { FileGenerationMeta } from '../../../models/task.model';
+import type { TokenPriceBasis } from '../../tokens/services/cost-breakdown.service';
+import { formatTokenCostUsd } from '../../tokens/token-cost-tooltip.util';
 
 export interface GeneratedFileProvenanceView {
   /** Compact one-line summary, kept stable for back-compat callers. */
@@ -14,7 +16,15 @@ export interface GeneratedFileProvenanceView {
   duration: string | null;
 }
 
-export function generatedFileProvenance(meta: FileGenerationMeta | null | undefined): GeneratedFileProvenanceView | null {
+/**
+ * `price` is the model's price basis from {@link ModelPriceStore} (the same
+ * TokenEconomy catalogue the Tokens metric uses); null or absent reads as
+ * "price unknown" rather than dropping the Cost line.
+ */
+export function generatedFileProvenance(
+  meta: FileGenerationMeta | null | undefined,
+  price?: TokenPriceBasis | null,
+): GeneratedFileProvenanceView | null {
   if (!meta) return null;
 
   const cliModel = [meta.cli, meta.model].filter(Boolean).join(' / ') || 'generated';
@@ -34,6 +44,7 @@ export function generatedFileProvenance(meta: FileGenerationMeta | null | undefi
     meta.tokensTotal > 0
       ? `Tokens: ${formatCount(meta.tokensTotal)} total (${formatCount(meta.tokensIn)} in, ${formatCount(meta.tokensOut)} out)`
       : 'Tokens: not recorded',
+    meta.tokensTotal > 0 ? `Cost: ${generationCost(meta, price)}` : null,
     meta.headShaAfter ? `Commit: ${meta.headShaAfter.slice(0, 12)}` : null,
   ].filter((v): v is string => !!v);
 
@@ -46,6 +57,16 @@ export function generatedFileProvenance(meta: FileGenerationMeta | null | undefi
     tokens,
     duration,
   };
+}
+
+/** AGT-3045: priced cost of one generation, or "price unknown". */
+export function generationCost(meta: FileGenerationMeta, price: TokenPriceBasis | null | undefined): string {
+  if (!price) return 'price unknown';
+  const usd = (meta.tokensIn * price.inputPerMillion
+    + meta.tokensOut * price.outputPerMillion
+    + (meta.cacheReadTokens ?? 0) * price.cacheReadPerMillion
+    + (meta.cacheCreationTokens ?? 0) * price.cacheWritePerMillion) / 1_000_000;
+  return formatTokenCostUsd(usd);
 }
 
 export function formatGeneratedFileTokens(tokens: number | null | undefined): string {

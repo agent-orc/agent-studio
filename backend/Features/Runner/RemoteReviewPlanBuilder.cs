@@ -33,15 +33,21 @@ public sealed class RemoteReviewPlanBuilder
     private readonly AspectRunnerService _aspects;
     private readonly IConfiguration _configuration;
     private readonly GitService? _git;
+    private readonly TimeProvider _time;
+    private readonly ILogger<RemoteReviewPlanBuilder>? _logger;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
         IConfiguration configuration,
-        GitService? git = null)
+        GitService? git = null,
+        TimeProvider? time = null,
+        ILogger<RemoteReviewPlanBuilder>? logger = null)
     {
         _aspects = aspects;
         _configuration = configuration;
         _git = git;
+        _time = time ?? TimeProvider.System;
+        _logger = logger;
     }
 
     /// <param name="changedFiles">
@@ -81,7 +87,10 @@ public sealed class RemoteReviewPlanBuilder
             repositoryPath,
             projectSettings?.BuildProfile,
             integrationRef,
-            changedFiles);
+            changedFiles) with
+        {
+            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
+        };
         var ordinaryToolPlan = toolPlan;
         var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
         var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
@@ -120,8 +129,13 @@ public sealed class RemoteReviewPlanBuilder
                     var level = DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
                         || options.ReviewTestLevel == "build-only"
                             ? TestExecutionLevels.BuildOnly : TestExecutionLevels.WorkPackage;
+                    // AGT-3085: the deferred plan alone selects .NET test classes
+                    // by reference to the changed types; the batch gate's Full
+                    // run on the combined candidate covers what that misses.
                     var selection = TestSelectionPlanner.Plan(selectionRepo,
-                        verify, changedPaths, projectSettings.TestExecution, "remote-review", level);
+                        verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
+                        ReferenceSelection(selectionRepo, resultSha!));
+                    LogReferenceSelection(task!, selection.Audit);
                     var selected = selection.Commands.Where(command =>
                         command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();
                     if (selection.Audit.Level == TestExecutionLevels.Full
@@ -275,6 +289,46 @@ public sealed class RemoteReviewPlanBuilder
             projectSettings,
             integrationRef,
             expectedResultSha);
+    }
+
+    /// <summary>
+    /// Reads unchanged files from the checkout and the delivery's changed paths
+    /// from the result commit (one bounded <c>git cat-file --batch</c>). The
+    /// identifier index is memoised per test project and checkout HEAD.
+    /// </summary>
+    private DotNetReferenceSelection ReferenceSelection(string repositoryPath, string resultSha)
+        => new()
+        {
+            Overlay = paths =>
+            {
+                if (_git is null) return DotNetSourceOverlay.Failed("no git service to read the delivery");
+                var read = _git.ReadFilesAtRevision(repositoryPath, resultSha, paths);
+                return new DotNetSourceOverlay(read.Files, read.Failure);
+            },
+            IndexMemo = (testProject, build) => _git is null
+                ? build()
+                : _git.MemoizeByHead(
+                    repositoryPath,
+                    $"dotnet-reference-index\n{Path.GetFullPath(repositoryPath)}\n{testProject}",
+                    build),
+            Time = _time,
+        };
+
+    private void LogReferenceSelection(TaskInfo task, TestSelectionAudit audit)
+    {
+        if (_logger is null || audit.PlanBuildTime is null) return;
+        foreach (var selection in audit.ReferenceSelections)
+        {
+            _logger.LogInformation(
+                "Review test selection for {TaskId}: {Summary}; seed types: {Seeds}",
+                task.Id,
+                selection.Summary,
+                selection.SeedTypes.Count == 0 ? "none" : string.Join(", ", selection.SeedTypes));
+        }
+        _logger.LogInformation(
+            "Review test selection for {TaskId}: plan built in {Milliseconds} ms",
+            task.Id,
+            (long)audit.PlanBuildTime.Value.TotalMilliseconds);
     }
 
     private static string? BriefHash(string folder)

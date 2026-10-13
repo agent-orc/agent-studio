@@ -223,6 +223,56 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       }
     }
   });
+  // AGT-3076: the rebuilt attempt authority store lost this integrated card's
+  // run attempt. The delivery panel says why acceptance needs an override
+  // before the operator tries to accept.
+  test('lost run attempt: says acceptance needs an operator override in both themes', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: { mergeCommit: MERGE_SHA }, landedState: 'merged-to-develop' });
+    await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503, body: '{}' }));
+    const base = detail({ mergeCommit: MERGE_SHA }, true, 'integrated');
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) => json(route, {
+      ...base,
+      info: {
+        ...base.info,
+        acceptanceAttemptGap: {
+          authorityEpoch: 2,
+          subjectRunAttemptId: 'run-agt-3042',
+          resultSha: MERGE_SHA,
+          reason: "Acceptance refused: no run attempt in the current authority epoch (2) for 'AGT-3042'. "
+            + "The review subject names run attempt 'run-agt-3042', which the attempt authority store no longer holds. "
+            + 'Accept with an operator override and a written reason to record the acceptance against the delivery evidence.',
+        },
+      },
+    }));
+    await page.route(new RegExp(`/api/tasks/${JOB_ID}/delivery-claim(\\?|$)`), (route) => json(route, {
+      taskKey: JOB_ID, jobId: JOB_ID, lane: '5-human-review', deliveryRef: 'runner/agent-runner-01/AGT-3042',
+      integrationBranch: 'develop', releaseBranch: 'main', containmentStatus: 'integrated',
+      integrated: true, released: false, integratedSha: MERGE_SHA, mergeCommit: MERGE_SHA,
+      mergeSubject: 'merge(AGT-3042): integrate reviewed delivery', mergedAtUtc: '2026-10-10T12:00:00Z',
+      hasIntegrationRecord: true, class: 'integrated-delivery', findings: [], completionClaim: null,
+      commits: [], detail: null,
+    }));
+    await openJob(page);
+
+    const notice = page.getByTestId('acceptance-attempt-gap');
+    await expect(notice).toContainText('Acceptance needs an operator override');
+    await expect(page.getByTestId('acceptance-attempt-gap-epoch')).toHaveText('2');
+    await expect(page.getByTestId('acceptance-attempt-gap-reason'))
+      .toContainText('no run attempt in the current authority epoch (2)');
+    await expect(notice).toContainText('run-agt-3042');
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        await page.getByTestId('delivery-claim-panel').locator('..').screenshot({
+          path: path.join(RESULTS_DIR, `acceptance-attempt-gap-${theme}.png`),
+        });
+      }
+    }
+  });
+
   test('not landed: waits for integration and shows no status pill', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });

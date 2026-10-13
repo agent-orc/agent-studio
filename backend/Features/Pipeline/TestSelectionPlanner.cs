@@ -49,6 +49,16 @@ public sealed record TestSelectionAudit
     /// gate log states which classes ran and the candidate reasons state why.
     /// </summary>
     public IReadOnlyList<string> SelectedTestClasses { get; init; } = [];
+
+    /// <summary>
+    /// Per impacted .NET test project: the seed types, the selected classes
+    /// and files, the closure depth, or the reason the whole project runs.
+    /// Set only when the caller opted into reference selection.
+    /// </summary>
+    public IReadOnlyList<DotNetReferenceSelectionAudit> ReferenceSelections { get; init; } = [];
+
+    /// <summary>Plan-build time of an opted-in reference selection.</summary>
+    public TimeSpan? PlanBuildTime { get; init; }
     public IReadOnlyList<string> OmittedTestCommands { get; init; } = [];
     public IReadOnlyList<string> Reasons { get; init; } = [];
     public string Selector { get; init; } = "deterministic";
@@ -85,14 +95,22 @@ public static class TestSelectionPlanner
         return TestExecutionLevels.WorkPackage;
     }
 
+    /// <param name="referenceSelection">
+    /// Opts a work-package plan into selecting the test classes of an impacted
+    /// .NET test project by reference to the changed types (AGT-3085). Null
+    /// keeps the whole project for every production diff. Only the deferred
+    /// Remote Review plan passes it, because the batch gate's Full run backs it.
+    /// </param>
     public static StagedVerifyPlan Plan(
         string repositoryPath,
         VerifyPlan verifyPlan,
         IReadOnlyList<string>? changedFiles,
         TestExecutionPolicy? policy,
         string? lane,
-        string? requiredLevel)
+        string? requiredLevel,
+        DotNetReferenceSelection? referenceSelection = null)
     {
+        var startedAt = referenceSelection?.Time.GetTimestamp();
         var level = ResolveLevel(policy, lane, requiredLevel);
         var fullSuiteRequired = TestExecutionLevels.Normalize(requiredLevel, "") == TestExecutionLevels.Full;
         var conservativeFullSuite = changedFiles is null && level == TestExecutionLevels.WorkPackage;
@@ -196,8 +214,10 @@ public static class TestSelectionPlanner
 
         var frontendWorkPackage = FrontendWorkPackagePlanner.Plan(repositoryPath, diff);
         var frontendTouched = FrontendWorkPackagePlanner.TouchesFrontend(diff);
-        var candidates = BuildCandidates(
-            repositoryPath, verifyPlan, diff, policy, history, frontendWorkPackage);
+        var referenceAudits = new List<DotNetReferenceSelectionAudit>();
+        var candidates = BuildCandidatesCore(
+            repositoryPath, verifyPlan, diff, policy, history, frontendWorkPackage,
+            referenceSelection, referenceAudits);
         var selectedIds = new HashSet<string>(StringComparer.Ordinal);
         var reasons = new List<string>();
 
@@ -241,6 +261,20 @@ public static class TestSelectionPlanner
         if (selectedTestClasses.Count > 0)
             reasons.Add($"work-package test classes: {string.Join(", ", selectedTestClasses)}");
 
+        TimeSpan? planBuildTime = null;
+        if (referenceSelection is not null && startedAt is { } started)
+        {
+            foreach (var audit in referenceAudits)
+            {
+                reasons.Add(audit.Summary);
+                if (audit.SeedTypes.Count > 0)
+                    reasons.Add($"{audit.TestProject} seed types: {string.Join(", ", audit.SeedTypes)}");
+            }
+            planBuildTime = referenceSelection.Time.GetElapsedTime(started);
+            reasons.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"reference selection plan built in {planBuildTime.Value.TotalMilliseconds:0} ms"));
+        }
+
         return new StagedVerifyPlan(commandsForRun, new TestSelectionAudit
         {
             Level = level,
@@ -251,6 +285,8 @@ public static class TestSelectionPlanner
             SelectedCandidateIds = selectedCandidates.Select(candidate => candidate.Id).ToList(),
             SelectedCommands = mergedTests.Select(Describe).ToList(),
             SelectedTestClasses = selectedTestClasses,
+            ReferenceSelections = referenceAudits,
+            PlanBuildTime = planBuildTime,
             OmittedTestCommands = fullTests
                 .Select(Describe)
                 .Except(mergedTests.Select(Describe), StringComparer.OrdinalIgnoreCase)
@@ -269,6 +305,19 @@ public static class TestSelectionPlanner
         TestExecutionPolicy? policy,
         IReadOnlyList<TestHubHistoryEntry> history,
         VerifyCommand? frontendWorkPackage = null)
+        => BuildCandidatesCore(
+            repositoryPath, verifyPlan, changedFiles, policy, history, frontendWorkPackage,
+            referenceSelection: null, referenceAudits: null);
+
+    private static IReadOnlyList<TestSelectionCandidate> BuildCandidatesCore(
+        string repositoryPath,
+        VerifyPlan verifyPlan,
+        IReadOnlyList<string> changedFiles,
+        TestExecutionPolicy? policy,
+        IReadOnlyList<TestHubHistoryEntry> history,
+        VerifyCommand? frontendWorkPackage,
+        DotNetReferenceSelection? referenceSelection,
+        List<DotNetReferenceSelectionAudit>? referenceAudits)
     {
         var map = new Dictionary<string, CandidateBuilder>(StringComparer.OrdinalIgnoreCase);
         frontendWorkPackage ??= FrontendWorkPackagePlanner.Plan(repositoryPath, changedFiles);
@@ -301,7 +350,8 @@ public static class TestSelectionPlanner
         if (frontendWorkPackage is not null)
             Add(map, frontendWorkPackage, frontendWorkPackage.SelectionReason);
 
-        foreach (var entry in DotNetTestInventory(repositoryPath, verifyPlan, changedFiles))
+        foreach (var entry in DotNetTestInventory(
+                     repositoryPath, verifyPlan, changedFiles, referenceSelection, referenceAudits))
             Add(map, entry.Command, entry.Impacted
                 ? entry.Slice?.Reason
                     ?? "diff touches this test project or a referenced production project"
@@ -351,13 +401,16 @@ public static class TestSelectionPlanner
             .ToList();
     }
 
-    private static IEnumerable<(VerifyCommand Command, bool Impacted, DotNetTestSlice? Slice)>
+    private static IReadOnlyList<(VerifyCommand Command, bool Impacted, DotNetTestSlice? Slice)>
         DotNetTestInventory(
             string repositoryPath,
             VerifyPlan verifyPlan,
-            IReadOnlyList<string> changedFiles)
+            IReadOnlyList<string> changedFiles,
+            DotNetReferenceSelection? referenceSelection,
+            List<DotNetReferenceSelectionAudit>? referenceAudits)
     {
-        if (!Directory.Exists(repositoryPath)) yield break;
+        var inventory = new List<(VerifyCommand Command, bool Impacted, DotNetTestSlice? Slice)>();
+        if (!Directory.Exists(repositoryPath)) return inventory;
         var projects = Directory.EnumerateFiles(repositoryPath, "*.csproj", SearchOption.AllDirectories)
             .Where(path => !IsGeneratedPath(Path.GetRelativePath(repositoryPath, path)))
             .ToList();
@@ -369,32 +422,87 @@ public static class TestSelectionPlanner
         var touchedProjects = ownership
             .Select(entry => entry.Project!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var impact = testProjects
+            .Select(testProject =>
+            {
+                var references = ProjectReferenceEntries(testProject);
+                var ownChangedFiles = ownership
+                    .Where(entry => string.Equals(entry.Project, testProject, StringComparison.OrdinalIgnoreCase))
+                    .Select(entry => entry.File)
+                    .ToList();
+                var touchedReferences = references
+                    .Where(reference => touchedProjects.Contains(reference.Path))
+                    .ToList();
+                return (TestProject: testProject, OwnChangedFiles: ownChangedFiles,
+                    TouchedReferences: touchedReferences,
+                    Impacted: ownChangedFiles.Count > 0 || touchedReferences.Count > 0);
+            })
+            .ToList();
 
-        foreach (var testProject in testProjects)
+        // Reference mode reads every changed .cs path inside an impacted
+        // project once, so a plan spends at most one overlay read.
+        var reference = referenceSelection is null
+            ? null
+            : DotNetReferenceSelectionPlanner.Prepare(
+                repositoryPath,
+                changedFiles,
+                impact.Where(entry => entry.Impacted)
+                    .SelectMany(entry => entry.OwnChangedFiles.Concat(ownership
+                        .Where(owned => entry.TouchedReferences.Any(reference => !reference.ProcessLevel
+                            && string.Equals(reference.Path, owned.Project, StringComparison.OrdinalIgnoreCase)))
+                        .Select(owned => owned.File)))
+                    .Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                        && !IsGeneratedPath(path))
+                    .ToList(),
+                referenceSelection);
+
+        foreach (var entry in impact)
         {
-            var references = ProjectReferences(testProject);
-            var referencedProductionTouched = references.Any(touchedProjects.Contains);
-            var ownChangedFiles = ownership
-                .Where(entry => string.Equals(entry.Project, testProject, StringComparison.OrdinalIgnoreCase))
-                .Select(entry => entry.File)
-                .ToList();
-            var impacted = ownChangedFiles.Count > 0 || referencedProductionTouched;
-            // A diff confined to this test project is bounded to the classes it
-            // declares; anything else keeps the whole project, because no
-            // convention maps a production type to its covering test classes.
-            var slice = impacted
-                ? DotNetWorkPackagePlanner.PlanSlice(
-                    repositoryPath, testProject, ownChangedFiles, referencedProductionTouched)
-                : null;
-            var relative = NormalizePath(Path.GetRelativePath(repositoryPath, testProject));
-            yield return (new VerifyCommand(
+            var relative = NormalizePath(Path.GetRelativePath(repositoryPath, entry.TestProject));
+            DotNetTestSlice? slice = null;
+            var impacted = entry.Impacted;
+            if (impacted && reference is not null)
+            {
+                var outcome = reference.Plan(
+                    relative,
+                    entry.OwnChangedFiles,
+                    entry.TouchedReferences
+                        .Where(item => !item.ProcessLevel)
+                        .ToDictionary(
+                            item => NormalizePath(Path.GetRelativePath(repositoryPath, item.Path)),
+                            item => (IReadOnlyList<string>)ownership
+                                .Where(owned => string.Equals(owned.Project, item.Path, StringComparison.OrdinalIgnoreCase))
+                                .Select(owned => owned.File)
+                                .ToList(),
+                            StringComparer.OrdinalIgnoreCase),
+                    entry.TouchedReferences
+                        .Where(item => item.ProcessLevel)
+                        .Select(item => NormalizePath(Path.GetRelativePath(repositoryPath, item.Path)))
+                        .ToList(),
+                    DotNetFilterExpression(verifyPlan).Expression);
+                referenceAudits?.Add(outcome.Audit);
+                // An empty closure leaves the project to the batch gate's Full
+                // run; the unfiltered command stays in the omitted inventory.
+                if (outcome.Kind == DotNetReferenceOutcomeKind.NoCommand) impacted = false;
+                slice = new DotNetTestSlice(outcome.Audit.SelectedClasses, outcome.Audit.Summary);
+            }
+            else if (impacted)
+            {
+                // A diff confined to this test project is bounded to the classes it
+                // declares; anything else keeps the whole project, because no
+                // convention maps a production type to its covering test classes.
+                slice = DotNetWorkPackagePlanner.PlanSlice(
+                    repositoryPath, entry.TestProject, entry.OwnChangedFiles, entry.TouchedReferences.Count > 0);
+            }
+            inventory.Add((new VerifyCommand(
                 VerifyEcosystem.DotNet,
                 VerifyCommandKind.Test,
                 "",
                 $"dotnet test \"{relative}\"{DotNetFilterSuffix(verifyPlan, slice?.Classes)}"),
                 impacted,
-                slice);
+                slice));
         }
+        return inventory;
     }
 
     internal static string DotNetFilterSuffix(VerifyPlan verifyPlan, IReadOnlyList<string>? classes)
@@ -402,12 +510,10 @@ public static class TestSelectionPlanner
         var (raw, expression) = DotNetFilterExpression(verifyPlan);
         if (classes is null || classes.Count == 0)
             return $" --filter {raw}";
-        var classExpression = string.Join(
-            "|", classes.Select(name => $"FullyQualifiedName~{name}"));
         // VSTest gives `&` and `|` their own meaning, so the composed expression
         // is quoted as one shell argument and both sides are parenthesized: an
         // inherited expression may itself be an alternation.
-        return $" --filter \"({expression})&({classExpression})\"";
+        return $" --filter \"{DotNetReferenceSelectionPlanner.FilterValue(expression, classes)}\"";
     }
 
     /// <summary>
@@ -463,16 +569,26 @@ public static class TestSelectionPlanner
         }
     }
 
-    private static IReadOnlyList<string> ProjectReferences(string project)
+    /// <summary>
+    /// The project's <c>ProjectReference</c> items. A reference with
+    /// <c>ReferenceOutputAssembly="false"</c> (attribute or child element) only
+    /// orders the build: the tests start that program as a process and cannot
+    /// name its types.
+    /// </summary>
+    private static IReadOnlyList<(string Path, bool ProcessLevel)> ProjectReferenceEntries(string project)
     {
         try
         {
             var dir = Path.GetDirectoryName(project)!;
             return XDocument.Load(project).Descendants()
                 .Where(element => element.Name.LocalName == "ProjectReference")
-                .Select(element => element.Attribute("Include")?.Value)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => Path.GetFullPath(Path.Combine(dir, value!)))
+                .Select(element => (Include: element.Attribute("Include")?.Value, Element: element))
+                .Where(item => !string.IsNullOrWhiteSpace(item.Include))
+                .Select(item => (
+                    Path.GetFullPath(Path.Combine(dir, item.Include!.Replace('\\', '/'))),
+                    IsFalse(item.Element.Attribute("ReferenceOutputAssembly")?.Value
+                        ?? item.Element.Elements()
+                            .FirstOrDefault(child => child.Name.LocalName == "ReferenceOutputAssembly")?.Value)))
                 .ToList();
         }
         catch (Exception ex)
@@ -480,6 +596,9 @@ public static class TestSelectionPlanner
             SilentCatch.Note(ex, "TestSelectionPlanner: project-reference inventory");
             return [];
         }
+
+        static bool IsFalse(string? value)
+            => string.Equals(value?.Trim(), "false", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static IReadOnlyList<TestHubHistoryEntry> ReadHistory(string root, string? configuredPath)

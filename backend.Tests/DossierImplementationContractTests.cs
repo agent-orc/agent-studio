@@ -85,6 +85,20 @@ public sealed class DossierImplementationContractTests
             finding.Contains("only its own", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Review_QuotesTheExpectedMarkersWhenTheSectionIsMissing()
+    {
+        const string after = "<main><section id=\"decision\">Keep this decision.</section></main>";
+
+        var review = DossierImplementationContract.Review(after, after, "AGT-42");
+
+        Assert.False(review.IsComplete);
+        Assert.True(review.IsAbsence);
+        var finding = Assert.Single(review.Findings);
+        Assert.Contains(DossierImplementationContract.SectionStartMarker, finding);
+        Assert.Contains(DossierImplementationContract.LogStartMarker, finding);
+    }
+
     private static string Document(string log, string decision = "Keep this decision.") =>
         "<main><section id=\"decision\">" + decision + "</section>"
         + DossierImplementationContract.SectionStartMarker

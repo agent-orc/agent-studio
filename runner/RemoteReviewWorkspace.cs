@@ -13,7 +13,10 @@ namespace AgentRunner;
 /// </summary>
 public sealed class RemoteReviewWorkspace
 {
-    private const int TestFailureParserVersion = 3;
+    // Version 4 (AGT-3089): entries now record the baseline mode, and a
+    // test-failures run that exited non-zero without a parsed failure name is
+    // never stored. Every older entry is a one-time cache miss.
+    private const int TestFailureParserVersion = 4;
     internal const int ReviewMaterialMaximumFiles = 200;
     internal const int ReviewMaterialMaximumLines = 12_000;
     private readonly RunnerOptions _options;
@@ -1637,14 +1640,14 @@ public sealed class RemoteReviewWorkspace
         var cachePath = ReviewBaselineResultCache.EntryPath(BaselineCacheRoot, key);
         Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
         var cached = await ReviewBaselineResultCache.ReadAsync(
-            cachePath, key, TestFailureParserVersion, DateTime.UtcNow, ct);
+            cachePath, key, TestFailureParserVersion, command.BaselineMode, DateTime.UtcNow, ct);
         if (cached is not null)
             return await ReuseBaselineResultAsync(command, subjectResult, cached, "hit", artifacts, commands, ct);
 
         var lockPath = cachePath + ".lock";
         await using var cacheLock = await AcquireCacheLockAsync(lockPath, ct);
         cached = await ReviewBaselineResultCache.ReadAsync(
-            cachePath, key, TestFailureParserVersion, DateTime.UtcNow, ct);
+            cachePath, key, TestFailureParserVersion, command.BaselineMode, DateTime.UtcNow, ct);
         if (cached is not null)
             return await ReuseBaselineResultAsync(command, subjectResult, cached, "hit-after-wait", artifacts, commands, ct);
 
@@ -1776,6 +1779,27 @@ public sealed class RemoteReviewWorkspace
                 foreach (var message in baselineCache.Save()) _log(message);
         }
         var failures = BaselineFailures(command, execution.Process);
+        if (!ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+            && execution.Process.ExitCode != 0
+            && failures.Count == 0)
+        {
+            // AGT-3089: a merge-base test run that exited non-zero without
+            // naming a failed test never ran the suite ("The argument ... is
+            // invalid", a missing browser). Caching it reused an unrun baseline
+            // as a red merge base for 24 hours and reported a false
+            // integration-branch defect.
+            var unavailable = BaselineUnavailable(
+                UnrunBaselineSummary(command, execution.Process),
+                baselineSha,
+                command);
+            SaveCaches(candidateCache);
+            throw await InfrastructureFailureAsync(
+                unavailable.Classification,
+                unavailable.Message,
+                commands,
+                artifacts,
+                ct);
+        }
         var entry = new BaselineCacheEntry(
             TestFailureParserVersion,
             key.RepositoryId,
@@ -1789,7 +1813,8 @@ public sealed class RemoteReviewWorkspace
             failures,
             execution.Process.StdOut,
             execution.Process.StdErr,
-            DateTime.UtcNow);
+            DateTime.UtcNow,
+            command.BaselineMode);
         await ReviewBaselineResultCache.WriteAsync(cachePath, entry, ct);
         _log(
             $"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} " +
@@ -2858,6 +2883,24 @@ public sealed class RemoteReviewWorkspace
         => ReviewBaselineModes.IsExitStatus(command.BaselineMode)
             ? []
             : ParsedTestFailures(result);
+
+    /// <summary>
+    /// One line for a test-failures baseline that exited non-zero without a
+    /// test result: the step, the exit code and the first non-empty stderr
+    /// line, or stdout when stderr is empty.
+    /// </summary>
+    internal static string UnrunBaselineSummary(ReviewCommandDto command, ProcessResult result)
+    {
+        var firstLine = FirstNonEmptyLine(result.StdErr) ?? FirstNonEmptyLine(result.StdOut);
+        var summary = $"baseline {command.StepId} exited {result.ExitCode} without reporting a test result";
+        return firstLine is null ? summary : $"{summary}: {firstLine}";
+    }
+
+    private static string? FirstNonEmptyLine(string? text)
+        => text?
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => AnsiEscapeSequence.Replace(line, string.Empty).Trim())
+            .FirstOrDefault(line => line.Length > 0);
 
     internal static IReadOnlyList<string> ParsedTestFailures(ProcessResult result)
     {

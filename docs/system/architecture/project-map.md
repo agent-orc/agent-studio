@@ -125,13 +125,13 @@ Workflows: `.github/workflows/deploy-website.yml`
 Render the persisted current capture without walking repositories:
 
 ```sh
-node scripts/generate-project-map.mjs --api http://localhost:5030 --project PROJ-002
+node scripts/generate-project-map.mjs --api http://127.0.0.1:5030 --project PROJ-002
 ```
 
 Create a fresh explicit portfolio capture, persist it as current plus API history, and render that exact snapshot:
 
 ```sh
-node scripts/generate-project-map.mjs --api http://localhost:5030 --project PROJ-002 --capture
+node scripts/generate-project-map.mjs --api http://127.0.0.1:5030 --project PROJ-002 --capture
 ```
 
 For a reviewed or archived API response:
