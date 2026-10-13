@@ -15,6 +15,29 @@ public class PickupHoldPolicyTests
     private static readonly DateTime Now = new(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime MonthAgo = Now.AddDays(-34);
 
+    [Theory]
+    [InlineData("local", false, TaskModes.Coding, true)]
+    [InlineData("local", false, TaskModes.Research, false)]
+    [InlineData("remote-01", false, TaskModes.Coding, false)]
+    [InlineData("local", true, TaskModes.Coding, false)]
+    public void PlacementHold_MatchesLocalCodingAdmission(
+        string location, bool admitted, string mode, bool expectedHold)
+    {
+        var card = Card() with { Mode = mode };
+        var hold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
+            card, null, false, null, null, Now, location, admitted, "remote-01"));
+
+        Assert.Equal(expectedHold, hold is not null);
+        if (!expectedHold) return;
+        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement, hold!.Mechanism);
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.Classification);
+        Assert.Contains("app", hold.Reason);
+        Assert.Contains("local", hold.Reason);
+        Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, Assert.Single(hold.Resolutions).Kind);
+        Assert.Contains("PUT /api/projects/app/execution-runner", hold.Resolutions[0].Detail);
+        Assert.Contains("remote-01", hold.Resolutions[0].Detail);
+    }
+
     [Fact]
     public void PickupEligibleCard_IsNotHeld()
     {

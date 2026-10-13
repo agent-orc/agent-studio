@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 
 using Xunit;
@@ -44,6 +45,52 @@ public sealed class PickupHoldEndpointsTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalCodingDenial_ReachesDetailAndBoardWithRoutingHint(bool deliveryUnderReview)
+    {
+        WriteJob(_appWatch, TaskStates.Ready, "local-coding", "APP-1");
+        if (deliveryUnderReview)
+        {
+            var path = Path.Combine(_appWatch, TaskStates.Ready, "local-coding", "task.json");
+            var task = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            task["phase"] = LifecyclePhases.AwaitingReview;
+            File.WriteAllText(path, task.ToJsonString());
+        }
+
+        using var factory = BuildFactory(allowLocalCoding: false);
+        using var client = factory.CreateClient();
+        var watchPath = Uri.EscapeDataString(_appWatch);
+        using var detail = JsonDocument.Parse(
+            await client.GetStringAsync($"/api/tasks/local-coding?watchPath={watchPath}"));
+        var hold = detail.RootElement.GetProperty("info").GetProperty("pickupHold");
+        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement, hold.GetProperty("mechanism").GetString());
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.GetProperty("classification").GetString());
+        Assert.Contains("local coding is disabled", hold.GetProperty("reason").GetString());
+        var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
+        Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
+        Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
+
+        using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
+        var card = FindCard(grouped.RootElement.GetProperty("ready"), "local-coding");
+        Assert.Equal(PickupHoldMechanisms.ExecutionPlacement,
+            card.GetProperty("pickupHold").GetProperty("mechanism").GetString());
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/tasks/local-coding/start?watchPath={watchPath}")
+        {
+            Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Client-Id", "local-default");
+        using var start = await client.SendAsync(request);
+        Assert.False(start.IsSuccessStatusCode);
+        using var startBody = JsonDocument.Parse(await start.Content.ReadAsStringAsync());
+        Assert.True(startBody.RootElement.TryGetProperty("code", out var code), startBody.RootElement.ToString());
+        Assert.Equal(RemoteExecutionRequirement.Code, code.GetString());
+        Assert.Contains("coding execution is disabled", startBody.RootElement.GetProperty("error").GetString());
     }
 
     [Fact]
@@ -211,11 +258,14 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "task.json"), json);
     }
 
-    private WebApplicationFactory<Program> BuildFactory() =>
+    private WebApplicationFactory<Program> BuildFactory(bool allowLocalCoding = true) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
+                if (allowLocalCoding)
+                    builder.ConfigureServices(services =>
+                        services.AddSingleton<ILocalCodingAdmissionPolicy>(AllowLocalCodingForTests.Instance));
                 builder.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>

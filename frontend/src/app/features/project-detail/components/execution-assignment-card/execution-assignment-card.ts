@@ -21,6 +21,7 @@ interface ProbeCheck {
 }
 
 interface ProjectExecutionSettings {
+  localCodingAdmitted?: boolean;
   pickupMode?: 'auto' | 'manual' | 'paused';
   executionLocation?: string;
   executionRunner?: string | null;
@@ -43,6 +44,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
 
   readonly selectedHostId = signal('local');
   readonly pickupMode = signal<'auto' | 'manual' | 'paused'>('manual');
+  readonly localCodingAdmitted = signal(true);
   readonly integrationBranch = signal('develop');
   readonly saving = signal(false);
   readonly saveError = signal<string | null>(null);
@@ -81,6 +83,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (settings) => {
           const project = settings?.[this.projectName()];
           this.pickupMode.set(project?.pickupMode || 'manual');
+          this.localCodingAdmitted.set(project?.localCodingAdmitted ?? true);
           this.selectedHostId.set(
             project?.executionLocation
             || (project?.remoteExecutionEnabled === false ? 'local' : project?.executionRunner)

@@ -41,7 +41,10 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         task["mode"] = taskMode;
         File.WriteAllText(taskPath, task.ToJsonString());
         var cli = new FailingCliService();
-        var runner = BuildRunner(cli, allowLocalCoding: false);
+        var logger = new CapturingLogger<ProjectRunner>();
+        TaskScannerService? scanner = null;
+        var runner = BuildRunner(cli, logger: logger, allowLocalCoding: false,
+            scannerObserver: observed => scanner = observed);
         var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "remote-only");
         var originalTask = File.ReadAllText(Path.Combine(readyFolder, "task.json"));
 
@@ -49,6 +52,23 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         {
             runner.SetMode("auto-continuous");
             await runner.TickAsync(CancellationToken.None);
+            await runner.TickAsync(CancellationToken.None);
+            Assert.Contains("local coding is disabled", runner.GetStatus().LastPickReason);
+            Assert.Single(logger.Entries.Where(entry => entry.Any(item =>
+                item.Key == "{OriginalFormat}"
+                && item.Value?.ToString()?.Contains("auto-pickup-rejected", StringComparison.Ordinal) == true)));
+
+            var reentered = System.Text.Json.Nodes.JsonNode.Parse(originalTask)!;
+            // Derived from the scanned lane entry so the re-entry stays clock-independent.
+            var firstEntry = scanner!.FindJob("remote-only")!.EnteredLaneAt;
+            reentered["enteredLaneAt"] = firstEntry.ToUniversalTime().AddMinutes(1).ToString("O");
+            originalTask = reentered.ToJsonString();
+            File.WriteAllText(taskPath, originalTask);
+            scanner!.InvalidateCache();
+            await runner.TickAsync(CancellationToken.None);
+            Assert.Equal(2, logger.Entries.Count(entry => entry.Any(item =>
+                item.Key == "{OriginalFormat}"
+                && item.Value?.ToString()?.Contains("auto-pickup-rejected", StringComparison.Ordinal) == true)));
         }
         else
         {
@@ -399,7 +419,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         ProviderLimitRegistry? providerLimits = null,
         IReadOnlyList<IQuotaProbe>? quotaProbes = null,
         Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null,
-        bool allowLocalCoding = true)
+        bool allowLocalCoding = true,
+        Action<TaskScannerService>? scannerObserver = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -422,6 +443,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        scannerObserver?.Invoke(scanner);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var mutations = new TaskMutationService(

@@ -243,7 +243,8 @@ public static class ProjectSettingsEndpoints
             ProjectSettingsService settings,
             ProjectRegistry projects,
             OrchestratorDefaultsProvider defaults,
-            IConfiguration configuration) =>
+            IConfiguration configuration,
+            TaskRunnerService runner) =>
         {
             var all = settings.GetAll().AsEnumerable();
             if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
@@ -260,6 +261,7 @@ public static class ProjectSettingsEndpoints
                     runnerMode = kv.Value.RunnerMode,
                     pickupMode = ProjectExecutionPolicy.ResolvePickupMode(kv.Value),
                     executionLocation = ProjectExecutionPolicy.ResolveExecutionLocation(kv.Value),
+                    localCodingAdmitted = runner.AllowsLocalCoding,
                     executionRunner = kv.Value.ExecutionRunner,
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,

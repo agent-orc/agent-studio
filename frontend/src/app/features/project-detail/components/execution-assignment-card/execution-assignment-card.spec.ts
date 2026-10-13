@@ -6,6 +6,28 @@ import { ExecutionAssignmentCardComponent } from './execution-assignment-card';
 import { RemoteHostsService } from '../../../remote-hosts';
 
 describe('ExecutionAssignmentCardComponent', () => {
+  it('warns when automatic pickup is routed local and coding is denied', () => {
+    TestBed.configureTestingModule({
+      imports: [ExecutionAssignmentCardComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    });
+    const fixture = TestBed.createComponent(ExecutionAssignmentCardComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Studio');
+    fixture.detectChanges();
+
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/settings').flush({
+      'Agent Studio': { pickupMode: 'auto', executionLocation: 'local', localCodingAdmitted: false },
+    });
+    flushHostRegistryFailure(http);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="local-coding-disabled-warning"]')?.textContent)
+      .toContain('Local coding is disabled');
+    flushRunnerInfrastructureFailures(http);
+    http.verify();
+  });
+
   it('loads and persists the project-dedicated host assignment', () => {
     TestBed.configureTestingModule({
       imports: [ExecutionAssignmentCardComponent],

@@ -1411,6 +1411,7 @@ public class ProjectRunner
         IReadOnlySet<string> excludedJobIds)
     {
         RelocateStrayHumanDecisionCards();
+        PrunePlacementWarnings();
         var skippedForConflict = new List<string>();
 
         foreach (var candidate in ListPickupCandidatesInDisplayedOrder())
@@ -1422,6 +1423,30 @@ public class ProjectRunner
             // Never double-claim a folder already occupying a slot. This is not
             // a visible-order deviation; the card is already running.
             if (_activeRuns.Contains(candidate.Info.Id)) continue;
+
+            if (candidate.Info.State == TaskStates.Ready)
+            {
+                var placementHold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
+                    candidate.Info, null, false, null, null, DateTime.UtcNow,
+                    ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName)),
+                    _localCodingAdmission?.AllowsLocalCoding == true));
+                if (placementHold?.Mechanism == PickupHoldMechanisms.ExecutionPlacement)
+                {
+                    _lastPickReason = placementHold.Reason;
+                    if (!_placementWarnings.TryGetValue(candidate.Info.Id, out var logged)
+                        || !string.Equals(logged.Reason, placementHold.Reason, StringComparison.Ordinal)
+                        || logged.EnteredLaneAt != candidate.Info.EnteredLaneAt)
+                    {
+                        _logger.LogWarning(
+                            "auto-pickup-rejected code={Code} task={Task} project={Project} reason={Reason}",
+                            RemoteExecutionRequirement.Code, candidate.Info.Key ?? candidate.Info.Id,
+                            ProjectName, placementHold.Reason);
+                        _placementWarnings[candidate.Info.Id] =
+                            (placementHold.Reason, candidate.Info.EnteredLaneAt);
+                    }
+                    continue;
+                }
+            }
 
             // CPU-Lastwaechter: do not add another build/install workload while
             // the host has been saturated for a full minute. Existing runs are
@@ -8720,6 +8745,20 @@ public class ProjectRunner
     // Deduped separately from the cycle set so a card can move between the two
     // classifications without losing either report.
     private readonly HashSet<string> _waitsOnUnsatisfiableWarned = new(StringComparer.OrdinalIgnoreCase);
+    // Written and pruned only on the picker path; concurrent because status
+    // reads can overlap a tick.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Reason, DateTime EnteredLaneAt)>
+        _placementWarnings = new(StringComparer.OrdinalIgnoreCase);
+
+    private void PrunePlacementWarnings()
+    {
+        if (_placementWarnings.IsEmpty) return;
+        var readyIds = _scanner.ScanAllAutomationJobs()
+            .Where(job => job.ProjectName == ProjectName && job.State == TaskStates.Ready)
+            .Select(job => job.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in _placementWarnings.Keys)
+            if (!readyIds.Contains(id)) _placementWarnings.TryRemove(id, out _);
+    }
 
     private List<TaskInfo> ListReadyPickupCandidatesInDisplayedOrder()
     {

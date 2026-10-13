@@ -28,6 +28,7 @@
 .execution-card__eyebrow,
 .execution-card__title,
 .execution-card__description,
+.execution-card__placement-warning,
 .execution-card__probe-head h5,
 .execution-card__probe-head p,
 .execution-card__error,
@@ -63,6 +64,15 @@
 .execution-card__probe-head p,
 .execution-card__check small {
   color: var(--studio-fg-dim);
+  font-size: 0.8rem;
+}
+
+.execution-card__placement-warning {
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
   font-size: 0.8rem;
 }
 
