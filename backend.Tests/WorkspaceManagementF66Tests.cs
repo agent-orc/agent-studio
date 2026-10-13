@@ -191,7 +191,11 @@ public sealed class WorkspaceManagementF66Tests : IDisposable
         Assert.Equal(storage, moved.StorageLocation); // storage unchanged
         Assert.True(Directory.Exists(storage));
         var after = SnapshotDirectoryTree(_root);
-        Assert.Equal(before, after); // no new / moved / removed dirs
+        // The registry is a .metadata runtime store and keeps its last-good
+        // version as projects.json.bak; nothing else may appear.
+        var backup = "F:" + Path.GetRelativePath(_root, projectsJson + ".bak").Replace('\\', '/');
+        Assert.Equal(before.Append(backup).Distinct().Order(StringComparer.Ordinal), after.Order(StringComparer.Ordinal)); // no new / moved / removed dirs
+        Assert.Equal(beforeBytes, File.ReadAllBytes(projectsJson + ".bak"));
         var afterBytes = File.ReadAllBytes(projectsJson);
         Assert.NotEqual(beforeBytes, afterBytes); // projects.json did change
     }

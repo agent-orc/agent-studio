@@ -146,6 +146,9 @@ public sealed class RunLivenessMonitorTests : IDisposable
             var taskKey = ResolveTaskKey(scanner, slug);
             SettleCompletedRun(authority, taskKey);
             var digest = authority.GetTaskProjection(taskKey).CurrentRunAttempt!.ResultEnvelopeDigest!;
+            // The settlement lives in the journal until a checkpoint folds it
+            // into the snapshot this test corrupts.
+            authority.CheckpointForMigration();
             var authorityPath = Path.Combine(_workspaceRoot, AttemptAuthorityService.RelativePath);
             var json = File.ReadAllText(authorityPath);
             var corrupted = json.Replace(digest, new string('d', digest.Length), StringComparison.Ordinal);

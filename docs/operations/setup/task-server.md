@@ -1405,7 +1405,8 @@ Treat a move from the OrchestratorApi-owned v1 routes to the standalone service
 as a release hold until all of these steps have durable evidence:
 
 1. Copy the complete legacy `TaskRepository`, including `identities/`,
-   `.metadata/attempt-authority.json`, and every
+   `.metadata/attempt-authority.json`, its `.bak` and `.journal.bak` recovery
+   companions, and every
    `.metadata/attempt-authority.archive-*.json`, to a rehearsal root while Stable is
    still on the held release. Inventory and import that copy into an empty
    rehearsal Task Server store. The inventory and import counts must agree for
@@ -1414,6 +1415,12 @@ as a release hold until all of these steps have durable evidence:
    attempt-authority store, or an unreadable live store or discovered archive,
    aborts the cutover. Imported live leases become `process-unknown`; they are
    never made claimable merely because the owner process was stopped.
+
+   Before freezing the source, call `POST /api/attempts/checkpoint` while the
+   backend is live, then stop authority mutations and include the resulting
+   snapshot and archive shards in the copy. Migration refuses a nonempty
+   `.metadata/attempt-authority.json.journal`; replay it in the live backend
+   and checkpoint again rather than importing a stale snapshot.
 
    Set `requireAttemptAuthority:true` on both migration requests. This converts
    a missing authority file from an inventory warning into the blocking

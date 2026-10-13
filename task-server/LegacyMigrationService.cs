@@ -498,6 +498,10 @@ public sealed class LegacyMigrationService(TaskServerStore store)
         CancellationToken ct)
     {
         var path = Path.Combine(root, ".metadata", "attempt-authority.json");
+        var journalPath = path + ".journal";
+        if (File.Exists(journalPath) && new FileInfo(journalPath).Length > 0)
+            throw new InvalidDataException(
+                $"Authority journal '{journalPath}' has uncheckpointed mutations. Checkpoint the live authority store before freezing the migration source.");
         if (!File.Exists(path))
         {
             warnings.Add("No legacy attempt-authority store was found; the inventory contains no lease or fence authority.");

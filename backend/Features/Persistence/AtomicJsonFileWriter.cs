@@ -1,4 +1,7 @@
 using System.Text.Json;
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace AgentStudio.Persistence;
 
@@ -39,8 +42,82 @@ public interface IAtomicJsonFileWriter
     void ReplaceExisting(string path, string content) => Write(path, content);
 }
 
+/// <summary>Per-caller opt-in for the last-good <c>.bak</c> sibling.</summary>
+public static class AtomicJsonFileWriterBackups
+{
+    /// <summary>
+    /// Returns a writer that keeps the replaced version as <c>&lt;file&gt;.bak</c>.
+    /// Only runtime stores under the workspace <c>.metadata</c> opt in. A sibling
+    /// backup next to a file in a project repository (Dossier descriptors,
+    /// wiki pages) or a task folder is an untracked file: it dirties the
+    /// worktree and an agent's <c>git add -A</c> commits it. Test doubles are
+    /// returned unchanged so failure injection keeps working.
+    /// </summary>
+    public static IAtomicJsonFileWriter WithLastGoodBackup(this IAtomicJsonFileWriter writer)
+        => writer is AtomicJsonFileWriter ? AtomicJsonFileWriter.KeepingLastGoodBackup() : writer;
+}
+
 public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
 {
+    private readonly bool _keepLastGoodBackup;
+
+    public AtomicJsonFileWriter() : this(keepLastGoodBackup: false)
+    {
+    }
+
+    private AtomicJsonFileWriter(bool keepLastGoodBackup) => _keepLastGoodBackup = keepLastGoodBackup;
+
+    /// <summary>A writer that keeps <c>&lt;file&gt;.bak</c>; see
+    /// <see cref="AtomicJsonFileWriterBackups.WithLastGoodBackup"/>.</summary>
+    public static AtomicJsonFileWriter KeepingLastGoodBackup() => new(keepLastGoodBackup: true);
+
+    /// <summary>Read a JSON document, falling back to the last flushed version.
+    /// The callback reports the exact source used to the owning service. Without
+    /// a valid backup the primary failure is rethrown unchanged, so callers keep
+    /// their existing exception handling.</summary>
+    public static string ReadAllTextWithBackup(string path, Action<string>? recovered = null)
+    {
+        Exception? primaryFailure = null;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                var text = File.ReadAllText(path);
+                using var document = JsonDocument.Parse(text);
+                if (document.RootElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+                    throw new JsonException("JSON state root must be an object or array.");
+                return text;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                primaryFailure = ex;
+                if (attempt == 9 || ex is JsonException or FileNotFoundException or DirectoryNotFoundException)
+                    break;
+                Thread.Sleep(1);
+            }
+        }
+        try
+        {
+            var backup = File.ReadAllText(path + ".bak");
+            using var document = JsonDocument.Parse(backup);
+            if (document.RootElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+                throw new JsonException("JSON backup root must be an object or array.");
+            recovered?.Invoke(path + ".bak");
+            System.Diagnostics.Trace.TraceWarning(
+                "JSON store recovered from backup: primary={0} source={1}", path, path + ".bak");
+            return backup;
+        }
+        catch (Exception backupFailure) when (
+            backupFailure is IOException or UnauthorizedAccessException or JsonException)
+        {
+            if (backupFailure is not (FileNotFoundException or DirectoryNotFoundException))
+                System.Diagnostics.Trace.TraceWarning(
+                    "JSON store backup unusable: primary={0} error={1}", path, backupFailure.Message);
+        }
+        ExceptionDispatchInfo.Throw(primaryFailure!);
+        throw primaryFailure!;
+    }
+
     /// <summary>
     /// How long a swap keeps retrying while concurrent readers hold the
     /// destination open. Readers of these stores are short plain opens
@@ -72,6 +149,7 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
             using var stream = new FileStream(
                 temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             JsonSerializer.Serialize(stream, value, options);
+            stream.Flush(flushToDisk: true);
         });
     }
 
@@ -86,22 +164,79 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
         Swap(path, content);
     }
 
-    private static void Swap(string path, string content)
-        => Swap(path, temporaryPath => File.WriteAllText(temporaryPath, content));
+    private void Swap(string path, string content)
+        => Swap(path, temporaryPath =>
+        {
+            using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true))
+                writer.Write(content);
+            stream.Flush(flushToDisk: true);
+        });
 
-    private static void Swap(string path, Action<string> writeTemporary)
+    private void Swap(string path, Action<string> writeTemporary)
     {
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
             writeTemporary(tempPath);
+            if (_keepLastGoodBackup && File.Exists(path))
+            {
+                var backupTemp = $"{path}.bak.{Guid.NewGuid():N}.tmp";
+                try
+                {
+                    using (var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    using (var backup = new FileStream(backupTemp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        // A damaged JSON primary must never replace a known-good backup.
+                        // ReplaceExisting also serves text documents, which cannot be parsed as JSON.
+                        if (path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using (var old = JsonDocument.Parse(source))
+                                if (old.RootElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+                                    throw new JsonException("JSON state root must be an object or array.");
+                            source.Position = 0;
+                        }
+                        source.CopyTo(backup);
+                        backup.Flush(flushToDisk: true);
+                    }
+                    MoveWithRetry(backupTemp, path + ".bak");
+                    FlushDirectory(path);
+                }
+                catch (JsonException)
+                {
+                    // The caller recovered a valid backup and is replacing a
+                    // corrupt primary. Preserve that backup during the repair.
+                    System.Diagnostics.Trace.TraceWarning("JSON primary was corrupt during replacement: {0}", path);
+                }
+                finally
+                {
+                    if (File.Exists(backupTemp)) File.Delete(backupTemp);
+                }
+            }
             MoveWithRetry(tempPath, path);
+            FlushDirectory(path);
         }
         finally
         {
             if (File.Exists(tempPath)) File.Delete(tempPath);
         }
     }
+
+    /// <summary>Persist rename metadata on Unix. Windows does not support opening
+    /// a directory through FileStream; the flushed files remain recoverable via .bak.</summary>
+    internal static void FlushDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        var descriptor = open(directory, 0);
+        if (descriptor < 0) return;
+        try { _ = fsync(descriptor); }
+        finally { _ = close(descriptor); }
+    }
+
+    [DllImport("libc", SetLastError = true)] private static extern int open(string path, int flags);
+    [DllImport("libc", SetLastError = true)] private static extern int fsync(int descriptor);
+    [DllImport("libc", SetLastError = true)] private static extern int close(int descriptor);
 
     /// <summary>
     /// Swaps the temp file into place so that CONCURRENT PLAIN READERS never

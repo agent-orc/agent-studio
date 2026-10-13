@@ -12,6 +12,115 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "attempt-authority-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void Corrupt_primary_recovers_backup_with_higher_fence_and_epoch()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var first = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 30, "first").RunAttempt!;
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        var writer = AtomicJsonFileWriter.KeepingLastGoodBackup();
+        var original = File.ReadAllText(path);
+        writer.Write(path, original); // create the last-good backup
+        var damaged = JsonNode.Parse(original)!;
+        damaged["lastFenceByTask"]!["AGT-1"] = first.LastFence + 7;
+        File.WriteAllText(path, damaged.ToJsonString() + new string('\0', 4096));
+
+        var recovered = NewService(() => now.AddMinutes(1));
+        Assert.Equal(path + ".bak", recovered.RecoverySource);
+        Assert.True(recovered.AuthorityEpoch > first.AuthorityEpoch);
+        Assert.True(recovered.CurrentFence("AGT-1") >= first.LastFence + 7);
+        Assert.True(recovered.AcquireRun("AGT-1", "PROJ-1", first.AttemptId, "runner-2", "host", 30, "next")
+            .RunAttempt!.LastFence > first.LastFence + 7);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!, "attempt-authority.json.corrupt-*.json"));
+    }
+
+    [Fact]
+    public void Corrupt_checkpoint_replays_previous_journal_segment_from_backup()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{"schemaVersion":6,"authorityEpoch":1,"lastFenceByTask":{},"runAttempts":[],"reviewAttempts":[]}""");
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "acquire").RunAttempt!;
+        service.CheckpointForMigration();
+        Assert.True(new FileInfo(path + ".journal.bak").Length > 0);
+        File.WriteAllText(path, """{"schemaVersion":6,"authorityEpoch":1}""" + new string('\0', 4096));
+
+        var recovered = NewService(() => now);
+        Assert.Equal(run.AttemptId, recovered.GetRun(run.AttemptId)!.AttemptId);
+        Assert.True(recovered.AuthorityEpoch > run.AuthorityEpoch);
+        Assert.True(recovered.CurrentFence("AGT-1") > run.LastFence);
+    }
+
+    [Fact]
+    public void Torn_journal_tail_keeps_valid_prefix_and_fences_old_lease()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{"schemaVersion":6,"authorityEpoch":1,"lastFenceByTask":{},"runAttempts":[],"reviewAttempts":[]}""");
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "acquire").RunAttempt!;
+        File.AppendAllText(path + ".journal", "torn tail");
+
+        var recovered = NewService(() => now.AddSeconds(1));
+        Assert.Equal(path + ".journal", recovered.RecoverySource);
+        Assert.Equal(AttemptLifecycleState.Superseded, recovered.GetRun(run.AttemptId)!.State);
+        Assert.True(recovered.CurrentFence("AGT-1") > run.LastFence);
+    }
+
+    [Fact]
+    public void Renewal_appends_a_small_durable_delta_instead_of_rewriting_a_large_snapshot()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var padding = new string('x', 2_000);
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 6,
+            authorityEpoch = 1,
+            runAttempts = Enumerable.Range(0, 200).Select(i => new
+            {
+                attemptId = $"historical-{i}", taskKey = $"AGT-{i + 100}", repositoryId = "PROJ-1",
+                state = AttemptLifecycleState.Pending, createdAt = now,
+                terminalReason = padding,
+            }).ToArray(),
+        }));
+        var service = NewService(() => now);
+        var acquired = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "acquire");
+        Assert.Equal(AttemptWriteStatus.Accepted, acquired.Status);
+        var run = acquired.RunAttempt!;
+        var beforeJournal = File.Exists(path + ".journal") ? new FileInfo(path + ".journal").Length : 0;
+        Assert.Equal(AttemptWriteStatus.Accepted, service.RenewRun(
+            new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "renew"),
+            "runner", 60).Status);
+        var renewalBytes = new FileInfo(path + ".journal").Length - beforeJournal;
+        Assert.True(renewalBytes < new FileInfo(path).Length / 10,
+            $"snapshot={new FileInfo(path).Length} renewal={renewalBytes}");
+        Assert.NotNull(NewService(() => now).GetRun(run.AttemptId));
+        Console.WriteLine($"Attempt authority renewal: baseline full rewrite {new FileInfo(path).Length} bytes; journal {renewalBytes} bytes.");
+    }
+
+    [Fact]
+    public void Startup_removes_only_stale_authority_temp_files()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var directory = Path.Combine(_root, ".metadata");
+        Directory.CreateDirectory(directory);
+        var stale = Path.Combine(directory, "attempt-authority.json.old.tmp");
+        var fresh = Path.Combine(directory, "attempt-authority.json.new.tmp");
+        File.WriteAllText(stale, "old");
+        File.WriteAllText(fresh, "new");
+        File.SetLastWriteTimeUtc(stale, now.AddHours(-2));
+        File.SetLastWriteTimeUtc(fresh, now);
+        _ = NewService(() => now);
+        Assert.False(File.Exists(stale));
+        Assert.True(File.Exists(fresh));
+    }
+
+    [Fact]
     public void Deferred_review_claim_is_immediately_claimable_again_with_a_new_fence()
     {
         var service = NewService();
@@ -1481,6 +1590,12 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Console.WriteLine(
             $"Representative attempt-authority live size: {beforeBytes} -> {afterBytes} bytes; "
             + $"reviews: {reviewCount} -> {liveReviews.Count}; archived: {archivedReviews.Count}.");
+
+        _ = NewService(() => now, terminalRetentionCount: AttemptAuthorityService.DefaultTerminalRetentionCount);
+        var boundedBytes = new FileInfo(livePath).Length;
+        Assert.True(boundedBytes < 10_000_000,
+            $"Expected the default hot snapshot below 10 MB, got {boundedBytes} bytes.");
+        Console.WriteLine($"Default hot snapshot: {beforeBytes} -> {boundedBytes} bytes.");
     }
 
     [Fact]
@@ -1512,7 +1627,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     }
 
     [Fact]
-    public void Settlement_compaction_overwrites_interrupted_daily_archive_without_loading_it()
+    public void Settlement_compaction_quarantines_a_damaged_hourly_shard_and_never_loads_older_archives()
     {
         var now = new DateTime(2026, 7, 28, 3, 0, 0, DateTimeKind.Utc);
         var service = NewService(() => now, terminalRetentionCount: 1);
@@ -1545,9 +1660,10 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
             60,
             "second-run-create").RunAttempt!;
         var livePath = Path.Combine(_root, AttemptAuthorityService.RelativePath);
-        var archivePath = Path.Combine(
-            Path.GetDirectoryName(livePath)!,
-            "attempt-authority.archive-2026-07-28.json");
+        var metadata = Path.GetDirectoryName(livePath)!;
+        var legacyDailyPath = Path.Combine(metadata, "attempt-authority.archive-2026-07-28.json");
+        File.WriteAllText(legacyDailyPath, "{ older archive");
+        var archivePath = Path.Combine(metadata, "attempt-authority.archive-2026-07-28-03.json");
         File.WriteAllText(archivePath, "{ interrupted archive");
 
         var settled = service.SettleRun(new SettleRunAttemptRequest
@@ -1564,6 +1680,11 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal(AttemptWriteStatus.Accepted, settled.Status);
         Assert.Null(service.GetRun(first.AttemptId));
         Assert.Equal(second.AttemptId, service.GetRun(second.AttemptId)!.AttemptId);
+        Assert.Equal("{ older archive", File.ReadAllText(legacyDailyPath));
+        Assert.Equal(
+            "{ interrupted archive",
+            File.ReadAllText(Assert.Single(Directory.GetFiles(
+                metadata, "attempt-authority.archive-2026-07-28-03.json.corrupt-*"))));
         using var archiveDocument = JsonDocument.Parse(File.ReadAllText(archivePath));
         var archivedRun = Assert.Single(
             archiveDocument.RootElement.GetProperty("runAttempts").EnumerateArray());
@@ -1571,6 +1692,134 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Contains(
             "settle:first-run-settle",
             archivedRun.GetProperty("idempotencyKeys").EnumerateArray().Select(key => key.GetString()));
+    }
+
+    [Fact]
+    public void Routine_compaction_batches_archived_attempts_into_one_shard_per_hour()
+    {
+        var now = new DateTime(2026, 7, 28, 10, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now, terminalRetentionCount: 1);
+        var metadata = Path.Combine(_root, ".metadata");
+        string[] Shards() => Directory.GetFiles(metadata, "attempt-authority.archive-*.json")
+            .Select(path => Path.GetFileName(path)!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        string[] ArchivedRunIds(string shard)
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(metadata, shard)));
+            return document.RootElement.GetProperty("runAttempts").EnumerateArray()
+                .Select(run => run.GetProperty("attemptId").GetString()!)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+        }
+        string SettledRun(string taskKey, string? previousAttemptId)
+        {
+            now = now.AddMinutes(1);
+            var run = service.AcquireRun(
+                taskKey, "PROJ-1", previousAttemptId, "runner", "host", 300, $"{taskKey}-{now:HHmm}-create").RunAttempt!;
+            now = now.AddMinutes(1);
+            Assert.Equal(AttemptWriteStatus.Accepted, service.SettleRun(new SettleRunAttemptRequest
+            {
+                Write = new AttemptWriteReference(
+                    run.AttemptId, run.LastFence, run.AuthorityEpoch, $"{taskKey}-{now:HHmm}-settle"),
+                Outcome = "done",
+                ResultSha = "sha-" + taskKey,
+            }).Status);
+            return run.AttemptId;
+        }
+        // A second run of the same card turns the first into unprotected
+        // terminal history that compaction may archive.
+        string SupersededRun(string taskKey)
+        {
+            var superseded = SettledRun(taskKey, null);
+            SettledRun(taskKey, superseded);
+            return superseded;
+        }
+
+        var first = SupersededRun("AGT-1");
+        Assert.Equal(["attempt-authority.archive-2026-07-28-10.json"], Shards());
+
+        // Inside the hour a single archivable attempt waits in the hot store.
+        var deferred = SupersededRun("AGT-2");
+        Assert.NotNull(service.GetRun(deferred));
+        Assert.Equal([first], ArchivedRunIds("attempt-authority.archive-2026-07-28-10.json"));
+
+        // More than one retention window of archivable attempts compacts early
+        // and merges into the same hourly shard instead of a new file.
+        var burst = SupersededRun("AGT-3");
+        Assert.Null(service.GetRun(deferred));
+        Assert.Equal(["attempt-authority.archive-2026-07-28-10.json"], Shards());
+        Assert.Equal(
+            new[] { first, deferred, burst }.Order(StringComparer.Ordinal),
+            ArchivedRunIds("attempt-authority.archive-2026-07-28-10.json"));
+
+        now = now.AddHours(1);
+        var nextHour = SupersededRun("AGT-4");
+        Assert.Equal(
+            ["attempt-authority.archive-2026-07-28-10.json", "attempt-authority.archive-2026-07-28-11.json"],
+            Shards());
+        Assert.Equal([nextHour], ArchivedRunIds("attempt-authority.archive-2026-07-28-11.json"));
+        Assert.Single(service.GetTaskProjection("AGT-2").RunAttempts);
+        Assert.Equal(2, service.GetTaskProjection("AGT-2", includeArchived: true).RunAttempts.Count);
+        Assert.Equal(2, NewService(() => now, terminalRetentionCount: 1)
+            .GetTaskProjection("AGT-2", includeArchived: true).RunAttempts.Count);
+    }
+
+    [Fact]
+    public void History_reads_load_only_the_shards_of_the_task_and_delivery_refs_come_from_the_index()
+    {
+        var now = new DateTime(2026, 7, 28, 10, 0, 0, DateTimeKind.Utc);
+        var metadata = Path.Combine(_root, ".metadata");
+        Directory.CreateDirectory(metadata);
+        var shaA = new string('a', 40);
+        var shaB = new string('b', 40);
+        string Shard(string hour, string taskKey, string sha)
+        {
+            var path = Path.Combine(metadata, $"attempt-authority.archive-2026-07-28-{hour}.json");
+            File.WriteAllText(path, JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                archivedAt = now,
+                runAttempts = new[]
+                {
+                    new
+                    {
+                        attemptId = "run-" + taskKey,
+                        taskKey,
+                        repositoryId = "PROJ-1",
+                        state = AttemptLifecycleState.Completed,
+                        createdAt = now.AddHours(-30),
+                        terminalAt = now.AddHours(-29),
+                        resultEnvelope = new
+                        {
+                            repositoryId = "PROJ-1",
+                            sourceRunAttemptId = "run-" + taskKey,
+                            baseSha = sha,
+                            resultSha = sha,
+                            immutableRemoteRef = $"refs/heads/agent-studio/results/run-{taskKey}/fence-1/{sha}",
+                            artifactManifestDigest = "manifest",
+                        },
+                    },
+                },
+                reviewAttempts = Array.Empty<object>(),
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            return path;
+        }
+        var shardA = Shard("08", "AGT-A", shaA);
+        var shardB = Shard("09", "AGT-B", shaB);
+        var service = NewService(() => now);
+
+        Assert.Single(service.GetTaskProjection("AGT-A", includeArchived: true).RunAttempts);
+        File.WriteAllText(shardB, "{ damaged after indexing");
+
+        Assert.Single(service.GetTaskProjection("AGT-A", includeArchived: true).RunAttempts);
+        Assert.Throws<InvalidDataException>(() => service.GetTaskProjection("AGT-B", includeArchived: true));
+        File.WriteAllText(shardA, "{ damaged after indexing");
+        var refs = service.GetIndexedDeliveryRefs(["AGT-A", "AGT-B"], includeArchived: true);
+        Assert.Equal(
+            [shaA, shaB],
+            refs.Select(item => item.ResultSha).Order(StringComparer.Ordinal));
+        Assert.Empty(service.GetIndexedDeliveryRefs(["AGT-A", "AGT-B"], includeArchived: false));
     }
 
     private (RunAttemptDto Run, ReviewAttemptDto Review) CompletedRunWithReview(AttemptAuthorityService service, string sha)

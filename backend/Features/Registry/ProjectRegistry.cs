@@ -49,7 +49,7 @@ public sealed class ProjectRegistry
         IAtomicJsonFileWriter? fileWriter = null)
     {
         _logger = logger;
-        _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
+        _fileWriter = (fileWriter ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
         var raw = config["TaskRepository"];
         _taskRepositoryRoot = string.IsNullOrWhiteSpace(raw) ? null : raw;
     }
@@ -68,7 +68,7 @@ public sealed class ProjectRegistry
             }
 
             var path = RegistryPaths.ProjectsFilePath(_taskRepositoryRoot);
-            if (!File.Exists(path))
+            if (!File.Exists(path) && !File.Exists(path + ".bak"))
             {
                 _registryFileWasMissingAtLoad = true;
                 _loaded = true;
@@ -77,7 +77,8 @@ public sealed class ProjectRegistry
 
             try
             {
-                var json = File.ReadAllText(path);
+                var json = AtomicJsonFileWriter.ReadAllTextWithBackup(path,
+                    source => _logger.LogWarning("project-registry-recovered source={Source}", source));
                 var parsed = JsonSerializer.Deserialize<ProjectsFile>(json, JsonOpts)
                     ?? throw new JsonException("The project registry JSON root is null.");
                 ValidateLoadedState(parsed);

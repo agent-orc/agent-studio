@@ -7,6 +7,19 @@ public static class AttemptAuthorityEndpoints
     {
         var group = app.MapGroup("/api/attempts");
 
+        group.MapGet("/health", (AttemptAuthorityService authority) => Results.Ok(new
+        {
+            status = authority.RecoverySource is null ? "healthy" : "recovered",
+            authorityEpoch = authority.AuthorityEpoch,
+            recoverySource = authority.RecoverySource,
+        }));
+
+        group.MapPost("/checkpoint", (AttemptAuthorityService authority) =>
+        {
+            authority.CheckpointForMigration();
+            return Results.Ok(new { status = "checkpointed", authorityEpoch = authority.AuthorityEpoch });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
         group.MapGet("/tasks/{taskKey}", (string taskKey, AttemptAuthorityService authority) =>
             Results.Ok(authority.GetTaskProjection(taskKey, includeArchived: true)));
 

@@ -1690,6 +1690,26 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Legacy_cutover_refuses_an_uncheckpointed_authority_journal()
+    {
+        using var data = new TempDirectory();
+        using var legacy = new TempDirectory();
+        Directory.CreateDirectory(Path.Combine(legacy.Path, "projects"));
+        var metadata = Path.Combine(legacy.Path, ".metadata");
+        Directory.CreateDirectory(metadata);
+        await File.WriteAllTextAsync(Path.Combine(metadata, "attempt-authority.json"),
+            """{"schemaVersion":6,"authorityEpoch":1,"lastFenceByTask":{},"runAttempts":[],"reviewAttempts":[]}""");
+        await File.WriteAllTextAsync(Path.Combine(metadata, "attempt-authority.json.journal"), "uncheckpointed");
+        var store = Store(data.Path);
+        await store.InitializeAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            new LegacyMigrationService(store).InventoryAsync(
+                new LegacyMigrationRequest(legacy.Path, "Workspace", true, RequireAttemptAuthority: true), default));
+        Assert.Contains("uncheckpointed mutations", error.Message);
+    }
+
+    [Fact]
     public async Task Legacy_cutover_inventories_every_entity_is_idempotent_and_restores_the_same_inventory_hash()
     {
         using var source = new TempDirectory();

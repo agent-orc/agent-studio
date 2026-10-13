@@ -105,7 +105,7 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
         var original = Assert.IsType<ReviewLeaseIsolation>(
             service.GetReviewLeaseIsolation(claimed.AttemptId, claimed.Lease!.LeaseId));
 
-        RewriteAsSchemaFourWithoutReviewIsolation(claimed.AttemptId);
+        RewriteAsSchemaFourWithoutReviewIsolation(service, claimed.AttemptId);
         service = NewService(() => now);
         var migrated = Assert.IsType<ReviewLeaseIsolation>(
             service.GetReviewLeaseIsolation(claimed.AttemptId, claimed.Lease.LeaseId));
@@ -181,7 +181,7 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
         ClaimedReview(service, out var claimed);
         var lease = claimed.Lease!;
 
-        RewriteReviewState(claimed.AttemptId, AttemptLifecycleState.Pending);
+        RewriteReviewState(service, claimed.AttemptId, AttemptLifecycleState.Pending);
         service = NewService(() => now);
 
         var reclaimed = service.ReClaimReview(
@@ -346,8 +346,14 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
             now);
     }
 
-    private void RewriteReviewState(string attemptId, AttemptLifecycleState state)
+    private void RewriteReviewState(
+        AttemptAuthorityService service,
+        string attemptId,
+        AttemptLifecycleState state)
     {
+        // Mutations after the first full write live in the journal; fold them
+        // into the snapshot before editing it on disk.
+        service.CheckpointForMigration();
         var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
         var root = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
         var review = root["reviewAttempts"]!.AsArray()
@@ -360,8 +366,9 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
         File.WriteAllText(path, root.ToJsonString());
     }
 
-    private void RewriteAsSchemaFourWithoutReviewIsolation(string attemptId)
+    private void RewriteAsSchemaFourWithoutReviewIsolation(AttemptAuthorityService service, string attemptId)
     {
+        service.CheckpointForMigration();
         var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
         var root = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
         root["schemaVersion"] = 4;

@@ -134,6 +134,72 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
     }
 
     [Fact]
+    public void Write_WithLastGoodBackup_KeepsThePreviousVersionBesideTheStore()
+    {
+        var path = Path.Combine(_dir, "state.json");
+        var writer = new AtomicJsonFileWriter().WithLastGoodBackup();
+        writer.Write(path, """{"version":1}""");
+        writer.Write(path, """{"version":2}""");
+
+        Assert.Equal("""{"version":2}""", File.ReadAllText(path));
+        Assert.Equal(["state.json", "state.json.bak"], Directory.GetFiles(_dir).Select(Path.GetFileName).Order());
+        Assert.Equal("""{"version":1}""", File.ReadAllText(path + ".bak"));
+    }
+
+    [Fact]
+    public void WithLastGoodBackup_LeavesInjectedTestDoublesUnchanged()
+    {
+        var injected = new RecordingWriter();
+
+        Assert.Same(injected, injected.WithLastGoodBackup());
+    }
+
+    [Fact]
+    public void ReadAllTextWithBackup_Uses_valid_backup_after_zero_tailed_primary()
+    {
+        var path = Path.Combine(_dir, "state.json");
+        var writer = AtomicJsonFileWriter.KeepingLastGoodBackup();
+        writer.Write(path, """{"version":1}""");
+        writer.Write(path, """{"version":2}""");
+        File.WriteAllText(path, """{"version":2}""" + new string('\0', 1024));
+        string? recoveredFrom = null;
+
+        Assert.Equal("""{"version":1}""",
+            AtomicJsonFileWriter.ReadAllTextWithBackup(path, source => recoveredFrom = source));
+        Assert.Equal(path + ".bak", recoveredFrom);
+        writer.Write(path, """{"version":3}""");
+        Assert.Equal("""{"version":1}""", File.ReadAllText(path + ".bak"));
+        Assert.Equal("""{"version":3}""", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void ReadAllTextWithBackup_WithoutABackup_RethrowsThePrimaryFailure()
+    {
+        // Stores that never opt into backups keep their own handling of a
+        // damaged or missing file (a JsonException, a FileNotFoundException).
+        var path = Path.Combine(_dir, "state.json");
+        File.WriteAllText(path, """{"version":2""" + new string('\0', 16));
+
+        Assert.ThrowsAny<JsonException>(() => AtomicJsonFileWriter.ReadAllTextWithBackup(path));
+        Assert.Throws<FileNotFoundException>(
+            () => AtomicJsonFileWriter.ReadAllTextWithBackup(Path.Combine(_dir, "missing.json")));
+    }
+
+    [Fact]
+    public void ReplaceExisting_ByDefault_LeavesNoBackupBesideARepositoryDocument()
+    {
+        // Wiki pages and Dossier descriptors live in project repositories. A
+        // sibling .bak there is an untracked file that dirties the worktree.
+        var path = Path.Combine(_dir, "notes.md");
+        var writer = new AtomicJsonFileWriter();
+        writer.Write(path, "first note\n");
+        writer.ReplaceExisting(path, "second note\n");
+
+        Assert.Equal("second note\n", File.ReadAllText(path));
+        Assert.Equal(["notes.md"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+    }
+
+    [Fact]
     public void ReplaceExisting_WhenTheFolderIsGone_FailsInsteadOfRecreatingIt()
     {
         // A task.json rewrite belongs to a folder another writer owns and may
@@ -245,5 +311,12 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
         if (exception is FileNotFoundException or DirectoryNotFoundException) return false;
         if (!OperatingSystem.IsWindows()) return false;
         return (exception.HResult & 0xffff) is 32 or 33;
+    }
+
+    private sealed class RecordingWriter : IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content)
+        {
+        }
     }
 }

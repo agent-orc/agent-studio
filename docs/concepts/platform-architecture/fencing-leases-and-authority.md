@@ -348,6 +348,7 @@ Delivered and load-bearing today:
 | Capability | Evidence |
 |---|---|
 | Persisted attempt authority with per-task monotonic fences, a global epoch, review lease namespace and port authority retained across same-worker re-fencing, and exact reclaim responses replayable across daemon generations | `backend/Features/Runner/AttemptAuthorityService.cs`, store at `.metadata/attempt-authority.json`, schema v6 |
+| Flushed authority mutation journal, periodic snapshot, terminal archive shards, and backup recovery with an epoch and fence-range advance | `AttemptAuthorityService`, `.metadata/attempt-authority.json.journal`, `.metadata/attempt-authority.json.bak`, and `/api/attempts/health` |
 | Soft-drain epoch rotation that does not requeue live work | `AttemptAuthorityService.RotateAuthorityEpoch` |
 | Ordered single-writer validation with a stable rejection vocabulary | `backend/Shared/Attempts/AttemptAuthorityModels.cs`, `ValidateRunWriteLocked` |
 | Fenced, fsynced, at-least-once host outbox with digest-bound final handoff | `runner/DurableRunOutbox.cs` |

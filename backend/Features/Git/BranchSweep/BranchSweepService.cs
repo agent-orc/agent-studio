@@ -339,8 +339,9 @@ public sealed class BranchSweepService
     /// <c>TaskTransitionService.TriggerBranchReclaimAfterArchive</c> uses. A ref
     /// whose key is absent from this index is an orphan and the policy decides
     /// it by the age rule of its class.
-    /// <paramref name="openKeys"/> carries the internal task keys of the
-    /// non-archived cards, which is what the attempt index is addressed by.
+    /// <paramref name="openKeys"/> carries every identifier of the non-archived
+    /// cards: remote runs address attempt authority by the card key, local
+    /// runs by the internal task key.
     /// </summary>
     private Dictionary<string, string> BuildTaskStateIndex(string project, out IReadOnlyList<string> openKeys)
     {
@@ -352,10 +353,11 @@ public sealed class BranchSweepService
             if (!string.IsNullOrWhiteSpace(task.Key)) index[task.Key!] = task.State;
             if (!string.IsNullOrWhiteSpace(task.TaskKey)) index.TryAdd(task.TaskKey, task.State);
             if (!string.IsNullOrWhiteSpace(task.Id)) index.TryAdd(task.Id, task.State);
-            if (!string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal)
-                && !string.IsNullOrWhiteSpace(task.TaskKey))
+            if (!string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal))
             {
-                open.Add(task.TaskKey);
+                open.AddRange(new[] { task.Key, task.TaskKey, task.Id }
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key!));
             }
         }
         openKeys = open;
@@ -365,13 +367,15 @@ public sealed class BranchSweepService
     /// <summary>
     /// Branch names still referenced by an open (non-archived) card through its
     /// indexed delivery refs. These are recovery sources, so the sweep keeps
-    /// them regardless of age.
+    /// them regardless of age. Earlier attempts of a card that stays open
+    /// (salvage and recovery refs) move to the authority archive after the
+    /// hot-store retention window, so archived attempts count as well.
     /// </summary>
     private HashSet<string> BuildOpenCardRefIndex(IReadOnlyList<string> openKeys)
     {
         var refs = new HashSet<string>(StringComparer.Ordinal);
         if (openKeys.Count == 0) return refs;
-        foreach (var indexed in _attempts.GetIndexedDeliveryRefs(openKeys, includeArchived: false))
+        foreach (var indexed in _attempts.GetIndexedDeliveryRefs(openKeys, includeArchived: true))
         {
             var branch = ToBranchName(indexed.Ref);
             if (branch is not null) refs.Add(branch);
