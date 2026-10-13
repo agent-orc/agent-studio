@@ -406,6 +406,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    watchPath,
                     developerRoot,
                     repoRoot,
                     delivery,
@@ -435,6 +436,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    watchPath,
                     developerRoot,
                     repoRoot,
                     branch,
@@ -451,6 +453,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    watchPath,
                     developerRoot,
                     repoRoot,
                     branch,
@@ -570,6 +573,7 @@ public sealed partial class MergeIntoDevelopRunner
                 }
                 pushDecidedByFence = true;
             }
+            var conclusionFolderPath = jobFolderPath;
             var cancelledGate = preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
                 ? preMainResult : preDevelopResult?.FailureKind == BuildTestGateFailureKind.Cancellation
                     ? preDevelopResult : null;
@@ -581,6 +585,11 @@ public sealed partial class MergeIntoDevelopRunner
                     cancellationSubject.Lane, live.Lane, live.ContinuePending,
                     ct.IsCancellationRequested, cancelledGate.CancellationReason);
                 cancelledGate = GateCancellationPolicy.Apply(cancelledGate, reason);
+                conclusionFolderPath = live.Folder;
+                IntegrationGateReceipts.Record(live.Folder,
+                    preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
+                        ? "pre-main-test-gate" : IntegrationGateJournal.PreDevelopBuildGateStep,
+                    cancelledGate, _timeline);
                 if (preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation) preMainResult = cancelledGate;
                 else preDevelopResult = cancelledGate;
                 _timeline?.Append(live.Folder, new TimelineEvent
@@ -610,7 +619,7 @@ public sealed partial class MergeIntoDevelopRunner
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
             result = await ConcludeAsync(
-                project, jobId, jobFolderPath, watchPath, taskBranch, branch, strategy,
+                project, jobId, conclusionFolderPath, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
                 raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
                 approvedPushSha: approvedPushSha).ConfigureAwait(false);
@@ -790,6 +799,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string? watchPath,
         string developerRoot,
         string repoRoot,
         DeliveryRefResolution delivery,
@@ -802,6 +812,7 @@ public sealed partial class MergeIntoDevelopRunner
                 project,
                 jobId,
                 jobFolderPath,
+                watchPath,
                 developerRoot,
                 repoRoot,
                 workBranch,
@@ -815,6 +826,7 @@ public sealed partial class MergeIntoDevelopRunner
                 project,
                 jobId,
                 jobFolderPath,
+                watchPath,
                 developerRoot,
                 repoRoot,
                 workBranch,
@@ -941,6 +953,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string? watchPath,
         string developerRoot,
         string repoRoot,
         string integrationBranch,
@@ -1106,12 +1119,14 @@ public sealed partial class MergeIntoDevelopRunner
                 CancellationToken.None,
                 reuse.Reused).ConfigureAwait(false);
         }
-        IntegrationGateReceipts.Record(
-            jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse);
+        if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
+            IntegrationGateReceipts.Record(
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse);
 
         // A verdict exists, in either direction: this process is no longer the
         // only thing standing between the branch and an un-gated merge.
-        IntegrationGateJournal.Clear(jobFolderPath);
+        IntegrationGateJournal.Clear(gate.FailureKind == BuildTestGateFailureKind.Cancellation
+            ? CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder : jobFolderPath);
 
         if (PreDevelopBuildGate.IsGreen(gate))
         {
@@ -1365,7 +1380,8 @@ public sealed partial class MergeIntoDevelopRunner
                 settings.BuildProfile,
                 preMainTimeout,
                 ct).ConfigureAwait(false);
-            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+            if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
+                IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
             if (gate.Verdict != BuildTestGateVerdict.Ok)
             {
                 return (
@@ -1529,7 +1545,8 @@ public sealed partial class MergeIntoDevelopRunner
             settings.BuildProfile,
             preMainTimeout,
             ct).ConfigureAwait(false);
-        IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+        if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
+            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
 
         if (gate.Verdict != BuildTestGateVerdict.Ok)
         {
