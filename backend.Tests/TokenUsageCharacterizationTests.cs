@@ -97,6 +97,7 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
                 ledger.LoadSnapshot("beta", _beta).Freshness),
         ]);
 
+        var adhoc = aggregator.AdHocAggregate();
         var record = PipelineRecord();
         var ledgerCalls = LedgerCalls();
         var sessions = Sessions();
@@ -218,6 +219,31 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
                     week = D(p.WeekUsd),
                     p.Coverage.Status,
                     p.Coverage.Reason,
+                }).ToList(),
+            },
+            adhoc = new
+            {
+                adhoc.Calls,
+                adhoc.InputTokens,
+                adhoc.OutputTokens,
+                adhoc.CacheReadTokens,
+                adhoc.CacheCreationTokens,
+                cost = D(adhoc.EstimatedApiCostUsd),
+                adhoc.AllModelsPriced,
+                bySource = adhoc.BySource.Select(row => new { row.Source, row.Calls, row.InputTokens, cost = D(row.EstimatedApiCostUsd) }).ToList(),
+                byDay = adhoc.ByDay.Select(row => new { row.Date, row.Calls, row.InputTokens, cost = D(row.EstimatedApiCostUsd) }).ToList(),
+                byModel = adhoc.ByModel.Select(row => new
+                {
+                    row.Model,
+                    row.ModelId,
+                    row.Cli,
+                    row.Calls,
+                    row.InputTokens,
+                    row.OutputTokens,
+                    row.CacheReadTokens,
+                    row.CacheCreationTokens,
+                    cost = D(row.EstimatedApiCostUsd),
+                    row.ModelPriced,
                 }).ToList(),
             },
             pipeline = new
@@ -534,6 +560,13 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
                 with { EstimatedApiCostUsd = 0.123456m, ModelPriced = true }],
             residualInput: 0, lastModel: "claude-opus-5", lastUpdate: At(10, 13, 8, 15));
 
+        // Workspace-scoped ad-hoc one-shot calls.
+        await AdHoc(store, "w001", At(10, 12, 7), "TitleGen", Tokens("claude-haiku-4-5-20251001", 800, 40));
+        await AdHoc(store, "w002", At(10, 12, 8), "TitleGen", Tokens("Claude Haiku 4.5", 900, 50));
+        await AdHoc(store, "w003", At(10, 11, 9), "SummaryGen", Tokens("sonnet", 4_000, 600, 2_000));
+        await AdHoc(store, "w004", At(10, 10, 9), "SummaryGen", Tokens("zeta-model-9", 1_000, 100));
+        await AdHoc(store, "w005", At(7, 20, 9), "Triage", Tokens("gpt-5.6-luna", 10_000, 1_000, 3_000));
+
         // beta.
         await Bus(store, "beta", "b001", At(10, 12, 12), "agent:claude", "BET-1",
             Tokens("claude-sonnet-5", 4_000, 600));
@@ -662,6 +695,20 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
             JobId = jobId,
             Topic = "token",
             Summary = "token usage",
+            Tokens = tokens,
+        });
+
+    private Task AdHoc(AgentMessageBusStore store, string id, DateTime at, string source, AgentMessageTokens tokens)
+        => store.AppendAsync(_workspace, new AgentMessage
+        {
+            Id = $"golden-{id}",
+            CreatedAt = at,
+            ParticipantId = "support:adhoc",
+            Role = "actor",
+            Kind = "token-usage",
+            Project = AgentMessageBusPaths.WorkspaceScope,
+            Topic = source,
+            Summary = "ad-hoc usage",
             Tokens = tokens,
         });
 
