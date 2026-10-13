@@ -8,7 +8,8 @@ public sealed record ProviderAuthProvisioningRequest(
     string SshTarget,
     string RunnerId,
     string EnvironmentVariable,
-    string Secret);
+    string Secret,
+    string? IdempotencyKey = null);
 
 public sealed record ProviderAuthProvisioningResponse(
     string Provider,
@@ -18,14 +19,19 @@ public sealed record ProviderAuthProvisioningResponse(
     string Detail,
     DateTime RequestedAt,
     IReadOnlyList<string> RestartedServices,
-    bool ProcessEnvironmentVerified);
+    bool ProcessEnvironmentVerified,
+    string? OperationId = null);
 
 public interface IProviderAuthProvisioner
 {
     Task<ProviderAuthProvisioningResponse> ProvisionAsync(
         ProviderAuthProvisioningRequest request,
-        CancellationToken cancellationToken);
+        ProviderAuthRenewalFence? fence, CancellationToken cancellationToken);
+    Task<string> FinalizePendingAsync(string sshTarget, string operationId, CancellationToken cancellationToken)
+        => Task.FromResult("verified");
 }
+
+public sealed record ProviderAuthRenewalFence(string OperationId, string ExpectedGeneration);
 
 public sealed class ProviderAuthProvisioningException(string message) : Exception(message);
 
@@ -86,8 +92,41 @@ public sealed class SshProviderAuthProvisioner : IProviderAuthProvisioner
 {
     private static readonly TimeSpan ProvisioningTimeout = TimeSpan.FromSeconds(45);
 
+    public async Task<string> FinalizePendingAsync(string sshTarget, string operationId,
+        CancellationToken cancellationToken)
+    {
+        if (!Regex.IsMatch(sshTarget, @"^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$")
+            || !Regex.IsMatch(operationId, @"^[A-Za-z0-9_.-]{1,128}$"))
+            throw new ArgumentException("Invalid host renewal target or operation.");
+        var startInfo = BuildStartInfo(sshTarget, "ANTHROPIC_API_KEY");
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(ProvisioningTimeout);
+        try
+        {
+            await process.StandardInput.WriteAsync(
+                PendingFinalizationScript.Replace("__OPERATION_ID__", operationId, StringComparison.Ordinal)
+                    .AsMemory(), bounded.Token);
+            process.StandardInput.Close();
+            var stdout = process.StandardOutput.ReadToEndAsync(bounded.Token);
+            var stderr = process.StandardError.ReadToEndAsync(bounded.Token);
+            await process.WaitForExitAsync(bounded.Token);
+            if (process.ExitCode != 0)
+                throw new ProviderAuthProvisioningException(
+                    "Pending renewal verification failed: " + SafeExcerpt(await stderr));
+            return (await stdout).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .LastOrDefault()?.Trim() ?? "pending";
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            throw;
+        }
+    }
+
     public async Task<ProviderAuthProvisioningResponse> ProvisionAsync(
-        ProviderAuthProvisioningRequest request,
+        ProviderAuthProvisioningRequest request, ProviderAuthRenewalFence? fence,
         CancellationToken cancellationToken)
     {
         var validation = ProviderAuthProvisioningPolicy.Validate(request);
@@ -113,7 +152,7 @@ public sealed class SshProviderAuthProvisioner : IProviderAuthProvisioner
         var stderrTask = process.StandardError.ReadToEndAsync(bounded.Token);
         try
         {
-            var standardInput = BuildStandardInput(request.EnvironmentVariable.Trim(), request.Secret);
+            var standardInput = BuildStandardInput(request.EnvironmentVariable.Trim(), request.Secret, fence);
             await process.StandardInput.WriteAsync(standardInput.AsMemory(), bounded.Token);
             await process.StandardInput.FlushAsync(bounded.Token);
             process.StandardInput.Close();
@@ -189,11 +228,18 @@ public sealed class SshProviderAuthProvisioner : IProviderAuthProvisioner
         return startInfo;
     }
 
-    internal static string BuildStandardInput(string environmentVariable, string secret)
+    internal static string BuildStandardInput(string environmentVariable, string secret,
+        ProviderAuthRenewalFence? fence = null)
     {
+        static bool Safe(string value) => value.Length is > 0 and <= 128 &&
+            value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or '.' or ':');
+        if (fence is not null && (!Safe(fence.OperationId) || !Safe(fence.ExpectedGeneration)))
+            throw new ArgumentException("Renewal fence identifiers are invalid.", nameof(fence));
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(secret));
         return RemoteScript.Replace("__PAYLOAD_BASE64__", payload, StringComparison.Ordinal)
-            .Replace("__ENVIRONMENT_VARIABLE__", environmentVariable, StringComparison.Ordinal);
+            .Replace("__ENVIRONMENT_VARIABLE__", environmentVariable, StringComparison.Ordinal)
+            .Replace("__OPERATION_ID__", fence?.OperationId ?? "", StringComparison.Ordinal)
+            .Replace("__EXPECTED_GENERATION__", fence?.ExpectedGeneration ?? "", StringComparison.Ordinal);
     }
 
     private static void TryKill(Process process)
@@ -219,8 +265,20 @@ public sealed class SshProviderAuthProvisioner : IProviderAuthProvisioner
 set -euo pipefail
 environment_variable="$1"
 expected_environment_variable='__ENVIRONMENT_VARIABLE__'
+operation_id='__OPERATION_ID__'
+expected_generation='__EXPECTED_GENERATION__'
 provider_auth_file='/etc/agent-runner/provider-auth.env'
 payload_base64='__PAYLOAD_BASE64__'
+generation="renewal_$(tr -d '-' </proc/sys/kernel/random/uuid)"
+if [[ -z "$operation_id" ]]; then operation_id="local_${generation}"; fi
+rollback_file="/etc/agent-runner/.provider-auth.rollback.${generation}"
+installed=0
+install_committed=0
+verified_all=0
+changed_units=()
+units=()
+created_dropins=()
+had_prior_file=0
 
 if [[ "$environment_variable" != "$expected_environment_variable" ]]; then
   echo '[provider-auth] Environment variable binding changed in transit.' >&2
@@ -237,11 +295,89 @@ token_tmp="$(mktemp)"
 env_tmp="$(mktemp)"
 dropin_tmp="$(mktemp)"
 provider_auth_install_tmp=''
-cleanup() {
+rollback_on_failure() {
+  result=$?
+  trap - EXIT
+  set +e
   rm -f -- "$token_tmp" "$env_tmp" "$dropin_tmp"
   [[ -z "$provider_auth_install_tmp" ]] || rm -f -- "$provider_auth_install_tmp"
+  if ((result == 0 && verified_all == 1)); then
+    rm -f -- "$rollback_file" || {
+      [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+      echo 'provider-auth-recovery-required=rollback-copy-cleanup-failed' >&2
+      exit 39
+    }
+    if [[ -n "${receipt_file:-}" ]] && ! printf 'verified\n' >"$receipt_file"; then
+      echo 'provider-auth-recovery-required=receipt-write-failed' >&2
+      exit 39
+    fi
+    exit 0
+  fi
+  if ((result != 0 && installed == 0)); then
+    rm -f -- "$rollback_file"
+    [[ -z "${receipt_file:-}" ]] || printf 'failed\n' >"$receipt_file"
+  fi
+  if ((result != 0 && installed == 1 && install_committed == 0)); then
+    restored=1
+    if ((had_prior_file)); then
+      restore_tmp=$(mktemp /etc/agent-runner/.provider-auth.restore.XXXXXX) || restored=0
+      if ((restored)) && ! install -m 0640 -o root -g agent "$rollback_file" "$restore_tmp"; then restored=0; fi
+      if ((restored)) && ! mv -fT -- "$restore_tmp" "$provider_auth_file"; then restored=0; fi
+      [[ -z "${restore_tmp:-}" ]] || rm -f -- "$restore_tmp"
+    else
+      rm -f -- "$provider_auth_file" || restored=0
+      for dropin in "${created_dropins[@]}"; do rm -f -- "$dropin" || restored=0; done
+      systemctl daemon-reload || restored=0
+    fi
+    if ((restored)); then
+      for unit in "${changed_units[@]}"; do
+        if [[ "$unit" == agent-runner-review.service ]]; then
+          /usr/local/sbin/agent-runner-deploy restart-review || restored=0
+        else
+          systemctl restart "$unit" || restored=0
+        fi
+        pid=$(systemctl show --property=MainPID --value "$unit")
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || restored=0
+        if ((restored)) && ! bash -c '
+          if [[ -f "$2" ]]; then
+            set -a; source "$2"; set +a
+          fi
+          oauth=${CLAUDE_CODE_OAUTH_TOKEN:-}; api=${ANTHROPIC_API_KEY:-}
+          generation=${AGENT_STUDIO_CLAUDE_AUTH_GENERATION:-}
+          seen_oauth=0; seen_api=0; seen_generation=0
+          while IFS= read -r -d "" entry; do
+            [[ -z "$oauth" || "$entry" != "CLAUDE_CODE_OAUTH_TOKEN=$oauth" ]] || seen_oauth=1
+            [[ -z "$api" || "$entry" != "ANTHROPIC_API_KEY=$api" ]] || seen_api=1
+            [[ -z "$generation" || "$entry" != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION=$generation" ]] || seen_generation=1
+            if [[ -z "$oauth" && "$entry" == CLAUDE_CODE_OAUTH_TOKEN=* ]] ||
+               [[ -z "$api" && "$entry" == ANTHROPIC_API_KEY=* ]] ||
+               [[ -z "$generation" && "$entry" == AGENT_STUDIO_CLAUDE_AUTH_GENERATION=* ]]; then exit 1; fi
+          done <"/proc/$1/environ"
+          [[ ( -z "$oauth" || "$seen_oauth" == 1 ) &&
+             ( -z "$api" || "$seen_api" == 1 ) &&
+             ( -z "$generation" || "$seen_generation" == 1 ) ]]
+        ' bash "$pid" "$provider_auth_file"; then restored=0; fi
+      done
+    fi
+    if ((restored)); then
+      if rm -f -- "$rollback_file"; then
+        [[ -z "${receipt_file:-}" ]] || printf 'rollback-restored\n' >"$receipt_file"
+        echo 'provider-auth-rollback-restored'
+      else
+        [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+        echo 'provider-auth-recovery-required=rollback-copy-cleanup-failed' >&2
+      fi
+    else
+      for unit in "${units[@]}"; do systemctl stop "$unit" || true; done
+      [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+      [[ -z "${receipt_file:-}" ]] || printf '%s\n' "$rollback_file" >>"$receipt_file"
+      echo "provider-auth-recovery-operation=$operation_id" >&2
+      echo 'provider-auth-recovery-required=rollback-failed' >&2
+    fi
+  fi
+  exit "$result"
 }
-trap cleanup EXIT
+trap rollback_on_failure EXIT
 printf '%s' "$payload_base64" | base64 --decode >"$token_tmp"
 unset payload_base64
 [[ -s "$token_tmp" ]] || { echo '[provider-auth] Decoded credential is empty.' >&2; exit 34; }
@@ -251,20 +387,42 @@ if LC_ALL=C grep -q '[^A-Za-z0-9._~+/=-]' "$token_tmp"; then
 fi
 
 install -d -m 0750 -o root -g agent /etc/agent-runner
+exec 9>/etc/agent-runner/.provider-auth-renewal.lock
+flock -n 9 || { echo 'provider-auth-binding-busy' >&2; exit 73; }
+if [[ -n "$expected_generation" ]]; then
+  current_generation=absent
+  if [[ -f "$provider_auth_file" ]]; then
+    current_generation=$(awk -F= '$1 == "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print $2 }' "$provider_auth_file")
+    [[ -n "$current_generation" ]] || current_generation=unknown
+  fi
+  [[ "$current_generation" == "$expected_generation" ]] || {
+    echo 'provider-auth-stale-generation' >&2; exit 46;
+  }
+fi
+receipt_dir=/etc/agent-runner/provider-renewal
+install -d -m 0700 -o root -g root "$receipt_dir"
+receipt_file="$receipt_dir/$operation_id"
+[[ ! -e "$receipt_file" ]] || { echo 'provider-auth-recovery-required' >&2; exit 74; }
+if [[ -f "$provider_auth_file" ]]; then had_prior_file=1; fi
+printf 'started\n%s\n%s\n%s\n' "$rollback_file" "$had_prior_file" "$generation" >"$receipt_file"
 if [[ -f "$provider_auth_file" ]]; then
-  awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" { print }' \
+  install -m 0600 -o root -g root "$provider_auth_file" "$rollback_file"
+  awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" && $1 != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print }' \
     "$provider_auth_file" >"$env_tmp"
+else
+  install -m 0600 -o root -g root /dev/null "$rollback_file"
 fi
 printf '%s=' "$environment_variable" >>"$env_tmp"
 cat "$token_tmp" >>"$env_tmp"
 printf '\n' >>"$env_tmp"
+printf 'AGENT_STUDIO_CLAUDE_AUTH_GENERATION=%s\n' "$generation" >>"$env_tmp"
 provider_auth_install_tmp="$(mktemp /etc/agent-runner/.provider-auth.env.XXXXXX)"
 install -m 0640 -o root -g agent "$env_tmp" "$provider_auth_install_tmp"
 mv -fT -- "$provider_auth_install_tmp" "$provider_auth_file"
 provider_auth_install_tmp=''
+installed=1
 
 printf '[Service]\nEnvironmentFile=%s\n' "$provider_auth_file" >"$dropin_tmp"
-units=()
 if systemctl cat agent-host.service >/dev/null 2>&1; then
   units+=(agent-host.service)
 elif systemctl cat agent-runner.service >/dev/null 2>&1; then
@@ -277,13 +435,19 @@ configured=()
 for unit in "${units[@]}"; do
   dropin_dir="/etc/systemd/system/${unit}.d"
   install -d -m 0755 "$dropin_dir"
+  [[ -e "$dropin_dir/90-provider-auth.conf" ]] || created_dropins+=("$dropin_dir/90-provider-auth.conf")
   install -m 0644 "$dropin_tmp" "$dropin_dir/90-provider-auth.conf"
   configured+=("$unit")
 done
 
 if ((${#configured[@]} == 0)); then
+  if [[ -n "${receipt_file:-}" ]]; then
+    { printf 'installed-awaiting-runner\n%s\n%s\n%s\n' "$rollback_file" "$had_prior_file" "$generation"; printf 'pending=%s\n' 'no-runner-unit'; } >"$receipt_file"
+  fi
+  [[ -n "$expected_generation" ]] || { echo 'provider-auth-unverified-local-install' >&2; exit 75; }
   echo 'provider-auth-file=installed'
   echo 'provider-auth-process-environment=pending-runner'
+  install_committed=1
   exit 0
 fi
 
@@ -292,6 +456,7 @@ verified=0
 pending=0
 for unit in "${configured[@]}"; do
   if [[ "$unit" == agent-runner-review.service ]]; then
+    changed_units+=("$unit")
     if [[ ! -x /usr/local/sbin/agent-runner-deploy ]] \
         || ! /usr/local/sbin/agent-runner-deploy restart-review; then
       printf 'provider-auth-unit-pending=%s\n' "$unit"
@@ -299,6 +464,7 @@ for unit in "${configured[@]}"; do
       continue
     fi
   else
+    changed_units+=("$unit")
     systemctl restart "$unit"
   fi
   main_pid="$(systemctl show --property=MainPID --value "$unit")"
@@ -306,9 +472,17 @@ for unit in "${configured[@]}"; do
     printf '[provider-auth] Unit %s did not expose a running MainPID.\n' "$unit" >&2
     exit 36
   }
-  if ! tr '\0' '\n' <"/proc/${main_pid}/environ" | grep -q "^${environment_variable}="; then
-    printf '[provider-auth] Unit %s did not receive %s through EnvironmentFile.\n' \
-      "$unit" "$environment_variable" >&2
+  if ! (set -a; source "$provider_auth_file"; set +a
+        candidate="${!environment_variable}"
+        matched=0
+        marker=0
+        while IFS= read -r -d '' entry; do
+          [[ "$entry" == "$environment_variable=$candidate" ]] && matched=1
+          [[ "$entry" == "AGENT_STUDIO_CLAUDE_AUTH_GENERATION=$generation" ]] && marker=1
+        done <"/proc/${main_pid}/environ"
+        [[ "$matched" == 1 && "$marker" == 1 ]]); then
+    printf '[provider-auth] Unit %s did not receive the selected provider generation.\n' \
+      "$unit" >&2
     exit 37
   fi
   verified=$((verified + 1))
@@ -317,9 +491,157 @@ done
 [[ "$((verified + pending))" -eq "${#configured[@]}" ]] || exit 38
 echo 'provider-auth-file=installed'
 if ((pending == 0)); then
+  verified_all=1
   echo 'provider-auth-process-environment=verified'
 else
+  if [[ -n "${receipt_file:-}" ]]; then
+    { printf 'installed-awaiting-runner\n%s\n%s\n%s\n' "$rollback_file" "$had_prior_file" "$generation"; for unit in "${configured[@]}"; do printf 'unit=%s\n' "$unit"; done; for unit in "${created_dropins[@]}"; do printf 'dropin=%s\n' "$unit"; done; for unit in "${configured[@]}"; do printf 'pending=%s\n' "$unit"; done; } >"$receipt_file"
+  fi
+  [[ -n "$expected_generation" ]] || { echo 'provider-auth-unverified-local-install' >&2; exit 75; }
   echo 'provider-auth-process-environment=pending-runner'
 fi
+install_committed=1
 """;
+
+    private const string PendingFinalizationScript = """
+set -euo pipefail
+operation_id='__OPERATION_ID__'
+receipt_file="/etc/agent-runner/provider-renewal/$operation_id"
+provider_auth_file=/etc/agent-runner/provider-auth.env
+exec 9>/etc/agent-runner/.provider-auth-renewal.lock
+flock -n 9 || exit 73
+[[ -f "$receipt_file" ]] || { echo recovery-required; exit 0; }
+mapfile -t receipt <"$receipt_file"
+[[ "${receipt[0]}" == installed-awaiting-runner || "${receipt[0]}" == started ]] || { echo "${receipt[0]}"; exit 0; }
+rollback_file="${receipt[1]}"
+had_prior_file="${receipt[2]}"
+installed_generation="${receipt[3]}"
+units=(); dropins=(); pending=()
+for line in "${receipt[@]:4}"; do
+  case "$line" in
+    unit=agent-host.service|unit=agent-runner.service|unit=agent-runner-review.service) units+=("${line#unit=}") ;;
+    dropin=/etc/systemd/system/agent-host.service.d/90-provider-auth.conf|dropin=/etc/systemd/system/agent-runner.service.d/90-provider-auth.conf|dropin=/etc/systemd/system/agent-runner-review.service.d/90-provider-auth.conf) dropins+=("${line#dropin=}") ;;
+    pending=*) pending+=("${line#pending=}") ;;
+  esac
+done
+if [[ "${receipt[0]}" == started ]]; then
+  for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+    if systemctl cat "$unit" >/dev/null 2>&1; then systemctl stop "$unit" || true; fi
+  done
+  printf 'recovery-required\n%s\n' "$rollback_file" >"$receipt_file"
+  echo recovery-required
+  exit 0
+fi
+if [[ "$rollback_file" != /etc/agent-runner/.provider-auth.rollback.* || ! -f "$rollback_file" ]]; then
+  for unit in "${units[@]}"; do systemctl stop "$unit" || true; done
+  printf 'recovery-required\n' >"$receipt_file"
+  echo recovery-required
+  exit 0
+fi
+recover() {
+  trap - ERR
+  set +e
+  restored=1
+  if [[ "$had_prior_file" == 1 ]]; then
+    restore_tmp=$(mktemp /etc/agent-runner/.provider-auth.restore.XXXXXX) || restored=0
+    if ((restored)) && ! install -m 0640 -o root -g agent "$rollback_file" "$restore_tmp"; then restored=0; fi
+    if ((restored)) && ! mv -fT -- "$restore_tmp" "$provider_auth_file"; then restored=0; fi
+    [[ -z "${restore_tmp:-}" ]] || rm -f -- "$restore_tmp"
+  else
+    rm -f -- "$provider_auth_file" || restored=0
+    for dropin in "${dropins[@]}"; do rm -f -- "$dropin" || restored=0; done
+    systemctl daemon-reload || restored=0
+  fi
+  if ((restored)); then
+    for unit in "${units[@]}"; do
+      if [[ "$unit" == agent-runner-review.service ]]; then
+        /usr/local/sbin/agent-runner-deploy restart-review || restored=0
+      else
+        systemctl restart "$unit" || restored=0
+      fi
+      pid=$(systemctl show --property=MainPID --value "$unit")
+      [[ "$pid" =~ ^[1-9][0-9]*$ ]] || restored=0
+      if ((restored)) && ! bash -c '
+        set -a; [[ ! -f "$2" ]] || source "$2"; set +a
+        oauth=${CLAUDE_CODE_OAUTH_TOKEN:-}; api=${ANTHROPIC_API_KEY:-}
+        generation=${AGENT_STUDIO_CLAUDE_AUTH_GENERATION:-}
+        seen_oauth=0; seen_api=0; seen_generation=0
+        while IFS= read -r -d "" entry; do
+          [[ -z "$oauth" || "$entry" != "CLAUDE_CODE_OAUTH_TOKEN=$oauth" ]] || seen_oauth=1
+          [[ -z "$api" || "$entry" != "ANTHROPIC_API_KEY=$api" ]] || seen_api=1
+          [[ -z "$generation" || "$entry" != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION=$generation" ]] || seen_generation=1
+          if [[ -z "$oauth" && "$entry" == CLAUDE_CODE_OAUTH_TOKEN=* ]] ||
+             [[ -z "$api" && "$entry" == ANTHROPIC_API_KEY=* ]] ||
+             [[ -z "$generation" && "$entry" == AGENT_STUDIO_CLAUDE_AUTH_GENERATION=* ]]; then exit 1; fi
+        done <"/proc/$1/environ"
+        [[ ( -z "$oauth" || "$seen_oauth" == 1 ) && ( -z "$api" || "$seen_api" == 1 ) && ( -z "$generation" || "$seen_generation" == 1 ) ]]
+      ' bash "$pid" "$provider_auth_file"; then restored=0; fi
+    done
+  fi
+  if ((restored)); then
+    rm -f -- "$rollback_file" || restored=0
+  fi
+  if ((restored)); then
+    printf 'rollback-restored\n' >"$receipt_file"
+    echo rollback-restored
+  else
+    for unit in "${units[@]}"; do systemctl stop "$unit" || true; done
+    printf 'recovery-required\n' >"$receipt_file"
+    echo recovery-required
+  fi
+  exit 0
+}
+trap recover ERR
+if ((${#units[@]} == 0)); then
+  if systemctl cat agent-host.service >/dev/null 2>&1; then
+    units+=(agent-host.service)
+  elif systemctl cat agent-runner.service >/dev/null 2>&1; then
+    units+=(agent-runner.service)
+  fi
+  if systemctl cat agent-runner-review.service >/dev/null 2>&1; then
+    units+=(agent-runner-review.service)
+  fi
+  if ((${#units[@]} == 0)); then echo pending; exit 0; fi
+  for unit in "${units[@]}"; do
+    dropin="/etc/systemd/system/${unit}.d/90-provider-auth.conf"
+    install -d -m 0755 "${dropin%/*}"
+    if [[ ! -e "$dropin" ]]; then dropins+=("$dropin"); fi
+    dropin_tmp=$(mktemp)
+    printf '[Service]\nEnvironmentFile=%s\n' "$provider_auth_file" >"$dropin_tmp"
+    install -m 0644 "$dropin_tmp" "$dropin"
+    rm -f -- "$dropin_tmp"
+  done
+  systemctl daemon-reload
+  pending=("${units[@]}")
+  { printf 'installed-awaiting-runner\n%s\n%s\n%s\n' "$rollback_file" "$had_prior_file" "$installed_generation"; for unit in "${units[@]}"; do printf 'unit=%s\n' "$unit"; done; for dropin in "${dropins[@]}"; do printf 'dropin=%s\n' "$dropin"; done; for unit in "${pending[@]}"; do printf 'pending=%s\n' "$unit"; done; } >"$receipt_file"
+fi
+for unit in "${pending[@]}"; do
+  if [[ "$unit" == agent-runner-review.service ]]; then
+    /usr/local/sbin/agent-runner-deploy restart-review || { echo pending; exit 0; }
+  else
+    systemctl restart "$unit"
+  fi
+done
+generation=$(awk -F= '$1 == "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print $2 }' "$provider_auth_file")
+[[ "$generation" == "$installed_generation" ]] || false
+for unit in "${units[@]}"; do
+  pid=$(systemctl show --property=MainPID --value "$unit")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || false
+  (set -a; source "$provider_auth_file"; set +a
+    candidate=${ANTHROPIC_API_KEY:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+    [[ -n "$candidate" ]]
+    matched=0; marker=0
+    while IFS= read -r -d '' entry; do
+      [[ "$entry" == "ANTHROPIC_API_KEY=$candidate" || "$entry" == "CLAUDE_CODE_OAUTH_TOKEN=$candidate" ]] && matched=1
+      [[ "$entry" == "AGENT_STUDIO_CLAUDE_AUTH_GENERATION=$generation" ]] && marker=1
+    done <"/proc/${pid}/environ"
+    [[ "$matched" == 1 && "$marker" == 1 ]]) || false
+done
+rm -f -- "$rollback_file"
+printf 'verified\n' >"$receipt_file"
+echo verified
+""";
+
+    internal static string BuildPendingFinalizationScriptForTest(string operationId)
+        => PendingFinalizationScript.Replace("__OPERATION_ID__", operationId, StringComparison.Ordinal);
 }

@@ -664,7 +664,9 @@ public sealed class ProviderAuthProbeTests
 
             var native = ProviderCredentialMonitor.Inspect("claude", home, new Dictionary<string, string?>());
             var environment = ProviderCredentialMonitor.Inspect("claude", home,
-                new Dictionary<string, string?> { ["CLAUDE_CODE_OAUTH_TOKEN"] = "fixture-env-secret" });
+                new Dictionary<string, string?> {
+                    ["CLAUDE_CODE_OAUTH_TOKEN"] = "fixture-env-secret",
+                });
 
             Assert.Equal($"native-cli-store:{modifiedAt.ToUnixTimeMilliseconds()}", native.CredentialGeneration);
             // An environment token has no safe version marker; hashing it is forbidden.
@@ -747,12 +749,16 @@ public sealed class ProviderAuthProbeTests
                 "{\"claudeAiOauth\":{\"expiresAt\":1788890400000,\"accessToken\":\"fixture-secret\"}}");
 
             var observed = ProviderCredentialMonitor.Inspect("claude", home,
-                new Dictionary<string, string?> { ["CLAUDE_CODE_OAUTH_TOKEN"] = "fixture-env-secret" });
+                new Dictionary<string, string?> {
+                    ["CLAUDE_CODE_OAUTH_TOKEN"] = "fixture-env-secret",
+                    ["AGENT_STUDIO_CLAUDE_AUTH_GENERATION"] = "renewal_fixture",
+                });
 
             Assert.Equal("environment-file", observed.EffectiveSource);
             Assert.True(observed.NativeFileShadowed);
             Assert.Null(observed.ExpiresAt);
             Assert.Null(observed.AccessTokenExpiresAt);
+            Assert.Equal("renewal_fixture", observed.CredentialGeneration);
             Assert.DoesNotContain("fixture-env-secret", observed.Detail);
         }
         finally

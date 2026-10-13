@@ -33,6 +33,37 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
 
+if (args.Length == 3 && args[0] == "--rebind-provider-auth"
+    && args[1] is ("codex" or "claude") && args[2] == "--drained")
+{
+    try
+    {
+        var provider = args[1];
+        if (System.Diagnostics.Process.GetProcessesByName(provider).Any(process =>
+        {
+            using (process) return !process.HasExited;
+        }))
+        {
+            Console.Error.WriteLine("Provider workers are still active; complete the drain before rebinding.");
+            return 2;
+        }
+        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var root = TaskCleanContextStore.ResolveRoot(userHome);
+        var count = TaskCleanContextStore.RebindProviderCredential(provider, userHome, root,
+            () => !System.Diagnostics.Process.GetProcessesByName(provider).Any(process =>
+            {
+                using (process) return !process.HasExited;
+            }));
+        Console.WriteLine($"provider-auth-rebound={provider}:{count}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Provider credential rebinding failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
+
 if (args.Length is 3 or 4 && args[0] == "--renew-repository-access"
     && (args.Length == 3 || args[3] == "--drained"))
 {

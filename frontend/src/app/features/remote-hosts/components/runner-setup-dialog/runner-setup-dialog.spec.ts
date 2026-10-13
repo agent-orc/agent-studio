@@ -3,8 +3,10 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { describe, expect, it } from 'vitest';
+import { of } from 'rxjs';
+import { describe, expect, it, vi } from 'vitest';
 import type { RemoteHost } from '../../models/remote-host.model';
+import { ProviderAuthStatusService } from '../../services/provider-auth-status.service';
 import { RunnerSetupDialogComponent } from './runner-setup-dialog';
 
 const HOST: RemoteHost = {
@@ -23,6 +25,32 @@ const HOST: RemoteHost = {
 };
 
 describe('RunnerSetupDialogComponent', () => {
+  it('polls a pending Review restart until host and real-request proof complete', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RunnerSetupDialogComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(RunnerSetupDialogComponent);
+    fixture.componentRef.setInput('host', HOST);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    const wait = vi.spyOn(TestBed.inject(ProviderAuthStatusService), 'waitForRenewalCompletion')
+      .mockReturnValue(of('complete'));
+    component.providerAuthSecret.set('fixture-provider-auth-value');
+    component.provisionProviderAuth();
+    TestBed.inject(HttpTestingController).expectOne(
+      '/api/v1/management/remote-hosts/provider-auth').flush({
+        provider: 'claude', environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN',
+        host: 'agent-runner', state: 'installed-awaiting-runner',
+        detail: 'Review restart pending.', requestedAt: '2026-08-04T12:00:00Z',
+        restartedServices: ['agent-runner.service'], processEnvironmentVerified: false,
+        operationId: 'renewal_fixture',
+      });
+    expect(wait).toHaveBeenCalledWith('renewal_fixture', 75_000, 'agent-runner');
+    expect(component.providerAuthPhase()).toBe('ok');
+  });
+
   it('blocks loopback until tunnel mode and every required value are explicit', async () => {
     await TestBed.configureTestingModule({
       imports: [RunnerSetupDialogComponent],

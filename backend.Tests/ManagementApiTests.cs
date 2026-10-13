@@ -1171,6 +1171,7 @@ public sealed class ManagementApiTests : IDisposable
 
         public Task<ProviderAuthProvisioningResponse> ProvisionAsync(
             ProviderAuthProvisioningRequest request,
+            AgentStudio.Management.ProviderAuthRenewalFence? fence,
             CancellationToken cancellationToken)
         {
             LastRequest = request;
