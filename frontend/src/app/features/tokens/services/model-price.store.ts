@@ -28,6 +28,18 @@ export class ModelPriceStore {
     if (wasEmpty && this.queued.size > 0) queueMicrotask(() => this.flush());
   }
 
+  /**
+   * AGT-3045: the price basis for one model, queueing the lookup on first
+   * read. Null while loading or when TokenEconomy does not know the model.
+   */
+  priceFor(modelId: string | null | undefined): TokenPriceBasis | null {
+    const id = modelId?.trim();
+    if (!id) return null;
+    const price = this.prices().get(id);
+    if (price === undefined) this.ensure([id]);
+    return price ?? null;
+  }
+
   private flush(): void {
     const missing = [...this.queued].slice(0, 100);
     this.queued.clear();

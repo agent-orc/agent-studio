@@ -32,6 +32,8 @@ public sealed class ManagementService
     private readonly MigrationStateStore _migrations;
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
     private readonly TaskIntegrationStatusService? _integrationStatus;
+    private readonly TaskMutationService? _mutations;
+    private readonly TimelineLog? _timeline;
     private readonly object _gate = new();
 
     public ManagementService(
@@ -43,7 +45,9 @@ public sealed class ManagementService
         ProjectRegistry projects,
         MigrationStateStore migrations,
         ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
-        TaskIntegrationStatusService? integrationStatus = null)
+        TaskIntegrationStatusService? integrationStatus = null,
+        TaskMutationService? mutations = null,
+        TimelineLog? timeline = null)
     {
         _configuration = configuration;
         _scanner = scanner;
@@ -54,6 +58,8 @@ public sealed class ManagementService
         _migrations = migrations;
         _reviewAttemptLifecycle = reviewAttemptLifecycle;
         _integrationStatus = integrationStatus;
+        _mutations = mutations;
+        _timeline = timeline;
     }
 
     private string Root => Path.GetFullPath(_configuration["TaskRepository"]
@@ -175,6 +181,7 @@ public sealed class ManagementService
                 var result = kind switch
                 {
                     "archive-sweep" => SweepArchive(request.DryRun, actor, key),
+                    "delivery-stale-repair-2026-10-11" => RepairDeliveryBounce(request.DryRun, actor, key),
                     "orphan-sweep" => SweepOrphans(request.DryRun, actor, key),
                     "fixture-sweep" => SweepFixtures(request.DryRun, actor, key),
                     "backup-create" => CreateBackup(request.DryRun, actor, key, request.RetentionCount),
@@ -217,6 +224,106 @@ public sealed class ManagementService
 
     public MaintenanceStatus CurrentMaintenance() => ReadState();
 
+    private ManagementCommandResult RepairDeliveryBounce(bool dry, string actor, string key)
+    {
+        var integration = _integrationStatus
+            ?? throw new ManagementException(503, "delivery-repair-unavailable");
+        var mutations = _mutations
+            ?? throw new ManagementException(503, "delivery-repair-unavailable");
+        var timeline = _timeline
+            ?? throw new ManagementException(503, "delivery-repair-unavailable");
+        var cards = _scanner.ScanAllAutomationJobs()
+            .Where(card => card.State == TaskStates.HumanReview)
+            .ToArray();
+        var statuses = integration.BuildLookup(cards);
+        string? OperatorReason(TaskInfo card)
+        {
+            var step = integration.ReadLatestMergeStep(card);
+            var reason = step?.Reason?.Trim();
+            return string.Equals(step?.Verdict, "operator-override", StringComparison.OrdinalIgnoreCase)
+                && CompletionContractPolicy.IsUsableReason(reason) ? reason : null;
+        }
+        var candidates = cards.Where(card =>
+        {
+            statuses.TryGetValue(card.TaskKey, out var status);
+            return DeliveryBounceRepairPolicy.IsEligible(card, status,
+                timeline.ReadAll(card.FolderPath), OperatorReason(card) is not null);
+        }).ToArray();
+        // The incident affected about 180 cards. Refuse a wider population
+        // rather than silently broadening a one-time historical repair.
+        if (candidates.Length > 250)
+            throw new ManagementException(409, "delivery-repair-candidate-limit");
+        var blocked = new List<object>();
+        var affected = 0;
+        if (!dry)
+        {
+            foreach (var candidate in candidates)
+            {
+                var card = _scanner.FindJob(candidate.Id, candidate.WatchPath);
+                if (card is null)
+                {
+                    blocked.Add(new { taskKey = candidate.TaskKey, reason = "card-missing" });
+                    continue;
+                }
+                var status = integration.BuildLookup([card]).GetValueOrDefault(card.TaskKey);
+                var operatorReason = OperatorReason(card);
+                if (!DeliveryBounceRepairPolicy.IsEligible(card, status,
+                    timeline.ReadAll(card.FolderPath), operatorReason is not null))
+                {
+                    blocked.Add(new { taskKey = card.TaskKey, reason = "eligibility-changed" });
+                    continue;
+                }
+
+                var subject = TaskIntegrationStatusService.CurrentReviewSubject(card);
+                var latest = card.Commits.Where(TaskCommitSupersession.IsEffectiveDelivery)
+                    .OrderBy(commit => commit.DeliveryGeneration ?? 0)
+                    .ThenBy(commit => commit.At).LastOrDefault();
+                var claim = new TaskCompletionClaim
+                {
+                    Basis = operatorReason is null ? CompletionClaimBases.IntegratedDelivery
+                        : CompletionClaimBases.OperatorOverride,
+                    Evidence = operatorReason is null
+                        ? "Restored the earlier acceptance after the 2026-10-11 false stale-delivery bounce; the current delivery is integrated."
+                        : "Restored the earlier operator override after the 2026-10-11 false stale-delivery bounce.",
+                    Reason = operatorReason,
+                    Actor = actor,
+                    CommitSha = status?.Sha,
+                    ResultSha = subject?.ResultSha ?? latest?.ResultSha ?? latest?.Sha,
+                    DeliveryEpoch = subject?.RunAttemptId ?? latest?.RunAttemptId
+                        ?? latest?.DeliveryGeneration?.ToString() ?? latest?.Sha,
+                    IntegrationBranch = status?.IntegrationBranch ?? card.IntegrationBranch,
+                    TargetRefFingerprint = status?.TargetRefFingerprint,
+                    RecordedAtUtc = DateTime.UtcNow,
+                };
+                if (!mutations.SetCompletionClaimOnFolder(card.FolderPath, claim)
+                    || _scanner.FindJob(card.Id, card.WatchPath)?.CompletionClaim?.Basis != claim.Basis)
+                {
+                    blocked.Add(new { taskKey = card.TaskKey, reason = "claim-write-failed" });
+                    continue;
+                }
+                var outcome = _states.MoveJob(card.Id, TaskStates.Completed, card.WatchPath,
+                    cause: TimelineActors.System, expectedSourceState: TaskStates.HumanReview,
+                    reason: "Restored acceptance after the 2026-10-11 delivery-verdict-stale incident.",
+                    transitionCause: LaneChangeCauses.Accepted,
+                    transitionDetail: "delivery-verdict-stale-repair-2026-10-11",
+                    historicalAcceptanceRepair: operatorReason is not null);
+                if (outcome.Status == MoveJobStatus.Success)
+                    affected++;
+                else
+                {
+                    TaskJsonFile.RemoveField(card.FolderPath, "completionClaim",
+                        Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+                    _scanner.InvalidateCache();
+                    blocked.Add(new { taskKey = card.TaskKey, reason = outcome.Status.ToString() });
+                }
+            }
+        }
+        return Result("delivery-stale-repair-2026-10-11", dry, candidates.Length, affected,
+            dry ? $"{candidates.Length} incident cards would return to Delivered."
+                : $"Restored {affected} incident cards to Delivered; {blocked.Count} blocked.",
+            actor, key, new { candidates = candidates.Select(card => card.TaskKey).ToArray(), blocked });
+    }
+
     private ManagementCommandResult SweepArchive(bool dry, string actor, string key)
     {
         var candidates = _scanner.ScanAllAutomationJobs().Where(x => x.State == TaskStates.Completed).ToArray();
@@ -236,13 +343,9 @@ public sealed class ManagementService
                     blocked.Add(new { taskKey = item.TaskKey, category = decision.Category,
                         recoveryAction = decision.RecoveryAction });
                 else if (AcceptanceIntegrationPolicy.IsIntegrationRequired(item)
-                    && (item.CompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
-                        || string.IsNullOrWhiteSpace(item.CompletionClaim.ResultSha)
-                        || string.IsNullOrWhiteSpace(item.CompletionClaim.DeliveryEpoch)
-                        || !string.Equals(item.CompletionClaim.TargetRefFingerprint,
-                            status?.TargetRefFingerprint, StringComparison.Ordinal)))
+                    && DeliveryLanePolicy.IsAcceptedDeliveryStale(item, status))
                     blocked.Add(new { taskKey = item.TaskKey, category = "stale-acceptance",
-                        recoveryAction = "Repeat human review for the current delivery epoch and target ref." });
+                        recoveryAction = "Repeat human review if the accepted delivery changed or is no longer integrated." });
             }
         if (!dry)
             foreach (var item in candidates)

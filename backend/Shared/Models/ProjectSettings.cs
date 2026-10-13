@@ -435,6 +435,9 @@ public record ProjectSettings
     /// <summary>Maximum automatic coding rounds for actionable review concerns. Default 1; 0 disables.</summary>
     public int MaxReviewConcernRounds { get; init; } = 1;
 
+    /// <summary>Require Remote Review to run on a host other than the source coding host.</summary>
+    public bool RequireDifferentReviewHost { get; init; }
+
     /// <summary>
     /// AGT-W57 cause breaker: when true (default), a repeated review
     /// infrastructure failure is counted fleet-wide by its cause fingerprint

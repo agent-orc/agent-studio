@@ -2071,6 +2071,10 @@
   flex-direction: column;
 }
 
+// Inline Workspace settings owns its own panel scroll. Keep the outer editor
+// viewport fixed so wheel and scrollIntoView cannot move the entire settings page.
+.studio-editor__main:has(.ws-settings--inline) { overflow: hidden; }
+
 // The projected content wrapper from app.html. Without an explicit
 // height + min-height: 0 the dashboard inside it never gets a height
 // to compute % against, so dashboard `height: 100%` resolves to
