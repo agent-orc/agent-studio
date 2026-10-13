@@ -105,17 +105,17 @@ describe('TaskSelectionService · stable task URLs', () => {
     coreVersion, resource: 'history', version: 'h1', computedAt: null, state: 'ready',
     data: { promptHistory: [], titleHistory: [], log: [{ at: 'x', message: `${task.id} log` }] }, reason: null,
   });
-  const overviewReply = (task: TaskInfo, coreVersion = '1') => ({
+  const overviewReply = (task: TaskInfo, coreVersion = '1', data: Partial<TaskInfo> = {}) => ({
     id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
     coreVersion, resource: 'overview', version: 'o1', computedAt: null, state: 'ready',
     data: { decision: null, planningSpawn: null, conceptDossier: null,
       olderBriefDelivery: null, relatedWikiPages: [], creationSource: null,
       completionClaim: null, parkedBlocker: null, needsInput: null,
-    references: null, waitsOn: null }, reason: null,
+    references: null, waitsOn: null, acceptanceAttemptGap: null, ...data }, reason: null,
   });
-  const flushOverview = (task: TaskInfo, coreVersion = '1') =>
+  const flushOverview = (task: TaskInfo, coreVersion = '1', data: Partial<TaskInfo> = {}) =>
     http.expectOne(req => req.url.endsWith(`/${task.id}/details/overview`))
-      .flush(overviewReply(task, coreVersion));
+      .flush(overviewReply(task, coreVersion, data));
   const flushUpfrontReview = (task: TaskInfo, coreVersion = '1') => {
     if (!['4-auto-review', '5-human-review', '5e-escalated', '6-completed'].includes(task.state)
       && !task.needsInput) return;
@@ -138,7 +138,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
   /** Land both documents after the core paint, then overview, usage and an expanded tab. */
   const paintRich = async (task: TaskInfo, opts: {
-    history?: boolean; coreVersion?: string; flushReview?: boolean;
+    history?: boolean; coreVersion?: string; flushReview?: boolean; overview?: Partial<TaskInfo>;
   } = {}) => {
     await loading('documents');
     const documents = http.match(req => req.url.endsWith(`/${task.id}/details/documents`));
@@ -148,7 +148,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     await loading('usage');
     http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
-    flushOverview(task, opts.coreVersion);
+    flushOverview(task, opts.coreVersion, opts.overview);
     if (opts.flushReview !== false) flushUpfrontReview(task, opts.coreVersion);
     if (opts.history) {
       const request = http.expectOne(req => req.url.endsWith(`/${task.id}/details/history`));
@@ -497,6 +497,32 @@ describe('TaskSelectionService · stable task URLs', () => {
     const evidence = http.expectOne(req => req.url.endsWith('/details/review'));
     expect(evidence.request.params.get('evidence')).toBe('true');
     expect(selection.resourceStates().git.phase).toBe('idle');
+  });
+
+  /**
+   * AGT-3096: the acceptance attempt gap reaches the core-first detail through
+   * the overview resource, and a reopen starts without the previous answer.
+   */
+  it('carries the acceptance attempt gap from the overview into the core-first detail', async () => {
+    const gap = {
+      authorityEpoch: 2, subjectRunAttemptId: 'run-2124',
+      resultSha: 'abcdef0123456789abcdef0123456789abcdef01',
+      reason: "Acceptance refused: no run attempt in the current authority epoch (2) for 'AGT-2124'.",
+    };
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await paintRich(info, { overview: { acceptanceAttemptGap: gap } });
+    expect(selection.selected()?.info.acceptanceAttemptGap).toEqual(gap);
+
+    // The board card still carries the old answer; the painted core drops
+    // it until the overview answers again. The visited core paints from cache.
+    selection.openDetail({ ...info, acceptanceAttemptGap: gap } as TaskInfo);
+    for (const request of http.match(req => req.url.endsWith('/human-readable-slug/core')))
+      request.flush(coreFor(info, 'Agent Studio'));
+    expect(selection.detailPreview()?.acceptanceAttemptGap).toBeNull();
+    await paintRich(info);
+    expect(selection.selected()?.info.acceptanceAttemptGap).toBeNull();
   });
 
   it('loads review facts after paint for a human-review card', async () => {

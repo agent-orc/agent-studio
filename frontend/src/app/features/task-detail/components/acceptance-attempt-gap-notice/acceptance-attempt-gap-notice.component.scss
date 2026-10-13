@@ -31,3 +31,42 @@
 .attempt-gap__epoch { font-variant-numeric: tabular-nums; }
 .attempt-gap__hint { color: var(--studio-fg-muted); font-size: 0.72rem; }
 .attempt-gap__hint code { color: var(--studio-fg); }
+
+// AGT-3096: the override path inside the notice.
+.attempt-gap__form { display: grid; gap: var(--studio-spacing-1); }
+.attempt-gap__label { color: var(--studio-fg); font-size: 0.72rem; font-weight: 600; }
+.attempt-gap__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font: inherit;
+  resize: vertical;
+}
+.attempt-gap__input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+.attempt-gap__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+.attempt-gap__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}
+.attempt-gap__actions button {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.attempt-gap__actions button:disabled { cursor: not-allowed; opacity: 0.6; }
+.attempt-gap__actions button.attempt-gap__primary {
+  background: var(--studio-accent);
+  border-color: var(--studio-accent);
+  color: var(--studio-on-accent);
+}
+.attempt-gap__actions button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
