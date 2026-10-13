@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace AgentStudio.Runner;
+namespace AgentStudio.Tokens;
 
 /// <summary>
 /// File-backed snapshots for the two workspace token rollups that
