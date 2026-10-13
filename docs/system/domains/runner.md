@@ -390,6 +390,17 @@ rollout decision.
   the current boot's `bootId`, and `detectedAt`. A new boot may rediscover the
   same dirty files; these fields distinguish discovery from file age. Expiry
   never commits or discards recovered files.
+  Before queuing, the scan checks branch and HEAD reflogs, whether the index
+  tree matches a strict ancestor of HEAD, and whether staged changes mostly
+  reverse a recent ancestor diff. A moved branch ref produces a
+  `ref-drift` entry with commit count, changed-file counts, unique worktree
+  blobs, and any `.git/index.lock` age and size. The commit endpoint checks
+  drift again and refuses a reverse-diff commit; the operator can leave the
+  checkout as is. Unique blobs require an explicit backup or stash before a
+  future checkout sync. An unattributed orphan with more than 200 files or
+  deletions above three times insertions (and above 100 lines) requires a
+  second confirmation. The dialog uses `detectedAt` as the finding date and
+  labels `createdAt` as the oldest file change.
 - `backend/Services/Supervisor/*`: Layer 2 advisory loop, meta-cycle, and rare
   intervention primitives.
 - `runner/*`: the standalone `agent-host` daemon. A dependency-free console

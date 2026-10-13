@@ -224,6 +224,13 @@ public static class TimelineEventKinds
     /// <summary>Written exception to the current-brief content acceptance gate.</summary>
     public const string CompletionContentOverridden = "completion_content_overridden";
     /// <summary>
+    /// AGT-3076: an operator override accepted a card whose RunAttempt the
+    /// attempt authority store no longer holds. Details carry the authority
+    /// epoch and the delivery evidence (integration status, ref, SHA, commits)
+    /// the acceptance rests on.
+    /// </summary>
+    public const string AcceptedWithoutRunAttempt = "accepted_without_run_attempt";
+    /// <summary>
     /// AGT-2793: <c>BranchReclaimTriggerService</c> deleted one or more of this
     /// task's remote git refs (task/runner/delivery) after a lifecycle
     /// transition (integration or archive). Details carry the deleted ref

@@ -14,7 +14,9 @@ export type PipelineStepStatus =
   | 'failed'
   | 'skipped'
   | 'planned'
-  | 'notApplicable';
+  | 'notApplicable'
+  /** AGT-3045: the run parked on open operator decisions; not a failure. */
+  | 'needsDecision';
 
 /** Static metadata for one step in the pipeline catalogue. */
 export interface PipelineStep {
