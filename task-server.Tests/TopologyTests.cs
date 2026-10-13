@@ -18,6 +18,8 @@ namespace TaskServer.Tests;
 
 [Trait("Category", "MachineBound")]
 [Trait("Category", "ReviewFlaky")]
+[Trait("ProcessReference", "AgentRunner")]
+[Trait("ProcessReference", "StudioBff")]
 public sealed class TopologyTests
 {
     [Fact(Timeout = 90000)]

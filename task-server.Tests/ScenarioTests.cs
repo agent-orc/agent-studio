@@ -12,6 +12,8 @@ namespace TaskServer.Tests;
 /// </summary>
 [Trait("Category", "MachineBound")]
 [Trait("Category", "ReviewFlaky")]
+[Trait("ProcessReference", "AgentRunner")]
+[Trait("ProcessReference", "OrchestratorApi")]
 public sealed class ScenarioTests
 {
     // The legacy runner plane step (AGT-2985) boots the backend monolith and a

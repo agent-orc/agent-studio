@@ -24,6 +24,7 @@ namespace AgentStudio.Tests;
 /// carries it next to the scenario report.
 /// </summary>
 [Collection(WebApplicationFactorySerialCollection.Name)]
+[Trait("ProcessReference", "TaskServer")]
 public sealed class ConnectorNegativeMatrixTests
 {
     private const string Origin = ConnectorOptions.DefaultStudioOrigin;

@@ -26,6 +26,18 @@ internal static partial class CSharpSourceScanner
     /// </summary>
     public static string MaskCommentsAndLiterals(string source) => Mask(source, maskLiterals: true);
 
+    /// <summary>
+    /// The top-level string literals of the code, each with its quotes and
+    /// prefix, in source order. Literals inside comments, and the source text
+    /// that a literal itself contains, are not literals of the code.
+    /// </summary>
+    public static IReadOnlyList<string> StringLiterals(string source)
+    {
+        var spans = new List<(int Start, int End)>();
+        Mask(source, maskLiterals: false, spans);
+        return spans.Select(span => source[span.Start..span.End]).ToList();
+    }
+
     public static int LineAt(string code, int index) => code.AsSpan(0, index).Count('\n') + 1;
 
     public static IEnumerable<MethodSpan> Methods(string code)
@@ -85,7 +97,7 @@ internal static partial class CSharpSourceScanner
         "nameof", "when", "fixed", "else", "throw", "yield", "case", "var", "typeof", "sizeof", "default",
     };
 
-    private static string Mask(string source, bool maskLiterals)
+    private static string Mask(string source, bool maskLiterals, List<(int Start, int End)>? literals = null)
     {
         var chars = source.ToCharArray();
         var index = 0;
@@ -107,7 +119,9 @@ internal static partial class CSharpSourceScanner
             }
             else if (source[index] == '"')
             {
-                index = StringLiteral(source, chars, index, maskLiterals);
+                var end = StringLiteral(source, chars, index, maskLiterals);
+                literals?.Add((index, end));
+                index = end;
             }
             else if (source[index] == '\'')
             {

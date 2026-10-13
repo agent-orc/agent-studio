@@ -1,4 +1,5 @@
 using System.Text;
+using AgentStudio.Tests.Architecture;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -13,6 +14,9 @@ namespace AgentStudio.Tests;
 public sealed class DotNetReferenceSelectionTests : IDisposable
 {
     private const string Project = "backend.Tests/OrchestratorApi.Tests.csproj";
+    private const string TaskServerTests = "task-server.Tests/TaskServer.Tests.csproj";
+    private const string TaskServerProcessReference =
+        """<ProjectReference Include="../task-server/TaskServer.csproj" ReferenceOutputAssembly="false" />""";
     private const string WholeProjectCommand =
         "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter Category!=MachineBound";
 
@@ -189,25 +193,303 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
     [Theory]
     [InlineData("attribute")]
     [InlineData("element")]
-    public void ProcessLevelReference_KeepsTheWholeProject(string form)
+    public void ProcessLevelReference_SelectsTheClassesThatStartTheProgram(string form)
     {
         var reference = form == "attribute"
-            ? """<ProjectReference Include="../task-server/TaskServer.csproj" ReferenceOutputAssembly="false" />"""
+            ? TaskServerProcessReference
             : """
               <ProjectReference Include="..\task-server\TaskServer.csproj">
                 <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
               </ProjectReference>
               """;
-        BackendRepository(reference);
-        Write("task-server/TaskServer.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
-        Write("task-server/LeaseStore.cs", "namespace AgentStudio.TaskServer;\npublic sealed class LeaseStore { }\n");
-        Write("backend.Tests/LeaseStoreTests.cs", """
+        TaskServerFixture(reference);
+
+        var result = Plan(["task-server/LeaseStore.cs"]);
+
+        // LeaseStoreTests names a type of the changed program, but the test
+        // project cannot compile against it, so only the trait selects.
+        Assert.Equal(
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~ConnectorNegativeMatrixTests)\"",
+            DotNetTestCommand(result));
+        Assert.Equal(["ConnectorNegativeMatrixTests"], result.Audit.SelectedTestClasses);
+        var audit = Assert.Single(result.Audit.ReferenceSelections);
+        Assert.Null(audit.FallbackReason);
+        Assert.Empty(audit.SeedTypes);
+        Assert.Equal(
+            ["process-level reference TaskServer: 1 class (ConnectorNegativeMatrixTests)"],
+            audit.ProcessReferences);
+        Assert.Equal(
+            "work package: 1 of 4 test classes selected (1 files, closure depth 0); "
+            + "process-level reference TaskServer: 1 class (ConnectorNegativeMatrixTests)",
+            audit.Summary);
+        Assert.Contains(audit.Summary, result.Audit.Reasons);
+    }
+
+    [Fact]
+    public void ProcessLevelAndProductionDiff_SelectsTheUnionOfTraitAndReferenceSelection()
+    {
+        TaskServerFixture(TaskServerProcessReference);
+        Write("backend/Features/Foo/FooService.cs", "namespace AgentStudio.Foo;\npublic sealed class FooService { }\n");
+        Write("backend.Tests/FooServiceTests.cs", """
             namespace AgentStudio.Tests;
-            public sealed class LeaseStoreTests { [Fact] public void Runs() => _ = new LeaseStore(); }
+            public sealed class FooServiceTests { [Fact] public void Runs() => _ = new FooService(); }
             """);
+        Unrelated("QuxTests", "QuuxTests");
+
+        var result = Plan(["backend/Features/Foo/FooService.cs", "task-server/LeaseStore.cs"]);
+
+        Assert.Equal(
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~ConnectorNegativeMatrixTests"
+            + "|FullyQualifiedName~FooServiceTests)\"",
+            DotNetTestCommand(result));
+        var audit = Assert.Single(result.Audit.ReferenceSelections);
+        Assert.Equal(["FooService"], audit.SeedTypes);
+        Assert.Equal(
+            ["backend.Tests/ConnectorNegativeMatrixTests.cs", "backend.Tests/FooServiceTests.cs"],
+            audit.SelectedFiles);
+        Assert.EndsWith(
+            "by reference to 1 changed types in 1 files; "
+            + "process-level reference TaskServer: 1 class (ConnectorNegativeMatrixTests)",
+            audit.Summary);
+    }
+
+    [Fact]
+    public void ProcessLevelReference_KeepsNonMachineBoundTraitClassesOfTheChangedProjectOnly()
+    {
+        TaskServerFixture(TaskServerProcessReference
+            + """<ProjectReference Include="../studio-bff/StudioBff.csproj" ReferenceOutputAssembly="false" />""");
+        Write("studio-bff/StudioBff.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        Write("backend.Tests/TaskServerTopologyTests.cs", """
+            namespace AgentStudio.Tests;
+            [Trait("Category", "MachineBound")]
+            [Trait("ProcessReference", "TaskServer")]
+            public sealed class TaskServerTopologyTests { [Fact] public void Starts() { } }
+            """);
+        Write("backend.Tests/BffProcessTests.cs", """
+            namespace AgentStudio.Tests;
+            [Trait("ProcessReference", "StudioBff")]
+            public sealed class BffProcessTests { [Fact] public void Starts() { } }
+            """);
+        Unrelated("QuxTests", "QuuxTests", "CorgeTests");
+
+        var result = Plan(["task-server/LeaseStore.cs"]);
+
+        Assert.Equal(["ConnectorNegativeMatrixTests"], result.Audit.SelectedTestClasses);
+        Assert.Equal(
+            ["process-level reference TaskServer: 1 class (ConnectorNegativeMatrixTests), "
+                + "1 MachineBound dropped (TaskServerTopologyTests)"],
+            Assert.Single(result.Audit.ReferenceSelections).ProcessReferences);
+    }
+
+    [Fact]
+    public void ProcessLevelReference_WithOnlyMachineBoundTraitClassesGetsNoCommand()
+    {
+        TaskServerFixture(TaskServerProcessReference, connectorMachineBound: true);
+
+        var result = Plan(["task-server/LeaseStore.cs"]);
+
+        Assert.DoesNotContain(result.Commands, command => command.Command.StartsWith("dotnet test", StringComparison.Ordinal));
+        var unselected = Assert.Single(result.Audit.Candidates, candidate => candidate.Command.Command == WholeProjectCommand);
+        Assert.DoesNotContain(unselected.Id, result.Audit.SelectedCandidateIds);
+        var audit = Assert.Single(result.Audit.ReferenceSelections);
+        Assert.Equal(
+            "process-level reference TaskServer: only MachineBound classes (ConnectorNegativeMatrixTests); no command",
+            audit.FallbackReason);
+        Assert.Contains($"{Project}: {audit.FallbackReason}", result.Audit.Reasons);
+    }
+
+    [Fact]
+    public void BackendOnlyDiff_GivesTaskServerTestsNoCommandAndNamesTheReason()
+    {
+        FooServiceFixture();
+        Write("task-server/TaskServer.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        Write(TaskServerTests, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="..\task-server\TaskServer.csproj" />
+                <ProjectReference Include="..\backend\OrchestratorApi.csproj" ReferenceOutputAssembly="false" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write("task-server.Tests/ScenarioTests.cs", """
+            namespace TaskServer.Tests;
+            [Trait("Category", "MachineBound")]
+            [Trait("ProcessReference", "OrchestratorApi")]
+            public sealed class ScenarioTests { [Fact] public void Boots() { } }
+            """);
+        Write("task-server.Tests/StoreTests.cs", """
+            namespace TaskServer.Tests;
+            public sealed class StoreTests { [Fact] public void Stores() { } }
+            """);
+
+        var result = Plan(["backend/Features/Foo/FooService.cs"]);
+
+        Assert.Equal(
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~FooServiceTests)\"",
+            DotNetTestCommand(result));
+        var audit = Assert.Single(result.Audit.ReferenceSelections, item => item.TestProject == TaskServerTests);
+        Assert.Equal(
+            "process-level reference OrchestratorApi: only MachineBound classes (ScenarioTests); no command",
+            audit.FallbackReason);
+        Assert.Contains(
+            $"{TaskServerTests}: process-level reference OrchestratorApi: only MachineBound classes "
+                + "(ScenarioTests); no command",
+            result.Audit.Reasons);
+        Assert.Contains(result.Audit.Candidates, candidate =>
+            candidate.Command.Command.StartsWith($"dotnet test \"{TaskServerTests}\"", StringComparison.Ordinal)
+            && candidate.Reasons.Count == 0);
+    }
+
+    [Fact]
+    public void ProcessLevelReference_WithoutATraitClassGetsNoCommand()
+    {
+        BackendRepository(TaskServerProcessReference);
+        Write("task-server/TaskServer.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
         Unrelated("BarTests", "BazTests");
 
-        AssertWholeProject(Plan(["task-server/LeaseStore.cs"]), "process-level reference: task-server/TaskServer.csproj");
+        var result = Plan(["task-server/Program.cs"]);
+
+        Assert.DoesNotContain(result.Commands, command => command.Command.StartsWith("dotnet test", StringComparison.Ordinal));
+        Assert.Equal(
+            "process-level reference TaskServer: no test class carries "
+                + "[Trait(\"ProcessReference\", \"TaskServer\")]; no command",
+            Assert.Single(result.Audit.ReferenceSelections).FallbackReason);
+    }
+
+    [Fact]
+    public void CombinedSelectionAboveHalfOfTheClasses_KeepsTheWholeProject()
+    {
+        TaskServerFixture(TaskServerProcessReference);
+        Write("backend/Features/Foo/FooService.cs", "namespace AgentStudio.Foo;\npublic sealed class FooService { }\n");
+        Write("backend.Tests/FooServiceTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class FooServiceTests { [Fact] public void Runs() => _ = new FooService(); }
+            """);
+        foreach (var name in new[] { "SecondProcessTests", "ThirdProcessTests" })
+        {
+            Write($"backend.Tests/{name}.cs", $$"""
+                namespace AgentStudio.Tests;
+                [Trait("ProcessReference", "TaskServer")]
+                public sealed class {{name}} { [Fact] public void Starts() { } }
+                """);
+        }
+
+        var result = Plan(["backend/Features/Foo/FooService.cs", "task-server/LeaseStore.cs"]);
+
+        // Each part alone stays under half of the seven classes; together they do not.
+        AssertWholeProject(result, "4 of 7 test classes selected, more than half of the project");
+        Assert.Equal(
+            ["process-level reference TaskServer: 3 classes "
+                + "(ConnectorNegativeMatrixTests, SecondProcessTests, ThirdProcessTests)"],
+            Assert.Single(result.Audit.ReferenceSelections).ProcessReferences);
+    }
+
+    [Fact]
+    public void WithoutTheParameter_AProcessLevelChangeStillRunsTheWholeProject()
+    {
+        TaskServerFixture(TaskServerProcessReference);
+
+        var result = TestSelectionPlanner.Plan(
+            _root, BackendVerifyPlan(), ["task-server/LeaseStore.cs"], policy: null,
+            "remote-review", TestExecutionLevels.WorkPackage);
+
+        Assert.Equal(WholeProjectCommand, DotNetTestCommand(result));
+        Assert.Empty(result.Audit.SelectedTestClasses);
+        Assert.Empty(result.Audit.ReferenceSelections);
+    }
+
+    [Fact]
+    public void Guard_FlagsAClassThatStartsAProcessLevelProgramWithoutTheTrait()
+    {
+        TaskServerFixture(TaskServerProcessReference);
+        Write("backend.Tests/DirectLaunchTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class DirectLaunchTests
+            {
+                [Fact]
+                public void Starts() => BuiltProcessLauncher.StartBuilt(".", "task-server", "task-server.dll");
+            }
+            """);
+        Write("backend.Tests/ServerHarness.cs", """
+            namespace AgentStudio.Tests;
+            internal sealed class ServerHarness
+            {
+                public static object Start() => StartBuilt(".", "task-server", "task-server.dll");
+            }
+            """);
+        Write("backend.Tests/HelperLaunchTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class HelperLaunchTests { [Fact] public void Starts() => ServerHarness.Start(); }
+            """);
+        Write("backend.Tests/UnnamedLaunchTests.cs", """
+            namespace AgentStudio.Tests;
+            [Trait("ProcessReference", "TaskServer")]
+            public sealed class UnnamedLaunchTests
+            {
+                [Fact]
+                public void Starts() => BuiltProcessLauncher.StartBuilt(".", "task-server", AssemblyFromSettings());
+            }
+            """);
+
+        var violations = ProcessReferenceTraitGuard.Check(_root, Project);
+
+        Assert.Equal(
+            [
+                "backend.Tests/DirectLaunchTests.cs: DirectLaunchTests starts task-server.dll without "
+                    + "[Trait(\"ProcessReference\", \"TaskServer\")]",
+                "backend.Tests/HelperLaunchTests.cs: HelperLaunchTests starts task-server.dll without "
+                    + "[Trait(\"ProcessReference\", \"TaskServer\")]",
+                "backend.Tests/UnnamedLaunchTests.cs: UnnamedLaunchTests calls BuiltProcessLauncher.StartBuilt "
+                    + "but names no output assembly literal, so its ProcessReference trait cannot be checked",
+            ],
+            violations);
+    }
+
+    [Fact]
+    public void Guard_FlagsATraitForAProjectWithoutAProcessLevelReference()
+    {
+        TaskServerFixture(TaskServerProcessReference);
+        Write("backend.Tests/StaleTraitTests.cs", """
+            namespace AgentStudio.Tests;
+            [Trait("ProcessReference", "StudioBff")]
+            [Trait("ProcessReference", "OrchestratorApi")]
+            public sealed class StaleTraitTests { [Fact] public void Runs() { } }
+            """);
+
+        var violations = ProcessReferenceTraitGuard.Check(_root, Project);
+
+        Assert.Equal(
+            [
+                "backend.Tests/StaleTraitTests.cs: StaleTraitTests carries a stale "
+                    + "[Trait(\"ProcessReference\", \"OrchestratorApi\")]; backend.Tests/OrchestratorApi.Tests.csproj "
+                    + "does not reference that project with ReferenceOutputAssembly=\"false\"",
+                "backend.Tests/StaleTraitTests.cs: StaleTraitTests carries a stale "
+                    + "[Trait(\"ProcessReference\", \"StudioBff\")]; backend.Tests/OrchestratorApi.Tests.csproj "
+                    + "does not reference that project with ReferenceOutputAssembly=\"false\"",
+            ],
+            violations);
+    }
+
+    [Fact]
+    public void Guard_AcceptsATraitedLauncherAndAnOrdinaryReferenceLaunch()
+    {
+        TaskServerFixture(TaskServerProcessReference);
+        // The test project compiles against the backend, so starting its
+        // output needs no trait: the reference selection already reaches it.
+        Write("backend.Tests/BackendProcessTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class BackendProcessTests
+            {
+                [Fact]
+                public void Starts() => BuiltProcessLauncher.StartBuilt(".", "backend", "OrchestratorApi.dll");
+            }
+            """);
+
+        Assert.Empty(ProcessReferenceTraitGuard.Check(_root, Project));
     }
 
     [Fact]
@@ -548,6 +830,38 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
         Assert.StartsWith(reason, audit.FallbackReason);
         Assert.Contains(result.Audit.Reasons, line =>
             line.Contains(reason, StringComparison.Ordinal) && line.Contains(Project, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The OrchestratorApi.Tests shape of AGT-3108: a process-level reference
+    /// to task-server, the one class that starts it, a class that names a
+    /// task-server type anyway, and two unrelated classes.
+    /// </summary>
+    private void TaskServerFixture(string reference, bool connectorMachineBound = false)
+    {
+        BackendRepository(reference);
+        Write("task-server/TaskServer.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Web">
+              <PropertyGroup><AssemblyName>task-server</AssemblyName></PropertyGroup>
+            </Project>
+            """);
+        Write("task-server/LeaseStore.cs", "namespace AgentStudio.TaskServer;\npublic sealed class LeaseStore { }\n");
+        var machineBound = connectorMachineBound ? "[Trait(\"Category\", \"MachineBound\")]\n" : "";
+        Write("backend.Tests/ConnectorNegativeMatrixTests.cs", $$"""
+            namespace AgentStudio.Tests;
+            [Collection("serial")]
+            {{machineBound}}[Trait("ProcessReference", "TaskServer")]
+            public sealed class ConnectorNegativeMatrixTests
+            {
+                [Fact]
+                public void Starts() => BuiltProcessLauncher.StartBuilt(".", "task-server", "task-server.dll");
+            }
+            """);
+        Write("backend.Tests/LeaseStoreTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class LeaseStoreTests { [Fact] public void Runs() => _ = new LeaseStore(); }
+            """);
+        Unrelated("BarTests", "BazTests");
     }
 
     private void FooServiceFixture()

@@ -91,13 +91,20 @@ projects and in the test project. A test file that names a seed is selected,
 and its own top-level types become seeds until nothing new is found, so
 fixtures and base classes carry the selection. The checkout supplies unchanged
 files, and one bounded `git cat-file --batch` supplies the changed paths at the
-result commit. The whole project still runs, with the reason in the audit, for
-a process-level (`ReferenceOutputAssembly="false"`) reference, a changed non-C#
-input or repository build input, a composition root (`Program.cs`,
-`Startup.cs`, `Host/`), a deleted, unreadable, or type-less changed file, a
-selection above half of the classes, or a filter above 16,384 characters. A
-project whose selection is empty gets no command and leaves its coverage to the
-batch gate's Full run. Tests that reach a change only through a caller, a
+result commit. A changed project that the test project references only at
+process level (`ReferenceOutputAssembly="false"`, AGT-3108) adds the test
+classes whose `[Trait("ProcessReference", "<ProjectFileName>")]` names it,
+minus classes that are MachineBound at class level; the audit names them, for
+example `process-level reference TaskServer: 1 class
+(ConnectorNegativeMatrixTests)`. `ProcessReferenceTraitGuardTests` fails a class
+that starts such a program's built output without the trait and a trait for a
+project that is not a process-level reference. The whole project still runs,
+with the reason in the audit, for a changed non-C# input or repository build
+input, a composition root (`Program.cs`, `Startup.cs`, `Host/`), a deleted,
+unreadable, or type-less changed file, a combined selection above half of the
+classes, or a filter above 16,384 characters. A project whose combined
+selection is empty gets no command and leaves its coverage to the batch gate's
+Full run. Tests that reach a change only through a caller, a
 route, dependency injection, or reflection are missed by design; that Full run
 is the safety net. The audit records the seed types, the selected classes and
 files, the closure depth, any fallback reason, and the plan-build time. The

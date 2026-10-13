@@ -55,11 +55,18 @@ public sealed class DotNetTestIndex
 }
 
 /// <summary>One indexed source file with its repo-relative path.</summary>
+/// <param name="ProcessReferences">
+/// The <c>[Trait("ProcessReference", "&lt;ProjectFileName&gt;")]</c> values of each
+/// top-level type that carries one at type level.
+/// </param>
+/// <param name="MachineBoundTypes">Top-level types with a type-level <c>Category=MachineBound</c> trait.</param>
 internal sealed record DotNetIndexedFile(
     string Path,
     IReadOnlyList<string> DeclaredTypes,
     IReadOnlyList<string> TestClasses,
-    IReadOnlySet<string> Tokens);
+    IReadOnlySet<string> Tokens,
+    IReadOnlyDictionary<string, IReadOnlyList<string>> ProcessReferences,
+    IReadOnlySet<string> MachineBoundTypes);
 
 /// <summary>Per test project evidence of a reference selection.</summary>
 public sealed record DotNetReferenceSelectionAudit
@@ -74,6 +81,12 @@ public sealed record DotNetReferenceSelectionAudit
 
     /// <summary>Why the whole project runs, or why it gets no command.</summary>
     public string? FallbackReason { get; init; }
+
+    /// <summary>
+    /// One line per changed project the test project references at process
+    /// level, naming the trait classes it selected (AGT-3108).
+    /// </summary>
+    public IReadOnlyList<string> ProcessReferences { get; init; } = [];
     public string Summary { get; init; } = "";
 }
 
@@ -96,16 +109,32 @@ internal sealed record DotNetReferenceOutcome(
 internal static class DotNetSourceScanner
 {
     /// <summary>
+    /// The trait a test class carries when it starts the built output of a
+    /// project referenced with <c>ReferenceOutputAssembly="false"</c>. Its value
+    /// is that project's file name without extension, for example
+    /// <c>TaskServer</c>.
+    /// </summary>
+    public const string ProcessReferenceTrait = "ProcessReference";
+
+    /// <summary>
     /// A top-level type declaration at column zero, the house style of a
     /// file-scoped namespace. Nested types are indented and never match, so a
     /// generic nested name such as <c>Options</c> does not become a seed.
     /// </summary>
     private static readonly Regex TopLevelTypeDeclaration = new(
-        @"^(?:\[[^\]\r\n]*\]\s*)*"
+        @"^(?<attributes>(?:\[[^\]\r\n]*\]\s*)*)"
         + @"(?<modifiers>(?:(?:public|internal|private|protected|file|sealed|abstract|static|partial|unsafe|readonly|ref|new)\s+)*)"
         + @"(?<kind>class|interface|enum|struct|record(?:\s+(?:class|struct))?)\s+"
         + @"(?<name>[A-Za-z_][A-Za-z0-9_]*)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Multiline);
+
+    private static readonly Regex ProcessReferenceAttribute = new(
+        @"\bTrait(?:Attribute)?\s*\(\s*""" + ProcessReferenceTrait + @"""\s*,\s*""(?<project>[^""]+)""\s*\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex MachineBoundAttribute = new(
+        @"\bTrait(?:Attribute)?\s*\(\s*""Category""\s*,\s*""MachineBound""\s*\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex TestAttribute = new(
         @"[\[,]\s*(?:Xunit\.)?(?:Skippable)?(?:Fact|Theory)(?:Attribute)?\s*[\]\(,]",
@@ -117,6 +146,7 @@ internal static class DotNetSourceScanner
             .Select(match => (
                 match.Index,
                 Name: match.Groups["name"].Value,
+                Attributes: match.Groups["attributes"].Value,
                 IsClass: match.Groups["kind"].Value == "class",
                 Runnable: !Regex.IsMatch(match.Groups["modifiers"].Value, @"\b(?:abstract|static)\b")))
             .ToList();
@@ -132,11 +162,25 @@ internal static class DotNetSourceScanner
             .Select(declaration => declaration.Name)
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        var processReferences = declarations
+            .GroupBy(declaration => declaration.Name, StringComparer.Ordinal)
+            .Select(group => (Name: group.Key, Projects: group
+                .SelectMany(declaration => ProcessReferenceAttribute.Matches(declaration.Attributes))
+                .Select(match => match.Groups["project"].Value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()))
+            .Where(entry => entry.Projects.Count > 0)
+            .ToDictionary(entry => entry.Name, entry => (IReadOnlyList<string>)entry.Projects, StringComparer.Ordinal);
         return new DotNetIndexedFile(
             relativePath,
             declarations.Select(declaration => declaration.Name).Distinct(StringComparer.Ordinal).ToList(),
             testClasses,
-            Tokens(text));
+            Tokens(text),
+            processReferences,
+            declarations
+                .Where(declaration => MachineBoundAttribute.IsMatch(declaration.Attributes))
+                .Select(declaration => declaration.Name)
+                .ToHashSet(StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -183,17 +227,21 @@ internal static class DotNetSourceScanner
 /// checked for an impacted test project:
 /// <list type="number">
 /// <item>A whole-project fallback names its reason: a repository-level build
-/// input, a process-level reference to a changed project, a changed non-C#
-/// file, a composition root, an unreadable or deleted file, a changed file
-/// without a top-level type.</item>
+/// input, a changed non-C# file, a composition root, an unreadable or deleted
+/// file, a changed file without a top-level type.</item>
 /// <item>Seeds are the top-level types of the changed <c>.cs</c> files of the
 /// referenced production projects and of the test project itself.</item>
 /// <item>A test-project file is selected when one of its identifier tokens
 /// names a seed; its own top-level types become seeds, to a fixpoint.</item>
 /// <item>The changed test files' directory siblings are added, as in the
 /// test-only slice.</item>
-/// <item>An empty selection gets no command; a selection above half of the
-/// project's classes or a filter above 16 KB runs the whole project.</item>
+/// <item>A changed project the test project references only at process level
+/// (<c>ReferenceOutputAssembly="false"</c>) adds the test classes whose
+/// <c>ProcessReference</c> trait names it, except those that are MachineBound
+/// at class level (AGT-3108).</item>
+/// <item>An empty combined selection gets no command; a combined selection
+/// above half of the project's classes or a filter above 16 KB runs the whole
+/// project.</item>
 /// </list>
 /// </summary>
 internal sealed class DotNetReferenceSelectionPlanner
@@ -316,7 +364,8 @@ internal sealed class DotNetReferenceSelectionPlanner
     /// </param>
     /// <param name="processLevelChanges">
     /// Touched projects the test project references with
-    /// <c>ReferenceOutputAssembly="false"</c>.
+    /// <c>ReferenceOutputAssembly="false"</c>. Their files are never read: the
+    /// tests cannot name their types, so they select by trait instead.
     /// </param>
     /// <param name="filterExpression">The project's own category filter.</param>
     public DotNetReferenceOutcome Plan(
@@ -328,8 +377,6 @@ internal sealed class DotNetReferenceSelectionPlanner
     {
         if (_buildInput is not null)
             return Whole(testProject, $"repository-level build input changed: {_buildInput}");
-        if (processLevelChanges.Count > 0)
-            return Whole(testProject, $"process-level reference: {string.Join(", ", processLevelChanges)}");
 
         var seeds = new SortedSet<string>(StringComparer.Ordinal);
         var seedFiles = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -388,6 +435,22 @@ internal sealed class DotNetReferenceSelectionPlanner
             .ToList();
         var classes = new SortedSet<string>(
             selectedFiles.SelectMany(file => file.TestClasses), StringComparer.Ordinal);
+
+        var processLines = new List<string>();
+        foreach (var project in processLevelChanges
+                     .Select(ProjectName)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Order(StringComparer.Ordinal))
+        {
+            var (line, traitClasses) = ProcessReferenceSelection(files, project);
+            processLines.Add(line);
+            classes.UnionWith(traitClasses);
+            selectedFiles = selectedFiles
+                .Concat(files.Where(file => file.TestClasses.Any(traitClasses.Contains)))
+                .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(file => file.Path, StringComparer.Ordinal)
+                .ToList();
+        }
         var fileCount = selectedFiles.Count;
 
         var audit = new DotNetReferenceSelectionAudit
@@ -399,15 +462,21 @@ internal sealed class DotNetReferenceSelectionPlanner
             TotalClasses = totalClasses,
             SelectedFiles = selectedFiles.Select(file => file.Path).ToList(),
             ClosureDepth = depth,
+            ProcessReferences = processLines,
         };
 
         if (classes.Count == 0)
         {
+            var reason = processLines.Count == 0
+                ? EmptySelectionReason
+                : seeds.Count == 0
+                    ? $"{string.Join("; ", processLines)}; no command"
+                    : $"{string.Join("; ", processLines)}; {EmptySelectionReason}";
             return new(DotNetReferenceOutcomeKind.NoCommand, audit with
             {
                 SelectedClasses = [],
-                FallbackReason = EmptySelectionReason,
-                Summary = $"{testProject}: {EmptySelectionReason}",
+                FallbackReason = reason,
+                Summary = $"{testProject}: {reason}",
             });
         }
 
@@ -426,13 +495,56 @@ internal sealed class DotNetReferenceSelectionPlanner
                 + $"{MaxFilterCharacters}", audit);
         }
 
-        return new(DotNetReferenceOutcomeKind.Selected, audit with
-        {
-            Summary = $"work package: {classes.Count} of {totalClasses} test classes selected "
-                + $"({fileCount} files, closure depth {depth}) by reference to {seeds.Count} "
-                + $"changed types in {seedFiles.Count} files",
-        });
+        var summary = $"work package: {classes.Count} of {totalClasses} test classes selected "
+            + $"({fileCount} files, closure depth {depth})";
+        if (seeds.Count > 0)
+            summary += $" by reference to {seeds.Count} changed types in {seedFiles.Count} files";
+        if (processLines.Count > 0)
+            summary += $"; {string.Join("; ", processLines)}";
+        return new(DotNetReferenceOutcomeKind.Selected, audit with { Summary = summary });
     }
+
+    /// <summary>
+    /// The test classes whose type-level <c>ProcessReference</c> trait names
+    /// <paramref name="project"/>, without those that are MachineBound at type
+    /// level: every review and gate command excludes that category, so they
+    /// would run nothing. A partial class counts its traits from every part.
+    /// </summary>
+    private static (string Line, IReadOnlySet<string> Classes) ProcessReferenceSelection(
+        IReadOnlyList<DotNetIndexedFile> files,
+        string project)
+    {
+        var traitClasses = files
+            .SelectMany(file => file.TestClasses.Select(name => (Name: name, File: file)))
+            .GroupBy(entry => entry.Name, StringComparer.Ordinal)
+            .Where(group => group.Any(entry =>
+                entry.File.ProcessReferences.TryGetValue(group.Key, out var projects)
+                && projects.Contains(project, StringComparer.OrdinalIgnoreCase)))
+            .Select(group => (Name: group.Key,
+                MachineBound: group.Any(entry => entry.File.MachineBoundTypes.Contains(group.Key))))
+            .OrderBy(entry => entry.Name, StringComparer.Ordinal)
+            .ToList();
+        var kept = traitClasses.Where(entry => !entry.MachineBound).Select(entry => entry.Name).ToList();
+        var dropped = traitClasses.Where(entry => entry.MachineBound).Select(entry => entry.Name).ToList();
+        var prefix = $"process-level reference {project}: ";
+        if (traitClasses.Count == 0)
+            return (prefix + $"no test class carries [Trait(\"{DotNetSourceScanner.ProcessReferenceTrait}\", "
+                + $"\"{project}\")]", new HashSet<string>(StringComparer.Ordinal));
+        if (kept.Count == 0)
+            return (prefix + $"only MachineBound classes ({string.Join(", ", dropped)})",
+                new HashSet<string>(StringComparer.Ordinal));
+        var line = prefix + $"{kept.Count} {(kept.Count == 1 ? "class" : "classes")} ({string.Join(", ", kept)})";
+        if (dropped.Count > 0)
+            line += $", {dropped.Count} MachineBound dropped ({string.Join(", ", dropped)})";
+        return (line, kept.ToHashSet(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// The value a <c>ProcessReference</c> trait uses for a project: its file
+    /// name without extension.
+    /// </summary>
+    internal static string ProjectName(string projectPath)
+        => Path.GetFileNameWithoutExtension(FileName(projectPath));
 
     /// <summary>The composed filter value, as <see cref="TestSelectionPlanner.DotNetFilterSuffix"/> writes it.</summary>
     internal static string FilterValue(string expression, IEnumerable<string> classes)

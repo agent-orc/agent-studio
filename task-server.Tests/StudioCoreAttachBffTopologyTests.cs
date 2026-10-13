@@ -21,6 +21,7 @@ namespace TaskServer.Tests;
 /// workbench turn, and the <c>/hubs/v1/studio</c> negotiate.
 /// </summary>
 [Trait("Category", "MachineBound")]
+[Trait("ProcessReference", "StudioBff")]
 public sealed class StudioCoreAttachBffTopologyTests
 {
     private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
