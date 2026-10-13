@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Git facts off the request path | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style data-dossier-figures>
+    .diagram-node { fill: var(--article-surface); stroke: var(--article-line); stroke-width: 1.4; }
+    .diagram-accent { fill: var(--article-link-soft); stroke: var(--article-link); stroke-width: 1.5; }
+    .diagram-bad { fill: var(--article-bad-soft); stroke: var(--article-bad); stroke-width: 1.4; }
+    .diagram-good { fill: var(--article-good-soft); stroke: var(--article-good); stroke-width: 1.4; }
+    .diagram-flow { fill: none; stroke: var(--article-muted); stroke-width: 1.8; }
+    .diagram-flow-bad { fill: none; stroke: var(--article-bad); stroke-width: 1.8; stroke-dasharray: 6 4; }
+    .diagram-head { fill: var(--article-ink); font: 600 15px var(--article-sans); }
+    .diagram-body { fill: var(--article-muted); font: 13px var(--article-sans); }
+    .diagram-small { fill: var(--article-faint); font: 11.5px var(--article-sans); }
+    .diagram-arrow { fill: var(--article-muted); }
+    .diagram-arrow-bad { fill: var(--article-bad); }
+    .figure-label { color: var(--article-ink); font-weight: 700; }
+    td code, th code { font-size: 0.8em; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · Agent Studio</p>
+    <h1>Git facts off the request path</h1>
+    <p class="lede">A durable fact store with one writer per repository, invalidated by ref and configuration generations, so that the board and every card read published facts and never start Git.</p>
+    <div class="meta"><span><b>As of</b> 13 October 2026, review corrections at <code>029e1cdb5</code></span><span><b>Source</b> AGT-3044</span><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Revision</b> 4, revises delivery <code>997208e00</code> and replaces the 11 October draft <code>4c9cb6d88</code></span><span><b>Location</b> <code>docs/git-facts-architecture/</code>, see <a href="#dossier-location">Dossier location</a></span></div>
+  </header>
+
+  <p>Robert's requirement of 11 October is short. Cards must load instantly, work must run remotely, and the Git performance problem must not come back. Six incidents since July had the same shape. A Git or filesystem fact was computed on demand, on the Windows task server host, as a side effect of a read or of a task event, by spawning the <code>git</code> CLI at roughly 70 to 100 ms per process. Each incident got a local fix such as a debounce, a TTL or a bounded origin read. The next growth step reopened it: 120, then 180, then 235 live cards, plus 2,088 archived cards.</p>
+  <p>This revision answers the concept review of the first draft. It inventories the card, integration and Wiki request families with code locations, and names the adjacent route families outside this migration. S1 measures the complete GET endpoint set before freezing its temporary exceptions; this table is not an exhaustive backend route manifest. It names the durable fact store and its writers. It defines invalidation by ref and configuration generation, the cold-start and crash-recovery story, and a sliced migration plan with measurable targets. The headline target is card list and card detail under 200 ms at the current board size, with zero Git processes per read.</p>
+  <div class="callout">
+    <h3>Scope and neighbours</h3>
+    <p>This Dossier owns the <em>facts</em>: ref generations, per-commit facts, reachability, per-card Git facts and result versions. Its neighbours own the rest, and it links to them rather than repeating them:</p>
+    <ul>
+      <li>Immutable diff objects, central Git views and the observer-only dev seat: <a href="../studio-route-ownership/index.html">Studio route ownership</a>, AGT-3017, decisions D1 and D5.</li>
+      <li>The progressive task core and detail resources: <a href="../task-switch-performance/index.html">Task switch performance</a>, AGT-2910.</li>
+      <li>Ref mutation authority and fenced remote integration: <a href="../operations/remote-gate-zielbild/index.html">Remote Gate and Integration Target Architecture</a>.</li>
+      <li>Integration truth and the board status contract: <a href="../operations/delivery-chain/index.html">Delivery chain</a>.</li>
+      <li>Health signals and the watcher: <a href="../operations/observation/index.html">Observation</a>.</li>
+      <li>Phase B, the remote Task Server: <a href="../operations/remote-task-server-local-studio.md">remote Task Server, local Studio</a>, AGT-2737.</li>
+    </ul>
+  </div>
+
+  <section id="situation" data-document-section="situation">
+    <h2><span class="number">01</span> Request paths today</h2>
+    <p>The 11 October hotfixes and the integrated AGT-2954 work already moved the board's Git facts onto a snapshot. AGT-3088 then made list and grouped reads acquire and pin a published task-index generation; dirty reads start a background refresh, while cold start and the client's own pending mutation can still wait. The task core and <code>/details/*</code> resources start no Git. When a card opens, the Studio still fires Git-backed requests, including the delivery claim on delivered cards. Live file reads also resolve Git roots, and file-history reads walk history. R1 to R10 retain reviewed baseline citations at <code>9e2526be5</code>, except R1, updated for AGT-3088, and R6, changed by AGT-3086. R11 to R14 cite the current code; the table names these request families and the exclusions below define its boundary.</p>
+
+    <div class="breakout">
+    <table>
+      <thead><tr><th>#</th><th>Request path</th><th>Mapping and call chain</th><th>Work on the request thread</th><th>Cache</th><th>Verdict</th></tr></thead>
+      <tbody>
+        <tr><td>R1</td><td><b>Card list</b><br><code>GET /api/tasks/</code>, <code>/grouped</code></td><td><code>TaskCrudEndpoints.cs:90-105, :195-206</code> acquire and pin a publication before <code>ScanAllJobs</code>; Git facts come from <code>TaskListGitProjectionCache.ReadCacheOnly</code> (<code>:145</code>).</td><td>0 Git spawns or workspace scans on the request thread. <code>TaskIndexCache.AcquireBoardReadAsync</code> (<code>TaskIndexCache.cs:267-307</code>) starts a background refresh for dirty input and returns the last publication. Only cold start or this client's pending mutation waits for a publication.</td><td>Signature-keyed, single-flight serialized body (<code>BoardReadConcurrencyGate.cs:13-40</code>). Its strong ETag hashes the built bytes, so a changed generation with identical bytes can return 304.</td><td>Git-free; cold start can wait. S5 owns persisted cold-start summaries and smaller bodies.</td></tr>
+        <tr><td>R2</td><td><b>Card core and detail resources</b><br><code>/{id}/core</code>, <code>/details/git</code>, <code>/details/review</code></td><td><code>TaskCoreEndpoints.cs:13</code>; <code>TaskDetailResources.cs:40</code>, <code>:79</code>. Snapshot only (<code>:52-53</code>). <code>/details/overview</code> calls the freshness-enforcing <code>scanner.FindJob</code> (<code>:28</code>).</td><td>0 Git spawns. <code>/core</code> answers 202 <code>warming</code> on a miss.</td><td>Index and snapshot.</td><td>Git-free.</td></tr>
+        <tr><td>R3</td><td><b>Legacy card detail</b><br><code>GET /{id}</code></td><td><code>TaskCrudEndpoints.cs:450-467</code>; Git facts from <code>ReadTask</code> (<code>:459</code>).</td><td>0 Git spawns. Every call also runs <code>scanner.ScanAllJobs()</code> (<code>:465</code>) to build waiters; unlike R1 this legacy route does not pin a board publication.</td><td>Index.</td><td>Git-free. Compatibility route.</td></tr>
+        <tr><td>R4</td><td><b>Provenance</b>, loaded on every card switch</td><td><code>git-pane.service.ts:235-283</code> calls <code>loadProvenance</code> (<code>:313</code>), which calls <code>TaskGitEndpoints.cs:302</code> and then <code>TaskProvenanceService.BuildView</code> (<code>TaskProvenanceService.cs:230</code>).</td><td>3 to 5 <code>rev-parse --verify</code> (<code>:266-268</code>), plus 2 <code>merge-base --is-ancestor</code> per attributed commit (<code>:358-366</code>). The doc comment at <code>:236-237</code> claims batched <code>rev-list</code> reads; the code does not batch.</td><td>None.</td><td><b>Spawns per open.</b></td></tr>
+        <tr><td>R5</td><td><b>Commit files and the default diff</b>, loaded on every switch for a card with commits</td><td><code>applyCommitDefault</code> (<code>git-pane.service.ts:331-343</code>) loads <code>/commits/files</code> (<code>TaskGitEndpoints.cs:213</code>) or <code>/commit</code> (<code>:98</code>), then the diff of the first file (<code>/commits/diff</code> <code>:228</code>, <code>/commit/diff</code> <code>:113</code>).</td><td><code>log --all --no-merges --grep=&lt;run trailer&gt;</code> (<code>GitService.cs:6965</code>); one <code>log a..b</code> per run (<code>:6887</code>); 2 <code>show</code> per SHA for the files (<code>:2978</code>, <code>:2992</code>); 1 <code>show</code> per SHA for the diff (<code>:3077</code>). <code>/commits</code> can also run attribution backfill inside the GET (<code>TaskGitEndpoints.cs:418</code>).</td><td>A 512-entry LRU for SHA ranges (<code>GitService.cs:695-731</code>). The <code>log --all --grep</code> result is cached without HEAD in the key (<code>:6958</code>), and an empty result is never cached (<code>:6968</code>).</td><td><b>Spawns per open.</b></td></tr>
+        <tr><td>R6</td><td><b>Result history</b><br><code>/{id}/result-history</code>, <code>/{id}/result-history/{versionId}</code></td><td><a href="../../backend/Features/Tasks/TaskFilesEndpoints.cs"><code>TaskFilesEndpoints.cs:22-51</code></a>; <a href="../../backend/Features/Tasks/Results/ResultHistoryQueryService.cs"><code>ResultHistoryQueryService.cs:11-17, :37-60</code></a>.</td><td>At the reviewed baseline, each read walked workspace history and spawned about 5 to 17 processes per version. At <code>aeb25d97b</code>, AGT-3086 reads persisted legacy snapshots and runs the backfill in the background. This does not remove the separate file-read root probes in R11.</td><td>Persisted legacy backfill and platform result snapshots.</td><td>Git-free after AGT-3086. S4 reuses this work.</td></tr>
+        <tr><td>R7</td><td><b>Run views</b><br><code>/runs/{i}/commits|files|diff</code></td><td><code>TaskRunnerEndpoints.cs:315</code>, <code>:346</code>, <code>:381</code>.</td><td>1 or 2 spawns. Without captured SHAs: <code>log --since/--until</code> (<code>GitService.cs:7299</code>).</td><td>SHA-range LRU.</td><td>Spawns on demand.</td></tr>
+        <tr><td>R8</td><td><b>Worktree status, diff, hygiene</b></td><td><code>TaskGitEndpoints.cs:25</code>, <code>:31</code>, <code>:324</code>.</td><td>About 5 spawns each (<code>GitService.cs:2309-2313</code>, <code>:1312-1360</code>).</td><td>1 s (<code>:676</code>), 3 s (<code>:1077</code>).</td><td>Dev-seat routes; retired by AGT-3017 D2 and D4.</td></tr>
+        <tr><td>R9</td><td><b>Integration status in mutations</b>: completion move, rebase</td><td><code>TaskTransitionService.cs:316</code> inside <code>MoveAsync</code> (HTTP move <code>TaskCrudEndpoints.cs:718</code>); <code>TaskIntegrationRecoveryEndpoints.cs:40</code>. Both call <code>TaskIntegrationStatusService.BuildLookup</code> directly.</td><td>On a cache miss, 6 to 8 spawns per repository, including two full ancestor enumerations <code>rev-list --ignore-missing</code> (<code>GitService.cs:8389</code>), from <code>ComputeRepoIntegration</code> (<code>TaskIntegrationStatusService.cs:1287-1340</code>).</td><td>In memory, keyed by root and branch, versioned by a spawn-free ref fingerprint (<code>:167-168</code>). TTL 10 min, 5 s or 1 s (<code>:86-88</code>).</td><td>Spawns on miss.</td></tr>
+        <tr><td>R10</td><td><b>Review planning</b></td><td><code>RemoteReviewPlanBuilder.Build</code> (<code>RemoteReviewPlanBuilder.cs:53</code>), from <code>POST /api/runner/completion</code> (<code>LeaseEndpoints.cs:1957-1968</code>), legacy review claims (<code>V1ReviewPlaneEndpoints.cs:2139-2167</code>) and project settings writes. The settings writes <b>replan every queued attempt inside the request</b> (<code>ProjectSettingsEndpoints.cs:1415-1442</code>, called at <code>:614</code>, <code>:1076</code>, <code>:1136</code>).</td><td><code>diff --name-only target...source</code> (<code>GitService.cs:3976-3989</code>) per attempt. The scoped-review delta uses its own <code>Process.Start</code> (<code>RemoteReviewPlanBuilder.cs:399-422</code>).</td><td>Plan frozen into the attempt.</td><td>Spawns per queued attempt.</td></tr>
+        <tr><td>R11</td><td><b>Card files and checkout files</b><br><code>GET /api/tasks/{id}/files/{path}</code>, <code>/files/{path}/history</code>, <code>/checkout/{path}</code>, <code>/checkout/{path}/history</code></td><td><a href="../../backend/Features/Tasks/TaskFilesEndpoints.cs"><code>TaskFilesEndpoints.cs:54-101</code></a> calls <code>ReadFile</code> or <code>GetHistory</code>. <a href="../../backend/Features/Tasks/TaskFileHistoryService.cs"><code>TaskFileHistoryService.cs:278-386</code></a>: <code>ReadLiveFile</code> calls <code>ResolveCandidates</code>, which builds workspace and/or code candidates.</td><td>Even a live file read starts one or two <code>rev-parse --show-toplevel</code> calls through <code>ResolveGitRoot</code> (<code>:360, :386, :543-545</code>). Historical reads add <code>show</code> (<code>:117</code>); history uses <code>log --follow</code> (<code>:403-412</code>). <code>RunGit</code> (<code>:616</code>) bypasses the common telemetry boundary. The escalation component requests <code>orchestrator-follow-up.md</code> (<code>escalation-summary.component.ts:128</code>); the decision component requests two result files (<code>decision-surface.component.ts:122-127</code>).</td><td>No Git-root cache in this service.</td><td><b>Spawns on card-file reads.</b> S4 owns their removal, including history and checkout variants.</td></tr>
+        <tr><td>R12</td><td><b>Project integration view</b><br><code>GET /api/git/integration</code></td><td><a href="../../backend/Host/SystemEndpoints.cs"><code>SystemEndpoints.cs:156-166</code></a> calls <a href="../../backend/Features/Git/ProjectIntegrationViewService.cs"><code>ProjectIntegrationViewService.Build:176-214</code></a>.</td><td>Resolve integration ref and both tips (<code>:190-194</code>); archive-inclusive task scan (<code>:198</code>); two ancestor enumerations (<code>:208-211</code>); publisher merge history and <code>TaskIntegrationStatusService.BuildLookup</code> (<code>:213-214</code>). The merge history runs <code>log --grep</code> (<code>GitService.cs:8787-8801</code>), even if the nested integration-status cache hits.</td><td>No cache on <code>Build</code>. Nested lookup cache does not cover the preceding work.</td><td><b>Spawns and walks on every readable-repository request.</b> S3 publishes this view.</td></tr>
+        <tr><td>R13</td><td><b>Wiki reads</b><br><code>/api/projects/{projectName}/wiki/recent</code>, <code>/pulse</code>, <code>/history/{path}</code>, <code>/revisions/{sha}/{path}</code>; other Wiki routes listed below</td><td><a href="../../backend/Features/Docs/ProjectDocsEndpoints.cs"><code>ProjectDocsEndpoints.cs:227-241, :384-410</code></a>; <a href="../../backend/Features/Docs/ProjectDocsService.cs"><code>ProjectDocsService.cs:660-684, :771-869, :1470-1487, :1533-1547</code></a>.</td><td>Checkout-mode recent/pulse/history use <code>GetHeadShaCached</code> / <code>MemoizeByHead</code>: a <code>rev-parse HEAD</code> after the 2 s TTL, with a history walk on memo miss or HEAD change (<code>GitService.cs:781-806, :7081-7084, :7963-7978</code>). Fixed-SHA document history can avoid the moving-HEAD probe, but cold immutable reads still use Git. Pulse also memoizes code-history dates against HEAD even in branch mode (<code>ProjectDocsService.cs:866-872</code>). Revisions fetch a SHA/path blob on cache miss (<code>:7988</code>).</td><td>In-memory HEAD memo or bounded immutable SHA cache; not a durable request-free projection.</td><td><b>Conditional request spawns.</b> Included in S1 measurement; Wiki projection migration remains a separately owned follow-up.</td></tr>
+        <tr><td>R14</td><td><b>Delivery claim on card open</b><br><code>GET /api/tasks/{id}/delivery-claim</code></td><td><a href="../../frontend/src/app/features/task-detail/components/prompt-pane/prompt-pane.component.ts"><code>prompt-pane.component.ts:34-41</code></a> resets to overview; <code>overview-title-block.component.html:73</code> mounts the panel. <a href="../../frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.ts"><code>delivery-claim-panel.component.ts:28-34, :74-87</code></a> fetches for delivered lanes. <a href="../../backend/Features/Tasks/Acceptance/DeliveryClaimEndpoints.cs"><code>DeliveryClaimEndpoints.cs:51-66</code></a> calls <a href="../../backend/Features/Tasks/Acceptance/DeliveryClaimSweep.cs"><code>DeliveryClaimSweep.Describe:130-144</code></a>.</td><td><code>Describe</code> calls <code>TaskIntegrationStatusService.BuildLookup</code> on every read (<code>:132</code>); a ref-cache miss starts the R9 ancestor work. An integrated card also calls <code>FindCarryingMerge</code> (<code>:144, :180-197</code>), which runs an uncached <code>git log -E --grep</code> over the integration ref (<code>GitService.cs:8899-8913</code>). The latter runs even when the integration lookup cache hits.</td><td>Nested integration lookup cache only; no cache for the carrying-merge walk.</td><td><b>Spawns on delivered-card opens.</b> S3 publishes both containment and carrying-merge facts.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Inventory boundary</h3>
+    <p>The table is not a claim that all other GET routes are Git-free. The following families are excluded from the eight implementation slices, except R12 and R14, which S3 owns. S1 enumerates all registered GET templates and records each measured violator by method and route template, with triggering scenarios retained as test evidence. A runtime guard can identify the route, but cannot identify a test scenario.</p>
+    <ul>
+      <li><b>Other project Git views and maintenance previews.</b> <code>/api/git/summary</code>, <code>/hygiene</code>, <code>/inventory</code>, <code>/history</code>, <code>/project-commit/files</code>, <code>/project-commit/diff</code> and <code>/cleanup/plan</code> (<a href="../../backend/Host/SystemEndpoints.cs"><code>SystemEndpoints.cs:115-195</code></a>). A route may already read a background snapshot, such as inventory; inclusion in this census is not proof of a spawn. The project views, maintenance and dev-seat retirement slices in <a href="../studio-route-ownership/index.html">AGT-3017</a> own their migration.</li>
+      <li><b>Remaining Wiki and repository-document reads.</b> Wiki root, tree, folder, search, home, files and assets, plus security, style guides, workbenches and architecture (<a href="../../backend/Features/Docs/ProjectDocsEndpoints.cs"><code>ProjectDocsEndpoints.cs:18-508</code></a>). Their source selection can differ between checkout and fixed-commit modes. R13 proves the recent, pulse, history and revision mechanisms; it does not assert that every Wiki route always spawns. Recommended follow-up owner: Docs/Wiki, using a ref/config-generation projection for recent/history/pulse and SHA/path objects for revisions, with last-good reads and 0 request spawns.</li>
+      <li><b>Publishing reads.</b> <code>/api/projects/{project}/publish-status</code>, <code>/publish/{targetId}/panel</code> and <code>/publish/{targetId}/run</code> (<a href="../../backend/Features/Publishing/PublishEndpoints.cs"><code>PublishEndpoints.cs:15-23, :57-62</code></a>). Publishing owns their background projection migration; S1 must capture conditional target derivation and direct process starts.</li>
+    </ul>
+    <p>These are explicit migration exclusions, not permanent guard exemptions. S1 freezes measured violations as route-keyed temporary debt with named owners. S3 to S5 establish the card and board target, including delivery claims. The universal zero-Git GET invariant is complete only when the Docs/Wiki, publishing and AGT-3017 owners remove their remaining entries; the guard keeps that debt visible and rejects any new route.</p>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1000 430" role="img" aria-labelledby="fig1-title fig1-desc">
+        <title id="fig1-title">Figure 1. Where a card switch meets Git today</title>
+        <desc id="fig1-desc">Representative request groups on the left. Card list and card core read a published index; cold board reads may wait for its first generation. Provenance, commit files and default diff, card file reads, delivery claims and mutations still start Git processes on the request thread.</desc>
+        <defs>
+          <marker id="f1-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="diagram-arrow" d="M0 0L10 5L0 10Z"/></marker>
+          <marker id="f1-arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="diagram-arrow-bad" d="M0 0L10 5L0 10Z"/></marker>
+        </defs>
+        <rect class="diagram-node" x="20" y="40" width="320" height="48" rx="8"/><text class="diagram-head" x="34" y="60">R1 Card list, grouped board</text><text class="diagram-body" x="34" y="79">0 spawns; cold start can wait</text>
+        <rect class="diagram-node" x="20" y="100" width="320" height="48" rx="8"/><text class="diagram-head" x="34" y="120">R2 Card core, /details/*</text><text class="diagram-body" x="34" y="139">0 spawns; 202 warming on a miss</text>
+        <rect class="diagram-bad" x="20" y="160" width="320" height="48" rx="8"/><text class="diagram-head" x="34" y="180">R4 Provenance (every switch)</text><text class="diagram-body" x="34" y="199">3-5 rev-parse + 2 merge-base per commit</text>
+        <rect class="diagram-bad" x="20" y="220" width="320" height="48" rx="8"/><text class="diagram-head" x="34" y="240">R5 Commit files, default diff</text><text class="diagram-body" x="34" y="259">log --all --grep + show per SHA</text>
+        <rect class="diagram-bad" x="20" y="280" width="320" height="48" rx="8"/><text class="diagram-head" x="34" y="300">R11 Card files (on open)</text><text class="diagram-body" x="34" y="319">1-2 root probes; history adds log</text>
+        <rect class="diagram-bad" x="20" y="340" width="320" height="48" rx="8"/><text class="diagram-head" x="34" y="360">R14 Delivery claim on card open</text><text class="diagram-body" x="34" y="379">BuildLookup + uncached merge log</text>
+        <rect class="diagram-node" x="420" y="40" width="230" height="100" rx="8"/><text class="diagram-head" x="436" y="66">Git snapshot</text><text class="diagram-body" x="436" y="88">in memory only</text><text class="diagram-body" x="436" y="107">empty after every restart</text><text class="diagram-small" x="436" y="127">TaskListGitProjectionCache</text>
+        <rect class="diagram-node" x="720" y="40" width="260" height="100" rx="8"/><text class="diagram-head" x="736" y="66">GitStateIndexService</text><text class="diagram-body" x="736" y="88">task events, ref watcher, 45 s</text><text class="diagram-body" x="736" y="107">1 config spawn per run</text><text class="diagram-small" x="736" y="127">background, 400 ms debounce</text>
+        <rect class="diagram-bad" x="720" y="250" width="260" height="138" rx="8"/><text class="diagram-head" x="736" y="278">git CLI processes</text><text class="diagram-body" x="736" y="301">on the task server host</text><text class="diagram-body" x="736" y="321">70-100 ms per spawn on Windows</text><text class="diagram-body" x="736" y="341">5-9 s each during the 11 Oct stall</text><text class="diagram-small" x="736" y="368">several spawn sites bypass telemetry</text>
+        <path class="diagram-flow" d="M340 64 L418 72" marker-end="url(#f1-arrow)"/>
+        <path class="diagram-flow" d="M340 124 L418 112" marker-end="url(#f1-arrow)"/>
+        <path class="diagram-flow" d="M720 90 L652 90" marker-end="url(#f1-arrow)"/>
+        <path class="diagram-flow" d="M850 140 L850 248" marker-end="url(#f1-arrow)"/>
+        <path class="diagram-flow-bad" d="M340 184 L718 268" marker-end="url(#f1-arrow-bad)"/>
+        <path class="diagram-flow-bad" d="M340 244 L718 296" marker-end="url(#f1-arrow-bad)"/>
+        <path class="diagram-flow-bad" d="M340 304 L718 326" marker-end="url(#f1-arrow-bad)"/>
+        <path class="diagram-flow-bad" d="M340 364 L718 356" marker-end="url(#f1-arrow-bad)"/>
+        <text class="diagram-small" x="20" y="418">Solid arrow: snapshot read or background work. Dashed arrow: a Git process started on the request thread. Other paths are listed in the table.</text>
+      </svg>
+      <figcaption><span class="figure-label">Figure 1.</span> Representative request paths on the current develop base. The board itself is Git-free and pins its index generation. Card opens can issue Git-backed provenance, commit, file and delivery-claim reads (R4, R5, R11, R14). Mutations (R9, R10), the project integration view (R12) and Wiki (R13) are in the table. Analytical rendering of the cited code, not a product screenshot.</figcaption>
+    </figure>
+
+    <h3>Background producer and storage</h3>
+    <p><code>GitStateIndexService</code> is the only writer of the board's Git snapshot (<code>SetSnapshot</code>, <code>TaskListGitProjectionCache.cs:197-206</code>). It is triggered by task watcher events (<code>GitStateIndexService.cs:328-338</code>), a <code>FileSystemWatcher</code> on <code>HEAD</code>, <code>packed-refs</code>, <code>config</code> and <code>refs/</code> (<code>:275-326</code>), a 45 s sweep (<code>:364-411</code>) and explicit <code>RequestRefresh</code> (<code>:222</code>). The defaults are a 400 ms debounce, 2 concurrent repositories and a 90 s run deadline (<code>:699-718</code>). <code>appsettings.json</code> overrides none of them. Each run starts with one <code>git config --includes --show-origin --null --list</code> (<code>:477</code>, <code>GitConfigSignature.cs:14-36</code>). It skips the rest only when its captured input is unchanged (<code>:481-484</code>). A task event therefore still costs at least one Git process per repository.</p>
+    <p>Fault isolation is partial. One failing card is marked unavailable. If the first <code>min(3, n)</code> cards all fail, the whole run is failed, and <code>MarkFailed</code> keeps the previous snapshot (<code>TaskListGitProjectionCache.cs:386-394</code>, <code>GitStateIndexService.cs:541-561</code>). The snapshot is a <code>ConcurrentDictionary</code>. Nothing is persisted, so every restart starts empty and readers report <code>warming</code> until the first full run completes (<code>TaskListGitProjectionCache.cs:285-287</code>).</p>
+    <p>The runner already publishes a Git fact. <code>DurableGitFactsPayload</code> carries repository, base SHA, result SHA and immutable result ref (<code>runner/DurableHandoffPayloads.cs:28-34</code>). It is emitted at result handoff (<code>runner/RemoteTaskRunner.cs:627-637</code>) and posted as <code>runner.git-facts</code> (<code>runner/TaskServerClient.cs:1885-1906</code>). The Task Server stores it as a generic event row (<code>task-server/TaskServerStore.cs:2426-2433</code>), and no code reads it back. The structured copy lives in <code>result_handoffs</code> (<code>:3944-3967</code>) in the SQLite database <code>task-server.db</code> (<code>:126</code>).</p>
+
+    <h3>Spawn boundary and telemetry</h3>
+    <p>Most Git processes pass through <code>GitService.RunGitProcess</code> (<code>GitService.cs:8259-8274</code>), which records <code>GitProcessTelemetry</code>. Several spawn sites do not: <code>TaskFileHistoryService.RunGit</code> (<code>TaskFileHistoryService.cs:585-604</code>), <code>GitService.RollbackGitArgs</code> (<code>GitService.cs:6661</code>), <code>RemoteReviewPlanBuilder.Git</code> (<code>RemoteReviewPlanBuilder.cs:399</code>), <code>CommitCandidateGate.cs:628</code>, <code>PublishActionService.cs:338-392</code> and <code>WorkspaceArtifactPushWorker.cs:211</code>. Telemetry scopes include <code>tasks/list</code>, <code>tasks/grouped</code>, <code>tasks/detail</code>, <code>tasks/detail/git</code>, <code>tasks/git/*</code> and <code>tasks/provenance</code>. The HTTP timing filter also opens <code>tasks/core</code> (<code>TaskOperationTimingFilter.cs:71</code>). Other scopes include <code>wiki/*</code> (<code>ProjectDocsService.cs:281-3096</code>, <code>WikiSearchService.cs:100</code>), <code>board/merge-status</code> and <code>git/commit-presence</code> (<code>BoardMergeStatusService.cs:90, :207</code>), <code>board/integration-status</code> (<code>TaskIntegrationStatusService.cs:143</code>) and <code>publish/derive</code> (<code>PublishTargetService.cs:120</code>), checked at <code>aeb25d97b</code>. These are service-level labels, not evidence that all HTTP routes are covered: nested calls may inherit a scope, while direct process starts can bypass it. S1 supplies an outer route scope for every GET and audits <code>/commits*</code>, <code>/commit*</code>, <code>/runs/*</code>, <code>/result-history*</code> and R11 to R14 explicitly. No guard stops a request from starting Git. The only rule is a comment (<code>GitStateIndexService.cs:32</code>). The admin endpoint <code>GET /api/admin/git-telemetry</code> warns above a grouped p95 of 1 s or 20 spawns per minute (<code>GitTelemetryAdminEndpoints.cs:15-20</code>). It is rendered inside the prompt admin panel (<code>prompt-admin-panel.component.html:199</code>), not in a health area.</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives">
+    <h2><span class="number">02</span> Alternatives</h2>
+    <p>Each alternative is judged against six criteria. Does any read start Git? Does the board survive a restart instantly? Does it survive a crash? What does it cost on Windows? How much work is it? Does it wait for the remote Task Server (AGT-2737)?</p>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Harden on-demand reads and caches</h3><p>Batch the provenance <code>merge-base</code> calls, cache <code>log --all --grep</code> by HEAD, memoize result history per workspace HEAD, add telemetry scopes. Every path in the table stays, and only its constant shrinks. A cache miss, a restart or a new route still spawns on the request thread. This is the pattern of every fix since July, and each one held only until the next growth step. Useful as a hotfix, never as the architecture.</p></article>
+      <article class="variant"><h3>B · Single-writer fact store on the task server</h3><p>Extend the existing indexer into the only writer of a persistent store. The store holds ref generations, content-addressed commit facts, reachability, per-card facts and result versions. Readers read only the store. This works today, without AGT-2737, and fixes cold start and crash recovery. It still computes on the task server host, on Windows while Stable runs there, though only for deltas.</p></article>
+      <article class="variant"><h3>C · Facts computed on the runner host, published as data</h3><p>The Linux runner host owns the canonical checkout (ADR-0073) and runs the integration that moves refs. A fenced producer there computes the same facts and publishes generations to the Task Server's SQLite store, extending <code>runner.git-facts</code>. Spawns are cheap, the facts sit next to the ref writer, and a sleeping workstation cannot block a read. It needs the Phase B Task Server, a fenced transport and a shadow period. This is the target, and it matches AGT-3017 D5.</p></article>
+      <article class="variant"><h3>D · In-process Git library</h3><p>LibGit2Sharp, or gitoxide behind a small sidecar, removes process start-up for <code>rev-parse</code>, <code>merge-base</code>, <code>diff-tree</code> and <code>config</code>. It does not decide ownership, invalidation or placement, and it brings native binaries and semantic gaps: conditional includes, worktrees, commit-graph and reftable. It is a possible accelerator inside B or C, chosen by measurement.</p></article>
+    </div>
+    <div class="breakout">
+    <table>
+      <thead><tr><th>Criterion</th><th>A Harden</th><th>B Store on task server</th><th>C Runner host publishes</th><th>D Library</th></tr></thead>
+      <tbody>
+        <tr><td>Git on a read request</td><td>Fewer spawns, never zero</td><td>Zero, enforced by guard</td><td>Zero, enforced by guard</td><td>In-process calls instead of spawns; still on the request unless combined with B or C</td></tr>
+        <tr><td>Restart</td><td>Cold, <code>warming</code></td><td>Restored last generation, no Git if refs unchanged</td><td>Task Server serves the store; producer restart invisible to readers</td><td>Unchanged</td></tr>
+        <tr><td>Crash during a run</td><td>Memory lost</td><td>Previous generation intact (transaction)</td><td>Same, plus a fence against a stale producer</td><td>Unchanged</td></tr>
+        <tr><td>Windows spawn cost</td><td>Full</td><td>Delta only</td><td>None on Windows</td><td>Lower per call</td></tr>
+        <tr><td>Depends on AGT-2737</td><td>No</td><td>No</td><td>Yes</td><td>No</td></tr>
+        <tr><td>Effort</td><td>Small, repeated</td><td>Medium</td><td>Medium on top of B's schema</td><td>Medium plus packaging</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation">
+    <h2><span class="number">03</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Working decision: guardrails, then B with the target schema, then C</h3>
+      <p>First measure and freeze existing GET violations, then make every non-exempt request spawn a test failure and shrink the exceptions through migration. Then build option B on the current backend with exactly the schema the Task Server will own, so that the move to option C relocates the writer, not the model. Evaluate D only as a reader inside the producer, after measurement. No read path keeps a fallback to request-time Git.</p>
+    </div>
+
+    <h3>The fact store</h3>
+    <p>One SQLite schema, the <em>Git fact store</em>, has two placements. In B it is a file <code>git-facts.db</code> in the backend state directory. The backend already uses SQLite in <code>ProjectChatIndex.cs</code>. In C the same tables live in <code>task-server.db</code>, next to <code>result_handoffs</code> and the artifact store (<code>task-server/TaskServerStore.cs:3499-4140</code>). That placement inherits the Task Server's fence, transaction (<code>InWriteTransactionAsync</code>) and backup model. Diff bodies are not part of this schema. They follow the AGT-3017 diff-object contract (<a href="../studio-route-ownership/index.html">D1</a>), keyed the same way.</p>
+    <div class="breakout">
+    <table>
+      <thead><tr><th>Table</th><th>Key</th><th>Content</th><th>Mutability</th><th>Writer</th></tr></thead>
+      <tbody>
+        <tr><td><code>git_repositories</code></td><td><code>repo_id</code></td><td>Canonical and workspace/worktree root mappings, origin URL, config signature, <code>config_generation</code></td><td>Updated on config change</td><td>Fact producer</td></tr>
+        <tr><td><code>git_ref_generations</code></td><td><code>repo_id, generation</code></td><td>Exact object IDs of the relevant <code>refs/heads</code>, <code>refs/remotes/origin</code> and integration refs; ref fingerprint; config generation; settings version; producer id and epoch; published time; state</td><td>Append only; one current row per repository</td><td>Fact producer</td></tr>
+        <tr><td><code>git_commit_facts</code></td><td><code>repo_id, sha</code></td><td>Parents, tree, author time, subject, trailers (<code>Run-Index</code>, <code>Verdict</code>, run marker), name-status and numstat per path</td><td>Immutable, content addressed</td><td>Fact producer, idempotent upsert</td></tr>
+        <tr><td><code>git_reachability</code></td><td><code>repo_id, target_ref, sha</code></td><td>First generation at which a commit became reachable from the target; removed on a non-fast-forward move</td><td>Grows per fast-forward</td><td>Fact producer</td></tr>
+        <tr><td><code>card_git_facts</code></td><td><code>repo_id, task_key</code></td><td>Input signature (attributed SHAs, review subject, delivery epoch), generation, provenance view, merge, integration and publish verdicts, typed error</td><td>Replaced per card</td><td>Fact producer</td></tr>
+        <tr><td><code>git_project_views</code></td><td><code>repo_id, generation, task_index_generation</code></td><td>Integration queue, publisher merge history and promotion view for R12; carrying-merge lookup reused by R14</td><td>Immutable published projection; pointer replaced atomically</td><td>Fact producer, S3</td></tr>
+        <tr><td><code>git_path_histories</code></td><td><code>repo_id, generation, path</code></td><td>Ordered file-history entries and SHA/path object references for R11</td><td>Replaced on relevant ref/config change</td><td>Repository history worker through the fact producer, S4</td></tr>
+        <tr><td><code>git_file_objects</code></td><td><code>repo_id, sha, path</code></td><td>Content hash and immutable blob location for historical file/checkout reads</td><td>Content addressed; live reads still use authorised filesystem paths</td><td>Repository history worker through the fact producer, S4</td></tr>
+        <tr><td><code>result_versions</code></td><td><code>task_key, version_id</code></td><td>Producer, lane, run index, verdict, steps, timestamp, content hash, source commit</td><td>Append only</td><td>Platform result writer; one-time backfill</td></tr>
+        <tr><td><code>fact_producer_health</code></td><td><code>repo_id</code></td><td>Last good generation and age, consecutive failures, queue length, spawns per minute, slowest command</td><td>Updated per run</td><td>Fact producer</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Writers</h3>
+    <p>Each table has exactly one writer. Request handlers write none of them.</p>
+    <ul>
+      <li><b>Fact producer, one per repository.</b> In B, this is <code>GitStateIndexService</code>, extended. In C, it is a fenced producer on the runner host beside the canonical checkout. It holds a lease per repository with a monotonically increasing <code>producer_epoch</code>. A publish whose epoch is lower than the stored one is rejected. This is the single-writer write gate of the <a href="../operations/haertung-verteilte-ausfuehrung/index.html">fencing model</a>.</li>
+      <li><b>Platform result writer.</b> Result versions are recorded when the platform writes <code>status.md</code>. <code>ResultVersionStore</code> already snapshots the prior document into <code>results/history/</code> whenever a producer replaces it (<code>ResultVersionStore.cs:9-15</code>), and it becomes the writer of <code>result_versions</code>. S4 reuses the AGT-3086 background backfill and indexes its persisted legacy versions, so <code>TaskFileHistoryService.GetWorkspaceResultHistory</code> leaves the request path.</li>
+      <li><b>Runner final-result handoff.</b> Base SHA, result SHA and result ref stay in <code>result_handoffs</code>. The producer reads them as the input signature of a card. It does not re-derive them from <code>log --all --grep</code>.</li>
+    </ul>
+
+    <h3>Invalidation by ref and configuration generation</h3>
+    <p>A generation identifies the exact Git input of every published fact. It is <code>(repo_id, ref fingerprint, config_generation, settings version)</code>, and it moves only when one of those moves.</p>
+    <ul>
+      <li><b>Ref fingerprint without spawning.</b> <code>ReadOnlyGitRefFingerprint</code> already hashes loose ref files, symbolic refs and <code>packed-refs</code> size and mtime without starting Git (<code>ReadOnlyGitRefFingerprint.cs:6-105</code>). The watcher and the sweep call it first. The <code>packed-refs</code> mtime and the file watcher are detection inputs only. The stored truth is the object ID of each ref, read in one <code>for-each-ref</code> after a fingerprint change. A reftable repository falls back to that one call per sweep.</li>
+      <li><b>Configuration generation from the watcher.</b> <code>config</code>, <code>config.worktree</code> and included files are already watched (<code>GitStateIndexService.cs:309-325</code>). Only a change in them runs <code>git config --list</code> and advances <code>config_generation</code>. This removes the spawn that every task event causes today.</li>
+      <li><b>Task events invalidate no Git fact.</b> A task event can change a card's input signature: a new attributed commit, a new review subject or a delivery epoch. Then only that card is rematerialized, as a join over stored commit facts and reachability. A new SHA costs one batched read for that SHA. An unchanged signature costs nothing.</li>
+      <li><b>Reachability per ref move, not per card.</b> On a fast-forward of a target ref from <code>old</code> to <code>new</code>, one <code>rev-list old..new</code> appends the newly reachable commits. A non-fast-forward move recomputes that ref's set once. Classification of all cards is then an in-memory join. With <code>core.commitGraph</code> and <code>fetch.writeCommitGraph</code> enabled, the full recompute stays bounded on the current history.</li>
+      <li><b>Superseded work is discarded.</b> A run that finishes after its input generation was superseded is not published; it reruns. The current code already does this (<code>GitStateIndexService.cs:518-527</code>).</li>
+    </ul>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1000 400" role="img" aria-labelledby="fig2-title fig2-desc">
+        <title id="fig2-title">Figure 2. Target data flow for Git facts</title>
+        <desc id="fig2-desc">Three writers on the left: the fact producer per repository, the platform result writer and the runner final-result handoff. They write one Git fact store in the centre. Readers on the right read only the store: the board generation, card detail and the Git pane, result history, and the health area. No reader starts Git.</desc>
+        <defs><marker id="f2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="diagram-arrow" d="M0 0L10 5L0 10Z"/></marker></defs>
+        <rect class="diagram-node" x="20" y="40" width="270" height="120" rx="8"/><text class="diagram-head" x="36" y="66">Fact producer per repository</text><text class="diagram-body" x="36" y="88">B: backend indexer, extended</text><text class="diagram-body" x="36" y="107">C: runner host, fenced epoch</text><text class="diagram-body" x="36" y="126">fingerprint first, Git for deltas</text><text class="diagram-small" x="36" y="147">the only process that runs git</text>
+        <rect class="diagram-node" x="20" y="180" width="270" height="76" rx="8"/><text class="diagram-head" x="36" y="206">Platform result writer</text><text class="diagram-body" x="36" y="228">status.md version at write time</text><text class="diagram-small" x="36" y="246">plus a one-time backfill</text>
+        <rect class="diagram-node" x="20" y="276" width="270" height="76" rx="8"/><text class="diagram-head" x="36" y="302">Runner final-result handoff</text><text class="diagram-body" x="36" y="324">base SHA, result SHA, result ref</text><text class="diagram-small" x="36" y="342">result_handoffs, already stored</text>
+        <rect class="diagram-accent" x="370" y="40" width="280" height="312" rx="10"/><text class="diagram-head" x="388" y="68">Git fact store (SQLite)</text><text class="diagram-body" x="388" y="96">repositories, config generation</text><text class="diagram-body" x="388" y="120">ref generations (append only)</text><text class="diagram-body" x="388" y="144">commit facts by SHA (immutable)</text><text class="diagram-body" x="388" y="168">reachability per target ref</text><text class="diagram-body" x="388" y="192">card Git facts + typed errors</text><text class="diagram-body" x="388" y="216">result versions</text><text class="diagram-body" x="388" y="240">producer health</text><text class="diagram-small" x="388" y="276">B: git-facts.db in the backend</text><text class="diagram-small" x="388" y="296">C: tables in task-server.db</text><text class="diagram-small" x="388" y="316">diff bodies: AGT-3017 objects</text>
+        <rect class="diagram-node" x="730" y="40" width="250" height="70" rx="8"/><text class="diagram-head" x="746" y="66">Board generation</text><text class="diagram-body" x="746" y="88">slim, pre-serialized, ETag</text>
+        <rect class="diagram-node" x="730" y="126" width="250" height="70" rx="8"/><text class="diagram-head" x="746" y="152">Card detail, Git pane</text><text class="diagram-body" x="746" y="174">core, details, provenance</text>
+        <rect class="diagram-node" x="730" y="212" width="250" height="60" rx="8"/><text class="diagram-head" x="746" y="238">Result history</text><text class="diagram-body" x="746" y="258">index read, no history walk</text>
+        <rect class="diagram-node" x="730" y="288" width="250" height="64" rx="8"/><text class="diagram-head" x="746" y="314">Health area</text><text class="diagram-body" x="746" y="335">age, failures, spawns per min</text>
+        <path class="diagram-flow" d="M290 100 L368 120" marker-end="url(#f2-arrow)"/>
+        <path class="diagram-flow" d="M290 218 L368 216" marker-end="url(#f2-arrow)"/>
+        <path class="diagram-flow" d="M290 314 L368 290" marker-end="url(#f2-arrow)"/>
+        <path class="diagram-flow" d="M650 90 L728 76" marker-end="url(#f2-arrow)"/>
+        <path class="diagram-flow" d="M650 160 L728 160" marker-end="url(#f2-arrow)"/>
+        <path class="diagram-flow" d="M650 230 L728 242" marker-end="url(#f2-arrow)"/>
+        <path class="diagram-flow" d="M650 300 L728 318" marker-end="url(#f2-arrow)"/>
+        <text class="diagram-small" x="20" y="388">No arrow leads from a reader to Git. A miss answers warming, stale or unavailable with its age.</text>
+      </svg>
+      <figcaption><span class="figure-label">Figure 2.</span> Target data flow. The producer is the only Git client. It moves from the backend (B) to the runner host (C) without a schema change. Proposal, not shipped behaviour.</figcaption>
+    </figure>
+
+    <h3>Cold start and crash recovery</h3>
+    <p>The store makes a restart a non-event for readers.</p>
+    <ol>
+      <li><b>Start.</b> The backend opens the store and loads the last published generation of each repository. Readers serve it at once with state <code>restored</code>, and its age is shown. No Git runs before the first read is served.</li>
+      <li><b>Confirm.</b> The producer computes the ref fingerprint and the configuration signature from files. If both equal the stored generation, the generation becomes <code>ready</code> with zero Git processes. If they differ, the producer runs a normal delta run, and readers keep the restored generation until the new one is published.</li>
+      <li><b>First ever start or a deleted store.</b> This is the only path that computes from scratch. It is bounded by the spawn budget. Readers answer <code>warming</code> per card, never by waiting, and never by falling back to Git.</li>
+      <li><b>Crash during a run.</b> A generation is published in one SQLite transaction in WAL mode: the facts, the card rows and the generation pointer. A crash before commit leaves the previous generation intact. Commit facts are idempotent upserts by SHA, so partial work is reused on the next run.</li>
+      <li><b>Stale or duplicate producer.</b> After a restart, a failover or a second runner, the new producer takes the lease with a higher epoch. A late publish from the old one fails the epoch check and is discarded.</li>
+      <li><b>Corruption.</b> On start, <code>PRAGMA quick_check</code> runs. If it fails, the file is moved aside, a typed health event is raised and the first-start path runs. The Task Server placement in C is also covered by its backup and restore (<code>FullBackupService.cs</code>).</li>
+    </ol>
+    <p>AGT-3088 already keeps board refresh off the request thread after the first publication (R1). The remaining cold-start gap is that a board read waits for that first publication. Persist the last published slim board summaries per project with their index generation. On start, serve them as <code>restored</code> while the background scan runs. Preserve the current pin and the bounded wait for the client's own pending mutation.</p>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1000 330" role="img" aria-labelledby="fig3-title fig3-desc">
+        <title id="fig3-title">Figure 3. Generation lifecycle, cold start and crash</title>
+        <desc id="fig3-desc">Five steps in a row: observe the ref fingerprint and config signature without spawning, compare with the last generation, compute only the delta, publish in one transaction with an epoch check, and serve. Below, the cold-start path restores the last generation before any Git runs, and the crash path keeps the previous generation intact.</desc>
+        <defs><marker id="f3-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="diagram-arrow" d="M0 0L10 5L0 10Z"/></marker></defs>
+        <rect class="diagram-node" x="20" y="40" width="168" height="104" rx="8"/><text class="diagram-head" x="34" y="66">1 Observe</text><text class="diagram-body" x="34" y="88">ref fingerprint</text><text class="diagram-body" x="34" y="106">config signature</text><text class="diagram-small" x="34" y="128">files only, no spawn</text>
+        <rect class="diagram-node" x="216" y="40" width="168" height="104" rx="8"/><text class="diagram-head" x="230" y="66">2 Compare</text><text class="diagram-body" x="230" y="88">with last generation</text><text class="diagram-body" x="230" y="106">and card signatures</text><text class="diagram-small" x="230" y="128">equal: stop, 0 spawns</text>
+        <rect class="diagram-node" x="412" y="40" width="168" height="104" rx="8"/><text class="diagram-head" x="426" y="66">3 Compute delta</text><text class="diagram-body" x="426" y="88">new SHAs: facts</text><text class="diagram-body" x="426" y="106">moved ref: rev-list</text><text class="diagram-small" x="426" y="128">affected cards only</text>
+        <rect class="diagram-accent" x="608" y="40" width="168" height="104" rx="8"/><text class="diagram-head" x="622" y="66">4 Publish</text><text class="diagram-body" x="622" y="88">one transaction</text><text class="diagram-body" x="622" y="106">generation + 1</text><text class="diagram-small" x="622" y="128">epoch must be current</text>
+        <rect class="diagram-good" x="804" y="40" width="176" height="104" rx="8"/><text class="diagram-head" x="818" y="66">5 Serve</text><text class="diagram-body" x="818" y="88">readers swap pointer</text><text class="diagram-body" x="818" y="106">ETag from body bytes</text><text class="diagram-small" x="818" y="128">no Git on any read</text>
+        <path class="diagram-flow" d="M188 92 L214 92" marker-end="url(#f3-arrow)"/>
+        <path class="diagram-flow" d="M384 92 L410 92" marker-end="url(#f3-arrow)"/>
+        <path class="diagram-flow" d="M580 92 L606 92" marker-end="url(#f3-arrow)"/>
+        <path class="diagram-flow" d="M776 92 L802 92" marker-end="url(#f3-arrow)"/>
+        <rect class="diagram-node" x="20" y="176" width="960" height="60" rx="8"/><text class="diagram-head" x="34" y="200">Cold start</text><text class="diagram-body" x="150" y="200">load last generation from the store, serve as restored, then step 1. Equal inputs: ready with 0 spawns.</text><text class="diagram-small" x="150" y="222">Only a first-ever start or a deleted store computes from scratch, as per-card warming, within the spawn budget.</text>
+        <rect class="diagram-node" x="20" y="252" width="960" height="60" rx="8"/><text class="diagram-head" x="34" y="276">Crash</text><text class="diagram-body" x="150" y="276">before step 4 commits, the previous generation stays current; commit facts already written are reused.</text><text class="diagram-small" x="150" y="298">A producer with an older epoch cannot publish after a newer one took the lease.</text>
+      </svg>
+      <figcaption><span class="figure-label">Figure 3.</span> The generation lifecycle. Steps 1 and 2 run on every watcher event and sweep. Steps 3 and 4 run only when an input really moved. Proposal, not shipped behaviour.</figcaption>
+    </figure>
+
+    <h3>Reads</h3>
+    <p>The migrated reads in R1 to R7, R11 and R12 use published projections or bounded file/object reads. None starts Git; a missing projection signals background work and answers warming.</p>
+    <ul>
+      <li><b>Provenance (R4).</b> A projection of <code>card_git_facts</code>: branch presence and containment per attributed commit, read from <code>git_reachability</code>.</li>
+      <li><b>Commit lists and files (R5).</b> From <code>card_git_facts</code> and <code>git_commit_facts</code>.</li>
+      <li><b>Default diff (R5).</b> Served from a SHA-keyed diff object that the producer writes at publication. Its key follows AGT-3017 D1. Until the object exists, the response is <code>warming</code> and the producer is asked to compute it with priority.</li>
+      <li><b>Result history (R6).</b> One indexed query over <code>result_versions</code>.</li>
+      <li><b>Run views (R7).</b> Read the run's captured SHA range from commit facts.</li>
+      <li><b>Card files (R11).</b> Live reads resolve the authorised task or checkout path without Git-root discovery. The producer resolves repository identity for history separately; historical lists and blobs read indexed SHA/path objects. Preserve path containment, source precedence and missing-file responses.</li>
+      <li><b>Project integration (R12).</b> The producer publishes the queue, publisher merges and promotion view for the ref/config generation. The request joins published task metadata without ancestor walks or nested live lookups. S3 shares the reachability computation with provenance.</li>
+      <li><b>Delivery claim (R14).</b> The delivered-card overview reads containment and the carrying merge from the same published generation. The producer indexes the integration ref's curated merges once per ref move and joins them by task key; a missing fact remains <code>unknown</code> or <code>warming</code>, never a false negative or a live <code>BuildLookup</code>/<code>git log</code> fallback.</li>
+    </ul>
+    <p>Each response carries the generation and its age, and responds to <code>If-None-Match</code>. The board keeps the AGT-2703 ETag contract. Its signature includes the Git generation (<code>BoardReadSignatureSource.cs:98-128</code>) and decides when to rebuild. The strong ETag is a hash of the built bytes (<code>BoardReadConcurrencyGate.cs:24-40</code>); a new generation changes the tag only when the response bytes change. The single-flight memo stays.</p>
+
+    <h3>Mutations and review planning</h3>
+    <p>Mutations may need a fact that is newer than the published generation. One example is the containment check before a card enters Completed (R9). The handler then asks the producer for "a generation at least as new as the current ref fingerprint" and waits at most 2 s. If the producer has not answered by then, the move returns 409 <code>integration-check-pending</code> and the Studio retries. The handler never spawns Git itself, so the spawn budget and the single writer hold. Review planning triggered by a project-settings write (R10) is queued to the existing <code>ReviewInfrastructureRetryScheduler</code> background service instead of running per attempt inside the request. The scoped-review delta uses the common spawn boundary.</p>
+
+    <h3>Acceptance freshness</h3>
+    <p>The AGT-3041 fix is in HEAD. <code>DeliveryLanePolicy.IsAcceptedDeliveryStale</code> no longer compares <code>TargetRefFingerprint</code>; the comment at <code>DeliveryLanePolicy.cs:32</code> calls the target HEAD "a cache key for the Git reachability calculation, not part of the accepted delivery". The snapshot model keeps that rule. A claim binds the result SHA, the delivery epoch and the containment verdict. It records the generation at which containment was proven. A new generation can stale the claim only if containment of the accepted SHA is lost, which means a non-fast-forward move removed it from <code>git_reachability</code>. An ordinary push to the target never stales it.</p>
+
+    <h3>Fault isolation, budgets and health</h3>
+    <ul>
+      <li><b>Card scope.</b> A failure in one card, such as a duplicate key, a corrupt sidecar or a missing object, writes a typed error into that card's row and leaves the others alone. The current repository-wide abort after <code>min(3, n)</code> failures becomes a repository health state that keeps the last good generation serving.</li>
+      <li><b>Repository scope.</b> A failing repository keeps serving its last good generation with an explicit age. Other repositories are unaffected; each has its own producer queue.</li>
+      <li><b>Spawn budget.</b> Zero Git processes per minute while no input moves. At most 120 per repository per minute during catch-up. The producer throttles above that and raises a warning at 80 percent. The existing 4-slot <code>GitProcessBudget</code> stays as the concurrency bound.</li>
+      <li><b>Health area.</b> <code>fact_producer_health</code> is shown in the Studio health area, not only in the prompt admin panel. It alarms when the last good generation is older than two sweep intervals, after three consecutive failures, or when the spawn budget is exceeded.</li>
+    </ul>
+
+    <h3>AGT-2954</h3>
+    <p>The brief reports AGT-2954 in Human Review with 15 unintegrated commits. At <code>9e2526be5</code>, the latest AGT-2954 salvage ref (<code>fe9f04210</code>, 5 October) is an ancestor of HEAD and of <code>origin/develop</code>. The 15 commits that are not ancestors come from the five early runs of 26 and 27 September. Ten of them are patch-identical to commits already in HEAD. The other five are alternative versions of the same first commit, each touching the same 18 files, and later runs superseded them. AGT-2954 delivered the versioned in-memory snapshot, the input signatures and <code>GitConfigScope</code>. It did not deliver persistence. The recommendation is to close it as integrated and fold nothing further from its salvage refs.</p>
+  </section>
+
+  <section id="migration" data-document-section="migration">
+    <h2><span class="number">04</span> Migration plan</h2>
+    <p>The slices are ordered so that each one is measurable on its own, and so that the first one stops later slices from regressing. "Current board size" means 235 live cards and 2,088 archived cards, the figures of 11 October. The 3,000-card fixture is the growth margin. Latency is server-side handler time, as measured by <code>TaskOperationTimingFilter</code>, at p95 over a 30-switch replay. That is the method of the <a href="../task-switch-performance/index.html">task switch Dossier</a>.</p>
+    <div class="breakout">
+    <table>
+      <thead><tr><th>Slice</th><th>Changes</th><th>Measurable target</th><th>Depends on</th></tr></thead>
+      <tbody>
+        <tr><td><b>S1 Guardrails</b></td><td>One Git process boundary; route-keyed read guard; registered GET census and focused violator tests; budget fixture</td><td>New read-route spawns fail a test. S1 records the measured violator manifest, including R14, by method and route template; scenarios are evidence, not runtime keys. Known debt remains visible and cannot grow. List/grouped: 0 spawns; 2 KiB/card ceiling. A 3,000-card no-op index run has a measured p95 budget (at most 90 s in S1, tightened to 2 s in S2).</td><td>None</td></tr>
+        <tr><td><b>S2 Durable store and restart</b></td><td>Store schema in <code>git-facts.db</code>; persist and restore generations; configuration generation from the watcher; producer epoch</td><td>Restart with unchanged refs: board Git facts <code>restored</code>, then <code>ready</code>, with 0 Git processes. A task event causes 0 spawns. Crash test keeps the previous generation. Unchanged-input index p95 at most 2 s for 3,000 cards.</td><td>S1</td></tr>
+        <tr><td><b>S3 Card Git facts</b></td><td>Commit facts, incremental reachability, provenance and commit lists from the store; default diff as an object; project integration R12 and delivery claim R14 from the same generation</td><td>Provenance, commit reads, default diff, R12 and R14: p95 under 200 ms and 0 request spawns, including integrated delivered cards. A single fast-forward is reflected within 2 s for 3,000 cards.</td><td>S2</td></tr>
+        <tr><td><b>S4 Card files and result history</b></td><td>Extend the S2 schema with result version, repository-root and file-history tables; reuse AGT-3086; remove live-file Git-root probes</td><td><code>/result-history</code> p95 under 50 ms, 0 spawns. All R11 variants: 0 spawns and p95 under 200 ms, including missing files and history. No history walker has a request caller.</td><td>S2</td></tr>
+        <tr><td><b>S5 Persist the slim board</b></td><td>Keep AGT-3088 pinned background refresh; persist cold-start summaries, pre-serialize the slim board, and remove the legacy detail route's unnecessary full-list build</td><td>List/grouped p95 under 200 ms at current size and 3,000 cards; first board read under 2 s after process start; payload per card bounded.</td><td>S1</td></tr>
+        <tr><td><b>S6 Mutations and review planning</b></td><td>Producer-mediated fresh generation for moves; replanning queued in the background</td><td>Completion move and project settings writes start 0 Git processes on the request thread; move p95 under 2.2 s, including the producer wait.</td><td>S2</td></tr>
+        <tr><td><b>S7 Runner host producer</b></td><td>Producer on the runner host publishes generations to <code>task-server.db</code>; shadow comparison; cutover per repository</td><td>One week of shadow run with zero mismatched card facts; after cutover, 0 Git processes on the task server host for facts.</td><td>S3, S4, AGT-2737 B6</td></tr>
+        <tr><td><b>S8 Reader benchmark and maintenance</b></td><td>CLI, <code>cat-file --batch</code>, LibGit2Sharp and gitoxide on identical fixtures; commit-graph and maintenance</td><td>A recorded decision with p50 and p95 per operation on Windows and Linux; adopt only with a 30 percent or larger CPU reduction and full correctness parity.</td><td>S3</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>S1 lands first. S2 and S5 can then proceed independently. S2 owns the schema and repository writer interface; S3 and S4 extend it without competing bootstraps. S3 removes provenance, commit, default-diff and delivery-claim spawns. S4 removes file-root probes and file-history walks while preserving AGT-3086. S5 removes the remaining cold-start wait and unnecessary legacy detail work, retaining AGT-3088's pinned background refresh. Only after S3, S4 and S5 pass a combined 30-switch replay, including Human Review and escalated cards, integrated delivery claims and absent decision files, is the card-detail target established: each required detail request p95 under 200 ms, with 0 Git processes. The replay reports total response completion time separately. S7 alone waits for Phase B and extends the AGT-3017 Git object and runner publication cards with ref generations, card facts and reachability.</p>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence">
+    <h2><span class="number">05</span> Evidence</h2>
+    <p>Three kinds of evidence are kept apart here. The incident measurements were supplied with the AGT-3044 brief. Original code observations were read from <code>9e2526be5</code>. The prior correction at <code>aeb25d97b</code> supports R6 and R11 to R13. The current base <code>029e1cdb5</code> supports R1, R3, R14 and the AGT-3088 board/ETag corrections. Historical observations below remain labelled by their original commit. The architecture is a proposal. This Dossier makes no claim about a visible product surface, so it carries no screenshot figures. Figures 1 to 3 are analytical renderings.</p>
+
+    <h3>Incident history</h3>
+    <div class="breakout">
+    <table>
+      <thead><tr><th>Date</th><th>Measured symptom</th><th>Mechanism</th><th>State at <code>9e2526be5</code></th></tr></thead>
+      <tbody>
+        <tr><td>26 Jul 2026</td><td>Wiki endpoints 0.8 to 10 s</td><td>Full docs tree stat walk per request. Filesystem, not Git, but the same pattern: no watcher-invalidated projection.</td><td>Wiki uses <code>MemoizeByHead</code> (<code>GitService.cs:965</code>).</td></tr>
+        <tr><td>1 Sep 2026</td><td>Constant API load; grouped read 2.1 s</td><td>No-op cache invalidations every 5 s tick (3,513 full scans in 14 h), uncached grouped enrichments, a 5 s TestRunService TTL, about 1.6 Git spawns per second. AGT-2699 to AGT-2703.</td><td>ETag/304 in place; TestRunService TTL 10 min (<code>TestRunService.cs:5-6</code>).</td></tr>
+        <tr><td>28 Sep 2026</td><td>Card list 25 to 90 s; runner claim polls timing out; leases lost</td><td>Index ran almost continuously: 120 config calls per run, 6 to 20 s, 400 ms debounce on every task event. Integration status computed 1,379 times in 5 min with 644 s of Git time, because every task event invalidated it. Interim local setting: debounce 20 s, one repository.</td><td>Task events no longer invalidate integration status (<code>InvalidateCache</code> <code>TaskIntegrationStatusService.cs:1348</code> has no caller); debounce still 400 ms by default.</td></tr>
+        <tr><td>4 Oct 2026</td><td>Machine CPU 77 to 95 percent; 8.5 Git spawns per second; Defender scanning every spawn</td><td>180 config calls per run, one <code>git config --get remote.origin.url</code> per card; runs of 20 to 39 s. CPU fell to 29 percent with Stable stopped.</td><td>Origin read once per repository per run (<code>TaskIntegrationStatusService.cs:681-688</code>); one config spawn per run remains.</td></tr>
+        <tr><td>10 and 11 Oct 2026</td><td>Host and backend hung 22:20 to 07:31 UTC; Git spawns totalling 33,000 s; Delivered cards bounced</td><td>Acceptance fingerprint tied to the moving develop HEAD (AGT-3041); ref drift under the dev checkout (AGT-3039).</td><td>AGT-3041 fixed in HEAD (<code>DeliveryLanePolicy.cs:20-48</code>).</td></tr>
+        <tr><td>11 Oct 2026</td><td>Card list 94 s; single spawns of 5 to 9 s</td><td>One duplicate card id threw in <code>TestRunService.BuildLookup</code> and aborted the whole projection on every run (579 failures). Readers fell back to request-time Git. 7 MB list payload behind a single-slot gate.</td><td>Duplicates resolved by <code>TaskProjectionCards.Select</code> (<code>TaskProjectionCards.cs:9-25</code>); the gate is a single-flight memo; board reads no longer fall back to Git.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Across the six incidents, each fix removed one amplifier and left three conditions in place. Facts were derived on the request host. Their store was memory. A read could reach Git when that memory was empty or wrong. The request-path table shows that all three conditions still exist on the card, in R4, R5 and R11. AGT-3086 has removed the R6 request-time walk on the new base.</p>
+
+    <h3>Code observations</h3>
+    <div class="evidence-list">
+      <a class="evidence" href="../../backend/Features/Tasks/TaskFileHistoryService.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Historical baseline: result-history walk at 9e2526be5</b><small><code>GetWorkspaceResultHistory</code> runs <code>log --all</code> over every lane path (<code>:154-156</code>), then several spawns per version (<code>:165-194</code>, <code>:439</code>), through its own <code>Process.Start</code> (<code>:585-604</code>). The component loads it from an effect on every job change (<code>previous-results-control.component.ts:28-37</code>). AGT-3086 removes this request-time walk at the new base; R6 records the current path.</small></span></a>
+      <a class="evidence" href="../../frontend/src/app/features/task-detail/services/git-pane.service.ts"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Git pane loads provenance and commit files on every switch</b><small><code>setJob</code> (<code>:235-283</code>) calls <code>loadProvenance</code> and <code>applyCommitDefault</code>, which loads the aggregate or single commit and selects the first file's diff.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/TaskProvenanceService.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Provenance is not batched</b><small>Two <code>merge-base --is-ancestor</code> per attributed commit (<code>:358-366</code>), despite the comment at <code>:236-237</code>.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/TaskIndexCache.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Board reads pin a published index</b><small>AGT-3088's <code>AcquireBoardReadAsync</code> (<code>:267-307</code>) returns the current publication and starts dirty refresh in the background. Cold start and the client's pending mutation can still wait; <code>TaskCrudEndpoints.cs:101-107, :204-208</code> pins the result.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/Acceptance/DeliveryClaimSweep.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Delivery claim still walks the integration branch</b><small><code>Describe</code> calls <code>BuildLookup</code> (<code>:132</code>), then <code>FindCarryingMerge</code> on integrated cards (<code>:144, :180-197</code>); <code>GitService.GetIntegrationMergeCommits</code> runs an uncached <code>log --grep</code> (<code>GitService.cs:8899-8913</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/TaskListGitProjectionCache.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Board Git facts are memory only</b><small><code>SetSnapshot</code> writes a <code>ConcurrentDictionary</code> (<code>:197-206</code>); restart answers <code>warming</code> (<code>:285-287</code>); repository-wide abort after <code>min(3, n)</code> failures (<code>:392-393</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Git/GitStateIndexService.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Task events still trigger a Git process</b><small>Task watcher events request a run (<code>:328-338</code>); every run spawns <code>git config --list</code> before the unchanged-input check (<code>:477-484</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/TaskTransitionService.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Completion move computes integration inline</b><small><code>BuildLookup</code> inside <code>MoveAsync</code> (<code>:316</code>); on a miss, full ancestor enumerations (<code>GitService.cs:8389</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Projects/ProjectSettingsEndpoints.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Settings writes replan every queued review inside the request</b><small><code>ReplanQueuedReviewAttempts</code> (<code>:1415-1442</code>) runs one merge-base diff per queued attempt.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Git/GitProcessTelemetry.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>No guard, partial telemetry</b><small>Telemetry records only spawns through <code>RunGitProcess</code> (<code>GitService.cs:8259-8274</code>) inside an open scope; six spawn sites bypass it; no request-scope assertion exists.</small></span></a>
+      <a class="evidence" href="../../task-server/TaskServerStore.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The runner already publishes a Git fact nobody reads</b><small><code>runner.git-facts</code> lands as a generic event row (<code>:2426-2433</code>); the Task Server is SQLite (<code>:126</code>) with <code>result_handoffs</code> (<code>:3944-3967</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/Acceptance/DeliveryLanePolicy.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-3041 is fixed</b><small>Staleness no longer compares the target fingerprint (<code>:20-48</code>).</small></span></a>
+      <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Card detail can exceed 200 ms when Git is cold</b><small>At 70 to 100 ms per Windows spawn, provenance for a card with 5 commits can start about 14 processes; an integrated delivery claim adds an uncached history walk. AGT-3086 already moved result-history walks off the request path. No correlated per-switch measurement exists at this commit; S1 records it.</small></span></a>
+      <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Generation-keyed SQLite store with one writer</b><small>Removes the three persistent conditions, and keeps the schema stable from B to C.</small></span></a>
+    </div>
+    <p class="dim">Evidence gap: no Stable telemetry was captured for this revision. The concept run must not start Stable or the dev backend outside a Playwright spec. The latency targets are therefore set as budgets, and S1 records the baseline before any later slice claims an improvement. The board figures of 235 and 2,088 cards are from the 11 October brief.</p>
+
+    <h3 id="dossier-location">Dossier location</h3>
+    <p>The brief names <code>docs/operations/git-facts-architecture/</code> as the output directory. This Dossier is delivered at <code>docs/git-facts-architecture/</code> on purpose, because the platform placement gate accepts a concept delivery only as <code>docs/&lt;slug&gt;/</code>. The 11 October draft <code>4c9cb6d88</code> used the brief's path, and revision 2 moves it. Publishing under <code>docs/operations/</code> after the decision stays possible. Like the other operations Dossiers, it would be a move outside the concept run.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="../../backend/Features/Pipeline/ConceptWorkbenchContract.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>A changed file under docs/operations/ resolves to the topic root docs/operations</b><small><code>ReviewChangedFiles</code> uses only the first path segment below <code>docs/</code> as the topic root (<code>:96-115</code>). For <code>docs/operations/git-facts-architecture/index.html</code> that root is <code>docs/operations</code>. <code>ReviewDirectory</code> then reviews it as Dossier <code>operations</code> (<code>:125-137</code>), and that directory has no <code>workbench.json</code>. The three-segment <code>docs/operations/&lt;slug&gt;</code> form is accepted only for existing legacy workbenches that are reviewed by directory (<code>:128-130</code>).</small></span></a>
+      <a class="evidence" href="../../backend/Features/Pipeline/ConceptWorkbenchPublisher.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Placement runs that check on the run's changed files</b><small><code>PublishAsync</code> passes the worktree status files to <code>ReviewChangedFiles</code> (<code>:57-62</code>) and stops before copying when the review is incomplete (<code>:63-64</code>).</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions">
+    <h2><span class="number">06</span> Open decisions</h2>
+    <p>Each decision has a recommended working option. Promoted cards use the recommendation until Robert records a different choice.</p>
+    <div class="breakout">
+    <table>
+      <thead><tr><th>Decision</th><th>Recommended working option</th><th>Alternative and consequence</th></tr></thead>
+      <tbody>
+        <tr><td><b>D1 Placement and order</b></td><td>Guardrails, then B on the backend with the target schema, then C after AGT-2737 B6.</td><td>C only: the card-detail target waits for Phase B, and Windows Git cost stays until then. B only: permanent Windows cost and a workstation dependency.</td></tr>
+        <tr><td><b>D2 AGT-2954</b></td><td>Close as integrated; its 5 October state is in develop. Do not cherry-pick the 15 superseded salvage commits.</td><td>Re-review the salvage chains: repeats work already merged, with conflict risk.</td></tr>
+        <tr><td><b>D3 Store technology</b></td><td>SQLite with one schema: <code>git-facts.db</code> in B, tables in <code>task-server.db</code> in C.</td><td>JSON files per repository: simpler to start, but no transactional publish, no indexed result-history query, and a second migration later.</td></tr>
+        <tr><td><b>D4 Result history</b></td><td>Index at write time and reuse AGT-3086 legacy backfill; remove the remaining R11 root probes and file-history walks.</td><td>Memoize the walk by workspace HEAD: still a walk on every workspace commit, which happens on most task events.</td></tr>
+        <tr><td><b>D5 Git in mutations</b></td><td>Producer-mediated fresh generation with a 2 s bound and a typed 409 retry.</td><td>Keep inline <code>BuildLookup</code>: correct, but every completion move remains a Git spike on the request thread.</td></tr>
+        <tr><td><b>D6 Guard enforcement</b></td><td>Measure and freeze exact GET exceptions in S1 first. For non-exempt reads, throw in Debug/tests; in production count, log and warn without throwing. Baseline exceptions are counted as migration debt, with warnings only for a new path or a breached ceiling. R9 and R10 are writes, not read-guard exceptions.</td><td>Throw in production: strongest, but an unknown path becomes a user-visible error during migration.</td></tr>
+        <tr><td><b>D7 Stale policy and budget</b></td><td>Serve last good with age; alarm after two missed sweeps, three failures or 120 spawns per repository per minute.</td><td>Fail closed when stale: blank facts replace known facts during a host outage.</td></tr>
+        <tr><td><b>D8 Reader engine</b></td><td>Keep the CLI with a long-lived <code>cat-file --batch</code> reader as the baseline; adopt a library only after S8 shows a 30 percent or larger CPU reduction with parity.</td><td>Adopt LibGit2Sharp now: lower per-call cost before proof; native packaging and config semantics risk.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">07</span> Implementation</h2>
+    <p>The eight slices S1 to S8 are defined as <code>implementationTasks</code> in <a href="workbench.json">workbench.json</a>, each with a bounded <code>acceptanceScope</code>. Delivery slices append their status here; the decision content above stays unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
