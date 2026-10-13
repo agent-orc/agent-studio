@@ -817,9 +817,18 @@ integration ref. A plan without agent aspects keeps the `verify-subject`
 completion command, so the frozen plan is never empty. The batch deferral does
 not apply, and delivery admission reads the plan as having no applicable
 build/test gate. The integration lane still verifies the contained tree before
-completion (AGT-3002). A settings-edit replan diffs against the Result-SHA, as
-the creation path does. The result ref usually exists only under
-`refs/remotes/origin` in the Studio checkout.
+completion (AGT-3002).
+
+The empty list must be measured against the integration ref. The completion
+path diffs against the run's pickup base, which a continuation round sets to
+the previous, still unintegrated result; a round without a commit then has an
+empty pickup diff while its delivery still changes code.
+`RemoteReviewPlanBuilder.CompletionChangedFiles` therefore measures an empty
+pickup diff again against the integration ref and keeps any non-empty pickup
+diff unchanged. The review retry scheduler and the settings-edit replan diff
+the Result-SHA against the integration ref directly, so all three freeze the
+same no-change decision. The replan no longer diffs the result ref, which
+usually exists only under `refs/remotes/origin` in the Studio checkout.
 
 ## Key code and tests
 

@@ -1960,10 +1960,11 @@ public static class LeaseEndpoints
                         taskProjectSettings,
                         integrationRef,
                         run.ResultSha,
-                        RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                        RemoteReviewPlanBuilder.CompletionChangedFiles(
                             git,
                             repositoryPath,
-                            deliveryRange?.MergeBaseSha ?? integrationRef,
+                            deliveryRange?.MergeBaseSha,
+                            integrationRef,
                             run.ResultSha),
                         deliveryBranch));
             }

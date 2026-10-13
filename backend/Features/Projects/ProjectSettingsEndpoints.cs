@@ -1439,19 +1439,25 @@ public static class ProjectSettingsEndpoints
     }
 
     /// <summary>
-    /// AGT-3079: the replan diffs against the immutable result SHA, as the
-    /// creation path does. The Studio checkout usually holds the result ref
-    /// only under <c>refs/remotes/origin</c>, so a diff against
+    /// AGT-3079: the replan diffs the immutable result SHA against the
+    /// integration ref, as the review retry scheduler does and as the creation
+    /// path does for its no-change decision
+    /// (<see cref="RemoteReviewPlanBuilder.CompletionChangedFiles"/>). The
+    /// Studio checkout usually holds the result ref only under
+    /// <c>refs/remotes/origin</c>, so a diff against
     /// <see cref="ReviewSubjectDto.ResultRef"/> failed and turned a pending
-    /// no-change plan back into the full plan.
+    /// no-change plan back into the full plan. A legacy subject without a
+    /// result ref keeps its diff-independent plan, as before.
     /// </summary>
     internal static IReadOnlyList<string>? ReplanChangedFiles(
         GitService git,
         string? repositoryPath,
         string? integrationRef,
         ReviewSubjectDto subject)
-        => RemoteReviewPlanBuilder.DeliveryChangedFiles(
-            git, repositoryPath, integrationRef, subject.ExpectedResultSha);
+        => string.IsNullOrWhiteSpace(subject.ResultRef)
+            ? null
+            : RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                git, repositoryPath, integrationRef, subject.ExpectedResultSha);
 
     private static object BatchGateSettingsResponse(BatchGateFormationOptions value) => new
     {

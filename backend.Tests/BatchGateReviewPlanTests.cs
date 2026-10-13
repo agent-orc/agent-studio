@@ -279,11 +279,119 @@ public sealed class BatchGateReviewPlanTests
                 fixture.Git, fixture.Repo, "develop", subject);
             Assert.NotNull(changed);
             Assert.Empty(changed);
+            // A legacy subject without a result ref keeps its diff-independent plan.
+            Assert.Null(AgentStudio.Projects.ProjectSettingsEndpoints.ReplanChangedFiles(
+                fixture.Git, fixture.Repo, "develop", subject with { ResultRef = null }));
 
             var settings = new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") };
             var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, settings, "develop",
                 subject.ExpectedResultSha, changed, subject.ResultRef);
             AssertNoChangePlan(plan, OrdinaryPlan(fixture, settings));
+        }
+        finally
+        {
+            DeleteDirectory(fixture.Root);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ContinuationRoundWithoutCommitOnAnUnintegratedResultKeepsTheFullPlan(bool batchGate)
+    {
+        var fixture = CreateFixture(LintCommand);
+        try
+        {
+            // The previous round's result changes code and is not on develop.
+            // The continuation round picked it up as its base and made no
+            // commit, so base == result == that unintegrated commit.
+            Git(fixture.Repo, "switch", "-qc", "agent-studio/results/task");
+            Directory.CreateDirectory(Path.Combine(fixture.Repo, "backend"));
+            File.WriteAllText(Path.Combine(fixture.Repo, "backend", "Pilot.cs"), "class Pilot {}\n");
+            Git(fixture.Repo, "add", ".");
+            Git(fixture.Repo, "commit", "-qm", "previous round");
+            var resultSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
+            Git(fixture.Repo, "switch", "-q", "develop");
+            var pickupBaseSha = resultSha;
+
+            // The pickup-base diff alone is empty and would read as no change.
+            Assert.Empty(RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                fixture.Git, fixture.Repo, pickupBaseSha, resultSha)!);
+            var changed = RemoteReviewPlanBuilder.CompletionChangedFiles(
+                fixture.Git, fixture.Repo, pickupBaseSha, "develop", resultSha);
+            Assert.Equal(new[] { "backend/Pilot.cs" }, changed);
+
+            var settings = new ProjectSettings
+            {
+                BatchGate = new(Enabled: batchGate, Scope: "code", ReviewTestLevel: "build-only"),
+            };
+            var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, settings, "develop",
+                resultSha, changed, ResultRef);
+
+            // A batch-deferred code plan runs its build as review-verification.
+            Assert.Contains(plan.Commands, command =>
+                command.Aspect == (batchGate ? "review-verification" : "build-tests"));
+            Assert.Contains(plan.Commands, command => command.Aspect == "lint");
+            Assert.NotEmpty(plan.Preparation ?? []);
+            Assert.DoesNotContain(plan.SkippedAspects ?? [], skip =>
+                skip.Aspect is "build-tests" or "lint" or "review-verification");
+            Assert.Equal(batchGate, plan.BuildTestDeferredToBatch);
+            if (!batchGate)
+            {
+                var ordinary = OrdinaryPlan(fixture, settings);
+                Assert.Equal(ToolSteps(ordinary), ToolSteps(plan));
+                Assert.Equal(PreparationSteps(ordinary), PreparationSteps(plan));
+            }
+
+            // A replan or review retry diffs the same SHA against develop and
+            // must freeze the same plan as the completion path (AGT-2827).
+            var replan = fixture.Builder.Build(fixture.Task, fixture.Repo, settings, "develop",
+                resultSha,
+                RemoteReviewPlanBuilder.DeliveryChangedFiles(fixture.Git, fixture.Repo, "develop", resultSha),
+                ResultRef);
+            Assert.Equal(ToolSteps(replan), ToolSteps(plan));
+            Assert.Equal(PreparationSteps(replan), PreparationSteps(plan));
+            Assert.Equal(replan.BuildTestDeferredToBatch, plan.BuildTestDeferredToBatch);
+        }
+        finally
+        {
+            DeleteDirectory(fixture.Root);
+        }
+    }
+
+    [Fact]
+    public void CompletionChangedFilesRemeasuresOnlyAnEmptyPickupDiff()
+    {
+        var fixture = CreateFixture(LintCommand);
+        try
+        {
+            // A result equal to develop stays no change through the completion path.
+            var developSha = Git(fixture.Repo, "rev-parse", "develop").Trim();
+            Assert.Empty(RemoteReviewPlanBuilder.CompletionChangedFiles(
+                fixture.Git, fixture.Repo, developSha, "develop", developSha)!);
+            Assert.Empty(RemoteReviewPlanBuilder.CompletionChangedFiles(
+                fixture.Git, fixture.Repo, null, "develop", developSha)!);
+
+            // A round that commits on top of an unintegrated previous result
+            // keeps today's pickup-base diff.
+            Git(fixture.Repo, "switch", "-qc", "agent-studio/results/task");
+            Directory.CreateDirectory(Path.Combine(fixture.Repo, "backend"));
+            File.WriteAllText(Path.Combine(fixture.Repo, "backend", "Pilot.cs"), "class Pilot {}\n");
+            Git(fixture.Repo, "add", ".");
+            Git(fixture.Repo, "commit", "-qm", "previous round");
+            var previousSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
+            Directory.CreateDirectory(Path.Combine(fixture.Repo, "docs"));
+            File.WriteAllText(Path.Combine(fixture.Repo, "docs", "pilot.md"), "Pilot notes.\n");
+            Git(fixture.Repo, "add", ".");
+            Git(fixture.Repo, "commit", "-qm", "this round");
+            var resultSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
+            Assert.Equal(new[] { "docs/pilot.md" }, RemoteReviewPlanBuilder.CompletionChangedFiles(
+                fixture.Git, fixture.Repo, previousSha, "develop", resultSha));
+
+            // An integration ref this checkout cannot resolve keeps the diff
+            // uncomputable, so the plan stays full.
+            Assert.Null(RemoteReviewPlanBuilder.CompletionChangedFiles(
+                fixture.Git, fixture.Repo, previousSha, "refs/heads/missing", previousSha));
         }
         finally
         {
@@ -423,6 +531,7 @@ public sealed class BatchGateReviewPlanTests
             WorkingDirectory = repo,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;

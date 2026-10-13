@@ -57,10 +57,14 @@ public sealed class RemoteReviewPlanBuilder
     }
 
     /// <summary>
-    /// AGT-3079: a valid result that changes no path against its merge base is
-    /// already contained in the integration line, so build, test and lint would
-    /// only compare that SHA with itself. Null paths mean the diff could not be
-    /// computed and never count as no change.
+    /// AGT-3079: a valid result that changes no path against its merge base
+    /// with the integration ref is already contained in the integration line,
+    /// so build, test and lint would only compare that SHA with itself. Null
+    /// paths mean the diff could not be computed and never count as no change.
+    /// The caller must measure <paramref name="changedPaths"/> against the
+    /// integration ref; an empty diff against any other base (a continuation
+    /// round's pickup base) proves nothing about the integration line. See
+    /// <see cref="CompletionChangedFiles"/>.
     /// </summary>
     internal static bool IsNoChangeResult(
         IReadOnlyList<string>? changedPaths,
@@ -79,7 +83,9 @@ public sealed class RemoteReviewPlanBuilder
     /// The delivery's paths against its merge base, when known. A diff that
     /// can change the Compose stack adds the Compose-render steps, whose host
     /// requirement routes the review to an executor that can render Compose
-    /// (AGT-2981). Null keeps the diff-independent plan.
+    /// (AGT-2981). Null keeps the diff-independent plan. An empty list marks a
+    /// no-change result (<see cref="IsNoChangeResult"/>), so it must come from
+    /// a diff against <paramref name="integrationRef"/>.
     /// </param>
     public Contract.ReviewPlanDto Build(
         TaskInfo? task,
@@ -504,6 +510,31 @@ public sealed class RemoteReviewPlanBuilder
            || string.IsNullOrWhiteSpace(resultSha)
             ? null
             : git.ChangedPathsAgainstMergeBase(repositoryPath, baseRef, resultSha);
+
+    /// <summary>
+    /// The completion path's changed paths. They are measured against the
+    /// run's pickup base, which a continuation round (mechanical fallback,
+    /// lost-worker or salvage continuation, older-brief start) sets to the
+    /// previous, still unintegrated result. A round without a commit then has
+    /// an empty pickup diff while its delivery still changes code against the
+    /// integration line. An empty pickup diff is therefore measured again
+    /// against <paramref name="integrationRef"/>, the base the no-change rule
+    /// and every rebuild path use (AGT-3079). A non-empty or null pickup diff
+    /// is returned unchanged.
+    /// </summary>
+    public static IReadOnlyList<string>? CompletionChangedFiles(
+        AgentStudio.Git.GitService git,
+        string? repositoryPath,
+        string? pickupBaseSha,
+        string? integrationRef,
+        string? resultSha)
+    {
+        var pickupBase = string.IsNullOrWhiteSpace(pickupBaseSha) ? integrationRef : pickupBaseSha;
+        var changed = DeliveryChangedFiles(git, repositoryPath, pickupBase, resultSha);
+        return changed is { Count: 0 } && !string.Equals(pickupBase, integrationRef, StringComparison.Ordinal)
+            ? DeliveryChangedFiles(git, repositoryPath, integrationRef, resultSha)
+            : changed;
+    }
 
     private IReadOnlySet<string> ConfiguredAspectIds()
     {
