@@ -181,7 +181,6 @@ wall-clock backend.Tests/TaskCoreCacheTests.cs 1
 wall-clock backend.Tests/TaskCoreEndpointTests.cs 6
 wall-clock backend.Tests/TaskFailureContinuationSelectionTests.cs 3
 wall-clock backend.Tests/TaskFileHistoryEndpointsTests.cs 4
-wall-clock backend.Tests/TaskIndexCacheTests.cs 1
 wall-clock backend.Tests/TaskIndexInvalidationGuardTests.cs 3
 wall-clock backend.Tests/TaskIntegrationStatusServiceTests.cs 2
 wall-clock backend.Tests/TaskLanePipelineBusinessStateMachineTests.cs 2
@@ -448,7 +447,6 @@ fixed-date backend.Tests/TaskCommitBindingTests.cs
 fixed-date backend.Tests/TaskCommitsEndpointIntegrationTests.cs
 fixed-date backend.Tests/TaskDetailHygieneScopeTests.cs
 fixed-date backend.Tests/TaskFileHistoryEndpointsTests.cs
-fixed-date backend.Tests/TaskIndexCacheTests.cs
 fixed-date backend.Tests/TaskIndexInvalidationGuardTests.cs
 fixed-date backend.Tests/TaskIntegrationRecordEndpointTests.cs
 fixed-date backend.Tests/TaskJsonSchemaTests.cs

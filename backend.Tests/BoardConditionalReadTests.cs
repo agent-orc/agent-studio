@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 using AgentStudio.Tasks;
@@ -66,9 +68,24 @@ public sealed class BoardConditionalReadTests : IDisposable
     /// beside it. Pointing it at the per-test temp workspace, the way
     /// <c>MergeEndpointsIntegrationTests</c> does, removes that coupling.
     /// </summary>
-    private WebApplicationFactory<Program> BuildFactory() =>
+    private WebApplicationFactory<Program> BuildFactory(
+        Func<Func<List<TaskInfo>>, Func<List<TaskInfo>>>? wrapIndexScan = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
+            if (wrapIndexScan is not null)
+            {
+                // The host's task index with its disk walk wrapped, so a test
+                // can hold a refresh open and see where it runs.
+                b.ConfigureServices(services => services.AddSingleton(sp =>
+                {
+                    var scanner = sp.GetRequiredService<TaskScannerService>();
+                    return new TaskIndexCache(
+                        scanner,
+                        sp.GetRequiredService<ILogger<TaskIndexCache>>(),
+                        sp.GetRequiredService<IConfiguration>(),
+                        wrapIndexScan(scanner.ScanAllJobsRaw));
+                }));
+            }
             b.UseEnvironment("Test");
             b.ConfigureAppConfiguration((_, cfg) =>
             {
@@ -418,6 +435,153 @@ public sealed class BoardConditionalReadTests : IDisposable
 
         Assert.Equal(HttpStatusCode.NotModified, second.Status);
         Assert.Equal(string.Empty, second.Body);
+    }
+
+    private const string Grouped = "/api/tasks/grouped";
+
+    private static readonly AsyncLocal<string?> RequestFlow = new();
+
+    /// <summary>
+    /// AGT-3088: with the index dirtied by an in-process write and its refresh
+    /// held open, board reads neither wait for that refresh nor run one: ten
+    /// concurrent reads return the published snapshot, a conditional read
+    /// answers 304 without building a body, and no read probes a quota-wait
+    /// marker or builds a reference graph on its own flow.
+    /// </summary>
+    [Fact]
+    public async Task DirtyIndex_BoardReadsServeThePublishedSnapshot_WithoutRunningOrAwaitingTheRefresh()
+    {
+        Seed("t-1", "First task", TaskStates.Ready);
+        using var release = new ManualResetEventSlim(true);
+        var requestFlowScans = 0;
+        using var factory = BuildFactory(scan => () =>
+        {
+            if (RequestFlow.Value is not null) Interlocked.Increment(ref requestFlowScans);
+            release.Wait(TimeSpan.FromSeconds(60));
+            return scan();
+        });
+        // Run requests on the test's execution context, so the flow-scoped
+        // probes below see exactly what the request flow did.
+        factory.Server.PreserveExecutionContext = true;
+        using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
+        await WaitForSettledValidatorAsync(client, Grouped);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var bodies = factory.Services.GetRequiredService<BoardReadConcurrencyGate>();
+
+        release.Reset();
+        try
+        {
+            Seed("t-2", "Second task", TaskStates.Ready);
+            scanner.InvalidateCache();
+            await WaitForBoardQuiescenceAsync(factory);
+
+            RequestFlow.Value = "board-request";
+            using var markerReads = AgentStudio.Runner.QuotaWaitMarker.Reads.Observe();
+            using var indexBuilds = TaskReferenceIndex.Builds.Observe();
+
+            var reads = Task.WhenAll(Enumerable.Range(0, 10).Select(_ => GetAsync(client, Grouped)));
+            Assert.Same(reads, await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(30))));
+            var responses = await reads;
+            Assert.All(responses, response =>
+            {
+                Assert.Equal(HttpStatusCode.OK, response.Status);
+                Assert.Contains("t-1", response.Body, StringComparison.Ordinal);
+                Assert.DoesNotContain("t-2", response.Body, StringComparison.Ordinal);
+            });
+
+            var builds = bodies.Builds;
+            var validated = await GetAsync(client, Grouped, responses[^1].ETag);
+            Assert.Equal(HttpStatusCode.NotModified, validated.Status);
+            Assert.Equal(builds, bodies.Builds);
+
+            Assert.Equal(0, markerReads.Count);
+            Assert.Equal(0, indexBuilds.Count);
+            Assert.Equal(0, Volatile.Read(ref requestFlowScans));
+        }
+        finally
+        {
+            RequestFlow.Value = null;
+            release.Set();
+        }
+
+        // Once the background refresh publishes, the board catches up.
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!(await GetAsync(client, Grouped)).Body.Contains("t-2", StringComparison.Ordinal))
+        {
+            Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(60), "the background refresh never published");
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary>
+    /// The validator folds the request's pinned generation, so a publish that
+    /// lands after the read took its snapshot cannot label the older body with
+    /// the newer generation.
+    /// </summary>
+    [Fact]
+    public async Task GroupedTag_NamesThePinnedGeneration_WhenAPublishLandsMidRequest()
+    {
+        Seed("t-1", "First task", TaskStates.Ready);
+        using var factory = BuildFactory();
+        using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
+        _ = await GetAsync(client, Grouped);
+        var services = factory.Services;
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var cache = services.GetRequiredService<TaskIndexCache>();
+
+        var publication = await scanner.AcquireBoardReadAsync(DefaultClientIdentity.Id, CancellationToken.None);
+        Assert.NotNull(publication);
+        cache.ForceRefresh();
+        Assert.True(cache.Generation > publication.Generation);
+
+        string token;
+        using (scanner.PinBoardRead(publication))
+        {
+            var jobs = scanner.ScanAllJobs();
+            token = services.GetRequiredService<BoardReadSignatureSource>().Compose(
+                "tasks/grouped",
+                "variant",
+                jobs,
+                services.GetRequiredService<TaskListGitProjectionCache>().ReadFreshness(jobs),
+                services.GetRequiredService<CliRouter>(),
+                services.GetRequiredService<AgentStudio.Runner.TaskRunnerService>());
+        }
+
+        var tasksPart = Assert.Single(token.Split('\u001f'), part => part.StartsWith("tasks=", StringComparison.Ordinal));
+        Assert.Equal("tasks=" + publication.Generation.ToString(CultureInfo.InvariantCulture), tasksPart);
+    }
+
+    /// <summary>
+    /// Read-your-writes per client: the reorder request is attributed to its
+    /// client, so that client's very next board read waits for the reordered
+    /// snapshot instead of answering with the old order.
+    /// </summary>
+    [Fact]
+    public async Task WritersOwnReorder_IsVisibleOnItsVeryNextGroupedRead()
+    {
+        Seed("t-a", "Task A", TaskStates.Ready);
+        Seed("t-b", "Task B", TaskStates.Ready);
+        using var factory = BuildFactory();
+        using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
+
+        foreach (var order in new[] { new[] { "t-a", "t-b" }, ["t-b", "t-a"], ["t-a", "t-b"], ["t-b", "t-a"] })
+        {
+            var reorder = await client.PostAsJsonAsync("/api/tasks/reorder", new
+            {
+                jobs = order.Select(id => new { jobId = id, watchPath = _watchPath }),
+            });
+            Assert.Equal(HttpStatusCode.OK, reorder.StatusCode);
+
+            var board = await GetAsync(client, Grouped);
+            using var document = JsonDocument.Parse(board.Body);
+            var ready = document.RootElement.GetProperty("ready").EnumerateArray()
+                .Select(card => card.GetProperty("id").GetString())
+                .ToArray();
+            Assert.Equal(order, ready);
+        }
     }
 
     [Fact]

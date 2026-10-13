@@ -277,6 +277,31 @@ describe('TaskService', () => {
     http.expectNone('/api/v1/studio/runner/status');
   });
 
+  it('keeps the initial hub pull during the boot read to one conditional follow-up', () => {
+    const hub = TestBed.inject(JobsHubClient) as unknown as JobsHubClientStub;
+    service.startLiveUpdates();
+    http.expectOne('/api/projects/settings').flush({});
+
+    // Boot read is in flight when the initial hub connect asks for a re-pull.
+    service.refresh();
+    const boot = http.expectOne(groupedRequest);
+    expect(boot.request.headers.has('If-None-Match')).toBe(false);
+    hub.handlers?.reconnected?.();
+    hub.handlers?.reconnected?.();
+    http.expectNone(groupedRequest);
+
+    boot.flush(emptyGrouped, { headers: { ETag: '"board-boot"' } });
+    for (const runner of http.match('/api/v1/studio/runner/status')) runner.flush({ projects: {} });
+
+    // Exactly one trailing read, and it revalidates the snapshot just stored.
+    const trailing = http.expectOne(groupedRequest);
+    expect(trailing.request.headers.get('If-None-Match')).toBe('"board-boot"');
+    trailing.flush(null, { status: 304, statusText: 'Not Modified', headers: { ETag: '"board-boot"' } });
+    for (const runner of http.match('/api/v1/studio/runner/status')) runner.flush({ projects: {} });
+    http.expectNone(groupedRequest);
+    service.stopLiveUpdates();
+  });
+
   it('calls the file-source history endpoints with encoded paths and source params', () => {
     let historyCount = 0;
     service

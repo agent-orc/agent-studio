@@ -23,7 +23,9 @@ namespace AgentStudio.Tasks;
 /// <list type="bullet">
 /// <item><description><b>Task index</b> - <c>TaskScannerService.SnapshotGeneration</c>.
 /// Covers <c>task.json</c> semantics, lane membership, folder structure, and
-/// everything the lane sort orders by.</description></item>
+/// everything the lane sort orders by. Inside a board read this is the pinned
+/// generation the body is built from (AGT-3088), so a publish that lands
+/// mid-request cannot tag an older body with a newer generation.</description></item>
 /// <item><description><b>Generated sidecars</b> -
 /// <see cref="TaskSidecarGeneration"/>. The task index deliberately ignores
 /// them, but the response projects them (pipeline execution record, step prompt
@@ -180,9 +182,11 @@ public sealed class BoardReadSignatureSource(
 
     /// <summary>
     /// Folds the in-memory runtime overlay the board projects onto each card.
-    /// Nothing here touches disk: every value is an O(1) read out of a runner or
-    /// CLI registry, so the fold stays cheap enough to run before the endpoint
-    /// decides whether the response is even needed.
+    /// Nothing here touches disk: every value is a read out of a runner or CLI
+    /// registry, and the runner status reads the request's pinned index
+    /// generation (provider waits from the snapshot, one shared queue order per
+    /// generation, AGT-3088), so the fold stays cheap enough to run before the
+    /// endpoint decides whether the response is even needed.
     ///
     /// <para>The lane gates mirror <c>TaskEndpointHelpers.WithRuntime</c>
     /// exactly. When a new runtime field is projected onto a card, it belongs

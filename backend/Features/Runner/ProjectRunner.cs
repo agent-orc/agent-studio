@@ -1184,13 +1184,13 @@ public class ProjectRunner
         var providerLimits = _providerLimits.Active(statusAt);
         if (providerLimits.Count == 0)
         {
-            foreach (var wait in _scanner.ScanAllAutomationJobs()
-                         .Select(task => QuotaWaitMarker.TryRead(task.FolderPath, _logger))
-                         .Where(wait => wait is not null
-                                        && string.Equals(wait.Scope, "provider", StringComparison.OrdinalIgnoreCase)))
+            // AGT-3088: the published snapshot already parsed every live
+            // card's quota-wait marker, so status reads never probe disk.
+            foreach (var wait in _scanner.ReadPerGeneration(
+                         ProviderWaitsProjection, 0, static publication => ReadProviderWaits(publication.Live)))
             {
                 _providerLimits.Record(new ProviderLimitStatus(
-                    wait!.CliType,
+                    wait.CliType,
                     wait.StartedAt,
                     wait.ResetAt,
                     wait.Reason,
@@ -8760,7 +8760,7 @@ public class ProjectRunner
             if (!readyIds.Contains(id)) _placementWarnings.TryRemove(id, out _);
     }
 
-    private List<TaskInfo> ListReadyPickupCandidatesInDisplayedOrder()
+    internal List<TaskInfo> ListReadyPickupCandidatesInDisplayedOrder()
     {
         var settings = _projectSettings.Get(ProjectName);
         var intakeEnabled = settings.IntakeEnabled == true;
@@ -10391,12 +10391,81 @@ public class ProjectRunner
     private List<string> GetQueuedJobIds()
     {
         // This ordered list is the single queue-position source used by the
-        // status API and TaskLiveStatusProjection. Reuse the pickup candidate
-        // policy so a card held behind dependsOn, intake, crash-backoff, agent,
-        // or task-kind gates never occupies a displayed runner-slot position.
-        return ListReadyPickupCandidatesInDisplayedOrder()
+        // status API and TaskLiveStatusProjection. It applies the pickup
+        // candidate policy so a card held behind dependsOn, intake,
+        // crash-backoff, agent, or task-kind gates never occupies a displayed
+        // runner-slot position. AGT-3088: the snapshot-derived part of that
+        // policy is evaluated once per index generation and settings version
+        // for all runners; only the in-memory crash backoff is applied here.
+        var orders = _scanner.ReadPerGeneration(
+            DisplayedReadyOrderProjection,
+            _projectSettings.Version,
+            publication => BuildDisplayedReadyOrders(publication, _projectSettings));
+        if (!orders.TryGetValue(ProjectName, out var ordered)) return [];
+        return ordered
+            .Where(job => !IsInRapidCrashBackoff(job.Id))
             .Select(job => job.Id)
             .ToList();
+    }
+
+    private const string ProviderWaitsProjection = "runner.provider-waits";
+    private const string DisplayedReadyOrderProjection = "runner.displayed-ready-order";
+
+    private static IReadOnlyList<QuotaWaitStatus> ReadProviderWaits(IEnumerable<TaskInfo> live)
+        => live
+            .Where(task => !task.Fixture
+                           && task.QuotaWait is not null
+                           && string.Equals(task.QuotaWait.Scope, "provider", StringComparison.OrdinalIgnoreCase))
+            .Select(task => task.QuotaWait!)
+            .ToList();
+
+    /// <summary>
+    /// The displayed Ready queue of every project for one index generation:
+    /// the cards <see cref="ListReadyPickupCandidatesInDisplayedOrder"/> would
+    /// return, minus the in-memory rapid-crash gate, in the same lane order.
+    /// Filtering commutes with that sort, so applying the crash gate afterwards
+    /// yields the same positions. Waits-on resolves against the published
+    /// fixture-free, archive-inclusive graph, the same input pickup builds.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<TaskInfo>> BuildDisplayedReadyOrders(
+        TaskIndexPublication publication,
+        ProjectSettingsService projectSettings)
+    {
+        var orders = new Dictionary<string, IReadOnlyList<TaskInfo>>(StringComparer.Ordinal);
+        foreach (var project in publication.Live
+                     .Where(job => !job.Fixture && job.State == TaskStates.Ready)
+                     .GroupBy(job => job.ProjectName ?? "", StringComparer.Ordinal))
+        {
+            var settings = projectSettings.Get(project.Key);
+            var intakeEnabled = settings.IntakeEnabled == true;
+            orders[project.Key] = LaneSortApplier.Sort(
+                    project.Where(job => IsSnapshotReadyCandidate(job, intakeEnabled, publication.AutomationReferences)),
+                    TaskStates.Ready,
+                    _ => settings)
+                .ToList();
+        }
+        return orders;
+    }
+
+    /// <summary>
+    /// The snapshot-only part of <see cref="IsReadyPickupCandidate"/>: every
+    /// gate except the in-memory crash backoff, without the pickup path's
+    /// once-per-card warnings (those stay with pickup).
+    /// </summary>
+    private static bool IsSnapshotReadyCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex)
+        => AgentTypes.IsAutoPickupEligible(job.Agent)
+           && !job.Fixture
+           && !TaskKinds.IsEpic(job.Kind)
+           && !TaskKinds.IsDecision(job.Kind)
+           && !TaskSlugs.IsHumanDecisionNeeded(job.Id)
+           && IsPickupAllowed(job, intakeEnabled)
+           && !HoldsOnWaitsOn(job, waitsOnIndex);
+
+    private static bool HoldsOnWaitsOn(TaskInfo job, TaskReferenceIndex waitsOnIndex)
+    {
+        if (job.References == null || job.References.DependsOn.Count == 0) return false;
+        var status = waitsOnIndex.EvaluateWaitsOn(job);
+        return status.CycleDetected || status.UnsatisfiableGate || status.Blocked;
     }
 
     private void NotifyStatus()

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -142,6 +143,11 @@ public class TaskScannerService : ITaskScanner
     /// the next read sees the change synchronously rather than waiting for
     /// the FileSystemWatcher's debounce window. No-op when no cache is
     /// registered (test fixtures that build the scanner directly).
+    ///
+    /// <para>When the write runs inside a client's write request
+    /// (<see cref="AgentStudio.Clients.AmbientClient"/>), the mutation is
+    /// recorded for that client: its board reads wait for it, nobody else's
+    /// do (AGT-3088).</para>
     /// </summary>
     public void InvalidateCache(
         [CallerMemberName] string callerMemberName = "",
@@ -150,8 +156,57 @@ public class TaskScannerService : ITaskScanner
         _indexCache?.Invalidate(
             TaskIndexCache.InvalidationSource.Mutation,
             callerMemberName,
-            callerFilePath);
+            callerFilePath,
+            clientId: AgentStudio.Clients.AmbientClient.Id);
         _statsMetadataCache?.Invalidate();
+    }
+
+    /// <summary>
+    /// Takes one published index generation for a board read without running
+    /// a disk walk on the caller's thread (AGT-3088). Null when no cache is
+    /// wired; the caller then keeps the direct disk-walk path.
+    /// </summary>
+    public async ValueTask<TaskIndexPublication?> AcquireBoardReadAsync(
+        string? clientId, CancellationToken cancellationToken)
+        => _indexCache is null
+            ? null
+            : await _indexCache.AcquireBoardReadAsync(clientId, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Pins <paramref name="publication"/> for the current flow: every index
+    /// read below it answers from that generation. Call it from the request
+    /// method itself so the pin flows into the rest of the request.
+    /// </summary>
+    public IDisposable PinBoardRead(TaskIndexPublication? publication)
+        => publication is null || _indexCache is null ? NoPin.Instance : _indexCache.Pin(publication);
+
+    /// <summary>
+    /// Returns a read model derived from the live and archive partitions of
+    /// one generation, built once per (name, version, generation) and shared
+    /// by every caller. Without a cache it is rebuilt from a raw walk on each
+    /// call, matching the uncached scan semantics.
+    /// </summary>
+    public T ReadPerGeneration<T>(string name, long version, Func<TaskIndexPublication, T> build)
+        where T : class
+    {
+        if (_indexCache != null) return _indexCache.GetDerived(name, version, build);
+        var all = ScanAllJobsRaw();
+        var live = all.Where(task => !string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal))
+            .ToImmutableList();
+        var archive = all.Where(task => string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal))
+            .ToImmutableList();
+        return build(new TaskIndexPublication(
+            live,
+            archive,
+            TaskReferenceIndex.Build(all),
+            TaskReferenceIndex.Build(live.Concat(archive).Where(task => !task.Fixture)),
+            0));
+    }
+
+    private sealed class NoPin : IDisposable
+    {
+        public static readonly NoPin Instance = new();
+        public void Dispose() { }
     }
 
     /// <summary>Publish one durable mutation to the cache-only core projection.</summary>
