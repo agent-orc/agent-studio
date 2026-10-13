@@ -8,6 +8,12 @@ const PROJECT = 'NeedsInput fixture';
 const WATCH_PATH = '/fixtures/needs-input';
 const JOB_ID = 'AGT-2736';
 const RESULTS = process.env.JOB_RESULTS_DIR ?? 'test-results';
+/**
+ * Browser clock for every spec here: three days after the park, a few hours
+ * after its last recall evaluation. The parked age is derived from `parkedAt`
+ * against this clock; the payload carries no read-time counter.
+ */
+const NOW = '2026-09-14T14:44:00.000Z';
 const QUESTION = `Which deployment strategy should I implement?
 
 - Option A: managed connector. Recommended for simpler operations.
@@ -28,6 +34,7 @@ function json(route: Route, body: unknown): Promise<void> {
 }
 
 async function installRoutes(page: Page): Promise<void> {
+  await page.clock.setFixedTime(new Date(NOW));
   await page.route('**:5039/update/status', route => json(route, { isRunning: false, behindBy: 0 }));
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/cli/quota**', route => json(route, {
@@ -85,7 +92,6 @@ async function installRoutes(page: Page): Promise<void> {
           'Only a person can clear this park; no automatic precondition is recorded.',
         lane: '5e-escalated',
         parkedAt: '2026-09-11T14:44:00.000Z',
-        parkedForSeconds: 3 * 24 * 60 * 60,
         reason:
           '[agent-needs-input] The remote agent requires operator input: choose-connector-vs-lan-deployment-strategy',
         recallStatus: 'blocked',
