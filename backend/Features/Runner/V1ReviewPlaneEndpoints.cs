@@ -855,7 +855,11 @@ public static class V1ReviewPlaneEndpoints
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
             var batchDeferredAccepted = batchDeferred
                 && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
-            if (batchDeferredAccepted)
+            // A replay restores the journaled report, which already carries the
+            // deferred verdict; appending it again would change the payload hash.
+            if (batchDeferredAccepted && !request.Verdicts.Any(verdict =>
+                    string.Equals(verdict.Aspect, "build-tests", StringComparison.Ordinal)
+                    && string.Equals(verdict.Classification, "DeferredToBatch", StringComparison.Ordinal)))
             {
                 request = request with
                 {
@@ -1016,6 +1020,12 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Json(
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+
+            // Count the review-side build and test minutes before batch
+            // admission, so a failed admission still reports them. Replays
+            // find the fact written by the first settlement.
+            batchPilot.RecordReviewVerification(task.ProjectName, settled.ReviewAttempt,
+                request.Commands);
 
             // Record only accepted deliveries, keyed by the fenced attempt id.
             // A report replay repairs this projection without charging twice.
@@ -1201,6 +1211,11 @@ public static class V1ReviewPlaneEndpoints
                 request.Outcome,
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
+            // AGT-3089: a worker that predates the diagnosis contract gives the
+            // same report on every retry of the unchanged subject. It escalates
+            // at once instead of feeding the cause breaker or the retry budget.
+            var diagnosisContractUnsupported = infrastructureFailure
+                && !Contract.ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(request.FailureClassification);
             var probeFailed = false;
             FailureInterventionResult? intervention = null;
             CauseBreakerOutcome? causeBreaker = null;
@@ -1208,6 +1223,7 @@ public static class V1ReviewPlaneEndpoints
             var breakerEnabled = causeBreakers.IsEnabled(task.ProjectName);
             if (infrastructureFailure
                 && !aspectRetryExhausted
+                && !diagnosisContractUnsupported
                 && (breakerEnabled
                     || PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep)))
             {
@@ -1275,7 +1291,7 @@ public static class V1ReviewPlaneEndpoints
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
             var retry = infrastructureFailure && !aspectRetryExhausted && intervention is null
-                        && !probeFailed
+                        && !probeFailed && !diagnosisContractUnsupported
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
@@ -1701,7 +1717,8 @@ public static class V1ReviewPlaneEndpoints
                             ?? (sourceRun?.TerminalAt is { } terminalAt
                                 ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
                                 : DateTimeOffset.UtcNow),
-                        attemptId);
+                        attemptId,
+                        settled.ReviewAttempt.Subject.ExpectedResultSha);
                     // AGT-2860: the durable resume point. Everything from here
                     // to the lane move lives in this request and dies with the
                     // process; the aspect verdicts that decided the gate live
@@ -1873,13 +1890,15 @@ public static class V1ReviewPlaneEndpoints
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted
+                        : aspectRetryExhausted || diagnosisContractUnsupported
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
                         ?? (aspectRetryExhausted
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
-                            : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
+                            : diagnosisContractUnsupported
+                                ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
+                                : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,

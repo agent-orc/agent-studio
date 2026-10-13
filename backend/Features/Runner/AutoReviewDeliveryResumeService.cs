@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using AgentStudio.Pipeline;
+
 namespace AgentStudio.Runner;
 
 /// <param name="Action">What the policy decided for this card.</param>
@@ -36,6 +39,22 @@ public sealed record AutoReviewResumeReport(int Scanned, int Integrated, int Com
 /// </summary>
 public sealed class AutoReviewDeliveryResumeService
 {
+    public static class Reasons
+    {
+        /// <summary>
+        /// The reviewed RunAttempt is no longer the task's current settled
+        /// delivery: a reissue leased a new run, without a new review generation
+        /// (AGT-3091).
+        /// </summary>
+        public const string ReviewedDeliverySuperseded = "reviewed-delivery-superseded";
+
+        /// <summary>
+        /// Another caller (the report request, or an earlier pass) is already
+        /// driving this card's integration; this pass does not wait for it.
+        /// </summary>
+        public const string IntegrationInFlight = "integration-in-flight";
+    }
+
     private readonly TaskScannerService _scanner;
     private readonly AttemptAuthorityService _authority;
     private readonly TaskIntegrationStatusService _integrationStatus;
@@ -44,6 +63,10 @@ public sealed class AutoReviewDeliveryResumeService
     private readonly TaskTransitionService _transitions;
     private readonly HumanReviewEscalation _escalation;
     private readonly ILogger<AutoReviewDeliveryResumeService> _logger;
+    // A superseded delivery is logged once per task and review generation, not
+    // on every sweep.
+    private readonly ConcurrentDictionary<string, string> _reportedSupersessions =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public AutoReviewDeliveryResumeService(
         TaskScannerService scanner,
@@ -134,6 +157,15 @@ public sealed class AutoReviewDeliveryResumeService
     {
         ArgumentNullException.ThrowIfNull(task);
 
+        // AGT-3091: the sweep's snapshot can be a whole gate old. AGT-2951 was
+        // reissued to 2-ready at 18:09 and integrated from a 4-auto-review
+        // snapshot at 18:12. Every decision and write below uses the lane as
+        // it is now.
+        if (CurrentAutoReviewCard(task) is not { } current)
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                AutoReviewResumePolicy.Reasons.OutsideAutoReview, Resumed: false);
+        task = current;
+
         var taskKey = CanonicalKey(task);
         var review = string.IsNullOrWhiteSpace(taskKey)
             ? null
@@ -174,6 +206,31 @@ public sealed class AutoReviewDeliveryResumeService
 
         if (!IsCurrent(review!))
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
+        if (Superseded(task, review!) is { } superseded)
+            return superseded;
+
+        Task<MergeIntoIntegrationResult>? pendingIntegration = null;
+        if (decision.Action == AutoReviewResumeAction.StartIntegration)
+        {
+            // The coordinator coalesces a replay of the same delivery key and
+            // the merge runner answers AlreadyMerged for a delivery the branch
+            // already contains, so re-entering here cannot double-merge. After
+            // an operator re-entry the last completed result is exactly the
+            // stale verdict being replaced, so it is not handed back. An
+            // integration another caller is still driving is not waited for
+            // (AGT-3091): it would hold this pass, and the lane snapshot of
+            // every card behind it, for that caller's whole gate.
+            if (!_integration.TryEnqueueUnlessInFlight(
+                    BuildIntegrationRequest(task, settlement!, review!),
+                    settlement!.DiscardCompletedReplay
+                    || decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry,
+                    out var started))
+            {
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                    Reasons.IntegrationInFlight, Resumed: false);
+            }
+            pendingIntegration = started;
+        }
 
         _logger.LogInformation(
             "auto-review-delivery-resume-started project={Project} job={JobId} attempt={AttemptId} action={Action} reason={Reason} source={Source}",
@@ -186,21 +243,18 @@ public sealed class AutoReviewDeliveryResumeService
         // integration attempt recorded as its park reason.
         var integrationDetail = deliveryMerged ? null : settlement?.IntegrationDetail;
 
-        if (decision.Action == AutoReviewResumeAction.StartIntegration)
+        if (pendingIntegration is not null)
         {
-            // The coordinator coalesces a replay of the same delivery key and
-            // the merge runner answers AlreadyMerged for a delivery the branch
-            // already contains, so re-entering here cannot double-merge. After
-            // an operator re-entry the last completed result is exactly the
-            // stale verdict being replaced, so it is not handed back.
-            var request = BuildIntegrationRequest(task, settlement!);
-            var result = await _integration.EnqueueAsync(
-                    request,
-                    discardCompletedReplay: settlement!.DiscardCompletedReplay
-                                            || decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry)
-                .ConfigureAwait(false);
+            var result = await pendingIntegration.ConfigureAwait(false);
             if (!IsCurrent(review!))
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
+            // A reissue during the gate: the coordinator or the publication
+            // fence refused the delivery, and the card is not owed this park.
+            if (Superseded(task, review!) is { } supersededDuringGate)
+                return supersededDuringGate;
+            if (CurrentAutoReviewCard(task) is null)
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                    AutoReviewResumePolicy.Reasons.OutsideAutoReview, Resumed: false);
             integrationOutcome = result.Outcome.ToString();
             integrationDetail = RemoteDeliveryParkReason.For(result);
             RemoteDeliverySettlementStore.RecordIntegration(
@@ -211,7 +265,7 @@ public sealed class AutoReviewDeliveryResumeService
         else if (decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed)
         {
             _integration.RecordGateFailure(
-                BuildIntegrationRequest(task, settlement!),
+                BuildIntegrationRequest(task, settlement!, review!),
                 settlement!.GateReason);
             RemoteDeliverySettlementStore.Advance(
                 task.FolderPath,
@@ -230,9 +284,42 @@ public sealed class AutoReviewDeliveryResumeService
             .ConfigureAwait(false);
     }
 
+    /// <summary>The card as the scanner holds it now, or null when it is not a live Auto Review card.</summary>
+    private TaskInfo? CurrentAutoReviewCard(TaskInfo task)
+        => _scanner.FindJob(task.Id, task.WatchPath) is { Fixture: false } current
+           && string.Equals(current.State, TaskStates.AutoReview, StringComparison.Ordinal)
+            ? current
+            : null;
+
     private bool IsCurrent(ReviewAttemptDto review)
         => string.Equals(_authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId,
             review.AttemptId, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Only the reviewed RunAttempt may integrate or leave Auto Review on this
+    /// review's verdict (AGT-3091). A concern or finding reissue leases a new
+    /// RunAttempt without a new review generation, so <see cref="IsCurrent"/>
+    /// stays true for the old verdict until the next delivery is reviewed.
+    /// Null while the reviewed delivery is still current.
+    /// </summary>
+    private AutoReviewResumeOutcome? Superseded(TaskInfo task, ReviewAttemptDto review)
+    {
+        if (_authority.IsReviewedDeliveryCurrent(review.AttemptId))
+        {
+            _reportedSupersessions.TryRemove(review.TaskKey, out _);
+            return null;
+        }
+        if (!_reportedSupersessions.TryGetValue(review.TaskKey, out var reported)
+            || !string.Equals(reported, review.AttemptId, StringComparison.Ordinal))
+        {
+            _reportedSupersessions[review.TaskKey] = review.AttemptId;
+            _logger.LogInformation(
+                "auto-review-delivery-resume-skipped project={Project} job={JobId} attempt={AttemptId} reason={Reason}",
+                task.ProjectName, task.Id, review.AttemptId, Reasons.ReviewedDeliverySuperseded);
+        }
+        return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+            Reasons.ReviewedDeliverySuperseded, Resumed: false);
+    }
 
     /// <summary>
     /// The normal <c>4-auto-review -&gt; 5-human-review</c> transition the
@@ -314,7 +401,8 @@ public sealed class AutoReviewDeliveryResumeService
 
     private RemoteDeliveryIntegrationRequest BuildIntegrationRequest(
         TaskInfo task,
-        RemoteDeliverySettlementRecord settlement)
+        RemoteDeliverySettlementRecord settlement,
+        ReviewAttemptDto review)
         => new(
             task.ProjectName,
             task.Id,
@@ -330,7 +418,8 @@ public sealed class AutoReviewDeliveryResumeService
                 ? PipelineTypes.Resolve(task)
                 : settlement.PipelineType,
             settlement.DeliveredAtUtc,
-            settlement.ReviewAttemptId);
+            settlement.ReviewAttemptId,
+            review.Subject.ExpectedResultSha);
 
     /// <summary>
     /// Git-derived integration verdict for one card. Never throws: an

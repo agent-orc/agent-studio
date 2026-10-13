@@ -75,7 +75,7 @@ public sealed class BatchGatePilotService
         _logger = logger;
         _load = load;
         _time = timeProvider ?? TimeProvider.System;
-        _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git);
+        _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git, logger);
         _advisor = advisor;
         _reservations = reservations;
         _reservations?.LoadPersistedProjects(_settings.GetAll().Keys);
@@ -118,6 +118,33 @@ public sealed class BatchGatePilotService
         await RunPerTaskFallbackAsync(pending, ct, recordInStore: false).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Records the review-side verification minutes of a settled batch-deferred
+    /// review once per review attempt, whatever its outcome. Replays find the
+    /// fact and are no-ops; a failed write is logged and never fails settlement.
+    /// </summary>
+    public bool RecordReviewVerification(string project, ReviewAttemptDto review,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.ReviewCommandEvidenceDto> commands)
+    {
+        if (review.Subject.Plan?.BuildTestDeferredToBatch != true) return false;
+        try
+        {
+            var minutes = BatchGateReviewVerificationCount.Count(commands);
+            return _store.RecordReviewVerification(new BatchGateReviewVerificationFact(
+                project, review.TaskKey, review.AttemptId,
+                review.TestedResultSha ?? review.Subject.ExpectedResultSha,
+                review.Outcome?.ToString() ?? "unknown",
+                minutes.CandidateMinutes, minutes.BaselineMinutes,
+                minutes.CountedCommands, _time.GetUtcNow()));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "batch-gate-review-verification-record-failed attempt={AttemptId}",
+                review.AttemptId);
+            return false;
+        }
+    }
+
     private BatchGatePendingRecord BuildPending(TaskInfo task, ReviewAttemptDto review,
         RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc)
     {
@@ -129,9 +156,10 @@ public sealed class BatchGatePilotService
             ?? throw new InvalidDataException("Batch repository is unavailable.");
         var branch = TaskIntegrationBranch.Resolve(task, project.IntegrationBranch);
         var envelope = sourceRun.ResultEnvelope;
-        var changed = envelope?.ImmutableRemoteRef is { } resultRef
-            ? _git.ChangedPathsAgainstMergeBase(repo, branch, resultRef)
-            : null;
+        // The result SHA against the fetched integration line: the Studio
+        // checkout has neither the local result ref nor a current local branch.
+        var changed = BatchGateDeliveryDiff.ChangedPaths(_git, repo, branch,
+            envelope?.ResultSha);
         var profile = GateProfile(project.BuildProfile, repo);
         var projection = _authority.GetTaskProjection(AuthorityKey(task));
         var subject = new BatchGateSubject(
@@ -1756,12 +1784,13 @@ public sealed class BatchGatePilotService
                 JsonSerializer.Serialize(stream, gate);
                 stream.Flush(flushToDisk: true);
             }
-            if (recordInStore)
-                _store.RecordExecution(new BatchGateExecutionFact(
-                    pending.Subject.Project, null, null,
-                    gate.TestedSha ?? pending.Subject.ResultSha,
-                    gate.Verdict.ToString(), Environment.MachineName,
-                    started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
+            // Every per-task gate that ran costs host minutes, emergency
+            // fallbacks included; only the queue mutations depend on recordInStore.
+            _store.RecordExecution(new BatchGateExecutionFact(
+                pending.Subject.Project, null, null,
+                gate.TestedSha ?? pending.Subject.ResultSha,
+                gate.Verdict.ToString(), Environment.MachineName,
+                started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))

@@ -49,6 +49,8 @@ public sealed class GitStateIndexService : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, string> _settingsVersion;
     private readonly SemaphoreSlim _repoSlots;
+    private readonly GitOriginStore? _originStore;
+    private readonly Func<string, string?> _originRoot;
     private const string SweepConfigUnavailable = "unavailable";
 
     private readonly ConcurrentDictionary<string, RepoState> _repos =
@@ -69,6 +71,7 @@ public sealed class GitStateIndexService : BackgroundService
         TaskSessionLog sessions,
         ProjectSettingsService settings,
         TaskListGitProjectionCache projectionCache,
+        GitOriginStore originStore,
         ILogger<GitStateIndexService> logger,
         IConfiguration config)
         : this(
@@ -120,7 +123,10 @@ public sealed class GitStateIndexService : BackgroundService
                     project.PublishAutomation.OrderBy(pair => pair.Key, StringComparer.Ordinal)
                         .Select(pair => $"{pair.Key}={pair.Value}"));
                 return $"{project.IntegrationBranch}\0{entries}";
-            })
+            },
+            originStore,
+            // Publish under the same root TaskIntegrationStatusService asks for.
+            git.ResolveRepoRootForWatchPath)
     {
     }
 
@@ -133,7 +139,9 @@ public sealed class GitStateIndexService : BackgroundService
         ILogger logger,
         GitStateIndexOptions options,
         TimeProvider timeProvider,
-        Func<string, string>? settingsVersion = null)
+        Func<string, string>? settingsVersion = null,
+        GitOriginStore? originStore = null,
+        Func<string, string?>? originRoot = null)
     {
         _scanner = scanner;
         _watcher = watcher;
@@ -144,6 +152,8 @@ public sealed class GitStateIndexService : BackgroundService
         _options = options;
         _timeProvider = timeProvider;
         _settingsVersion = settingsVersion ?? (_ => "");
+        _originStore = originStore;
+        _originRoot = originRoot ?? (_ => null);
         _repoSlots = new SemaphoreSlim(options.MaxConcurrentRepos, options.MaxConcurrentRepos);
     }
 
@@ -374,7 +384,12 @@ public sealed class GitStateIndexService : BackgroundService
             {
                 var refs = SafeCapture(state.RepositoryPath);
                 string config;
-                try { config = GitConfigSignature.Capture(state.RepositoryPath).Signature; }
+                try
+                {
+                    var effectiveConfig = GitConfigSignature.Capture(state.RepositoryPath);
+                    PublishOrigin(state, effectiveConfig);
+                    config = effectiveConfig.Signature;
+                }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // A missing checkout or unreadable config is a typed sweep
@@ -408,6 +423,24 @@ public sealed class GitStateIndexService : BackgroundService
             }
             finally { _repoSlots.Release(); }
         }
+    }
+
+    /// <summary>
+    /// AGT-3083: every capture the index pays for also refreshes the shared
+    /// origin store, so integration lookups need no <c>git config</c> of their
+    /// own and see a config source created after an earlier capture within
+    /// one sweep interval.
+    /// </summary>
+    private void PublishOrigin(RepoState state, GitEffectiveConfig config)
+    {
+        if (_originStore is null) return;
+        string? root = null;
+        try { root = _originRoot(state.WatchPath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            SilentCatch.Note(ex, "GitStateIndexService: origin root resolution failed");
+        }
+        _originStore.Publish(string.IsNullOrWhiteSpace(root) ? state.RepositoryPath : root, config);
     }
 
     /// <summary>
@@ -475,6 +508,7 @@ public sealed class GitStateIndexService : BackgroundService
                 using var budget = GitProcessBudget.Begin(deadline.Token);
                 var tasksForRepo = TaskProjectionCards.Select(ReadTasks(state), _logger);
                 var effectiveConfig = GitConfigSignature.Capture(state.RepositoryPath);
+                PublishOrigin(state, effectiveConfig);
                 using var configScope = GitConfigScope.Begin(state.RepositoryPath, effectiveConfig.OriginUrl);
                 var input = CaptureInput(state, tasksForRepo, effectiveConfig.Signature);
                 attemptedInput = input;

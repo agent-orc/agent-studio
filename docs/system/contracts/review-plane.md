@@ -124,8 +124,12 @@ The file-backed endpoint has these durable and asynchronous parts:
 
 `RemoteReviewSettlementReconciler` scans current settled attempts at startup
 and every 30 seconds. It restores a missing delivery sidecar from the journal,
-requeues due evidence, and invokes `AutoReviewDeliveryResumeService` for pending
-integration and lane work. Every replay checks the current ReviewAttempt id,
+requeues due evidence, and starts `AutoReviewDeliveryResumeService` for pending
+integration and lane work. A tick starts one resume pass only when none is
+running and never waits for it, because a pass can await a whole merge gate
+(AGT-3091). Before a restore would write, the reconciler re-reads the card: a
+concern or finding reissue may have moved it out of `4-auto-review` since the
+tick's scan. Every replay checks the current ReviewAttempt id,
 accepted report key, immutable subject SHA, and tested result SHA. A missing journal with missing
 evidence, corrupt journal, mismatched payload, or exhausted projection yields a
 typed repair state; a terminal `Pass` alone never supplies a gate verdict.
@@ -134,8 +138,15 @@ archived card has no lane continuation: once its current review reconciles to
 `Complete`, `NoWork` or `Repair`, ordinary ticks skip it until a new review
 generation appears; a restarted process reconciles the whole archive once.
 The integration coordinator checks the review generation again when a queued
-delivery starts, after any wait behind another delivery. A superseded queued
-item completes with a typed error without running Git or a recovery round.
+delivery starts, after any wait behind another delivery. For a review-driven
+delivery it also checks that the card is still in `4-auto-review` and that the
+review's source RunAttempt is still the task's current, completed RunAttempt
+with the reviewed Result-SHA (`AttemptAuthorityService.IsReviewedDeliveryCurrent`).
+A reissue changes neither the review generation nor the queued request, so the
+generation check alone cannot see it. A superseded queued item completes with
+a typed error (`superseded-review-generation` or `reviewed-delivery-superseded`)
+without running Git or a recovery round. A delivery without a
+`ReviewAttemptId` (a batch member) skips both checks.
 After the runner returns, the coordinator never relabels its result: a merge
 the publication fence admitted stays merged. A superseded conflict starts no
 integration agent round.
@@ -158,13 +169,26 @@ are:
   `remote-review-evidence-projection-superseded`.
 - **Git integration.** `MergeIntoDevelopRunner.RunAsync` takes a
   `publicationFence`. Merge and gate stay local; enqueueing the origin push is
-  the commit point and runs inside the fence. A refused publication resets the
+  the commit point and runs inside the fence. A review-driven integration uses
+  `TryApplyForCurrentReviewedDelivery`, which also requires the reviewed
+  RunAttempt to be current; `AcquireRun` takes the same per-task gate, so a new
+  lease is ordered strictly before or after the push enqueue. The evidence
+  projector keeps `TryApplyForCurrentReview`. A refused publication resets the
   local integration branches to their synchronized tips and returns
   `superseded-review-generation` without publishing anything. A clean
   rollback is routine supersession and raises no failure intervention; a
   failed rollback does.
+- **Reviewed SHA.** A review-driven `RemoteDeliveryIntegrationRequest` carries
+  the reviewed Result-SHA, and the coordinator's delivery key includes it. The
+  runner refuses with `stale-attempt`, before any ref moves, when
+  `DeliveryRefResolver.Resolve` names another SHA or none, whichever source it
+  used. A request without a reviewed SHA keeps the unpinned merge.
 - **Lane move.** The endpoint and `AutoReviewDeliveryResumeService` check the
-  current generation immediately before the move. The state-machine move is not
+  current generation immediately before the move. The resume service also
+  re-reads the card's lane before it decides, and answers
+  `reviewed-delivery-superseded` (logged once per task and review) without an
+  integration, a gate-failure record or a lane move when the reviewed
+  RunAttempt is no longer current. The state-machine move is not
   run under the continuation gate, so this remains a check, not a fenced commit.
 An infrastructure failure left in Auto Review without a durable retry schedule
 also reports repair while its evidence remains recoverable.
@@ -398,9 +422,12 @@ acting.
 at boot (from `AutoReviewPostProcessingRecoveryService`, before the re-enqueue
 scan) and on every deferral pass of `AutoReviewPostProcessingWorker`. It never
 creates a ReviewAttempt. `StartIntegration` re-enters
-`RemoteDeliveryIntegrationCoordinator` (which coalesces a replay of the same
-delivery key, and whose merge runner answers `AlreadyMerged` for a delivery the
-branch already holds); both actions then finish the normal
+`RemoteDeliveryIntegrationCoordinator` (which hands back a completed replay of
+the same delivery key, and whose merge runner answers `AlreadyMerged` for a
+delivery the branch already holds). It never joins an integration of the same
+card that another caller is still driving: it answers `integration-in-flight`
+and moves on, so one report request's gate cannot age the lane snapshot of
+every card behind it (AGT-3091). Both actions then finish the normal
 `4-auto-review -> 5-human-review` transition with the same park verdict the
 report endpoint writes, after which the acceptance rail carries the integrated
 card into the completed lane on its ordinary schedule.
@@ -448,6 +475,7 @@ knows that.
 | Evidence retries follow the journaled failure count across restarts; a defect is a typed repair without retries | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Evidence_retry_uses_the_journaled_failure_count_for_delay_and_exhaustion`, `Non_transient_evidence_failure_is_a_typed_repair_without_retry`. |
 | The journaled delivery decision carries the authority outcome, and one policy restores the sidecar | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Journaled_delivery_carries_the_authority_outcome_not_the_report_spelling`, `Journaled_delivery_restores_the_sidecar_only_for_an_auto_review_card_without_one`. |
 | A successor prevents queued stale integration | `backend.Tests/RemoteDeliveryIntegrationTests.cs`: `Queued_delivery_from_superseded_review_never_starts_integration` holds a preceding delivery, supersedes the queued attempt, then checks the stale request never calls the integration runner. |
+| A reissued card is never integrated on its old verdict (AGT-3091): a stale lane snapshot, a superseded RunAttempt at resume, at dequeue and at the publication fence, a resolved SHA other than the reviewed one, and an integration another caller drives | `backend.Tests/ReviewSettlementReissueRaceTests.cs`: `Resume_on_a_stale_auto_review_snapshot_of_a_reissued_card_neither_integrates_nor_writes`, `Reconcile_on_a_stale_auto_review_snapshot_of_a_reissued_card_writes_no_sidecar`, `A_card_back_in_auto_review_with_a_newer_run_is_not_integrated_on_the_old_verdict`, `A_queued_review_driven_delivery_whose_card_was_reissued_completes_without_integrating`, the three `Merge_runner_*` cases, `A_run_leased_while_the_gate_runs_refuses_the_review_driven_publication`, `Resume_skips_an_integration_another_caller_drives_and_the_reconcile_tick_does_not_wait`. |
 | A successor after the publication fence never relabels a published merge; a superseded conflict starts no agent round; a clean supersession raises no intervention | `backend.Tests/RemoteDeliveryIntegrationTests.cs`: `Successor_after_a_published_merge_keeps_the_true_merge_result`, `Superseded_conflict_starts_no_agent_round`; `backend.Tests/MergeIntoDevelopRunnerTests.cs`: `RunAsync_RefusedPublicationFence_RaisesNoFailureIntervention`. |
 | A changed payload under the accepted key is an idempotency conflict on every path; the journal gate is per attempt | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Replayed_report_key_keeps_one_canonical_payload`, `Journal_gate_serializes_one_attempt_without_blocking_another`. |
 | The reconciler logs a repair once per generation and skips settled archived cards on ordinary ticks | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Reconciler_reports_a_repair_once_per_review_generation`, `Reconciler_skips_a_settled_archived_card_on_ordinary_ticks`. |

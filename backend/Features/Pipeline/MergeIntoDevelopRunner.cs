@@ -163,7 +163,8 @@ public sealed partial class MergeIntoDevelopRunner
         CancellationToken ct,
         string integrationStrategy = IntegrationStrategies.DirectMerge,
         string pipelineType = PipelineTypes.Task,
-        Func<Action, bool>? publicationFence = null)
+        Func<Action, bool>? publicationFence = null,
+        string? reviewedResultSha = null)
     {
         // Count both the active operation and serialized waiters. The external
         // stable watchdog uses this drain signal to avoid cutting the process
@@ -187,7 +188,8 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 return await RunSerializedAsync(
                     project, jobId, jobFolderPath, watchPath,
-                    integrationBranch, integrationStrategy, pipelineType, publicationFence, ct).ConfigureAwait(false);
+                    integrationBranch, integrationStrategy, pipelineType, publicationFence,
+                    reviewedResultSha, ct).ConfigureAwait(false);
             }
             finally
             {
@@ -227,6 +229,7 @@ public sealed partial class MergeIntoDevelopRunner
         string integrationStrategy,
         string pipelineType,
         Func<Action, bool>? publicationFence,
+        string? reviewedResultSha,
         CancellationToken ct)
     {
         var startedAt = DateTime.UtcNow;
@@ -275,6 +278,26 @@ public sealed partial class MergeIntoDevelopRunner
                     null, null, startedAt, ct).ConfigureAwait(false);
             }
             var delivery = DeliveryRefResolver.Resolve(jobId, jobFolderPath);
+            // AGT-3091: a review-driven integration merges exactly what the
+            // review passed. The subject check above runs only while a subject
+            // exists and compares it with the current RunAttempt, not with the
+            // review; without a subject Resolve falls back to the card's last
+            // attributed commit. Either way any other SHA, or none, is refused
+            // before a single ref moves.
+            if (reviewedResultSha is not null
+                && !string.Equals(delivery.ExpectedResultSha, reviewedResultSha, StringComparison.OrdinalIgnoreCase))
+            {
+                return await ConcludeAsync(
+                    project, jobId, jobFolderPath, watchPath, delivery.Ref, integrationBranch, strategy,
+                    MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.StaleAttempt,
+                        $"The reviewed delivery {reviewedResultSha} no longer matches the task's current delivery "
+                        + $"{delivery.ExpectedResultSha ?? "(none)"} from {delivery.Source}; nothing was merged."),
+                    null, null, startedAt, ct,
+                    // Like a cleanly rolled-back supersession this is routine:
+                    // the card is being reworked, nobody needs an intervention.
+                    raiseIntervention: false).ConfigureAwait(false);
+            }
             // The caller supplies current project/repository truth. A review
             // subject stores only the branch observed when the run was prepared
             // and must not retarget acceptance after project settings or

@@ -55,6 +55,15 @@ public sealed record BatchGateExecutionFact(
     DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
     long QueueWaitMs, double OverloadMinutes, string EvidencePath);
 
+/// <summary>
+/// Review-side verification of one batch-deferred review: the builds and
+/// selected tests its plan ran with aspect <c>review-verification</c>.
+/// </summary>
+public sealed record BatchGateReviewVerificationFact(
+    string Project, string TaskKey, string ReviewAttemptId, string TestedSha,
+    string Outcome, double CandidateMinutes, double BaselineMinutes,
+    int CountedCommands, DateTimeOffset RecordedAtUtc);
+
 public sealed record BatchGateBaseVerdict(
     string Project, string BaseSha, string GateProfileDigest,
     string Outcome, string? FailureFingerprint, string Reason,
@@ -285,6 +294,36 @@ public sealed class BatchGateStore
         return Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
                 .Select(Read<BatchGateExecutionFact>)
+                .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
+                .ToArray()
+            : [];
+    }
+
+    /// <summary>Writes the review attempt's fact once; false when it already exists.</summary>
+    public bool RecordReviewVerification(BatchGateReviewVerificationFact fact)
+    {
+        var folder = Path.Combine(_root, "review-verification");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(fact.ReviewAttemptId) + ".json");
+        if (File.Exists(path)) return false;
+        try
+        {
+            WriteOnce(path, fact);
+            return true;
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            // A concurrent replay of the same settlement won the write.
+            return false;
+        }
+    }
+
+    public IReadOnlyList<BatchGateReviewVerificationFact> ListReviewVerifications(string project)
+    {
+        var folder = Path.Combine(_root, "review-verification");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .Select(Read<BatchGateReviewVerificationFact>)
                 .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
                 .ToArray()
             : [];

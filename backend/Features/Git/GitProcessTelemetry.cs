@@ -111,55 +111,139 @@ public static class GitProcessTelemetry
 
     /// <summary>
     /// Rolling per-label request stats (AGT-2726): every scope rollup is also
-    /// recorded here, bounded to <see cref="RollupHistoryLimit"/> entries per
-    /// label, so an Admin surface can compute p50/p95 and a spawn rate without
-    /// a second counter. This is purely additive bookkeeping over the same
-    /// <see cref="GitRequestScope.Dispose"/> rollup already logged; nothing
+    /// recorded here so an Admin surface can compute p50/p95 and a spawn rate
+    /// without a second counter. This is purely additive bookkeeping over the
+    /// same <see cref="GitRequestScope.Dispose"/> rollup already logged; nothing
     /// about the log line changes.
+    ///
+    /// <para>
+    /// AGT-3083: counts and spawn totals come from per-minute buckets, so a busy
+    /// label is counted exactly for the whole window. Only the wall-time
+    /// percentiles read the bounded reservoir of the newest
+    /// <see cref="PercentileSampleLimit"/> rollups. Before this, the reservoir
+    /// was also the count, and a label above about 33 calls per minute was
+    /// understated by the fraction of the hour it had dropped.
+    /// </para>
     /// </summary>
-    private const int RollupHistoryLimit = 2000;
+    internal const int PercentileSampleLimit = 2000;
 
-    private static readonly ConcurrentDictionary<string, ConcurrentQueue<RollupSample>> _rollups =
+    /// <summary>Minute buckets older than this are dropped; it bounds memory per label.</summary>
+    internal static readonly TimeSpan BucketRetention = TimeSpan.FromHours(6);
+
+    private static readonly ConcurrentDictionary<string, LabelStats> _rollups =
         new(StringComparer.Ordinal);
 
-    private readonly record struct RollupSample(DateTimeOffset At, int Spawns, long GitMs, long WallMs);
+    private readonly record struct RollupSample(DateTimeOffset At, long WallMs);
 
     private static void RecordRollup(string label, int spawns, long gitMs, long wallMs, TimeProvider timeProvider)
-    {
-        var queue = _rollups.GetOrAdd(label, static _ => new ConcurrentQueue<RollupSample>());
-        queue.Enqueue(new RollupSample(timeProvider.GetUtcNow(), spawns, gitMs, wallMs));
-        while (queue.Count > RollupHistoryLimit && queue.TryDequeue(out _)) { }
-    }
+        => _rollups.GetOrAdd(label, static _ => new LabelStats())
+            .Record(timeProvider.GetUtcNow(), spawns, gitMs, wallMs);
 
     /// <summary>
     /// Per-label rollup stats over the requested trailing <paramref name="window"/>,
-    /// used by the Admin git-telemetry surface. p50/p95 are computed over wall
-    /// time; <c>SpawnsPerMinute</c> normalizes the summed spawn count in the
-    /// window to a per-minute rate so windows of different length compare
-    /// evenly.
+    /// used by the Admin git-telemetry surface. <c>SampleCount</c>,
+    /// <c>TotalSpawns</c> and <c>SpawnsPerMinute</c> count every rollup in the
+    /// window at minute resolution (a minute that overlaps the window counts
+    /// whole). p50/p95 are computed over wall time from the bounded reservoir;
+    /// <c>PercentileSampleCount</c> says how many rollups they were taken from.
+    /// <c>SpawnsPerMinute</c> normalizes the spawn total to a per-minute rate
+    /// so windows of different length compare evenly.
     /// </summary>
     public static IReadOnlyList<EndpointStats> GetStatsSnapshot(TimeSpan window, TimeProvider? timeProvider = null)
     {
         var now = (timeProvider ?? TimeProvider.System).GetUtcNow();
         var cutoff = now - window;
         var results = new List<EndpointStats>();
-        foreach (var (label, queue) in _rollups)
+        foreach (var (label, stats) in _rollups)
         {
-            var samples = queue.Where(s => s.At >= cutoff).ToArray();
-            if (samples.Length == 0) continue;
-            var wallTimes = samples.Select(s => (double)s.WallMs).OrderBy(v => v).ToArray();
-            var totalSpawns = samples.Sum(s => s.Spawns);
+            var read = stats.Read(cutoff);
+            if (read.Count == 0) continue;
+            var wallTimes = read.WallTimes.Select(ms => (double)ms).OrderBy(v => v).ToArray();
             var minutes = Math.Max(window.TotalMinutes, 1.0 / 60);
             results.Add(new EndpointStats(
                 label,
-                samples.Length,
+                read.Count,
                 Percentile(wallTimes, 0.50),
                 Percentile(wallTimes, 0.95),
-                totalSpawns,
-                totalSpawns / minutes));
+                read.Spawns,
+                read.Spawns / minutes,
+                wallTimes.Length));
         }
         return results.OrderByDescending(r => r.P95Ms).ToArray();
     }
+
+    /// <summary>Exact minute totals plus the bounded percentile reservoir of one label.</summary>
+    private sealed class LabelStats
+    {
+        private readonly object _gate = new();
+        private readonly Queue<RollupSample> _reservoir = new();
+        // Ordered by minute; at most one entry per minute of BucketRetention.
+        private readonly LinkedList<MinuteBucket> _buckets = new();
+
+        public void Record(DateTimeOffset at, int spawns, long gitMs, long wallMs)
+        {
+            var minute = MinuteOf(at);
+            lock (_gate)
+            {
+                _reservoir.Enqueue(new RollupSample(at, wallMs));
+                while (_reservoir.Count > PercentileSampleLimit) _reservoir.Dequeue();
+
+                var bucket = _buckets.Last?.Value is { } last && last.Minute == minute ? last : null;
+                if (bucket is null)
+                {
+                    // An out-of-order clock folds into the newest bucket instead
+                    // of breaking the ordering the pruning below relies on.
+                    bucket = _buckets.Last?.Value is { } newest && newest.Minute > minute
+                        ? newest
+                        : _buckets.AddLast(new MinuteBucket(minute)).Value;
+                }
+                bucket.Count++;
+                bucket.Spawns += spawns;
+                bucket.GitMs += gitMs;
+
+                var oldest = minute - (long)BucketRetention.TotalMinutes;
+                while (_buckets.First is { } first && first.Value.Minute < oldest) _buckets.RemoveFirst();
+            }
+        }
+
+        public (int Count, int Spawns, long[] WallTimes) Read(DateTimeOffset cutoff)
+        {
+            var firstMinute = MinuteOf(cutoff);
+            lock (_gate)
+            {
+                var count = 0;
+                var spawns = 0;
+                foreach (var bucket in _buckets)
+                {
+                    if (bucket.Minute < firstMinute) continue;
+                    count += bucket.Count;
+                    spawns += bucket.Spawns;
+                }
+                var wallTimes = _reservoir.Where(sample => sample.At >= cutoff)
+                    .Select(sample => sample.WallMs).ToArray();
+                return (count, spawns, wallTimes);
+            }
+        }
+
+        public int BucketCountForTest
+        {
+            get { lock (_gate) return _buckets.Count; }
+        }
+
+        private static long MinuteOf(DateTimeOffset at) => at.UtcTicks / TimeSpan.TicksPerMinute;
+
+        private sealed class MinuteBucket(long minute)
+        {
+            public long Minute { get; } = minute;
+            public int Count;
+            public int Spawns;
+            public long GitMs;
+        }
+    }
+
+    /// <summary>Test hook: how many minute buckets a label currently holds.</summary>
+    internal static int BucketCount(string label)
+        => _rollups.TryGetValue(label, out var stats) ? stats.BucketCountForTest : 0;
 
     /// <summary>Test/diagnostic hook: clears all recorded rollup history.</summary>
     internal static void ResetStats() => _rollups.Clear();
@@ -288,7 +372,11 @@ public static class GitProcessTelemetry
 /// One request label's rollup stats over a trailing window, read by the Admin
 /// git-telemetry surface. <see cref="P50Ms"/>/<see cref="P95Ms"/> are wall-time
 /// percentiles; <see cref="SpawnsPerMinute"/> is the summed spawn count in the
-/// window normalized to a per-minute rate.
+/// window normalized to a per-minute rate. <see cref="SampleCount"/> and
+/// <see cref="TotalSpawns"/> count every rollup in the window;
+/// <see cref="PercentileSampleCount"/> is the number of rollups the percentiles
+/// were computed from, lower than <see cref="SampleCount"/> when the bounded
+/// reservoir truncated a busy label.
 /// </summary>
 public sealed record EndpointStats(
     string Label,
@@ -296,4 +384,5 @@ public sealed record EndpointStats(
     double P50Ms,
     double P95Ms,
     int TotalSpawns,
-    double SpawnsPerMinute);
+    double SpawnsPerMinute,
+    int PercentileSampleCount);

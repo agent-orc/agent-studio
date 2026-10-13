@@ -91,16 +91,20 @@ public sealed class DossierMaintenanceServiceTests : IDisposable
     public void Review_GatesMissingEntryAndAcceptsAnExistingIdempotentEntry()
     {
         WriteWorkbench("context-chat", "ASW-W8", ["AGT-42"]);
+        var seed = InitRepoAndCommit("seed dossier");
         var service = Service();
-        var task = new TaskInfo { Id = "source-task", Key = "AGT-42" };
+        var task = new TaskInfo
+        {
+            Id = "source-task",
+            Key = "AGT-42",
+            IntegrationBranch = "refs/heads/develop",
+        };
 
+        RunGit("update-ref", "refs/heads/develop", seed);
         var missing = service.Review("Project", _root, task);
-        File.WriteAllText(
-            Path.Combine(_root, "docs", "context-chat", "index.html"),
-            Dossier(
-                "<li data-implementation-entry=\"\" data-task-key=\"AGT-42\" "
-                + "data-delivered-at=\"2026-08-10\" data-slice=\"Context API\">"
-                + "Delivered the bounded context API.</li>"));
+        WriteDossier(Dossier(Entry("AGT-42")));
+        var withEntry = CommitDossier("docs: entry landed elsewhere");
+        RunGit("update-ref", "refs/heads/develop", withEntry);
         var complete = service.Review("Project", _root, task);
 
         Assert.True(missing.Required);
@@ -114,11 +118,7 @@ public sealed class DossierMaintenanceServiceTests : IDisposable
     public void Review_UsesTheAttributedCommitParentAsTheAppendOnlyBaseline()
     {
         WriteWorkbench("context-chat", "ASW-W8", ["AGT-42"]);
-        RunGit("init");
-        RunGit("config", "user.email", "dossier-tests@example.invalid");
-        RunGit("config", "user.name", "Dossier Tests");
-        RunGit("add", ".");
-        RunGit("commit", "-m", "seed dossier");
+        InitRepoAndCommit("seed dossier");
         File.WriteAllText(
             Path.Combine(_root, "docs", "context-chat", "index.html"),
             Dossier(
@@ -146,6 +146,113 @@ public sealed class DossierMaintenanceServiceTests : IDisposable
         var review = Service().Review("Project", _root, task);
 
         Assert.True(review.IsComplete, review.Summary);
+    }
+
+    [Fact]
+    public void Review_AcceptsAValidEntryOnTheIntegrationTipWhenTheAttributedRevisionIsStale()
+    {
+        var (a, b) = StaleAttributedThenIntegrated(Dossier(Entry("AGT-42")));
+        RunGit("update-ref", "refs/heads/develop", b);
+
+        var review = Service().Review("Project", _root, AttributedTask(a));
+
+        Assert.True(review.IsComplete, review.Summary);
+        Assert.Empty(review.Findings);
+        Assert.Contains("refs/heads/develop@", review.Summary);
+        Assert.Contains(b[..8], review.Summary);
+        Assert.Contains("already present", review.Summary);
+    }
+
+    [Fact]
+    public void Review_PrefersTheFetchedOriginTipOverTheLocalBranch()
+    {
+        var (a, b) = StaleAttributedThenIntegrated(Dossier(Entry("AGT-42")));
+        RunGit("update-ref", "refs/remotes/origin/develop", b);
+        RunGit("update-ref", "refs/heads/develop", a);
+        var service = Service();
+        var task = AttributedTask(a);
+
+        var candidates = service.ResolveRevisionCandidates(_root, task, subjectResultSha: null);
+        var review = service.Review("Project", _root, task, candidates);
+
+        Assert.Equal(
+            ["refs/remotes/origin/develop", "refs/heads/develop"],
+            candidates.Select(candidate => candidate.Source).ToArray());
+        Assert.True(review.IsComplete, review.Summary);
+        Assert.Contains("origin/develop", review.Summary);
+        Assert.Contains(b[..8], review.Summary);
+    }
+
+    [Fact]
+    public void Review_ChecksTheRunResultBeforeTheIntegrationBranch()
+    {
+        var (a, b) = StaleAttributedThenIntegrated(Dossier(Entry("AGT-42")));
+        RunGit("update-ref", "refs/heads/develop", a);
+        var service = Service();
+        var task = AttributedTask(a);
+
+        var candidates = service.ResolveRevisionCandidates(_root, task, subjectResultSha: b);
+        var review = service.Review("Project", _root, task, candidates);
+
+        Assert.Equal(DossierRevision.RunResultSource, candidates[0].Source);
+        Assert.True(review.IsComplete, review.Summary);
+        Assert.Contains("run result", review.Summary);
+        Assert.Contains(b[..8], review.Summary);
+    }
+
+    [Fact]
+    public void Review_ReportsBothRevisionsWhenTheIntegrationTipHasNoEntry()
+    {
+        var (a, b) = StaleAttributedThenIntegrated(Dossier(string.Empty));
+        RunGit("update-ref", "refs/heads/develop", b);
+
+        var review = Service().Review("Project", _root, AttributedTask(a));
+
+        Assert.False(review.IsComplete);
+        Assert.Equal(2, review.Findings.Count);
+        Assert.Contains(review.Findings, finding =>
+            finding.Contains("attributed commit " + a[..8], StringComparison.Ordinal)
+            && finding.Contains(DossierImplementationContract.SectionStartMarker, StringComparison.Ordinal)
+            && finding.Contains(DossierImplementationContract.LogStartMarker, StringComparison.Ordinal)
+            && finding.Contains("</main>", StringComparison.Ordinal));
+        Assert.Contains(review.Findings, finding =>
+            finding.Contains("refs/heads/develop@" + b[..8], StringComparison.Ordinal)
+            && finding.Contains("no entry for AGT-42", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Review_DoesNotAcceptADuplicateEntryOnTheIntegrationTip()
+    {
+        var (a, b) = StaleAttributedThenIntegrated(Dossier(Entry("AGT-42") + Entry("AGT-42")));
+        RunGit("update-ref", "refs/heads/develop", b);
+
+        var review = Service().Review("Project", _root, AttributedTask(a));
+
+        Assert.False(review.IsComplete);
+        Assert.Contains(review.Findings, finding =>
+            finding.Contains("duplicate entries for AGT-42", StringComparison.Ordinal)
+            && finding.Contains(b[..8], StringComparison.Ordinal));
+        Assert.DoesNotContain("already present", review.Summary);
+    }
+
+    [Fact]
+    public void Review_NeverClearsAnAppendOnlyViolationFromANewerRevision()
+    {
+        WriteWorkbench("context-chat", "ASW-W8", ["AGT-42"]);
+        InitRepoAndCommit("seed dossier");
+        WriteDossier(Dossier(Entry("AGT-42")).Replace(
+            "Keep this decision.", "Reworded decision.", StringComparison.Ordinal));
+        var a = CommitDossier("feat: append entry and reword decision");
+        WriteDossier(Dossier(Entry("AGT-42")));
+        var b = CommitDossier("fix: restore decision");
+        RunGit("update-ref", "refs/heads/develop", b);
+
+        var review = Service().Review("Project", _root, AttributedTask(a));
+
+        Assert.False(review.IsComplete);
+        var finding = Assert.Single(review.Findings);
+        Assert.Contains("changed outside the append-only implementation log", finding);
+        Assert.Contains("attributed commit " + a[..8], finding);
     }
 
     [Theory]
@@ -248,6 +355,69 @@ public sealed class DossierMaintenanceServiceTests : IDisposable
         + "</ol></section>"
         + DossierImplementationContract.SectionEndMarker
         + "</main>";
+
+    private const string NoSectionDossier =
+        "<main><section id=\"decision\">Keep this decision.</section></main>";
+
+    /// <summary>
+    /// Seeds a Dossier without the implementation section, then commits A
+    /// (attributed: edits the Dossier, still no section) and B (unattributed:
+    /// <paramref name="integrated"/>). Returns both full SHAs.
+    /// </summary>
+    private (string A, string B) StaleAttributedThenIntegrated(string integrated)
+    {
+        WriteWorkbench("context-chat", "ASW-W8", ["AGT-42"]);
+        WriteDossier(NoSectionDossier);
+        InitRepoAndCommit("seed dossier without implementation section");
+        WriteDossier(NoSectionDossier.Replace(
+            "</section>", "</section><p>First round notes.</p>", StringComparison.Ordinal));
+        var a = CommitDossier("feat: first round");
+        WriteDossier(integrated);
+        var b = CommitDossier("feat: fix round");
+        return (a, b);
+    }
+
+    private static TaskInfo AttributedTask(string sha) => new()
+    {
+        Id = "source-task",
+        Key = "AGT-42",
+        IntegrationBranch = "refs/heads/develop",
+        Commits =
+        [
+            new TaskCommitInfo
+            {
+                Sha = sha,
+                ResultSha = sha,
+                Files = ["docs/context-chat/index.html"],
+                At = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc),
+            },
+        ],
+    };
+
+    private static string Entry(string taskKey) =>
+        $"<li data-implementation-entry=\"\" data-task-key=\"{taskKey}\" "
+        + "data-delivered-at=\"2026-08-10\" data-slice=\"Context API\">"
+        + "Delivered the bounded context API.</li>";
+
+    private void WriteDossier(string html) =>
+        File.WriteAllText(Path.Combine(_root, "docs", "context-chat", "index.html"), html);
+
+    private string InitRepoAndCommit(string message)
+    {
+        RunGit("init");
+        RunGit("config", "user.email", "dossier-tests@example.invalid");
+        RunGit("config", "user.name", "Dossier Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", message);
+        return RunGit("rev-parse", "HEAD").Trim();
+    }
+
+    private string CommitDossier(string message)
+    {
+        RunGit("add", "docs/context-chat/index.html");
+        RunGit("commit", "-m", message);
+        return RunGit("rev-parse", "HEAD").Trim();
+    }
 
     private string RunGit(params string[] args)
     {

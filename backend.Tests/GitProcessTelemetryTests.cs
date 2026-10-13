@@ -191,6 +191,43 @@ public class GitProcessTelemetryTests
         Assert.Equal(1, stats!.SampleCount);
     }
 
+    [Fact]
+    public void GetStatsSnapshot_CountsEveryCallOfABusyLabelBeyondThePercentileSample()
+    {
+        // AGT-3083: 2,500 rollups over 50 minutes is 50 calls per minute, above
+        // the ~33/min the 2,000-sample reservoir can hold for an hour. The count
+        // and spawn total must still cover every call in the window.
+        var label = "test/stats-busy-" + Guid.NewGuid();
+        var clock = new FakeTimeProviderStep(DateTimeOffset.Parse("2026-10-12T17:00:00Z"));
+        var expectedSpawns = 0;
+        for (var i = 0; i < 2500; i++)
+        {
+            using (GitProcessTelemetry.BeginRequest(label, NullLogger.Instance, timeProvider: clock))
+            {
+                var spawns = i % 3 + 1;
+                for (var spawn = 0; spawn < spawns; spawn++) GitProcessTelemetry.Record("config", 1, 0);
+                expectedSpawns += spawns;
+            }
+            clock.Advance(TimeSpan.FromMilliseconds(1200));
+        }
+
+        var stats = GitProcessTelemetry.GetStatsSnapshot(TimeSpan.FromHours(1), clock)
+            .Single(s => s.Label == label);
+
+        Assert.Equal(2500, stats.SampleCount);
+        Assert.Equal(expectedSpawns, stats.TotalSpawns);
+        Assert.Equal(expectedSpawns / 60.0, stats.SpawnsPerMinute, precision: 6);
+        Assert.Equal(GitProcessTelemetry.PercentileSampleLimit, stats.PercentileSampleCount);
+        // Memory stays bounded: one bucket per minute the calls touched.
+        Assert.InRange(GitProcessTelemetry.BucketCount(label), 50, 51);
+
+        // Hours later, the buckets past retention are dropped on the next record.
+        clock.Advance(GitProcessTelemetry.BucketRetention + TimeSpan.FromHours(1));
+        using (GitProcessTelemetry.BeginRequest(label, NullLogger.Instance, timeProvider: clock))
+            GitProcessTelemetry.Record("config", 1, 0);
+        Assert.Equal(1, GitProcessTelemetry.BucketCount(label));
+    }
+
     /// <summary>Minimal step-able <see cref="TimeProvider"/> so these tests do not depend on <c>Microsoft.Extensions.Time.Testing</c>.</summary>
     private sealed class FakeTimeProviderStep(DateTimeOffset start) : TimeProvider
     {

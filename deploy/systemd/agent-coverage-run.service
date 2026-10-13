@@ -1,0 +1,30 @@
+# AGT-3074: measures .NET and frontend coverage of the integration branch tip
+# outside the review queue and hands the reports to Quality Studio's coverage
+# sensor. Install steps and configuration: docs/operations/setup/linux-runner-host.md,
+# section "Scheduled coverage run".
+[Unit]
+Description=Agent Studio scheduled coverage run (release-category test suites)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agent-runner
+Group=agent-runner
+WorkingDirectory=/var/lib/agent-runner
+# COVERAGE_RUN_CHECKOUT, COVERAGE_RUN_STATE_DIRS and the QUALITY_STUDIO_* values.
+# runner.env is deliberately not read: the test processes never see runner credentials.
+EnvironmentFile=/etc/agent-runner/coverage-run.env
+ExecStart=/opt/agent-host/current/agent-host coverage-run
+# Lowest CPU and I/O priority for the whole tree; every step also runs under nice -n 19.
+Nice=19
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+# Backstop above the summed suite time-boxes; a stop cancels and reaps the running suite.
+TimeoutStartSec=6h
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/agent-runner /home/agent-runner
+SyslogIdentifier=agent-coverage-run

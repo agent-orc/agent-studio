@@ -406,7 +406,6 @@ fixed-date backend.Tests/ProviderLimitRegistryTests.cs
 fixed-date backend.Tests/ProviderRejectionFleetServiceTests.cs
 fixed-date backend.Tests/QuotaAdmissionEventEmissionTests.cs
 fixed-date backend.Tests/QuotaFallbackMarkerTests.cs
-fixed-date backend.Tests/QuotaWindowProjectionTests.cs
 fixed-date backend.Tests/RecoveryChatLineTests.cs
 fixed-date backend.Tests/RecurringOutputPatternServiceTests.cs
 fixed-date backend.Tests/ReissueOpenItemsPreCheckTests.cs
