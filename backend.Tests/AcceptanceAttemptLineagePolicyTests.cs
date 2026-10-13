@@ -5,6 +5,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the lineage policy reads the ledger order, never the clock; the fixed instants never meet now.
+
 /// <summary>
 /// AGT-3076 - the acceptance lineage matrix. Only a run attempt the authority
 /// store no longer holds can be overridden; every other mismatch means a
