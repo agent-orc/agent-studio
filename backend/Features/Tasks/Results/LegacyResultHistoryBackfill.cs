@@ -62,8 +62,11 @@ public sealed class LegacyResultHistoryBackfill
         var key = Key(task);
         // In-memory facts first, then the file: a run that finishes in between
         // is then seen as complete rather than as "attempted but missing".
-        var running = _inFlight.ContainsKey(key);
+        // The attempt is read before the in-flight set, the reverse of the
+        // order StartOrJoin writes them, so a run that starts in between is
+        // seen as running rather than as "attempted, not running".
         DateTimeOffset? lastAttempt = _lastAttempt.TryGetValue(key, out var at) ? at : null;
+        var running = _inFlight.ContainsKey(key);
         var snapshot = LegacyResultHistoryFile.Read(task.FolderPath);
 
         var decision = LegacyResultHistoryPolicy.Decide(

@@ -570,7 +570,10 @@ and stores the outcome in `results/history/legacy-git.json` (schema version,
 commit, timestamp, producer, lane, content hash, and markdown). The file stays
 under 1 MiB by dropping the markdown of the oldest versions first and marking
 them truncated. It lives under `results/` because the workspace repository
-ignores that folder. See
+ignores that folder. Everything under `results/history/` is Studio's own
+record, so the probes that ask whether a card produced work (named deliverable,
+delivery-claim sweep, inconclusive-with-results, status stub, meta cycle) skip
+it; opening a card never makes it look as if it produced something. See
 [ADR-0070](../architecture/decisions/adr-archive.md#adr-0070---result-versions-live-in-readable-task-folder-snapshots-with-git-backfill-2026-09-11).
 
 ```markdown

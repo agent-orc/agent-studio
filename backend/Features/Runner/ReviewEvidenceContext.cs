@@ -58,7 +58,7 @@ public static class ResultsInventory
             files = Directory
                 .EnumerateFiles(resultsDir, "*", SearchOption.AllDirectories)
                 // Requeue history is audit evidence, not an active deliverable.
-                .Where(path => !IsHistoryPath(resultsDir, path))
+                .Where(path => !AgentStudio.Tasks.TaskPaths.IsResultsHistoryPath(resultsDir, path))
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
@@ -130,7 +130,7 @@ public static class ResultsInventory
             var resultsDir = Path.Combine(jobFolderPath, "results");
             return Directory.Exists(resultsDir)
                 && Directory.EnumerateFiles(resultsDir, "*", SearchOption.AllDirectories)
-                    .Any(path => !IsHistoryPath(resultsDir, path));
+                    .Any(path => !AgentStudio.Tasks.TaskPaths.IsResultsHistoryPath(resultsDir, path));
         }
         catch
         {
@@ -142,14 +142,6 @@ public static class ResultsInventory
     {
         var rel = Path.GetRelativePath(root, file);
         return rel.Replace('\\', '/');
-    }
-
-    private static bool IsHistoryPath(string resultsDir, string file)
-    {
-        var relative = Path.GetRelativePath(resultsDir, file);
-        var firstSeparator = relative.IndexOfAny(['/', '\\']);
-        var first = firstSeparator < 0 ? relative : relative[..firstSeparator];
-        return string.Equals(first, "history", StringComparison.OrdinalIgnoreCase);
     }
 }
 

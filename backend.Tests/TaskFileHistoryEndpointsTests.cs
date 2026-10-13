@@ -549,6 +549,59 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>().WhenIdleAsync();
     }
 
+    /// <summary>
+    /// Opening a card writes the legacy Result-history cache under
+    /// <c>results/history/</c>. That is Studio's own record, not work the card
+    /// produced: a code-free card with nothing else under <c>results/</c> is
+    /// still refused completion after the list call, and no results probe
+    /// reports it as having results.
+    /// </summary>
+    [Fact]
+    public async Task ResultHistory_ListCall_DoesNotGiveACodeFreeCardADeliverable()
+    {
+        const string id = "ASS-RESULT-HISTORY-CODE-FREE";
+        var job = Path.Combine(_workspaceProjectRoot, TaskStates.HumanReview, id);
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), $$"""
+            {
+              "id": "{{id}}",
+              "title": "Code-free fixture",
+              "state": "{{TaskStates.HumanReview}}",
+              "order": 1,
+              "agent": "claude",
+              "createdAt": "2026-10-01T08:00:00Z",
+              "requiresIntegration": false
+            }
+            """, Encoding.UTF8);
+        File.WriteAllText(Path.Combine(job, "prompt.md"), "Think it through.\n", Encoding.UTF8);
+        Directory.CreateDirectory(Path.Combine(_workspaceProjectRoot, TaskStates.Completed));
+
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using (var open = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}"))
+            open.EnsureSuccessStatusCode();
+        await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>().WhenIdleAsync();
+        var cache = LegacyResultHistoryFile.PathFor(job);
+        Assert.True(File.Exists(cache) && new FileInfo(cache).Length > 0, "The list call left no legacy cache to probe.");
+
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob(id, _workspaceProjectRoot)!;
+        Assert.Null(NamedDeliverableReader.Read(card).Path);
+        Assert.False(DeliveryClaimSweep.BuildFacts(card, status: null).HasNamedDeliverable);
+        Assert.Empty(TaskPaths.ResultArtifacts(job));
+        Assert.False(AgentStudio.Runner.ResultsInventory.HasActiveArtifacts(job));
+
+        using var move = await client.PostAsJsonAsync(
+            $"/api/tasks/{id}/move?watchPath={watchPath}",
+            new MoveJobRequest { TargetState = TaskStates.Completed, Reason = "Accept the concept." });
+        var body = await move.Content.ReadAsStringAsync();
+        Assert.False(move.IsSuccessStatusCode, body);
+        Assert.Contains("This task delivers no code", body, StringComparison.Ordinal);
+        Assert.True(Directory.Exists(job), "The refused card left Human Review.");
+        Assert.Null(factory.Services.GetRequiredService<TaskScannerService>().FindJob(id, _workspaceProjectRoot)!.CompletionClaim);
+    }
+
     private static LegacyResultHistoryEntry LegacyEntry(string sha, string result, string hash) => new(
         sha,
         new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc),
