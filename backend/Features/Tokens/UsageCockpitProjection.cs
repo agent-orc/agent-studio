@@ -140,7 +140,7 @@ public static class UsageCockpitProjection
             children.Add(new UsageProjectCost(source.ProjectId, source.Name,
                 available ? today : null, available ? week : null,
                 new UsageSourceState(status, observedAt,
-                    source.ProjectId is null ? 0 : BusBackedProjectTokenUsageReader.SnapshotTtlSeconds,
+                    source.ProjectId is null ? 0 : ProjectTokenLedger.SnapshotTtlSeconds,
                     reason.Length == 0 ? null : reason),
                 source.LatestReceiptAt is { } receiptAt ? AsUtc(receiptAt) : null));
         }
@@ -152,7 +152,7 @@ public static class UsageCockpitProjection
             known.Count == 0 ? null : known.Sum(child => child.WeekUsd ?? 0m),
             children, new UsageSourceState(overall,
                 children.Select(child => child.Coverage.ObservedAt).Max(),
-                BusBackedProjectTokenUsageReader.SnapshotTtlSeconds,
+                ProjectTokenLedger.SnapshotTtlSeconds,
                 overall == "complete" ? null : "Known totals may omit unavailable or unpriced usage."),
             $"TokenEconomy/{typeof(TokenEconomy.ModelPriceCatalog).Assembly.GetName().Version?.ToString() ?? "unknown"}",
             ProviderUsageNormalization.OpenAiInputIncludesCachedV1,

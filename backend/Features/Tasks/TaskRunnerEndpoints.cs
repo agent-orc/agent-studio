@@ -222,7 +222,7 @@ public static class TaskRunnerEndpoints
             {
                 if (!string.IsNullOrWhiteSpace(key) && tokenLookup.TryGetValue(key, out var found))
                 {
-                    tokenSummary = TokenSummaryService.WithModelFallback(found, info.Model);
+                    tokenSummary = RunModelFallback.Apply(found, info.Model);
                     break;
                 }
             }

@@ -1,6 +1,6 @@
 using EconomyPricing = TokenEconomy;
 
-namespace AgentStudio.Runner;
+namespace AgentStudio.Tokens;
 
 /// <summary>
 /// Adapts the published TokenEconomy package to Studio's stable pricing

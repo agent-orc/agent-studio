@@ -1,6 +1,6 @@
 using EconomyPricing = TokenEconomy;
 
-namespace AgentStudio.Runner;
+namespace AgentStudio.Tokens;
 
 /// <summary>
 /// Studio-facing projection of TokenEconomy's historical pricing result.
@@ -70,4 +70,13 @@ public static class TokenPricing
         return Provider.Estimate(AgentStudio.Tokens.ModelIdentity.Resolve(modelId)?.ModelId ?? modelId,
             inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
     }
+
+    /// <summary>Price every ledger entry at its own timestamp, one result per entry.</summary>
+    public static IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
+        => ledger
+            .Select(entry => new PricedTokenEntry(entry, entry.TokenUsage is { } usage
+                ? Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
+                    usage.CacheReadTokens, usage.CacheCreationTokens, entry.Ts)
+                : null))
+            .ToList();
 }
