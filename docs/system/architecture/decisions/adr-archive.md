@@ -1965,7 +1965,8 @@ Every fix round continues on the reviewed delivery. One per-card budget counts
 every automatic round. At budget end, non-test blocks degrade to concerns with
 a linked follow-up card; `build-tests` and `tests-and-evidence` blocks escalate
 with a receipt. Review prefers an eligible executor on a different host but
-never waits for that preference; a project may choose a hard host requirement.
+never waits for that preference; a project may choose a hard host requirement
+(AGT-3069).
 
 Engine instances are interchangeable under per-occurrence leases, with no
 leader election: one instance in workstation and one-box profiles, two in the
@@ -1978,11 +1979,22 @@ reserved for a person. An AI Operator works within those bounds. A decision
 step answers one bounded question from frozen grounds, chooses one typed action,
 writes a receipt and ends. An execution step produces evidence and never chooses
 the next step. The Engine is the runtime for the AI Operator and decision steps;
-claimable execution steps run on runner hosts. A strong model chooses a typed
+claimable execution steps run on runner hosts. Both operators use the same
+intent interface with different autonomy classes. Escalation runs one way: from
+decision step to AI Operator to human. A strong model chooses a typed
 action from bounded, versioned grounds. Deterministic code validates authority
 and safety, enforces finite execution, dispatches through the Task Server and
 records a receipt. This amends ADR-0032's placement of the final choice for
 these bounded orchestration decisions; its contract and loop guards remain.
+
+As in AGT-W73, degraded mode allows one bounded transport retry on an alternate
+strong model of the same capability and price ceiling, then records `ask` and
+holds the transition; no deterministic fallback decides. A configurable 24-hour
+emergency run limit with existing salvage replaces the 3,600-second coding
+timeout. Cost caps apply per card (24 calls, 8,000 input and 1,000 output tokens
+per call, $5 priced) and per host-day (48 scheduled plus 12 event calls, 180,000
+input and 90,000 output tokens, $10 priced). Implementation: AGT-3063 to
+AGT-3068.
 
 **Consequences.** This amends ADR-0063's runtime-role count from three to five
 and ADR-0076's consequence that Operations Server was the fourth role. The five
