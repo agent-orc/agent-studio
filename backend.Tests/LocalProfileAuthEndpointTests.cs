@@ -191,7 +191,7 @@ public sealed class LocalProfileAuthEndpointTests : IDisposable
         Assert.Equal("authentication-required", body.GetProperty("error").GetString());
     }
 
-    private WebApplicationFactory<Program> BuildFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory() => new TestHostFactory().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>

@@ -220,7 +220,7 @@ public sealed class OrchestratorSessionRegistryTests : IDisposable
         Directory.CreateDirectory(projectRoot);
         Directory.CreateDirectory(codeRoot);
 
-        return new WebApplicationFactory<Program>()
+        return new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
