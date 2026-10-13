@@ -506,10 +506,9 @@ public sealed class TaskIntegrationStatusService
                 ? found : null;
             reachUnavailable |= reach is null || !reach.IntegrationReachSucceeded;
             var memberships = EvaluateMemberships(job, group, LegacyPathEvidence(group, reach), reach, subject);
-            var current = memberships.Where(commit => commit.IntegrationRule
-                is not (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker)).ToList();
+            var current = CurrentCommits(memberships);
             superseded.AddRange(memberships.Where(commit => commit.IntegrationRule == CommitIntegrationRules.Superseded));
-            var missing = current.Where(commit => !commit.OnIntegrationBranch).Select(commit => Short(commit.Sha)).ToList();
+            var missing = MissingCommits(current);
             var landed = current.Where(commit => commit.OnIntegrationBranch).ToList();
             integratedTotal += landed.Count;
             currentTotal += current.Count;
@@ -523,7 +522,7 @@ public sealed class TaskIntegrationStatusService
                     && !AncestorSetContains(reach.PublishedAncestors, commit.Sha))
                     .Select(commit => $"{group.Repository} {Short(commit.Sha)}"));
             }
-            repositoryEntries.Add(RepositoryEntry(group, memberships, reach));
+            repositoryEntries.Add(RepositoryEntry(group, memberships, current, missing, reach));
         }
 
         var projectedBranch = repositoryEntries.FirstOrDefault()?.IntegrationBranch ?? primaryBranch;
@@ -595,8 +594,9 @@ public sealed class TaskIntegrationStatusService
             if (group.Key is null || !reaches.TryGetValue(group.Key, out var reach)
                 || !reach.IntegrationReachSucceeded)
                 continue;
-            entries.Add(RepositoryEntry(
-                group, EvaluateMemberships(job, group, group.Commits, reach, subject), reach));
+            var memberships = EvaluateMemberships(job, group, group.Commits, reach, subject);
+            var current = CurrentCommits(memberships);
+            entries.Add(RepositoryEntry(group, memberships, current, MissingCommits(current), reach));
         }
         return entries;
     }
@@ -622,14 +622,25 @@ public sealed class TaskIntegrationStatusService
                     reach?.IntegrationBranch ?? group.IntegrationBranch,
                     reach?.PublishedAncestors))).ToList();
 
+    private static List<TaskRepositoryCommitMembership> CurrentCommits(
+        IEnumerable<TaskRepositoryCommitMembership> memberships)
+        => memberships.Where(commit => commit.IntegrationRule
+            is not (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker)).ToList();
+
+    private static List<string> MissingCommits(IEnumerable<TaskRepositoryCommitMembership> current)
+        => current.Where(commit => !commit.OnIntegrationBranch).Select(commit => Short(commit.Sha)).ToList();
+
+    /// <summary>
+    /// Projects one repository line from the caller's own partition, so the
+    /// line and the verdict built from the same lists cannot disagree.
+    /// </summary>
     private static TaskRepositoryIntegrationStatus RepositoryEntry(
         RepositoryCommitGroup group,
         List<TaskRepositoryCommitMembership> memberships,
+        IReadOnlyList<TaskRepositoryCommitMembership> current,
+        IReadOnlyList<string> missing,
         RepoIntegration? reach)
     {
-        var current = memberships.Where(commit => commit.IntegrationRule
-            is not (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker)).ToList();
-        var missing = current.Where(commit => !commit.OnIntegrationBranch).Select(commit => Short(commit.Sha)).ToList();
         var branch = reach?.IntegrationBranch ?? group.IntegrationBranch;
         return new TaskRepositoryIntegrationStatus
         {
