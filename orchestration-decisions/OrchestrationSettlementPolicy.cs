@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.TaskServer;
@@ -9,7 +10,8 @@ internal sealed record OrchestrationSettlementDecision(
     string? TaskState,
     bool IsTerminal,
     string? SupersededReason = null,
-    string? SettlementReason = null);
+    string? SettlementReason = null,
+    TransitionDecision? Transition = null);
 
 internal static class OrchestrationSettlementPolicy
 {
@@ -22,7 +24,8 @@ internal static class OrchestrationSettlementPolicy
         string currentTaskState,
         long expectedTaskVersion,
         long currentTaskVersion,
-        RepeatedReviewBlockDiagnosis? repeatedBlock = null)
+        RepeatedReviewBlockDiagnosis? repeatedBlock = null,
+        TransitionDecision? transition = null)
     {
         if (!string.Equals(currentTaskState, "4-auto-review", StringComparison.Ordinal))
         {
@@ -44,6 +47,25 @@ internal static class OrchestrationSettlementPolicy
                 null,
                 true,
                 $"Task version changed from {expectedTaskVersion} to {currentTaskVersion} before settlement.");
+        }
+
+        if (transition is not null && (action == OrchestrationAction.Reissue
+            || transition.Action is TransitionAction.DegradeWithFollowUp or TransitionAction.Escalate))
+        {
+            return transition.Action switch
+            {
+                TransitionAction.FindingRound or TransitionAction.ConcernRound
+                    or TransitionAction.ReviewInfrastructureRetry => Terminal(
+                        "reissued", currentStage, currentReissueAttempts + 1, "2-ready", transition.Reason)
+                        with { Transition = transition },
+                TransitionAction.DegradeWithFollowUp => Terminal(
+                    "completed", currentStage, currentReissueAttempts, "5-human-review", transition.Reason)
+                    with { Transition = transition },
+                TransitionAction.Escalate => Terminal(
+                    "escalated", currentStage, currentReissueAttempts, "5e-escalated", transition.Reason)
+                    with { Transition = transition },
+                _ => Continue(stages, currentStage, currentReissueAttempts) with { Transition = transition },
+            };
         }
 
         return action switch

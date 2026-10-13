@@ -153,4 +153,7 @@
     <Using Include="AgentStudio.Connector" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../orchestration-decisions/Orchestration.Decisions.csproj" />
+  </ItemGroup>
 </Project>

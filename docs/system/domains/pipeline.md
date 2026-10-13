@@ -928,7 +928,7 @@ comparison before Quality Studio's verdict contract can decide a review.
   `IntegrationRef` on every hand-out (a frozen plan otherwise replays the stale
   ref through each retry) and rewrites an outdated card field, emitting
   `integration_branch_corrected`.
-- `backend/Features/Runner/ReviewInfrastructureRepeatPolicy.cs` and
+- `orchestration-decisions/ReviewInfrastructureRepeatPolicy.cs` and
   `contracts/TaskServer.Contracts/ReviewInfrastructureDiagnosis.cs`: a repeating
   infrastructure cause must name itself. Every runner-side `BaselineUnavailable`
   carries the base commit, integration ref, step, and command line in its reason;

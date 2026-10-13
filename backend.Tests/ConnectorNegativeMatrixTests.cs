@@ -24,7 +24,7 @@ namespace AgentStudio.Tests;
 /// carries it next to the scenario report.
 /// </summary>
 [Collection(WebApplicationFactorySerialCollection.Name)]
-[Trait("ProcessReference", "TaskServer")]
+// TaskServer is now an aliased compile reference, so test selection follows the project dependency.
 public sealed class ConnectorNegativeMatrixTests
 {
     private const string Origin = ConnectorOptions.DefaultStudioOrigin;
