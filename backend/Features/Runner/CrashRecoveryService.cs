@@ -48,6 +48,7 @@ public sealed class CrashRecoveryService
     private readonly ILogger<CrashRecoveryService> _logger;
     private readonly IJsonlAppender _appender;
     private readonly PickupLockFile _pickupLock;
+    private readonly CrashRecoveryDismissalStore _dismissals;
     private readonly object _pendingLock = new();
     private readonly List<PendingCrashRecovery> _pendingOrphanRecoveries = [];
     private readonly string _bootId = Guid.NewGuid().ToString("N");
@@ -62,9 +63,11 @@ public sealed class CrashRecoveryService
         IOptions<BackendFileLoggerOptions> logOptions,
         ILogger<CrashRecoveryService> logger,
         IJsonlAppender? appender = null,
-        PickupLockFile? pickupLock = null)
+        PickupLockFile? pickupLock = null,
+        CrashRecoveryDismissalStore? dismissals = null)
     {
         _scanner = scanner;
+        _dismissals = dismissals ?? throw new ArgumentNullException(nameof(dismissals));
         _transitions = transitions;
         _mutations = mutations;
         _git = git;
@@ -245,7 +248,11 @@ public sealed class CrashRecoveryService
         if (string.IsNullOrWhiteSpace(repoRoot)) return;
         // Status must stay readable even when a stale index.lock is present.
         // GitService's status reader disables optional index refresh locks.
-        if (_git.GetStatusForRepoRoot(repoRoot).Files.Count == 0) return;
+        if (_git.GetStatusForRepoRoot(repoRoot).Files.Count == 0)
+        {
+            _dismissals.Remove(entry.Name, repoRoot);
+            return;
+        }
         var initialFiles = ReadPendingFiles(repoRoot, null);
         var refDrift = CrashRecoveryGitScan.Inspect(repoRoot, initialFiles, includeBlobs: false).RefDrift;
 
@@ -304,10 +311,14 @@ public sealed class CrashRecoveryService
         var decision = new RecoveryDecision
         {
             At = DateTime.UtcNow,
-            Kind = RecoveryDecisionKinds.OrphanPending,
+            Kind = pending.Dismissed ? RecoveryDecisionKinds.OrphanDismissalKept : RecoveryDecisionKinds.OrphanPending,
             ProjectName = entry.Name,
             JobId = jobId,
-            Reason = pending.Classification == CrashRecoveryClassifications.RefDrift
+            PendingId = pending.Dismissed ? pending.Id : null,
+            DismissedAt = pending.DismissedAt,
+            Reason = pending.Dismissed
+                ? $"unchanged dismissed orphan finding; pendingId={pending.Id}; dismissedAt={pending.DismissedAt:O}"
+                : pending.Classification == CrashRecoveryClassifications.RefDrift
                 ? $"checkout ref drift detected; commit disabled; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}"
                 : jobId == null
                     ? $"operator confirmation required before committing orphan changes; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}; no active 3-progress job to attribute to"
@@ -315,16 +326,22 @@ public sealed class CrashRecoveryService
         };
         decisions.Add(decision);
         AppendRecoveryEntry(decision);
-        _logger.LogInformation(
-            "CrashRecoveryService: queued orphan changes for project {Project} job {JobId} as pending recovery {PendingId}; waiting for operator confirmation.",
-            entry.Name, jobId ?? "(none)", pending.Id);
+        if (pending.Dismissed)
+            _logger.LogInformation(
+                "CrashRecoveryService: kept dismissal for unchanged orphan recovery {PendingId} in project {Project}.",
+                pending.Id, entry.Name);
+        else
+            _logger.LogInformation(
+                "CrashRecoveryService: queued orphan changes for project {Project} job {JobId} as pending recovery {PendingId}; waiting for operator confirmation.",
+                entry.Name, jobId ?? "(none)", pending.Id);
     }
 
-    public IReadOnlyList<PendingCrashRecovery> GetPendingOrphanRecoveries()
+    public IReadOnlyList<PendingCrashRecovery> GetPendingOrphanRecoveries(bool includeDismissed = false)
     {
         lock (_pendingLock)
         {
             return _pendingOrphanRecoveries
+                .Where(p => includeDismissed || !p.Dismissed)
                 .OrderBy(p => p.CreatedAt)
                 .Select(p => p with { Files = p.Files.ToArray(), Pathspecs = p.Pathspecs?.ToArray() })
                 .ToArray();
@@ -405,19 +422,39 @@ public sealed class CrashRecoveryService
             "CrashRecoveryService: committed operator-confirmed orphan changes for project {Project} as {Sha}",
             pending.ProjectName, commit.Sha);
 
+        try { _dismissals.Remove(pending.ProjectName, pending.RepoRoot); }
+        catch (Exception ex) { _logger.LogError(ex, "CrashRecoveryService: could not clear dismissal after commit for {Project}", pending.ProjectName); }
         AttachCommitToJob(pending, commit.Sha);
         return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.Committed, pending, commit.Sha);
     }
 
     public CrashRecoveryActionResult DismissPendingOrphanRecovery(string id)
     {
-        var pending = TakePendingOrphanRecovery(id);
-        if (pending == null)
-            return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.NotFound, Error: "Pending crash recovery item not found.");
+        PendingCrashRecovery pending;
+        CrashRecoveryDismissal dismissal;
+        lock (_pendingLock)
+        {
+            var index = _pendingOrphanRecoveries.FindIndex(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+                return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.NotFound, Error: "Pending crash recovery item not found.");
+            pending = _pendingOrphanRecoveries[index];
+            try
+            {
+                dismissal = _dismissals.Record(pending);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "CrashRecoveryService: could not persist dismissal for {PendingId}", pending.Id);
+                return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.Failed, pending,
+                    Error: "Could not save crash recovery dismissal.");
+            }
+            pending = pending with { Dismissed = true, DismissedAt = dismissal.DismissedAt };
+            _pendingOrphanRecoveries[index] = pending;
+        }
 
         var decision = new RecoveryDecision
         {
-            At = DateTime.UtcNow,
+            At = dismissal.DismissedAt.UtcDateTime,
             Kind = RecoveryDecisionKinds.OrphanSkipped,
             ProjectName = pending.ProjectName,
             JobId = pending.JobId,
@@ -455,6 +492,7 @@ public sealed class CrashRecoveryService
             JobId = jobId,
             RepoRoot = repoRoot,
             Files = files,
+            ContentFingerprint = scan.ContentFingerprint,
             RecoveryClassification = classification,
             Branch = scan.Branch,
             HeadSha = scan.HeadSha,
@@ -472,6 +510,12 @@ public sealed class CrashRecoveryService
             JobFolder = jobFolder,
             Pathspecs = pathspecs?.ToArray()
         };
+
+        var dismissal = _dismissals.Find(entry.Name, repoRoot);
+        if (dismissal != null
+            && string.Equals(dismissal.Classification, classification, StringComparison.Ordinal)
+            && string.Equals(dismissal.ContentFingerprint, scan.ContentFingerprint, StringComparison.Ordinal))
+            pending = pending with { Dismissed = true, DismissedAt = dismissal.DismissedAt };
 
         lock (_pendingLock)
         {
@@ -1041,6 +1085,8 @@ public sealed record RecoveryDecision
     [JsonPropertyName("jobId")] public string? JobId { get; init; }
     [JsonPropertyName("targetState")] public string? TargetState { get; init; }
     [JsonPropertyName("commitSha")] public string? CommitSha { get; init; }
+    [JsonPropertyName("pendingId")] public string? PendingId { get; init; }
+    [JsonPropertyName("dismissedAt")] public DateTimeOffset? DismissedAt { get; init; }
     [JsonPropertyName("reason")] public string Reason { get; init; } = "";
 }
 
@@ -1057,6 +1103,9 @@ public sealed record PendingCrashRecovery
     [JsonPropertyName("jobId")] public string? JobId { get; init; }
     [JsonPropertyName("repoRoot")] public string RepoRoot { get; init; } = "";
     [JsonPropertyName("files")] public IReadOnlyList<string> Files { get; init; } = [];
+    [JsonPropertyName("contentFingerprint")] public string ContentFingerprint { get; init; } = "";
+    [JsonPropertyName("dismissed")] public bool Dismissed { get; init; }
+    [JsonPropertyName("dismissedAt")] public DateTimeOffset? DismissedAt { get; init; }
     [JsonPropertyName("unknownBlobs")] public IReadOnlyList<string> UnknownBlobs { get; init; } = [];
     [JsonPropertyName("branch")] public string Branch { get; init; } = "";
     [JsonIgnore] public string HeadSha { get; init; } = "";
@@ -1114,14 +1163,10 @@ public static class RecoveryDecisionKinds
     public const string TransitionCompleted = "transition-completed";
     public const string TransitionFailed = "transition-failed";
     public const string OrphanPending = "orphan-pending-confirmation";
+    public const string OrphanDismissalKept = "orphan-dismissal-kept";
     public const string OrphanCommitted = "orphan-committed";
     public const string OrphanCommitFailed = "orphan-commit-failed";
-    /// <summary>
-    /// C1: orphan changes were detected but skipped because no 3-progress
-    /// job was active to attribute them to (= likely a human editor
-    /// session, not a crashed agent run). Set
-    /// ATP_CRASH_RECOVERY_AGGRESSIVE=1 to re-enable the old auto-commit.
-    /// </summary>
+    /// <summary>An orphan action was skipped or the operator left changes uncommitted.</summary>
     public const string OrphanSkipped = "orphan-skipped";
     /// <summary>An interrupted mid-flight run was requeued from 3-progress back to 2-ready.</summary>
     public const string RunInterruptedRequeued = "run-interrupted-requeued";

@@ -439,15 +439,24 @@ rollout decision.
   gates before auto-accept.
 - `backend/Features/Runner/CrashRecoveryService.cs`: recovery for orphaned run
   state after process failure. An orphan working-tree finding stays pending until
-  an explicit operator commit or leave-uncommitted action. The global recovery
+  an explicit operator commit or leave-uncommitted action. Leave uncommitted
+  persists under the task repository's `.metadata` directory for the same
+  project, canonical worktree, classification, and dirty-file content fingerprint.
+  An unchanged finding stays dismissed across boots and can still be committed
+  by ID. A changed dirty file, path set, or classification offers it again;
+  changing only a file timestamp does not. A clean tree or a successful recovery
+  commit clears the project's dismissal. The global recovery
   entry point is visible while a review-required finding remains pending;
   trivial metadata sidecars retain their separate notification path. Ordinary
   task navigation does not open a blocking dialog. Opening the entry point shows the
   decision; closing that view changes no shared record or files. A browser
-  reload and task selection do not reopen it. The pending response exposes a
+  reload and task selection do not reopen it. The default pending response omits
+  dismissed findings; `?includeDismissed=true` includes them with `dismissedAt`.
+  The pending response exposes a
   stable finding ID, the oldest dirty-file time (`createdAt` for compatibility),
-  the current boot's `bootId`, and `detectedAt`. A new boot may rediscover the
-  same dirty files; these fields distinguish discovery from file age. Expiry
+  the current boot's `bootId`, `detectedAt`, and `contentFingerprint`. A new boot
+  may rediscover dirty files, but a matching dismissal keeps the finding out of
+  the default response. These fields distinguish discovery from file age. Expiry
   never commits or discards recovered files.
   Before queuing, the scan checks branch and HEAD reflogs, whether the index
   tree matches a strict ancestor of HEAD, and whether staged changes mostly
