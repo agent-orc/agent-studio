@@ -34,6 +34,14 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
     private const string Project = "demo";
     private const string CleanStatus = "## Summary\nDone and verified.\n\nResult: Success\n\n## Open Items\nNone\n";
     private const string PassVerdict = "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]";
+    private const string DGradeWithFinding = """
+        The review report, scripts and screenshots were never committed.
+        [[CODE_REVIEW_FINDING: text=The review report and its screenshots were never committed; commit them with the change.]]
+        [[CODE_REVIEW_GRADE: grade=D; summary=Deliverables were never committed.]]
+        [[TASK_DONE]]
+        """;
+    private int _gradeCalls;
+    private Func<string, string> _gradeReply = _ => DGradeWithFinding;
 
     public ReviewDecisionOrchestratorGradeStepTests()
     {
@@ -497,6 +505,213 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         Assert.Contains("service is unavailable", grade.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task GradeStep_DeferredReview_ReusesUnchangedGrade_WithoutSideEffects()
+    {
+        const string slug = "grade-deferred-reuse";
+        var (orchestrator, folder) = SeedDeferredGradeScenario(slug);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(1, Volatile.Read(ref _gradeCalls));
+        Assert.True(Directory.Exists(folder), "a deferred review keeps the card in 4-auto-review");
+        Assert.Single(Directory.GetFiles(folder, "code-review-grade-*.md"));
+        var grade = ReadPipelineStep(folder, PipelineCatalogue.CodeReviewGradeStepId);
+        Assert.Equal(1, grade.Runs);
+        Assert.Equal("D", grade.Verdict);
+        Assert.Single(ReadTags(folder), t => t.StartsWith("code-review:grade-"));
+        Assert.Contains("code-review:grade-d", ReadTags(folder));
+        Assert.Single(
+            File.ReadAllLines(Path.Combine(folder, PostProcessingOutcomeLog.FileName)),
+            line => line.Contains(PipelineCatalogue.CodeReviewGradeStepId, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GradeStep_DeferredReview_NewCommit_GradesAfreshWithNewInputKey()
+    {
+        const string slug = "grade-deferred-commit";
+        var (orchestrator, folder) = SeedDeferredGradeScenario(slug);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        RotateGradeReports(folder);
+        CommitFile("follow-up.txt", "FOLLOW_UP_CHANGE\n", "follow-up change");
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(2, Volatile.Read(ref _gradeCalls));
+        var keys = Directory.GetFiles(folder, "code-review-grade-*.md*")
+            .Select(file => FrontmatterParser.Parse(File.ReadAllText(file)).Fields[CodeReviewGradeReuse.InputKeyField])
+            .ToList();
+        Assert.Equal(2, keys.Count);
+        Assert.NotEqual(keys[0], keys[1]);
+    }
+
+    [Fact]
+    public async Task GradeStep_DeferredReview_NewResultsFile_GradesAfresh()
+    {
+        const string slug = "grade-deferred-results";
+        var (orchestrator, folder) = SeedDeferredGradeScenario(slug);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        RotateGradeReports(folder);
+        File.WriteAllText(Path.Combine(folder, "results", "report.md"), "# Review report\n");
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(2, Volatile.Read(ref _gradeCalls));
+    }
+
+    [Fact]
+    public async Task GradeStep_DeferredReview_ChangedGradeModel_GradesAfresh()
+    {
+        const string slug = "grade-deferred-model";
+        var (first, folder) = SeedDeferredGradeScenario(slug);
+        var second = BuildDeferredOrchestrator(
+            new SwitchableLintScssRunner(),
+            extraConfig: new Dictionary<string, string?>
+            {
+                ["CodeReviewStep:DefaultModel"] = "claude-opus-5-5",
+            });
+
+        await first.TickOnceAsync(_workspace, CancellationToken.None);
+        RotateGradeReports(folder);
+        await second.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(2, Volatile.Read(ref _gradeCalls));
+    }
+
+    [Fact]
+    public async Task GradeStep_DeferredReview_DeletedReport_GradesAfresh()
+    {
+        const string slug = "grade-deferred-deleted";
+        var (orchestrator, folder) = SeedDeferredGradeScenario(slug);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        File.Delete(Assert.Single(Directory.GetFiles(folder, "code-review-grade-*.md")));
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(2, Volatile.Read(ref _gradeCalls));
+        Assert.Single(Directory.GetFiles(folder, "code-review-grade-*.md"));
+    }
+
+    [Fact]
+    public async Task GradeStep_DeferredReview_ExecutionError_IsNeverReused()
+    {
+        const string slug = "grade-deferred-error";
+        var calls = 0;
+        var (orchestrator, folder) = SeedDeferredGradeScenario(slug, _ =>
+            Interlocked.Increment(ref calls) == 1
+                ? throw new InvalidOperationException("grade CLI unavailable")
+                : DGradeWithFinding);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        // The diagnostic report of the failed call already carries the same key;
+        // only the row's missing verdict blocks the reuse.
+        var failedReport = Assert.Single(Directory.GetFiles(folder, "code-review-grade-*.md"));
+        Assert.NotNull(FrontmatterParser.Parse(File.ReadAllText(failedReport))
+            .Fields[CodeReviewGradeReuse.InputKeyField]);
+        Assert.Null(ReadPipelineStep(folder, PipelineCatalogue.CodeReviewGradeStepId).Verdict);
+        RotateGradeReports(folder);
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(2, Volatile.Read(ref _gradeCalls));
+        Assert.Equal("D", ReadPipelineStep(folder, PipelineCatalogue.CodeReviewGradeStepId).Verdict);
+    }
+
+    [Fact]
+    public async Task GradeStep_ReusedGrade_DrivesTheSameCouncilReactionAsTheFirstRun()
+    {
+        const string slug = "grade-reuse-council";
+        var lint = new SwitchableLintScssRunner();
+        var (orchestrator, autoReviewFolder) = SeedDeferredGradeScenario(slug, lint: lint);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        var firstReport = Path.GetFileName(Assert.Single(
+            Directory.GetFiles(autoReviewFolder, "code-review-grade-*.md")));
+        lint.Result = new LintScssResult(LintScssVerdict.Ok, 0, 1, string.Empty, "ok");
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(1, Volatile.Read(ref _gradeCalls));
+        Assert.False(Directory.Exists(autoReviewFolder), "the settled review leaves 4-auto-review");
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Assert.True(Directory.Exists(folder), "the reused D grade starts the council round");
+        var reaction = AgentStudio.Review.CouncilReviewReactionStore.Read(folder, firstReport);
+        Assert.NotNull(reaction);
+        Assert.Equal(AgentStudio.Review.CouncilReactionDisposition.Reissue, reaction!.Disposition);
+        Assert.Contains(
+            "never committed",
+            Assert.Single(reaction.Assessments).Finding,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private (ReviewDecisionOrchestrator Orchestrator, string Folder) SeedDeferredGradeScenario(
+        string slug,
+        Func<string, string>? gradeReply = null,
+        SwitchableLintScssRunner? lint = null)
+    {
+        // The subject is the HEAD fallback (<sha8> (HEAD)), as for WEB-23.
+        RunGit("init", "-q", "-b", "main");
+        RunGit("config", "user.email", "test@example.invalid");
+        RunGit("config", "user.name", "Grade Reuse Test");
+        CommitFile("feature.txt", "FEATURE_CHANGE\n", "feature change");
+        SeedReviewJobWithDone(slug, CleanStatus, taskType: TaskTypes.Chore, withScreenshot: true);
+
+        if (gradeReply is not null) _gradeReply = gradeReply;
+        return (
+            BuildDeferredOrchestrator(lint ?? new SwitchableLintScssRunner()),
+            Path.Combine(_watchPath, TaskStates.AutoReview, slug));
+    }
+
+    /// <summary>Every deferred-grade orchestrator shares one grade-call counter.</summary>
+    private ReviewDecisionOrchestrator BuildDeferredOrchestrator(
+        SwitchableLintScssRunner lint,
+        IDictionary<string, string?>? extraConfig = null)
+        => BuildOrchestrator(
+            aspectStub: (_, _) => PassVerdict,
+            gradeCli: model =>
+            {
+                Interlocked.Increment(ref _gradeCalls);
+                return _gradeReply(model);
+            },
+            maxReissues: 3,
+            extraConfig: extraConfig,
+            wireGit: true,
+            lintScssRunner: lint);
+
+    private void CommitFile(string name, string content, string message)
+    {
+        File.WriteAllText(Path.Combine(_watchPath, name), content);
+        RunGit("add", name);
+        RunGit("commit", "-q", "-m", message);
+    }
+
+    /// <summary>
+    /// Report file names have millisecond resolution; renaming the earlier one
+    /// keeps a second fresh grade from landing on the same name.
+    /// </summary>
+    private static void RotateGradeReports(string folder)
+    {
+        foreach (var file in Directory.GetFiles(folder, "code-review-grade-*.md"))
+            File.Move(file, file + ".bak");
+    }
+
+    /// <summary>
+    /// Mirrors <see cref="RemoteRequiredLintScssRunner"/> on a repository with
+    /// an Angular workspace until the test switches the result.
+    /// </summary>
+    private sealed class SwitchableLintScssRunner : ILintScssRunner
+    {
+        public LintScssResult Result { get; set; } = new(
+            LintScssVerdict.Fail, null, 0,
+            RemoteExecutionRequirement.Message, RemoteExecutionRequirement.Code)
+        {
+            InfrastructureFailureCode = RemoteExecutionRequirement.Code,
+        };
+
+        public Task<LintScssResult> RunAsync(
+            string repositoryPath, PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+            => Task.FromResult(Result);
+    }
+
     private void SeedReviewJobWithDone(
         string slug,
         string status,
@@ -531,7 +746,8 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         IBuildTestGateRunner? buildTestGate = null,
         bool wireGradeService = true,
         Action<string>? gradePromptObserver = null,
-        bool wireGit = false)
+        bool wireGit = false,
+        ILintScssRunner? lintScssRunner = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -598,7 +814,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
             sessions: null,
             git: wireGit ? git : null,
             pipelineLog: pipelineLog,
-            lintScssRunner: null,
+            lintScssRunner: lintScssRunner,
             codeReviewStep: codeReviewStep,
             projectSettings: settings,
             buildTestGateRunner: buildTestGate);

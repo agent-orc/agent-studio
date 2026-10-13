@@ -217,4 +217,110 @@ public sealed class QuotaWindowProjectionTests
         Assert.Contains("resetAt moved", anchored.Windows[0].ProjectionSuspiciousReason);
         Assert.Null(QuotaWindowProjection.Project(anchored.Windows[0], now, capPct: 95));
     }
+
+    [Fact]
+    public void AnchorWindowStarts_WeeklyDropWithLaterReset_ReanchorsAndClearsReason()
+    {
+        // AGT-3080: Codex reset its weekly window early on 2026-10-11 (28 % -> 0 %,
+        // confirmed by the plausibility gate's second probe).
+        var previous = new QuotaSnapshot
+        {
+            CliType = "codex",
+            Windows =
+            {
+                new QuotaWindow
+                {
+                    Label = "Weekly", UsedPct = 28,
+                    ResetAt = new DateTime(2026, 10, 14, 4, 10, 0, DateTimeKind.Utc),
+                    ObservedStartAt = new DateTime(2026, 10, 7, 4, 10, 0, DateTimeKind.Utc),
+                },
+            },
+        };
+        var candidate = new QuotaSnapshot
+        {
+            CliType = "codex",
+            Windows =
+            {
+                new QuotaWindow
+                {
+                    Label = "Weekly", UsedPct = 0,
+                    ResetAt = new DateTime(2026, 10, 18, 7, 34, 0, DateTimeKind.Utc),
+                },
+            },
+        };
+
+        var anchored = QuotaWindowProjection.AnchorWindowStarts(
+            previous, candidate, nowUtc: new DateTime(2026, 10, 11, 8, 4, 0, DateTimeKind.Utc));
+
+        var weekly = anchored.Windows[0];
+        Assert.Equal(new DateTime(2026, 10, 11, 7, 34, 0, DateTimeKind.Utc), weekly.ObservedStartAt);
+        Assert.Null(weekly.ProjectionSuspiciousReason);
+
+        var later = weekly with { UsedPct = 30 };
+        var projection = QuotaWindowProjection.Project(
+            later, nowUtc: new DateTime(2026, 10, 13, 12, 0, 0, DateTimeKind.Utc), capPct: 95);
+        Assert.NotNull(projection);
+        Assert.Equal(0.312, projection!.ElapsedFraction!.Value, precision: 3);
+    }
+
+    [Fact]
+    public void AnchorWindowStarts_WeeklyResetMovesLaterWithoutDrop_StaysSuspicious()
+    {
+        var anchoredStart = new DateTime(2026, 10, 7, 4, 10, 0, DateTimeKind.Utc);
+        var previous = new QuotaSnapshot
+        {
+            CliType = "codex",
+            Windows =
+            {
+                new QuotaWindow
+                {
+                    Label = "Weekly", UsedPct = 22,
+                    ResetAt = new DateTime(2026, 10, 14, 4, 10, 0, DateTimeKind.Utc),
+                    ObservedStartAt = anchoredStart,
+                },
+            },
+        };
+        var candidate = new QuotaSnapshot
+        {
+            CliType = "codex",
+            Windows =
+            {
+                new QuotaWindow
+                {
+                    Label = "Weekly", UsedPct = 23,
+                    ResetAt = new DateTime(2026, 10, 18, 7, 34, 0, DateTimeKind.Utc),
+                },
+            },
+        };
+
+        var anchored = QuotaWindowProjection.AnchorWindowStarts(
+            previous, candidate, nowUtc: new DateTime(2026, 10, 11, 8, 4, 0, DateTimeKind.Utc));
+
+        Assert.Equal(anchoredStart, anchored.Windows[0].ObservedStartAt);
+        Assert.Contains("resetAt moved", anchored.Windows[0].ProjectionSuspiciousReason);
+    }
+
+    [Fact]
+    public void EvaluateProjectedBreach_ParsedCompactClaudeWeekly_ProjectsBreach()
+    {
+        // 48 h into the week that resets 2026-10-13T12:00Z: elapsed fraction 0.286.
+        var now = new DateTime(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
+
+        static QuotaSnapshot Parse(int usedPct, DateTime nowUtc) => new()
+        {
+            CliType = "claude",
+            Windows = ClaudeQuotaProbe.ParseUsageWindows(
+                $"Currentweek(allmodels)███{usedPct}%usedResetsOct13,2pm(Europe/Berlin)", nowUtc: nowUtc),
+        };
+
+        var busy = Parse(40, now);
+        var breach = QuotaWindowProjection.EvaluateProjectedBreach(busy, Caps(), nowUtc: now);
+
+        Assert.NotNull(breach);
+        Assert.True(breach!.Projected);
+        Assert.Equal("Weekly (all models)", breach.WindowLabel);
+        Assert.Equal(140, QuotaWindowProjection.Project(busy.Windows[0], now, capPct: 95)!.ProjectedUsedPct, precision: 1);
+
+        Assert.Null(QuotaWindowProjection.EvaluateProjectedBreach(Parse(15, now), Caps(), nowUtc: now));
+    }
 }

@@ -262,11 +262,23 @@ public static class CompletionGate
         Escalate,
     }
 
+    /// <summary>
+    /// Which check produced the findings. The follow-up wording depends on it:
+    /// a Dossier maintenance gap is not unfinished work in the run's own
+    /// result/status evidence.
+    /// </summary>
+    public enum CompletionGateSource
+    {
+        RunEvidence,
+        DossierMaintenance,
+    }
+
     public sealed record Decision
     {
         public CompletionGateAction Action { get; init; } = CompletionGateAction.Pass;
         public IReadOnlyList<string> Findings { get; init; } = [];
         public string Reason { get; init; } = "No unfinished-work evidence found.";
+        public CompletionGateSource Source { get; init; } = CompletionGateSource.RunEvidence;
 
         public bool IsIncomplete => Action != CompletionGateAction.Pass;
     }
@@ -332,13 +344,26 @@ public static class CompletionGate
         };
     }
 
-    public static string BuildFollowUp(IReadOnlyList<string> findings, IReadOnlyList<string>? priorCommits = null)
+    public static string BuildFollowUp(
+        IReadOnlyList<string> findings,
+        IReadOnlyList<string>? priorCommits = null,
+        CompletionGateSource source = CompletionGateSource.RunEvidence)
     {
         var sb = new StringBuilder();
         sb.AppendLf(RunOutcomePolicy.DiffOnlySteeringRule);
         sb.AppendLf();
-        sb.AppendLf("The Orchestrator Completion-Gate found unfinished work in the previous run's own result/status evidence.");
-        sb.AppendLf("Resolve these items before doing anything else, then end with [[TASK_DONE]] only when the task is actually complete.");
+        if (source == CompletionGateSource.DossierMaintenance)
+        {
+            sb.AppendLf("The Orchestrator Dossier maintenance gate found that the Dossier implementation log for this card is missing or invalid at the revision named in each item below.");
+            sb.AppendLf("Follow the \"Dossier implementation update\" section of this run's instructions: append exactly one entry for this card inside the canonical implementation log and change nothing else in the Dossier.");
+            sb.AppendLf("If the entry for this card is already on the integration branch, report that with the revision that carries it and do not add it again.");
+            sb.AppendLf("End with [[TASK_DONE]] only when the Dossier entry is in place.");
+        }
+        else
+        {
+            sb.AppendLf("The Orchestrator Completion-Gate found unfinished work in the previous run's own result/status evidence.");
+            sb.AppendLf("Resolve these items before doing anything else, then end with [[TASK_DONE]] only when the task is actually complete.");
+        }
         sb.AppendLf();
         foreach (var finding in findings.Take(MaxFindings))
         {

@@ -2964,6 +2964,13 @@
           <td><code>BuildBeforeNoBuildAsync</code> threw on every nonzero exit before recording command evidence. Report admission also required a test repeat even when its prerequisite build failed.</td>
           <td>The observed terminal was ReviewInfra. The corrected path records the red build under its planned step and reaches <code>ProductFailure</code> for a delivery compile error or <code>IntegrationBranchDefect</code> for a build already red on the integration branch. Two runner and two Task Server regression scenarios passed.</td>
         </tr>
+        <tr id="case-unrun-baseline-and-pre-diagnosis-worker">
+          <td>2026-10-12</td>
+          <td><code>AGT-3089</code><br><span class="small">unrun-baseline-and-pre-diagnosis-worker</span></td>
+          <td>AGT-3033, AGT-3032 and seven other cards were graded <code>ReviewInfra/DiagnosisMissing</code> 14 times in one day. Each retry ran the full suite again on the unchanged SHA (30 to 75 minutes per slot). The verdicts cited a baseline "already exiting 1 on the merge base" that was reused from an attempt whose merge-base test only printed "The argument ... is invalid".</td>
+          <td>The review hosts ran workers older than the AGT-2916 diagnosis contract, which never report a <code>Diagnosis</code> or a clean repeat, and every <code>ReviewInfra</code> result was retried. The runner cached a test-failures baseline that exited non-zero without a parsed failure name and reused it for 24 hours as a red merge base.</td>
+          <td>Each card used 2 of 3 retries. Now an unrun test-failures baseline ends as <code>ReviewInfra/BaselineUnavailable</code> and is never cached. Parser version 4 makes every older cache entry a miss. A report from a pre-diagnosis worker (outcome other than ReviewInfra, an undiagnosed failed deterministic command, no clean repeat) is graded <code>ReviewInfra/DiagnosisContractUnsupported</code>. It is not retried and escalates as <code>environmental</code>, naming the executor and the worker release. Upgrading the review hosts is an operator action.</td>
+        </tr>
       </tbody>
     </table>
 

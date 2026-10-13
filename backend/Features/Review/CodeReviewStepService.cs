@@ -393,6 +393,7 @@ public sealed class CodeReviewStepService
                 $"verdict: {statusToken}\n" +
                 $"summary: {safeSummary}\n" +
                 $"tag: {gradeTag}\n" +
+                (string.IsNullOrWhiteSpace(request.InputKey) ? string.Empty : $"{CodeReviewGradeReuse.InputKeyField}: {request.InputKey}\n") +
                 "---\n\n" +
                 $"# Code Review - Quality Grade: {gradeToken}\n\n" +
                 (string.IsNullOrWhiteSpace(summary) ? string.Empty : $"> {summary}\n\n") +
@@ -536,6 +537,14 @@ public sealed record CodeReviewStepRequest(
     /// read-only planning / research card is read as legitimate.
     /// </summary>
     public string CardMode { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Grade-mode input key (<see cref="CodeReviewGradeReuse.ComputeInputKey"/>),
+    /// persisted in the report frontmatter so the orchestrator can reuse an
+    /// unchanged grade within one open pipeline attempt. The service itself
+    /// never reuses: every call grades afresh.
+    /// </summary>
+    public string? InputKey { get; init; }
 }
 
 /// <summary>Per-call report returned by <see cref="CodeReviewStepService.RunAsync"/>.</summary>

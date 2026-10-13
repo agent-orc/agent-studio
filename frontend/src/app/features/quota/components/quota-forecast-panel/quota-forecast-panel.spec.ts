@@ -4,11 +4,11 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { QuotaForecastPanelComponent } from './quota-forecast-panel';
-import type { QuotaHistoryResponse } from '../../models/quota-history.model';
+import type { QuotaForecast, QuotaHistoryResponse } from '../../models/quota-history.model';
 
 const WEEKLY = 'Current week (all models)';
 
-function history(reachesFullBeforeReset: boolean): QuotaHistoryResponse {
+function history(reachesFullBeforeReset: boolean, weekly: Partial<QuotaForecast> = {}): QuotaHistoryResponse {
   return {
     cliType: 'claude', hours: 48, from: '2026-09-27T04:27:00Z', to: '2026-09-29T04:30:00Z',
     retentionDays: 14, rateLookbackHours: 3,
@@ -33,6 +33,7 @@ function history(reachesFullBeforeReset: boolean): QuotaHistoryResponse {
           rateFrom: '2026-09-29T01:27:00Z', forecastFullAt: '2026-09-29T12:57:00Z',
           resetAt: reachesFullBeforeReset ? '2026-10-02T08:00:00Z' : '2026-09-29T10:00:00Z',
           reachesFullBeforeReset,
+          ...weekly,
         },
       },
     ],
@@ -54,7 +55,7 @@ const routes = {
   },
 };
 
-async function render(reachesFullBeforeReset: boolean) {
+async function render(reachesFullBeforeReset: boolean, weekly: Partial<QuotaForecast> = {}) {
   await TestBed.configureTestingModule({
     imports: [QuotaForecastPanelComponent],
     providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
@@ -67,7 +68,7 @@ async function render(reachesFullBeforeReset: boolean) {
     snapshots: [{ cliType: 'claude', windows: [], fetchedAt: '2026-09-29T04:27:00Z' }],
   });
   http.expectOne(req => req.url === '/api/cli/quota/history'
-    && req.params.get('cli') === 'claude' && req.params.get('hours') === '48').flush(history(reachesFullBeforeReset));
+    && req.params.get('cli') === 'claude' && req.params.get('hours') === '48').flush(history(reachesFullBeforeReset, weekly));
   http.expectOne('/api/cli/quota/model-routes').flush(routes);
   fixture.detectChanges();
   return { fixture, http, el: fixture.nativeElement as HTMLElement };
@@ -101,5 +102,12 @@ describe('QuotaForecastPanelComponent', () => {
     const { el } = await render(false);
     expect(el.querySelector('[data-testid="quota-fallback"]')).toBeNull();
     expect(el.querySelector('[data-testid="quota-forecast-badge"]')).toBeNull();
+  });
+
+  it('shows no fallback notice when the reset time is unknown', async () => {
+    const { el } = await render(false, { status: 'unknown-reset', resetAt: null });
+    expect(el.querySelector('[data-testid="quota-forecast-sentence"]')?.textContent)
+      .toContain('the reset time is unknown');
+    expect(el.querySelector('[data-testid="quota-fallback"]')).toBeNull();
   });
 });

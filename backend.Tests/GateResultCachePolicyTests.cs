@@ -8,22 +8,35 @@ public sealed class GateResultCachePolicyTests
     [Fact]
     public void Local_toolchain_identity_changes_when_selected_sdk_changes_without_host_binary_change()
     {
-        var repository = Path.GetFullPath(Path.GetTempPath());
-        var commands = new[]
+        var repository = Path.Combine(Path.GetTempPath(), "agentstudio-toolchain-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(repository);
+        try
         {
-            new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
-        };
-        string Identity(string sdk) => GateResultCache.LocalToolchainIdentity(
-            commands, repository,
-            (executable, directory, argument) =>
+            // Keep the launcher constant while simulating two SDK selections.
+            // A gate host may run dotnet from a path absent in the test process.
+            var launcher = Path.Combine(repository, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+            File.WriteAllText(launcher, "unchanged host binary");
+            var commands = new[]
             {
-                Assert.Equal("--version", argument);
-                Assert.Equal(repository, directory);
-                // The resolved executable carries a platform extension on Windows (dotnet.exe).
-                return Path.GetFileNameWithoutExtension(executable) == "dotnet" ? sdk : "unchanged";
-            });
+                new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
+            };
+            string Identity(string sdk) => GateResultCache.LocalToolchainIdentity(
+                commands, repository,
+                (executable, directory, argument) =>
+                {
+                    Assert.Equal(launcher, executable);
+                    Assert.Equal(repository, directory);
+                    Assert.Equal("--version", argument);
+                    return sdk;
+                },
+                [repository]);
 
-        Assert.NotEqual(Identity("10.0.301"), Identity("10.0.302"));
+            Assert.NotEqual(Identity("10.0.301"), Identity("10.0.302"));
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+        }
     }
 
     [Fact]

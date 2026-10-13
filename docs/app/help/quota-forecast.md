@@ -43,8 +43,9 @@ The backend computes everything; the UI only renders it.
    than 20 minutes of span reads "Not enough readings". A flat or falling series
    is idle and has no forecast.
 4. **Forecast.** Linear extrapolation from the latest reading to 100 %,
-   compared with the latest known reset. An unknown reset counts as "before the
-   reset" so the warning is not hidden.
+   compared with the latest known reset. When the reset time is unknown the
+   status is `unknown-reset`: the sentence still gives the time of 100 %, but no
+   warning or fallback notice is shown, because the order is not known.
 
 Example from the night that motivated the view: 77 % at 01:27Z and 83 % at
 04:27Z give 2 %/h, so 100 % lands at 12:57Z, well before a Friday reset.
@@ -66,7 +67,7 @@ differ during a burst.
   `forecast` (`status`, `currentPct`, `currentAt`, `ratePctPerHour`, `rateFrom`,
   `forecastFullAt`, `resetAt`, `reachesFullBeforeReset`).
 - `forecast.status` is one of `no-data`, `insufficient-data`, `reached`, `idle`,
-  `full-before-reset`, `resets-first`.
+  `full-before-reset`, `resets-first`, `unknown-reset`.
 
 The forecast always reads the whole retained series, so a short `hours` range
 does not starve the rate window.

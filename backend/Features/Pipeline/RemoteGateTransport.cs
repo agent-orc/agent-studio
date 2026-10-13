@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
 
@@ -10,17 +11,57 @@ namespace AgentStudio.Pipeline;
 /// Bounded emergency transport for exact integration/promotion candidates.
 /// This does not mint Task Server run authority or publish a repository ref.
 /// </summary>
-public sealed class RemoteGateTransport(IConfiguration configuration,
-    ILogger<RemoteGateTransport> logger) : IRemoteGateTransport
+public sealed class RemoteGateTransport : IRemoteGateTransport
 {
+    /// <summary>
+    /// Age after which a GUID run folder under the local transport root is
+    /// treated as abandoned. The folder is last written at request.json; before
+    /// response.json can be the next write, at most 2 x InfrastructureTimeout
+    /// (remote mkdir, request scp), the bundle scp (at most
+    /// max(InfrastructureTimeout, 1,024 s) under the 1 GiB limit), the worker
+    /// SSH wait (at most 86,400 s + 150 s) and one more InfrastructureTimeout for
+    /// the response scp itself can pass. With Stable's 480 s that is about
+    /// 24.7 h. 26 h stays safe while InfrastructureTimeout is at most about
+    /// 29 minutes.
+    /// </summary>
+    internal static readonly TimeSpan StaleRunFolderAge = TimeSpan.FromHours(26);
+
+    internal static readonly TimeSpan SweepInterval = TimeSpan.FromHours(1);
+
+    private const long NeverSwept = long.MinValue;
+
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<RemoteGateTransport> _logger;
+    private readonly TimeProvider _time;
+    private readonly string _localRoot;
+    private readonly Action<string> _deleteDirectory;
+    private long _lastSweepTicks = NeverSwept;
+
+    public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
+        TimeProvider? timeProvider = null)
+        : this(configuration, logger, timeProvider ?? TimeProvider.System,
+            Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints)
+    {
+    }
+
+    internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
+        TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory)
+    {
+        _configuration = configuration;
+        _logger = logger;
+        _time = timeProvider;
+        _localRoot = localRoot;
+        _deleteDirectory = deleteDirectory;
+    }
+
     public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
         IReadOnlyList<string>? changedFiles, BuildProfile? profile,
         PostStepMode mode, TimeSpan timeout, CancellationToken ct)
     {
-        var options = RemoteGateOptions.Read(configuration);
+        var options = RemoteGateOptions.Read(_configuration);
         var runId = Guid.NewGuid().ToString("N");
-        var localRoot = Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport");
-        var local = Path.Combine(localRoot, runId);
+        var local = Path.Combine(_localRoot, runId);
         var remote = options.Root + "/" + runId;
         var infra = request.InfrastructureTimeout > TimeSpan.Zero
             ? request.InfrastructureTimeout : TimeSpan.FromMinutes(2);
@@ -31,6 +72,7 @@ public sealed class RemoteGateTransport(IConfiguration configuration,
         var overallSeconds = checked((int)Math.Ceiling((queue + timeout + infra * 3 + TimeSpan.FromMinutes(2)).TotalSeconds));
         if (overallSeconds is < 1 or > 86400)
             throw new InvalidOperationException("Remote gate total budget must be at most 24 hours.");
+        TrySweepStaleRunFolders();
         Directory.CreateDirectory(local);
         var remoteCreated = false;
         try
@@ -111,10 +153,10 @@ public sealed class RemoteGateTransport(IConfiguration configuration,
                 throw new IOException(TransferFailure(bundleBytes, transfer.Elapsed, transferBudget, exception.Message), exception);
             }
             transfer.Stop();
-            logger.LogInformation("remote_gate_bundle_transferred run_id={RunId} bundle_bytes={BundleBytes} transfer_ms={TransferMs} budget_seconds={BudgetSeconds}",
+            _logger.LogInformation("remote_gate_bundle_transferred run_id={RunId} bundle_bytes={BundleBytes} transfer_ms={TransferMs} budget_seconds={BudgetSeconds}",
                 runId, bundleBytes, transfer.ElapsedMilliseconds, transferBudget.TotalSeconds);
             await Scp(options, local, "request.json", options.Host + ":" + remote + "/request.json", infra, ct);
-            logger.LogInformation("remote_gate_dispatched run_id={RunId} host={Host} expected_sha={ExpectedSha} bundle_sha256={Digest} bundle_bytes={BundleBytes} transfer_ms={TransferMs}",
+            _logger.LogInformation("remote_gate_dispatched run_id={RunId} host={Host} expected_sha={ExpectedSha} bundle_sha256={Digest} bundle_bytes={BundleBytes} transfer_ms={TransferMs}",
                 runId, options.Host, request.ExpectedSha, digest, bundleBytes, transfer.ElapsedMilliseconds);
             var command = "cd " + Quote(remote) + " && exec timeout --signal=TERM --kill-after=120s "
                 + overallSeconds + "s env DOTNET_PROCESSOR_COUNT=" + options.ProcessorCount
@@ -152,15 +194,98 @@ public sealed class RemoteGateTransport(IConfiguration configuration,
                 try { await Ssh(options, local, cleanup, TimeSpan.FromSeconds(20), CancellationToken.None); }
                 catch (Exception exception)
                 {
-                    logger.LogWarning(exception, "remote_gate_cleanup_pending host={Host} run_id={RunId}", options.Host, runId);
+                    _logger.LogWarning(exception, "remote_gate_cleanup_pending host={Host} run_id={RunId}", options.Host, runId);
                 }
             }
-            // The only recursively removed local path was constructed from our
-            // fixed temp namespace and a generated GUID, never a request path.
-            try { Directory.Delete(local, recursive: true); }
-            catch (Exception exception) { logger.LogWarning(exception, "remote_gate_local_transport_cleanup_failed run_id={RunId}", runId); }
+            DeleteLocalRunFolder(local, runId);
         }
     }
+
+    /// <summary>
+    /// Removes this run's local folder, including the read-only pack files git
+    /// writes, without following reparse points. A failure is logged and never
+    /// changes the gate result.
+    /// </summary>
+    internal void DeleteLocalRunFolder(string local, string runId)
+    {
+        // The only recursively removed local path was constructed from our
+        // fixed temp namespace and a generated GUID, never a request path.
+        try { _deleteDirectory(local); }
+        catch (Exception exception) { _logger.LogWarning(exception, "remote_gate_local_transport_cleanup_failed run_id={RunId}", runId); }
+    }
+
+    /// <summary>
+    /// Sweeps abandoned run folders at most once per <see cref="SweepInterval"/>
+    /// per process. Parallel gates race on the last-sweep ticks, so exactly one
+    /// caller sweeps; the others continue immediately.
+    /// </summary>
+    internal bool TrySweepStaleRunFolders()
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var last = Interlocked.Read(ref _lastSweepTicks);
+        if (last != NeverSwept && now.Ticks - last < SweepInterval.Ticks) return false;
+        if (Interlocked.CompareExchange(ref _lastSweepTicks, now.Ticks, last) != last) return false;
+        try { SweepStaleRunFolders(now); }
+        catch (Exception exception) { _logger.LogWarning(exception, "remote_gate_local_transport_sweep_failed"); }
+        return true;
+    }
+
+    /// <summary>
+    /// Deletes direct child directories of the transport root whose name has
+    /// the <c>Guid.ToString("N")</c> shape and whose last write is older than
+    /// <see cref="StaleRunFolderAge"/>. Dev and Stable share this root, so the
+    /// name shape and the age are the only ownership proof; files, other names
+    /// and top-level reparse points are never touched.
+    /// </summary>
+    private void SweepStaleRunFolders(DateTime utcNow)
+    {
+        if (!Directory.Exists(_localRoot)) return;
+        var deadline = utcNow - StaleRunFolderAge;
+        var removed = 0;
+        var failed = 0;
+        foreach (var candidate in Directory.EnumerateDirectories(_localRoot).ToList())
+        {
+            if (!IsAbandonedRunFolder(candidate, deadline)) continue;
+            try
+            {
+                _deleteDirectory(candidate);
+                removed++;
+            }
+            catch (Exception exception)
+            {
+                // The other instance sharing this root may have swept it first.
+                if (!Directory.Exists(candidate)) removed++;
+                else
+                {
+                    failed++;
+                    AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate stale run folder sweep");
+                }
+            }
+        }
+        _logger.Log(failed > 0 ? LogLevel.Warning : LogLevel.Information,
+            "remote_gate_local_transport_sweep removed={Removed} failed={Failed}", removed, failed);
+    }
+
+    private static bool IsAbandonedRunFolder(string candidate, DateTime deadline)
+    {
+        try
+        {
+            var info = new DirectoryInfo(candidate);
+            return IsRunFolderName(info.Name)
+                && (info.Attributes & FileAttributes.ReparsePoint) == 0
+                && info.LastWriteTimeUtc <= deadline;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The folder vanished or cannot be inspected; it is not a proven
+            // abandoned run folder, so it is left alone.
+            AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate stale run folder inspection");
+            return false;
+        }
+    }
+
+    internal static bool IsRunFolderName(string name)
+        => name.Length == 32 && name.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static Task Git(string cwd, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct,
         Action<string>? output = null)
