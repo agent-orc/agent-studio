@@ -101,6 +101,19 @@ public sealed class RemoteConceptReviewTests : IDisposable
         Assert.DoesNotContain(new string('x', 70_000), prompt);
     }
 
+    [Fact]
+    public void Project_host_requirement_is_sealed_into_review_plan()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Review the concept.");
+
+        Assert.False(BuildPlan().RequireDifferentHostFailureDomain);
+        Assert.True(BuildPlan(new ProjectSettings
+        {
+            RequireDifferentReviewHost = true,
+        }).RequireDifferentHostFailureDomain);
+    }
+
     private ReviewPlanDto BuildPlan(ProjectSettings? settings = null)
     {
         var config = new ConfigurationBuilder().Build();

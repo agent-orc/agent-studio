@@ -7,7 +7,7 @@
     @if (showIdentity()) {
       @if (releaseId(); as id) {
         @if (id !== releaseLabel()) {
-          <code class="release__detail" [attr.data-testid]="testIdPrefix() + '-id'">{{ id }}</code>
+          <code class="release__detail" [attr.title]="id" [attr.data-testid]="testIdPrefix() + '-id'">{{ id }}</code>
         }
       }
       @if (commit(); as sha) {

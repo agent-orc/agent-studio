@@ -605,6 +605,14 @@
   <strong>AGT-3062 · Engine and execution decisions</strong>
   <span>Delivered: ADR-0078 records D14 to D21 and the decided actor and typed-action model; the target architecture and contracts align on engine placement, runner claims, fix rounds, per-card budget, review host preference and process profiles.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3069" data-delivered-at="2026-10-12" data-slice="Review host placement">
+  <strong>AGT-3069 · Review host placement</strong>
+  <span>Delivered: D19 A prefers an idle eligible review executor on another host, falls back immediately when none is available, and exposes a project hard requirement with a named wait reason. Coding and review host identities are recorded on the subject and attempt; focused claim tests cover both placement modes.</span>
+</li>
+<li data-implementation-entry="" data-task-key="AGT-3071" data-delivered-at="2026-10-12" data-slice="D19 to D21 architecture record">
+  <strong>AGT-3071 · D19 to D21 architecture record</strong>
+  <span>Delivered: ADR-0078 and the canonical target architecture record review host preference, interchangeable leased engine instances and the Operations Broker documentation and UI term.</span>
+</li>
 <!-- agent-studio:implementation-log:end --></ol></section><!-- agent-studio:implementation-section:end -->
 <section id="sources"><h2>Code index</h2><p>Every reference resolves to an inspected writer, reader or wire contract. Line numbers and SHA-256 file hashes are pinned in <a href="evidence.json">evidence.json</a>. Revalidate them if develop advances.</p><table><thead><tr><th>Ref</th><th>File, location and purpose</th></tr></thead><tbody>
 <tr id="src-A"><td>A</td><td class="source-path"><a href="../../backend/Features/Runner/AttemptAuthorityService.cs">backend/Features/Runner/AttemptAuthorityService.cs</a>, line 45: <code>public const string RelativePath</code>. File-backed attempt authority; acquisition, fencing, epochs, settlement and restart adoption.</td></tr>

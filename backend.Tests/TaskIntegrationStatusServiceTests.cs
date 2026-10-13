@@ -1469,18 +1469,18 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
     [Theory]
     [Trait("Category", "MachineBound")]
-    [InlineData(null, false, true)]
-    [InlineData("", false, true)]
-    [InlineData("   ", false, true)]
-    [InlineData("matching", true, true)]
-    [InlineData("old-ref", false, true)]
-    [InlineData(null, false, false)]
-    [InlineData("", false, false)]
-    [InlineData("   ", false, false)]
-    [InlineData("matching", true, false)]
-    [InlineData("old-ref", false, false)]
-    public void ArchiveGuard_AndReconciliation_RequireCurrentTargetFingerprint(
-        string? fingerprint, bool allowed, bool withReviewSubject)
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("matching", true)]
+    [InlineData("old-ref", true)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("matching", false)]
+    [InlineData("old-ref", false)]
+    public void ArchiveGuard_AndReconciliation_IgnoreTargetHeadFingerprint(
+        string? fingerprint, bool withReviewSubject)
     {
         var repo = SeedDevelopMainRepo();
         var sha = RunGit(repo, "rev-parse develop").Out.Trim();
@@ -1523,13 +1523,10 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         var outcome = states.MoveJob(card.Id, TaskStates.Archive, watchPath);
 
-        Assert.Equal(allowed ? MoveJobStatus.Success : MoveJobStatus.IntegrationFailed, outcome.Status);
-        Assert.Equal(allowed ? null : TaskStates.AutoReview, reconciliationTarget);
-        Assert.Equal(reconciliationTarget is null, outcome.Status == MoveJobStatus.Success);
-        Assert.Equal(allowed ? TaskStates.Archive : TaskStates.Completed,
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        Assert.Null(reconciliationTarget);
+        Assert.Equal(TaskStates.Archive,
             scanner.FindJob(card.Id, watchPath)?.State);
-        if (!allowed)
-            Assert.Contains("Reintegrate and review the current delivery.", outcome.Message);
     }
 
     [Theory]

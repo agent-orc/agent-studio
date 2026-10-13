@@ -19,8 +19,9 @@
       </span>
     }
     @if (h.serviceRole === 'review' && reviewQuotaLabel()) {
-      <span class="role__plane" data-testid="remote-host-review-plane">
-        {{ reviewQuotaLabel() }} · ceiling {{ slotTotal() ?? 'n/a' }} · {{ throttledShareLabel() }}
+      <span class="role__plane" data-testid="remote-host-review-plane"
+            [attr.title]="reviewQuotaLabel() + ' · ' + (slotTotal() ?? 'n/a') + ' slot ceiling · ' + throttledShareLabel()">
+        {{ reviewQuotaLabel() }} · {{ slotTotal() ?? 'n/a' }} slot ceiling · {{ throttledShareLabel() }}
       </span>
     }
     @if (h.reviewPlane?.sustainedThrottling) {
@@ -48,16 +49,16 @@
   {{ activeSlots() }} / {{ slotTotal() ?? 'n/a' }}
 </td>
 <td class="role__load role__number">
-  @if (h.reviewPlane?.throttledShare !== null && h.reviewPlane?.throttledShare !== undefined) {
-    <span data-testid="remote-host-review-throttled-share">{{ ((h.reviewPlane?.throttledShare ?? 0) * 100).toFixed(0) }}%</span>
-  } @else {
-    <span class="role__placeholder" title="Reported once per machine">–</span>
-  }
+  <span class="role__placeholder" title="Host CPU load is reported once per machine">–</span>
 </td>
 <td class="role__activity"><span class="role__placeholder" title="Reported once per machine">–</span></td>
 <td class="role__release" data-testid="remote-host-role-release" [attr.title]="releaseTooltip()">
-  <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"
-    testIdPrefix="remote-host-role-release" [showIdentity]="true" />
+  @if (showRelease()) {
+    <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"
+      testIdPrefix="remote-host-role-release" [showIdentity]="true" />
+  } @else {
+    <span class="role__placeholder" title="Reported once per machine">–</span>
+  }
 </td>
 <td class="role__actions">
   <div class="role__actions-wide">

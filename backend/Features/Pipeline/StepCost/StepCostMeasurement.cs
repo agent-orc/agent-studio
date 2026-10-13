@@ -68,7 +68,8 @@ public static class StepCostMeasurement
 
     public static bool IsTerminal(PipelineStepStatus status) => status is
         PipelineStepStatus.Passed or PipelineStepStatus.Failed
-        or PipelineStepStatus.Skipped or PipelineStepStatus.NotApplicable;
+        or PipelineStepStatus.Skipped or PipelineStepStatus.NotApplicable
+        or PipelineStepStatus.NeedsDecision;
 
     public static long Tokens(PipelineStepExecution row)
         => row.InputTokens + row.OutputTokens + row.CacheReadTokens + row.CacheCreationTokens;

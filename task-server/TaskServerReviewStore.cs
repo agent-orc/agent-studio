@@ -33,6 +33,7 @@ public sealed partial class TaskServerStore
         await AddColumnIfMissingAsync(connection, "runs", "result_ref", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "runs", "source_bundle_artifact_id", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "runs", "source_bundle_sha256", "TEXT", ct);
+        await AddColumnIfMissingAsync(connection, "runs", "coding_host_id", "TEXT", ct);
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS review_subjects(
                 id TEXT PRIMARY KEY,
@@ -104,6 +105,14 @@ public sealed partial class TaskServerStore
         await AddColumnIfMissingAsync(connection, "review_attempts", "port_base", "INTEGER", ct);
         await AddColumnIfMissingAsync(connection, "review_attempts", "resource_namespace", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "review_deliveries", "response_json", "TEXT", ct);
+        await ExecuteAsync(connection, """
+            UPDATE review_subjects
+               SET coding_host_id = (
+                   SELECT COALESCE(r.coding_host_id, runner.host_id)
+                     FROM runs r LEFT JOIN runners runner ON runner.id = r.runner_id
+                    WHERE r.id = review_subjects.source_run_id)
+             WHERE coding_host_id IS NULL;
+            """, ct);
         await BackfillReviewResourceNamespacesAsync(connection, ct);
     }
 
@@ -162,9 +171,11 @@ public sealed partial class TaskServerStore
 
             await using (var command = Command(connection, """
                 SELECT r.task_id, r.status, r.result_sha, r.repository_id, r.repository_url,
-                       r.result_ref, r.source_bundle_artifact_id, r.source_bundle_sha256, t.state
+                       r.result_ref, r.source_bundle_artifact_id, r.source_bundle_sha256, t.state,
+                       COALESCE(r.coding_host_id, runner.host_id)
                   FROM runs r
                   JOIN tasks t ON t.id = r.task_id
+                  LEFT JOIN runners runner ON runner.id = r.runner_id
                  WHERE r.id = $run;
                 """, transaction, ("$run", request.SourceRunId)))
             await using (var reader = await command.ExecuteReaderAsync(ct))
@@ -184,6 +195,11 @@ public sealed partial class TaskServerStore
                 ValidateOptionalSourceField(reader, 5, request.ResultRef, "result ref");
                 ValidateOptionalSourceField(reader, 6, request.SourceBundleArtifactId, "source bundle artifact");
                 ValidateOptionalSourceField(reader, 7, request.SourceBundleSha256, "source bundle digest");
+                var codingHost = reader.IsDBNull(9) ? null : reader.GetString(9);
+                if (codingHost is not null && request.CodingHostId is not null
+                    && !string.Equals(codingHost, request.CodingHostId, StringComparison.Ordinal))
+                    throw new TaskServerConflictException("coding-host-mismatch", "Review coding host does not match the source run executor host.");
+                request = request with { CodingHostId = codingHost ?? request.CodingHostId };
             }
 
             if (request.Plan.BriefSha256 is { } briefHash)
@@ -302,6 +318,8 @@ public sealed partial class TaskServerStore
             string? capabilityBlockReason = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
             var unclaimable = new List<ReviewUnclaimableAttemptDto>();
+            string? hostWaitReason = null;
+            string? hostWaitMessage = null;
             // Read one page at a time so a claimable attempt cannot be hidden
             // behind a page of plans this executor cannot run.
             async Task<int> ScanCandidatesAsync(int offset)
@@ -324,13 +342,9 @@ public sealed partial class TaskServerStore
                              OR (a.status = 'leased' AND a.expires_at <= $now)
                            )
                        AND t.state = '4-auto-review'
-                       AND NOT (
-                             json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
-                             AND s.coding_host_id = $host
-                           )
                      ORDER BY a.created_at, a.attempt_number, a.id
                      LIMIT $limit OFFSET $offset;
-                    """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId),
+                    """, transaction, ("$now", Iso(UtcNow)),
                     ("$limit", ClaimCandidatePageSize), ("$offset", offset));
                 await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
@@ -373,6 +387,30 @@ public sealed partial class TaskServerStore
                         capabilityBlockReason = candidateAdmission.Reason;
                         continue;
                     }
+                    if (string.Equals(candidate.Subject.CodingHostId, executor.HostId, StringComparison.Ordinal))
+                    {
+                        var otherIdle = !candidate.Subject.Plan.RequireDifferentHostFailureDomain
+                            && await HasIdleEligibleDifferentReviewHostAsync(
+                                connection, transaction, request, candidate.Subject, executor.HostId, ct);
+                        var placement = ReviewHostPlacementPolicy.Decide(
+                            candidate.Subject.CodingHostId, executor.HostId,
+                            candidate.Subject.Plan.RequireDifferentHostFailureDomain, otherIdle);
+                        if (placement == ReviewHostPlacementDecision.WaitForRequiredHost)
+                        {
+                            hostWaitReason = ReviewClaimEmptyReasons.DifferentHostRequired;
+                            hostWaitMessage = $"Review waits for an eligible executor on a host other than coding host '{executor.HostId}' because this project requires host separation.";
+                            continue;
+                        }
+                        if (placement == ReviewHostPlacementDecision.YieldToOtherHost)
+                        {
+                            if (hostWaitReason is null)
+                            {
+                                hostWaitReason = ReviewClaimEmptyReasons.DifferentHostPreferred;
+                                hostWaitMessage = $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'.";
+                            }
+                            continue;
+                        }
+                    }
                     attempt = candidate.Attempt;
                     subject = candidate.Subject;
                     capabilityAdmission = candidateAdmission;
@@ -388,9 +426,13 @@ public sealed partial class TaskServerStore
                 // AGT-2987: a subject the registered capabilities cannot serve
                 // used to be skipped without a word. Name it instead.
                 if (capabilityBlock is null) unclaimableToLog = unclaimable;
-                response = capabilityBlock is not null
+                response = hostWaitReason == ReviewClaimEmptyReasons.DifferentHostRequired
+                    ? ReviewClaimEmptyResponses.Empty(hostWaitReason, hostWaitMessage!)
+                    : capabilityBlock is not null
                     ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
                         with { AdmissionReason = capabilityBlockReason }
+                    : hostWaitReason is not null && unclaimable.Count == 0
+                        ? ReviewClaimEmptyResponses.Empty(hostWaitReason, hostWaitMessage!)
                     : ReviewClaimEmptyResponses.ForQueue(
                         unclaimable,
                         ReviewClaimEmptyReasons.QueueEmpty,
@@ -472,6 +514,55 @@ public sealed partial class TaskServerStore
         }, ct);
         LogUnclaimableReviews(request.ExecutorId, unclaimableToLog);
         return response!;
+    }
+
+    private async Task<bool> HasIdleEligibleDifferentReviewHostAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ReviewClaimRequest request,
+        ReviewSubjectDto subject,
+        string codingHostId,
+        CancellationToken ct)
+    {
+        var alternatives = new List<(string RunnerId, string HostId, IReadOnlySet<string> Capabilities)>();
+        await using (var command = Command(connection, """
+            SELECT id, host_id, capabilities_json
+              FROM runners
+             WHERE status = 'active'
+               AND host_id <> $host
+               AND last_seen_at > $fresh
+               AND COALESCE(effective_max_parallelism, role_max_parallelism, 1) > (
+                   SELECT COUNT(*) FROM review_attempts a
+                    WHERE a.executor_id = runners.id
+                      AND (a.status = 'process-unknown'
+                           OR (a.status = 'leased' AND a.expires_at > $now)))
+             ORDER BY id;
+            """, transaction, ("$host", codingHostId),
+            ("$fresh", Iso(UtcNow.AddMinutes(-2))), ("$now", Iso(UtcNow))))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                var capabilities = (JsonSerializer.Deserialize<string[]>(reader.GetString(2), ReviewJson) ?? [])
+                    .ToHashSet(StringComparer.Ordinal);
+                if (capabilities.Contains(ReviewCapabilities.ReviewExecutor)
+                    && !capabilities.Contains(ReviewCapabilities.CodingExecutor))
+                    alternatives.Add((reader.GetString(0), reader.GetString(1), capabilities));
+            }
+        }
+        foreach (var other in alternatives)
+        {
+            if (MissingSubjectCapabilities(new ReviewExecutorRow(other.HostId, other.Capabilities), subject).Count > 0)
+                continue;
+            var requirements = RequiredReviewCapabilities(request.RequiredCapabilities, subject);
+            var admission = await EvaluateCapabilityAdmissionAsync(
+                connection, transaction, other.RunnerId, other.HostId, requirements, ct);
+            if (!admission.Eligible) continue;
+            var envelope = await EvaluateHostEnvelopeAsync(
+                connection, transaction, other.HostId, HostRoles.Review, other.RunnerId, ct);
+            if (envelope.Admitted) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -1912,6 +2003,8 @@ public sealed partial class TaskServerStore
             || !string.Equals(existing.SourceRunId, request.SourceRunId, StringComparison.Ordinal)
             || !string.Equals(existing.RepositoryId, request.RepositoryId, StringComparison.Ordinal)
             || !string.Equals(existing.ExpectedResultSha, request.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
+            || (request.CodingHostId is not null
+                && !string.Equals(existing.CodingHostId, request.CodingHostId, StringComparison.Ordinal))
             || !string.Equals(existing.ReviewPolicyHash, request.ReviewPolicyHash, StringComparison.Ordinal)
             || HashJson(existing.Plan) != HashJson(request.Plan))
             throw new TaskServerConflictException("idempotency-conflict", "Review subject idempotency key is bound to different immutable facts.");

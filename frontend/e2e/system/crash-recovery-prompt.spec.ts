@@ -73,7 +73,48 @@ async function measureCoreReads(page: Page, baseUrl: string, keys: readonly stri
 
 test.describe('Crash recovery prompt', () => {
   test.describe.configure({ timeout: 600_000 }); // Cold isolated backend builds can be slow on a loaded runner.
+  test.describe('with a ref moved under the checkout', () => {
+    test.skip(process.env.PW_PREBUILT === '1' && process.env.PW_E2E_PROFILE !== 'ref-drift', 'Requires the ref-drift repository profile.');
+    test.use({ refDriftRepository: true });
+    test('refuses the commit endpoint and keeps Leave as is available', async ({ page, devBackend }) => {
+      const response = await page.request.get(`${devBackend.baseUrl}/api/crash-recovery/pending`);
+      expect(response.ok()).toBe(true);
+      const item = (await response.json()).pending.find((entry: { classification: string }) => entry.classification === 'ref-drift');
+      expect(item).toBeTruthy();
+      expect(item.behindCommits).toBe(1);
+      expect(item.unknownBlobs).toContain('unique-worktree.txt');
+      expect(item.unknownBlobs).toEqual(['unique-worktree.txt']);
+      expect(item.unknownBlobs).not.toContain('added-in-commit.txt');
+      const commit = await page.request.post(`${devBackend.baseUrl}/api/crash-recovery/pending/${item.id}/commit`, {
+        headers: { 'X-Client-Id': 'local-default' },
+      });
+      expect(commit.status()).toBe(400);
+      expect((await commit.json()).error).toContain('reverse diff');
+
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      await page.getByTestId('crash-recovery-entry').click();
+      const dialog = page.getByTestId('crash-recovery-prompt');
+      await expect(dialog).toContainText('Checkout lags behind');
+      await expect(dialog).toContainText('1 file with content absent from Git objects');
+      await expect(dialog.getByTestId('crash-recovery-commit')).toHaveCount(0);
+      const evidenceDir = process.env['JOB_RESULTS_DIR'];
+      if (evidenceDir) {
+        await mkdir(evidenceDir, { recursive: true });
+        await setTheme(page, 'light');
+        await page.screenshot({ path: join(evidenceDir, 'ref-drift-light--real.png') });
+        await setTheme(page, 'dark');
+        await page.screenshot({ path: join(evidenceDir, 'ref-drift-dark--real.png') });
+      }
+      await expect(dialog.getByTestId('crash-recovery-dismiss')).toBeVisible();
+      const dismiss = await page.request.post(`${devBackend.baseUrl}/api/crash-recovery/pending/${item.id}/dismiss`, {
+        headers: { 'X-Client-Id': 'local-default' },
+      });
+      expect(dismiss.ok()).toBe(true);
+      expect((await (await page.request.get(`${devBackend.baseUrl}/api/crash-recovery/pending`)).json()).pending).toEqual([]);
+    });
+  });
   test.describe('with a real pending record', () => {
+    test.skip(process.env.PW_PREBUILT === '1' && process.env.PW_E2E_PROFILE !== 'recovery', 'Requires the recovery repository profile.');
     // The dev-backend fixture creates a disposable dirty Git repository before boot.
     // The pending item below is produced by CrashRecoveryService, not a route mock.
     test.use({ recoveryRepository: true });
@@ -223,6 +264,7 @@ test.describe('Crash recovery prompt', () => {
   });
 
   test('does not seed the dirty recovery repository for a backend that did not opt in', async ({ page, devBackend }) => {
+    test.skip(process.env.PW_PREBUILT === '1' && ['recovery', 'ref-drift'].includes(process.env.PW_E2E_PROFILE ?? ''), 'This profile intentionally seeds a recovery repository.');
     const watchPaths = await (await page.request.get(`${devBackend.baseUrl}/api/watch-paths`)).json();
     expect(watchPaths[0].rootPath).not.toContain('recovery-repository');
     const pending = await (await page.request.get(`${devBackend.baseUrl}/api/crash-recovery/pending`)).json();
@@ -328,6 +370,38 @@ test.describe('Crash recovery prompt', () => {
     await dialog.getByTestId('crash-recovery-commit').click();
     await expect(dialog).toBeHidden();
     expect(commitCalled).toBe(true);
+  });
+
+  test('shows ref drift without offering a commit', async ({ page }) => {
+    let commitCalled = false;
+    await page.route('**/api/crash-recovery/pending', route => route.fulfill({ json: { pending: [{
+      id: 'drift-1', createdAt: '2026-07-01T00:00:00Z', detectedAt: '2026-10-11T00:00:00Z',
+      projectName: 'Demo', jobId: null, repoRoot: '/repo', files: ['deleted.txt', 'unique.txt'],
+      unknownBlobs: ['unique.txt'], branch: 'develop', behindCommits: 3,
+      insertions: 2, deletions: 140, indexLock: '.git/index.lock: 4 bytes, 30 seconds old',
+      classification: 'ref-drift', message: 'rescue',
+      reason: 'Checkout lags behind develop by 3 commits (ref moved under the checkout).',
+    }] } }));
+    await page.route('**/api/crash-recovery/pending/drift-1/commit', route => {
+      commitCalled = true;
+      return route.fulfill({ status: 400 });
+    });
+    await page.goto('/');
+    await page.getByTestId('crash-recovery-entry').click();
+    const dialog = page.getByTestId('crash-recovery-prompt');
+    await expect(dialog).toContainText('Checkout lags behind develop by 3 commits');
+    await expect(dialog).toContainText('2 files, 2 insertions, 140 deletions');
+    await expect(dialog).toContainText('unique.txt');
+    await expect(dialog.getByTestId('crash-recovery-commit')).toHaveCount(0);
+    expect(commitCalled).toBe(false);
+    const evidenceDir = process.env['JOB_RESULTS_DIR'];
+    if (evidenceDir) {
+      await mkdir(evidenceDir, { recursive: true });
+      await setTheme(page, 'light');
+      await page.screenshot({ path: join(evidenceDir, 'ref-drift-light--mocked.png') });
+      await setTheme(page, 'dark');
+      await page.screenshot({ path: join(evidenceDir, 'ref-drift-dark--mocked.png') });
+    }
   });
 
   test('keeps the board interactive while unattributed read-evidence sidecars stay uncommitted', async ({ page, devBackend }) => {

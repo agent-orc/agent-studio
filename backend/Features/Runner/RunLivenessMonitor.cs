@@ -151,7 +151,8 @@ public sealed class RunLivenessMonitor
             foreach (var laneFolder in _taskAccess.ListLaneFolders(entry.Path, TaskStates.Progress))
             {
                 ct.ThrowIfCancellationRequested();
-                if (_scanner.FindJob(laneFolder.Slug, entry.Path)?.Fixture == true)
+                var job = _scanner.FindJob(laneFolder.Slug, entry.Path);
+                if (job?.Fixture == true)
                     continue;
                 var folder = laneFolder.FolderPath;
                 // Slice B owns a valid steer-pending wait: it intentionally has
@@ -167,13 +168,12 @@ public sealed class RunLivenessMonitor
                 // A folder-shaped orphan (no task.json) is not a runnable run;
                 // leave it to StaleProgressArchiver's debris/mid-move handling.
                 var hasJobJson = File.Exists(Path.Combine(folder, "task.json"));
-                var taskKey = hasJobJson ? TryReadTaskKey(folder) ?? laneFolder.Slug : laneFolder.Slug;
                 candidates.Add(new Candidate(
                     laneFolder.Slug,
                     folder,
                     hasJobJson,
                     isActiveHere,
-                    HasRemoteLeaseHistory: _leases?.Inspect(taskKey).Lease is not null,
+                    HasRemoteLeaseHistory: HasRemoteLeaseHistory(job, folder, laneFolder.Slug, hasJobJson),
                     HasLiveHeartbeat: isActiveHere || _pickupLock.HasLiveOwner(folder),
                     HasVisibleWaitingState: hasJobJson && HasVisibleWaitingState(folder),
                     CoreRunFinished: hasJobJson && RunFinishedSignal.CoreRunFinished(folder),
@@ -468,6 +468,25 @@ public sealed class RunLivenessMonitor
             return doc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// The claim endpoints lease a card under <c>Key ?? TaskKey ?? Id</c>. A card
+    /// without a stable key is leased under its composite scanner key, which
+    /// task.json never carries, so the task.json key alone misses that lease and
+    /// demoted a live remote claim to 2-ready under a concurrent prompt save
+    /// (AGT-3075). Every identity the card can be leased under is checked.
+    /// </summary>
+    private bool HasRemoteLeaseHistory(TaskInfo? job, string folder, string slug, bool hasJobJson)
+    {
+        if (_leases is null) return false;
+        var claimKey = !string.IsNullOrWhiteSpace(job?.Key) ? job.Key
+            : !string.IsNullOrWhiteSpace(job?.TaskKey) ? job.TaskKey
+            : job?.Id;
+        return new[] { claimKey, hasJobJson ? TryReadTaskKey(folder) : null, slug }
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.Ordinal)
+            .Any(key => _leases.Inspect(key!).Lease is not null);
     }
 
     private static string? TryReadTaskKey(string jobFolder)
