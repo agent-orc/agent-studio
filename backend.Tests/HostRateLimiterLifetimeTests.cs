@@ -19,7 +19,6 @@ namespace AgentStudio.Tests;
 /// boot. The public-demo profile disposes its global limiter when the host
 /// stops; profiles without a limit never create the rate limiter.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class HostRateLimiterLifetimeTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(
@@ -34,31 +33,22 @@ public sealed class HostRateLimiterLifetimeTests : IDisposable
     [Fact]
     public async Task Public_demo_global_limiter_is_disposed_when_the_host_stops()
     {
-        var previous = Environment.GetEnvironmentVariable("Security__Profile");
-        Environment.SetEnvironmentVariable("Security__Profile", ExecutionAdmissionPolicy.PublicDemoProfile);
-        try
+        System.Threading.RateLimiting.PartitionedRateLimiter<HttpContext>? limiter;
+        using (var factory = BuildFactory(ExecutionAdmissionPolicy.PublicDemoProfile, onRateLimiterOptions: null))
         {
-            System.Threading.RateLimiting.PartitionedRateLimiter<HttpContext>? limiter;
-            using (var factory = BuildFactory(ExecutionAdmissionPolicy.PublicDemoProfile, onRateLimiterOptions: null))
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
             {
-                using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-                {
-                    BaseAddress = new Uri("https://demo.test"),
-                    HandleCookies = false,
-                });
-                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
-                limiter = factory.Services.GetRequiredService<IOptions<RateLimiterOptions>>().Value.GlobalLimiter;
-                Assert.NotNull(limiter);
-                using var lease = limiter.AttemptAcquire(new DefaultHttpContext());
-                Assert.True(lease.IsAcquired);
-            }
+                BaseAddress = new Uri("https://demo.test"),
+                HandleCookies = false,
+            });
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
+            limiter = factory.Services.GetRequiredService<IOptions<RateLimiterOptions>>().Value.GlobalLimiter;
+            Assert.NotNull(limiter);
+            using var lease = limiter.AttemptAcquire(new DefaultHttpContext());
+            Assert.True(lease.IsAcquired);
+        }
 
-            Assert.Throws<ObjectDisposedException>(() => limiter.AttemptAcquire(new DefaultHttpContext()));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("Security__Profile", previous);
-        }
+        Assert.Throws<ObjectDisposedException>(() => limiter.AttemptAcquire(new DefaultHttpContext()));
     }
 
     [Fact]
@@ -78,12 +68,11 @@ public sealed class HostRateLimiterLifetimeTests : IDisposable
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, configuration) =>
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["TaskRepository"] = _workspace,
-                    ["Security:Profile"] = profile,
-                }));
+            builder.UseTestSettings(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _workspace,
+                ["Security:Profile"] = profile,
+            });
             if (onRateLimiterOptions is not null)
             {
                 builder.ConfigureTestServices(services =>

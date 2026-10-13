@@ -12,13 +12,6 @@ using RClaim = Runner::AgentRunner.RunnerClaimRequest;
 
 namespace AgentStudio.Tests;
 
-[CollectionDefinition(WebApplicationFactorySerialCollection.Name, DisableParallelization = true)]
-public sealed class WebApplicationFactorySerialCollection
-{
-    public const string Name = "WebApplicationFactorySerial";
-}
-
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class NetworkedSecurityEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));

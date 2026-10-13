@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -20,12 +21,14 @@ namespace AgentStudio.Tests;
 /// broader net behind it: every unsafe method is denied outright and every
 /// safe method must match an explicit read allowlist.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(
         Path.GetTempPath(),
         "studio-public-demo-edge-" + Guid.NewGuid().ToString("N"));
+    private readonly string _secondWorkspace = Path.Combine(
+        Path.GetTempPath(),
+        "studio-public-demo-edge-second-" + Guid.NewGuid().ToString("N"));
 
     [Theory]
     [InlineData("local", "GET", true, true)]
@@ -103,79 +106,70 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Allowlisted_read_succeeds_and_issues_a_hardened_ephemeral_viewer_cookie()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-                HandleCookies = false,
-            });
-
-            var response = await client.GetAsync("/api/environment");
-
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.True(body.GetProperty("publicDemo").GetProperty("active").GetBoolean());
-            Assert.Equal(
-                ExecutionAdmissionPolicy.PublicDemoProfile,
-                body.GetProperty("publicDemo").GetProperty("profile").GetString());
-
-            Assert.Equal(
-                "default-src 'self'",
-                response.Headers.GetValues("Content-Security-Policy").Single().Split(';')[0].Trim());
-            Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
-            Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
-
-            var setCookie = response.Headers.GetValues("Set-Cookie").Single(v =>
-                v.StartsWith(PublicDemoViewerSessionStore.CookieName + "=", StringComparison.Ordinal));
-            Assert.Contains("HttpOnly", setCookie, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Secure", setCookie, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("SameSite=Strict", setCookie, StringComparison.OrdinalIgnoreCase);
+            BaseAddress = new Uri("https://demo.test"),
+            HandleCookies = false,
         });
+
+        var response = await client.GetAsync("/api/environment");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("publicDemo").GetProperty("active").GetBoolean());
+        Assert.Equal(
+            ExecutionAdmissionPolicy.PublicDemoProfile,
+            body.GetProperty("publicDemo").GetProperty("profile").GetString());
+
+        Assert.Equal(
+            "default-src 'self'",
+            response.Headers.GetValues("Content-Security-Policy").Single().Split(';')[0].Trim());
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
+
+        var setCookie = response.Headers.GetValues("Set-Cookie").Single(v =>
+            v.StartsWith(PublicDemoViewerSessionStore.CookieName + "=", StringComparison.Ordinal));
+        Assert.Contains("HttpOnly", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Secure", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SameSite=Strict", setCookie, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task Non_allowlisted_read_is_denied_even_though_the_route_exists()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-
-            var response = await client.GetAsync("/api/audits/run-1");
-
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
-            Assert.Equal(ExecutionAdmissionPolicy.PublicDemoProfile, body.GetProperty("profile").GetString());
+            BaseAddress = new Uri("https://demo.test"),
         });
+
+        var response = await client.GetAsync("/api/audits/run-1");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
+        Assert.Equal(ExecutionAdmissionPolicy.PublicDemoProfile, body.GetProperty("profile").GetString());
     }
 
     [Fact]
     public async Task Unsafe_method_on_a_non_execution_tagged_mutation_still_gets_the_typed_edge_denial()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-
-            // /api/tags carries no ExecutionRouteMetadata (it is not part of
-            // the S2 catalogue), so this proves the edge's blanket net
-            // catches mutations S2 was never told about, rather than S2
-            // masking the gap.
-            var response = await client.PostAsJsonAsync("/api/tags", new { id = "x", label = "X", color = "#fff" });
-
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
+            BaseAddress = new Uri("https://demo.test"),
         });
+
+        // /api/tags carries no ExecutionRouteMetadata (it is not part of
+        // the S2 catalogue), so this proves the edge's blanket net
+        // catches mutations S2 was never told about, rather than S2
+        // masking the gap.
+        var response = await client.PostAsJsonAsync("/api/tags", new { id = "x", label = "X", color = "#fff" });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
     }
 
     [Theory]
@@ -187,108 +181,96 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
         string path,
         string method)
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-            using var request = new HttpRequestMessage(new HttpMethod(method), path);
-
-            var response = await client.SendAsync(request);
-
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
+            BaseAddress = new Uri("https://demo.test"),
         });
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
     }
 
     [Fact]
     public async Task Replay_ingest_requires_the_exclusive_replay_credential_in_public_demo_mode()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-            var requestBody = new DemoReplayEventRequest(
-                "demo-trace",
-                new string('0', 64),
-                1,
-                "invalid-signature",
-                new DemoReplayFrame(
-                    1,
-                    0,
-                    "DEMO-1",
-                    DemoReplayFrameKinds.TurnStarted,
-                    "Simulated frame"),
-                DateTime.UtcNow);
-
-            var anonymous = await client.PostAsJsonAsync("/api/runner/replay/events", requestBody);
-            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
-            Assert.Equal("runner-authentication-required", await ErrorCodeAsync(anonymous));
-
-            var store = factory.Services.GetRequiredService<AccessSecurityStore>();
-            var (_, enrollmentCode) = store.CreateEnrollment(new RunnerEnrollmentRequest(
-                "demo-runner-replay",
-                [RunnerScopes.DemoReplay],
-                null,
-                null));
-            var (_, _, secret) = store.EnrollRunner(enrollmentCode);
-            using var authenticatedRequest = new HttpRequestMessage(
-                HttpMethod.Post,
-                "/api/runner/replay/events")
-            {
-                Content = JsonContent.Create(requestBody),
-            };
-            authenticatedRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
-
-            var authenticated = await client.SendAsync(authenticatedRequest);
-
-            Assert.Equal(HttpStatusCode.Forbidden, authenticated.StatusCode);
-            Assert.Equal(DemoReplayDenialCodes.Disabled, await ErrorCodeAsync(authenticated));
+            BaseAddress = new Uri("https://demo.test"),
         });
+        var requestBody = new DemoReplayEventRequest(
+            "demo-trace",
+            new string('0', 64),
+            1,
+            "invalid-signature",
+            new DemoReplayFrame(
+                1,
+                0,
+                "DEMO-1",
+                DemoReplayFrameKinds.TurnStarted,
+                "Simulated frame"),
+            DateTime.UtcNow);
+
+        var anonymous = await client.PostAsJsonAsync("/api/runner/replay/events", requestBody);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.Equal("runner-authentication-required", await ErrorCodeAsync(anonymous));
+
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var (_, enrollmentCode) = store.CreateEnrollment(new RunnerEnrollmentRequest(
+            "demo-runner-replay",
+            [RunnerScopes.DemoReplay],
+            null,
+            null));
+        var (_, _, secret) = store.EnrollRunner(enrollmentCode);
+        using var authenticatedRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/runner/replay/events")
+        {
+            Content = JsonContent.Create(requestBody),
+        };
+        authenticatedRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
+
+        var authenticated = await client.SendAsync(authenticatedRequest);
+
+        Assert.Equal(HttpStatusCode.Forbidden, authenticated.StatusCode);
+        Assert.Equal(DemoReplayDenialCodes.Disabled, await ErrorCodeAsync(authenticated));
     }
 
     [Fact]
     public async Task Plain_http_is_rejected_before_any_allowlist_check()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("http://demo.test"),
-            });
-
-            var response = await client.GetAsync("/api/environment");
-
-            Assert.Equal((HttpStatusCode)426, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("https-required", body.GetProperty("error").GetString());
+            BaseAddress = new Uri("http://demo.test"),
         });
+
+        var response = await client.GetAsync("/api/environment");
+
+        Assert.Equal((HttpStatusCode)426, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("https-required", body.GetProperty("error").GetString());
     }
 
     [Fact]
     public async Task Cross_origin_request_is_denied()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/environment");
-            request.Headers.Add("Origin", "https://not-the-demo.example");
-
-            var response = await client.SendAsync(request);
-
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            BaseAddress = new Uri("https://demo.test"),
         });
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/environment");
+        request.Headers.Add("Origin", "https://not-the-demo.example");
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Theory]
@@ -297,128 +279,182 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [InlineData("https://demo.test/path")]
     public async Task Origin_must_match_the_complete_https_origin(string origin)
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/environment");
-            request.Headers.Add("Origin", origin);
-
-            var response = await client.SendAsync(request);
-
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
+            BaseAddress = new Uri("https://demo.test"),
         });
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/environment");
+        request.Headers.Add("Origin", origin);
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(PublicDemoEdgePolicy.ReadOnlyDeniedCode, body.GetProperty("error").GetString());
     }
 
     [Fact]
     public async Task Https_allowed_and_denied_responses_carry_hsts()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
-
-            var allowed = await client.GetAsync("/api/environment");
-            var denied = await client.PostAsJsonAsync("/api/tags", new { name = "blocked" });
-
-            Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
-            Assert.True(allowed.Headers.Contains("Strict-Transport-Security"));
-            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
-            Assert.True(denied.Headers.Contains("Strict-Transport-Security"));
+            BaseAddress = new Uri("https://demo.test"),
         });
+
+        var allowed = await client.GetAsync("/api/environment");
+        var denied = await client.PostAsJsonAsync("/api/tags", new { name = "blocked" });
+
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        Assert.True(allowed.Headers.Contains("Strict-Transport-Security"));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.True(denied.Headers.Contains("Strict-Transport-Security"));
     }
 
     [Fact]
     public async Task Rate_limit_returns_a_typed_safe_denial()
     {
-        var previous = Environment.GetEnvironmentVariable(
-            "Security__PublicDemoEdge__RateLimit__PermitLimit");
-        Environment.SetEnvironmentVariable(
-            "Security__PublicDemoEdge__RateLimit__PermitLimit", "2");
-        try
+        using var factory = BuildFactory(PermitLimit(2));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            await WithPublicDemoProfile(async () =>
-            {
-                using var factory = BuildFactory();
-                using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-                {
-                    BaseAddress = new Uri("https://demo.test"),
-                });
+            BaseAddress = new Uri("https://demo.test"),
+        });
 
-                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
-                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
-                var limited = await client.GetAsync("/api/environment");
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/environment")).StatusCode);
+        var limited = await client.GetAsync("/api/environment");
 
-                Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
-                var body = await limited.Content.ReadFromJsonAsync<JsonElement>();
-                Assert.Equal("public-demo-rate-limited", body.GetProperty("error").GetString());
-                Assert.False(body.TryGetProperty("exception", out _));
-                Assert.False(body.TryGetProperty("stackTrace", out _));
-            });
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(
-                "Security__PublicDemoEdge__RateLimit__PermitLimit", previous);
-        }
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        var body = await limited.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("public-demo-rate-limited", body.GetProperty("error").GetString());
+        Assert.False(body.TryGetProperty("exception", out _));
+        Assert.False(body.TryGetProperty("stackTrace", out _));
     }
 
     [Fact]
-    public async Task Public_demo_kestrel_body_limit_is_tightened()
+    public async Task Rate_limit_of_one_host_leaves_a_concurrent_default_host_unlimited()
     {
-        await WithPublicDemoProfile(() =>
-        {
-            using var factory = BuildFactory();
-            var kestrel = factory.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value;
+        using var limited = BuildFactory(PermitLimit(2));
+        using var standard = BuildFactory(new Dictionary<string, string?> { ["TaskRepository"] = _secondWorkspace });
+        var clients = await BootTogetherAsync(limited, standard);
+        using var limitedClient = clients[0];
+        using var standardClient = clients[1];
 
-            Assert.Equal(16 * 1024, kestrel.Limits.MaxRequestBodySize);
-            return Task.CompletedTask;
+        var limitedStatuses = new List<HttpStatusCode>();
+        var standardStatuses = new List<HttpStatusCode>();
+        for (var request = 0; request < 3; request++)
+        {
+            var responses = await Task.WhenAll(
+                limitedClient.GetAsync("/api/environment"),
+                standardClient.GetAsync("/api/environment"));
+            limitedStatuses.Add(responses[0].StatusCode);
+            standardStatuses.Add(responses[1].StatusCode);
+        }
+
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.TooManyRequests], limitedStatuses);
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.OK], standardStatuses);
+    }
+
+    [Fact]
+    public void Public_demo_kestrel_body_limit_is_tightened()
+    {
+        using var factory = BuildFactory();
+
+        Assert.Equal(16 * 1024, KestrelLimits(factory).MaxRequestBodySize);
+    }
+
+    [Fact]
+    public async Task Concurrent_hosts_each_keep_their_own_security_profile_and_body_cap()
+    {
+        // Program.cs reads the profile, and from it the Kestrel body cap and
+        // the execution admission, before Build(). These tests used to reach
+        // that read through the process environment, so a second host booting
+        // at the same moment saw the first one's profile (AGT-3106).
+        using var demo = BuildFactory();
+        using var local = BuildFactory(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _secondWorkspace,
+            ["Security:Profile"] = SecurityProfiles.Local,
         });
+        var clients = await BootTogetherAsync(demo, local);
+        using var demoClient = clients[0];
+        using var localClient = clients[1];
+
+        var demoProfile = await PublicDemoAsync(demoClient);
+        var localProfile = await PublicDemoAsync(localClient);
+
+        Assert.True(demoProfile.GetProperty("active").GetBoolean());
+        Assert.Equal(SecurityProfiles.PublicDemo, demoProfile.GetProperty("profile").GetString());
+        Assert.False(localProfile.GetProperty("active").GetBoolean());
+        Assert.Equal(SecurityProfiles.Local, localProfile.GetProperty("profile").GetString());
+        Assert.Equal(16 * 1024, KestrelLimits(demo).MaxRequestBodySize);
+        Assert.Equal(25 * 1024 * 1024, KestrelLimits(local).MaxRequestBodySize);
+        Assert.True(demo.Services.GetRequiredService<StartupExecutionAdmission>().IsPublicDemo);
+        Assert.False(local.Services.GetRequiredService<StartupExecutionAdmission>().IsPublicDemo);
     }
 
     [Fact]
     public async Task Hub_negotiate_post_is_not_caught_by_the_blanket_unsafe_method_denial()
     {
-        await WithPublicDemoProfile(async () =>
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                BaseAddress = new Uri("https://demo.test"),
-            });
+            BaseAddress = new Uri("https://demo.test"),
+        });
 
-            var negotiate = await client.PostAsync("/hubs/jobs/negotiate?negotiateVersion=1", content: null);
+        var negotiate = await client.PostAsync("/hubs/jobs/negotiate?negotiateVersion=1", content: null);
 
-            Assert.NotEqual(HttpStatusCode.Forbidden, negotiate.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, negotiate.StatusCode);
+    }
+
+    // UseSetting reaches the reads Program.cs makes before Build() (the
+    // execution admission, the Kestrel body cap and the rate limit), and it
+    // belongs to this one host, so the tests of this class run in parallel.
+    private WebApplicationFactory<Program> BuildFactory(
+        IReadOnlyDictionary<string, string?>? overrides = null)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _workspace,
+            ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
+        };
+        if (overrides is not null)
+            foreach (var (key, value) in overrides)
+                values[key] = value;
+        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseTestSettings(values);
         });
     }
 
-    private WebApplicationFactory<Program> BuildFactory(
-        IReadOnlyDictionary<string, string?>? overrides = null) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, configuration) =>
-            {
-                var values = new Dictionary<string, string?>
-                {
-                    ["TaskRepository"] = _workspace,
-                    ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
-                };
-                if (overrides is not null)
-                    foreach (var (key, value) in overrides)
-                        values[key] = value;
-                configuration.AddInMemoryCollection(values);
-            });
-        });
+    private static Dictionary<string, string?> PermitLimit(int permits) => new()
+    {
+        ["Security:PublicDemoEdge:RateLimit:PermitLimit"] = permits.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
+
+    /// <summary>Starts both hosts at the same time and returns a client of each.</summary>
+    private static Task<HttpClient[]> BootTogetherAsync(
+        WebApplicationFactory<Program> first,
+        WebApplicationFactory<Program> second)
+    {
+        var options = new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://demo.test") };
+        return Task.WhenAll(
+            Task.Run(() => first.CreateClient(options)),
+            Task.Run(() => second.CreateClient(options)));
+    }
+
+    private static async Task<JsonElement> PublicDemoAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("/api/environment");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return body.GetProperty("publicDemo");
+    }
+
+    private static KestrelServerLimits KestrelLimits(WebApplicationFactory<Program> factory)
+        => factory.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value.Limits;
 
     private static async Task<string?> ErrorCodeAsync(HttpResponseMessage response)
     {
@@ -426,26 +462,10 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
         return payload.TryGetProperty("error", out var error) ? error.GetString() : null;
     }
 
-    // WebApplicationFactory layers its ConfigureAppConfiguration override on
-    // top of Program.cs's own configuration sources, but a handful of values
-    // (StartupExecutionAdmission, the Kestrel body cap, the rate-limiter
-    // partition function) are read and captured once, early, before that
-    // override is visible - the same reason PublicDemoExecutionProfileTests
-    // sets this environment variable. AddEnvironmentVariables() is one of the
-    // very first sources WebApplication.CreateBuilder wires up, so it is
-    // visible to those early reads too. The serial collection this class
-    // runs under makes the process-wide env var safe between test methods.
-    private static async Task WithPublicDemoProfile(Func<Task> body)
-    {
-        var previous = Environment.GetEnvironmentVariable("Security__Profile");
-        Environment.SetEnvironmentVariable("Security__Profile", ExecutionAdmissionPolicy.PublicDemoProfile);
-        try { await body(); }
-        finally { Environment.SetEnvironmentVariable("Security__Profile", previous); }
-    }
-
     public void Dispose()
     {
-        try { Directory.Delete(_workspace, true); } catch { }
+        TestTempRoot.TryDelete(_workspace);
+        TestTempRoot.TryDelete(_secondWorkspace);
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider

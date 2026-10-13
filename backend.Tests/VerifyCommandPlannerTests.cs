@@ -545,7 +545,10 @@ public sealed class VerifyCommandPlannerTests : IDisposable
 // maschinenweiten Lock %TEMP%\agentstudio-build-test-gate.lock - laeuft die Suite IM
 // Gate, haelt das Gate den Lock bereits -> 15s-SLA -> Timeout/Collision -> Gate-Fail
 // (Selbstblockade). Klassenweit, weil jede Methode denselben Runner/Lock beruehrt.
+// ProcessEnvironmentSerial: CommandExecution_DoesNotHandTheHostListenerConfigurationToTheChild
+// sets ASPNETCORE_URLS, which a connector booting at the same time reads as its listener.
 [Trait("Category", "MachineBound")]
+[Collection(ProcessEnvironmentSerialCollection.Name)]
 public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
 {
     private readonly string _root;
@@ -561,15 +564,10 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            var cache = GateDependencyCacheSession.CachePath(
-                BuildTestGateRunner.ReviewWorkspaceRoot,
-                _root);
-            if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true);
-        }
-        catch { /* best-effort */ }
-        try { Directory.Delete(_root, recursive: true); } catch { /* best-effort */ }
+        TestTempRoot.TryDelete(GateDependencyCacheSession.CachePath(
+            BuildTestGateRunner.ReviewWorkspaceRoot,
+            _root));
+        TestTempRoot.TryDelete(_root);
     }
 
     private Task<BuildTestGateResult> Run(

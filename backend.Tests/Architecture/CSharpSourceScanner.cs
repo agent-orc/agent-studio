@@ -5,7 +5,8 @@ namespace AgentStudio.Tests.Architecture;
 
 /// <summary>
 /// Lexical C# source helpers for the analyzer-style guard tests
-/// (<see cref="PromptLineEndingGuardTests"/>, <see cref="TestClockGuardTests"/>).
+/// (<see cref="PromptLineEndingGuardTests"/>, <see cref="TestClockGuardTests"/>,
+/// <see cref="SerialCollectionGuardTests"/>).
 /// Masking keeps offsets and line breaks, so a match in masked text maps to the
 /// same line of the original file.
 /// </summary>
@@ -13,6 +14,9 @@ internal static partial class CSharpSourceScanner
 {
     /// <summary>A method or local function: its name, declaration line and body span.</summary>
     internal sealed record MethodSpan(string Name, int Line, int Start, int End);
+
+    /// <summary>A class, struct, record or interface with a body: its name, declaration line and body span.</summary>
+    internal sealed record TypeSpan(string Name, int Line, int Start, int End);
 
     /// <summary>Reads a source file with CRLF folded to LF, so line numbers are host-independent.</summary>
     public static string Read(string path) => File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
@@ -61,6 +65,22 @@ internal static partial class CSharpSourceScanner
                 continue;
             if (end < 0) continue;
             yield return new MethodSpan(name, LineAt(code, match.Index), match.Index, end + 1);
+        }
+    }
+
+    /// <summary>
+    /// Every type declaration with a body, nested ones included. Pass code with
+    /// comments and literals masked, so a brace in a string cannot shift a span.
+    /// </summary>
+    public static IEnumerable<TypeSpan> Types(string code)
+    {
+        foreach (Match match in TypeDeclaration().Matches(code))
+        {
+            var open = code.IndexOfAny(['{', ';'], match.Index + match.Length);
+            if (open < 0 || code[open] == ';') continue;
+            var end = FindBalancedEnd(code, open, '{', '}');
+            if (end < 0) continue;
+            yield return new TypeSpan(match.Groups["name"].Value, LineAt(code, match.Index), match.Index, end + 1);
         }
     }
 
@@ -272,4 +292,7 @@ internal static partial class CSharpSourceScanner
         + @"(?:\([^;{}]*?\)|[\w.]+(?:\s*<[^;{}()]*>)?(?:\[\])*)\??\s+(?<name>[A-Za-z_]\w*)\s*(?:<[^;{}()]*>)?\s*\(",
         RegexOptions.Multiline)]
     private static partial Regex MethodDeclaration();
+
+    [GeneratedRegex(@"\b(?:record\s+(?:class|struct)|class|struct|record|interface)\s+(?<name>[A-Za-z_]\w*)")]
+    private static partial Regex TypeDeclaration();
 }

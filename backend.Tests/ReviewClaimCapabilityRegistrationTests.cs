@@ -27,7 +27,6 @@ namespace AgentStudio.Tests;
 /// and a stagnation flag that any legacy dequeue reset. These tests pin the
 /// registration, the typed empty answer, and the claim-side alarm.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
 {
     private const string ProjectName = "agent-runner-01";

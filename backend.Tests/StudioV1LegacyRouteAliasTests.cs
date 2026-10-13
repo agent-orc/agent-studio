@@ -19,7 +19,6 @@ namespace AgentStudio.Tests;
 /// closed, so the plane proxy forwards the versioned shapes and only the hub
 /// alias stays local.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class StudioV1LegacyRouteAliasTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-v1-alias-" + Guid.NewGuid().ToString("N"));

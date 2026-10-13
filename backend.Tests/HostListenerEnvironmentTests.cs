@@ -1,3 +1,4 @@
+using System.Collections;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
@@ -59,5 +60,49 @@ public sealed class HostListenerEnvironmentTests
 
         Assert.Empty(HostListenerEnvironment.RemoveFrom(environment));
         Assert.Equal("/usr/bin", environment["PATH"]);
+    }
+
+    [Fact]
+    public void Launcher_strip_unsets_every_listener_variable_and_names_it()
+    {
+        // The test bootstrap hands the process environment to this helper
+        // once per test process (AGT-3106); a snapshot stands in for it here.
+        var environment = new Hashtable
+        {
+            ["URLS"] = "http://127.0.0.1:5031",
+            ["ASPNETCORE_URLS"] = "http://127.0.0.1:5031",
+            ["Kestrel__Endpoints__Http__Url"] = "http://127.0.0.1:5031",
+            ["PATH"] = "/usr/bin",
+            ["Connector__Mode"] = "native",
+        };
+        var unset = new List<string>();
+
+        var removed = LauncherListenerEnvironment.Strip(environment, unset.Add);
+
+        Assert.Equal(["ASPNETCORE_URLS", "Kestrel__Endpoints__Http__Url", "URLS"], removed);
+        Assert.Equal(removed, unset);
+        Assert.Equal(
+            "backend.Tests: removed the launcher's listener configuration (ASPNETCORE_URLS, "
+            + "Kestrel__Endpoints__Http__Url, URLS) so every host under test owns its listener.",
+            LauncherListenerEnvironment.Describe(removed));
+    }
+
+    [Fact]
+    public void Launcher_strip_leaves_an_environment_without_a_listener_alone()
+    {
+        var unset = new List<string>();
+
+        var removed = LauncherListenerEnvironment.Strip(new Hashtable { ["PATH"] = "/usr/bin" }, unset.Add);
+
+        Assert.Empty(removed);
+        Assert.Empty(unset);
+    }
+
+    [Fact]
+    public void Test_process_starts_without_a_listener_from_its_launcher()
+    {
+        Assert.DoesNotContain(
+            Environment.GetEnvironmentVariables().Keys.OfType<string>(),
+            HostListenerEnvironment.Carries);
     }
 }

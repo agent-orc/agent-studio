@@ -18,7 +18,6 @@ namespace AgentStudio.Tests;
 /// with it the archive shards of the card, exactly once; a card without
 /// archived attempts opens no shard at all.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class TaskDetailArchiveReadEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(

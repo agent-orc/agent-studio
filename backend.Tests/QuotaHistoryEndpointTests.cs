@@ -12,7 +12,6 @@ namespace AgentStudio.Tests;
 /// AGT-3001: <c>GET /api/cli/quota/history?cli=claude&amp;hours=48</c> returns the
 /// recorded series per window with the three-hour rate and the 100 % forecast.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class QuotaHistoryEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "quota-history-endpoint-" + Guid.NewGuid().ToString("N"));

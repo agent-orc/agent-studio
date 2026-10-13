@@ -20,7 +20,6 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ManagementApiTests : IDisposable
 {
     // The delivery-bounce repair compares no timestamps with now; the fixture
