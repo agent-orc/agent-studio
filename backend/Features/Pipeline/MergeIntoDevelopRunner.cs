@@ -468,7 +468,11 @@ public sealed partial class MergeIntoDevelopRunner
             // AGT-3002: containment says the delivery is on the branch, not that
             // anything verified the branch with it. A contained delivery
             // completes only on gate evidence for the exact tree it would claim.
+            // AGT-3103: when the published branch already carries it, the
+            // integration is a no-op: no gate, no push, and the integration
+            // reservation is released as soon as this call returns.
             ContainedDeliveryVerification? verification = null;
+            var noOpIntegration = false;
             if (result.Outcome.IsAlreadyContained())
             {
                 verification = await VerifyContainedDeliveryAsync(
@@ -478,6 +482,7 @@ public sealed partial class MergeIntoDevelopRunner
                     watchPath,
                     repoRoot,
                     pushBranch ?? branch,
+                    delivery,
                     result).ConfigureAwait(false);
                 result = verification.Result;
                 if (verification.Gate is not null)
@@ -485,7 +490,8 @@ public sealed partial class MergeIntoDevelopRunner
                     if (verification.ReleaseGate) preMainResult = verification.Gate;
                     else preDevelopResult = verification.Gate;
                 }
-                if (!result.Outcome.IsSuccessfulIntegration())
+                noOpIntegration = verification.NoOp && result.Outcome.IsSuccessfulIntegration();
+                if (!result.Outcome.IsSuccessfulIntegration() || noOpIntegration)
                 {
                     pushBranch = null;
                     approvedPushSha = null;
@@ -519,7 +525,7 @@ public sealed partial class MergeIntoDevelopRunner
                     AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
                     detail);
             }
-            if (pushBranch is null && result.Outcome.IsSuccessfulIntegration())
+            if (pushBranch is null && result.Outcome.IsSuccessfulIntegration() && !noOpIntegration)
             {
                 // Pin the object the push may publish: the merge result this card's
                 // gate released, or, for AlreadyMerged, the exact SHA recovered
@@ -569,6 +575,23 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 await RaiseUnverifiedBranchCauseAsync(jobId, watchPath, verification!, startedAt, ct)
                     .ConfigureAwait(false);
+            }
+            if (noOpIntegration && result.Outcome.IsSuccessfulIntegration())
+            {
+                // The published branch already carries the delivery: nothing
+                // to publish. A terminal push step keeps the push backstop from
+                // looking for an approval this call deliberately never gave.
+                RecordPushStep(
+                    jobFolderPath,
+                    project,
+                    jobId,
+                    new GitPushResult(
+                        true,
+                        result.ContainmentSha ?? string.Empty,
+                        _git.HasOriginRemote(repoRoot) ? "already-remote" : "no-remote",
+                        null),
+                    startedAt,
+                    environmentalRetries: 0);
             }
 
             // AGT-1999: once the accepted task is folded into the integration
@@ -2055,7 +2078,7 @@ public sealed partial class MergeIntoDevelopRunner
                 return (
                     PipelineStepStatus.Passed,
                     "already-merged",
-                    $"Task branch already contained in {integrationBranch}; no merge needed.{exactGate}",
+                    $"Task branch already contained in {integrationBranch}; no merge needed.{NoOpNote(result)}{exactGate}",
                     containedGate?.Reason);
             case MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch:
                 var evidence = result.EvidenceShas.Count == 0
@@ -2066,6 +2089,7 @@ public sealed partial class MergeIntoDevelopRunner
                     PipelineStepStatus.Passed,
                     "already-on-integration-branch",
                     $"No task branch exists; attributed commits are already on {integrationBranch}."
+                    + NoOpNote(result)
                     + (directGate is null || string.IsNullOrWhiteSpace(result.MergedSha)
                         ? string.Empty
                         : $" Exact build-gate verdict {directGate.Verdict} exists for {Short(result.MergedSha!)}."),
@@ -2100,6 +2124,18 @@ public sealed partial class MergeIntoDevelopRunner
                 return (PipelineStepStatus.Failed, "error", result.Error ?? "Merge failed.", null);
         }
     }
+
+    /// <summary>
+    /// AGT-3103: names the SHA that proved a no-op integration and says that
+    /// nothing was built, tested, or pushed for it.
+    /// </summary>
+    private static string NoOpNote(MergeIntoIntegrationResult result)
+        => string.IsNullOrWhiteSpace(result.ContainmentSha)
+            ? string.Empty
+            : $" Containment proven by {Short(result.ContainmentSha!)}; no gate ran and nothing was pushed"
+              + (result.VerificationPending
+                  ? " (integrated-unverified: no gate evidence names a tree that carries the delivery)."
+                  : ".");
 
     private static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
 

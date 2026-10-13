@@ -85,7 +85,9 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
                 CancellationToken.None,
                 request.IntegrationStrategy).ConfigureAwait(false);
 
-            if (result.Outcome.IsSuccessfulIntegration())
+            // AGT-3103: a no-op integration without gate evidence is
+            // integrated-unverified. Containment alone never completes it.
+            if (result.Outcome.IsSuccessfulIntegration() && !result.VerificationPending)
             {
                 await FinalizeAcceptedTaskAsync(request, result).ConfigureAwait(false);
             }
@@ -199,15 +201,16 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         var decision = AcceptanceIntegrationPolicy.Decide(
             result.Outcome,
             integrationRequired: AcceptanceIntegrationPolicy.IsIntegrationRequired(job));
-        if (decision == AcceptedIntegrationLaneDecision.Complete)
+        if (decision == AcceptedIntegrationLaneDecision.Complete && !result.VerificationPending)
         {
             await FinalizeBranchlessTaskAsync(request, job, result).ConfigureAwait(false);
             return;
         }
 
+        var outcome = OutcomeLabel(result);
         if (job.State == TaskStates.Completed && _transitions != null)
         {
-            var moveReason = $"Acceptance integration ended with {result.Outcome}: "
+            var moveReason = $"Acceptance integration ended with {outcome}: "
                              + (result.Error ?? "The delivery was not integrated.");
             var moved = await _transitions.MoveAsync(
                 request.JobId,
@@ -219,7 +222,7 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
                 expectedSourceState: TaskStates.Completed,
                 suppressIntegrationTrigger: true,
                 transitionCause: LaneChangeCauses.AcceptanceIntegrationFailed,
-                transitionDetail: result.Outcome.ToString()).ConfigureAwait(false);
+                transitionDetail: outcome).ConfigureAwait(false);
             if (moved.Status != MoveJobStatus.Success)
             {
                 _logger.LogWarning(
@@ -241,10 +244,10 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
             job.FolderPath,
             TimelineEventKinds.IntegrationFailed,
             TimelineActors.System,
-            $"Integration failed ({result.Outcome}); the task is in Human Review.",
+            $"Integration failed ({outcome}); the task is in Human Review.",
             details: new Dictionary<string, string>
             {
-                ["outcome"] = result.Outcome.ToString(),
+                ["outcome"] = outcome,
                 ["integrationBranch"] = request.IntegrationBranch,
                 ["detail"] = result.Error ?? string.Empty,
             });
@@ -297,7 +300,7 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         {
             AcceptanceIntegrationStatusDocument.WriteFailure(
                 job.FolderPath,
-                result.Outcome.ToString(),
+                OutcomeLabel(result),
                 result.Error,
                 request.IntegrationBranch);
         }
@@ -311,6 +314,16 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
                 result.Outcome);
         }
     }
+
+    /// <summary>
+    /// The outcome an acceptance failure names. A no-op integration without
+    /// gate evidence reached the branch, so it names the missing verification,
+    /// not its successful merge outcome (AGT-3103).
+    /// </summary>
+    private static string OutcomeLabel(MergeIntoIntegrationResult result)
+        => result.VerificationPending
+            ? MergeIntoDevelopRunner.IntegrationUnverifiedFailureCode
+            : result.Outcome.ToString();
 
     private void TryClearAcceptanceIntegrationStatus(TaskInfo job)
     {

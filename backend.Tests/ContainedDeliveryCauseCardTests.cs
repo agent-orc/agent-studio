@@ -10,6 +10,9 @@ namespace AgentStudio.Tests;
 /// AGT-3002 - when the one verification gate on a contained delivery fails,
 /// the integration lane opens a cause card for the branch. Every card stuck on
 /// the same branch joins that one cause card instead of opening its own.
+/// AGT-3103: that gate runs only for a delivery the unpublished integration
+/// lane carries, because a push of the lane tip follows. A delivery the
+/// published branch already carries is a no-op and runs no gate.
 /// </summary>
 public sealed class ContainedDeliveryCauseCardTests : IDisposable
 {
@@ -80,8 +83,8 @@ public sealed class ContainedDeliveryCauseCardTests : IDisposable
             failureInterventions: interventions,
             timeline: timeline);
 
-        // Two deliveries reached develop without a gate this lane can name,
-        // the way the operator script pushed them.
+        // Two deliveries reached the integration lane without a gate this lane
+        // can name; the published branch does not carry them yet.
         var first = CreateCardMergedWithoutGate(mutations, scanner, pipeline, "first.txt");
         var second = CreateCardMergedWithoutGate(mutations, scanner, pipeline, "second.txt");
 
@@ -179,12 +182,29 @@ public sealed class ContainedDeliveryCauseCardTests : IDisposable
         File.WriteAllText(Path.Combine(_repo, file), file);
         Git("add", "-A");
         Git("commit", "-q", "-m", "feat: " + file);
-        Git("checkout", "-q", "develop");
+        // The merge lands on the Studio lane only; the published develop (a
+        // repository without origin publishes its local branch) stays behind.
+        var lane = GitService.IntegrationLaneRef("develop");
+        Git("checkout", "-q", "--detach", LaneTip(lane) ?? "develop");
         Git("merge", "-q", "--no-ff", "--no-edit", branch);
+        Git("update-ref", lane, "HEAD");
+        Git("checkout", "-q", "develop");
         return card;
     }
 
+    private string? LaneTip(string lane)
+    {
+        var (code, stdout, _) = RunGit(["rev-parse", "--verify", "--quiet", lane]);
+        return code == 0 ? stdout.Trim() : null;
+    }
+
     private void Git(params string[] args)
+    {
+        var (code, _, stderr) = RunGit(args);
+        Assert.True(code == 0, $"git {string.Join(' ', args)} failed: {stderr}");
+    }
+
+    private (int Code, string Stdout, string Stderr) RunGit(string[] args)
     {
         using var process = new Process
         {
@@ -194,14 +214,15 @@ public sealed class ContainedDeliveryCauseCardTests : IDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                CreateNoWindow = true,
             },
         };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
         process.Start();
-        var stderr = process.StandardError.ReadToEnd();
-        process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEndAsync();
+        var stdout = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)} failed: {stderr}");
+        return (process.ExitCode, stdout, stderr.GetAwaiter().GetResult());
     }
 
     private sealed class RedGate : IBuildTestGateRunner

@@ -34,6 +34,27 @@ public sealed class BatchGatePolicyTests
     }
 
     [Fact]
+    public void LeavesAsIntegrated_OnlyACurrentUnownedContainedMemberLeaves()
+    {
+        // AGT-3103: containment is asked last, and only for a member that could leave.
+        var asked = 0;
+        bool Contained(string sha) { asked++; return sha == Sha; }
+
+        Assert.True(BatchGatePolicy.LeavesAsIntegrated(Subject("a"), Contained));
+        Assert.False(BatchGatePolicy.LeavesAsIntegrated(Subject("b"), _ => false));
+        Assert.Equal(1, asked);
+        Assert.False(BatchGatePolicy.LeavesAsIntegrated(
+            Subject("c") with { CurrentGeneration = false }, Contained));
+        Assert.False(BatchGatePolicy.LeavesAsIntegrated(
+            Subject("d") with { OwningBatchId = "batch-1" }, Contained));
+        Assert.False(BatchGatePolicy.LeavesAsIntegrated(
+            Subject("e") with { ActivePerTaskGate = true }, Contained));
+        Assert.False(BatchGatePolicy.LeavesAsIntegrated(
+            Subject("f") with { ResultSha = "" }, Contained));
+        Assert.Equal(1, asked);
+    }
+
+    [Fact]
     public void OrderAndDigestAreStableAndSubjectSensitive()
     {
         var members = new[] { Subject("z", -2, 2), Subject("b", -2, 1), Subject("a", -2, 1), Subject("c", -1, 1) };

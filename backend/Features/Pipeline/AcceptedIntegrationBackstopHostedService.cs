@@ -118,7 +118,9 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                     PipelineTypes.Resolve(job));
                 attemptOutcomes.Add(result.Outcome);
                 attemptRecorded = true;
-                if (result.Outcome.IsSuccessfulIntegration())
+                // AGT-3103: a no-op integration without gate evidence stays
+                // integrated-unverified; the backstop never completes it.
+                if (result.Outcome.IsSuccessfulIntegration() && !result.VerificationPending)
                 {
                     FinalizeTransactionalAccept(job);
                     ClearPendingTag(job);
@@ -127,7 +129,9 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                 {
                     ReturnTransactionalAcceptToReview(
                         job,
-                        result.Outcome.ToString(),
+                        result.VerificationPending
+                            ? MergeIntoDevelopRunner.IntegrationUnverifiedFailureCode
+                            : result.Outcome.ToString(),
                         result.Error);
                 }
             }

@@ -8,7 +8,7 @@ public sealed record BatchGateOwnership(
     string? BatchId = null, string? BatchRunId = null,
     string? FallbackTestedSha = null, string? FallbackEvidencePath = null,
     bool FallbackIntegrated = false, bool FallbackGateActive = false,
-    int FallbackGateStarts = 0);
+    int FallbackGateStarts = 0, string? ContainedInSha = null);
 
 /// <summary>Card-local admission marker. Its presence makes lane release fail closed.</summary>
 public static class BatchGateOwnershipStore
@@ -76,6 +76,14 @@ public static class BatchGateOwnershipStore
                 && projection.CurrentRunAttempt.ResultEnvelope?.ImmutableRemoteRef
                     == ownership.Subject.ResultRef,
         };
+        // AGT-3103: a member the integration branch already contained left
+        // the queue without a gate; its evidence is the containment record.
+        if (ownership.ContainedInSha is not null)
+            return ownership.FallbackIntegrated && current.CurrentGeneration
+                && ownership.FallbackEvidencePath is { } containment
+                && Path.GetFileName(containment) == containment
+                && File.Exists(Path.Combine(TaskPaths.LogsDir(taskFolder), containment))
+                ? null : "batch-gate-evidence-missing";
         if (ownership.FallbackTestedSha is not null)
             return ownership.FallbackIntegrated && current.CurrentGeneration
                 && string.Equals(ownership.FallbackTestedSha,
