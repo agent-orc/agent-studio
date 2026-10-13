@@ -97,7 +97,7 @@ public static class WorkspaceTokensTimelineService
                     bucket.HasUnpricedCall = true;
                 }
 
-                var modelId = TokenModelDisplay.StoredId(u.Model) ?? UnknownModel;
+                var modelId = ModelIdentity.StoredId(u.Model) ?? UnknownModel;
                 var host = TokenUsageHost.Resolve(u.Host, entry.ParticipantId);
                 if (!modelMap.TryGetValue((project, modelId, host), out var modelTotal))
                 {
@@ -194,7 +194,7 @@ public static class WorkspaceTokensTimelineService
                 Model: m.Model,
                 // Label resolved per response from the registry; the id is
                 // the stored value and an unknown id renders as itself.
-                ModelLabel: m.Model == UnknownModel ? UnknownModel : TokenModelDisplay.Label(m.Model) ?? m.Model,
+                ModelLabel: m.Model == UnknownModel ? UnknownModel : ModelIdentity.Label(m.Model) ?? m.Model,
                 Host: m.Host,
                 CliTypes: m.CliTypes.OrderBy(c => c, StringComparer.Ordinal).ToList(),
                 Calls: m.Calls,

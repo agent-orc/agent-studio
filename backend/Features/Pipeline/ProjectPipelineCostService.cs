@@ -288,9 +288,9 @@ public sealed class ProjectPipelineCostService
             if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
                 continue;
 
-            var kind = TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)
+            var kind = TokenParticipants.IsOrchestrator(entry.ParticipantId)
                 ? StepKind.Orchestrator
-                : TokenModelDisplay.IsSupportingParticipant(entry.ParticipantId)
+                : TokenParticipants.IsSupporting(entry.ParticipantId)
                     ? StepKind.Aspect
                     : StepKind.Core;
             var stepId = kind switch
@@ -474,7 +474,7 @@ public sealed class ProjectPipelineCostService
 
     private static ReceiptMatch ReceiptMatchKey(
         string jobId, StepKind kind, string? model, long input, long output, long cacheRead, long cacheCreation)
-        => new(jobId, kind, ModelMetadataRegistry.NormalizeId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
+        => new(jobId, kind, ModelIdentity.RegistryId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
 
     /// <summary>
     /// Zero the logged core tokens only in the attempts a core receipt covers.

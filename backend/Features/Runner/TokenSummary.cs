@@ -87,8 +87,8 @@ public static class TokenSummaryService
             bucket.Cost += cost.Total;
             if (!cost.ModelKnown) bucket.AnyUnpriced = true;
             // Stored as the observed id; the label is resolved for rendering.
-            var canonicalModel = TokenModelDisplay.StoredId(u.Model);
-            var displayModel = TokenModelDisplay.Label(u.Model);
+            var canonicalModel = ModelIdentity.StoredId(u.Model);
+            var displayModel = ModelIdentity.Label(u.Model);
             if (entry.Ts > (bucket.LastUpdate ?? DateTime.MinValue))
             {
                 bucket.LastUpdate = entry.Ts;
@@ -101,7 +101,7 @@ public static class TokenSummaryService
                     bucket.LastAnyModel = displayModel;
                     bucket.LastAnyModelId = canonicalModel;
                 }
-                if (TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
+                if (TokenParticipants.IsAgent(entry.ParticipantId)
                     && entry.Ts > (bucket.LastAgentUpdate ?? DateTime.MinValue))
                 {
                     bucket.LastAgentUpdate = entry.Ts;
@@ -127,7 +127,7 @@ public static class TokenSummaryService
                 UsageNormalization = u.UsageNormalization,
                 PinnedModel = string.IsNullOrWhiteSpace(u.PinnedModel)
                     ? null
-                    : TokenModelDisplay.StoredId(u.PinnedModel),
+                    : ModelIdentity.StoredId(u.PinnedModel),
                 ModelMismatch = u.ModelMismatch,
                 EstimatedApiCostUsd = cost.Total,
                 ModelPriced = cost.ModelKnown,
@@ -160,9 +160,9 @@ public static class TokenSummaryService
 
     public static TaskTokenSummary WithModelFallback(TaskTokenSummary summary, string? modelId)
     {
-        var fallbackLabel = TokenModelDisplay.Label(modelId);
+        var fallbackLabel = ModelIdentity.Label(modelId);
         if (string.IsNullOrWhiteSpace(fallbackLabel)) return summary;
-        var fallbackId = TokenModelDisplay.StoredId(modelId);
+        var fallbackId = ModelIdentity.StoredId(modelId);
 
         var entries = summary.Entries
             .Select(e => ShouldApplyRunModelFallback(e)
@@ -171,7 +171,7 @@ public static class TokenSummaryService
             .ToList();
         var hasAgentFallbackRow = entries.Any(e =>
             string.Equals(e.Model, fallbackId, StringComparison.Ordinal)
-            && TokenModelDisplay.IsAgentParticipant(e.ParticipantId));
+            && TokenParticipants.IsAgent(e.ParticipantId));
 
         return summary with
         {
@@ -195,8 +195,8 @@ public static class TokenSummaryService
     }
 
     private static bool ShouldApplyRunModelFallback(TaskTokenCall entry)
-        => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
-           && string.IsNullOrWhiteSpace(TokenModelDisplay.Label(entry.Model));
+        => TokenParticipants.IsAgent(entry.ParticipantId)
+           && string.IsNullOrWhiteSpace(ModelIdentity.Label(entry.Model));
 
     private sealed class Bucket
     {

@@ -120,8 +120,8 @@ public sealed class BetterCandidateUsageReportService
 
     private static bool SameModel(string expected, string? actual)
         => string.Equals(
-            ModelMetadataRegistry.NormalizeId(expected),
-            ModelMetadataRegistry.NormalizeId(actual),
+            ModelIdentity.RegistryId(expected),
+            ModelIdentity.RegistryId(actual),
             StringComparison.OrdinalIgnoreCase);
 
     private static DateOnly StartOfWeek(DateTime timestamp)

@@ -172,7 +172,7 @@ public sealed class TokenLedgerDuplicateRepair
         {
             var call = StoredUsageNormalization.Normalize(stored);
             var estimate = TokenPricing.Estimate(
-                ModelMetadataRegistry.NormalizeId(call.Model),
+                ModelIdentity.RegistryId(call.Model),
                 call.InputTokens,
                 call.OutputTokens,
                 call.CacheReadTokens,

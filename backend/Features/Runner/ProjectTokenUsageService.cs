@@ -281,7 +281,7 @@ public static class ProjectTokenUsageService
             var ts = entry.Ts.ToUniversalTime();
             if (ts > acc.LastActivity) acc.LastActivity = ts;
             acc.Category = PreferCategory(acc.Category, Categorize(entry, jobsById));
-            var displayModel = TokenModelDisplay.Label(u.Model);
+            var displayModel = ModelIdentity.Label(u.Model);
             if (!string.IsNullOrWhiteSpace(displayModel))
             {
                 if (ts > acc.LastAnyModelAt)
@@ -289,7 +289,7 @@ public static class ProjectTokenUsageService
                     acc.LastAnyModelAt = ts;
                     acc.LastAnyModel = displayModel;
                 }
-                if (TokenModelDisplay.IsAgentParticipant(entry.ParticipantId) && ts > acc.LastAgentModelAt)
+                if (TokenParticipants.IsAgent(entry.ParticipantId) && ts > acc.LastAgentModelAt)
                 {
                     acc.LastAgentModelAt = ts;
                     acc.LastAgentModel = displayModel;
@@ -352,7 +352,7 @@ public static class ProjectTokenUsageService
 
             var ts = entry.Ts.ToUniversalTime();
             var delta = rows.Count == 0 ? (long?)null : rowTotal - lastTotal;
-            var displayModel = TokenModelDisplay.Label(u.Model);
+            var displayModel = ModelIdentity.Label(u.Model);
             rows.Add(new ProjectJobTokenRun
             {
                 Index = index++,
@@ -378,7 +378,7 @@ public static class ProjectTokenUsageService
             category = PreferCategory(category, Categorize(entry, jobsById));
             if (!string.IsNullOrWhiteSpace(displayModel))
             {
-                if (TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)) lastModel = displayModel;
+                if (TokenParticipants.IsAgent(entry.ParticipantId)) lastModel = displayModel;
                 else lastModel ??= displayModel;
             }
         }
@@ -416,9 +416,9 @@ public static class ProjectTokenUsageService
 
     public static string Categorize(OrchestratorLogEntry entry, IReadOnlyDictionary<string, TaskInfo> jobsById)
     {
-        if (TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)) return ProjectTokenCategory.Job;
-        if (TokenModelDisplay.IsSupportingParticipant(entry.ParticipantId)) return ProjectTokenCategory.Supporting;
-        if (TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)) return ProjectTokenCategory.Orchestrator;
+        if (TokenParticipants.IsAgent(entry.ParticipantId)) return ProjectTokenCategory.Job;
+        if (TokenParticipants.IsSupporting(entry.ParticipantId)) return ProjectTokenCategory.Supporting;
+        if (TokenParticipants.IsOrchestrator(entry.ParticipantId)) return ProjectTokenCategory.Orchestrator;
 
         var jobId = entry.JobId;
         if (string.IsNullOrWhiteSpace(jobId)) return ProjectTokenCategory.Orchestrator;

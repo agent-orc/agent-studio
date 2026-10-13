@@ -109,7 +109,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             var total = command.InputTokens + command.OutputTokens
                         + command.CacheReadTokens + command.CacheCreationTokens;
             if (total <= 0) continue;
-            var model = TokenModelDisplay.StoredId(command.Model);
+            var model = ModelIdentity.StoredId(command.Model);
             var cost = TokenPricing.Estimate(
                 command.Model, command.InputTokens, command.OutputTokens,
                 command.CacheReadTokens, command.CacheCreationTokens, command.FinishedAt);
@@ -117,7 +117,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             {
                 Ts = command.FinishedAt,
                 Model = model,
-                DisplayModel = TokenModelDisplay.Label(model),
+                DisplayModel = ModelIdentity.Label(model),
                 ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
                 CliType = CliFromExecutable(command.FileName),
                 Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
