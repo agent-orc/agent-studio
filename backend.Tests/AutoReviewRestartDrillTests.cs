@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
@@ -89,6 +90,43 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
 
         var settlement = RemoteDeliverySettlementStore.Read(moved.FolderPath)!;
         Assert.Equal(RemoteDeliverySettlementStage.LaneSettled, settlement.Stage);
+    }
+
+    [Fact]
+    public async Task Exhausted_delivery_resume_does_not_start_integration_after_restart()
+    {
+        var clock = new FakeTimeProvider();
+        var starts = 0;
+        var seeded = Build(clock: clock);
+        var card = SeedPassedDelivery(seeded, "bounded-resume");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+        AutoReviewResumeRetryStore.Write(card.FolderPath, new AutoReviewResumeRetryRecord(
+            card.ReviewAttemptId, AutoReviewResumeRetryPolicy.MaxAttempts,
+            clock.GetUtcNow(), "lane write could not progress"));
+
+        var restarted = Build(
+            integrate: _ =>
+            {
+                starts++;
+                throw new InvalidOperationException("integration must not start");
+            },
+            clock: clock);
+        var outcome = await restarted.Resume.ResumeAsync(
+            restarted.Scanner.FindJob(card.Id, _watchPath)!, "bounded-restart");
+
+        Assert.Equal("delivery-resume-exhausted", outcome.Reason);
+        Assert.Equal("lane write could not progress", outcome.Detail);
+        Assert.Equal(0, starts);
+        Assert.Equal(TaskStates.AutoReview,
+            restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
+        var surfaced = await restarted.Worker.ResumeDeliveryIfOwedAsync(
+            new AutoReviewPostProcessingRequest(Project, card.Id, _watchPath,
+                clock.GetUtcNow().UtcDateTime, "bounded-restart", Attempt: 5),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingDeliveryIntegration),
+            CancellationToken.None);
+        Assert.Equal(PostProcessingCardStatus.Blocked, surfaced.Status);
+        Assert.Contains("lane write could not progress", surfaced.Reason);
+        Assert.Equal(0, starts);
     }
 
     [Fact]
@@ -1431,7 +1469,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     /// </summary>
     private Stack Build(
         Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>>? integrate = null,
-        GitOriginStore? originStore = null)
+        GitOriginStore? originStore = null,
+        TimeProvider? clock = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -1523,7 +1562,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             coordinator,
             transitions,
             escalation,
-            NullLogger<AutoReviewDeliveryResumeService>.Instance);
+            NullLogger<AutoReviewDeliveryResumeService>.Instance,
+            time: clock);
 
         var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, configuration);
         scanner.SetIndexCache(indexCache);

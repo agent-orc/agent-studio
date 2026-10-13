@@ -1115,6 +1115,11 @@ public static class V1ReviewPlaneEndpoints
             if (!settled.Accepted || settled.ReviewAttempt is null)
                 return AttemptError(settled);
 
+            // The authority verdict is durable here. Closing the exact probe
+            // cannot depend on the later delivery lane transition succeeding.
+            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+                causeBreakers.ObserveGreen(settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId);
+
             var task = FindTask(scanner, settled.ReviewAttempt.TaskKey);
             if (task is null)
                 return Results.Json(
@@ -1398,12 +1403,6 @@ public static class V1ReviewPlaneEndpoints
                 {
                     intervention = await failureInterventions.RaiseAsync(task, failureEvidence, ct);
                 }
-            }
-            else if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass && breakerEnabled)
-            {
-                // Only a passing review is a green probe. A product failure,
-                // cancellation or inconclusive result does not resolve the cause.
-                causeBreakers.ObserveGreen(settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId);
             }
             if (breakerEnabled && settled.ReviewAttempt.Outcome != ReviewTerminalOutcome.Pass)
                 probeFailed = causeBreakers.ObserveProbeFailure(task,

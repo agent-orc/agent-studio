@@ -184,3 +184,15 @@ public static class AutoReviewResumePolicy
     public static bool IsAdmissibleOutcome(ReviewTerminalOutcome? outcome)
         => outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect;
 }
+
+/// <summary>Durable, bounded schedule for a delivery resume that did not advance.</summary>
+public static class AutoReviewResumeRetryPolicy
+{
+    public const int MaxAttempts = 5;
+
+    public static bool CanStart(int attempts, DateTimeOffset? nextAt, DateTimeOffset now)
+        => attempts < MaxAttempts && (nextAt is null || nextAt <= now);
+
+    public static TimeSpan Delay(int attempts)
+        => TimeSpan.FromMinutes(1 << Math.Clamp(attempts - 1, 0, 3));
+}
