@@ -1,4 +1,4 @@
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 public sealed record DeliveredReviewRound(
     string AttemptId,
@@ -34,7 +34,7 @@ public static class ReviewRoundBudgetPolicy
         ReviewRoundBudgetDecision decision)
     {
         if (!decision.Degrade
-            || !string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(request.Outcome, ReviewOutcomeKinds.ProductFailure, StringComparison.OrdinalIgnoreCase))
             return request;
         var verdicts = request.Verdicts.Select(verdict =>
             decision.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)
@@ -45,7 +45,7 @@ public static class ReviewRoundBudgetPolicy
             AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(verdict.Status));
         return request with
         {
-            Outcome = remainingBlock ? request.Outcome : "Pass",
+            Outcome = remainingBlock ? request.Outcome : ReviewOutcomeKinds.Pass,
             FailureClassification = remainingBlock ? request.FailureClassification : null,
             Summary = $"Review round {decision.RoundNumber} of {decision.MaximumRounds}: "
                       + $"{decision.SpentBy} spent the review budget; open findings moved to a linked follow-up. "

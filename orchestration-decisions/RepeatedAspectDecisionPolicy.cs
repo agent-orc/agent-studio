@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 public sealed record RepeatedAspectBlockDiagnosis(
     string Fingerprint,
@@ -51,14 +51,15 @@ public static partial class RepeatedAspectDecisionPolicy
             var consecutivePrior = 0;
             foreach (var record in relevantRecords)
             {
-                if (record.Kind is "Skipped" or "OperatorRequeue") continue;
+                if (record.Kind is nameof(AgentStudio.Runner.ReviewDecisionKind.Skipped)
+                    or nameof(AgentStudio.Runner.ReviewDecisionKind.OperatorRequeue)) continue;
                 var fingerprints = record.FailureFingerprints ?? [];
                 var matches = fingerprints.Contains(block.Fingerprint, StringComparer.Ordinal)
                               || string.Equals(
                                   record.FailureFingerprint,
                                   block.Fingerprint,
                                   StringComparison.Ordinal);
-                if (record.Kind != "Reissue"
+                if (record.Kind != nameof(AgentStudio.Runner.ReviewDecisionKind.Reissue)
                     || !string.Equals(record.FailureKind, FailureKind, StringComparison.Ordinal)
                     || !matches)
                     break;
@@ -79,7 +80,7 @@ public static partial class RepeatedAspectDecisionPolicy
             blocked.Select(block => block.Fingerprint).ToList());
     }
 
-    internal static string Fingerprint(string value)
+    public static string Fingerprint(string value)
     {
         var normalized = Whitespace().Replace(value.Trim().ToLowerInvariant(), " ");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))

@@ -62,7 +62,7 @@ public sealed class ReviewPlaneGateLogicTests
     public void An_unparseable_aspect_reply_retries_the_aspect_instead_of_reopening_the_card(
         string classification, Contract.ReviewFollowUpAction expected)
     {
-        var decision = Contract.ReviewFollowUpPolicy.Decide(
+        var decision = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
             [new Contract.ReviewFollowUpFinding("code-quality", "block", "Reviewer unavailable.",
                 CitedPath, "Preserve pending state.", classification)],
             concernRoundsUsed: 0,

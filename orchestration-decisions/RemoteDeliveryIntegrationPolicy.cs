@@ -1,5 +1,5 @@
 using Contract = AgentStudio.TaskServer.Contracts;
-namespace AgentStudio.Pipeline;
+namespace AgentStudio.OrchestrationDecisions;
 
 public enum RemoteBuildTestGateClass
 {
@@ -47,9 +47,9 @@ public static class RemoteDeliveryIntegrationPolicy
         // so it is admissible; the branch defect carries its own operator alert.
         var integrationBranchDefect = string.Equals(
             reviewOutcome,
-            "IntegrationBranchDefect",
+            ReviewOutcomeKinds.IntegrationBranchDefect,
             StringComparison.OrdinalIgnoreCase);
-        if (!string.Equals(reviewOutcome, "Pass", StringComparison.OrdinalIgnoreCase)
+        if (!string.Equals(reviewOutcome, ReviewOutcomeKinds.Pass, StringComparison.OrdinalIgnoreCase)
             && !integrationBranchDefect)
         {
             return new RemoteDeliveryIntegrationDecision(

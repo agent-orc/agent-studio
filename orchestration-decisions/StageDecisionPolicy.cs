@@ -1,6 +1,6 @@
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.Orchestration.Decisions;
+namespace AgentStudio.OrchestrationDecisions;
 
 public sealed record LegacyReviewFinding(string? Severity, string? Summary);
 public sealed record StagePayload(
@@ -14,7 +14,7 @@ public sealed record StagePayload(
     int? AutomaticRoundsUsed = null, int MaximumCardRounds = 4,
     int ConcernRoundsUsed = 0, int MaximumConcernRounds = 0,
     bool InfrastructureRetryAvailable = false, int MaximumReissues = 2,
-    AgentStudio.Runner.ReviewRoundBudgetLedger? DeliveredRounds = null);
+    ReviewRoundBudgetLedger? DeliveredRounds = null);
 
 public sealed record StagePolicyDecision(OrchestrationAction Action, TransitionDecision? Transition = null);
 
@@ -23,30 +23,34 @@ public static class StageDecisionPolicy
 {
     public static TransitionFacts Facts(string taskId, int reissues, StagePayload payload)
     {
-        var findings = (payload.Verdicts ?? []).Select(verdict => new ReviewFollowUpFinding(
+        var findings = (payload.Verdicts ?? []).Where(verdict =>
+            !string.Equals(verdict.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
+                StringComparison.OrdinalIgnoreCase)).Select(verdict => new ReviewFollowUpFinding(
             verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
             verdict.Missing, verdict.Classification)).Concat((payload.ReviewFindings ?? []).Select(item =>
                 new ReviewFollowUpFinding("review-finding",
                     item.Severity is "blocker" or "critical" ? "block" : "concerns",
                     item.Summary, Finding: item.Summary))).ToArray();
-        return new(new(taskId, "4-auto-review"),
+        return new(new(taskId, TaskStates.AutoReview),
             new(payload.ReviewAttemptId ?? payload.RunAttemptId ?? string.Empty,
                 !string.IsNullOrWhiteSpace(payload.ResultSha),
                 payload.ResultRef is { Length: > 0 } resultRef && payload.ResultSha is { Length: > 0 } sha
                     ? new(resultRef, sha, payload.ReviewAttemptId ?? string.Empty) : null),
-            new(payload.ReviewOutcome ?? "Pass", findings, payload.ReviewPlan, payload.Verdicts,
+            new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, payload.Verdicts,
                 payload.FailureClassification),
             new(payload.MaximumCardRounds, payload.MaximumConcernRounds, MaximumReissues: payload.MaximumReissues),
             new(payload.AutomaticRoundsUsed ?? reissues, payload.ConcernRoundsUsed, reissues),
             new(payload.ReviewPlan?.BuildTestDeferredToBatch == true, payload.InfrastructureRetryAvailable), payload.DeliveredRounds);
     }
 
-    public static AgentStudio.Runner.ReviewRoundBudgetLedger DeliveredHistory(IEnumerable<StagePayload> priorOldestFirst)
+    public static ReviewRoundBudgetLedger DeliveredHistory(IEnumerable<StagePayload> priorOldestFirst)
         => new(priorOldestFirst.Where(payload => payload.ReviewAttemptId is not null
-                && payload.ReviewOutcome is "Pass" or "ProductFailure" or "IntegrationBranchDefect")
+                && payload.ReviewOutcome is ReviewOutcomeKinds.Pass or ReviewOutcomeKinds.ProductFailure or ReviewOutcomeKinds.IntegrationBranchDefect)
             .GroupBy(payload => payload.ReviewAttemptId, StringComparer.Ordinal).Select(group => group.Last())
-            .Select(payload => new AgentStudio.Runner.DeliveredReviewRound(payload.ReviewAttemptId!,
-                (payload.Verdicts ?? []).Where(verdict => ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+            .Select(payload => new DeliveredReviewRound(payload.ReviewAttemptId!,
+                (payload.Verdicts ?? []).Where(verdict => ReviewGradingPolicy.IsBlockingToken(verdict.Status)
+                    && !string.Equals(verdict.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
+                        StringComparison.OrdinalIgnoreCase))
                     .Select(verdict => verdict.Aspect).ToArray(), [])).ToArray());
 
     public static int ConcernRoundsUsed(IEnumerable<StagePayload> priorReports)

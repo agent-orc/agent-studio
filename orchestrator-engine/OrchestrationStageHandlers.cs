@@ -1,4 +1,4 @@
-using AgentStudio.Orchestration.Decisions;
+using AgentStudio.OrchestrationDecisions;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -16,16 +16,6 @@ public interface IOrchestrationStageHandler
     Task<OrchestrationStageDecision> ExecuteAsync(
         OrchestrationRunDto run,
         CancellationToken ct);
-}
-
-internal static class ReviewDecisionPolicy
-{
-    internal static OrchestrationAction Decide(
-        string? reviewOutcome,
-        string? executionOutcome,
-        string? terminal)
-        => StageDecisionPolicy.ReviewOutcome(reviewOutcome, executionOutcome, terminal);
-
 }
 
 public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler

@@ -217,7 +217,6 @@ wall-clock backend.Tests/WorkspaceTokensTimelineCategoryTests.cs 2
 wall-clock backend.Tests/WorktreeOrphanDirectorySweeperTests.cs 4
 wall-clock operations-server.Tests/BoundaryPolicyTests.cs 1
 wall-clock orchestrator-engine.Tests/EngineContractTests.cs 3
-wall-clock orchestrator-engine.Tests/StageHandlerTests.cs 2
 wall-clock retention.Tests/FileTreeFullBackupServiceTests.cs 4
 wall-clock retention.Tests/FileTreeRetentionStoreTests.cs 5
 wall-clock retention.Tests/RetentionCliTests.cs 6

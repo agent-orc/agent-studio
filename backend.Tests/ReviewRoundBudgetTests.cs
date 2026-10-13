@@ -221,7 +221,7 @@ public sealed class ReviewRoundBudgetTests
             new("code-quality", "concerns", "Dead branch in backend/Feature.cs.",
                 "backend/Feature.cs", "Remove the dead branch."),
         };
-        var followUp = AgentStudio.TaskServer.Contracts.ReviewFollowUpPolicy.Decide(findings, 0, 1);
+        var followUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(findings, 0, 1);
         Assert.Equal(AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.ReviewConcernRound, followUp.Action);
 
         var degraded = new ReviewRoundBudgetDecision(4, 4, ["code-quality"], "code-quality");
@@ -235,7 +235,7 @@ public sealed class ReviewRoundBudgetTests
     [Fact]
     public void UnspentBudget_KeepsTheOrdinaryConcernRound()
     {
-        var followUp = AgentStudio.TaskServer.Contracts.ReviewFollowUpPolicy.Decide(
+        var followUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
             [new("code-quality", "concerns", "Dead branch in backend/Feature.cs.",
                 "backend/Feature.cs", "Remove the dead branch.")], 0, 1);
         var unspent = new ReviewRoundBudgetDecision(2, 4, [], null);

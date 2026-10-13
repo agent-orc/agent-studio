@@ -34,8 +34,8 @@ public static class RemoteReviewContinuationPolicy
     public static RemoteReviewContinuationStep Decide(
         IEnumerable<TimelineEvent> ledger, string attemptId, string cause, string moveKey, string currentState)
     {
-        return AgentStudio.Orchestration.Decisions.ContinuationReplayPolicy.Decide(
-            ledger.Select(entry => new AgentStudio.Orchestration.Decisions.RoundTimelineFact(entry.Kind, entry.Details)),
+        return AgentStudio.OrchestrationDecisions.ContinuationReplayPolicy.Decide(
+            ledger.Select(entry => new AgentStudio.OrchestrationDecisions.RoundTimelineFact(entry.Kind, entry.Details)),
             attemptId, cause, moveKey, currentState);
 
     }
@@ -50,7 +50,7 @@ public static class RemoteReviewContinuationPolicy
     /// </summary>
     public static bool OpensFindingRound(
         ReviewTerminalOutcome outcome, AgentStudio.TaskServer.Contracts.ReviewFollowUpAction followUp)
-        => AgentStudio.Orchestration.Decisions.TransitionDecisionPolicy.OpensFindingRound(outcome.ToString(), followUp);
+        => AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.OpensFindingRound(outcome.ToString(), followUp);
 }
 
 public static class RemoteReviewContinuationProjection

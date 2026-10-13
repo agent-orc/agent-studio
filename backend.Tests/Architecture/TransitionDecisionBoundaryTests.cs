@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using AgentStudio.Orchestration.Decisions;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
@@ -33,6 +33,23 @@ public sealed class TransitionDecisionBoundaryTests
             || name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || name.StartsWith("System.Net.Http", StringComparison.Ordinal)
             || name.StartsWith("System.Diagnostics.Process", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Library_has_one_namespace_and_no_host_friend_assemblies()
+    {
+        var root = RepositoryRoot.Find();
+        foreach (var file in Sources(Path.Combine(root, "orchestration-decisions")))
+        {
+            var declarations = Regex.Matches(File.ReadAllText(file), @"\bnamespace\s+([\w.]+)")
+                .Select(match => match.Groups[1].Value).ToArray();
+            if (Path.GetFileName(file) == "GlobalUsings.cs")
+                Assert.Empty(declarations);
+            else
+                Assert.Equal("AgentStudio.OrchestrationDecisions", Assert.Single(declarations));
+        }
+        var project = File.ReadAllText(Path.Combine(root, "orchestration-decisions", "Orchestration.Decisions.csproj"));
+        Assert.DoesNotContain("InternalsVisibleTo", project, StringComparison.Ordinal);
     }
 
     [Fact]

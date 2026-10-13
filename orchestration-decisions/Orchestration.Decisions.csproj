@@ -6,9 +6,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../contracts/TaskServer.Contracts/TaskServer.Contracts.csproj" />
-    <InternalsVisibleTo Include="task-server" />
-    <InternalsVisibleTo Include="TaskServer.Tests" />
-    <InternalsVisibleTo Include="OrchestratorApi.Tests" />
-    <InternalsVisibleTo Include="OrchestratorApi" />
   </ItemGroup>
 </Project>

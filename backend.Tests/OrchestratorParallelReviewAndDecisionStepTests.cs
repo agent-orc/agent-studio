@@ -106,7 +106,7 @@ public class OrchestratorParallelReviewAndDecisionStepTests : IDisposable
         var reviewFile = Assert.Single(Directory.EnumerateFiles(folder, "code-review-grade-*.md"));
         var reaction = AgentStudio.Review.CouncilReviewReactionStore.Read(folder, Path.GetFileName(reviewFile));
         Assert.NotNull(reaction);
-        Assert.Equal(AgentStudio.Review.CouncilReactionDisposition.Reissue, reaction!.Disposition);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue, reaction!.Disposition);
         Assert.Equal(2, reaction.Assessments.Count);
         Assert.True(reaction.StartsNewRound);
         var reactionJson = File.ReadAllText(

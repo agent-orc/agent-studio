@@ -1,8 +1,7 @@
 using AgentStudio.Pipeline;
-using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.Orchestration.Decisions;
+namespace AgentStudio.OrchestrationDecisions;
 
 public enum TransitionAction
 {
@@ -41,8 +40,16 @@ public static class TransitionDecisionPolicy
 {
     public static TransitionDecision Decide(TransitionFacts facts)
     {
+        // An uncited block is not an actionable finding. The former Council loop
+        // skipped it before deciding whether to reissue the reviewed delivery.
+        var findings = facts.Review.Findings.Where(item =>
+            !string.Equals(item.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
+                StringComparison.OrdinalIgnoreCase)).ToArray();
+        var verdicts = (facts.Review.Verdicts ?? []).Where(item =>
+            !string.Equals(item.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
+                StringComparison.OrdinalIgnoreCase)).ToArray();
         var review = ReviewBudgetPolicy.Decide(new ReviewBudgetFacts(
-            facts.Review.Outcome, facts.Review.Findings, facts.Counters.ConcernRounds,
+            facts.Review.Outcome, findings, facts.Counters.ConcernRounds,
             facts.Settings.MaximumConcernRounds,
             new(facts.Counters.AutomaticRounds, facts.Settings.MaximumRounds),
             facts.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty, facts.Attempt.Id,
@@ -50,12 +57,12 @@ public static class TransitionDecisionPolicy
             facts.Counters.Reissues, facts.Settings.MaximumReissues, facts.AcceptedReplay));
         TransitionAction action;
         string reason;
-        if (facts.AcceptedReplay || facts.Card.State != "4-auto-review")
+        if (facts.AcceptedReplay || facts.Card.State != TaskStates.AutoReview)
         {
             action = TransitionAction.Halt;
             reason = "The review is already applied or the card has left Auto Review.";
         }
-        else if (string.Equals(facts.Review.Outcome, "ReviewInfra", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(facts.Review.Outcome, ReviewOutcomeKinds.ReviewInfra, StringComparison.OrdinalIgnoreCase))
         {
             action = RetryInfrastructure(facts.Gate.InfrastructureRetryAvailable,
                 facts.Gate.AspectRetryExhausted, facts.Gate.InterventionActive, facts.Gate.ProbeFailed,
@@ -84,7 +91,7 @@ public static class TransitionDecisionPolicy
             reason = review.FollowUp.Reason;
         }
         else if (review.FollowUp.Action == ReviewFollowUpAction.ReviewConcernRound
-                 && string.Equals(facts.Review.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
+                 && string.Equals(facts.Review.Outcome, ReviewOutcomeKinds.Pass, StringComparison.OrdinalIgnoreCase))
         {
             action = TransitionAction.ConcernRound;
             reason = review.FollowUp.Reason;
@@ -92,14 +99,14 @@ public static class TransitionDecisionPolicy
         else
         {
             var integration = RemoteDeliveryIntegrationPolicy.Decide(facts.Attempt.HasSettledEnvelope,
-                facts.Review.Outcome, facts.Review.Plan, facts.Review.Verdicts ?? []);
+                facts.Review.Outcome, facts.Review.Plan, verdicts);
             action = integration.ShouldIntegrate ? TransitionAction.AcceptAndIntegrate : TransitionAction.HumanReview;
             reason = integration.Reason;
         }
         return Create(action, reason, facts.Card.Key, facts.Attempt.Id,
             facts.Counters.AutomaticRounds, facts.Settings.MaximumRounds,
             action == TransitionAction.DegradeWithFollowUp
-                ? facts.Review.Findings.Where(item => review.RoundBudget.DegradedAspects.Contains(
+                ? findings.Where(item => review.RoundBudget.DegradedAspects.Contains(
                     item.Aspect, StringComparer.OrdinalIgnoreCase)).ToArray()
                 : review.FollowUp.Findings, facts.Attempt.ReviewedDelivery);
     }
@@ -140,31 +147,31 @@ public static class TransitionDecisionPolicy
     };
 
     public static bool IsDeferredAcceptance(bool deferred, string outcome)
-        => deferred && (string.Equals(outcome, "Pass", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(outcome, "IntegrationBranchDefect", StringComparison.OrdinalIgnoreCase));
+        => deferred && (string.Equals(outcome, ReviewOutcomeKinds.Pass, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(outcome, ReviewOutcomeKinds.IntegrationBranchDefect, StringComparison.OrdinalIgnoreCase));
 
     public static bool RetryInfrastructure(bool budgetAvailable, bool aspectRetryExhausted,
         bool interventionActive, bool probeFailed, bool diagnosisSupported)
         => budgetAvailable && !aspectRetryExhausted && !interventionActive && !probeFailed && diagnosisSupported;
 
     public static bool OpensFindingRound(string outcome, ReviewFollowUpAction action)
-        => outcome is "Pass" or "ProductFailure" or "IntegrationBranchDefect"
+        => outcome is ReviewOutcomeKinds.Pass or ReviewOutcomeKinds.ProductFailure or ReviewOutcomeKinds.IntegrationBranchDefect
            && action == ReviewFollowUpAction.ReviewFindingRound;
 
     public static string CompletionLane(string outcome, bool providerRejected) => providerRejected
-        ? "5e-escalated" : outcome.Trim().ToLowerInvariant() switch
+        ? TaskStates.Escalated : outcome.Trim().ToLowerInvariant() switch
         {
-            "done" or "noop" => "4-auto-review",
-            "blocked" or "needsinput" or "unknown" => "5e-escalated",
-            "environmentfailure" or "stopped" or "mechanicalfallback" => "2-ready",
+            CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp => TaskStates.AutoReview,
+            CompletionOutcomeKinds.Blocked or CompletionOutcomeKinds.NeedsInput or CompletionOutcomeKinds.Unknown => TaskStates.Escalated,
+            CompletionOutcomeKinds.EnvironmentFailure or CompletionOutcomeKinds.Stopped or CompletionOutcomeKinds.MechanicalFallback => TaskStates.Ready,
             _ => string.Empty,
         };
 
     public static bool CreateReview(bool epicPlanning, string outcome, bool verifiedDelivery, bool reportOnly)
-        => !epicPlanning && outcome is "done" or "noop" && verifiedDelivery && !reportOnly;
+        => !epicPlanning && outcome is CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp && verifiedDelivery && !reportOnly;
 
     public static TransitionAction Salvage(string? outcome, bool hasCommit, int roundsUsed)
-        => !string.Equals(outcome?.Trim(), "unknown", StringComparison.OrdinalIgnoreCase)
+        => !string.Equals(outcome?.Trim(), CompletionOutcomeKinds.Unknown, StringComparison.OrdinalIgnoreCase)
             ? TransitionAction.Continue : hasCommit && Math.Max(0, roundsUsed) < 1
                 ? TransitionAction.SalvageContinuation : TransitionAction.Escalate;
 }

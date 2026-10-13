@@ -221,7 +221,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         var reaction = AgentStudio.Review.CouncilReviewReactionStore.Read(
             folder, Path.GetFileName(reviewFile));
         Assert.NotNull(reaction);
-        Assert.Equal(AgentStudio.Review.CouncilReactionDisposition.Escalate, reaction!.Disposition);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Escalate, reaction!.Disposition);
         Assert.Contains(
             "no concrete finding sentence",
             Assert.Single(reaction.Assessments).Finding,
@@ -288,7 +288,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         var reaction = AgentStudio.Review.CouncilReviewReactionStore.Read(
             folder, Path.GetFileName(reviewFile));
         Assert.NotNull(reaction);
-        Assert.Equal(AgentStudio.Review.CouncilReactionDisposition.Reissue, reaction!.Disposition);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue, reaction!.Disposition);
         Assert.True(reaction.StartsNewRound);
         Assert.Equal("grade-b-no-evidence", reaction.TargetJobId);
         Assert.Equal(finding, Assert.Single(reaction.Assessments).Finding);
@@ -358,7 +358,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         var decision = Assert.Single(ReviewDecisionLog.ReadAll(_workspace, Project));
         Assert.NotNull(decision.CouncilReaction);
         Assert.Equal(
-            AgentStudio.Review.CouncilReactionDisposition.Reissue,
+            AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue,
             decision.CouncilReaction!.Disposition);
     }
 
@@ -391,7 +391,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         var reaction = AgentStudio.Review.CouncilReviewReactionStore.Read(
             folder, Path.GetFileName(reviewFile));
         Assert.NotNull(reaction);
-        Assert.Equal(AgentStudio.Review.CouncilReactionDisposition.Escalate, reaction!.Disposition);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Escalate, reaction!.Disposition);
         Assert.NotNull(Assert.Single(ReviewDecisionLog.ReadAll(_workspace, Project)).CouncilReaction);
     }
 
@@ -636,7 +636,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         Assert.True(Directory.Exists(folder), "the reused D grade starts the council round");
         var reaction = AgentStudio.Review.CouncilReviewReactionStore.Read(folder, firstReport);
         Assert.NotNull(reaction);
-        Assert.Equal(AgentStudio.Review.CouncilReactionDisposition.Reissue, reaction!.Disposition);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue, reaction!.Disposition);
         Assert.Contains(
             "never committed",
             Assert.Single(reaction.Assessments).Finding,

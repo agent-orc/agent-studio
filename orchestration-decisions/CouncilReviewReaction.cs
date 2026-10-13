@@ -1,5 +1,5 @@
 using System.Text.Json.Serialization;
-namespace AgentStudio.Review;
+namespace AgentStudio.OrchestrationDecisions;
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum CouncilFindingAction { FixNextRound, Accept, Escalate }

@@ -32,7 +32,7 @@ public sealed class ReviewProjectionService
             RoundBudget = new ReviewRoundBudgetView(
                 ledger.Delivered,
                 Math.Clamp(_settings?.Get(task.ProjectName).MaxDeliveredReviewRounds
-                           ?? AgentStudio.Runner.ReviewRoundBudgetPolicy.DefaultMaximumRounds, 1, 20),
+                           ?? AgentStudio.OrchestrationDecisions.ReviewRoundBudgetPolicy.DefaultMaximumRounds, 1, 20),
                 ledger.SpentBy),
         };
     }

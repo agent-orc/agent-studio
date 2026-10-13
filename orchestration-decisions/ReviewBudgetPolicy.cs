@@ -1,7 +1,6 @@
-using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.Orchestration.Decisions;
+namespace AgentStudio.OrchestrationDecisions;
 
 public sealed record ReviewBudgetFacts(string Outcome, IReadOnlyList<ReviewFollowUpFinding> Findings,
     int ConcernRoundsUsed, int MaximumConcernRounds, CardRoundBudgetState CardBudget,
@@ -20,15 +19,15 @@ public static class ReviewBudgetPolicy
             .Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var round = ReviewRoundBudgetPolicy.Decide(facts.DeliveredRounds, facts.AttemptId, blocked,
             facts.MaximumDeliveredRounds, facts.ConsecutiveBlockRounds, facts.PriorReissues, facts.MaximumReissues);
-        var concern = facts.Outcome == "Pass" && followUp.Action == ReviewFollowUpAction.ReviewConcernRound;
+        var concern = facts.Outcome == ReviewOutcomeKinds.Pass && followUp.Action == ReviewFollowUpAction.ReviewConcernRound;
         var card = CardRoundBudgetPolicy.DecideForReview(facts.CardBudget, blocked, concern);
         if (!facts.AcceptedReplay && card == CardRoundBudgetAction.DegradeToFollowUp
-            && (facts.Outcome == "ProductFailure" || concern))
+            && (facts.Outcome == ReviewOutcomeKinds.ProductFailure || concern))
             round = new(round.RoundNumber, round.MaximumRounds,
                 concern ? facts.Findings.Where(item => !string.Equals(item.Status, "pass", StringComparison.OrdinalIgnoreCase))
                     .Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : blocked,
                 "card-round-budget");
-        var degrade = !facts.AcceptedReplay && ((facts.Outcome == "ProductFailure" && round.Degrade)
+        var degrade = !facts.AcceptedReplay && ((facts.Outcome == ReviewOutcomeKinds.ProductFailure && round.Degrade)
             || (concern && card == CardRoundBudgetAction.DegradeToFollowUp));
         if (degrade)
         {
@@ -40,6 +39,6 @@ public static class ReviewBudgetPolicy
                 followUp = ReviewRoundBudgetPolicy.ApplyFollowUp(followUp, round);
         }
         return new(followUp, round, card, blocked, degrade,
-            !facts.AcceptedReplay && facts.Outcome == "ProductFailure" && card == CardRoundBudgetAction.Escalate);
+            !facts.AcceptedReplay && facts.Outcome == ReviewOutcomeKinds.ProductFailure && card == CardRoundBudgetAction.Escalate);
     }
 }

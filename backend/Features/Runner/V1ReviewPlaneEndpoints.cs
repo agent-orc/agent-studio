@@ -1,4 +1,4 @@
-using AgentStudio.Orchestration.Decisions;
+using AgentStudio.OrchestrationDecisions;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -863,7 +863,7 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
-            var reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
+            var reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
                 request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                     verdict.Aspect,
                     verdict.Status,
@@ -1429,7 +1429,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 var projectSettingsForFollowUp = settings.Get(task.ProjectName);
                 var concernLedger = ReviewConcernRoundStore.Read(task.FolderPath);
-                reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
+                reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
                     request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                         verdict.Aspect,
                         verdict.Status,

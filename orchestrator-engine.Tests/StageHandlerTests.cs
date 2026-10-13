@@ -28,7 +28,7 @@ public sealed class StageHandlerTests
         string outcome,
         OrchestrationAction expected)
     {
-        Assert.Equal(expected, ReviewDecisionPolicy.Decide(outcome, null, null));
+        Assert.Equal(expected, StageDecisionPolicy.ReviewOutcome(outcome, null, null));
     }
 
     [Fact]
@@ -70,13 +70,13 @@ public sealed class StageHandlerTests
     }
 
     [Fact]
-    public async Task Council_does_not_reissue_a_block_downgraded_for_missing_citation()
+    public async Task Council_does_not_reissue_a_block_without_citation()
     {
         var decision = await new CouncilLoop().ExecuteAsync(
             Run("""
                 {"verdicts":[{
                   "aspect":"documentation-impact",
-                  "status":"concerns",
+                  "status":"block",
                   "classification":"block-without-citation"
                 }]}
                 """),
@@ -96,8 +96,10 @@ public sealed class StageHandlerTests
         Assert.Equal(OrchestrationAction.Reissue, decision.Action);
     }
 
-    private static OrchestrationRunDto Run(string payload)
-        => new(
+    private static OrchestrationRunDto Run(string payload, TimeProvider? clock = null)
+    {
+        var now = (clock ?? new FrozenTimeProvider(DateTimeOffset.UnixEpoch)).GetUtcNow().UtcDateTime;
+        return new(
             "run-1",
             "project-1",
             "task-1",
@@ -106,8 +108,14 @@ public sealed class StageHandlerTests
             OrchestrationStage.ReviewDecision,
             payload,
             0,
-            DateTime.UtcNow,
-            DateTime.UtcNow,
+            now,
+            now,
             null,
             []);
+    }
+
+    private sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 }
