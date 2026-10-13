@@ -105,7 +105,11 @@ export interface ClaudeSignInTarget {
   aliases: readonly string[];
   sshTarget?: string | null;
   baselineAdvertisedAt: string | null;
+  /** R1 renews the environment setup token; R2 a native CLI login. Defaults to environment. */
+  mode?: ClaudeSignInMode;
 }
+
+export type ClaudeSignInMode = 'environment' | 'native';
 
 export interface ClaudeSignInStartResponse {
   handle: string;

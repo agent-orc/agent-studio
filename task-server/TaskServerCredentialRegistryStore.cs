@@ -120,6 +120,7 @@ public sealed partial class TaskServerStore
             await AuditAsync(connection, transaction, actorId, "credential.metadata-observed",
                 "credential", record.CredentialId,
                 JsonSerializer.Serialize(new { record.InstallationId, record.HostId, record.Generation }), ct);
+            await ReconcileCredentialRemindersAsync(connection, transaction, ct);
         }, ct);
         return record;
     }

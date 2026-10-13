@@ -76,7 +76,7 @@ export class ClaudeSignInDialogComponent implements OnDestroy {
       return;
     }
 
-    this.providerAuth.startClaudeSignIn(request.hostId, sshTarget).subscribe({
+    this.providerAuth.startClaudeSignIn(request.hostId, sshTarget, request.mode ?? 'environment').subscribe({
       next: session => {
         this.session.set(session);
         this.phase.set('pending');
