@@ -415,6 +415,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
                         MergeIntoIntegrationOutcome.Error,
                         error: MergeIntoDevelopRunner.SupersededReviewGenerationError));
+                    AppendSuperseded(delivery);
                     continue;
                 }
                 // AGT-3091: a delivery may wait here behind a whole gate. A
@@ -432,6 +433,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
                         MergeIntoIntegrationOutcome.Error,
                         error: $"{ReviewedDeliverySupersededError}: the card left Auto Review or its reviewed RunAttempt is no longer current; nothing was merged."));
+                    AppendSuperseded(delivery);
                     continue;
                 }
                 _logger.LogInformation(
@@ -443,7 +445,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 IntegrationLaneEvents.Append(delivery.Request.JobFolderPath,
                     delivery.Request.Project, delivery.Request.JobId, "dequeued",
                     sequence: delivery.Sequence);
-                var result = await _integrate(delivery.Request).ConfigureAwait(false);
+                MergeIntoIntegrationResult result;
+                using (IntegrationLaneEvents.BeginDelivery(delivery.Sequence))
+                    result = await _integrate(delivery.Request).ConfigureAwait(false);
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
                 // a stale repair round, which a successor refuses.
@@ -600,6 +604,13 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private static bool IsSameCard(RemoteDeliveryIntegrationRequest left, RemoteDeliveryIntegrationRequest right)
         => string.Equals(left.Project, right.Project, StringComparison.OrdinalIgnoreCase)
            && string.Equals(left.JobId, right.JobId, StringComparison.Ordinal);
+
+    // A delivery dropped before it reached the runner still ends its lane
+    // sequence, so it never counts as waiting.
+    private static void AppendSuperseded(QueuedDelivery delivery)
+        => IntegrationLaneEvents.Append(delivery.Request.JobFolderPath,
+            delivery.Request.Project, delivery.Request.JobId, "ejected",
+            sequence: delivery.Sequence, outcome: "Superseded");
 
     private long NextSequence()
     {

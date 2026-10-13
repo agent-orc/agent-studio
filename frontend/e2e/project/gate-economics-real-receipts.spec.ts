@@ -13,9 +13,11 @@ import { setTheme } from '../helpers/theme';
  * header lines and `test-selection.json` audit byte for byte; only the long
  * test-output dump in `reason=` is shortened to the failing command, the
  * failing tests and the totals. The receipts predate the new header fields,
- * so queue wait and reuse rung must render as Unknown, never as zero. Their
- * file time is restamped into the 7-day window because the window is read
- * from the file time and the originals are older than seven days.
+ * so queue wait and reuse rung must render as Unknown, never as zero. The
+ * window reads each receipt's own originalCompletedAtUtc, not its file time,
+ * so the copied receipts stay on 28/29 September: they count in the 30-day
+ * window only. All eight gates were red, so they are eight gate runs and no
+ * gated merge.
  */
 
 const RUN_ID = `run-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
@@ -81,9 +83,12 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
   // 3001541 3012606 3016313 3055919 3090341 3143131 3186026 3348733.
   // Median (3055919 + 3090341) / 2 = 3073130 ms = 51.2 min.
   // p90 at rank 6.3 = 3186026 + 0.3 * 162707 = 3234838 ms = 53.9 min.
-  const projection = await (await page.request.get(`${devBackend.baseUrl}/api/gate-economics?window=7d`)).json();
+  const recent = await (await page.request.get(`${devBackend.baseUrl}/api/gate-economics?window=7d`)).json();
+  const recentRow = recent.rows.find((item: { project: string }) => item.project === project);
+  expect(recentRow.gateRed).toBe(0);
+  const projection = await (await page.request.get(`${devBackend.baseUrl}/api/gate-economics?window=30d`)).json();
   const row = projection.rows.find((item: { project: string }) => item.project === project);
-  expect(row.gatedMerges).toBe(8);
+  expect(row.gatedMerges).toBe(0);
   expect(row.gateRed).toBe(8);
   expect(row.gateMinutesMedian).toBeCloseTo(3073130 / 60000, 6);
   expect(row.gateMinutesP90).toBeCloseTo(3234838.1 / 60000, 6);
@@ -109,15 +114,19 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
   await page.getByTestId('project-shell-rail-pipeline').click();
 
   const economics = page.getByTestId('gate-economics');
+  await expect(economics).toBeVisible({ timeout: 30_000 });
+  await economics.getByRole('button', { name: '30 days' }).click();
   const projectRow = economics.locator(`[data-testid="gate-economics-project"][data-project="${project}"]`);
-  await expect(projectRow.locator('td').nth(0)).toHaveText('8', { timeout: 30_000 });
+  await expect(projectRow.locator('td').nth(9)).toHaveText('0 / 8 / 0', { timeout: 30_000 });
+  await expect(projectRow.locator('td').nth(0)).toHaveText('0');
   await expect(projectRow.locator('td').nth(1)).toHaveText('51.2 min / 53.9 min');
   await expect(projectRow.locator('td').nth(2)).toHaveText('Unknown');
   const counts = await economics.getByTestId('gate-economics-project').locator('td:nth-child(2)').allTextContents();
   await expect(economics.getByTestId('gate-economics-all').locator('td:nth-child(2)'))
     .toHaveText(String(counts.reduce((sum, count) => sum + Number(count.trim()), 0)));
   const healthRow = page.getByTestId('pipeline-health-economics');
-  await expect(healthRow).toContainText('8 gated merges · median 51.2 min · queue p90 Unknown');
+  await expect(healthRow).toContainText('Gate economics · 30 days');
+  await expect(healthRow).toContainText('0 gated merges · median 51.2 min · queue p90 Unknown');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);

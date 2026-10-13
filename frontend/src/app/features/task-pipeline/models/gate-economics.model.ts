@@ -44,4 +44,6 @@ export interface GateEconomicsResponse {
   window: string;
   asOfUtc: string;
   rows: GateEconomicsRow[];
+  /** The integration-lane metrics always cover this many hours, whatever the window. */
+  laneWindowHours?: number;
 }

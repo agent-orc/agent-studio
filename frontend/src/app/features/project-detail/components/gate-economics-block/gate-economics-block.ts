@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, inject, output, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import type { GateEconomicsResponse } from '../../../task-pipeline/models/gate-economics.model';
 import { projectIdentity } from '../../../../services/project-identity.util';
@@ -14,6 +14,8 @@ export class GateEconomicsBlockComponent implements OnDestroy {
   private readonly tasks = inject(TaskService);
   readonly data = signal<GateEconomicsResponse | null>(null);
   readonly window = signal<'7d' | '30d'>('7d');
+  /** One fetch feeds the cross-project table and the per-project health row. */
+  readonly loaded = output<GateEconomicsResponse>();
   private readonly poll = setInterval(() => this.refresh(), 60_000);
 
   constructor() { this.refresh(); }
@@ -27,7 +29,11 @@ export class GateEconomicsBlockComponent implements OnDestroy {
   color(name: string): string { return projectIdentity(name).color; }
   private refresh(): void {
     this.tasks.getGateEconomics(this.window()).subscribe({
-      next: value => this.data.set(value),
+      next: value => {
+        if (!Array.isArray(value?.rows)) return;
+        this.data.set(value);
+        this.loaded.emit(value);
+      },
       error: () => { /* Preserve the last complete projection. */ },
     });
   }

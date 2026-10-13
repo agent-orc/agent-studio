@@ -196,6 +196,14 @@ public static class IntegrationGateReceipts
     }
 
     /// <summary>
+    /// The rung a receipt records (AGT-3070): exact on Remote Review reuse,
+    /// none when no gate ran because its source was missing, otherwise full.
+    /// </summary>
+    internal static string GateRung(BuildTestGateResult result, IntegrationGateReuseDecision? reuse)
+        => reuse?.Reused == true ? "exact"
+            : result.FailureKind == BuildTestGateFailureKind.MissingSource ? "none" : "full";
+
+    /// <summary>
     /// Writes one numbered gate-evidence log into the job's <c>post-steps</c>
     /// folder (<c>&lt;prefix&gt;-N.log</c>): verdict, exact expected / tested SHA,
     /// the flaky re-run audit, the test-selection audit, and the tail of the
@@ -212,7 +220,8 @@ public static class IntegrationGateReceipts
         BuildTestGateResult result,
         TimelineLog? timeline = null,
         IntegrationGateReuseDecision? reuse = null,
-        long? mergeLockWaitMs = null)
+        long? mergeLockWaitMs = null,
+        TimeProvider? time = null)
     {
         var dir = Path.Combine(jobFolderPath, "post-steps");
         Directory.CreateDirectory(dir);
@@ -253,8 +262,9 @@ public static class IntegrationGateReceipts
             $"reason={result.Reason}\n" +
             $"verdictSource={result.VerdictSource} originalRunId={result.GateRunId ?? "n/a"} originalCompletedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"} originalEvidencePathB64={Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(result.OriginEvidencePath ?? ""))} profileDigest={result.GateProfileDigest ?? "n/a"} pipelineDefinitionVersion={result.PipelineDefinitionVersion?.ToString() ?? "n/a"} toolchainIdentity={result.ToolchainIdentity ?? "n/a"}\n" +
             $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
-            $"gateRung={(reuse?.Reused == true ? "exact" : "full")}\n" +
+            $"gateRung={GateRung(result, reuse)}\n" +
             $"testLevel={result.TestSelection?.Level ?? "unknown"}\n" +
+            $"recordedAtUtc={(time ?? TimeProvider.System).GetUtcNow():O}\n" +
             $"gateQueueWaitMs={result.GateQueueWaitMs} mergeLockWaitMs={mergeLockWaitMs?.ToString() ?? "unknown"} gateCollisionDetected={result.GateCollisionDetected.ToString().ToLowerInvariant()}\n" +
             reuseLine + "\n" +
             budget + "\n" +

@@ -231,17 +231,26 @@ public sealed partial class MergeIntoDevelopRunner
     // Integration gates carry no WatchPath, so they stay out of the pipeline-health
     // registry (no hang alarm, no orchestrator.jsonl in the integration worktree).
     // The lane remembers its own machine-gate holder for gate-token-waiting events.
+    // The delivery sequence is captured here, on the runner's flow, because the
+    // gate may invoke these callbacks from another thread.
     private Action IntegrationGateWaiting(string jobFolderPath, string project, string jobId)
-        => () => IntegrationLaneEvents.Append(
-            jobFolderPath, project, jobId, "gate-token-waiting",
+    {
+        var sequence = IntegrationLaneEvents.CurrentSequence;
+        return () => IntegrationLaneEvents.Append(
+            jobFolderPath, project, jobId, "gate-token-waiting", sequence: sequence,
             holdingProject: _pipelineHealth?.HoldingProject() ?? Volatile.Read(ref _integrationGateHolder));
+    }
 
     private Action IntegrationGateAcquired(string jobFolderPath, string project, string jobId)
-        => () =>
+    {
+        var sequence = IntegrationLaneEvents.CurrentSequence;
+        return () =>
         {
             Volatile.Write(ref _integrationGateHolder, project);
-            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-token-acquired");
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-token-acquired",
+                sequence: sequence);
         };
+    }
 
     private IReadOnlyList<string>? VerificationChangedPaths(
         string repoRoot, string jobId, string jobFolderPath, string sha)

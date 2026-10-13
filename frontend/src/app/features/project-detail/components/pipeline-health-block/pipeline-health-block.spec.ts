@@ -59,6 +59,8 @@ describe('PipelineHealthBlockComponent', () => {
       project: 'Agent Taskboard', capturedAtUtc: '2026-07-23T01:00:00Z', status: 'healthy', enabled: true,
       tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
     });
+    // AGT-3070: one cross-project gate-economics fetch; this test does not need its rows.
+    http.expectOne('/api/gate-economics?window=7d').flush({ window: '7d', asOfUtc: '2026-07-23T01:00:00Z', rows: [] });
     fixture.detectChanges();
     await fixture.whenStable();
 
@@ -104,6 +106,7 @@ describe('PipelineHealthBlockComponent', () => {
       project: 'Agent Taskboard', capturedAtUtc: '2026-09-27T15:50:00Z', status: 'healthy', enabled: true,
       tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
     });
+    http.expectOne('/api/gate-economics?window=7d').flush({ window: '7d', asOfUtc: '2026-09-27T15:50:00Z', rows: [] });
     fixture.detectChanges();
     await fixture.whenStable();
 
@@ -113,5 +116,66 @@ describe('PipelineHealthBlockComponent', () => {
     expect(stall?.getAttribute('data-repository')).toBe('C:\\Projects\\agent-taskboard-workspace');
     expect(stall?.textContent).toContain('Workspace evidence flush failing for 17 min');
     expect(stall?.textContent).toContain('index.lock');
+  });
+
+  it('reads its project row from the one gate-economics fetch and ignores a malformed payload (AGT-3070)', async () => {
+    const fixture = TestBed.createComponent(PipelineHealthBlockComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Taskboard');
+    fixture.detectChanges();
+
+    http.expectOne('/api/projects/Agent%20Taskboard/pipeline-health').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-10-13T08:00:00Z', status: 'healthy',
+      activeGate: null, fingerprint: null, lanes: [], alerts: [],
+    });
+    http.expectOne('/api/projects/Agent%20Taskboard/operator-sweeps').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-10-13T08:00:00Z', status: 'healthy', enabled: true,
+      tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+    });
+    const economics = http.match('/api/gate-economics?window=7d');
+    expect(economics.length).toBe(1);
+    economics[0].flush({});
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="pipeline-health-economics"]')).toBeNull();
+    expect(host.querySelector('[data-testid="gate-economics"]')?.textContent).toContain('Loading gate measurements');
+  });
+
+  it('shows the project row of the gate-economics projection in the health block (AGT-3070)', async () => {
+    const fixture = TestBed.createComponent(PipelineHealthBlockComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Taskboard');
+    fixture.detectChanges();
+
+    http.expectOne('/api/projects/Agent%20Taskboard/pipeline-health').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-10-13T08:00:00Z', status: 'healthy',
+      activeGate: null, fingerprint: null, lanes: [], alerts: [],
+    });
+    http.expectOne('/api/projects/Agent%20Taskboard/operator-sweeps').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-10-13T08:00:00Z', status: 'healthy', enabled: true,
+      tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+    });
+    const row = (project: string, gatedMerges: number) => ({
+      project, gatedMerges, gateGreen: gatedMerges, gateRed: 0, gateCancelled: 0,
+      gateMinutesMedian: 42, gateMinutesP90: 51, queueWaitP90Ms: 120_000, exactReuseRate: 0.25,
+      disjointReuseRate: 0, fullSuiteShare: 0.75, sameShaRetestRate: null, lastNightlyGuard: null,
+      deliveryLagP50Minutes: 30, deliveryLagP95Minutes: 90, oldestWaitingMinutes: null, preparationP50Minutes: null,
+      queued: 2, prepared: 0, gating: 1, readyToPublish: 0, laneGateDurationP50Minutes: null,
+      laneGateDurationP95Minutes: null, laneGateGreen: 0, laneGateRed: 0, laneGateCancelled: 0,
+      gateTokenWaitP50Ms: null, gateTokenWaitP95Ms: null, gateHoldingProject: null, mergeLockWaitP95Ms: null,
+      publicationLockWaitP95Ms: null, ejectedConflict: 0, ejectedAgentRound: 0, ejectedRed: 0, ejectedError: 0,
+      arrivalsPerHour: 0, mergesPerHour: 0, projectShortCode: 'AGT', projectColor: null,
+    });
+    http.expectOne('/api/gate-economics?window=7d').flush({
+      window: '7d', asOfUtc: '2026-10-13T08:00:00Z',
+      rows: [row('All projects', 4), row('Agent Taskboard', 4)],
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const economics = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="pipeline-health-economics"]');
+    expect(economics?.textContent).toContain('4 gated merges');
+    expect(economics?.textContent).toContain('queue p90 2 min');
+    expect(economics?.textContent).toContain('Last 24 h: integration lag p95 90 min · 2 queued · 1 gating');
   });
 });

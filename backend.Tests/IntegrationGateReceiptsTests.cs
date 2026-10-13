@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -74,13 +75,14 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         };
 
         IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", result,
-            mergeLockWaitMs: 400);
+            mergeLockWaitMs: 400, time: new FakeTimeProvider(Now));
 
         var lines = File.ReadAllLines(Path.Combine(_root, "post-steps", "pre-develop-build-gate-1.log"));
         Assert.StartsWith("verdict=", lines[0]);
         Assert.StartsWith("expectedSha=", lines[1]);
         Assert.StartsWith("reason=", lines[2]);
         Assert.Contains("gateRung=full", lines);
+        Assert.Contains($"recordedAtUtc={Now:O}", lines);
         Assert.Contains(lines, line => line.StartsWith("gateQueueWaitMs=800 mergeLockWaitMs=400 gateCollisionDetected=false"));
         Assert.NotNull(IntegrationGateReceipts.ReadExact(_root, "pre-develop-build-gate", sha));
     }
@@ -124,12 +126,85 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
 
         var row = GateEconomicsEndpoints.ProjectRow("fixture", [],
             since: start.AddDays(-1), now: Now, retest: null, batchMetrics:
-            [new BatchGateMetric("fixture", 2, batch)]);
+            [new BatchGateMetric("fixture", 2, batch, Published: true)]);
 
         Assert.Equal(2, row.GatedMerges);
         Assert.Equal(2, row.GateMinutesMedian);
         Assert.Equal(1, row.FullSuiteShare);
         Assert.Equal(1200, row.QueueWaitP90Ms);
+        Assert.Equal(1, row.GateGreen);
+    }
+
+    [Fact]
+    public void Economics_counts_batch_reruns_as_gate_runs_but_merges_only_the_published_run()
+    {
+        var start = Now.AddHours(-3);
+        BatchGateExecutionFact Run(string runId, string outcome, int offsetMinutes) => new(
+            "fixture", "batch-" + runId, runId, new string('b', 40), outcome, "host",
+            start.AddMinutes(offsetMinutes), start.AddMinutes(offsetMinutes + 40),
+            0, 0, "evidence.jsonl", 2_400_000);
+
+        // A red three-member batch, one red isolation probe of two members and
+        // the published survivor of one member.
+        var row = GateEconomicsEndpoints.ProjectRow("fixture", [],
+            since: Now.AddDays(-1), now: Now, retest: null, batchMetrics:
+            [
+                new BatchGateMetric("fixture", 3, Run("red", "Fail", 0)),
+                new BatchGateMetric("fixture", 2, Run("probe", "Fail", 45)),
+                new BatchGateMetric("fixture", 1, Run("survivor", "Ok", 90), Published: true),
+            ]);
+
+        Assert.Equal(1, row.GatedMerges);
+        Assert.Equal(1, row.GateGreen);
+        Assert.Equal(2, row.GateRed);
+        Assert.Equal(1, row.FullSuiteShare);
+    }
+
+    [Fact]
+    public void Economics_places_receipts_by_recorded_time_not_by_file_time()
+    {
+        var postSteps = Path.Combine(_root, "post-steps");
+        Directory.CreateDirectory(postSteps);
+        // A clone restamps every file; the receipt's own time still places it.
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
+            "verdict=Ok exit=0 durationMs=60000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=old\n" +
+            $"verdictSource=Executed originalRunId=r1 originalCompletedAtUtc={Now.AddDays(-40):O}\n");
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-2.log"),
+            "verdict=Ok exit=0 durationMs=120000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=new\n" +
+            $"verdictSource=Executed originalRunId=r2 originalCompletedAtUtc={Now.AddDays(-40):O}\n" +
+            $"gateRung=exact\ntestLevel=full\nrecordedAtUtc={Now.AddDays(-2):O}\n");
+        StampReceipts(postSteps, Now.AddMinutes(-1));
+
+        var row = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            since: Now.AddDays(-30), now: Now, retest: null);
+
+        Assert.Equal(1, row.GatedMerges);
+        Assert.Equal(2, row.GateMinutesMedian);
+    }
+
+    [Fact]
+    public void Missing_source_gate_records_no_rung_and_counts_as_unknown()
+    {
+        var missing = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+            "", "No pre-merge tip.", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.MissingSource,
+        };
+        var executed = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 120000,
+            "", "Passed.", false, false);
+        var time = new FakeTimeProvider(Now.AddHours(-1));
+        IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", missing, time: time);
+        IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", executed, time: time);
+
+        var row = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            since: Now.AddDays(-1), now: Now, retest: null);
+
+        Assert.Contains("gateRung=none",
+            File.ReadAllLines(Path.Combine(_root, "post-steps", "pre-develop-build-gate-1.log")));
+        Assert.Equal(0, row.ExactReuseRate);
+        Assert.Equal(2, row.GateMinutesMedian);
+        Assert.Equal(1, row.GateRed);
+        Assert.Equal(1, row.GatedMerges);
     }
 
     [Fact]

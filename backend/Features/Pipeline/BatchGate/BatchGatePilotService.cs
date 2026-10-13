@@ -107,6 +107,7 @@ public sealed class BatchGatePilotService
         var pending = _store.Enqueue(candidate);
         BatchGateOwnershipStore.Write(task.FolderPath,
             new BatchGateOwnership(review.AttemptId, pending.Subject));
+        Lane(pending, "enqueued", deliveredAtUtc: pending.Subject.ReviewCompletedAtUtc);
         return pending;
     }
 
@@ -939,6 +940,7 @@ public sealed class BatchGatePilotService
             {
                 BatchGateOwnershipStore.Write(task.FolderPath,
                     new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject));
+                Lane(pending, "requeued", reason: $"batch:{manifest.BatchId}");
                 released.Add(pending);
             }
         }
@@ -974,6 +976,8 @@ public sealed class BatchGatePilotService
                 AbandonSuperseded("superseded before replay");
                 return;
             }
+            foreach (var member in manifest.Members)
+                Lane(pending[member.TaskKey], "dequeued", reason: $"batch:{manifest.BatchId}");
             var currentBase = _git.FetchBatchIntegrationTip(
                 repo, manifest.Scope.IntegrationBranch, cancellation.Token);
             if (currentBase is not null && !string.Equals(currentBase, manifest.BaseSha,
@@ -1001,7 +1005,10 @@ public sealed class BatchGatePilotService
                 return;
             }
             foreach (var key in assembly.EjectedKeys)
+            {
                 _logger.LogWarning("batch-member-conflict batch={BatchId} task={TaskKey}", manifest.BatchId, key);
+                Lane(pending[key], "ejected", outcome: "Conflict", reason: $"batch:{manifest.BatchId}");
+            }
             if (assembly.CascadeStopped)
                 _logger.LogWarning("batch-conflict-cascade batch={BatchId} deferred={Members}",
                     manifest.BatchId, string.Join(',', assembly.DeferredKeys));
@@ -1029,8 +1036,9 @@ public sealed class BatchGatePilotService
                 repo, _settings.Get(manifest.Scope.Project).BuildProfile);
             _store.RecordRun(run);
             State(manifest, BatchPhase.Running, assembly.CandidateSha, lease.Fence);
+            var gated = assembly.AdmittedKeys.Select(key => pending[key]).ToArray();
             var gate = await RunGateAsync(run, repo, cancellation.Token,
-                () => MembersCurrent() && RouteEnabled()).ConfigureAwait(false);
+                () => MembersCurrent() && RouteEnabled(), gated).ConfigureAwait(false);
             if (!RouteEnabled())
             {
                 AbandonRollback();
@@ -1052,7 +1060,8 @@ public sealed class BatchGatePilotService
                         lease.Fence, "GateInfra: no healthy host for same-SHA retry");
                     return;
                 }
-                gate = await RunGateAsync(run, repo, cancellation.Token).ConfigureAwait(false);
+                gate = await RunGateAsync(run, repo, cancellation.Token, gated: gated)
+                    .ConfigureAwait(false);
                 if (gate.IsInfrastructureFailure)
                 {
                     RecordVerdict(run, gate, "infrastructure-red");
@@ -1177,10 +1186,15 @@ public sealed class BatchGatePilotService
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
         string repo, ISet<string> fallbackKeys, CancellationToken ct)
     {
+        var publicationWait = _time.GetTimestamp();
         using (var refLease = await _refLeases.AcquireAsync(
             manifest.Scope.Project, repo, manifest.Scope.IntegrationBranch,
             ct).ConfigureAwait(false))
         {
+            var publicationWaitMs = (long)_time.GetElapsedTime(publicationWait).TotalMilliseconds;
+            foreach (var key in assembly.AdmittedKeys)
+                Lane(pending[key], "publication-lock-acquired",
+                    publicationLockWaitMs: publicationWaitMs, reason: $"batch:{manifest.BatchId}");
             if (!BatchRouteEnabled(manifest))
             {
                 State(manifest, BatchPhase.Abandoned, assembly.CandidateSha,
@@ -1263,6 +1277,9 @@ public sealed class BatchGatePilotService
                 manifest.BaseSha, assembly.CandidateSha, published.Sha,
                 lease.Fence, refLease.Fence, _time.GetUtcNow()));
             State(manifest, BatchPhase.Published, assembly.CandidateSha, lease.Fence);
+            foreach (var key in assembly.AdmittedKeys)
+                Lane(pending[key], "published", outcome: published.Status,
+                    receipt: published.Sha, reason: $"batch:{manifest.BatchId}");
             // A push by object SHA does not necessarily advance origin/develop
             // in this checkout. The lane status projection reads that mirror.
             _git.FetchBatchIntegrationTip(repo, manifest.Scope.IntegrationBranch, ct);
@@ -1365,7 +1382,8 @@ public sealed class BatchGatePilotService
                 var gate = await RunGateAsync(probeRun, repo, token,
                     () => BatchRouteEnabled(diagnostic)
                         && subset.All(member =>
-                        Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+                        Refresh(pending[member.TaskKey]).Subject.CurrentGeneration),
+                    subset.Select(member => pending[member.TaskKey]).ToArray())
                     .ConfigureAwait(false);
                 var classification = gate.IsInfrastructureFailure
                     ? BatchGateFailureClass.InfrastructureRed
@@ -1451,9 +1469,13 @@ public sealed class BatchGatePilotService
     }
 
     private async Task<BuildTestGateResult> RunGateAsync(BatchGateRunRecord run,
-        string repo, CancellationToken ct, Func<bool>? stillCurrent = null)
+        string repo, CancellationToken ct, Func<bool>? stillCurrent = null,
+        IReadOnlyList<BatchGatePendingRecord>? gated = null)
     {
         var started = _time.GetUtcNow();
+        foreach (var member in gated ?? [])
+            Lane(member, "gate-requested", level: TestExecutionLevels.Full,
+                reuseToken: run.BatchRunId, reason: $"batch:{run.BatchId}");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var gateTask = _gate.RunAsync(new BuildTestGateRequest(
                 repo, run.CandidateSha, "batch-gate")
@@ -1503,6 +1525,11 @@ public sealed class BatchGatePilotService
             result.Verdict.ToString(), Environment.MachineName, started,
             _time.GetUtcNow(), result.GateQueueWaitMs, overloadMinutes,
             run.EvidencePath, result.DurationMs));
+        foreach (var member in gated ?? [])
+            Lane(member, "gate-finished", level: TestExecutionLevels.Full,
+                durationMs: result.DurationMs, queueWaitMs: result.GateQueueWaitMs,
+                outcome: result.Verdict.ToString(), reuseToken: run.BatchRunId,
+                reason: $"batch:{run.BatchId}");
         return result;
     }
 
@@ -1756,6 +1783,8 @@ public sealed class BatchGatePilotService
                 new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
                     FallbackGateActive: true, FallbackGateStarts: starts + 1));
             var started = _time.GetUtcNow();
+            Lane(pending, "gate-requested", level: TestExecutionLevels.Full,
+                reason: "per-task-fallback");
             BuildTestGateResult gate;
             try
             {
@@ -1791,6 +1820,9 @@ public sealed class BatchGatePilotService
                 gate.TestedSha ?? pending.Subject.ResultSha,
                 gate.Verdict.ToString(), Environment.MachineName,
                 started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
+            Lane(pending, "gate-finished", level: TestExecutionLevels.Full,
+                durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
+                outcome: gate.Verdict.ToString(), reason: "per-task-fallback");
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))
@@ -1806,6 +1838,8 @@ public sealed class BatchGatePilotService
                 FallbackEvidencePath: Path.GetFileName(evidence));
             BatchGateOwnershipStore.Write(task.FolderPath, ownership);
         }
+        // The coordinator opens its own lane sequence for the same delivery.
+        Lane(pending, "handed-off", reason: "per-task-fallback");
         var result = await _directIntegration.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
             task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
             pending.Subject.IntegrationBranch, pending.IntegrationStrategy,
@@ -1837,6 +1871,8 @@ public sealed class BatchGatePilotService
             HumanReviewEscalationCategories.AutoReviewEscalation,
             reason, ct).ConfigureAwait(false);
         if (movedRed.Status != MoveJobStatus.Success) return;
+        Lane(pending, "ejected", outcome: reason.StartsWith("GateInfra", StringComparison.Ordinal)
+            ? "GateInfra" : "GateFailed", reason: reason);
         BatchGateOwnershipStore.ClearIfReviewAttempt(
             movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
         if (recordInStore)
@@ -1885,11 +1921,31 @@ public sealed class BatchGatePilotService
 
     private void ResolveSuperseded(BatchGatePendingRecord pending, string reason)
     {
+        Lane(pending, "ejected", outcome: "Superseded", reason: reason);
         var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
         if (task is not null)
             BatchGateOwnershipStore.ClearIfReviewAttempt(task.FolderPath,
                 pending.ReviewAttemptId);
         _store.ResolvePending(pending.ReviewAttemptId, reason);
+    }
+
+    // AGT-3070: typed lane events for batch-deferred deliveries. The durable
+    // batch enqueue sequence identifies the delivery; an emergency fallback
+    // was never enqueued, has no sequence and records nothing.
+    private void Lane(BatchGatePendingRecord pending, string kind,
+        DateTimeOffset? deliveredAtUtc = null, long? queueWaitMs = null,
+        long? durationMs = null, long? publicationLockWaitMs = null,
+        string? level = null, string? outcome = null, string? reuseToken = null,
+        string? reason = null, string? receipt = null)
+    {
+        if (pending.Subject.EnqueueSequence <= 0) return;
+        var folder = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath
+            ?? pending.JobFolderPath;
+        IntegrationLaneEvents.Append(folder, pending.Subject.Project, pending.Subject.TaskKey,
+            kind, sequence: pending.Subject.EnqueueSequence, deliveredAtUtc: deliveredAtUtc,
+            queueWaitMs: queueWaitMs, durationMs: durationMs,
+            publicationLockWaitMs: publicationLockWaitMs, level: level, outcome: outcome,
+            reuseToken: reuseToken, reason: reason, receipt: receipt, atUtc: _time.GetUtcNow());
     }
 
     private void State(BatchGateManifest manifest, BatchPhase phase,

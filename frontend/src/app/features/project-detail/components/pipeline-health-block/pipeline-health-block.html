@@ -45,9 +45,9 @@
     </div>
     @if (economics(); as e) {
       <div class="ph__economics" data-testid="pipeline-health-economics">
-        <span class="ph__label">Gate economics · 7 days</span>
+        <span class="ph__label">Gate economics · {{ economicsWindow() === '30d' ? '30 days' : '7 days' }}</span>
         <strong>{{ e.gatedMerges }} gated merges · median {{ metric(e.gateMinutesMedian, ' min') }} · queue p90 {{ minutes(e.queueWaitP90Ms) }}</strong>
-        <small>Integration lag p95 {{ metric(e.deliveryLagP95Minutes, ' min') }} · {{ e.queued }} queued · {{ e.gating }} gating</small>
+        <small>Last 24 h: integration lag p95 {{ metric(e.deliveryLagP95Minutes, ' min') }} · {{ e.queued }} queued · {{ e.gating }} gating</small>
       </div>
     }
     @for (stall of evidenceFlushStalls(); track stall.repository ?? stall.detail) {
@@ -60,4 +60,4 @@
   </section>
 }
 <app-operator-sweeps-block class="ph-sweeps" [projectName]="projectName()" />
-<app-gate-economics-block class="ph-economics" />
+<app-gate-economics-block class="ph-economics" (loaded)="onEconomics($event)" />

@@ -8,7 +8,7 @@
   </header>
   @if (data(); as projection) {
     <div class="ge__scroll"><table>
-      <thead><tr><th scope="col">Project</th><th scope="col">Gated merges</th><th scope="col">Gate median / p90</th><th scope="col">Queue p90</th><th scope="col">Reuse exact / disjoint</th><th scope="col">Full suite</th><th scope="col">Same SHA retest</th><th scope="col">Nightly guard</th><th scope="col">Lag p50 / p95</th><th scope="col">Oldest waiting</th></tr></thead>
+      <thead><tr><th scope="col">Project</th><th scope="col">Gated merges</th><th scope="col">Gate median / p90</th><th scope="col">Queue p90</th><th scope="col">Reuse exact / disjoint</th><th scope="col">Full suite</th><th scope="col">Same SHA retest</th><th scope="col">Nightly guard</th><th scope="col">Lag p50 / p95 (24 h)</th><th scope="col">Oldest waiting (24 h)</th><th scope="col">Gate runs green / red / cancelled</th></tr></thead>
       <tbody>
         @for (row of projection.rows; track row.project) {
           <tr [attr.data-project]="row.project" [attr.data-testid]="row.project === 'All projects' ? 'gate-economics-all' : 'gate-economics-project'">
@@ -21,11 +21,12 @@
             <td>{{ row.lastNightlyGuard || 'Not available' }}</td>
             <td>{{ format(row.deliveryLagP50Minutes, ' min') }} / {{ format(row.deliveryLagP95Minutes, ' min') }}</td>
             <td>{{ format(row.oldestWaitingMinutes, ' min') }}</td>
+            <td>{{ row.gateGreen }} / {{ row.gateRed }} / {{ row.gateCancelled }}</td>
           </tr>
         }
       </tbody>
     </table></div>
-    <div class="ge__subhead">Integration lane · last 24 hours</div>
+    <div class="ge__subhead">Integration lane · last {{ projection.laneWindowHours ?? 24 }} hours, independent of the window above</div>
     <div class="ge__scroll"><table data-testid="integration-lane-metrics">
       <thead><tr><th scope="col">Project</th><th scope="col">Queue / prepared / gating / ready</th><th scope="col">Preparation p50</th><th scope="col">Token wait p50 / p95</th><th scope="col">Merge lock p95</th><th scope="col">Publication lock p95</th><th scope="col">Gate duration p50 / p95</th><th scope="col">Gate green / red / cancelled</th><th scope="col">Ejections conflict / agent round / red / error</th><th scope="col">Arrivals / merges per hour</th></tr></thead>
       <tbody>
