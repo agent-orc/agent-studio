@@ -7,6 +7,25 @@ namespace AgentStudio.Tests;
 public sealed class BuildIdentityTests
 {
     [Fact]
+    public void PublishedArtifactRead_ReturnsConfiguredReleaseSha()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "studio-build-identity-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var sha = new string('a', 40);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "RELEASE-SHA"), sha + "\n");
+            var legacy = BuildIdentity.Load(new ConfigurationBuilder().Build(), Assembly.GetExecutingAssembly());
+
+            Assert.Equal(sha, PublishedArtifactSha.Load(directory, legacy).Value);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void MissingManifest_ProducesExplicitLegacyDirtyIdentityWithoutTimestampFreshness()
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

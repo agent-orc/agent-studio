@@ -63,6 +63,19 @@ backend copies the manifest beside the published assembly and exposes the
 same identity from `GET /api/system/about` and `GET /api/system/version`.
 `GET /healthz` remains body-compatible and adds tag and commit response headers.
 
+## Open Studio tabs after a Stable update
+
+The published frontend embeds its source commit, and the backend sends the
+published artifact commit as `X-Agent-Studio-Commit` on API responses and
+`GET /healthz`. An open tab checks that header on its next API response and
+after the SignalR connection returns from a backend restart. If the commits
+differ, it shows **Agent Studio was updated – reload to continue** with a
+Reload button. The notice stays visible until dismissed or reloaded; after a
+reconnect it appears again if the tab is still stale. Reload the tab to use the
+new frontend. Composer drafts persist per tab through the reload.
+
+Development builds without a published commit do not show this notice.
+
 ## Required Stable configuration
 
 The update contract needs one block in the Stable checkout's

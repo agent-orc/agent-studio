@@ -592,6 +592,8 @@ builder.Services.AddSingleton<CauseBreakerHostedService>();
 // is compared against, so it is resolved once and shared by /api/system/version
 // and the host-release drift watchdog.
 builder.Services.AddSingleton(sp => BuildIdentity.Load(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(sp => PublishedArtifactSha.Load(
+    AppContext.BaseDirectory, sp.GetRequiredService<BuildIdentity>()));
 builder.Services.AddSingleton(sp => StableReleaseIdentity.FromBuildIdentity(
     sp.GetRequiredService<BuildIdentity>()));
 builder.Services.AddSingleton<HostReleaseDriftWatchdog>();
@@ -1231,6 +1233,16 @@ app.UseForwardedHeaders();
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
 app.UseRouting();
+// A tab running the previous frontend sees this on its next API response.
+// The value is captured once from the installed artifacts, never from a
+// checkout that might advance while this process is still running.
+var publishedArtifactSha = app.Services.GetRequiredService<PublishedArtifactSha>().Value;
+app.Use(async (context, next) =>
+{
+    if (publishedArtifactSha is not null && context.Request.Path.StartsWithSegments("/api"))
+        context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+    await next(context);
+});
 // An explicitly selected standalone Task Server owns all task data. Legacy
 // /api handlers still use TaskRepository; do not let compatibility traffic
 // create a second authority while their route migration is unfinished.
