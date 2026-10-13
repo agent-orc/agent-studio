@@ -9,6 +9,11 @@ namespace AgentStudio.Git;
 /// </summary>
 internal static class ReadOnlyGitRefFingerprint
 {
+    // Release tags are few. A loose tag tree beyond this bound stops the
+    // enumeration and marks the fingerprint unreliable, so callers fall back to
+    // the short cache TTL instead of reading an unbounded tree per heartbeat.
+    private const int MaxLooseTagEntries = 4096;
+
     /// <summary>
     /// Resolves the shared Git metadata directory without spawning Git. Linked
     /// worktrees return the same directory, which makes it a stable repository
@@ -68,10 +73,13 @@ internal static class ReadOnlyGitRefFingerprint
             metadata.Common,
             Path.Combine(metadata.Common, "packed-refs"));
 
-        // Loose version tags are created/replaced atomically. Hash directory
-        // metadata recursively (never tag-file contents), so a tag under an
-        // existing namespace such as refs/tags/v1/* is observed cheaply. Packed
-        // tags are covered by packed-refs above.
+        // Loose version tags are created/replaced atomically. Hash the sorted
+        // entry listing of refs/tags recursively, with directory times and each
+        // loose tag file's size and write time (never tag-file contents). A
+        // directory mtime alone is too coarse: two tag writes inside one kernel
+        // tick, or an overlayfs copy-up, leave it unchanged, while the entry
+        // listing still names the new or removed tag. Packed tags are covered by
+        // packed-refs above.
         if (includeTags)
         {
             reliable &= AppendDirectoryTreeMetadata(
@@ -275,17 +283,33 @@ internal static class ReadOnlyGitRefFingerprint
                 AttributesToSkip = FileAttributes.ReparsePoint,
                 IgnoreInaccessible = false,
             };
-            var directories = Directory.EnumerateDirectories(root, "*", options)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
-            var reliable = true;
-            foreach (var directory in directories)
-                reliable &= AppendDirectoryMetadata(hash, commonDir, directory);
-            return reliable;
+            var entries = new List<(string Path, string Stamp)>();
+            foreach (var entry in new DirectoryInfo(root).EnumerateFileSystemInfos("*", options))
+            {
+                if (entries.Count == MaxLooseTagEntries)
+                {
+                    Append(hash, "tag-entries-truncated");
+                    return false;
+                }
+
+                var relative = Path.GetRelativePath(commonDir, entry.FullName).Replace('\\', '/');
+                var stamp = entry is FileInfo file
+                    ? $"file:{file.Length}:{file.LastWriteTimeUtc.Ticks}"
+                    : $"dir:{entry.CreationTimeUtc.Ticks}:{entry.LastWriteTimeUtc.Ticks}";
+                entries.Add((relative, stamp));
+            }
+
+            foreach (var (path, stamp) in entries.OrderBy(e => e.Path, StringComparer.Ordinal))
+            {
+                Append(hash, path);
+                Append(hash, stamp);
+            }
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Append(hash, "tag-directories-unreadable");
-            SilentCatch.Note(ex, "ReadOnlyGitRefFingerprint: tag directory enumeration failed");
+            Append(hash, "tag-entries-unreadable");
+            SilentCatch.Note(ex, "ReadOnlyGitRefFingerprint: tag tree enumeration failed");
             return false;
         }
     }

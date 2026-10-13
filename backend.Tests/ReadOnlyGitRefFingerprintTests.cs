@@ -115,14 +115,91 @@ public sealed class ReadOnlyGitRefFingerprintTests : IDisposable
     public void Capture_NestedLooseTagChangeUsesDirectoryMetadata()
     {
         Git("tag", "v1/one");
+        PinTagTreeTimes();
         var before = ReadOnlyGitRefFingerprint.Capture(
             _root, ["develop", "main"], includeTags: true);
 
+        // Both tag writes land inside one directory-mtime tick, which is what
+        // a coarse kernel tick or an overlayfs copy-up produces on a gate host.
         Git("tag", "v1/two");
+        PinTagTreeTimes();
 
         var after = ReadOnlyGitRefFingerprint.Capture(
             _root, ["develop", "main"], includeTags: true);
         Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void Capture_NestedLooseTagRemovalWithinOneTickChangesFingerprint()
+    {
+        Git("tag", "v1/one");
+        Git("tag", "v1/two");
+        PinTagTreeTimes();
+        var before = ReadOnlyGitRefFingerprint.Capture(
+            _root, ["develop", "main"], includeTags: true);
+
+        // git tag -d also rewrites packed-refs, which would hide the loose tree
+        // signal. Remove only the loose file, as a loose-only prune does.
+        File.Delete(Path.Combine(_root, ".git", "refs", "tags", "v1", "two"));
+        PinTagTreeTimes();
+
+        var after = ReadOnlyGitRefFingerprint.Capture(
+            _root, ["develop", "main"], includeTags: true);
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void Capture_NestedLooseTagRewriteChangesFingerprintThroughFileMetadata()
+    {
+        Git("tag", "v1/one");
+        PinTagTreeTimes();
+        var before = ReadOnlyGitRefFingerprint.Capture(
+            _root, ["develop", "main"], includeTags: true);
+
+        // Retarget the tag without moving any tracked branch. The directory
+        // listing, directory times and file size stay identical; only the loose
+        // ref file's own write time moves when git replaces it.
+        Git("tag", "-f", "v1/one", "main^{tree}");
+        PinTagTreeTimes();
+        File.SetLastWriteTimeUtc(
+            Path.Combine(_root, ".git", "refs", "tags", "v1", "one"),
+            PinnedTagTime.AddSeconds(1));
+
+        var after = ReadOnlyGitRefFingerprint.Capture(
+            _root, ["develop", "main"], includeTags: true);
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void CaptureDetailed_OversizedLooseTagTreeUsesShortFallback()
+    {
+        var tags = Path.Combine(_root, ".git", "refs", "tags", "bulk");
+        Directory.CreateDirectory(tags);
+        for (var i = 0; i <= 4096; i++)
+            File.WriteAllText(Path.Combine(tags, $"t{i:D4}"), string.Empty);
+
+        var withTags = ReadOnlyGitRefFingerprint.CaptureDetailed(
+            _root, ["develop", "main"], includeTags: true);
+        var withoutTags = ReadOnlyGitRefFingerprint.CaptureDetailed(
+            _root, ["develop", "main"]);
+
+        Assert.True(withTags.RequiresShortFallback);
+        Assert.False(withoutTags.RequiresShortFallback);
+    }
+
+    // clock-independent: a fixed literal replaces every refs/tags directory and
+    // loose tag file time so the fingerprint cannot depend on the host's mtime tick.
+    private static readonly DateTime PinnedTagTime =
+        new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private void PinTagTreeTimes()
+    {
+        var tags = Path.Combine(_root, ".git", "refs", "tags");
+        foreach (var file in Directory.EnumerateFiles(tags, "*", SearchOption.AllDirectories))
+            File.SetLastWriteTimeUtc(file, PinnedTagTime);
+        foreach (var directory in Directory.EnumerateDirectories(tags, "*", SearchOption.AllDirectories))
+            Directory.SetLastWriteTimeUtc(directory, PinnedTagTime);
+        Directory.SetLastWriteTimeUtc(tags, PinnedTagTime);
     }
 
     [Fact]
