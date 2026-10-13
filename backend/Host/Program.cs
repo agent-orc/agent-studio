@@ -18,6 +18,10 @@ if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
     return;
 }
 
+// Host timeline (AGT-3107): read the clock before anything else so the
+// opt-in timeline can report the time from entry to Build().
+var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
+
 // Static Serilog logger so DI-less / static contexts (TryReadEnteredLaneAt,
 // path + parser helpers, the SilentCatch standard) have a real logger before -
 // and independently of - the DI container. CreateBootstrapLogger publishes it
@@ -117,6 +121,24 @@ var publicDemoExecutionProfile = string.Equals(
     SecurityProfiles.PublicDemo,
     StringComparison.OrdinalIgnoreCase);
 builder.Services.AddSingleton(new StartupExecutionAdmission(startupSecurityProfile));
+
+// Opt-in boot and shutdown timeline (AGT-3107). Off unless
+// AGENT_STUDIO_HOST_TIMELINE or Diagnostics:HostTimeline:Directory names a
+// directory; then hosted services are timed by one decorator applied when the
+// container is built, and the host appends one JSON line on dispose.
+var hostTimeline = HostTimelineRecorder.Create(
+    hostEntryTimestamp,
+    builder.Configuration,
+    TimeProvider.System,
+    connectorProfile ? "connector" : startupSecurityProfile,
+    builder.Environment.EnvironmentName);
+if (hostTimeline.IsEnabled)
+{
+    var developmentValidation = builder.Environment.IsDevelopment();
+    builder.Host.UseServiceProviderFactory(new HostTimelineServiceProviderFactory(
+        hostTimeline,
+        new ServiceProviderOptions { ValidateScopes = developmentValidation, ValidateOnBuild = developmentValidation }));
+}
 builder.Services.AddSingleton<PublicDemoViewerSessionStore>();
 
 // Rolling backend file logger + crash marker (see Services/Diagnostics).
@@ -1097,10 +1119,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
         new System.Text.Json.Serialization.JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
 });
 // Public-demo request-rate ceiling (W34 §6 "Minimum mutation surface" /
-// "Transport and browser boundary"). The global limiter itself is always
-// registered so UseRateLimiter has one policy to run; the partition function
-// below is the only branch on profile, and it hands back an unlimited
-// partition for local/networked so this is a no-op there.
+// "Transport and browser boundary"). The partition function hands back an
+// unlimited partition for local/networked; only the public-demo profile runs
+// the middleware at all (see UseRateLimiter below).
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -1156,7 +1177,10 @@ if (SecurityProfiles.IsLocal(builder.Configuration))
 if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
+hostTimeline.Checkpoint("entryToBuild");
 var app = builder.Build();
+hostTimeline.Checkpoint("build");
+hostTimeline.Attach(app.Services);
 
 if (connectorProfile)
 {
@@ -1211,7 +1235,20 @@ if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
     });
 }
 if (networkedSecurityProfile || publicDemoExecutionProfile) app.UseHsts();
-app.UseRateLimiter();
+// Only the public-demo profile limits anything, so only it runs the rate
+// limiter. RateLimitingMiddleware starts two partitioned limiters, each with a
+// 100 ms heartbeat timer that nothing disposes. Under WebApplicationFactory
+// those timers kept every stopped host reachable (about 2 timers and one host
+// graph per boot; AGT-3107). The global limiter is disposed once the host has
+// stopped serving; the middleware's internal endpoint limiter cannot be, so
+// profiles without a limit do not create it.
+if (SecurityProfiles.IsPublicDemo(app.Configuration))
+{
+    app.UseRateLimiter();
+    var rateLimiterOptions = app.Services
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.RateLimiting.RateLimiterOptions>>();
+    app.Lifetime.ApplicationStopped.Register(() => rateLimiterOptions.Value.GlobalLimiter?.Dispose());
+}
 app.UsePublicDemoExecutionLock();
 // Runs after the execution lock: a route S2 already denies by identity keeps
 // its specific execution-disabled code, and this is the broader net behind
@@ -1267,17 +1304,21 @@ if (!networkedSecurityProfile) app.UseClientIdentity();
 // Management intent is authoritative for admission. Reads, recovery controls,
 // and the bounded set of writes needed to drain an existing Runner remain live.
 app.UseManagementMode();
+hostTimeline.Checkpoint("middleware");
 
 // Touch the identity store at boot so the bootstrap "local-default" identity
 // is created before any caller looks at it.
-app.Services.GetRequiredService<ClientIdentityStore>().EnsureLoaded();
+hostTimeline.Sweep("ClientIdentityStore.EnsureLoaded",
+    () => app.Services.GetRequiredService<ClientIdentityStore>().EnsureLoaded());
 
 // Ensure state folders exist and migrate legacy flat jobs
-app.Services.GetRequiredService<TaskStateMachine>().EnsureStateFoldersAndMigrate();
+hostTimeline.Sweep("TaskStateMachine.EnsureStateFoldersAndMigrate",
+    () => app.Services.GetRequiredService<TaskStateMachine>().EnsureStateFoldersAndMigrate());
 // Clear abandoned integration-slot index locks before boot recovery invokes git.
 if (!publicDemoExecutionProfile) try
 {
-    app.Services.GetRequiredService<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>().RunOnce();
+    hostTimeline.Sweep("IntegrationWorktreeStartupLockSweep",
+        () => app.Services.GetRequiredService<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>().RunOnce());
 }
 catch (Exception ex)
 {
@@ -1287,7 +1328,8 @@ catch (Exception ex)
 // Backfill jobs that carry agent:"human" + cliType:null + model:null with owner
 // client defaults. Idempotent; no-op once all jobs are already migrated.
 {
-    var backfillCount = app.Services.GetRequiredService<TaskMutationService>().BackfillAgentDefaults();
+    var backfillCount = hostTimeline.Sweep("BackfillAgentDefaults",
+        () => app.Services.GetRequiredService<TaskMutationService>().BackfillAgentDefaults());
     if (backfillCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
             .LogInformation("Backfilled agent defaults on {Count} job(s)", backfillCount);
@@ -1298,11 +1340,11 @@ catch (Exception ex)
 // The pass does not move or rename watched project data.
 try
 {
-    AgentStudio.Registry.RegistryBootstrap.Run(
+    hostTimeline.Sweep("RegistryBootstrap", () => AgentStudio.Registry.RegistryBootstrap.Run(
         app.Services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>(),
         app.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>(),
         app.Services.GetRequiredService<TaskScannerService>(),
-        app.Services.GetRequiredService<ILogger<Program>>());
+        app.Services.GetRequiredService<ILogger<Program>>()));
 }
 catch (ProjectRegistryLoadException ex)
 {
@@ -1319,7 +1361,7 @@ catch (Exception ex)
 // Idempotent; no-op once all jobs carry a key.
 {
     var mutations = app.Services.GetRequiredService<TaskMutationService>();
-    var keyCount = mutations.BackfillTaskKeys();
+    var keyCount = hostTimeline.Sweep("BackfillTaskKeys", mutations.BackfillTaskKeys);
     if (keyCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
             .LogInformation("Backfilled task keys on {Count} job(s)", keyCount);
@@ -1328,14 +1370,14 @@ catch (Exception ex)
     // sweep is idempotent and a no-op once every key is unique; it keeps the
     // oldest task on the contested key and re-keys the namesakes. Runs after
     // the backfill so freshly stamped jobs are part of the uniqueness check.
-    var dedupCount = mutations.DeduplicateTaskKeys();
+    var dedupCount = hostTimeline.Sweep("DeduplicateTaskKeys", mutations.DeduplicateTaskKeys);
     if (dedupCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
             .LogWarning("Resolved duplicate task keys by re-keying {Count} task(s)", dedupCount);
 
-    TaskProjectionCards.WarnDuplicateIds(
+    hostTimeline.Sweep("WarnDuplicateIds", () => TaskProjectionCards.WarnDuplicateIds(
         app.Services.GetRequiredService<TaskScannerService>().ScanAllJobsWithArchive(),
-        app.Services.GetRequiredService<ILogger<Program>>());
+        app.Services.GetRequiredService<ILogger<Program>>()));
 }
 
 // ReviewAttempts are claimable only while their owning task remains in Auto
@@ -1343,8 +1385,8 @@ catch (Exception ex)
 // before any Remote Review Executor can poll this process.
 try
 {
-    var repaired = app.Services.GetRequiredService<ReviewAttemptTaskLifecycleService>()
-        .SweepUnclaimableAttempts();
+    var repaired = hostTimeline.Sweep("ReviewAttemptTaskLifecycle.BootSweep",
+        () => app.Services.GetRequiredService<ReviewAttemptTaskLifecycleService>().SweepUnclaimableAttempts());
     if (repaired > 0)
     {
         app.Services.GetRequiredService<ILogger<Program>>()
@@ -1364,7 +1406,8 @@ catch (Exception ex)
 // so historical and new live observations cannot race each other.
 try
 {
-    app.Services.GetRequiredService<AgentStudio.Docs.WikiAgentReadService>().EnsureBackfilled();
+    hostTimeline.Sweep("WikiAgentReadBackfill",
+        () => app.Services.GetRequiredService<AgentStudio.Docs.WikiAgentReadService>().EnsureBackfilled());
 }
 catch (Exception ex)
 {
@@ -1375,7 +1418,8 @@ catch (Exception ex)
 // the structured repository field used by multi-repository delivery status.
 try
 {
-    app.Services.GetRequiredService<TaskMutationService>().BackfillLegacyCommitRepositories();
+    hostTimeline.Sweep("CommitRepositoryBackfill",
+        () => app.Services.GetRequiredService<TaskMutationService>().BackfillLegacyCommitRepositories());
 }
 catch (Exception ex)
 {
@@ -1387,7 +1431,8 @@ catch (Exception ex)
 // mutation service; entries with complete metadata make later boots a no-op.
 try
 {
-    app.Services.GetRequiredService<TaskMutationService>().BackfillMissingCommitMetadata();
+    hostTimeline.Sweep("CommitMetadataBackfill",
+        () => app.Services.GetRequiredService<TaskMutationService>().BackfillMissingCommitMetadata());
 }
 catch (Exception ex)
 {
@@ -1399,7 +1444,8 @@ catch (Exception ex)
 // remain untouched and visible in that report.
 try
 {
-    app.Services.GetRequiredService<SupersededCommitSweep>().RunOnce();
+    hostTimeline.Sweep("SupersededCommitSweep",
+        () => app.Services.GetRequiredService<SupersededCommitSweep>().RunOnce());
 }
 catch (Exception ex)
 {
@@ -1411,7 +1457,8 @@ catch (Exception ex)
 // report; nothing here changes what the pickup gate admits.
 try
 {
-    app.Services.GetRequiredService<AgentStudio.Tasks.PickupHoldSweep>().RunOnce();
+    hostTimeline.Sweep("PickupHoldSweep",
+        () => app.Services.GetRequiredService<AgentStudio.Tasks.PickupHoldSweep>().RunOnce());
 }
 catch (Exception ex)
 {
@@ -1424,7 +1471,8 @@ catch (Exception ex)
 // receipts from the durable CLI log.
 try
 {
-    app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunOnce();
+    hostTimeline.Sweep("RemoteCompletionAttributionSweep",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunOnce());
 }
 catch (Exception ex)
 {
@@ -1435,7 +1483,8 @@ catch (Exception ex)
 // written while cached_input_tokens was incorrectly added to input_tokens.
 try
 {
-    app.Services.GetRequiredService<AgentStudio.Tokens.OpenAiUsageHistoryRepair>().RunOnce();
+    hostTimeline.Sweep("OpenAiUsageHistoryRepair",
+        () => app.Services.GetRequiredService<AgentStudio.Tokens.OpenAiUsageHistoryRepair>().RunOnce());
 }
 catch (Exception ex)
 {
@@ -1446,7 +1495,8 @@ catch (Exception ex)
 // once (AGT-3012). Bus duplicates are collapsed on read and only reported.
 try
 {
-    app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce();
+    hostTimeline.Sweep("TokenLedgerDuplicateRepair",
+        () => app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce());
 }
 catch (Exception ex)
 {
@@ -1459,7 +1509,8 @@ catch (Exception ex)
 // It is idempotent and cheap once every active/rotated file is bounded.
 try
 {
-    app.Services.GetRequiredService<CliOutputLogMaintenanceService>().Run();
+    hostTimeline.Sweep("CliOutputLogMaintenance",
+        () => app.Services.GetRequiredService<CliOutputLogMaintenanceService>().Run());
 }
 catch (Exception ex)
 {
@@ -1473,7 +1524,8 @@ catch (Exception ex)
 // no-ops because existing non-empty Result documents are never overwritten.
 try
 {
-    app.Services.GetRequiredService<TaskTransitionService>().BackfillMissingResultDocuments();
+    hostTimeline.Sweep("ResultDocumentBackfill",
+        () => app.Services.GetRequiredService<TaskTransitionService>().BackfillMissingResultDocuments());
 }
 catch (Exception ex)
 {
@@ -1485,7 +1537,8 @@ catch (Exception ex)
 // receipts and leaves genuinely newer queued follow-ups untouched.
 try
 {
-    app.Services.GetRequiredService<TaskTransitionService>().ReconcilePendingIntents();
+    hostTimeline.Sweep("PendingIntentReconciliation",
+        () => app.Services.GetRequiredService<TaskTransitionService>().ReconcilePendingIntents());
 }
 catch (Exception ex)
 {
@@ -1517,7 +1570,8 @@ catch (Exception ex)
 // intentional: the runner must see the adopted state on its first scan.
 if (!publicDemoExecutionProfile) try
 {
-    app.Services.GetRequiredService<RunLivenessMonitor>().AdoptOnBootAsync().GetAwaiter().GetResult();
+    hostTimeline.Sweep("RunLivenessMonitor.AdoptOnBoot",
+        () => app.Services.GetRequiredService<RunLivenessMonitor>().AdoptOnBootAsync().GetAwaiter().GetResult());
 }
 catch (Exception ex)
 {
@@ -1526,7 +1580,8 @@ catch (Exception ex)
 
 if (!publicDemoExecutionProfile) try
 {
-    app.Services.GetRequiredService<CrashRecoveryService>().RecoverAsync().GetAwaiter().GetResult();
+    hostTimeline.Sweep("CrashRecoveryService",
+        () => app.Services.GetRequiredService<CrashRecoveryService>().RecoverAsync().GetAwaiter().GetResult());
 }
 catch (Exception ex)
 {
@@ -1541,18 +1596,20 @@ catch (Exception ex)
 if (!publicDemoExecutionProfile) try
 {
     var archiver = app.Services.GetRequiredService<StaleProgressArchiver>();
-    archiver.SweepAsync().GetAwaiter().GetResult();
+    hostTimeline.Sweep("StaleProgressArchiver.Sweep", () => archiver.SweepAsync().GetAwaiter().GetResult());
     // Failed-pickup-elimination (supersedes ADR-0028/0029): drain any folders
     // that linger in the retired 3a-failed-pickup lane from before this change
     // - real tasks back to 2-ready, debris to 7-archive - after the sweep so a
     // folder requeued from 3-progress is never also drained. Idempotent once
     // the lane is empty.
-    archiver.DrainFailedPickupLaneAsync().GetAwaiter().GetResult();
+    hostTimeline.Sweep("StaleProgressArchiver.DrainFailedPickupLane",
+        () => archiver.DrainFailedPickupLaneAsync().GetAwaiter().GetResult());
 }
 catch (Exception ex)
 {
     crashRecorder.Record("StaleProgressArchiver", ex);
 }
+hostTimeline.Checkpoint("bootSweeps");
 
 // Seed the Agent Message Bus participant registry. Workspace-scoped, idempotent
 // across boots; safe to fire-and-forget. See docs/system/architecture/bus/agent-message-bus.md section 2.
@@ -1702,8 +1759,8 @@ watcher.OnWikiChanged += (projectName, _) =>
 // request. The host's other lifecycle calls (ReloadProjectAsync,
 // ShutdownAsync) are wired through the typed interface and used by
 // callers, not at startup.
-_ = app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
-    .BootAsync();
+_ = hostTimeline.Sweep("TaskAccessHost.Boot", () => app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
+    .BootAsync());
 
 // Pre-warm AgentMessageBusStore projections for every watched project
 // BEFORE the HTTP listener starts. The grouped-jobs endpoint folds in
@@ -1738,7 +1795,7 @@ _ = app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
         var failures = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         try
         {
-            Parallel.ForEach(projects, project =>
+            hostTimeline.Sweep("BusProjectionWarmup", () => Parallel.ForEach(projects, project =>
             {
                 try
                 {
@@ -1749,7 +1806,7 @@ _ = app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
                 {
                     failures[project] = ex.GetType().Name + ": " + ex.Message;
                 }
-            });
+            }));
         }
         catch (Exception ex)
         {
@@ -1890,6 +1947,8 @@ else
     WindowsWorktreeOrphanSweeper.Sweep(worktreeOrphanLogger);
 }
 
+hostTimeline.Checkpoint("wiring");
+
 // Wire up Runner status → SignalR push
 var taskRunner = app.Services.GetRequiredService<TaskRunnerService>();
 taskRunner.OnRunnerStatusChanged += (projectName, status) =>
@@ -1901,5 +1960,6 @@ app.MapHub<TaskHub>("/hubs/jobs");
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());
+hostTimeline.Checkpoint("mapEndpoints");
 
 app.Run();
