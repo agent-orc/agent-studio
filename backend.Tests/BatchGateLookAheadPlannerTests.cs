@@ -123,7 +123,24 @@ public sealed class BatchGateLookAheadPlannerTests
             ? new ReviewPlanDto([], [], BuildTestDeferredToBatch: deferred)
             : null;
 
-        Assert.Equal(expected, BatchPlanUpcomingEligibility.IsCandidate(plan, sourceRunIsCurrent));
+        Assert.Equal(expected, BatchPlanUpcomingEligibility.IsCandidate(plan, sourceRunIsCurrent,
+            false, "current-sha", "current-sha"));
+    }
+
+    [Theory]
+    [InlineData(true, "current", "current", "pending-continue-intent")]
+    [InlineData(false, "old", "current", "review-subject-mismatch")]
+    [InlineData(false, null, "current", "review-subject-mismatch")]
+    [InlineData(false, "current", null, "review-subject-mismatch")]
+    [InlineData(false, "", "", "review-subject-mismatch")]
+    [InlineData(false, "CURRENT", "current", null)]
+    public void Delivery_eligibility_requires_no_continuation_and_the_current_review_subject(
+        bool pending, string? reviewed, string? delivered, string? reason)
+    {
+        Assert.Equal(reason, BatchPlanUpcomingEligibility.DeliveryExclusion(pending, reviewed, delivered));
+        Assert.Equal(reason is null, BatchPlanUpcomingEligibility.IsCandidate(
+            new ReviewPlanDto([], [], BuildTestDeferredToBatch: true), true,
+            pending, reviewed, delivered));
     }
 
     [Fact]
