@@ -63,9 +63,14 @@ public sealed class AutoReviewDeliveryResumeService
     private readonly TaskTransitionService _transitions;
     private readonly HumanReviewEscalation _escalation;
     private readonly ILogger<AutoReviewDeliveryResumeService> _logger;
+    private readonly CauseBreakerService? _causeBreakers;
+    private readonly AutoReviewPostProcessingQueue? _queue;
+    private readonly TimeProvider _time;
     // A superseded delivery is logged once per task and review generation, not
     // on every sweep.
     private readonly ConcurrentDictionary<string, string> _reportedSupersessions =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _resumeGates =
         new(StringComparer.OrdinalIgnoreCase);
 
     public AutoReviewDeliveryResumeService(
@@ -76,7 +81,10 @@ public sealed class AutoReviewDeliveryResumeService
         RemoteDeliveryIntegrationCoordinator integration,
         TaskTransitionService transitions,
         HumanReviewEscalation escalation,
-        ILogger<AutoReviewDeliveryResumeService> logger)
+        ILogger<AutoReviewDeliveryResumeService> logger,
+        CauseBreakerService? causeBreakers = null,
+        AutoReviewPostProcessingQueue? queue = null,
+        TimeProvider? time = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -86,6 +94,9 @@ public sealed class AutoReviewDeliveryResumeService
         _transitions = transitions;
         _escalation = escalation;
         _logger = logger;
+        _causeBreakers = causeBreakers;
+        _queue = queue;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -156,6 +167,21 @@ public sealed class AutoReviewDeliveryResumeService
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(task);
+        var gate = _resumeGates.GetOrAdd(task.ProjectName + "/" + task.Id,
+            _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await ResumeCoreAsync(task, source, ct).ConfigureAwait(false); }
+        finally { gate.Release(); }
+    }
+
+    private async Task<AutoReviewResumeOutcome> ResumeCoreAsync(
+        TaskInfo task, string source, CancellationToken ct)
+    {
+        var settledProbe = CanonicalKey(task) is { } key
+            ? _authority.GetTaskProjection(key).CurrentReviewAttempt
+            : null;
+        if (settledProbe is { Outcome: ReviewTerminalOutcome.Pass, TerminalAt: not null })
+            _causeBreakers?.ObserveGreen(settledProbe.TaskKey, settledProbe.AttemptId);
 
         // AGT-3091: the sweep's snapshot can be a whole gate old. AGT-2951 was
         // reissued to 2-ready at 18:09 and integrated from a 4-auto-review
@@ -209,6 +235,28 @@ public sealed class AutoReviewDeliveryResumeService
         if (Superseded(task, review!) is { } superseded)
             return superseded;
 
+        // The retry record belongs to this exact review generation. It retains
+        // the budget across restarts and across both resume callers.
+        var now = _time.GetUtcNow();
+        var retry = AutoReviewResumeRetryStore.Read(task.FolderPath, review!.AttemptId);
+        var resumeAttempts = retry?.Attempts ?? 0;
+        var nextResumeAt = retry?.NextAtUtc;
+        var resumeReason = retry?.Reason;
+        if (resumeAttempts >= AutoReviewResumeRetryPolicy.MaxAttempts)
+        {
+            ShowResumeWait(task, resumeAttempts, nextResumeAt, resumeReason);
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                "delivery-resume-exhausted", false, resumeReason);
+        }
+        if (!AutoReviewResumeRetryPolicy.CanStart(resumeAttempts, nextResumeAt, now))
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                "delivery-resume-backoff", false, resumeReason);
+
+        AutoReviewResumeRetryStore.Write(task.FolderPath, new AutoReviewResumeRetryRecord(
+            review.AttemptId, resumeAttempts + 1,
+            now + AutoReviewResumeRetryPolicy.Delay(resumeAttempts + 1),
+            "resume interrupted before progress"));
+
         Task<MergeIntoIntegrationResult>? pendingIntegration = null;
         if (decision.Action == AutoReviewResumeAction.StartIntegration)
         {
@@ -226,6 +274,8 @@ public sealed class AutoReviewDeliveryResumeService
                     || decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry,
                     out var started))
             {
+                if (retry is null) AutoReviewResumeRetryStore.Clear(task.FolderPath, review.AttemptId);
+                else AutoReviewResumeRetryStore.Write(task.FolderPath, retry);
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
                     Reasons.IntegrationInFlight, Resumed: false);
             }
@@ -243,45 +293,89 @@ public sealed class AutoReviewDeliveryResumeService
         // integration attempt recorded as its park reason.
         var integrationDetail = deliveryMerged ? null : settlement?.IntegrationDetail;
 
-        if (pendingIntegration is not null)
+        try
         {
-            var result = await pendingIntegration.ConfigureAwait(false);
-            if (!IsCurrent(review!))
-                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
-            // A reissue during the gate: the coordinator or the publication
-            // fence refused the delivery, and the card is not owed this park.
-            if (Superseded(task, review!) is { } supersededDuringGate)
-                return supersededDuringGate;
-            if (CurrentAutoReviewCard(task) is null)
-                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
-                    AutoReviewResumePolicy.Reasons.OutsideAutoReview, Resumed: false);
-            integrationOutcome = result.Outcome.ToString();
-            integrationDetail = RemoteDeliveryParkReason.For(result);
-            RemoteDeliverySettlementStore.RecordIntegration(
-                task.FolderPath,
-                integrationOutcome,
-                integrationDetail);
-        }
-        else if (decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed)
-        {
-            _integration.RecordGateFailure(
-                BuildIntegrationRequest(task, settlement!, review!),
-                settlement!.GateReason);
-            RemoteDeliverySettlementStore.Advance(
-                task.FolderPath,
-                RemoteDeliverySettlementStage.IntegrationSettled,
-                integrationOutcome);
-        }
+            if (pendingIntegration is not null)
+            {
+                var result = await pendingIntegration.ConfigureAwait(false);
+                if (!IsCurrent(review!))
+                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
+                // A reissue during the gate: the coordinator or the publication
+                // fence refused the delivery, and the card is not owed this park.
+                if (Superseded(task, review!) is { } supersededDuringGate)
+                    return supersededDuringGate;
+                if (CurrentAutoReviewCard(task) is null)
+                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                        AutoReviewResumePolicy.Reasons.OutsideAutoReview, Resumed: false);
+                integrationOutcome = result.Outcome.ToString();
+                integrationDetail = RemoteDeliveryParkReason.For(result);
+                RemoteDeliverySettlementStore.RecordIntegration(
+                    task.FolderPath,
+                    integrationOutcome,
+                    integrationDetail);
+            }
+            else if (decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed)
+            {
+                _integration.RecordGateFailure(
+                    BuildIntegrationRequest(task, settlement!, review!),
+                    settlement!.GateReason);
+                RemoteDeliverySettlementStore.Advance(
+                    task.FolderPath,
+                    RemoteDeliverySettlementStage.IntegrationSettled,
+                    integrationOutcome);
+            }
 
-        return await CompleteTransitionAsync(
-                task,
-                review,
-                decision,
-                integrationOutcome,
-                integrationDetail,
-                source,
-                ct)
-            .ConfigureAwait(false);
+            var completed = await CompleteTransitionAsync(
+                    task,
+                    review,
+                    decision,
+                    integrationOutcome,
+                    integrationDetail,
+                    source,
+                    ct)
+                .ConfigureAwait(false);
+            if (completed.Resumed || CurrentAutoReviewCard(task) is null)
+                ClearResumeFailure(task, review.AttemptId);
+            else if (completed.Action != AutoReviewResumeAction.None)
+                RecordResumeFailure(task, review.AttemptId, completed.Detail ?? completed.Reason);
+            return completed;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            RecordResumeFailure(task, review.AttemptId, ex.Message);
+            _logger.LogWarning(ex,
+                "auto-review-delivery-resume-failed project={Project} job={JobId} attempt={AttemptId}",
+                task.ProjectName, task.Id, review.AttemptId);
+            return new AutoReviewResumeOutcome(decision.Action,
+                "delivery-resume-failed", false, ex.Message);
+        }
+    }
+
+    private void RecordResumeFailure(TaskInfo task, string attemptId, string reason)
+    {
+        var retry = AutoReviewResumeRetryStore.Read(task.FolderPath, attemptId);
+        if (retry is null) return;
+        AutoReviewResumeRetryStore.Write(task.FolderPath, retry with { Reason = reason });
+        ShowResumeWait(task, retry.Attempts, retry.NextAtUtc, reason);
+        _logger.LogWarning(
+            "auto-review-delivery-resume-deferred project={Project} job={JobId} attempt={AttemptId} tries={Tries} next={Next} reason={Reason}",
+            task.ProjectName, task.Id, attemptId, retry.Attempts, retry.NextAtUtc, reason);
+    }
+
+    private void ShowResumeWait(TaskInfo task, int attempts, DateTimeOffset? nextAt, string? reason)
+    {
+        var exhausted = attempts >= AutoReviewResumeRetryPolicy.MaxAttempts;
+        _queue?.SetWaitState(task.ProjectName, task.Id, new AutoReviewQueueWaitState(
+            exhausted ? "delivery-resume-exhausted" : "delivery-resume-backoff",
+            reason, attempts,
+            (nextAt ?? _time.GetUtcNow()).UtcDateTime));
+    }
+
+    private void ClearResumeFailure(TaskInfo task, string attemptId)
+    {
+        var current = _scanner.FindJob(task.Id, task.WatchPath) ?? task;
+        AutoReviewResumeRetryStore.Clear(current.FolderPath, attemptId);
+        _queue?.ClearWaitState(task.ProjectName, task.Id);
     }
 
     /// <summary>The card as the scanner holds it now, or null when it is not a live Auto Review card.</summary>
@@ -439,7 +533,15 @@ public sealed class AutoReviewDeliveryResumeService
         }
     }
 
-    private static string? CanonicalKey(TaskInfo task)
-        => new[] { task.Key, task.TaskKey, task.Id }
-            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    private string? CanonicalKey(TaskInfo task)
+    {
+        var keys = new[] { task.Key, task.TaskKey, task.Id }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return keys.FirstOrDefault(key =>
+                   _authority.GetTaskProjection(key).CurrentReviewAttempt is not null)
+               ?? keys.FirstOrDefault();
+    }
 }
