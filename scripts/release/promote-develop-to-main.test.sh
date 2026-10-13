@@ -44,6 +44,32 @@ export RELEASE_GATE_CPU_COUNT=12
 export RELEASE_GATE_SETTLE_SECONDS=0
 export FAKE_SYSTEMCTL_STATE="$test_root/no-runner-units"
 
+# The release package step publishes the gated backend. A fake dotnet records
+# each call and writes the runtime files fetch-remote-artifacts.sh requires;
+# FAKE_DOTNET_FAIL=1 simulates a failed publish. It is on PATH only for the
+# scenarios that pass it explicitly.
+fake_dotnet_bin="$test_root/fake-dotnet-bin"
+mkdir -p "$fake_dotnet_bin"
+cat > "$fake_dotnet_bin/dotnet" <<'FAKE'
+#!/usr/bin/env bash
+set -eu
+printf '%s|%s\n' "$PWD" "$*" >> "${FAKE_DOTNET_LOG:?}"
+if [[ "${FAKE_DOTNET_FAIL:-}" == 1 ]]; then
+  printf '%s\n' 'fixture publish failed' >&2
+  exit 1
+fi
+test "$1" = publish
+output=
+while (($#)); do
+  if [[ "$1" == --output ]]; then output=$2; shift 2; else shift; fi
+done
+mkdir -p "$output"
+for file in OrchestratorApi.dll OrchestratorApi.deps.json OrchestratorApi.runtimeconfig.json; do
+  printf 'fixture %s\n' "$file" > "$output/$file"
+done
+FAKE
+chmod +x "$fake_dotnet_bin/dotnet"
+
 make_fixture() {
   local name=$1
   local gate_mode=$2
@@ -71,6 +97,11 @@ make_fixture() {
 set -eu
 test "${1:-}" = --repo
 test -d "${2:-}"
+# Like the real gate's final step, leave an ignored production frontend build.
+mkdir -p "$2/frontend/dist/frontend/browser/media"
+printf '%s\n' '<!doctype html>' > "$2/frontend/dist/frontend/browser/index.html"
+printf '%s\n' 'fixture asset' > "$2/frontend/dist/frontend/browser/media/asset.txt"
+printf '%s\n' 'fixture licenses' > "$2/frontend/dist/frontend/3rdpartylicenses.txt"
 printf '%s\n' PROMOTION_FULL_GATE=passed
 EOF
       ;;
@@ -130,6 +161,7 @@ EOF
   esac
   chmod +x "$seed/scripts/release/promotion-full-gate.sh"
   printf '%s\n' base > "$seed/payload.txt"
+  printf '%s\n' 'frontend/dist/' > "$seed/.gitignore"
   git -C "$seed" add .
   git -C "$seed" commit --quiet -m 'base'
   git -C "$seed" branch -M main
@@ -200,7 +232,9 @@ printf 'infinity\n' > "$green_units/agent-runner.service.quota"
 printf '6s\n' > "$green_units/agent-runner-review.service.quota"
 old_main=$(git --git-dir="$green_remote" rev-parse refs/heads/main)
 develop=$(git --git-dir="$green_remote" rev-parse refs/heads/develop)
-FAKE_SYSTEMCTL_STATE="$green_units" \
+green_dotnet_log="$test_root/green/dotnet.log"
+FAKE_SYSTEMCTL_STATE="$green_units" FAKE_DOTNET_LOG="$green_dotnet_log" \
+  PATH="$fake_dotnet_bin:$PATH" \
   "$green_operator/scripts/release/promote-develop-to-main.sh" \
   --execute --tag release/test-green --required-ancestor "$develop" \
   --evidence-dir "$green_evidence" >/dev/null
@@ -213,6 +247,10 @@ grep -q '"status":"promoted"' "$green_evidence/promotion-record.json"
 grep -q '"atomicPush":true' "$green_evidence/promotion-record.json"
 grep -Fxq 'PROMOTION_FULL_GATE=passed' "$green_evidence/full-gate.log"
 grep -q 'historical-whitespace.txt' "$green_evidence/candidate-whitespace-review.txt"
+# Without --release-dir nothing is published or packaged.
+test ! -e "$green_dotnet_log"
+test ! -e "$green_evidence/release-publish.log"
+grep -q '"releasePackage":null' "$green_evidence/promotion-record.json"
 # The gate ran inside the capacity window: both units were throttled, then
 # restored, and the record attributes the gate to its host load (AGT-2982).
 test "$(cat "$green_units/agent-runner.service.quota")" = infinity
@@ -305,6 +343,116 @@ grep -q '"error":"atomic main/tag push failed with exit code' \
   "$push_failure_evidence/promotion-record.json"
 grep -q 'fixture push rejected' "$push_failure_evidence/push.log"
 printf '%s\n' 'simulated atomic push failure record passed'
+
+# With --release-dir a promoted run packages the release from the gated
+# worktree in exactly the layout fetch-remote-artifacts.sh validates, and the
+# record names the archive and its sha256.
+package_operator=$(make_fixture package pass)
+package_remote="$test_root/package/remote.git"
+package_evidence="$test_root/package/evidence"
+package_releases="$test_root/package/releases"
+package_dotnet_log="$test_root/package/dotnet.log"
+package_sha=$(git --git-dir="$package_remote" rev-parse refs/heads/develop)
+FAKE_DOTNET_LOG="$package_dotnet_log" PATH="$fake_dotnet_bin:$PATH" \
+  "$package_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-package --evidence-dir "$package_evidence" \
+  --release-dir "$package_releases" >/dev/null
+package_dir="$package_releases/$package_sha"
+test "$(git --git-dir="$package_remote" rev-parse refs/heads/main)" = "$package_sha"
+test "$(find "$package_releases" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1
+test "$(wc -l < "$package_dotnet_log" | tr -d ' ')" = 1
+# The publish ran in the gate worktree (removed by now) into a staging
+# directory that was renamed into place.
+publish_call=$(cat "$package_dotnet_log")
+publish_cwd=${publish_call%%|*}
+[[ "$publish_cwd" == */candidate && ! -e "$publish_cwd" ]]
+[[ "${publish_call#*|}" == "publish backend/OrchestratorApi.csproj --configuration Release --no-build --no-restore --nologo --output $package_releases/.$package_sha.partial."* ]]
+test "$(tr -d '\r\n' < "$package_dir/release.sha256")" = \
+  "$(sha256sum "$package_dir/release.tar.gz" | cut -d ' ' -f1)"
+grep -Fxq 'PROMOTION_FULL_GATE=passed' "$package_dir/full-gate.log"
+tar -tzf "$package_dir/release.tar.gz" | while IFS= read -r entry; do
+  [[ "$entry" == backend/* || "$entry" == frontend/* ]] || { printf 'Unexpected archive path: %s\n' "$entry" >&2; exit 1; }
+done
+! tar -tvzf "$package_dir/release.tar.gz" | grep -E '^[^d-]' >/dev/null
+package_unpack="$test_root/package/unpack"
+mkdir -p "$package_unpack"
+tar -xzf "$package_dir/release.tar.gz" -C "$package_unpack"
+for component in backend frontend; do
+  test "$(cat "$package_unpack/$component/RELEASE-SHA")" = "$package_sha"
+  test "$(cat "$package_unpack/$component/FULL-GATE")" = "PROMOTION_FULL_GATE=passed:$package_sha"
+done
+for file in backend/OrchestratorApi.dll backend/OrchestratorApi.deps.json \
+  backend/OrchestratorApi.runtimeconfig.json frontend/index.html \
+  frontend/media/asset.txt frontend/3rdpartylicenses.txt; do
+  test -s "$package_unpack/$file"
+done
+grep -q '"status":"promoted"' "$package_evidence/promotion-record.json"
+grep -Fq "\"releasePackage\":{\"status\":\"written\",\"directory\":\"$package_dir\",\"archive\":\"$package_dir/release.tar.gz\",\"sha256\":\"$(cat "$package_dir/release.sha256")\"}" \
+  "$package_evidence/promotion-record.json"
+grep -Fq "release package written: $package_dir/release.tar.gz" "$package_evidence/promotion.log"
+printf '%s\n' 'release package from the gate worktree passed'
+
+# A red gate with --release-dir leaves no package and publishes nothing.
+red_package_operator=$(make_fixture package-red fail)
+red_package_releases="$test_root/package-red/releases"
+red_package_dotnet_log="$test_root/package-red/dotnet.log"
+run_expect_rc 4 env FAKE_DOTNET_LOG="$red_package_dotnet_log" PATH="$fake_dotnet_bin:$PATH" \
+  "$red_package_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-package-red --evidence-dir "$test_root/package-red/evidence" \
+  --release-dir "$red_package_releases" >/dev/null 2>&1
+test -z "$(ls -A "$red_package_releases")"
+test ! -e "$red_package_dotnet_log"
+grep -q '"status":"blocked-gate"' "$test_root/package-red/evidence/promotion-record.json"
+grep -q '"releasePackage":null' "$test_root/package-red/evidence/promotion-record.json"
+
+# A rejected push with --release-dir likewise leaves no package.
+push_package_operator=$(make_fixture package-push pass)
+push_package_releases="$test_root/package-push/releases"
+cp "$push_failure_remote/hooks/pre-receive" "$test_root/package-push/remote.git/hooks/pre-receive"
+run_expect_rc 6 env FAKE_DOTNET_LOG="$test_root/package-push/dotnet.log" PATH="$fake_dotnet_bin:$PATH" \
+  "$push_package_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-package-push --evidence-dir "$test_root/package-push/evidence" \
+  --release-dir "$push_package_releases" >/dev/null 2>&1
+test -z "$(ls -A "$push_package_releases")"
+test ! -e "$test_root/package-push/dotnet.log"
+grep -q '"status":"blocked-push"' "$test_root/package-push/evidence/promotion-record.json"
+
+# A failed publish after the verified push keeps main promoted, leaves no
+# partial package, and reports the failure as exit code 8 and in the record.
+publish_failure_operator=$(make_fixture package-publish-failure pass)
+publish_failure_remote="$test_root/package-publish-failure/remote.git"
+publish_failure_evidence="$test_root/package-publish-failure/evidence"
+publish_failure_releases="$test_root/package-publish-failure/releases"
+publish_failure_sha=$(git --git-dir="$publish_failure_remote" rev-parse refs/heads/develop)
+run_expect_rc 8 env FAKE_DOTNET_FAIL=1 FAKE_DOTNET_LOG="$test_root/package-publish-failure/dotnet.log" \
+  PATH="$fake_dotnet_bin:$PATH" \
+  "$publish_failure_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-package-publish-failure --evidence-dir "$publish_failure_evidence" \
+  --release-dir "$publish_failure_releases" >/dev/null 2>&1
+test "$(git --git-dir="$publish_failure_remote" rev-parse refs/heads/main)" = "$publish_failure_sha"
+test "$(git --git-dir="$publish_failure_remote" rev-parse refs/tags/release/test-package-publish-failure^{})" = "$publish_failure_sha"
+test -z "$(ls -A "$publish_failure_releases")"
+grep -q 'fixture publish failed' "$publish_failure_evidence/release-publish.log"
+grep -q '"status":"promoted"' "$publish_failure_evidence/promotion-record.json"
+grep -q '"atomicPush":true' "$publish_failure_evidence/promotion-record.json"
+grep -q '"releasePackage":{"status":"failed","directory":"[^"]*","error":"dotnet publish of the gated backend failed; see release-publish.log"}' \
+  "$publish_failure_evidence/promotion-record.json"
+
+# An occupied package directory is refused before the gate, so main never
+# advances toward a package location that cannot be written.
+occupied_operator=$(make_fixture package-occupied pass)
+occupied_remote="$test_root/package-occupied/remote.git"
+occupied_evidence="$test_root/package-occupied/evidence"
+occupied_main=$(git --git-dir="$occupied_remote" rev-parse refs/heads/main)
+occupied_sha=$(git --git-dir="$occupied_remote" rev-parse refs/heads/develop)
+mkdir -p "$test_root/package-occupied/releases/$occupied_sha"
+run_expect_rc 3 "$occupied_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-package-occupied --evidence-dir "$occupied_evidence" \
+  --release-dir "$test_root/package-occupied/releases" >/dev/null 2>&1
+test "$(git --git-dir="$occupied_remote" rev-parse refs/heads/main)" = "$occupied_main"
+test ! -e "$occupied_evidence/full-gate.log"
+grep -q '"status":"blocked-release-dir"' "$occupied_evidence/promotion-record.json"
+printf '%s\n' 'release package failure paths passed'
 
 # A red or nominally green but incomplete gate cannot advance either ref.
 for gate_mode in fail incomplete; do
@@ -408,6 +556,10 @@ if [[ -n ${PROMOTION_TEST_ARTIFACT_DIR:-} ]]; then
     "$PROMOTION_TEST_ARTIFACT_DIR/simulated-push-failure-record.json"
   cp "$push_failure_evidence/push.log" \
     "$PROMOTION_TEST_ARTIFACT_DIR/simulated-push-failure.log"
+  cp "$package_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/release-package-execute-record.json"
+  cp "$publish_failure_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/release-package-publish-failure-record.json"
 fi
 
 printf '%s\n' 'develop -> main promotion tests passed'
