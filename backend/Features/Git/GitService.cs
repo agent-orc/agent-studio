@@ -220,6 +220,20 @@ public record MergeIntoIntegrationResult(
     public int? AutomaticRecoveryBudgetLimit { get; init; }
 
     /// <summary>
+    /// AGT-3103: the integration-branch SHA that proved the delivery already
+    /// contained. Set only for a no-op integration, which the lane completes
+    /// without a gate run and without a push.
+    /// </summary>
+    public string? ContainmentSha { get; init; }
+
+    /// <summary>
+    /// AGT-3103: a no-op integration completed, but no gate evidence names a
+    /// tree that carries the delivery (integrated-unverified). Acceptance must
+    /// not complete the card on this result alone.
+    /// </summary>
+    public bool VerificationPending { get; init; }
+
+    /// <summary>
     /// Typed cause of an <see cref="MergeIntoIntegrationOutcome.Error"/> result
     /// (<see cref="AcceptedIntegrationFailureCodes"/>). Every Error names one, so
     /// the log line, the pipeline step, and the card projection agree on why the
@@ -7545,6 +7559,14 @@ public class GitService
         }
         return true;
     }
+
+    /// <summary>
+    /// True when the repository at <paramref name="repoRoot"/> names an
+    /// <c>origin</c> remote. Without one the local integration branch is the
+    /// whole published state: nothing can ever be pushed.
+    /// </summary>
+    public bool HasOriginRemote(string repoRoot)
+        => !string.IsNullOrWhiteSpace(repoRoot) && Directory.Exists(repoRoot) && HasRemote(repoRoot, "origin");
 
     private static bool HasRemote(string repoRoot, string remote)
     {

@@ -779,7 +779,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_MainTarget_AlreadyOnOriginWithoutGateEvidence_RunsFullSuiteOnceOnTheTip()
+    public async Task RunAsync_MainTarget_AlreadyOnOriginWithoutGateEvidence_IsANoOpWithoutTheFullSuite()
     {
         var (repo, remote) = SeedRepoWithOrigin("runner-main-stale-local");
         const string deliveryRef = "agent-studio/results/run-stale-main/result";
@@ -801,8 +801,9 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         var (git, log, settings) = BuildWithSettings(repo);
         // AGT-3002: main was advanced out of band, so no gate this card can
-        // name ever passed on that tree. Containment alone no longer completes
-        // the card; the mandatory full suite runs once on the exact tip.
+        // name ever passed on that tree; containment alone does not verify it.
+        // AGT-3103: origin/main already carries the delivery, so nothing is
+        // released and the mandatory full suite does not run for it either.
         var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
             BuildTestGateVerdict.Ok,
             0,
@@ -851,14 +852,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             CancellationToken.None);
 
         Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
-        Assert.Equal(1, gateRunner.Invocations);
-        Assert.Equal(resultSha, gateRunner.Request!.ExpectedSha);
+        Assert.Equal(0, gateRunner.Invocations);
         Assert.Equal(resultSha, outcome.MergedSha);
+        Assert.Equal(resultSha, outcome.ContainmentSha);
+        Assert.True(outcome.VerificationPending);
         var verification = IntegrationVerificationStore.Read(jobFolder);
         Assert.NotNull(verification);
-        Assert.Equal(IntegrationVerificationStates.Verified, verification!.State);
-        Assert.Equal(IntegrationVerificationEvidence.GateRun, verification.Evidence);
+        Assert.Equal(IntegrationVerificationStates.Unverified, verification!.State);
+        Assert.Equal(IntegrationVerificationEvidence.None, verification.Evidence);
         Assert.Equal(resultSha, verification.Sha);
+        Assert.Equal(resultSha, verification.ContainmentSha);
         // AGT-2996: the lane follows origin; the stale local main is left to
         // the push worker's release, not moved by the merge step.
         Assert.Equal(resultSha, Lane(repo, "main"));
@@ -1822,12 +1825,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         // re-read later by the worker.
         var repo = SeedRepo("run-already-merged");
         RunGit(repo, "checkout -q -b develop");
+        var published = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q -b task/44");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
         RunGit(repo, "checkout -q develop");
         RunGit(repo, "merge -q --no-ff -m \"chore: pre-merged\" task/44");
         var tip = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        // AGT-3103: only the unpublished lane carries the delivery, so a push
+        // follows and the AGT-3002 rule of exact evidence or one gate applies.
+        KeepOnUnpublishedLane(repo, "develop", published);
 
         var (git, log, settings) = BuildWithSettings(repo);
         var queue = new IntegrationPushQueue();
@@ -1848,12 +1855,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = SeedRepo("run-already-merged-gated");
         RunGit(repo, "checkout -q -b develop");
+        var published = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q -b task/45");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
         RunGit(repo, "checkout -q develop");
         RunGit(repo, "merge -q --no-ff -m \"chore: pre-merged\" task/45");
         var tip = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        // AGT-3103: only the unpublished lane carries the delivery, so a push
+        // follows and the AGT-3002 rule of exact evidence or one gate applies.
+        KeepOnUnpublishedLane(repo, "develop", published);
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
@@ -1901,7 +1912,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
     [Fact]
     [Trait("Category", "MachineBound")]
-    public async Task RunAsync_MainTarget_ContainedDeliveryWithPreDevelopReceipt_RunsPreMainFullSuite()
+    public async Task RunAsync_MainTarget_ContainedDeliveryWithPreDevelopReceipt_DoesNotCountForMain()
     {
         var repo = SeedRepo("contained-main-pre-develop-receipt");
         RunGit(repo, "checkout -q -b task/main-contained");
@@ -1938,14 +1949,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var outcome = await runner.RunAsync(
             "Fixture", "main-contained", jobFolder, repo, "main", CancellationToken.None);
 
+        // A pre-develop receipt never satisfies the mandatory pre-main full
+        // suite. AGT-3103: main already carries the delivery, so the no-op
+        // runs no suite either and the card stays unverified.
         Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
-        Assert.Equal(1, gateRunner.Invocations);
-        Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
-        Assert.Equal(TestExecutionLevels.Full, gateRunner.Request.RequiredTestLevel);
-        Assert.True(gateRunner.Request.RequireExactSubject);
-        Assert.Equal(IntegrationVerificationStates.Verified,
+        Assert.Equal(0, gateRunner.Invocations);
+        Assert.Equal(tip, outcome.ContainmentSha);
+        Assert.True(outcome.VerificationPending);
+        Assert.Equal(IntegrationVerificationStates.Unverified,
             IntegrationVerificationStore.Read(jobFolder)?.State);
-        Assert.Single(Directory.GetFiles(evidenceDir, "pre-main-test-gate-*.log"));
+        Assert.Empty(Directory.GetFiles(evidenceDir, "pre-main-test-gate-*.log"));
     }
 
     [Fact]
@@ -1954,12 +1967,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = SeedRepo("run-already-merged-red-gate");
         RunGit(repo, "checkout -q -b develop");
+        var published = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q -b task/46");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
         RunGit(repo, "checkout -q develop");
         RunGit(repo, "merge -q --no-ff -m \"chore: merge before crash\" task/46");
         var tip = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        // AGT-3103: only the unpublished lane carries the delivery, so a push
+        // follows and the AGT-3002 rule of exact evidence or one gate applies.
+        KeepOnUnpublishedLane(repo, "develop", published);
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
@@ -1987,7 +2004,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(1, gateRunner.Invocations);
         Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
         Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
-        Assert.Equal(tip, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(tip, Lane(repo, "develop"));
         Assert.False(queue.Reader.TryRead(out _));
 
         var step = ReadMergeStep(log, jobFolder);
@@ -2007,6 +2024,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = SeedRepo("run-already-merged-wrong-receipt");
         RunGit(repo, "checkout -q -b develop");
+        var published = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q -b task/47");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
@@ -2018,6 +2036,9 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Commit(repo, "feat: develop work");
         RunGit(repo, "merge -q --no-ff -m \"chore: merge before crash\" task/47");
         var integrationTip = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        // AGT-3103: only the unpublished lane carries the delivery, so a push
+        // follows and the AGT-3002 rule of exact evidence or one gate applies.
+        KeepOnUnpublishedLane(repo, "develop", published);
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
@@ -2065,6 +2086,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = SeedRepo("contained-code-before-docs-tip");
         RunGit(repo, "checkout -q -b develop");
+        var published = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q -b task/delivery-range");
         Directory.CreateDirectory(Path.Combine(repo, "backend"));
         File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
@@ -2077,6 +2099,9 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "docs", "later.md"), "later notes\n");
         Commit(repo, "docs: advance the integration tip");
         var tip = RunGit(repo, "rev-parse develop").Out.Trim();
+        // AGT-3103: only the unpublished lane carries the delivery, so a push
+        // follows and the AGT-3002 rule of exact evidence or one gate applies.
+        KeepOnUnpublishedLane(repo, "develop", published);
 
         var (git, log, settings) = BuildWithSettings(repo);
         var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
@@ -2211,12 +2236,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var repo = SeedRepo("run-already-merged-unwired-gate");
         RunGit(repo, "checkout -q -b develop");
+        var published = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q -b task/48");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
         RunGit(repo, "checkout -q develop");
         RunGit(repo, "merge -q --no-ff -m \"chore: merge before crash\" task/48");
         var tip = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        // AGT-3103: only the unpublished lane carries the delivery, so a push
+        // follows and the AGT-3002 rule of exact evidence or one gate applies.
+        KeepOnUnpublishedLane(repo, "develop", published);
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
@@ -2234,7 +2263,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             "Fixture", "48", jobFolder, repo, "develop", CancellationToken.None);
 
         Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
-        Assert.Equal(tip, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(tip, Lane(repo, "develop"));
         Assert.False(queue.Reader.TryRead(out _));
 
         var step = ReadMergeStep(log, jobFolder);
@@ -3493,6 +3522,21 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         RunGit(cwd, "add -A");
         RunGit(cwd, $"commit -q -m \"{message}\"");
+    }
+
+    /// <summary>
+    /// AGT-3103: rewinds the published <paramref name="branch"/> (a repository
+    /// without origin publishes its local branch) to <paramref name="published"/>
+    /// and leaves the merged history on the Studio lane only, as a gated merge
+    /// still awaiting its push. Such a delivery is not a no-op integration.
+    /// </summary>
+    private static void KeepOnUnpublishedLane(string repo, string branch, string published)
+    {
+        var tip = RunGit(repo, $"rev-parse refs/heads/{branch}").Out.Trim();
+        RunGit(repo, $"update-ref {LaneRef(branch)} {tip}");
+        RunGit(repo, "checkout -q --detach");
+        RunGit(repo, $"update-ref refs/heads/{branch} {published}");
+        RunGit(repo, $"checkout -q {branch}");
     }
 
     /// <summary>AGT-2996: the Studio-owned integration lane ref name for a branch.</summary>

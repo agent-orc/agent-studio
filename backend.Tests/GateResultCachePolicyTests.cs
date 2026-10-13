@@ -47,16 +47,37 @@ public sealed class GateResultCachePolicyTests
         var profile = new BuildProfile { BuildCmds = ["dotnet build"] };
         string Digest(BuildTestGateRequest selected, BuildProfile candidate, string toolchain) =>
             GateResultCache.ProfileDigest(selected, candidate, PostStepMode.Fail,
-                ["src/File.cs"], [command], toolchain);
+                [command], toolchain);
 
         var original = Digest(request, profile, "toolchain-1");
         Assert.NotEqual(original, Digest(request, profile with { BuildCmds = ["dotnet build --no-restore"] }, "toolchain-1"));
         Assert.NotEqual(original, Digest(request with { PipelineDefinitionVersion = 2 }, profile, "toolchain-1"));
         Assert.NotEqual(original, Digest(request, profile, "toolchain-2"));
-        Assert.NotEqual(original, Digest(request with
+        Assert.NotEqual(original, Digest(request with { RequiredTestLevel = "full" }, profile, "toolchain-1"));
+    }
+
+    [Fact]
+    public void Profile_digest_is_the_command_plan_not_the_diff_that_selected_it()
+    {
+        // AGT-3103: two gates on one SHA whose diffs select the same commands
+        // share a verdict; a different command plan never does.
+        var request = new BuildTestGateRequest("/repo", new string('a', 40), "merge-into-develop-build-gate");
+        var profile = new BuildProfile { BuildCmds = ["dotnet build"] };
+        var test = new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test Backend.Tests");
+        var lint = new VerifyCommand(VerifyEcosystem.Node, VerifyCommandKind.Lint, "frontend", "npm run lint");
+
+        var mergeGate = GateResultCache.ProfileDigest(request with
         {
-            ChangedFileStatuses = new Dictionary<string, string> { ["src/File.cs"] = "deleted" },
-        }, profile, "toolchain-1"));
+            ChangedFileStatuses = new Dictionary<string, string> { ["backend/A.cs"] = "modified" },
+        }, profile, PostStepMode.Fail, [test], "toolchain-1");
+        var verificationGate = GateResultCache.ProfileDigest(request with
+        {
+            ChangedFileStatuses = new Dictionary<string, string> { ["backend/B.cs"] = "deleted" },
+        }, profile, PostStepMode.Fail, [test], "toolchain-1");
+
+        Assert.Equal(mergeGate, verificationGate);
+        Assert.NotEqual(mergeGate, GateResultCache.ProfileDigest(
+            request, profile, PostStepMode.Fail, [test, lint], "toolchain-1"));
     }
 
     [Fact]

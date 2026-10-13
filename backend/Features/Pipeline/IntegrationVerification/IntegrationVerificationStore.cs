@@ -22,6 +22,13 @@ public sealed record IntegrationVerificationRecord
     public string IntegrationBranch { get; init; } = "";
 
     /// <summary>
+    /// AGT-3103: the published branch SHA that proved a no-op integration's
+    /// delivery contained. May differ from <see cref="Sha"/> when the evidence
+    /// is an earlier verified tree the branch still carries.
+    /// </summary>
+    public string? ContainmentSha { get; init; }
+
+    /// <summary>
     /// Full SHAs of the card's delivery that <see cref="Sha"/> contained when
     /// the verdict was recorded (review-subject result, attributed commits).
     /// Lets a later branch tip keep this verdict only while it still carries

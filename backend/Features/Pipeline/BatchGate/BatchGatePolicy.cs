@@ -165,6 +165,21 @@ public static class BatchGatePolicy
         return new(manifest, exclusions, keys, false);
     }
 
+    /// <summary>
+    /// AGT-3103: a waiting member whose result SHA the integration branch
+    /// already contains leaves the queue as integrated instead of forcing a
+    /// candidate and a gate run. Only a current, unowned member qualifies: a
+    /// batch that owns it, or a per-task gate already running for it, settles
+    /// it on its own path. <paramref name="containedInBase"/> is asked last,
+    /// so it costs a Git call only for a member that could leave.
+    /// </summary>
+    public static bool LeavesAsIntegrated(BatchGateSubject subject, Func<string, bool> containedInBase)
+        => subject.CurrentGeneration
+           && subject.OwningBatchId is null
+           && !subject.ActivePerTaskGate
+           && !string.IsNullOrWhiteSpace(subject.ResultSha)
+           && containedInBase(subject.ResultSha);
+
     public static BatchExclusionReason? Exclusion(
         BatchGateSubject s, BatchGateScope scope, BatchGateFormationOptions options)
     {
