@@ -21,9 +21,6 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
 
     internal static EconomyPricing.ModelListing? FindListing(string modelId) => Source.Find(modelId);
 
-    internal static EconomyPricing.ModelPrice? CurrentPrice(string modelId)
-        => Source.ResolvePrice(modelId, DateTime.UtcNow).Price;
-
     public TokenCostEstimate Estimate(
         string? modelId,
         long inputTokens,

@@ -40,8 +40,7 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
 
     public void Dispose()
     {
-        try { if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true); }
-        catch { /* best-effort */ }
+        if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
     }
 
     [Fact]

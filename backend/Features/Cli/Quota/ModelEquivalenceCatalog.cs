@@ -38,10 +38,15 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
     private static readonly ModelRoutingKnowledgeBase Knowledge = ModelRoutingKnowledgeBase.Default;
 
     private static readonly ModelMigrationCatalogRegistry MigrationCatalog = new();
+    private readonly ITokenPricing _pricing;
     public string Version { get; } = BuildVersion();
     public IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
 
-    public ModelEquivalenceCatalog() => Routes = BuildRoutes();
+    public ModelEquivalenceCatalog(ITokenPricing pricing)
+    {
+        _pricing = pricing;
+        Routes = BuildRoutes();
+    }
 
     public (string Model, string? ThinkingLevel)? TryGetEquivalent(
         string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType)
@@ -75,8 +80,8 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
         return route with
         {
             FromModel = model,
-            FromInputPerMTok = price?.InputPerMTok,
-            FromOutputPerMTok = price?.OutputPerMTok,
+            FromInputPerMTok = price?.InputPerMillion,
+            FromOutputPerMTok = price?.OutputPerMillion,
         };
     }
 
@@ -165,8 +170,8 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
             NormalizeCli(source.CliId), source.CanonicalId, sourceThinking,
             NormalizeCli(target.CliId), target.CanonicalId, targetThinking,
             Version,
-            fromPrice?.InputPerMTok, fromPrice?.OutputPerMTok,
-            toPrice?.InputPerMTok, toPrice?.OutputPerMTok,
+            fromPrice?.InputPerMillion, fromPrice?.OutputPerMillion,
+            toPrice?.InputPerMillion, toPrice?.OutputPerMillion,
             source.CapabilityTier.ToString());
     }
 
@@ -185,14 +190,14 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
         => IsUsableSource(model)
            && string.Equals(model.RoutingStatus.ToString(), "Selectable", StringComparison.OrdinalIgnoreCase);
 
-    private static decimal PriceScore(string modelId)
+    private decimal PriceScore(string modelId)
     {
         var price = CurrentPrice(modelId);
-        return price is null ? decimal.MaxValue : price.InputPerMTok + price.OutputPerMTok;
+        return price is null ? decimal.MaxValue : price.InputPerMillion + price.OutputPerMillion;
     }
 
-    private static ModelPrice? CurrentPrice(string modelId)
-        => TokenEconomyPriceProvider.CurrentPrice(modelId);
+    private TokenPriceBasis? CurrentPrice(string modelId)
+        => _pricing.Estimate(modelId, 0, 0, 0, 0).PriceBasis;
 
     private static string? DefaultThinkingFor(string modelId)
         => Knowledge.Routes

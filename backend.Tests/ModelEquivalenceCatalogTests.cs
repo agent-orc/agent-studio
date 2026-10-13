@@ -6,7 +6,41 @@ namespace AgentStudio.Tests;
 
 public sealed class ModelEquivalenceCatalogTests
 {
-    private readonly ModelEquivalenceCatalog _catalogue = new();
+    private readonly ModelEquivalenceCatalog _catalogue = new(TokenTestServices.Pricing());
+
+    [Fact]
+    public void RoutePrices_UseInjectedPricing()
+    {
+        var pricing = new FixedPricing();
+        var catalogue = new ModelEquivalenceCatalog(pricing);
+
+        var route = catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", CliTypes.Codex);
+
+        Assert.NotNull(route);
+        Assert.Equal(123m, route.FromInputPerMTok);
+        Assert.Equal(456m, route.FromOutputPerMTok);
+        Assert.Equal(123m, route.ToInputPerMTok);
+        Assert.Equal(456m, route.ToOutputPerMTok);
+        Assert.Contains(ModelIds.ClaudeOpus5, pricing.PricedModels);
+    }
+
+    private sealed class FixedPricing : ITokenPricing
+    {
+        public HashSet<string> PricedModels { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
+            long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
+        {
+            PricedModels.Add(modelId ?? "");
+            return new TokenCostEstimate(0, 0, 0, 0, 0, modelId ?? "", true,
+                TokenEconomy.PriceStatus.Resolved,
+                new TokenPriceBasis(123m, 456m, 123m, 456m, "USD", DateTime.UnixEpoch,
+                    null, null, false));
+        }
+
+        public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
+            => [];
+    }
 
     [Theory]
     [InlineData(ModelIds.ClaudeOpus5, "high", ModelIds.Gpt56Sol, "high")]

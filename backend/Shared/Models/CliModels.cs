@@ -306,21 +306,11 @@ public sealed record ModelMetadata(
     string[]? Aliases = null,
     string[]? ThinkingLevels = null,
     string? DefaultThinkingLevel = null,
-    string? MinimumCliVersion = null)
-{
-    // Pricing is intentionally a live catalog pass-through. Studio owns no
-    // rates; callers that need historical cost use ITokenPricing.Estimate.
-    private TokenEconomy.ModelPrice? CurrentPrice =>
-        TokenEconomyPriceProvider.CurrentPrice(Id);
-    public decimal? InputPricePerMillion => CurrentPrice?.InputPerMTok;
-    public decimal? OutputPricePerMillion => CurrentPrice?.OutputPerMTok;
-    public decimal? CacheReadPerMillionOverride => CurrentPrice?.CacheReadPerMTok;
-    public decimal? CacheWritePerMillionOverride => CurrentPrice?.CacheWritePerMTok;
-}
+    string? MinimumCliVersion = null);
 
 /// <summary>
 /// Single server-side source of truth for known model metadata: catalog labels,
-/// defaults, pricing, context windows, aliases, and deprecation status.
+/// defaults, context windows, aliases, and deprecation status.
 /// </summary>
 public static class ModelMetadataRegistry
 {

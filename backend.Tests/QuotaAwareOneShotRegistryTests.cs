@@ -185,7 +185,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var fallback = new CliQuotaFallbackService(
             configuration,
             NullLogger<CliQuotaFallbackService>.Instance,
-            new ModelEquivalenceCatalog());
+            new ModelEquivalenceCatalog(TokenTestServices.Pricing()));
         var wait = new CliQuotaWaitPolicyService(
             NullLogger<CliQuotaWaitPolicyService>.Instance,
             configuration);

@@ -153,7 +153,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             new CliQuotaFallbackService(
                 configuration,
                 NullLogger<CliQuotaFallbackService>.Instance,
-                new ModelEquivalenceCatalog()),
+                new ModelEquivalenceCatalog(TokenTestServices.Pricing())),
             new CliQuotaWaitPolicyService(
                 NullLogger<CliQuotaWaitPolicyService>.Instance,
                 configuration),

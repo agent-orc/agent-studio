@@ -158,9 +158,11 @@ public class TokenPricingTests
     }
 
     [Fact]
-    public void ModelMetadataPricing_IsPassThroughFromTokenEconomyCatalog()
+    public void ModelMetadataPrices_AreAvailableThroughPricingService()
     {
-        foreach (var entry in ModelMetadataRegistry.All.Where(m => m.InputPricePerMillion is not null))
+        var pricing = TokenTestServices.Pricing();
+        foreach (var entry in ModelMetadataRegistry.All.Where(m =>
+                     pricing.Estimate(m.Id, 0, 0, 0, 0).ModelKnown))
         {
             Assert.True(TokenEconomyPriceProvider.Catalog.ContainsKey(entry.Id), entry.Id);
             Assert.NotNull(ModelMetadataRegistry.ContextWindowFor(entry.Id));
