@@ -8,7 +8,7 @@ public sealed class StageHandlerTests
 {
     [Theory]
     [InlineData("""{"agentOutcome":"done"}""", OrchestrationAction.Continue)]
-    [InlineData("""{"agentOutcome":"needs-input"}""", OrchestrationAction.Reissue)]
+    [InlineData("""{"agentOutcome":"needs-input"}""", OrchestrationAction.Escalate)]
     [InlineData("""{"agentOutcome":"blocked"}""", OrchestrationAction.Escalate)]
     public async Task Review_decision_loop_maps_terminal_facts(
         string payload,
@@ -61,12 +61,12 @@ public sealed class StageHandlerTests
     }
 
     [Fact]
-    public async Task Council_reissues_normalized_remote_review_concerns()
+    public async Task Council_keeps_unactionable_remote_review_concerns()
     {
         var decision = await new CouncilLoop().ExecuteAsync(
             Run("""{"verdicts":[{"aspect":"requirements","status":"concerns"}]}"""),
             default);
-        Assert.Equal(OrchestrationAction.Reissue, decision.Action);
+        Assert.Equal(OrchestrationAction.Continue, decision.Action);
     }
 
     [Fact]

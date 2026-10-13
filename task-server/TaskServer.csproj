@@ -65,4 +65,7 @@
     <Delete Files="$(PublishDir)$(AssemblyName).staticwebassets.endpoints.json" />
   </Target>
 
+  <ItemGroup>
+    <ProjectReference Include="../orchestration-decisions/Orchestration.Decisions.csproj" />
+  </ItemGroup>
 </Project>

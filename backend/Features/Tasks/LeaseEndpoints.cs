@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
@@ -1515,19 +1516,8 @@ public static class LeaseEndpoints
                                     == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest
                 ? req.OutcomeDecision.ProviderRejection
                 : null;
-            var targetState = outcome switch
-            {
-                "done" or "noop" => TaskStates.AutoReview,
-                "blocked" or "needsinput" or "unknown" => TaskStates.Escalated,
-                // AGT-2870: an operator stop is not a verdict on the work. The
-                // card returns to Ready, where a queued follow-up or the next
-                // pickup continues from the salvage this attempt left behind.
-                "environmentfailure" or "stopped" or "mechanicalfallback" => TaskStates.Ready,
-                _ => string.Empty,
-            };
+            var targetState = TransitionDecisionPolicy.CompletionLane(outcome, providerRejection is not null);
             var operatorStopped = string.Equals(outcome, "stopped", StringComparison.Ordinal);
-            if (providerRejection is not null)
-                targetState = TaskStates.Escalated;
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
@@ -1940,10 +1930,8 @@ public static class LeaseEndpoints
             // disproved delivery. There is nothing materializable to review,
             // and minting one is how the AGT-2220 incident acquired a subject
             // pinned to a SHA that was never on its recorded ref.
-            if (!isEpicPlanning
-                && outcome is ("done" or "noop")
-                && unverifiedDelivery is null
-                && !TaskModes.IsReportOnly(task.Mode))
+            if (TransitionDecisionPolicy.CreateReview(isEpicPlanning, outcome,
+                unverifiedDelivery is null, TaskModes.IsReportOnly(task.Mode)))
             {
                 var requirementsPath = Path.Combine(task.FolderPath, "prompt.md");
                 var requirements = File.Exists(requirementsPath) ? File.ReadAllText(requirementsPath) : task.Id;

@@ -21,7 +21,7 @@ public sealed record RemoteReviewContinuation(
     ReviewRoundBudgetLedger? DeliveredRoundSeed = null,
     ContinuationBaseRecord? Base = null);
 
-public enum RemoteReviewContinuationStep { Move, Finish, Completed, Unapplicable }
+
 
 /// <summary>
 /// Which part of a journaled continuation still has to run. The receipt
@@ -34,17 +34,10 @@ public static class RemoteReviewContinuationPolicy
     public static RemoteReviewContinuationStep Decide(
         IEnumerable<TimelineEvent> ledger, string attemptId, string cause, string moveKey, string currentState)
     {
-        var rows = ledger.ToList();
-        if (rows.Any(item => (item.Kind is TimelineEventKinds.QualityLoopReopened or TimelineEventKinds.OrchestratorEscalated)
-                             && item.Details?.GetValueOrDefault("reviewAttemptId") == attemptId
-                             && item.Details?.GetValueOrDefault("cause") == cause))
-            return RemoteReviewContinuationStep.Completed;
-        if (rows.Any(item => item.Kind == TimelineEventKinds.LaneChanged
-                             && item.Details?.GetValueOrDefault("idempotencyKey") == moveKey))
-            return RemoteReviewContinuationStep.Finish;
-        return currentState == TaskStates.AutoReview
-            ? RemoteReviewContinuationStep.Move
-            : RemoteReviewContinuationStep.Unapplicable;
+        return AgentStudio.Orchestration.Decisions.ContinuationReplayPolicy.Decide(
+            ledger.Select(entry => new AgentStudio.Orchestration.Decisions.RoundTimelineFact(entry.Kind, entry.Details)),
+            attemptId, cause, moveKey, currentState);
+
     }
 
     /// <summary>
@@ -57,9 +50,7 @@ public static class RemoteReviewContinuationPolicy
     /// </summary>
     public static bool OpensFindingRound(
         ReviewTerminalOutcome outcome, AgentStudio.TaskServer.Contracts.ReviewFollowUpAction followUp)
-        => outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
-               or ReviewTerminalOutcome.IntegrationBranchDefect
-           && followUp == AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.ReviewFindingRound;
+        => AgentStudio.Orchestration.Decisions.TransitionDecisionPolicy.OpensFindingRound(outcome.ToString(), followUp);
 }
 
 public static class RemoteReviewContinuationProjection

@@ -57,7 +57,9 @@ public sealed record ReviewOrchestrationPayloadDto(
     string? FailureClassification,
     string? Summary,
     IReadOnlyList<ReviewVerdictDto> Verdicts,
-    IReadOnlyList<ReviewOrchestrationGateDto> Gates);
+    IReadOnlyList<ReviewOrchestrationGateDto> Gates,
+    string? ResultRef = null,
+    ReviewPlanDto? ReviewPlan = null);
 
 public sealed record FlowDefinitionDto(
     string ProjectId,

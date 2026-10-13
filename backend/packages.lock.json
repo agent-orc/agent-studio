@@ -235,6 +235,12 @@
       },
       "AgentStudio.TaskServer.Contracts": {
         "type": "Project"
+      },
+      "orchestration.decisions": {
+        "type": "Project",
+        "dependencies": {
+          "AgentStudio.TaskServer.Contracts": "[0.9.5, )"
+        }
       }
     }
   }
