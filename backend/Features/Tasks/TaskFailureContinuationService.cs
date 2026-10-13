@@ -81,31 +81,11 @@ public sealed class TaskFailureContinuationService
             && status?.Status != IntegrationStatuses.Partial && status?.Status != IntegrationStatuses.MergedLocally)
             return Refused(409, "The current delivery has no failure to continue.");
 
-        var stage = failed?.StepId ?? "delivery-pending";
         var currentFailure = status?.Failure is { } projectedFailure
             && failed?.StepId == projectedFailure.Stage ? projectedFailure : null;
-        var reason = currentFailure?.Reason ?? failed?.Reason ?? status?.Detail
-            ?? "The delivery is not reachable from the integration branch.";
-        var findings = steps is null ? string.Empty : string.Join("; ", steps
-            .Where(step => IsCurrentStep(step, subject) && step.Verdict is "concerns" or "block")
-            .Select(step => $"{step.StepId}: {step.VerdictSummary ?? step.Reason}")
-            .Take(8));
-        var evidence = string.Join("\n", new[]
-        {
-            findings,
-            failed?.VerdictSummary ?? string.Empty,
-            ReadEvidenceExcerpt(job.FolderPath, failed?.EvidenceRef),
-        }.Where(value => !string.IsNullOrWhiteSpace(value)));
-        var prompt = IntegrationContinuationPrompt.Build(
-            job.Key ?? job.Id,
-            subject?.ResultRef ?? status?.DeliveryRef,
-            subject?.ResultSha,
-            status?.IntegrationBranch ?? "develop",
-            stage, reason,
-            failed?.ConflictReport ?? currentFailure?.ConflictReport,
-            evidence,
-            integrationTip: ReadIntegrationTip(_git, job.WatchPath, status?.IntegrationBranch),
-            evidenceRef: failed?.EvidenceRef);
+        var (stage, reason, prompt) = BuildContinuationPrompt(
+            job, steps, failed, status, subject,
+            ReadIntegrationTip(_git, job.WatchPath, status?.IntegrationBranch));
         try
         {
             // No model, CLI, or thinking override: task pins remain authoritative.
@@ -152,6 +132,70 @@ public sealed class TaskFailureContinuationService
             && (step.Status == PipelineStepStatus.Failed || step.Verdict is "concerns" or "block"))
             ?? current?.LastOrDefault(step => step.Status == PipelineStepStatus.Failed
                 || step.Verdict is "concerns" or "block");
+    }
+
+    /// <summary>
+    /// Composes the failed stage, its reason, and the continuation brief. The
+    /// selected failure stays the last current failed step; when that is a later
+    /// step such as the escalation, the failed build-test gate of the same
+    /// attempt still contributes its reason, because it names the failing command.
+    /// </summary>
+    internal static (string Stage, string Reason, string Prompt) BuildContinuationPrompt(
+        TaskInfo job,
+        IReadOnlyList<PipelineStepExecution>? steps,
+        PipelineStepExecution? failed,
+        TaskIntegrationStatus? status,
+        ReviewSubjectRecord? subject,
+        string? integrationTip)
+    {
+        var stage = failed?.StepId ?? "delivery-pending";
+        var currentFailure = status?.Failure is { } projectedFailure
+            && failed?.StepId == projectedFailure.Stage ? projectedFailure : null;
+        var reason = currentFailure?.Reason ?? failed?.Reason ?? status?.Detail
+            ?? "The delivery is not reachable from the integration branch.";
+        var findings = steps is null ? string.Empty : string.Join("; ", steps
+            .Where(step => IsCurrentStep(step, subject) && step.Verdict is "concerns" or "block")
+            .Select(step => $"{step.StepId}: {step.VerdictSummary ?? step.Reason}")
+            .Take(8));
+        var evidence = string.Join("\n", new[]
+        {
+            findings,
+            failed?.VerdictSummary ?? string.Empty,
+            GateReasonExcerpt(FailedGateStep(steps, failed, subject)),
+            ReadEvidenceExcerpt(job.FolderPath, failed?.EvidenceRef),
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        var prompt = IntegrationContinuationPrompt.Build(
+            job.Key ?? job.Id,
+            subject?.ResultRef ?? status?.DeliveryRef,
+            subject?.ResultSha,
+            status?.IntegrationBranch ?? "develop",
+            stage, reason,
+            failed?.ConflictReport ?? currentFailure?.ConflictReport,
+            evidence,
+            integrationTip: integrationTip,
+            evidenceRef: failed?.EvidenceRef);
+        return (stage, reason, prompt);
+    }
+
+    /// <summary>Upper bound for the gate reason carried into the brief.</summary>
+    internal const int GateReasonExcerptLimit = 2048;
+
+    private static PipelineStepExecution? FailedGateStep(
+        IReadOnlyList<PipelineStepExecution>? steps,
+        PipelineStepExecution? failed,
+        ReviewSubjectRecord? subject)
+        => steps?.LastOrDefault(step => step.StepId == PipelineCatalogue.BuildTestGateStepId
+            && step.Status == PipelineStepStatus.Failed
+            && IsCurrentStep(step, subject)
+            && !ReferenceEquals(step, failed));
+
+    private static string GateReasonExcerpt(PipelineStepExecution? gate)
+    {
+        var reason = gate?.Reason?.Trim();
+        if (gate is null || string.IsNullOrEmpty(reason)) return string.Empty;
+        return reason.Length <= GateReasonExcerptLimit
+            ? $"{gate.StepId}: {reason}"
+            : $"{gate.StepId}: {reason[..GateReasonExcerptLimit]}\n(truncated)";
     }
 
     private static TaskFailureContinuationResult Refused(int status, string error) => new(status, error);

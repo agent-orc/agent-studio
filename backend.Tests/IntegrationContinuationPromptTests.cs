@@ -58,4 +58,42 @@ public sealed class IntegrationContinuationPromptTests
         Assert.Contains("results/gate-output.txt", prompt);
         Assert.DoesNotContain("The platform attempted", prompt);
     }
+
+    [Theory]
+    [InlineData("solution-quality-gate", "Resolve the recorded review findings")]
+    [InlineData("merge-into-develop", "one-to-one delivery commit mapping")]
+    [InlineData("post-build-test-gate", "Resolve the recorded failure")]
+    public void EveryBranchCarriesTheVerificationScope(string stage, string branchMarker)
+    {
+        var prompt = IntegrationContinuationPrompt.Build(
+            "AGT-3093", "refs/heads/task/AGT-3093", "sha", "develop", stage, "Failed");
+
+        Assert.Contains(branchMarker, prompt);
+        Assert.Contains(IntegrationContinuationPrompt.VerificationScope.Trim(), prompt);
+        Assert.Contains(GuardFirstGatePlan.GuardFilter, prompt);
+        Assert.Contains("leave whole test projects to the gates", prompt);
+        Assert.DoesNotContain("relevant tests", prompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void EvidenceAsksToRerunTheFailingCommandFirst()
+    {
+        var prompt = IntegrationContinuationPrompt.Build(
+            "AGT-3093", null, null, "develop", "post-orchestrator-decision", "Escalated",
+            evidence: "post-build-test-gate: `npm --prefix frontend run lint` exited 1");
+
+        Assert.Contains("npm --prefix frontend run lint", prompt);
+        Assert.Contains("rerun that exact command first and fix it before any broader test run", prompt);
+    }
+
+    [Fact]
+    public void WithoutEvidenceRef_DoesNotPointAtTheTaskServerPipelineFile()
+    {
+        var prompt = IntegrationContinuationPrompt.Build(
+            "AGT-3093", null, null, "develop", "post-orchestrator-decision", "Escalated");
+
+        Assert.DoesNotContain("pipeline-execution.json", prompt);
+        Assert.DoesNotContain("Failure evidence ref", prompt);
+        Assert.DoesNotContain("rerun that exact command first", prompt);
+    }
 }
