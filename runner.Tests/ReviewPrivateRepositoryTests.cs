@@ -339,14 +339,27 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
 
         public static BasicAuthGitServer Start(string projectRoot, string username, string password)
         {
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            var server = new BasicAuthGitServer(projectRoot, username, password, port);
-            server._listener.Start();
-            server._loop = server.AcceptAsync();
-            return server;
+            for (var attempt = 1; ; attempt++)
+            {
+                var probe = new TcpListener(IPAddress.Loopback, 0);
+                probe.Start();
+                var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+                probe.Stop();
+                var server = new BasicAuthGitServer(projectRoot, username, password, port);
+                try
+                {
+                    server._listener.Start();
+                }
+                catch (HttpListenerException) when (attempt < 5)
+                {
+                    // A parallel test took the probed port before the listener bound it.
+                    // Retry with a fresh port. Close() is skipped: on Linux it would try
+                    // to bind the taken port again.
+                    continue;
+                }
+                server._loop = server.AcceptAsync();
+                return server;
+            }
         }
 
         private async Task AcceptAsync()
