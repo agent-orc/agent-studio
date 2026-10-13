@@ -131,6 +131,28 @@ public sealed class RemoteBuildTestGateRunnerTests
     }
 
     [Theory]
+    [InlineData(true, false, GateCancellationReasons.Shutdown)]
+    [InlineData(false, true, GateCancellationReasons.Operator)]
+    [InlineData(false, false, GateCancellationReasons.Shutdown)]
+    public async Task Returned_worker_cancellation_carries_its_source_through_transport(
+        bool shutdownSignal, bool operatorStop, string expectedReason)
+    {
+        var workerResult = RemoteGateWorker.ClassifyCancellation(
+            RemoteBuildTestGateRunner.Failure(Request(), BuildTestGateFailureKind.Cancellation,
+                "Remote gate worker stopped."), shutdownSignal, operatorStop);
+        var transport = new RecordingTransport { Result = workerResult };
+
+        var result = await Runner(transport).RunAsync(Request(), [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(expectedReason, result.CancellationReason);
+        Assert.Equal(expectedReason, GateCancellationPolicy.Decide(Sha, Sha,
+            TaskStates.AutoReview, TaskStates.AutoReview, false, false, result.CancellationReason));
+    }
+
+    [Theory]
     [InlineData("ECONNRESET")]
     [InlineData("ETIMEDOUT")]
     [InlineData("unable to access")]

@@ -42,17 +42,21 @@ public static class RemoteGateWorker
         };
         using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(invocation.OverallTimeoutSeconds));
         using var cancelWatcher = new CancellationTokenSource();
+        using var shutdownSignal = new CancellationTokenSource();
+        using var operatorStop = new CancellationTokenSource();
         using var terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
         {
             context.Cancel = true;
+            shutdownSignal.Cancel();
             lifetime.Cancel();
         });
         using var hangup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
         {
             context.Cancel = true;
+            shutdownSignal.Cancel();
             lifetime.Cancel();
         });
-        var watch = WatchCancellationAsync(directory, lifetime, cancelWatcher.Token);
+        var watch = WatchCancellationAsync(directory, lifetime, operatorStop, cancelWatcher.Token);
         using var logging = LoggerFactory.Create(builder => builder.AddSimpleConsole());
         var logger = logging.CreateLogger<RemoteGateWorkerLog>();
         BuildTestGateResult result;
@@ -130,6 +134,8 @@ public static class RemoteGateWorker
                 FailureKind = BuildTestGateFailureKind.Environment,
                 Reason = "Remote gate source cleanup failed; gate remains blocked. " + result.Reason,
             };
+        result = ClassifyCancellation(result, shutdownSignal.IsCancellationRequested,
+            operatorStop.IsCancellationRequested);
         result = result with { Executor = "remote-worker:" + Environment.MachineName };
         var response = new RemoteGateResponse(1, invocation.RunId, invocation.BundleSha256, result);
         var responsePath = Path.Combine(directory, "response.json");
@@ -156,8 +162,18 @@ public static class RemoteGateWorker
             throw new InvalidDataException("Remote gate invocation identity, subject, or budget is invalid.");
     }
 
+    internal static BuildTestGateResult ClassifyCancellation(BuildTestGateResult result,
+        bool shutdownSignalled, bool operatorStopRequested)
+    {
+        if (result.FailureKind != BuildTestGateFailureKind.Cancellation) return result;
+        var source = shutdownSignalled ? GateCancellationReasons.Shutdown
+            : operatorStopRequested ? GateCancellationReasons.Operator
+            : GateCancellationReasons.Shutdown; // Overall worker deadline is infrastructure.
+        return result with { CancellationReason = source };
+    }
+
     private static async Task WatchCancellationAsync(string directory,
-        CancellationTokenSource execution, CancellationToken ct)
+        CancellationTokenSource execution, CancellationTokenSource operatorStop, CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         try
@@ -165,6 +181,7 @@ public static class RemoteGateWorker
             while (await timer.WaitForNextTickAsync(ct))
             {
                 if (!File.Exists(Path.Combine(directory, "cancel"))) continue;
+                operatorStop.Cancel();
                 execution.Cancel();
                 return;
             }

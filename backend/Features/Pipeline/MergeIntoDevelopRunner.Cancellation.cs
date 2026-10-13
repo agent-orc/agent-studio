@@ -16,4 +16,11 @@ public sealed partial class MergeIntoDevelopRunner
         return new CancellationSubject(reviewedSha ?? sha, task?.State,
             task?.PendingIntent is not null, liveFolder);
     }
+
+    private string CancellationReceiptFolder(string jobId,
+        string originalFolder, BuildTestGateResult gate)
+        => gate.FailureKind == BuildTestGateFailureKind.Cancellation
+            ? CaptureCancellationSubject(jobId, Directory.GetParent(originalFolder)?.Parent?.FullName,
+                originalFolder, null).Folder
+            : originalFolder;
 }

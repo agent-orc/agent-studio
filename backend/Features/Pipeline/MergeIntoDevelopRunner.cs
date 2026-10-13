@@ -565,9 +565,11 @@ public sealed partial class MergeIntoDevelopRunner
                 ? preMainResult : preDevelopResult?.FailureKind == BuildTestGateFailureKind.Cancellation
                     ? preDevelopResult : null;
             var shutdownCancellation = false;
+            var conclusionFolder = jobFolderPath;
             if (cancelledGate is not null)
             {
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
+                conclusionFolder = live.Folder;
                 var reason = GateCancellationPolicy.Decide(cancellationSubject.Sha, live.Sha,
                     cancellationSubject.Lane, live.Lane, live.ContinuePending,
                     ct.IsCancellationRequested, cancelledGate.CancellationReason);
@@ -601,7 +603,7 @@ public sealed partial class MergeIntoDevelopRunner
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
             result = await ConcludeAsync(
-                project, jobId, jobFolderPath, watchPath, taskBranch, branch, strategy,
+                project, jobId, conclusionFolder, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
                 raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
                 approvedPushSha: approvedPushSha).ConfigureAwait(false);
@@ -1080,12 +1082,13 @@ public sealed partial class MergeIntoDevelopRunner
                 CancellationToken.None,
                 reuse.Reused).ConfigureAwait(false);
         }
+        var receiptFolder = CancellationReceiptFolder(jobId, jobFolderPath, gate);
         IntegrationGateReceipts.Record(
-            jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse);
+            receiptFolder, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse);
 
         // A verdict exists, in either direction: this process is no longer the
         // only thing standing between the branch and an un-gated merge.
-        IntegrationGateJournal.Clear(jobFolderPath);
+        IntegrationGateJournal.Clear(receiptFolder);
 
         if (PreDevelopBuildGate.IsGreen(gate))
         {
@@ -1313,7 +1316,9 @@ public sealed partial class MergeIntoDevelopRunner
                 ExpectedSha = sourceSha,
                 TestedSha = sourceSha,
             };
-            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+            IntegrationGateReceipts.Record(
+                CancellationReceiptFolder(jobId, jobFolderPath, gate),
+                "pre-main-test-gate", gate, _timeline);
             _logger.LogInformation(
                 "merge-into-main develop-candidate docs-only light gate for project={Project} job={JobId} changedPaths={Count}",
                 project,
@@ -1339,7 +1344,9 @@ public sealed partial class MergeIntoDevelopRunner
                 settings.BuildProfile,
                 preMainTimeout,
                 ct).ConfigureAwait(false);
-            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+            IntegrationGateReceipts.Record(
+                CancellationReceiptFolder(jobId, jobFolderPath, gate),
+                "pre-main-test-gate", gate, _timeline);
             if (gate.Verdict != BuildTestGateVerdict.Ok)
             {
                 return (
@@ -1503,7 +1510,9 @@ public sealed partial class MergeIntoDevelopRunner
             settings.BuildProfile,
             preMainTimeout,
             ct).ConfigureAwait(false);
-        IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+        IntegrationGateReceipts.Record(
+                CancellationReceiptFolder(jobId, jobFolderPath, gate),
+                "pre-main-test-gate", gate, _timeline);
 
         if (gate.Verdict != BuildTestGateVerdict.Ok)
         {
