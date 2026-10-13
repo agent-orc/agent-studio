@@ -42,6 +42,7 @@ public sealed class TaskTransitionService
     private readonly ResultVersionStore? _resultVersions;
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly AgentStudio.Pipeline.BatchGateStore? _batchGateStore;
+    private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
     private readonly TimeProvider _time;
     private readonly bool _guardedDelivery;
     private long _resultScaffoldCreatedCount;
@@ -90,7 +91,8 @@ public sealed class TaskTransitionService
         BranchReclaimTriggerService? branchReclaim = null,
         TimeProvider? timeProvider = null,
         IConfiguration? configuration = null,
-        AgentStudio.Pipeline.BatchGateStore? batchGateStore = null)
+        AgentStudio.Pipeline.BatchGateStore? batchGateStore = null,
+        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null)
     {
         _scanner = scanner;
         _states = states;
@@ -114,6 +116,7 @@ public sealed class TaskTransitionService
         _resultVersions = resultVersions;
         _branchReclaim = branchReclaim;
         _batchGateStore = batchGateStore;
+        _failureInterventions = failureInterventions;
         _time = timeProvider ?? TimeProvider.System;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
@@ -219,7 +222,15 @@ public sealed class TaskTransitionService
         // reports any stray working-tree diff as a containment violation rather
         // than committing it. See TaskModes / ParallelSlotPolicy and ADR-0052.
         var isReadOnly = TaskModes.IsReadOnly(info.Mode);
-        var integrationRequired = AcceptanceIntegrationPolicy.IsIntegrationRequired(info);
+        // Legacy intervention follow-ups were stored as bug cards. The ledger
+        // supplies their code-free intent without rewriting task metadata at
+        // completion. Delivery evidence still outranks that intent.
+        var completionInfo = targetState == TaskStates.Completed
+            && info.RequiresIntegration is null
+            && _failureInterventions?.IsInterventionFollowUp(info) == true
+            ? info with { NoBranchExpected = true }
+            : info;
+        var integrationRequired = AcceptanceIntegrationPolicy.IsIntegrationRequired(completionInfo);
 
         // Auto-commit is a per-project operator setting. Read it from the live
         // ProjectSettingsService cache for every transition so a UI toggle
@@ -336,12 +347,18 @@ public sealed class TaskTransitionService
         var contentClaim = completionContract?.Claim;
         if (contentClaim is not null && contentEvidence is not null)
         {
+            // A code-free operator resolution already names its evidence.
+            // Record the content gap below without replacing that claim with
+            // wording about an unproven repository delivery.
+            var replaceClaimForContent = contentDecision?.Overridden == true
+                && !(contentClaim.Basis == CompletionClaimBases.DeliverableWithoutCode
+                    && contentClaim.Reason is not null);
             contentClaim = contentClaim with
             {
-                Basis = contentDecision?.Overridden == true
+                Basis = replaceClaimForContent
                     ? CompletionClaimBases.OperatorOverride : contentClaim.Basis,
                 Evidence = AppendLineageEvidence(
-                    contentDecision?.Overridden == true ? contentDecision.Message : contentClaim.Evidence,
+                    replaceClaimForContent ? contentDecision!.Message : contentClaim.Evidence,
                     acceptanceLineage),
                 Reason = contentDecision?.Overridden == true ? reason?.Trim() : contentClaim.Reason,
                 CurrentBriefVersion = contentEvidence.CurrentBriefVersion,
