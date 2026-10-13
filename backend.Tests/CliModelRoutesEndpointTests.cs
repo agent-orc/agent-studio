@@ -9,7 +9,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class CliModelRoutesEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "model-routes-endpoint-" + Guid.NewGuid().ToString("N"));

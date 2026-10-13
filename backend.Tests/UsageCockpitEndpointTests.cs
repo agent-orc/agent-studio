@@ -18,7 +18,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class UsageCockpitEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "usage-cockpit-http-" + Guid.NewGuid().ToString("N"));

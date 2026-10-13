@@ -79,7 +79,6 @@ namespace AgentStudio.Tests;
 // scheduling make these end-to-end cases intentionally machine-dependent.
 [Trait("Category", "MachineBound")]
 [Trait("Category", "ReviewFlaky")]
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class RemoteRunnerEndToEndTests : IDisposable
 {
     private static readonly JsonSerializerOptions ApiJson = CreateApiJson();

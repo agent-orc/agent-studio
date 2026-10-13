@@ -25,7 +25,6 @@ namespace AgentStudio.Tests;
 /// It limits class-placed projects, which many hosts share; a pinned project
 /// keeps its existing admission, bounded by its one host's slot ceiling.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class LeasePlacementEndpointsTests : IDisposable
 {
     private const string ProjectName = "lease-placement";

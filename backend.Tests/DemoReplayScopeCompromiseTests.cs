@@ -19,7 +19,6 @@ namespace AgentStudio.Tests;
 /// take a lease, report a completion, or move a card, and it must be unable to
 /// invent a frame the server accepts.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class DemoReplayScopeCompromiseTests : IDisposable
 {
     private const string ProjectName = "Demo App";
