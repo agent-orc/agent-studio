@@ -502,9 +502,11 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
         services.AddSingleton<TokenSummaryCacheStore>();
         services.AddSingleton<TokenPricingDriftMonitor>();
         services.AddSingleton<ProjectTokenReceiptReader>();
+        services.AddSingleton<ProjectTokenLedger>();
+        services.AddSingleton<BusAdHocUsageReader>();
+        services.AddSingleton<ITokenPriceProvider, TokenEconomyPriceProvider>();
+        services.AddSingleton<ITokenPricing, TokenPricingService>();
         services.AddSingleton<BusBackedProjectTokenUsageReader>();
-        services.AddSingleton<BusBackedWorkspaceTimelineReader>();
-        services.AddSingleton<BusBackedAdHocUsageReader>();
         services.AddSingleton<ITokenAggregator, TokenAggregationService>();
         return services.BuildServiceProvider();
     }
