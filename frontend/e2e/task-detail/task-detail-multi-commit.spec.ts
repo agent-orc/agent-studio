@@ -87,7 +87,6 @@ const SLIM_CARD = {
   ownerClientId: 'local-default',
   commitCount: 3,
   commitSummary: {
-    count: 3,
     latestShortSha: '3333333',
     latestSubject: 'chore: update docs after operator steer',
     latestFilesChanged: 3,

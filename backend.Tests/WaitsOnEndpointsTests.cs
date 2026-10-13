@@ -77,9 +77,11 @@ public sealed class WaitsOnEndpointsTests : IDisposable
 
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
         Assert.Equal("LIB-1", item.GetProperty("key").GetString());
-        Assert.True(Flag(item, "resolved"));       // target exists
+        // The target exists: the card names only a missing target (resolved: false).
+        Assert.False(item.TryGetProperty("resolved", out _));
         Assert.False(Flag(item, "fulfilled"));     // but is still open
-        Assert.Equal(TaskStates.Ready, item.GetProperty("targetState").GetString());
+        // No board consumer reads the target lane; it is on /details/overview.
+        Assert.False(item.TryGetProperty("targetState", out _));
         Assert.True(Flag(waitsOn, "blocked"));
         Assert.False(Flag(waitsOn, "cycleDetected"));
     }

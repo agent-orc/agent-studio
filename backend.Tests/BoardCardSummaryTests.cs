@@ -78,11 +78,11 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
     /// Stable (12.10.2026), converted back to the task model and sanitized
     /// (text, keys, ids, paths and SHAs replaced by filler of the same length).
     /// Those cards averaged 4.4 KB on the wire before this budget existed
-    /// (today's whole Stable board: 3.8 KB). They now average about 2.2 KB:
+    /// (today's whole Stable board: 3.8 KB). They now average about 2.0 KB:
     /// what is left is identity (id, watch path, title), the token breakdown
-    /// the project chip sums, and the badges' short facts. The budget sits just
-    /// above that so any regrowth fails; the whole-board average, which also
-    /// holds the lighter lanes, stays under 2 KB.
+    /// the project chip sums, and the badges' short facts. The budget is the
+    /// card's 2 KB per card on these, the heaviest cards on a live board; the
+    /// lighter lanes keep the whole-board average well below it.
     /// </summary>
     [Fact]
     public void Production_shaped_human_review_cards_stay_within_their_budget()
@@ -102,7 +102,7 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         var sizes = cards.Select(card => BoardCardSummary.Serialize(card).Length).ToArray();
         var average = sizes.Average();
         output.WriteLine($"44 production-shaped Human Review cards: average {average:F0} B, max {sizes.Max()} B, total {sizes.Sum()} B");
-        Assert.True(average < 2304, $"Average card was {average:F0} bytes; budget is 2304");
+        Assert.True(average < 2048, $"Average card was {average:F0} bytes; budget is 2048");
         Assert.True(sizes.Max() < 3072, $"Largest card was {sizes.Max()} bytes");
     }
 
@@ -226,6 +226,77 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.False(root.TryGetProperty("epicId", out _));
     }
 
+    /// <summary>
+    /// Values a reader restores (task.service restoreBoardCardDefaults) stay
+    /// off the card: the token total that is the sum of its counters, a priced
+    /// summary, false merge flags, an existing target, the lane and title of a
+    /// fulfilled edge, a source label that repeats the summary, sub-second
+    /// instants the card only turns into ages.
+    /// </summary>
+    [Fact]
+    public void Restorable_defaults_and_repeated_values_stay_off_the_card()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-13T07:49:48.4939747Z"));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var job = Fixture() with
+        {
+            CreatedAt = now,
+            TokenSummary = new TaskTokenSummary
+            {
+                InputTokens = 12000, OutputTokens = 3000, CacheReadTokens = 500, TotalTokens = 15500,
+                AllModelsPriced = true, LastUpdate = now,
+            },
+            MergeSignal = new TaskMergeSignal { Branch = "task/agt-3043", InIntegration = true, InRelease = false },
+            ParkedBlocker = new ParkedBlockerStatus("operator-decision", "manual", "Only a person can clear this park.",
+                now, 0, "Decide", "undeterminable", null, "detail"),
+            TestEvidence = new TaskTestRunEvidence
+            {
+                EvidenceState = "proven", Summary = "Review build-tests Pass at 1234567 ",
+                Sources = [new TaskTestEvidenceSource { Kind = "review", Summary = "Review build-tests Pass at 1234567" }],
+            },
+            WaitsOn = new WaitsOnStatus
+            {
+                Blocked = true,
+                Items =
+                [
+                    new WaitsOnItem { Key = "AGT-1", Resolved = true, Fulfilled = true, TargetState = TaskStates.Completed, TargetTitle = "Done" },
+                    new WaitsOnItem { Key = "AGT-2", Resolved = true, TargetState = TaskStates.HumanReview, TargetTitle = "Open" },
+                    new WaitsOnItem { Key = "AGT-3", Resolved = false },
+                ],
+            },
+        };
+
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        var root = document.RootElement;
+
+        var tokens = root.GetProperty("tokenSummary");
+        Assert.False(tokens.TryGetProperty("totalTokens", out _));
+        Assert.False(tokens.TryGetProperty("allModelsPriced", out _));
+        Assert.Equal("2026-10-13T07:49:48Z", tokens.GetProperty("lastUpdate").GetString());
+        Assert.Equal("2026-10-13T07:49:48Z", root.GetProperty("createdAt").GetString());
+        Assert.Equal("2026-10-13T07:49:48Z", root.GetProperty("parkedBlocker").GetProperty("parkedAt").GetString());
+        var merge = root.GetProperty("mergeSignal");
+        Assert.True(merge.GetProperty("inIntegration").GetBoolean());
+        Assert.False(merge.TryGetProperty("inRelease", out _));
+        Assert.False(root.GetProperty("testEvidence").TryGetProperty("sourceLabel", out _));
+        Assert.False(root.GetProperty("commitSummary").TryGetProperty("count", out _));
+        Assert.Equal(1, root.GetProperty("commitCount").GetInt32());
+
+        var items = root.GetProperty("waitsOn").GetProperty("items").EnumerateArray().ToDictionary(
+            item => item.GetProperty("key").GetString()!);
+        Assert.Equal("""{"key":"AGT-1","fulfilled":true}""", items["AGT-1"].GetRawText());
+        Assert.False(items["AGT-2"].TryGetProperty("resolved", out _));
+        Assert.False(items["AGT-2"].TryGetProperty("targetState", out _));
+        Assert.Equal("Open", items["AGT-2"].GetProperty("targetTitle").GetString());
+        Assert.False(items["AGT-3"].GetProperty("resolved").GetBoolean());
+
+        // A total that is not the sum of its counters is still sent.
+        var odd = Fixture() with { TokenSummary = new TaskTokenSummary { InputTokens = 10, TotalTokens = 25, AllModelsPriced = false } };
+        using var oddDocument = JsonDocument.Parse(BoardCardSummary.Serialize(odd));
+        Assert.Equal(25, oddDocument.RootElement.GetProperty("tokenSummary").GetProperty("totalTokens").GetInt64());
+        Assert.False(oddDocument.RootElement.GetProperty("tokenSummary").GetProperty("allModelsPriced").GetBoolean());
+    }
+
     [Fact]
     public void A_pending_intent_read_with_a_null_prompt_still_serializes()
     {
@@ -320,7 +391,7 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         using var document = JsonDocument.Parse(bytes);
         var references = document.RootElement.GetProperty("references");
         Assert.True(bytes.Length < 4096, $"100-edge card was {bytes.Length} bytes");
-        Assert.Equal(100, references.GetProperty("dependsOnCount").GetInt32());
+        Assert.False(references.TryGetProperty("dependsOnCount", out _));
         Assert.Equal(3, references.GetProperty("dependsOn").GetArrayLength());
         Assert.Equal(100, references.GetProperty("dependsOnKeys").GetArrayLength());
         Assert.Equal("AGT-99", references.GetProperty("dependsOnKeys")[99].GetString());

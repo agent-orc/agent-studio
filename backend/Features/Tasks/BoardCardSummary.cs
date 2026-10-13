@@ -92,7 +92,8 @@ internal static class BoardCardSummary
             ["state"] = job.State,
             ["order"] = job.Order,
             ["agent"] = job.Agent,
-            ["createdAt"] = job.CreatedAt,
+            // The card shows ages, so instants it alone uses are whole seconds.
+            ["createdAt"] = WholeSeconds(job.CreatedAt),
             ["watchPath"] = job.WatchPath,
             ["projectName"] = job.ProjectName,
             ["lastActivity"] = job.LastActivity,
@@ -130,9 +131,9 @@ internal static class BoardCardSummary
             var latest = job.Commits[^1];
             fields["commitSummary"] = new
             {
-                count = job.Commits.Count,
+                // The count is the card's commitCount.
                 latestShortSha = latest.ShortSha,
-                latestSubject = Short(latest.Message, 100),
+                latestSubject = Short(latest.Message, 72),
                 latestFilesChanged = latest.FilesChanged,
                 hasFiles = latest.Files.Count > 0,
             };
@@ -148,18 +149,21 @@ internal static class BoardCardSummary
             };
         if (job.TokenSummary is { } tokens)
         {
-            var tokenFields = new Dictionary<string, object?>
-            {
-                ["totalTokens"] = tokens.TotalTokens,
-                ["allModelsPriced"] = tokens.AllModelsPriced,
-            };
+            var tokenFields = new Dictionary<string, object?>();
+            // The total is the sum of the four counters on every live card;
+            // it is sent only when it differs. Absent allModelsPriced reads
+            // as priced; only an unpriced model is named.
+            if (tokens.TotalTokens != tokens.InputTokens + tokens.OutputTokens
+                + tokens.CacheReadTokens + tokens.CacheCreationTokens)
+                tokenFields["totalTokens"] = tokens.TotalTokens;
+            if (!tokens.AllModelsPriced) tokenFields["allModelsPriced"] = false;
             if (tokens.InputTokens != 0) tokenFields["inputTokens"] = tokens.InputTokens;
             if (tokens.OutputTokens != 0) tokenFields["outputTokens"] = tokens.OutputTokens;
             if (tokens.CacheReadTokens != 0) tokenFields["cacheReadTokens"] = tokens.CacheReadTokens;
             if (tokens.CacheCreationTokens != 0) tokenFields["cacheCreationTokens"] = tokens.CacheCreationTokens;
             if (tokens.EstimatedApiCostUsd != 0) tokenFields["estimatedApiCostUsd"] = tokens.EstimatedApiCostUsd;
             if (tokens.LastModel is not null) tokenFields["lastModel"] = tokens.LastModel;
-            if (tokens.LastUpdate is not null) tokenFields["lastUpdate"] = tokens.LastUpdate;
+            if (tokens.LastUpdate is { } lastUpdate) tokenFields["lastUpdate"] = WholeSeconds(lastUpdate);
             if (tokens.HasModelMismatch) tokenFields["hasModelMismatch"] = true;
             fields["tokenSummary"] = tokenFields;
         }
@@ -205,8 +209,10 @@ internal static class BoardCardSummary
                 evidence.RunId, evidence.RunCommit, evidence.RunState, evidence.RunResult,
                 sourceCount = evidence.Sources.Count,
                 // Usually the summary itself; sent only when it adds something.
+                // Both sides are trimmed first lines, so trailing whitespace on
+                // the summary does not make an identical label look different.
                 sourceLabel = Short(evidence.Sources.FirstOrDefault()?.Summary, 80) is { } label
-                    && label != evidence.Summary ? label : null,
+                    && label != Short(evidence.Summary, 80) ? label : null,
             };
         if (job.OutcomeIssue is { } issue)
             fields["outcomeIssue"] = new
@@ -224,7 +230,7 @@ internal static class BoardCardSummary
                 park.BlockerType,
                 // No read-time age: the client derives it from ParkedAt, so an
                 // unchanged parked card serializes to the same bytes on every read.
-                park.ParkedAt,
+                parkedAt = WholeSeconds(park.ParkedAt),
                 reason = Short(park.Reason, 100),
                 requiresDecisionCard = park.RequiresDecisionCard ? true : (bool?)null,
                 decision = park.Decision is null
@@ -286,7 +292,7 @@ internal static class BoardCardSummary
         if (!job.References.IsEmpty)
             fields["references"] = new
             {
-                dependsOnCount = job.References.DependsOn.Count,
+                // Every key, so the count is its length.
                 dependsOnKeys = job.References.DependsOn.Select(dependency => dependency.Key).ToArray(),
                 // A plain edge serializes as its key, which dependsOnKeys
                 // already lists; the object form is sent only for release gates.
@@ -311,16 +317,21 @@ internal static class BoardCardSummary
                     : null,
                 items = waits.Items.OrderByDescending(item => item.Unsatisfiable)
                     .ThenBy(item => item.Fulfilled).Take(3)
+                    // A fulfilled edge no longer explains a wait: the chip
+                    // tooltip lists it as "KEY (done)", so it carries its key
+                    // and flags only. The title stays on open edges; the
+                    // target lane, which no board consumer reads, is on
+                    // /details/overview.
                     .Select(item => new
                     {
                         item.Key,
-                        resolved = Flag(item.Resolved), pendingDecision = Flag(item.PendingDecision),
+                        // An existing target is the default; only a missing one is named.
+                        resolved = item.Resolved || item.Fulfilled ? (bool?)null : false, pendingDecision = Flag(item.PendingDecision),
                         fulfilled = Flag(item.Fulfilled), releaseGate = Flag(item.ReleaseGate),
-                        targetReleased = Flag(item.TargetReleased),
+                        targetReleased = Flag(item.TargetReleased && !item.Fulfilled),
                         waitingForRelease = Flag(item.WaitingForRelease),
                         unsatisfiable = Flag(item.Unsatisfiable),
-                        item.TargetState,
-                        targetTitle = Short(item.TargetTitle, 40),
+                        targetTitle = item.Fulfilled ? null : Short(item.TargetTitle, 40),
                     }).ToArray(),
             };
         Add(fields, "blockedBy", job.BlockedBy.Count == 0 ? null : job.BlockedBy);
@@ -350,7 +361,7 @@ internal static class BoardCardSummary
             {
                 // The branch is gitContext.branch; the d/m segments default
                 // their labels to develop and main.
-                merge.InIntegration, merge.InRelease,
+                inIntegration = Flag(merge.InIntegration), inRelease = Flag(merge.InRelease),
                 integrationBranch = merge.IntegrationBranch == "develop" ? null : NullIfEmpty(merge.IntegrationBranch),
                 releaseBranch = merge.ReleaseBranch == "main" ? null : NullIfEmpty(merge.ReleaseBranch),
                 integrationSha = ShortSha(merge.IntegrationSha),
@@ -401,6 +412,9 @@ internal static class BoardCardSummary
     private const int PendingPromptLength = 200;
 
     private static bool? Flag(bool value) => value ? true : null;
+
+    private static DateTime WholeSeconds(DateTime value)
+        => new(value.Ticks - value.Ticks % TimeSpan.TicksPerSecond, value.Kind);
 
     private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
