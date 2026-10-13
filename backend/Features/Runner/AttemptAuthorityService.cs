@@ -126,6 +126,7 @@ public sealed class AttemptAuthorityService
     private readonly ILogger<AttemptAuthorityService> _logger;
     private readonly Func<DateTime> _utcNow;
     private readonly IAtomicJsonFileWriter _writer;
+    private readonly Func<string, string> _readArchiveText;
     private readonly int _terminalRetentionCount;
     private readonly bool _useJournal;
     private readonly Dictionary<string, string> _recordHashes = new(StringComparer.Ordinal);
@@ -136,8 +137,9 @@ public sealed class AttemptAuthorityService
     private BoardAuthoritySnapshot _boardSnapshot = BoardAuthoritySnapshot.Empty;
 
     /// <summary>
-    /// Task keys and delivery refs per archive shard, read from disk once on the
-    /// first history read. Shards this process writes afterwards are recorded in
+    /// Task keys and delivery refs per archive shard, read from disk once, by
+    /// <see cref="WarmArchiveIndex"/> after startup or by the first history read
+    /// that beats it. Shards this process writes afterwards are recorded in
     /// <see cref="_archiveWrites"/>, so compaction never waits for the build.
     /// </summary>
     private readonly object _archiveIndexBuildGate = new();
@@ -218,10 +220,25 @@ public sealed class AttemptAuthorityService
         ILogger<AttemptAuthorityService> logger,
         Func<DateTime>? utcNow = null,
         IAtomicJsonFileWriter? writer = null)
+        : this(configuration, logger, utcNow, writer, File.ReadAllText)
+    {
+    }
+
+    /// <summary>
+    /// <paramref name="readArchiveText"/> reads one archive shard; tests inject
+    /// a reader that counts which shards a read opens.
+    /// </summary>
+    internal AttemptAuthorityService(
+        IConfiguration configuration,
+        ILogger<AttemptAuthorityService> logger,
+        Func<DateTime>? utcNow,
+        IAtomicJsonFileWriter? writer,
+        Func<string, string> readArchiveText)
     {
         _logger = logger;
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
         _writer = (writer ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
+        _readArchiveText = readArchiveText;
         _useJournal = _writer is AtomicJsonFileWriter;
         var root = configuration["TaskRepository"];
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
@@ -3104,7 +3121,16 @@ public sealed class AttemptAuthorityService
             .Select(LoadArchive)
             .ToList();
 
-    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex()
+    /// <summary>
+    /// Builds the archive index off the request path (AGT-3109). The card detail
+    /// polls history every few seconds; without a warm index the first of those
+    /// reads after a restart deserializes every shard while the others wait for
+    /// it. A failed build stays unbuilt, so the next history read retries it and
+    /// still fails closed. Returns the number of indexed shards.
+    /// </summary>
+    public int WarmArchiveIndex() => ArchiveIndex("warmup").Count;
+
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex(string trigger = "history-read")
     {
         var fromDisk = Volatile.Read(ref _archiveIndexFromDisk);
         if (fromDisk is null)
@@ -3114,8 +3140,14 @@ public sealed class AttemptAuthorityService
                 fromDisk = _archiveIndexFromDisk;
                 if (fromDisk is null)
                 {
+                    var started = System.Diagnostics.Stopwatch.GetTimestamp();
                     fromDisk = BuildArchiveIndexFromDisk();
                     Volatile.Write(ref _archiveIndexFromDisk, fromDisk);
+                    _logger.LogInformation(
+                        "attempt-authority-archive-index-built trigger={Trigger} shards={ShardCount} elapsedMs={ElapsedMs}",
+                        trigger,
+                        fromDisk.Count,
+                        (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 }
             }
         }
@@ -3148,12 +3180,12 @@ public sealed class AttemptAuthorityService
                 .ToHashSet(StringComparer.OrdinalIgnoreCase),
             DeliveryRefs(archive.RunAttempts, archive.ReviewAttempts).ToList());
 
-    private static AuthorityArchive LoadArchive(string path)
+    private AuthorityArchive LoadArchive(string path)
     {
         try
         {
             var archive = JsonSerializer.Deserialize<AuthorityArchive>(
-                File.ReadAllText(path),
+                _readArchiveText(path),
                 JsonOptions) ?? new AuthorityArchive();
             archive.RunAttempts ??= [];
             archive.ReviewAttempts ??= [];
