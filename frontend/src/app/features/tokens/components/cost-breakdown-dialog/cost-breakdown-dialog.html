@@ -23,7 +23,7 @@
                 <strong class="cost-breakdown__model-total">
                   {{ item.estimate.modelKnown ? formatUsd(item.estimate.total) : item.recordedModelPriced ? 'No current price' : 'Unknown' }}
                 </strong>
-                @if (item.recordedCostUsd != null) {
+                @if (item.recordedCostUsd !== null && item.recordedCostUsd !== undefined) {
                   <span class="cost-breakdown__recorded">Recorded usage cost: {{ item.recordedModelPriced ? formatUsd(item.recordedCostUsd) : 'Unknown' }}</span>
                 }
               </div>

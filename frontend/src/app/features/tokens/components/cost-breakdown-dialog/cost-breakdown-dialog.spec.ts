@@ -44,7 +44,7 @@ describe('CostBreakdownDialogComponent', () => {
   it('shows a recorded cost when a historical model has no current price', async () => {
     const fake = {
       open: signal(true), title: signal("Usage cost at today's price"), loading: signal(false),
-      error: signal<string | null>(null), provider: signal('TokenEconomy'), close: () => {},
+      error: signal<string | null>(null), provider: signal('TokenEconomy'), close: () => undefined,
       items: signal([{
         model: 'retired-model', label: 'Retired model', calculatedAt: '2026-10-11T00:00:00Z',
         inputTokens: 1_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,

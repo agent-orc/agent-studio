@@ -241,7 +241,7 @@ describe('CliUsageModalComponent', () => {
       ] };
       const fixture = await build(codexRow, 'codex', tokens);
       expect(fixture.componentInstance.modelRows()).toHaveLength(1);
-      const show = vi.spyOn(TestBed.inject(CostBreakdownService), 'show').mockImplementation(() => {});
+      const show = vi.spyOn(TestBed.inject(CostBreakdownService), 'show').mockImplementation(() => undefined);
       fixture.componentInstance.showTotalCalculation();
       expect(show).toHaveBeenCalledWith([
         expect.objectContaining({ model: 'gpt-6-sol', recordedCostUsd: 10 }),
