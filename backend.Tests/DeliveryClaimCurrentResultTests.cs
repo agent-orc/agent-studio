@@ -161,6 +161,106 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-3097 - a two-commit attempt integrated through a curated mapping.
+    /// The first commit never reaches develop itself, so the sweep must not
+    /// read the card as unintegrated, and released follows the mapped
+    /// integration commit on main.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Sweep_MultiCommitCuratedMapping_IsIntegratedAndAnswersReleasedAgainstMain(bool released)
+    {
+        Git(_repo, "checkout", "-q", "-b", "task/curated", "develop");
+        File.WriteAllText(Path.Combine(_repo, "first.txt"), "first\n");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-q", "-m", "feat: first half");
+        var first = Git(_repo, "rev-parse", "HEAD");
+        File.WriteAllText(Path.Combine(_repo, "second.txt"), "second\n");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-q", "-m", "feat: second half");
+        var source = Git(_repo, "rev-parse", "HEAD");
+        Git(_repo, "checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_repo, "first.txt"), "first, curated\n");
+        File.WriteAllText(Path.Combine(_repo, "second.txt"), "second, curated\n");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-q", "-m", "merge(AGT-3097): curated integration");
+        var integrated = Git(_repo, "rev-parse", "HEAD");
+        Git(_repo, "checkout", "-q", "main");
+        if (released)
+            Git(_repo, "merge", "-q", "--ff-only", "develop");
+        WriteCuratedCard(first, source, integrated);
+        var (sweep, scanner) = BuildSweep();
+
+        var answer = sweep.Describe(scanner.FindJob(TaskId, _watchPath)!);
+        var row = Assert.Single(sweep.Run(_watchPath, repair: false)!.Rows);
+
+        Assert.True(answer.Integrated);
+        Assert.Equal("current-result-curated-mapping", answer.Detail);
+        Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, answer.Class);
+        Assert.DoesNotContain(DeliveryClaimFindings.UnintegratedDelivery, answer.Findings);
+        Assert.Equal(released, answer.Released);
+        var mapped = Assert.Single(answer.Commits, commit => commit.Sha == source);
+        Assert.True(mapped.OnIntegrationBranch);
+        Assert.Equal(released, mapped.OnReleaseBranch);
+        Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, row.Class);
+        Assert.Equal(released, row.Released);
+    }
+
+    private void WriteCuratedCard(string first, string source, string integrated)
+    {
+        const string attempt = "run-curated";
+        var folder = Path.Combine(_watchPath, TaskStates.Completed, TaskId);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = TaskId,
+            key = "AGT-3097",
+            title = TaskId,
+            state = TaskStates.Completed,
+            order = 1,
+            agent = "codex",
+            mode = TaskModes.Coding,
+            projectName = Project,
+            commits = new[] { first, source }.Select(sha => new
+            {
+                sha,
+                shortSha = sha[..8],
+                message = "feat: curated attempt",
+                filesChanged = 1,
+                at = _clock.GetUtcNow(),
+                attribution = "automatic",
+                confidence = 1,
+                runAttemptId = attempt,
+            }).ToArray(),
+            integrationRecords = new[]
+            {
+                new TaskIntegrationRecord
+                {
+                    Id = "curated-mapping",
+                    Classification = IntegrationRecordClasses.CuratedMapping,
+                    RecordedAtUtc = _clock.GetUtcNow().UtcDateTime,
+                    IntegrationBranch = "develop",
+                    SourceSha = source,
+                    IntegrationSha = integrated,
+                    DeliveryEpoch = attempt,
+                },
+            },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Implement the fixture.\n");
+        ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-3097",
+            RunAttemptId = attempt,
+            Project = Project,
+            Repository = _repo,
+            ResultSha = source,
+            AttemptChainId = "attempt-agt-3097",
+            CompletedAtUtc = _clock.GetUtcNow(),
+        });
+    }
+
+    /// <summary>
     /// One file-carrying commit, still holding the next-attempt placeholder
     /// (AGT-2821 ab4c1b3), proven by the current review subject. The hosted
     /// endpoint tests use the archive lane: the test host's lane rails reopen

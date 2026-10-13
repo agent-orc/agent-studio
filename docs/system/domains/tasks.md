@@ -1164,6 +1164,17 @@ delivery is not superseded, so the completion contract and the reconciliation
 pass clear the placeholder from contained commits and never touch a named
 successor.
 
+When the verdict comes from the current result (`current-result-ancestor` or
+`current-result-curated-mapping`), `released` is answered for the commit that
+verdict anchors on: the result SHA, or, for a curated mapping, the mapped
+integration SHA. The curated source commit never reaches the release branch
+itself. The same rule sets a curated-mapped commit's `onReleaseBranch`. Both
+answers come from the cached release ancestor set, without an extra Git process.
+The sweep never classifies a card as `unintegrated-delivery` while its
+containment status is `integrated`. A per-commit line can still miss a commit:
+a second commit of a curated-mapped attempt, or a group keyed to another
+repository. Neither proves that the delivery did not land (AGT-3097).
+
 Three read surfaces consume this:
 `GET /api/tasks/{id}/delivery-claim` (per-card deployment answer, including the
 curated `merge(KEY): ...` commit that carried the delivery and release-line

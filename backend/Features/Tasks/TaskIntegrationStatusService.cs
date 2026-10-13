@@ -499,15 +499,28 @@ public sealed class TaskIntegrationStatusService
             var subjectKey = ResolvePrimaryRepoKey(job);
             if (subjectKey is not null && reaches.TryGetValue(subjectKey, out var subjectReach))
             {
+                // AGT-3097: released is answered for the commit the verdict
+                // anchors on, from the same cached reach; a curated source
+                // commit never reaches main, its mapped integration commit does.
                 if (AncestorSetContains(subjectReach.PublishedAncestors, subject.ResultSha))
                     return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
                         DeliveryRefFor(job), "current-result-ancestor")
-                        with { Repositories = CurrentResultRepositories(job, card, reaches, subject) };
-                if (HasCuratedMapping(job, subject.ResultSha, subject.RunAttemptId,
-                        subjectReach.IntegrationBranch, subjectReach.PublishedAncestors))
+                        with
+                        {
+                            Repositories = CurrentResultRepositories(job, card, reaches, subject),
+                            CurrentResultReleased = AncestorSetContains(subjectReach.ReleaseAncestors, subject.ResultSha),
+                        };
+                var mapped = CuratedMappingIntegrationShas(job, subject.ResultSha, subject.RunAttemptId,
+                    subjectReach.IntegrationBranch, subjectReach.PublishedAncestors).ToList();
+                if (mapped.Count > 0)
                     return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
                         DeliveryRefFor(job), "current-result-curated-mapping")
-                        with { Repositories = CurrentResultRepositories(job, card, reaches, subject) };
+                        with
+                        {
+                            Repositories = CurrentResultRepositories(job, card, reaches, subject),
+                            CurrentResultReleased = mapped.Any(sha =>
+                                AncestorSetContains(subjectReach.ReleaseAncestors, sha)),
+                        };
                 if (AncestorSetContains(subjectReach.DevelopAncestors, subject.ResultSha))
                     return MergedLocally(subjectReach.IntegrationBranch, DeliveryRefFor(job),
                         "current result is present locally", [Short(subject.ResultSha)]);
@@ -636,20 +649,28 @@ public sealed class TaskIntegrationStatusService
         IReadOnlyList<TaskCommitInfo> commits,
         RepoIntegration? reach,
         ReviewSubjectRecord? subject)
-        => DeliveryGenerationPolicy.Evaluate(
-            commits,
-            sha => reach is not null && AncestorSetContains(reach.DevelopAncestors, sha),
-            sha => reach is not null && AncestorSetContains(reach.ReleaseAncestors, sha),
-            // Content equivalence alone cannot establish delivery identity.
-            // Only an explicit, epoch-bound mapping to a published SHA can.
-            sha => false,
-            sha => group.Commits.Any(commit => string.Equals(commit.Sha, sha,
-                    StringComparison.OrdinalIgnoreCase)
-                && HasCuratedMapping(job, sha,
+    {
+        IEnumerable<string> MappedIntegrationShas(string sha)
+            => group.Commits
+                .Where(commit => string.Equals(commit.Sha, sha, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(commit => CuratedMappingIntegrationShas(job, sha,
                     subject?.RunAttemptId ?? commit.RunAttemptId
                         ?? commit.DeliveryGeneration?.ToString(),
                     reach?.IntegrationBranch ?? group.IntegrationBranch,
-                    reach?.PublishedAncestors))).ToList();
+                    reach?.PublishedAncestors));
+
+        return DeliveryGenerationPolicy.Evaluate(
+            commits,
+            sha => reach is not null && AncestorSetContains(reach.DevelopAncestors, sha),
+            // AGT-3097: a curated-mapped source commit is released when its
+            // mapped integration commit is on the release branch.
+            sha => reach is not null && (AncestorSetContains(reach.ReleaseAncestors, sha)
+                || MappedIntegrationShas(sha).Any(mapped => AncestorSetContains(reach.ReleaseAncestors, mapped))),
+            // Content equivalence alone cannot establish delivery identity.
+            // Only an explicit, epoch-bound mapping to a published SHA can.
+            sha => false,
+            sha => MappedIntegrationShas(sha).Any()).ToList();
+    }
 
     private static List<TaskRepositoryCommitMembership> CurrentCommits(
         IEnumerable<TaskRepositoryCommitMembership> memberships)
@@ -713,17 +734,22 @@ public sealed class TaskIntegrationStatusService
             () => ReadOnlyGitConcurrencyLimiter.Run(() => _git.IsIntegratedByContent(root, reach.PublishedHead, sha))) == true;
     }
 
-    private static bool HasCuratedMapping(TaskInfo job, string sourceSha,
+    /// <summary>
+    /// The published integration SHAs an explicit, epoch-bound curated mapping
+    /// names for <paramref name="sourceSha"/>. Empty when no mapping proves it.
+    /// </summary>
+    private static IEnumerable<string> CuratedMappingIntegrationShas(TaskInfo job, string sourceSha,
         string? deliveryEpoch, string branch, HashSet<string>? publishedAncestors)
-        => publishedAncestors is not null
-           && !string.IsNullOrWhiteSpace(deliveryEpoch)
-           && job.IntegrationRecords.Any(record =>
-               record.Classification == IntegrationRecordClasses.CuratedMapping
-               && string.Equals(record.SourceSha, sourceSha, StringComparison.OrdinalIgnoreCase)
-               && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
-               && string.Equals(record.IntegrationBranch, branch, StringComparison.OrdinalIgnoreCase)
-               && record.IntegrationSha?.Length == 40
-               && AncestorSetContains(publishedAncestors, record.IntegrationSha));
+        => publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)
+            ? []
+            : job.IntegrationRecords.Where(record =>
+                    record.Classification == IntegrationRecordClasses.CuratedMapping
+                    && string.Equals(record.SourceSha, sourceSha, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
+                    && string.Equals(record.IntegrationBranch, branch, StringComparison.OrdinalIgnoreCase)
+                    && record.IntegrationSha?.Length == 40
+                    && AncestorSetContains(publishedAncestors, record.IntegrationSha))
+                .Select(record => record.IntegrationSha!);
 
     /// <summary>
     /// The repository/branch the card is answered from when it carries no

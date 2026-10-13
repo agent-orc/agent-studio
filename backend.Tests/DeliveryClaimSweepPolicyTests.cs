@@ -215,6 +215,58 @@ public class DeliveryClaimSweepPolicyTests
         Assert.False(assessment.Repairs.HasWork);
     }
 
+    /// <summary>
+    /// AGT-3097 - a two-commit attempt integrated through a curated mapping.
+    /// Only the mapped result commit reads as contained; its sibling never
+    /// reaches the branch itself. The card verdict proved containment, so the
+    /// card is not an unintegrated delivery.
+    /// </summary>
+    [Fact]
+    public void MultiCommitCuratedMappingCardIntegratedByContainmentIsNotUnintegrated()
+    {
+        var assessment = DeliveryClaimSweepPolicy.Assess(Card(
+            [
+                Commit("a11ce01", contained: false),
+                Commit("b0b0002", contained: true),
+            ],
+            IntegrationStatuses.Integrated));
+
+        Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, assessment.Class);
+        Assert.DoesNotContain(DeliveryClaimFindings.UnintegratedDelivery, assessment.Findings);
+        Assert.False(assessment.Repairs.AppendIntegrationRecord);
+    }
+
+    /// <summary>
+    /// AGT-3097 - the commit group is keyed to a repository other than the
+    /// subject's primary one, so no attributed commit carries containment,
+    /// while the current result proved the card integrated. Nothing is
+    /// repaired: no contained commit can be named.
+    /// </summary>
+    [Fact]
+    public void RepositoryKeyMismatchIntegratedByContainmentIsNotUnintegrated()
+    {
+        var assessment = DeliveryClaimSweepPolicy.Assess(Card(
+            [Commit("c0ffee3", contained: false)],
+            IntegrationStatuses.Integrated,
+            hasRecord: false));
+
+        Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, assessment.Class);
+        Assert.DoesNotContain(DeliveryClaimFindings.UnintegratedDelivery, assessment.Findings);
+        Assert.False(assessment.Repairs.HasWork);
+    }
+
+    /// <summary>A merged-locally card is not contained; the fallback does not cover it.</summary>
+    [Fact]
+    public void UncontainedDeliveryMergedOnlyLocallyStaysUnintegrated()
+    {
+        var assessment = DeliveryClaimSweepPolicy.Assess(Card(
+            [Commit("d00d004", contained: false)],
+            IntegrationStatuses.MergedLocally));
+
+        Assert.Equal(DeliveryClaimClasses.UnintegratedDelivery, assessment.Class);
+        Assert.Contains(DeliveryClaimFindings.UnintegratedDelivery, assessment.Findings);
+    }
+
     /// <summary>An unanswerable containment question is its own class, not a failure.</summary>
     [Fact]
     public void UnknownContainmentIsNotReportedAsUnintegrated()
