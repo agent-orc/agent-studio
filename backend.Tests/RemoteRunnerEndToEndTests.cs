@@ -7380,6 +7380,62 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Null(CauseWaitMarker.TryRead(nextTaskFolder));
     }
 
+    [Fact]
+    public void Cause_breaker_disable_closes_a_partially_released_open_record()
+    {
+        var clock = new FakeTimeProvider();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        using var factory = BuildFactory(clock: clock, causeWaitReleaseFactory: _ => new NeverCauseWaitRelease());
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        OpenPreparationBreaker(breaker, task);
+        IntegrateCauseCard(factory.Services, Assert.Single(breaker.List(openOnly: true)));
+
+        Assert.Equal(0, breaker.Sweep());
+        Assert.Equal("cause-integrated", Assert.Single(breaker.List(openOnly: true)).CloseReason);
+
+        Assert.Equal(1, breaker.CloseForDisabledProject(ProjectName));
+        var disabled = Assert.Single(breaker.List());
+        Assert.False(disabled.IsOpen);
+        Assert.Equal("disabled", disabled.CloseReason);
+        Assert.Single(disabled.Waiting);
+        Assert.Empty(breaker.List(openOnly: true));
+        var stored = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(_workspace, CauseBreakerService.RelativePath)));
+        Assert.Equal("disabled", stored.RootElement[0].GetProperty("closeReason").GetString());
+        Assert.Equal("closed", stored.RootElement[0].GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public void Cause_breaker_sweep_persists_final_waiter_cleanup_on_disabled_record()
+    {
+        var clock = new FakeTimeProvider();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        var markers = new FlakyCauseWaitMarkerStore();
+        using var factory = BuildFactory(clock: clock, causeWaitMarkers: markers);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        SettleClaimedReviewAsPreparationFailure(factory.Services.GetRequiredService<AttemptAuthorityService>());
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        OpenPreparationBreaker(breaker, task);
+
+        markers.FailClears = 1;
+        Assert.Equal(1, breaker.CloseForDisabledProject(ProjectName));
+        var disabled = Assert.Single(breaker.List());
+        Assert.False(disabled.IsOpen);
+        Assert.True(Assert.Single(disabled.Waiting).Released);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+
+        Assert.Equal(0, breaker.Sweep());
+        Assert.Empty(Assert.Single(breaker.List()).Waiting);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        var stored = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(_workspace, CauseBreakerService.RelativePath)));
+        Assert.Equal(0, stored.RootElement[0].GetProperty("waiting").GetArrayLength());
+        Assert.Equal(0, stored.RootElement[0].GetProperty("observations").GetArrayLength());
+    }
+
     private sealed class NeverCauseWaitRelease : ICauseWaitRelease
     {
         public string? Release(TaskInfo task, string deliveryKey) => null;

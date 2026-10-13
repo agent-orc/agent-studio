@@ -161,7 +161,7 @@ public sealed class CauseBreakerService
         {
             var records = Records();
             var closed = 0;
-            foreach (var record in records.Where(item => item.IsOpen && item.CloseReason is null
+            foreach (var record in records.Where(item => item.IsOpen
                          && (item.Observations.Any(observation => Same(observation.Project, projectName))
                              || item.Waiting.Any(waiting => Same(waiting.Project, projectName)
                                  || Same(ResolveWaitingTask(item, waiting)?.ProjectName, projectName)))).ToArray())
@@ -508,6 +508,7 @@ public sealed class CauseBreakerService
         {
             var records = Records();
             var closed = 0;
+            var changed = false;
             foreach (var record in records.Where(item => item.IsOpen
                          || item.CloseReason == "disabled" && item.Waiting.Count > 0).ToArray())
             {
@@ -538,11 +539,17 @@ public sealed class CauseBreakerService
                 };
                 if (reason == CauseBreakerCloseReason.None) continue;
                 var updated = CloseLocked(records, record, reason, exceptTaskKey: null);
+                changed |= updated.State != record.State
+                    || updated.ClosedAt != record.ClosedAt
+                    || updated.CloseReason != record.CloseReason
+                    || updated.ProbeTaskKey != record.ProbeTaskKey
+                    || updated.ProbeAttemptId != record.ProbeAttemptId
+                    || !updated.Observations.SequenceEqual(record.Observations)
+                    || !updated.Waiting.SequenceEqual(record.Waiting);
                 if (record.IsOpen && !updated.IsOpen) closed++;
             }
             var reconciled = ReconcileMarkersLocked(records);
-            if (records.Any(item => item.CloseReason is not null && item.Waiting.Count > 0)
-                || closed > 0 || reconciled)
+            if (changed || reconciled)
                 Persist(records);
             return closed;
         }
@@ -781,7 +788,7 @@ public sealed class CauseBreakerService
             State = stillWaiting.Count == 0 || reason == CauseBreakerCloseReason.Disabled
                 ? CauseBreakerStates.Closed : CauseBreakerStates.Open,
             ClosedAt = stillWaiting.Count == 0 || reason == CauseBreakerCloseReason.Disabled
-                ? now : null,
+                ? record.ClosedAt ?? now : null,
             CloseReason = closeReason,
             ProbeTaskKey = stillWaiting.Count > 0 && reason == CauseBreakerCloseReason.ProbeGreen
                 ? record.ProbeTaskKey : null,
