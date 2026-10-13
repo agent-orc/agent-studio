@@ -86,7 +86,11 @@ public sealed class RemoteBuildTestGateRunner(
             catch (OperationCanceledException)
             {
                 return Failure(request, BuildTestGateFailureKind.Cancellation,
-                    "Remote verification was cancelled.") with { DurationMs = started.ElapsedMilliseconds };
+                    "Remote verification was cancelled.") with
+                    {
+                        DurationMs = started.ElapsedMilliseconds,
+                        CancellationReason = GateCancellationReasons.Shutdown,
+                    };
             }
             catch (Exception exception) when (exception is IOException or TimeoutException or System.Net.Sockets.SocketException)
             {

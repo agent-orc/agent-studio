@@ -16,7 +16,7 @@ namespace AgentStudio.Tests;
 /// outcome (passed / failed / skipped). A conflict is recorded as a visible
 /// failure, not swallowed.
 /// </summary>
-public sealed class MergeIntoDevelopRunnerTests : IDisposable
+public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
 {
     private readonly string _tempDir;
 
