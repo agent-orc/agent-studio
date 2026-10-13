@@ -11,9 +11,9 @@ public static class CrashRecoveryEndpoints
     {
         var group = app.MapGroup("/api/crash-recovery");
 
-        group.MapGet("/pending", (CrashRecoveryService recovery) =>
+        group.MapGet("/pending", (bool? includeDismissed, CrashRecoveryService recovery) =>
         {
-            return Results.Ok(new { pending = recovery.GetPendingOrphanRecoveries() });
+            return Results.Ok(new { pending = recovery.GetPendingOrphanRecoveries(includeDismissed == true) });
         });
 
         group.MapPost("/pending/{id}/commit", (string id, bool? confirmLarge, CrashRecoveryService recovery) =>
@@ -30,9 +30,12 @@ public static class CrashRecoveryEndpoints
         group.MapPost("/pending/{id}/dismiss", (string id, CrashRecoveryService recovery) =>
         {
             var result = recovery.DismissPendingOrphanRecovery(id);
-            return result.Status == CrashRecoveryActionStatuses.NotFound
-                ? Results.NotFound(result)
-                : Results.Ok(result);
+            return result.Status switch
+            {
+                CrashRecoveryActionStatuses.NotFound => Results.NotFound(result),
+                CrashRecoveryActionStatuses.Failed => Results.BadRequest(result),
+                _ => Results.Ok(result),
+            };
         });
     }
 }
