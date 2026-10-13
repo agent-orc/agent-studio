@@ -2971,6 +2971,13 @@
           <td>The review hosts ran workers older than the AGT-2916 diagnosis contract, which never report a <code>Diagnosis</code> or a clean repeat, and every <code>ReviewInfra</code> result was retried. The runner cached a test-failures baseline that exited non-zero without a parsed failure name and reused it for 24 hours as a red merge base.</td>
           <td>Each card used 2 of 3 retries. Now an unrun test-failures baseline ends as <code>ReviewInfra/BaselineUnavailable</code> and is never cached. Parser version 4 makes every older cache entry a miss. A report from a pre-diagnosis worker (outcome other than ReviewInfra, an undiagnosed failed deterministic command, no clean repeat) is graded <code>ReviewInfra/DiagnosisContractUnsupported</code>. It is not retried and escalates as <code>environmental</code>, naming the executor and the worker release. Upgrading the review hosts is an operator action.</td>
         </tr>
+        <tr id="case-cancelled-gate-subject-ownership">
+          <td>2026-10-13</td>
+          <td><code>AGT-3120</code><br><span class="small">cancelled-gate-subject-ownership</span></td>
+          <td>AGT-3044 escalated when a gate for its older delivery was cancelled after a fix round. AGT-3106 escalated while review daemons restarted.</td>
+          <td>The per-task, batch fallback, and merge callers treated Cancellation as failed verification without checking current delivery ownership or shutdown.</td>
+          <td>The observed terminal was Escalated. Superseded cancellations now retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. Operator stops still park the card. The timeline records superseded, shutdown, or operator.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -2982,6 +2989,12 @@
   <!-- ============================ 4. THE PLAN ============================ -->
   <section id="plan">
     <h2>4. The plan</h2>
+
+    <h3>Cancelled verification gates</h3>
+    <p>A gate cancellation first checks delivery SHA, lane ownership, and pending continue intent.
+       Superseded runs record evidence without an escalation. Shutdown of a current subject schedules
+       one infrastructure retry after restart through the existing gate budgets. Operator cancellation
+       retains its parking behavior. Every cancellation records its lifecycle reason in the timeline.</p>
 
     <h3>Retry + cooldown policy</h3>
     <p>Retry applies <em>only</em> to the infra-crash class. Logical conclusions (sentinels, real failures) never retry.</p>
