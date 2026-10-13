@@ -65,7 +65,6 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly allBoardJobs = input<readonly TaskInfo[]>([]);
   readonly reorderDisabled = input<boolean>(false);
   readonly mutationsBlocked = input<boolean>(false);
-  readonly visibleLanes = input<readonly string[]>([]);
   /** Resolved lane sort strategy; `mixed` means visible projects disagree. */
   readonly sortStrategy = input<string>('');
   readonly collapsed = input<boolean>(false);

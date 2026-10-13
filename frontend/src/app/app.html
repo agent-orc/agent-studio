@@ -139,7 +139,6 @@
                       data-testid="studio-board">
                   <app-epic-group-board
                     [tasks]="epicBoardTasks()"
-                    [visibleLanes]="visibleBoardLanes()"
                     [compact]="effectiveCompactCards()"
                     [highlightJobId]="justCreatedJobId()"
                     (jobClick)="openDetail($event)" />
@@ -165,7 +164,6 @@
                           [state]="lane.state"
                           [jobs]="lane.jobs"
                           [allBoardJobs]="epicBoardTasks()"
-                          [visibleLanes]="visibleBoardLanes()"
                           [collapsed]="isLaneCollapsed(lane.state)"
                           [compact]="effectiveCompactCards()"
                           [archiving]="archivingInProgress()"

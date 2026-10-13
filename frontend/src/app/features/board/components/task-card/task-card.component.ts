@@ -4,6 +4,8 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
 import { BoardMutationsService } from '../../state/board-mutations.service';
+import { LaneCollapseService } from '../../state/lane-collapse.service';
+import { focusVisibleLaneStates } from '../board-lane-layout.util';
 import { ClientService } from '../../../../services/client.service';
 import { CodeReviewActivityStore } from '../../../../services/code-review-activity.store';
 import { cliTypeIcon } from '../../../../services/format.util';
@@ -100,7 +102,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly epicSubTasks = input<readonly TaskInfo[]>([]);
   readonly compact = input<boolean>(false);
   readonly mutationsBlocked = input<boolean>(false);
-  readonly visibleLanes = input<readonly string[]>([]);
   /**
    * F2: when set and matches this card's job id, the card renders the
    * "just created" pulse highlight and scrolls itself into view on the
@@ -447,6 +448,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly notifications = inject(NotificationService);
   private readonly jobs = inject(TaskService);
   private readonly boardMutations = inject(BoardMutationsService);
+  private readonly laneFocus = inject(LaneCollapseService).focusedContainer;
   private readonly selection = inject(TaskSelectionService);
   private readonly boardFilters = inject(BoardFiltersService);
   readonly cardContextMenu = signal<{ x: number; y: number } | null>(null);
@@ -454,7 +456,8 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly epicsForMenu = signal<EpicRollup[]>([]);
 
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
-    this.job(), this.isEpic(), this.epicsForMenu(), this.subTaskEpicId(), this.mutationsBlocked(), this.visibleLanes()));
+    this.job(), this.isEpic(), this.epicsForMenu(), this.subTaskEpicId(), this.mutationsBlocked(),
+    focusVisibleLaneStates(this.laneFocus())));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {

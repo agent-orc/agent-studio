@@ -10,6 +10,7 @@ import { MODEL_IDS } from '../../../cli';
 import { ProviderAuthStatusService } from '../../../remote-hosts';
 import { TaskService } from '../../../../services/task.service';
 import { BoardMutationsService } from '../../state/board-mutations.service';
+import { LaneCollapseService } from '../../state/lane-collapse.service';
 import { MOVE_PREFIX } from './task-card-view-model';
 import type { TaskInfo, ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
 import {
@@ -56,7 +57,6 @@ describe('TaskCardComponent (smoke)', () => {
     const fixture = TestBed.createComponent(TaskCardComponent);
     const job = makeJob({ state: '5-human-review' });
     fixture.componentRef.setInput('job', job);
-    fixture.componentRef.setInput('visibleLanes', ['2-ready', '5-human-review', '6-completed', '7-archive']);
     fixture.detectChanges();
 
     fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_PREFIX + '6-completed' } as never);
@@ -65,6 +65,19 @@ describe('TaskCardComponent (smoke)', () => {
     fixture.detectChanges();
     fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_PREFIX + '7-archive' } as never);
     expect(changeStateFromDetail).toHaveBeenCalledTimes(1);
+  });
+  it('limits move rows to lanes of the focused board container', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    fixture.componentRef.setInput('job', makeJob({ state: '5-human-review' }));
+    const moveIds = () => fixture.componentInstance.cardCtxMenuItems()
+      .flatMap((item) => item.kind === 'row' && item.id.startsWith(MOVE_PREFIX) ? [item.id] : []);
+    expect(moveIds()).toContain(MOVE_PREFIX + '2-ready');
+    TestBed.inject(LaneCollapseService).focusedContainer.set('decide');
+    expect(moveIds()).toEqual([MOVE_PREFIX + '6-completed', MOVE_PREFIX + '7-archive']);
   });
   it('compiles + instantiates without throwing', async () => {
     await TestBed.configureTestingModule({

@@ -4,7 +4,7 @@
  * behaviour of the extracted unit so the split is provably behaviour-preserving.
  */
 import { describe, expect, it } from 'vitest';
-import { buildFocusLanes, buildLaneGroups, laneChrome } from './board-lane-layout.util';
+import { buildFocusLanes, buildLaneGroups, focusVisibleLaneStates, laneChrome } from './board-lane-layout.util';
 import { READY_PHASES } from './ready-lane-split.util';
 import { lanePresentation } from '../../../models/lane-presentation';
 import { GroupedJobs, TaskInfo, TaskState } from '../../../models/task.model';
@@ -162,6 +162,29 @@ describe('buildLaneGroups', () => {
       TaskState.Progress,
       TaskState.CodeNotComplete,
       TaskState.AutoReview,
+    ]);
+  });
+});
+
+describe('focusVisibleLaneStates', () => {
+  it('lists every always-rendered lane in board order when no container is focused', () => {
+    expect(focusVisibleLaneStates(null)).toEqual([
+      TaskState.Ready,
+      TaskState.Preparation,
+      TaskState.Backlog,
+      TaskState.Progress,
+      TaskState.AutoReview,
+      TaskState.HumanReview,
+      TaskState.Completed,
+      TaskState.Archive,
+    ]);
+  });
+
+  it('narrows to the focused container', () => {
+    expect(focusVisibleLaneStates('decide')).toEqual([
+      TaskState.HumanReview,
+      TaskState.Completed,
+      TaskState.Archive,
     ]);
   });
 });
