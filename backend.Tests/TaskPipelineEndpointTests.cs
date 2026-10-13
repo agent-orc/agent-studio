@@ -102,7 +102,7 @@ public sealed class TaskPipelineEndpointTests : IDisposable
     [Fact]
     public async Task GetPipeline_ConfigExposesCatalogueDisableCapabilities()
     {
-        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
@@ -171,7 +171,7 @@ public sealed class TaskPipelineEndpointTests : IDisposable
     [Fact]
     public async Task RunPostStep_UsesCanonicalProjectIdentityAndLeavesManagedRepoClean()
     {
-        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
