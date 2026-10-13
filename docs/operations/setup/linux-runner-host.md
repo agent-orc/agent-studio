@@ -977,13 +977,15 @@ attempt-authority held several pending attempts and host load had headroom.
 
 Two follow-on effects of feeding the advisor the right number:
 
-- **A raised baseline takes effect without a backend restart.** The running
-  recommendation used to be seeded once at startup; raising
-  `AutoReviewQueueAdaptiveParallelism:BaselineParallelism` in configuration only
-  reached it once an unrelated raise or lower crossed the new value in
-  passing. The advisor now adopts a higher configured baseline on its next
-  refresh whenever the combined queue is non-empty, ahead of and unblocked by
-  the raise cooldown.
+- **A raised baseline takes effect without a backend restart when the host has
+  headroom.** The running recommendation used to be seeded once at startup;
+  raising `AutoReviewQueueAdaptiveParallelism:BaselineParallelism` in
+  configuration only reached it once an unrelated raise or lower crossed the
+  new value in passing. The advisor now adopts a higher configured baseline on
+  its next refresh whenever the combined queue is non-empty and a fresh review
+  host snapshot shows no saturation, ahead of and unblocked by the raise
+  cooldown. Without a fresh plane budget, or while the host is saturated, it
+  holds and names the reason.
 - **The recommendation never exceeds a host's own bootstrap.** The
   capability-advertisement endpoint (`PUT /api/v1/runners/{runnerId}/capabilities`)
   clamps the advisor's one global recommendation to the specific executor's
@@ -1001,10 +1003,31 @@ so the recommendation cannot exceed
 `cpu.max`, not the per-worker child cgroup, and reports the raw value, effective
 plane cores, host cores, per-worker envelope, current ceiling, rolling duration
 of the last 20 completed reviews, and `throttled_usec` delta divided by wall
-time. If duration grows by more than 25% after a raise while throttled share is
-at least 10%, the advisor withdraws the raise. The runner repeats the role-quota
-clamp before every claim, so a stale or mis-set central ceiling cannot overbook
-the unit.
+time. The same advertisement carries the host snapshot (`Load1`, CPU cores,
+used and total memory), and the advisor reads both from that one observation.
+
+Every adaptive raise requires all of the following (AGT-3073):
+
+- queue depth at or above `RaiseQueueDepthThreshold`. A stagnant queue below
+  the threshold holds, so `RaiseQueueDepthThreshold: 1000` switches stagnation
+  raises off together with depth raises;
+- `RaiseOnStagnation` not set to `false` while the queue is stagnant. `false`
+  holds a stagnant queue even at the threshold;
+- a fresh review plane budget (at most 3 minutes old). Without one the advisor
+  holds with `raise refused: no fresh review plane budget`;
+- no host saturation: role throttled share below `HighThrottledShareThreshold`
+  (10%), load per core below `MaxLoadPerCore` (1.0), available memory at or
+  above `MinAvailableMemoryShare` (15%), and the rolling review duration at most
+  `SlowdownThreshold` (25%) above the duration at the baseline;
+- an elapsed `RaiseCooldownMinutes`. Start-up counts as the last change.
+
+The duration reference is the rolling duration when the advisor first raised
+above the baseline. It is kept through further raises and lowers and dropped
+once the recommendation is back at the baseline. Above the baseline, any
+saturation signal, including a duration regression alone, lowers one step per
+`LowerCooldownMinutes` until the baseline is reached, even with a backlog. The
+runner repeats the role-quota clamp before every claim, so a stale or mis-set
+central ceiling cannot overbook the unit.
 
 Execution Hosts shows the review role's quota, adopted ceiling, and throttled
 share. Two consecutive samples at or above 10% raise the existing degraded-host

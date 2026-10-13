@@ -366,15 +366,24 @@ executor's own registered bootstrap before answering `RoleMaxParallelism`, so
 one host's declared capacity is never exceeded (AGT-2848). The advisor's input
 also includes the freshest review-role plane budget: role `cpu.max`, host cores,
 the unchanged per-worker envelope, rolling review duration, and role
-`throttled_usec` share. The ceiling never exceeds one worker per documented
-2-core minimum. A greater-than-25% rolling duration regression after a raise,
-combined with at least 10% throttled share, withdraws that raise. The runner
+`throttled_usec` share, plus load per core and available memory from the same
+host snapshot. The ceiling never exceeds one worker per documented 2-core
+minimum. A raise requires queue depth at or above `RaiseQueueDepthThreshold`
+(stagnation below it never raises), a fresh plane budget, an elapsed raise
+cooldown (start-up counts as a change), and no saturation signal: high role
+throttling, high load per core, low available memory, or a rolling duration
+regression against the duration at the baseline. `RaiseOnStagnation: false`
+also holds a stagnant queue at the threshold. Saturation lowers a
+recommendation above the configured baseline one step per lower cooldown, even
+with a backlog. The decision reason, including host saturation, is returned by
+`GET /api/runner/auto-review-parallelism-recommendation`. The runner
 applies the same role-quota clamp locally before claiming. Queue input is the
 combined backlog of the legacy post-processing queue and current
 attempt-authority ReviewAttempts in state Pending (`GET
 /api/runner/auto-review-queue`), and a raised
 `AutoReviewQueueAdaptiveParallelism:BaselineParallelism` is adopted on the next
-refresh once the queue is non-empty, without a backend restart. The
+refresh once the queue is non-empty and a fresh plane budget shows no
+saturation, without a backend restart. The
 operator-facing form of this is in
 [docs/operations/remote-hosts.md](../../operations/remote-hosts.md) and
 [docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md#how-the-review-ceiling-is-derived).
