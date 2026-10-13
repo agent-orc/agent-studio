@@ -528,6 +528,8 @@ internal static class PromptDescriptionCatalog
             "Research delivery contract for one primary HTML report with linked supporting material.", "Runner"),
         ["mode-framing-concept.md"] = new("Mode framing: concept",
             "Docs-only Dossier contract injected for concept-mode runs.", "Runner"),
+        ["mode-framing-verification-scope.md"] = new("Mode framing: verification scope",
+            "Coding-mode test and lint scope for the run: covering classes, guard tests, and lint; whole suites stay with the gates.", "Runner"),
         ["mode-framing-dossier-maintenance.md"] = new("Mode framing: Dossier maintenance",
             "Append-only implementation-log contract injected for cards linked to a living Dossier.", "Runner"),
         ["mode-framing-web.md"] = new("Mode framing: web access",

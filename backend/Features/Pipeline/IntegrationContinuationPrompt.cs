@@ -5,6 +5,18 @@ namespace AgentStudio.Pipeline;
 /// <summary>One source for the context given to an agent after integration stalls.</summary>
 public static class IntegrationContinuationPrompt
 {
+    /// <summary>
+    /// The coding-mode verification scope in one sentence: focused checks in the
+    /// run, whole test projects stay with the gates.
+    /// </summary>
+    internal const string VerificationScope =
+        "Build, run the test classes that cover the change plus new or changed tests, "
+        + "run the guard tests (filter \"" + GuardFirstGatePlan.GuardFilter + "\") and the project's lint commands, "
+        + "and leave whole test projects to the gates. ";
+
+    internal const string RerunFailingCommandFirst =
+        "If the evidence names a failing command, rerun that exact command first and fix it before any broader test run. ";
+
     public static string Build(
         string taskKey,
         string? deliveryRef,
@@ -34,12 +46,14 @@ public static class IntegrationContinuationPrompt
             || stage.Contains("merge", StringComparison.OrdinalIgnoreCase)
             || stage.Contains("rebase", StringComparison.OrdinalIgnoreCase);
         var taskDirection = isReview
-            ? "Resolve the recorded review findings on this same task, run the relevant tests, and publish the corrected delivery. "
+            ? "Resolve the recorded review findings on this same task. " + VerificationScope
+              + "Then publish the corrected delivery. "
             : isConflict
                 ? $"Continue on the existing delivery branch, merging the latest integration branch by merging 'origin/{integrationBranch}' into it when needed. "
                   + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-                  + "Run the relevant tests and publish a new delivery. "
-                : "Resolve the recorded failure on this same task, run the relevant tests, and publish the corrected delivery. ";
+                  + VerificationScope + "Then publish a new delivery. "
+                : "Resolve the recorded failure on this same task. " + VerificationScope
+                  + "Then publish the corrected delivery. ";
         return "## CONTINUATION\n\n"
             + (isConflict ? "Automatic integration recovery context.\n" : "Orchestrator failure context.\n")
             + $"Continue task {taskKey} and resolve the integration dead end.\n"
@@ -47,11 +61,13 @@ public static class IntegrationContinuationPrompt
             + $"Integration branch: {integrationBranch}; tip: {conflict?.IntegrationTipSha ?? integrationTip ?? "not recorded"}.\n"
             + $"Delivery side: {deliveryRef ?? "not recorded"} at {deliverySha ?? conflict?.DeliverySha ?? "not recorded"}.\n"
             + $"Attempted stages: {stages}. Conflicted files: {files}.\n"
-            + $"Failure evidence ref: {evidenceRef ?? "pipeline-execution.json"}.\n"
+            + (string.IsNullOrWhiteSpace(evidenceRef) ? "" : $"Failure evidence ref: {evidenceRef}.\n")
             + (string.IsNullOrWhiteSpace(evidence) ? ""
                 : evidence.Contains('\n') ? $"Gate or review evidence:\n{evidence.TrimEnd()}\n"
                 : $"Gate or review evidence: {evidence}.\n")
-            + "Preserve the card's model, CLI, and reasoning pins. " + taskDirection
+            + "Preserve the card's model, CLI, and reasoning pins. "
+            + (string.IsNullOrWhiteSpace(evidence) ? "" : RerunFailingCommandFirst)
+            + taskDirection
             + "In the delivery report, identify this failed stage and link the evidence you resolved. "
             + "Do not move or push the integration branch. Finish with the normal task terminal sentinel.";
     }
