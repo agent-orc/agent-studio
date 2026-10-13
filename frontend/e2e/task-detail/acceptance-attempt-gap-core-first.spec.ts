@@ -84,7 +84,7 @@ function overview(gap: typeof GAP | null) {
     decision: null, planningSpawn: null, conceptDossier: null, olderBriefDelivery: null,
     relatedWikiPages: [], creationSource: 'operator', completionClaim: null,
     parkedBlocker: null, needsInput: null,
-    references: { dependsOn: [], relatesTo: [], supersedes: [] }, waitsOn: null,
+    references: { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [] }, waitsOn: null,
     acceptanceAttemptGap: gap,
   });
 }
@@ -171,6 +171,14 @@ async function mockApplication(page: Page, move: (route: Route) => Promise<void>
   await page.route(`**/api/tasks/${TASK_ID}/details/usage**`, route => json(route, { error: 'usage offline' }, 503));
   await page.route(`**/api/tasks/${TASK_ID}/details/review**`, route =>
     json(route, resource('review', { reviewProjection: null, evidence: null })));
+  // The core-first detail learns the integration state from the git resource;
+  // it decides whether the Human Review primary reads Accept.
+  await page.route(`**/api/tasks/${TASK_ID}/details/git**`, route => {
+    const card = task();
+    return json(route, resource('git', { mergeSignal: null, integration: card.integration,
+      publishSignal: null, testEvidence: null, commit: card.commit, commits: card.commits,
+      provenance: null }));
+  });
   await page.route(`**/api/tasks/${TASK_ID}/details/overview**`, route => {
     traffic.overviewReads++;
     return json(route, overview(GAP));
@@ -197,7 +205,17 @@ async function openCoreFirst(page: Page): Promise<void> {
 async function screenshot(page: Page, fileName: string): Promise<void> {
   if (!RESULTS_DIR) return;
   mkdirSync(RESULTS_DIR, { recursive: true });
-  await page.getByTestId('delivery-claim-panel').screenshot({ path: path.join(RESULTS_DIR, fileName) });
+  // The notice renders next to the claim panel, outside its box; clip to both.
+  const boxes = [];
+  for (const testId of ['delivery-claim-panel', 'acceptance-attempt-gap']) {
+    const box = await page.getByTestId(testId).boundingBox();
+    if (box) boxes.push(box);
+  }
+  const x = Math.min(...boxes.map(b => b.x));
+  const y = Math.min(...boxes.map(b => b.y));
+  await page.screenshot({ path: path.join(RESULTS_DIR, fileName), clip: { x, y,
+    width: Math.max(...boxes.map(b => b.x + b.width)) - x,
+    height: Math.max(...boxes.map(b => b.y + b.height)) - y } });
 }
 
 test.describe('Acceptance attempt gap in the core-first detail (AGT-3096)', () => {
@@ -245,8 +263,10 @@ test.describe('Acceptance attempt gap in the core-first detail (AGT-3096)', () =
     await expect(page.getByTestId('acceptance-attempt-gap')).toBeVisible({ timeout: 15_000 });
     const readsBeforeAccept = traffic.overviewReads;
 
+    // Integration is proven by the git resource, which loads with the Git pane.
+    await page.getByRole('button', { name: 'Toggle Git panel' }).click();
     const accept = page.getByTestId('studio-triage-action-mark-done');
-    await expect(accept).toHaveText(/Accept/);
+    await expect(accept).toHaveText(/Accept/, { timeout: 15_000 });
     await expect(accept).toBeEnabled();
     await accept.click();
 
