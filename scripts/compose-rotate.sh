@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Rotate one Compose principal without showing or copying the issued credential.
+# Rerunning after a failure resumes the same rotation operation.
 set -euo pipefail
 role="${1:-}"
 case "$role" in studio|engine|runner|review-runner) ;; *) echo 'usage: compose-rotate.sh studio|engine|runner|review-runner [--dev]' >&2; exit 64 ;; esac
@@ -26,4 +27,7 @@ case "$role" in
     review-runner) services=("agent-host-review-distributed${suffix}") ;;
 esac
 "${compose[@]}" up -d --no-deps --force-recreate --wait "${services[@]}"
+# The recreated service now reads the new bearer. Prove and acknowledge it so
+# Task Server retires the previous generation instead of waiting for the deadline.
+"${compose[@]}" run --rm --no-deps "credential-manager${suffix}" "$role" --complete
 printf 'credential-rotation=complete role=%s\n' "$role"
