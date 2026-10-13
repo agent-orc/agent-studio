@@ -40,6 +40,20 @@ public static class RemoteReviewContinuationPolicy
             ? RemoteReviewContinuationStep.Move
             : RemoteReviewContinuationStep.Unapplicable;
     }
+
+    /// <summary>
+    /// Whether a settled report opens a finding round. Only a delivered round
+    /// (Pass, ProductFailure, IntegrationBranchDefect) can. An infrastructure
+    /// report keeps its retry or escalation even when it carries a block
+    /// verdict, as before the continuation was journaled (AGT-3100): its
+    /// continuation would have no delivered round and the journal would refuse
+    /// it as corrupt.
+    /// </summary>
+    public static bool OpensFindingRound(
+        ReviewTerminalOutcome outcome, AgentStudio.TaskServer.Contracts.ReviewFollowUpAction followUp)
+        => outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
+               or ReviewTerminalOutcome.IntegrationBranchDefect
+           && followUp == AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.ReviewFindingRound;
 }
 
 public static class RemoteReviewContinuationProjection

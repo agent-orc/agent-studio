@@ -988,7 +988,7 @@ public static class V1ReviewPlaneEndpoints
                         RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
                         blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
                         cardBudget, deliveredRound, roundSeed);
-                else if (reviewFollowUp.Action == Contract.ReviewFollowUpAction.ReviewFindingRound)
+                else if (RemoteReviewContinuationPolicy.OpensFindingRound(outcome, reviewFollowUp.Action))
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.FindingRound,
                         BuildRemoteFindingFollowUp(reviewFollowUp.Findings, attemptId),
