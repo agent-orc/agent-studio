@@ -228,8 +228,14 @@ public sealed class FlowEpisodeClassifierTests
             var folder = Path.Combine(root, "post-steps");
             Directory.CreateDirectory(folder);
             File.WriteAllText(Path.Combine(folder, "build-test-gate-1.log"),
-                $"durationMs=0 startedAtUtc={T0:O} queueWaitMs=5880001\n" + new string('x', 8000));
-            File.WriteAllText(Path.Combine(folder, "build-test-gate-2.log"), "bad header");
+                $"verdict=Pass exit=0 signal=n/a durationMs=0\n" +
+                "gateId=build-test failureKind=None failureFingerprint=n/a\n" +
+                $"gateRunId=gate-1 startedAtUtc={T0:O} completedAtUtc={T0:O} verdictSource=local\n" +
+                "profileDigest=n/a pipelineDefinitionVersion=n/a toolchainIdentity=n/a originalEvidencePath=n/a\n" +
+                "collision=False queueWaitMs=5880001\n" + new string('x', 8000));
+            File.WriteAllText(Path.Combine(folder, "build-test-gate-2.log"),
+                "bad header\nline 2\nline 3\nline 4\nline 5\n" +
+                $"durationMs=0 startedAtUtc={T0:O} queueWaitMs=5880001\n");
             var result = FlowGateLogEvidence.Read(root);
             Assert.True(result.Malformed);
             Assert.Single(result.Segments);
