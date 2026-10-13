@@ -49,7 +49,9 @@ public sealed partial class TaskServerStore
     // typed observations. Migrations are idempotent; the version guards
     // downgrades from binaries without all contracts.
     // 33 adds the typed credential runbook operation journal and step receipts.
-    public const int CurrentSchemaVersion = 33;
+    // 34 combines the runbook journal with generation-keyed credential expiry
+    // and rotation reminders (I8), preserving the downgrade guard.
+    public const int CurrentSchemaVersion = 34;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4454,6 +4456,7 @@ public sealed partial class TaskServerStore
                AND json_array_length(consumers_json) = 1;
             """, ct);
         await ApplyIdentityBootstrapMigrationAsync(connection, ct);
+        await ApplyCredentialReminderMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

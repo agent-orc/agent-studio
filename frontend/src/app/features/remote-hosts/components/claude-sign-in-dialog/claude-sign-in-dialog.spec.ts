@@ -79,11 +79,19 @@ describe('ClaudeSignInDialogComponent', () => {
     fixture.detectChanges();
 
     const dialog = document.querySelector('[data-testid="claude-sign-in-dialog"]') as HTMLElement;
-    expect(providerAuth.startClaudeSignIn).toHaveBeenCalledWith('host-01', 'agent@runner-01');
+    expect(providerAuth.startClaudeSignIn).toHaveBeenCalledWith('host-01', 'agent@runner-01', 'environment');
     expect(dialog.querySelector('[data-testid="claude-sign-in-pending"]')).toBeTruthy();
     expect(dialog.querySelector<HTMLAnchorElement>('[data-testid="claude-sign-in-url"]')?.href)
       .toBe('https://claude.ai/setup-token/abc123');
     expect(dialog.textContent).toContain('Studio does not receive the resulting token');
+  });
+
+  it('starts the native-login renewal (R2) when the host credential is a native Claude login', async () => {
+    store.request.set({ ...TARGET, mode: 'native' });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(providerAuth.startClaudeSignIn).toHaveBeenCalledWith('host-01', 'agent@runner-01', 'native');
   });
 
   it('cancels the host session when the pending dialog closes', async () => {

@@ -208,6 +208,7 @@
           }
         </section>
 
+        <section class="detail" appHostCredentials [host]="h" [now]="now()"></section>
         <section class="detail" data-testid="remote-host-detail-section-capacity">
           <app-remote-host-detail-summary label="Capacity and leases" [summary]="capacitySummary()"
             testId="remote-host-detail-toggle-capacity" [expanded]="isSectionExpanded('capacity')"

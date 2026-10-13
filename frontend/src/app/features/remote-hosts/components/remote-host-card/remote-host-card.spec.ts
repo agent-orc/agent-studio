@@ -91,7 +91,9 @@ describe('RemoteHostCardComponent', () => {
   it('opens to compact one-line section summaries before revealing internals', () => {
     const fixture = mount(HOST, true, false);
     const el: HTMLElement = fixture.nativeElement;
-    expect(el.querySelectorAll('[data-testid^="remote-host-detail-toggle-"]').length).toBe(7);
+    expect(el.querySelectorAll('[data-testid^="remote-host-detail-toggle-"]').length).toBe(8);
+    expect(el.querySelector('[data-testid="remote-host-detail-toggle-credentials"]')?.textContent)
+      .toMatch(/Loading credentials|Credential registry unavailable/);
     expect(el.querySelector('[data-testid="remote-host-detail-toggle-capabilities"]')?.textContent)
       .toContain('2 capabilities ok');
     expect(el.querySelector('.meter')).toBeNull();

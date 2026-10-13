@@ -68,6 +68,7 @@ builder.Services.AddStudioP2Services();
 builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
+builder.Services.AddHostedService<CredentialReminderHostedService>();
 
 var configuredUrl = builder.Configuration["LISTEN_URL"]
                     ?? builder.Configuration[$"{TaskServerOptions.SectionName}:ListenUrl"];

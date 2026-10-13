@@ -7,6 +7,7 @@ import {
   type ProviderAuthBadge,
   type CodexSignInStartResponse,
   type CodexSignInStatusResponse,
+  type ClaudeSignInMode,
   type ClaudeSignInStartResponse,
   type ClaudeSignInStatusResponse,
   type ProviderAuthProvisioningRequest,
@@ -143,12 +144,16 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  startClaudeSignIn(hostId: string, sshTarget: string): Observable<ClaudeSignInStartResponse> {
+  startClaudeSignIn(
+    hostId: string,
+    sshTarget: string,
+    mode: ClaudeSignInMode = 'environment',
+  ): Observable<ClaudeSignInStartResponse> {
     if (!this.http) throw new Error('Claude sign-in requires the Studio HTTP client.');
     const idempotencyKey = `signin-${crypto.randomUUID()}`;
     return this.http.post<ClaudeSignInStartResponse>(
       `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/claude-sign-in`,
-      { sshTarget, idempotencyKey },
+      { sshTarget, idempotencyKey, mode },
     );
   }
 

@@ -802,7 +802,8 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(
                 () => store.CreatePrincipalAsync(request, Actor(context), ct),
-                StatusCodes.Status201Created));
+                StatusCodes.Status201Created))
+            .RequireStudioRole(StudioUserRoles.Owner);
         management.MapPost("/principals/{principalId}/rotate", async (
             HttpContext context,
             string principalId,
@@ -816,7 +817,8 @@ public static class TaskServerEndpoints
                     : await InvokeAsync(() => store.RotatePrincipalAsync(
                         principalId, request, actor.PrincipalId, ct))
                 : Results.Json(new ApiError("principal-required", "An authenticated management principal is required."),
-                    statusCode: StatusCodes.Status403Forbidden));
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireStudioRole(StudioUserRoles.Owner);
         management.MapGet("/principals/{principalId}/rotations/{operationId}", async (
             string principalId, string operationId, TaskServerStore store, CancellationToken ct)
             => await InvokeNullableAsync(() => store.GetPrincipalRotationAsync(principalId, operationId, ct)));
@@ -868,7 +870,8 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.RevokePrincipalAsync(
-                principalId, Actor(context), ct)));
+                principalId, Actor(context), ct)))
+            .RequireStudioRole(StudioUserRoles.Owner);
         management.MapGet("/status", (TaskServerStore store) => Results.Ok(store.Status()));
         management.MapGet("/outboxes", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListRunnerOutboxesAsync(ct)));
@@ -896,13 +899,16 @@ public static class TaskServerEndpoints
         management.MapGet("/remote-hosts", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListRunnerCapabilitySnapshotsAsync(ct)));
         management.MapGet("/credentials", async (TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ListCredentialRegistryAsync(ct)));
+            => await InvokeAsync(() => store.ListCredentialRegistryAsync(ct)))
+            .RequireStudioRole(StudioUserRoles.Operator);
+        management.MapCredentialViewEndpoints();
         management.MapPut("/credentials", async (
             HttpContext context,
             CredentialRegistryObservationRequest request,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeAsync(() => store.UpsertCredentialRegistryAsync(request, Actor(context), ct)));
+            => await InvokeAsync(() => store.UpsertCredentialRegistryAsync(request, Actor(context), ct)))
+            .RequireStudioRole(StudioUserRoles.Owner);
         management.MapPost("/provider-renewals", async (
             HttpContext context, BeginProviderRenewalRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.BeginProviderRenewalAsync(request, Actor(context), ct)));

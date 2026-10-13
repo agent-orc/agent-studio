@@ -132,9 +132,7 @@ public static class TaskServerPlaneProxy
 
         foreach (var (name, values) in context.Request.Headers)
         {
-            if (HopByHopHeaders.Contains(name)
-                || string.Equals(name, "Host", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase))
+            if (!ForwardsRequestHeader(name))
             {
                 continue;
             }
@@ -144,6 +142,9 @@ public static class TaskServerPlaneProxy
                 request.Content.Headers.TryAddWithoutValidation(name, values.ToArray());
             }
         }
+
+        if (ActingRole(context, context.RequestServices.GetRequiredService<IConfiguration>()) is { } actingRole)
+            request.Headers.TryAddWithoutValidation(CredentialViewProtocol.ActingRoleHeader, actingRole);
 
         try
         {
@@ -172,6 +173,34 @@ public static class TaskServerPlaneProxy
                 message = $"The standalone Task Server could not be reached: {exception.Message}",
             });
         }
+    }
+
+    internal static bool ForwardsRequestHeader(string name)
+        => !HopByHopHeaders.Contains(name)
+           && !string.Equals(name, "Host", StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(name, CredentialViewProtocol.ActingRoleHeader, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The Studio role this edge authenticated, forwarded so the Task Server can scope
+    /// credential metadata (I8). The networked profile uses the signed-in human; the local
+    /// profile mirrors the loopback local-default operator of the local management routes.
+    /// </summary>
+    internal static string? ActingRole(HttpContext context, IConfiguration configuration)
+    {
+        if (SecurityProfiles.IsNetworked(configuration))
+            return context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                   && StudioRoles.IsValid(human.User.Role)
+                ? human.User.Role
+                : null;
+        if (!SecurityProfiles.IsLocal(configuration)) return null;
+        var remote = context.Connection.RemoteIpAddress;
+        var loopback = remote is null || System.Net.IPAddress.IsLoopback(remote);
+        return loopback
+               && string.Equals(context.Request.Headers["X-Client-Id"].FirstOrDefault(), DefaultClientIdentity.Id, StringComparison.Ordinal)
+               && string.Equals(context.Items["ClientId"]?.ToString(), DefaultClientIdentity.Id, StringComparison.Ordinal)
+            ? StudioRoles.Operator
+            : null;
     }
 
     private static string? ReadServiceToken(IConfiguration configuration)
