@@ -5,6 +5,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the verification record's timestamp is stored data; the runner never compares it with now.
+
 /// <summary>
 /// AGT-3103 - a delivery the published integration branch already carries is
 /// a no-op integration: it completes without a build, a test run, or a push,
@@ -165,7 +167,7 @@ public sealed class NoOpIntegrationTests : IDisposable
             Evidence = IntegrationVerificationEvidence.MergeGate,
             GateVerdict = nameof(BuildTestGateVerdict.Ok),
             Reason = "The integration lane created this merge and its gate returned Ok.",
-            RecordedAtUtc = DateTimeOffset.Parse("2026-10-13T02:00:00Z"),
+            RecordedAtUtc = RecordedAt,
         });
 
         var outcome = await harness.Runner.RunAsync(
@@ -182,6 +184,122 @@ public sealed class NoOpIntegrationTests : IDisposable
         Assert.Equal(published, verification.ContainmentSha);
     }
 
+    [Fact]
+    public async Task NoOpCarryingAPassedBatchCandidate_IsVerifiedWithoutAGateOrAnOverride()
+    {
+        // The operator fast path of 13.10.2026: a batch candidate that replays
+        // the delivery is pushed to develop, then the original delivery is
+        // recorded as contained. The candidate's batch gate already passed
+        // with this card as a member, so that verdict is the card's evidence.
+        var (repo, remote) = SeedRepoWithOrigin("batch-candidate");
+        RunGit(repo, "checkout -q -b develop");
+        var baseSha = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b task/65");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        var resultSha = RunGit(repo, "rev-parse task/65").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, $"cherry-pick -x {resultSha}");
+        var candidate = RunGit(repo, "rev-parse develop").Out.Trim();
+        Assert.NotEqual(resultSha, candidate);
+        RunGit(repo, "merge -q -s ours -m \"record: delivery contained\" task/65");
+        RunGit(repo, "push -q -u origin develop");
+        var published = RemoteSha(remote, "develop");
+
+        var batchGates = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        RecordPassedBatchMember(batchGates, "AGT-65", baseSha, resultSha, candidate);
+        var harness = Harness(repo, "65", batchGates);
+        var outcome = await harness.Runner.RunAsync(
+            "Fixture", "65", harness.JobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(0, harness.Gate.Invocations);
+        Assert.False(outcome.VerificationPending);
+        Assert.Equal(published, outcome.ContainmentSha);
+        Assert.False(harness.Queue.Reader.TryRead(out _));
+        var verification = IntegrationVerificationStore.Read(harness.JobFolder);
+        Assert.Equal(IntegrationVerificationStates.Verified, verification!.State);
+        Assert.Equal(IntegrationVerificationEvidence.CarriedTree, verification.Evidence);
+        Assert.Equal(candidate, verification.Sha);
+        Assert.Equal([resultSha], verification.DeliveryShas);
+        // The board keeps the carried verdict while develop carries the candidate.
+        Assert.True(IntegrationVerificationProjection.CarriesVerifiedDelivery(
+            verification, "develop", resultSha, _ => true));
+        using var grant = harness.Reservations.TryAcquire("Fixture");
+        Assert.NotNull(grant);
+    }
+
+    [Fact]
+    public async Task NoOpWithABatchCandidateTheTipNoLongerCarries_StaysUnverified()
+    {
+        var (repo, _) = SeedRepoWithOrigin("batch-candidate-dropped");
+        RunGit(repo, "checkout -q -b develop");
+        var baseSha = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b task/66");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        var resultSha = RunGit(repo, "rev-parse task/66").Out.Trim();
+        // A candidate that never reached develop. -x keeps it a distinct commit.
+        RunGit(repo, "checkout -q -b candidate develop");
+        RunGit(repo, $"cherry-pick -x {resultSha}");
+        var candidate = RunGit(repo, "rev-parse candidate").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge -q --no-ff -m \"merge: operator fast path\" task/66");
+        RunGit(repo, "push -q -u origin develop");
+
+        var batchGates = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        RecordPassedBatchMember(batchGates, "AGT-66", baseSha, resultSha, candidate);
+        var harness = Harness(repo, "66", batchGates);
+        var outcome = await harness.Runner.RunAsync(
+            "Fixture", "66", harness.JobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(0, harness.Gate.Invocations);
+        Assert.True(outcome.VerificationPending);
+        Assert.Equal(IntegrationVerificationStates.Unverified,
+            IntegrationVerificationStore.Read(harness.JobFolder)!.State);
+    }
+
+    /// <summary>
+    /// Writes the batch gate's durable evidence for one passed member through
+    /// the store's own validation: manifest, assembled state, run, verdict,
+    /// admitted replay, and the member record.
+    /// </summary>
+    private void RecordPassedBatchMember(
+        BatchGateStore store, string taskKey, string baseSha, string resultSha, string candidate)
+    {
+        var scope = new BatchGateScope("Fixture", "repo", "develop", "full", "digest", "v1");
+        var member = new BatchGateSubject(
+            taskKey, "Fixture", "repo", "develop", "full", "digest", "v1",
+            "refs/heads/agent-studio/results/" + taskKey, resultSha, "run-1", 1, 1, resultSha,
+            true, true, true, true, false, null, false, RecordedAt, 1);
+        var manifest = new BatchGateManifest(
+            "batch-" + taskKey, scope, baseSha,
+            BatchGatePolicy.MembershipDigest(baseSha, scope, [member]),
+            RecordedAt, [member], [], [taskKey]);
+        store.CloseManifest(manifest);
+        var evidence = Path.Combine(_tempDir, taskKey + "-batch-evidence.json");
+        File.WriteAllText(evidence, "{\"tested\":true}");
+        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembled, candidate, 1, RecordedAt));
+        var run = new BatchGateRunRecord("run-1", manifest.BatchId, manifest.MembershipDigest,
+            baseSha, candidate, "full", "digest", "gate-host", 1, ["dotnet test"], RecordedAt, evidence);
+        store.RecordRun(run);
+        store.RecordVerdict(new BatchGateRunVerdict(run.BatchRunId, manifest.BatchId,
+            manifest.MembershipDigest, candidate, "digest", "pass", "passed", evidence, RecordedAt));
+        store.RecordReplay(new BatchGateReplayRecord(manifest.BatchId, manifest.MembershipDigest,
+            taskKey, resultSha, baseSha, candidate,
+            [new AgentStudio.Git.RebasedCommitReplacement(resultSha, candidate)], [], "admitted", RecordedAt));
+        store.RecordMember(new BatchGateMemberRecord(
+            taskKey, member.RunAttempt, member.DeliveryEpoch, resultSha, [candidate],
+            manifest.BatchId, manifest.MembershipDigest, baseSha, candidate, "digest",
+            run.BatchRunId, "pass", evidence, RecordedAt));
+    }
+
+    private static readonly DateTimeOffset RecordedAt = new(2026, 10, 13, 2, 0, 0, TimeSpan.Zero);
+
     private sealed record RunnerHarness(
         MergeIntoDevelopRunner Runner,
         PipelineExecutionLog Log,
@@ -190,7 +308,7 @@ public sealed class NoOpIntegrationTests : IDisposable
         BatchIntegrationReservationService Reservations,
         string JobFolder);
 
-    private RunnerHarness Harness(string repo, string jobId)
+    private RunnerHarness Harness(string repo, string jobId, BatchGateStore? batchGates = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -220,7 +338,8 @@ public sealed class NoOpIntegrationTests : IDisposable
             pushQueue: queue,
             projectSettings: settings,
             preDevelopBuildGate: new PreDevelopBuildGate(gate),
-            batchReservations: reservations);
+            batchReservations: reservations,
+            batchGates: batchGates);
 
         // Outside the repository, as in production, so the tree stays clean.
         var jobFolder = Path.Combine(_tempDir, "jobs", jobId);

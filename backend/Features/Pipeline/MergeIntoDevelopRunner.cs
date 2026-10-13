@@ -45,6 +45,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly RefMutationLeaseService? _refMutationLeases;
     private readonly BatchIntegrationReservationService? _batchReservations;
+    private readonly BatchGateStore? _batchGates;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -88,7 +89,8 @@ public sealed partial class MergeIntoDevelopRunner
         IConfiguration? configuration = null,
         AgentStudio.Tasks.TimelineLog? timeline = null,
         RefMutationLeaseService? refMutationLeases = null,
-        BatchIntegrationReservationService? batchReservations = null)
+        BatchIntegrationReservationService? batchReservations = null,
+        BatchGateStore? batchGates = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -111,6 +113,7 @@ public sealed partial class MergeIntoDevelopRunner
         _timeline = timeline;
         _refMutationLeases = refMutationLeases;
         _batchReservations = batchReservations;
+        _batchGates = batchGates;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero

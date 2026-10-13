@@ -512,9 +512,20 @@ now a no-op integration:
   tree (still `GateFailed`, still no rerun); then a **carried tree**. A carried
   tree is an earlier verified tree that the published tip still carries and
   that already contained every delivery commit: the card's own verified record,
-  or an `integrated-verified` record that names its `integrationSha`. A carried
-  verdict is recorded against that earlier tree (evidence `carried-tree`). This
-  is the same carry the board projection applies after the tip moves on.
+  an `integrated-verified` record that names its `integrationSha`, or a passed
+  batch gate member record for this delivery (see below). A carried verdict is
+  recorded against that earlier tree (evidence `carried-tree`). This is the
+  same carry the board projection applies after the tip moves on.
+- **Batch candidate evidence.** The operator fast path pushes a batch
+  candidate to the branch before its members' reviews settle. The batch gate
+  already tested each member on that candidate tree and wrote a member record
+  (`batch-gates/<batchId>/members/<taskKey>/<runId>.json`, verdict `pass`).
+  When the published tip still carries that tested candidate and the record's
+  original result SHA is the delivery, the candidate counts as the carried
+  tree. The verification record names the candidate SHA and lists the
+  original result SHA in `deliveryShas`, because the candidate holds the
+  replayed commits rather than the original ones. A candidate that never
+  reached the branch, or a member record without `pass`, proves nothing.
 - **No evidence.** The card is `integrated-unverified`, with the reason that
   the no-op ran no gate. The integration step still passes, so a settling
   review moves the card to Human Review as usual. Acceptance follows the rule
@@ -523,6 +534,19 @@ now a no-op integration:
   worker and backstop never complete such a result. They return the card to
   Human Review with the outcome `IntegrationUnverified` instead of re-running
   a gate.
+- **Decision on the operator cost (operator review, 13.10.2026).** Before
+  AGT-3103, a contained delivery without evidence ran one gate on the tip and
+  completed as `integrated-verified`. That gate is exactly the 60 to 75 minute
+  run this change removes, so it does not come back for the no-op. The cost
+  is limited instead: a card that reached the branch through a gated batch
+  candidate is verified by that candidate's gate (above) and needs no
+  override. Only a delivery that reached the branch with no gate evidence at
+  all, such as a hand-merged branch, stays `integrated-unverified` and needs
+  an operator override to be accepted. The release line (`main`) follows the
+  same rule: an out-of-band push to `main` is not followed by the mandatory
+  full suite. Only evidence on `main` itself verifies it: a
+  `pre-main-test-gate` receipt, or a verified or `integrated-verified` record
+  for a tree on `main`. Work-line batch evidence never counts for `main`.
 - **Unpublished lane.** A delivery that only the Studio integration lane
   carries (a gated merge whose push is still pending) is not a no-op: the lane
   still owes that push. It keeps the AGT-3002 rule of one gate on the lane tip
