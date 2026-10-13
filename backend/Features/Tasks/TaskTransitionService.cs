@@ -313,8 +313,7 @@ public sealed class TaskTransitionService
         if (targetState == TaskStates.Completed
             && fromState != TaskStates.Completed)
         {
-            completionIntegrationStatus = _integrationStatus?.BuildLookup([info])
-                .GetValueOrDefault(info.TaskKey);
+            completionIntegrationStatus = _integrationStatus?.BuildForCompletion(info);
             completionContract = DecideCompletionContract(
                 info,
                 settings,

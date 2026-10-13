@@ -135,12 +135,24 @@ public sealed class TaskIntegrationStatusService
     /// lane carries no verdict and the card renders none. Never throws.
     /// </summary>
     public Dictionary<string, TaskIntegrationStatus> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookupCore(jobs, deliveredOnly: true);
+
+    /// <summary>
+    /// Computes the completion verdict for one card regardless of its source lane.
+    /// Board projection continues to use <see cref="BuildLookup"/> and its lane filter.
+    /// </summary>
+    public TaskIntegrationStatus BuildForCompletion(TaskInfo job)
+        => BuildLookupCore([job], deliveredOnly: false)[job.TaskKey];
+
+    private Dictionary<string, TaskIntegrationStatus> BuildLookupCore(
+        IReadOnlyCollection<TaskInfo> jobs, bool deliveredOnly)
     {
         Interlocked.Increment(ref _lookupCount);
         var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
         if (jobs.Count == 0) return result;
 
-        using var _t = GitProcessTelemetry.BeginRequest("board/integration-status", _logger);
+        using var _t = GitProcessTelemetry.BeginRequest(
+            deliveredOnly ? "board/integration-status" : "task/completion-integration-status", _logger);
 
         var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
@@ -150,7 +162,7 @@ public sealed class TaskIntegrationStatusService
         // otherwise. Git itself interprets includes, conditional includes and
         // worktree config, so there is no partial filesystem parser or TTL.
         var origins = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
-        foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
+        foreach (var job in jobs.Where(job => !deliveredOnly || DeliveredLanes.Contains(job.State)))
         {
             var groups = BuildRepositoryGroups(job, origins);
             // AGT-2856: a card without an attributed commit is answered from its

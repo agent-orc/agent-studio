@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -20,6 +21,79 @@ public sealed class TaskLanePipelineBusinessStateMachineTests : IDisposable
     private readonly TaskLanePipelineFixture _fixture = new();
 
     public void Dispose() => _fixture.Dispose();
+
+    [Fact]
+    public async Task Backlog_OperatorCompletion_UsesContainedDeliveryWithoutReviewOrGate()
+    {
+        var sha = _fixture.InitializeRepositoryWithIntegratedCommit();
+        _fixture.Settings.SetIntegrationBranch(TaskLanePipelineFixture.Project, "develop");
+        const string id = "backlog-contained-delivery";
+        const string key = "AGT-BACKLOG-CONTAINED";
+        _fixture.SeedTask(TaskStates.Backlog, id, key: key,
+            commits: [TaskLanePipelineFixture.Commit(sha, "contained delivery", 1)],
+            integrationBranch: "refs/heads/develop");
+        CompletionContentFixture.RecordPassedReview(
+            _fixture.Scanner.FindJob(id, _fixture.WatchPath)!.FolderPath);
+        var authority = _fixture.CreateAttemptAuthority(() => _fixture.Clock.GetUtcNow().UtcDateTime);
+        var transitions = _fixture.CreateTransitions(
+            integrationStatus: _fixture.CreateIntegrationStatus(),
+            reviewAttemptLifecycle: _fixture.CreateReviewAttemptLifecycle(authority),
+            enforceGuard: true);
+
+        var outcome = await transitions.MoveAsync(id, TaskStates.Completed, _fixture.WatchPath,
+            cause: "human:operator", operatorOverride: true,
+            reason: "The delivery is already contained in develop.");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var completed = _fixture.Scanner.FindJob(id, _fixture.WatchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.Equal(CompletionClaimBases.IntegratedDelivery, completed.CompletionClaim?.Basis);
+        Assert.Empty(authority.ListPendingReviewAttempts());
+        Assert.Null(authority.GetTaskProjection(key).CurrentReviewAttempt);
+        Assert.Null(IntegrationVerificationStore.Read(completed.FolderPath));
+    }
+
+    [Fact]
+    public async Task Ready_CompletionWithUncontainedDelivery_ReportsNotContained()
+    {
+        _fixture.InitializeRepositoryWithIntegratedCommit();
+        _fixture.Settings.SetIntegrationBranch(TaskLanePipelineFixture.Project, "develop");
+        var sha = _fixture.CommitUnintegratedDelivery();
+        const string id = "ready-uncontained-delivery";
+        _fixture.SeedTask(TaskStates.Ready, id,
+            commits: [TaskLanePipelineFixture.Commit(sha, "uncontained delivery", 1)],
+            integrationBranch: "refs/heads/develop");
+        var transitions = _fixture.CreateTransitions(
+            integrationStatus: _fixture.CreateIntegrationStatus());
+
+        var outcome = await transitions.MoveAsync(id, TaskStates.Completed, _fixture.WatchPath,
+            cause: "human:operator", operatorOverride: true,
+            reason: "Closing this card after checking its delivery.");
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Contains("not contained", outcome.Message);
+        Assert.DoesNotContain("could not be determined", outcome.Message);
+        Assert.Equal(TaskStates.Ready, _fixture.Scanner.FindJob(id, _fixture.WatchPath)!.State);
+    }
+
+    [Fact]
+    public async Task Backlog_CompletionWithoutDelivery_ReportsNoDelivery()
+    {
+        _fixture.InitializeRepositoryWithIntegratedCommit();
+        _fixture.Settings.SetIntegrationBranch(TaskLanePipelineFixture.Project, "develop");
+        const string id = "backlog-no-delivery";
+        _fixture.SeedTask(TaskStates.Backlog, id, includeCommit: false);
+        var transitions = _fixture.CreateTransitions(
+            integrationStatus: _fixture.CreateIntegrationStatus());
+
+        var outcome = await transitions.MoveAsync(id, TaskStates.Completed, _fixture.WatchPath,
+            cause: "human:operator", operatorOverride: true,
+            reason: "Closing this card after checking its delivery.");
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Contains("no delivery to integrate", outcome.Message);
+        Assert.DoesNotContain("could not be determined", outcome.Message);
+    }
 
     [Fact]
     public Task Backlog_OperatorPromotion_TaskMovesToPreparation()
@@ -1089,6 +1163,8 @@ internal sealed class TaskLanePipelineFixture : IDisposable
 {
     public const string Project = "business-state-machine";
     public const string ContractTag = "quality";
+    public FakeTimeProvider Clock { get; } = new(
+        new DateTimeOffset(2026, 7, 30, 12, 0, 0, TimeSpan.Zero));
 
     private static readonly JsonSerializerOptions TaskJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -1145,15 +1221,18 @@ internal sealed class TaskLanePipelineFixture : IDisposable
         TaskScannerService? scanner = null,
         IAutoReviewPostProcessingQueue? autoReviewQueue = null,
         TaskIntegrationStatusService? integrationStatus = null,
-        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null)
+        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
+        bool enforceGuard = false)
     {
         var selectedScanner = scanner ?? Scanner;
-        var selectedStates = ReferenceEquals(selectedScanner, Scanner)
+        var selectedStates = ReferenceEquals(selectedScanner, Scanner) && !enforceGuard
             ? States
             : new TaskStateMachine(
                 selectedScanner,
                 NullLogger<TaskStateMachine>.Instance,
-                timeline: Timeline);
+                timeline: Timeline,
+                integrationStatus: integrationStatus,
+                configuration: Configuration);
         var selectedMutations = ReferenceEquals(selectedScanner, Scanner)
             ? Mutations
             : BuildMutations(selectedScanner);
@@ -1174,7 +1253,8 @@ internal sealed class TaskLanePipelineFixture : IDisposable
             autoReviewQueue: autoReviewQueue,
             integrationStatus: integrationStatus,
             timeline: Timeline,
-            reviewAttemptLifecycle: reviewAttemptLifecycle);
+            reviewAttemptLifecycle: reviewAttemptLifecycle,
+            timeProvider: Clock);
     }
 
     public ReviewAttemptTaskLifecycleService CreateReviewAttemptLifecycle(
@@ -1198,7 +1278,8 @@ internal sealed class TaskLanePipelineFixture : IDisposable
             Git,
             Settings,
             new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
-            NullLogger<TaskIntegrationStatusService>.Instance);
+            NullLogger<TaskIntegrationStatusService>.Instance,
+            Clock);
 
     public AttemptAuthorityService CreateAttemptAuthority(Func<DateTime> utcNow)
         => new(
@@ -1346,6 +1427,15 @@ internal sealed class TaskLanePipelineFixture : IDisposable
         return RunGitCapture("rev-parse", "HEAD").Trim();
     }
 
+    public string CommitUnintegratedDelivery()
+    {
+        RunGit("checkout", "-q", "-b", "task/unintegrated");
+        File.WriteAllText(Path.Combine(RepositoryPath, "unintegrated.txt"), "unintegrated\n");
+        RunGit("add", "-A");
+        RunGit("commit", "-q", "-m", "feat: unintegrated delivery");
+        return RunGitCapture("rev-parse", "HEAD").Trim();
+    }
+
     public static TaskCommitInfo Commit(
         char shaCharacter,
         string message,
@@ -1444,6 +1534,7 @@ internal sealed class TaskLanePipelineFixture : IDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                CreateNoWindow = true,
             },
         };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
