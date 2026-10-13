@@ -1175,7 +1175,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
     await expect.poll(() => requestedBody).not.toBeNull();
     expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
-      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
+      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/), mode: 'environment' });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'codex-device-sign-in-dark--mocked.png') });
@@ -1258,7 +1258,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog.getByTestId('claude-sign-in-url')).toHaveAttribute('href', 'https://claude.ai/setup-token/mock');
     await expect.poll(() => requestedBody).not.toBeNull();
     expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
-      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
+      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/), mode: 'environment' });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'claude-device-sign-in-dark--mocked.png') });

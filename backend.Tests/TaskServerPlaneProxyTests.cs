@@ -1,4 +1,7 @@
+using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -118,6 +121,54 @@ public sealed class TaskServerPlaneProxyTests
             File.Delete(path + ".consumer-proof");
             File.Delete(path);
         }
+    }
+
+    [Theory]
+    [InlineData("networked", "viewer", "viewer")]
+    [InlineData("networked", "operator", "operator")]
+    [InlineData("networked", "owner", "owner")]
+    [InlineData("networked", null, null)]
+    public void Proxy_acts_only_for_the_role_of_the_authenticated_human(
+        string profile, string? role, string? expected)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Security:Profile"] = profile })
+            .Build();
+        var context = new DefaultHttpContext();
+        context.Request.Headers[CredentialViewProtocol.ActingRoleHeader] = StudioRoles.Owner;
+        if (role is not null)
+            context.Items[AccessSecurityMiddleware.HumanPrincipalItem] = new HumanPrincipal(
+                new StudioUser { Id = "usr", Username = "user", DisplayName = "User", Role = role, PasswordHash = "redacted" },
+                new StudioSession
+                {
+                    Id = "ses", UserId = "usr", TokenHash = "redacted", CsrfHash = "redacted",
+                    CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddHours(1), AbsoluteExpiresAt = DateTime.UtcNow.AddHours(8),
+                });
+
+        Assert.Equal(expected, TaskServerPlaneProxy.ActingRole(context, configuration));
+        // A client-supplied claim is never forwarded verbatim.
+        Assert.False(TaskServerPlaneProxy.ForwardsRequestHeader(CredentialViewProtocol.ActingRoleHeader));
+        Assert.True(TaskServerPlaneProxy.ForwardsRequestHeader("Accept"));
+    }
+
+    [Fact]
+    public void Local_profile_acts_as_operator_only_for_the_loopback_default_client()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Security:Profile"] = "local" })
+            .Build();
+        var local = new DefaultHttpContext();
+        local.Request.Headers["X-Client-Id"] = "local-default";
+        local.Items["ClientId"] = "local-default";
+        local.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+        Assert.Equal(StudioRoles.Operator, TaskServerPlaneProxy.ActingRole(local, configuration));
+
+        var remote = new DefaultHttpContext();
+        remote.Request.Headers["X-Client-Id"] = "local-default";
+        remote.Items["ClientId"] = "local-default";
+        remote.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.0.2.10");
+        Assert.Null(TaskServerPlaneProxy.ActingRole(remote, configuration));
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
