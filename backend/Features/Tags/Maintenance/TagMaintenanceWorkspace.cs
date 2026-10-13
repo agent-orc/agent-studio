@@ -16,7 +16,8 @@ public interface ITagMaintenanceWorkspace
 /// <summary>Uses the existing application writers; no maintenance-specific task or Dossier storage.</summary>
 public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMutationService tasks,
     TagRegistryService tags, AreaRegistryService areas, AreaGlossaryService glossaries,
-    WorkbenchCatalogueService dossiers, WorkbenchTagService dossierTags, ProjectDocsService docs)
+    WorkbenchCatalogueService dossiers, WorkbenchTagService dossierTags, ProjectDocsService docs,
+    ProjectRegistry registry, ManagedRepositoryMutationService repositoryMutations)
     : ITagMaintenanceWorkspace
 {
     public IReadOnlyList<string> Projects() => scanner.GetWatchPaths().Select(p => p.Name)
@@ -122,8 +123,13 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                     ?? throw new InvalidOperationException("Affected Dossier no longer exists.");
                 return TagMaintenancePolicy.Encode(dossier.Workbench.Tags);
             case "wiki":
+                var root = ProjectRepoResolver.ResolveForProject(change.Project, scanner, registry);
+                if (root == null || !Directory.Exists(root))
+                    throw new WikiTagWriteUnavailableException("Project checkout is unavailable.");
                 var file = docs.ReadWikiFile(change.Project, change.Id)
-                    ?? throw new InvalidOperationException("Affected wiki article no longer exists.");
+                    ?? throw new WikiTagWriteUnavailableException(
+                        docs.WikiWriteBlockReason(change.Project)
+                        ?? "Affected wiki article is unavailable in the checkout.");
                 return TagMaintenancePolicy.Encode(ProjectDocsService.FrontmatterTags(file.Content));
             default: throw new ArgumentException("Unknown change kind.");
         }
@@ -179,11 +185,32 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                 }
                 else
                 {
-                    var file = docs.ReadWikiFile(change.Project, change.Id)!;
-                    var updated = RewriteFrontmatter(file.Content, ids);
-                    if (taggingStatus != null) updated = RewriteTaggingStatus(updated, taggingStatus);
-                    var result = docs.WriteWikiFile(change.Project, change.Id, updated);
-                    if (!result.Success) throw new InvalidOperationException(result.Error);
+                    if (taggingStatus == "tags-proposed") return false;
+                    if (docs.WikiWriteBlockReason(change.Project) is { } blocked)
+                        throw new WikiTagWriteUnavailableException(blocked);
+                    var root = ProjectRepoResolver.ResolveForProject(change.Project, scanner, registry);
+                    if (root == null || !Directory.Exists(root))
+                        throw new WikiTagWriteUnavailableException("Project checkout is unavailable.");
+                    var relPath = "docs/" + change.Id.Replace('\\', '/');
+                    var mutation = repositoryMutations.Execute(change.Project, root,
+                        $"wiki-tags-{TagMaintenancePolicy.Fingerprint(relPath)}",
+                        $"chore(wiki): set tags for {relPath}", [relPath], () =>
+                        {
+                            var file = docs.ReadWikiFile(change.Project, change.Id)
+                                ?? throw new InvalidOperationException("Affected wiki article no longer exists.");
+                            if (TagMaintenancePolicy.Encode(ProjectDocsService.FrontmatterTags(file.Content)) != change.Before)
+                                throw new InvalidOperationException($"Stale wiki/{change.Id}.");
+                            var updated = RewriteFrontmatter(file.Content, ids);
+                            if (taggingStatus == "tagged") updated = RewriteTaggingStatus(updated, taggingStatus);
+                            var saved = docs.WriteWikiFile(change.Project, change.Id, updated);
+                            if (!saved.Success) throw new InvalidOperationException(saved.Error);
+                        }, requireCleanCheckoutAndPush: true);
+                    if (!mutation.Success)
+                    {
+                        if (mutation.PreflightBlocked)
+                            throw new WikiTagWriteUnavailableException(mutation.Error ?? "Wiki tag commit is unavailable.");
+                        throw new InvalidOperationException(mutation.Error ?? "Wiki tag commit failed.");
+                    }
                 }
                 break;
         }
@@ -192,24 +219,26 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
 
     public static string RewriteFrontmatter(string content, string[] tags)
     {
+        var newline = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         if (Regex.IsMatch(content, @"<head(?:\s[^>]*)?>", RegexOptions.IgnoreCase))
         {
             var meta = "<meta name=\"agent-studio-tags\" content=\"" + string.Join(", ", tags) + "\">";
             var pattern = "<meta\\s+name=[\"']agent-studio-tags[\"']\\s+content=[\"'][^\"']*[\"']\\s*/?>";
             return Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase)
                 ? Regex.Replace(content, pattern, meta, RegexOptions.IgnoreCase)
-                : Regex.Replace(content, @"<head(?:\s[^>]*)?>", match => match.Value + "\n  " + meta,
+                : Regex.Replace(content, @"<head(?:\s[^>]*)?>", match => match.Value + newline + "  " + meta,
                     RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
         }
         if (Regex.IsMatch(content, @"\A\s*(?:<!doctype\s+html|<html\b)", RegexOptions.IgnoreCase))
             throw new InvalidOperationException("HTML article has no head for tag metadata.");
         var match = Regex.Match(content, @"\A---\r?\n(?<body>.*?)\r?\n---(?:\r?\n|$)", RegexOptions.Singleline);
-        if (!match.Success) return "---\ntags: [" + string.Join(", ", tags) + "]\n---\n\n" + content;
+        if (!match.Success) return "---" + newline + "tags: [" + string.Join(", ", tags) + "]"
+            + newline + "---" + newline + newline + content;
         var body = match.Groups["body"].Value;
         var replaced = Regex.Replace(body, @"(?im)^tags:[^\r\n]*(?:\r?\n[ \t]*-[^\r\n]*)*",
             "tags: [" + string.Join(", ", tags) + "]");
         if (replaced == body && !Regex.IsMatch(body, @"(?im)^tags:"))
-            replaced = body + "\ntags: [" + string.Join(", ", tags) + "]";
+            replaced = body + newline + "tags: [" + string.Join(", ", tags) + "]";
         return content[..match.Groups["body"].Index] + replaced
             + content[(match.Groups["body"].Index + match.Groups["body"].Length)..];
     }
@@ -217,25 +246,29 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
     public static string RewriteTaggingStatus(string content, string status)
     {
         if (status is not ("tagged" or "tags-proposed")) throw new ArgumentException("Unknown tagging status.");
+        var newline = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         if (Regex.IsMatch(content, @"<head(?:\s[^>]*)?>", RegexOptions.IgnoreCase))
         {
             var meta = "<meta name=\"agent-studio-tagging-status\" content=\"" + status + "\">";
             var pattern = "<meta\\s+name=[\"']agent-studio-tagging-status[\"']\\s+content=[\"'][^\"']*[\"']\\s*/?>";
             return Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase)
                 ? Regex.Replace(content, pattern, meta, RegexOptions.IgnoreCase)
-                : Regex.Replace(content, @"<head(?:\s[^>]*)?>", match => match.Value + "\n  " + meta,
+                : Regex.Replace(content, @"<head(?:\s[^>]*)?>", match => match.Value + newline + "  " + meta,
                     RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
         }
         if (Regex.IsMatch(content, @"\A\s*(?:<!doctype\s+html|<html\b)", RegexOptions.IgnoreCase))
             throw new InvalidOperationException("HTML article has no head for tag metadata.");
         var match = Regex.Match(content, @"\A---\r?\n(?<body>.*?)\r?\n---(?:\r?\n|$)", RegexOptions.Singleline);
-        if (!match.Success) return "---\ntaggingStatus: " + status + "\n---\n\n" + content;
+        if (!match.Success) return "---" + newline + "taggingStatus: " + status
+            + newline + "---" + newline + newline + content;
         var body = match.Groups["body"].Value;
         var line = "taggingStatus: " + status;
         var replaced = Regex.IsMatch(body, @"(?im)^taggingStatus:")
             ? Regex.Replace(body, @"(?im)^taggingStatus:[^\r\n]*", line)
-            : body + "\n" + line;
+            : body + newline + line;
         return content[..match.Groups["body"].Index] + replaced
             + content[(match.Groups["body"].Index + match.Groups["body"].Length)..];
     }
 }
+
+public sealed class WikiTagWriteUnavailableException(string reason) : InvalidOperationException(reason);

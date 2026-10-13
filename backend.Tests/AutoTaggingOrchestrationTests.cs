@@ -1,11 +1,15 @@
+using System.Diagnostics;
 using AgentStudio.Areas;
+using AgentStudio.Pipeline;
 using AgentStudio.Tags;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
+[Trait("Category", "MachineBound")]
 public sealed class AutoTaggingOrchestrationTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "auto-tag-orchestration-" + Guid.NewGuid().ToString("N"));
@@ -19,11 +23,22 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     private readonly RejectableWriter _writer = new();
     private readonly ProjectDocsService _docs;
     private readonly AutoTaggingService _service;
+    private readonly ProjectRegistry _registry;
+    private readonly WorkspaceArtifactPushQueue _pushQueue = new();
+    private readonly TagMaintenanceWorkspace _persistence;
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
 
     public AutoTaggingOrchestrationTests()
     {
         var watch = Path.Combine(_root, "project");
         Directory.CreateDirectory(watch);
+        Git("init", "-q", "-b", "main");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(watch, ".gitignore"), "/*\n!/docs/\n!/.gitignore\n!/foreign.txt\n");
+        File.WriteAllText(Path.Combine(watch, "foreign.txt"), "base");
+        Git("add", ".gitignore", "foreign.txt");
+        Git("commit", "-q", "-m", "test: initialize checkout");
         _config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
@@ -35,6 +50,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, _config);
         _scanner = new TaskScannerService(_config, NullLogger<TaskScannerService>.Instance, summary);
         var registry = new ProjectRegistry(_config, NullLogger<ProjectRegistry>.Instance);
+        _registry = registry;
         _mutations = new TaskMutationService(_scanner,
             new ClientIdentityStore(_config, NullLogger<ClientIdentityStore>.Instance), registry,
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
@@ -42,23 +58,150 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         new TaskStateMachine(_scanner, NullLogger<TaskStateMachine>.Instance).EnsureStateFoldersAndMigrate();
         _settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, _config);
         var areas = new AreaRegistryService(new TagRegistryService(NullLogger<TagRegistryService>.Instance, _config), _settings);
-        _docs = new ProjectDocsService(_scanner, registry, NullLogger<ProjectDocsService>.Instance,
-            fileWriter: _writer);
         var git = new GitService(NullLogger<GitService>.Instance, _scanner, _config);
+        _docs = new ProjectDocsService(_scanner, registry, NullLogger<ProjectDocsService>.Instance,
+            git: git, fileWriter: _writer);
         var catalogue = new WorkbenchCatalogueService(_scanner, registry, git, configuration: _config);
-        var persistence = new TagMaintenanceWorkspace(_scanner, _mutations, null!, areas, null!,
-            catalogue, new WorkbenchTagService(catalogue, areas, git), _docs);
-        _workspace.Writer = persistence.Write;
+        var repositoryMutations = new ManagedRepositoryMutationService(git, _settings, _pushQueue);
+        _persistence = new TagMaintenanceWorkspace(_scanner, _mutations, null!, areas, null!,
+            catalogue, new WorkbenchTagService(catalogue, areas, git), _docs, registry, repositoryMutations);
+        _workspace.Writer = _persistence.Write;
         _service = new AutoTaggingService(_workspace, _classifier,
             new TagGoldenSetEvaluator(new FakeGoldenClassifier(), _config), _settings, _scanner,
             areas,
             new TimelineLog(NullLogger<TimelineLog>.Instance),
-            new OrchestratorLog(NullLogger<OrchestratorLog>.Instance), _config);
+            new OrchestratorLog(NullLogger<OrchestratorLog>.Instance), _config, _clock);
     }
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, recursive: true); } catch { }
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+    }
+
+    [Fact]
+    public async Task WikiAutoTagCommitsOnlyArticleAndQueuesPush()
+    {
+        AddWiki("new.md");
+        var before = int.Parse(Git("rev-list", "--count", "HEAD"));
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        Assert.Equal("tagged", Assert.Single(report.Items).Status);
+        Assert.Equal(before + 1, int.Parse(Git("rev-list", "--count", "HEAD")));
+        Assert.Equal("chore(wiki): set tags for docs/new.md", Git("log", "-1", "--format=%s"));
+        Assert.Equal("docs/new.md", Git("show", "--pretty=format:", "--name-only", "HEAD"));
+        Assert.Equal(string.Empty, Git("status", "--porcelain"));
+        Assert.True(_pushQueue.Reader.TryRead(out var push));
+        Assert.Equal(Git("rev-parse", "HEAD"), push!.Sha);
+        Assert.False(_pushQueue.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public async Task WikiProposalLeavesArticleUnchangedAndRecordsReasonForDirtyCheckout()
+    {
+        AddWiki("dirty.md");
+        var article = Path.Combine(Watch(), "docs", "dirty.md");
+        var before = File.ReadAllText(article);
+        File.WriteAllText(Path.Combine(Watch(), "foreign.txt"), "foreign change");
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        var proposal = Assert.Single(report.Items);
+        Assert.Equal("tags-proposed", proposal.Status);
+        Assert.Contains("pre-existing changes", proposal.Reason);
+        Assert.Equal(before, File.ReadAllText(article));
+        Assert.False(_pushQueue.Reader.TryRead(out _));
+        Assert.Equal(proposal.Reason, Assert.Single(_service.Read(Project)).Reason);
+    }
+
+    [Fact]
+    public async Task LowConfidenceWikiProposalWritesNoFile()
+    {
+        AddWiki("uncertain.md");
+        _classifier.Confidence["uncertain.md"] = 0.4;
+        var article = Path.Combine(Watch(), "docs", "uncertain.md");
+        var before = File.ReadAllText(article);
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        Assert.Equal("tags-proposed", Assert.Single(report.Items).Status);
+        Assert.Equal(before, File.ReadAllText(article));
+        Assert.Equal(string.Empty, Git("status", "--porcelain"));
+        Assert.False(_pushQueue.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public async Task WikiRepositoryLockKeepsClassificationAsProposal()
+    {
+        AddWiki("locked.md");
+        var article = Path.Combine(Watch(), "docs", "locked.md");
+        var before = File.ReadAllText(article);
+        File.WriteAllText(Path.Combine(Watch(), ".git", "index.lock"), "held");
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        var proposal = Assert.Single(report.Items);
+        Assert.Equal("tags-proposed", proposal.Status);
+        Assert.Contains("Repository lock exists", proposal.Reason);
+        Assert.Equal(before, File.ReadAllText(article));
+        Assert.False(_pushQueue.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public async Task MissingCheckoutKeepsClassificationAsProposal()
+    {
+        AddWiki("missing.md");
+        var moved = Path.Combine(_root, "detached-project");
+        Directory.Move(Watch(), moved);
+        var article = Path.Combine(moved, "docs", "missing.md");
+        var before = File.ReadAllText(article);
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        var proposal = Assert.Single(report.Items);
+        Assert.Equal("tags-proposed", proposal.Status);
+        Assert.Contains("checkout is unavailable", proposal.Reason);
+        Assert.Equal(before, File.ReadAllText(article));
+        Assert.False(_pushQueue.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public void WikiMaintenanceMergeAndRetireEachCommitOnlyTheArticle()
+    {
+        AddWiki("maintenance.md");
+        var empty = TagMaintenancePolicy.Encode(Array.Empty<string>());
+        var first = TagMaintenancePolicy.Encode(new[] { "execution-and-runner" });
+        var second = TagMaintenancePolicy.Encode(new[] { "observation" });
+
+        Assert.True(_persistence.Write(new("wiki", Project, "maintenance.md", empty, first)));
+        Assert.True(_persistence.Write(new("wiki", Project, "maintenance.md", first, second)));
+        Assert.True(_persistence.Write(new("wiki", Project, "maintenance.md", second, empty)));
+
+        Assert.Equal("docs/maintenance.md", Git("show", "--pretty=format:", "--name-only", "HEAD"));
+        Assert.Equal("chore(wiki): set tags for docs/maintenance.md", Git("log", "-1", "--format=%s"));
+        Assert.Equal(string.Empty, Git("status", "--porcelain"));
+        var pushes = 0;
+        while (_pushQueue.Reader.TryRead(out _)) pushes++;
+        Assert.Equal(3, pushes);
+    }
+
+    [Fact]
+    public async Task WikiSourceBranchKeepsClassificationAsProposal()
+    {
+        AddWiki("source.md");
+        var project = _registry.EnsureProjectForStorage(Watch(), Project, DefaultWorkspace.Id);
+        _registry.SetWikiSourceBranch(project.Id, "main");
+        var article = Path.Combine(Watch(), "docs", "source.md");
+        var before = File.ReadAllText(article);
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        var proposal = Assert.Single(report.Items);
+        Assert.Equal("tags-proposed", proposal.Status);
+        Assert.Contains("Wiki source", proposal.Reason);
+        Assert.Equal(before, File.ReadAllText(article));
+        Assert.Equal(string.Empty, Git("status", "--porcelain"));
+        Assert.False(_pushQueue.Reader.TryRead(out _));
     }
 
     [Fact]
@@ -80,12 +223,12 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         var applied = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
         Assert.True(applied.Applied);
         Assert.Equal(2, applied.Classified);
-        Assert.Equal(2, _workspace.Writes.Count);
+        Assert.Single(_workspace.Writes);
         Assert.Equal("accepted", _workspace.Writes[0].Id);
         Assert.Equal("tagged", _service.Read(Project).Single(x => x.Id == "accepted").Status);
         Assert.Equal("tags-proposed", _service.Read(Project).Single(x => x.Id == "uncertain").Status);
         Assert.Equal("tagged", _scanner.FindJob("accepted", Watch())!.TaggingStatus);
-        Assert.Equal("tags-proposed", _scanner.FindJob("uncertain", Watch())!.TaggingStatus);
+        Assert.Null(_scanner.FindJob("uncertain", Watch())!.TaggingStatus);
         var feed = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch());
         Assert.Contains(feed, x => x.Summary.Contains("Auto-tagged card accepted", StringComparison.Ordinal));
         Assert.Contains(feed, x => x.Summary.Contains("Tags proposed for card uncertain", StringComparison.Ordinal));
@@ -229,11 +372,8 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
 
     [Theory]
     [InlineData("card", 0.95)]
-    [InlineData("card", 0.4)]
     [InlineData("wiki-md", 0.95)]
-    [InlineData("wiki-md", 0.4)]
     [InlineData("wiki-html", 0.95)]
-    [InlineData("wiki-html", 0.4)]
     public async Task StorageFailureLeavesTagsAndStatusUnchangedAndRetryCompletes(string kind, double confidence)
     {
         var id = kind == "card" ? "atomic-card" : "atomic-article." + (kind == "wiki-md" ? "md" : "html");
@@ -295,18 +435,15 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
 
     [Theory]
     [InlineData("card", "timeline", 0.95)]
-    [InlineData("card", "timeline", 0.4)]
     [InlineData("card", "state", 0.95)]
     [InlineData("card", "activity", 0.95)]
     [InlineData("card", "report", 0.95)]
     [InlineData("wiki", "state", 0.95)]
     [InlineData("wiki", "activity", 0.95)]
     [InlineData("wiki", "report", 0.95)]
-    [InlineData("wiki", "report", 0.4)]
     [InlineData("dossier", "state", 0.95)]
     [InlineData("dossier", "activity", 0.95)]
     [InlineData("dossier", "report", 0.95)]
-    [InlineData("dossier", "report", 0.4)]
     public async Task PostWriteFailureResumesAfterRestartWithoutReclassificationOrDuplicateEvents(
         string kind, string boundary, double confidence)
     {
@@ -458,7 +595,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         new TagGoldenSetEvaluator(new FakeGoldenClassifier(), _config), _settings, _scanner,
         new AreaRegistryService(new TagRegistryService(NullLogger<TagRegistryService>.Instance, _config), _settings),
         new TimelineLog(NullLogger<TimelineLog>.Instance),
-        new OrchestratorLog(NullLogger<OrchestratorLog>.Instance), _config);
+        new OrchestratorLog(NullLogger<OrchestratorLog>.Instance), _config, _clock);
 
     private void AddDossier(string id)
     {
@@ -471,6 +608,8 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
             entrypoint = "index.html", status = "active", phase = "testing", updatedAt = "2026-09-13T10:00:00Z",
         }));
         _workspace.Items.Add(new(Project, "dossier", id, "Classification Dossier", [], "Context", true));
+        Git("add", "docs/operations/" + id);
+        Git("commit", "-q", "-m", "test: add dossier");
     }
 
     private void AddWiki(string id)
@@ -480,6 +619,8 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
             ? "<!doctype html><html><head><title>Article</title></head><body>Article body</body></html>"
             : "# Article\n\nArticle body";
         File.WriteAllText(Path.Combine(Watch(), "docs", id), content);
+        Git("add", "docs/" + id);
+        Git("commit", "-q", "-m", "test: add wiki article");
         Assert.True(_docs.PreloadWikiContent(Project));
         _workspace.Items.Add(new(Project, "wiki", id, "Article", [], content, true));
     }
@@ -507,6 +648,21 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     private AutoTagBackfillQueue NewQueue() => new(_service, _config,
         NullLogger<AutoTagBackfillQueue>.Instance);
     private string Watch() => Path.Combine(_root, "project");
+    private string Git(params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = Watch(), RedirectStandardError = true,
+            RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+        return output.Trim();
+    }
     private void AddCard(string id)
     {
         var created = _mutations.CreateJob(new CreateTaskRequest

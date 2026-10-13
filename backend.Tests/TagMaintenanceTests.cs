@@ -90,6 +90,15 @@ public sealed class TagMaintenanceTests : IDisposable
         Assert.Equal(after, TagMaintenanceWorkspace.RewriteFrontmatter(before, ["new"]));
 
     [Fact]
+    public void WikiRewriteUsesExistingCrlfWhenAddingMetadata()
+    {
+        var original = "---\r\ntitle: Hello\r\n---\r\nBody\r\n";
+        var tagged = TagMaintenanceWorkspace.RewriteFrontmatter(original, ["observation"]);
+        var withStatus = TagMaintenanceWorkspace.RewriteTaggingStatus(tagged, "tagged");
+        Assert.Equal("---\r\ntitle: Hello\r\ntags: [observation]\r\ntaggingStatus: tagged\r\n---\r\nBody\r\n", withStatus);
+    }
+
+    [Fact]
     public async Task ReviewCreatesProseCardAndReportWithoutApplyingThenHonorsCadence()
     {
         var workspace = new FakeWorkspace(); var service = Service(workspace);
