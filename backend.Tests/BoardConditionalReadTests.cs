@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 
+using AgentStudio.Runner;
 using AgentStudio.Tasks;
 
 using Microsoft.AspNetCore.Hosting;
@@ -239,13 +240,15 @@ public sealed class BoardConditionalReadTests : IDisposable
         }
     }
 
-    private void Seed(string slug, string title, string state)
+    private void Seed(string slug, string title, string state, string? key = null)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
-            JsonSerializer.Serialize(new { id = slug, title, state, order = 1, agent = "claude" }));
+            key is null
+                ? JsonSerializer.Serialize(new { id = slug, title, state, order = 1, agent = "claude" })
+                : JsonSerializer.Serialize(new { id = slug, key, title, state, order = 1, agent = "claude" }));
     }
 
     private static async Task<(HttpStatusCode Status, string? ETag, string Body)> GetAsync(
@@ -300,6 +303,73 @@ public sealed class BoardConditionalReadTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, after.Status);
         Assert.NotEqual(before.ETag, after.ETag);
         Assert.Contains("t-2", after.Body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AGT-3094: a claim files its lease under the card key, not under the
+    /// composite scanner key. Once the board looks the lease up by that key, a
+    /// lease change has to move the tag. The card sits in Ready so the
+    /// Progress clock tick cannot be what moved it.
+    /// </summary>
+    [Fact]
+    public async Task RunLeaseOnAKeyedCard_AnswersTwoHundredUnderANewTag()
+    {
+        Seed("t-keyed", "Keyed task", TaskStates.Ready, key: "AGT-ETAG-RUN");
+        using var factory = BuildFactory();
+        using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
+        await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
+
+        var before = await GetAsync(client, "/api/tasks/grouped");
+        var acquired = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+            new RunLeaseAcquireRequest(
+                "AGT-ETAG-RUN", "agent-runner-etag", "agent-runner-etag", "linux-host", 4321, "remote"));
+        var after = await GetAsync(client, "/api/tasks/grouped", before.ETag);
+
+        Assert.NotNull(acquired.Lease);
+        Assert.Equal(HttpStatusCode.OK, after.Status);
+        Assert.NotEqual(before.ETag, after.ETag);
+        Assert.Contains("agent-runner-etag", after.Body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AGT-3094: the Auto Review queue line names the review's lease holder or
+    /// its terminal outcome. A review that fails without its queue position
+    /// moving still has to move the tag.
+    /// </summary>
+    [Fact]
+    public async Task ReviewAttemptFailing_AnswersTwoHundredUnderANewTag()
+    {
+        const string key = "AGT-ETAG-REVIEW";
+        Seed("t-review-keyed", "Keyed review", TaskStates.AutoReview, key: key);
+        using var factory = BuildFactory();
+        using var client = CreateClient(factory);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(key, "PROJ-1", null, "runner", "host", 60, "etag-run-create").RunAttempt!;
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "etag-run-complete"),
+            Outcome = "done",
+            ResultSha = "sha-etag",
+        });
+        var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            key, "PROJ-1", "sha-etag", run.AttemptId, "req", "policy", [], "etag-review-create")).ReviewAttempt!;
+        var leased = authority.ClaimReview(
+            review.AttemptId, "kori-review", "review-host", 600, "etag-review-claim").ReviewAttempt!;
+        await WaitForBoardQuiescenceAsync(factory);
+        await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
+
+        var before = await GetAsync(client, "/api/tasks/grouped");
+        var failed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(leased.AttemptId, leased.LastFence, leased.AuthorityEpoch, "etag-review-settle"),
+            "sha-etag", ReviewTerminalOutcome.InfrastructureFailure, "DiagnosisMissing"));
+        var after = await GetAsync(client, "/api/tasks/grouped", before.ETag);
+
+        Assert.Contains("kori-review", before.Body, StringComparison.Ordinal);
+        Assert.Equal(AttemptWriteStatus.Accepted, failed.Status);
+        Assert.Equal(HttpStatusCode.OK, after.Status);
+        Assert.NotEqual(before.ETag, after.ETag);
+        Assert.Contains("infrastructureFailure", after.Body, StringComparison.Ordinal);
     }
 
     [Fact]

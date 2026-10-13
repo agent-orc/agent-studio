@@ -43,7 +43,10 @@ namespace AgentStudio.Tasks;
 /// <c>logs/decisions/{project}.jsonl</c> stamp. These live outside every watch
 /// path, so no watcher event covers them.</description></item>
 /// <item><description><b>Review queue</b> - the durable attempt authority's
-/// ordered priority and claimable position snapshot.</description></item>
+/// ordered priority and claimable position snapshot, plus, per visible Auto
+/// Review card, the current ReviewAttempt facts the live-status queue line
+/// reads (state, outcome, lease holder, lease start, scheduled infrastructure
+/// retry) and whether the authority knows the card at all.</description></item>
 /// <item><description><b>In-memory runtime state</b> - the runtime fold below.
 /// CLI executions, run-activity facts, auto-loop snapshots, summariser state,
 /// runner badges, quota fallbacks, queue positions and execution locations
@@ -196,6 +199,7 @@ public sealed class BoardReadSignatureSource(
     private long RuntimeFold(IReadOnlyList<TaskInfo> jobs, CliRouter router, TaskRunnerService runners)
     {
         var hash = new HashCode();
+        BoardAuthoritySnapshot? authority = null;
 
         // Runner queues decide the "position n in queue" chip on Ready cards and
         // the runner mode pill, and they move without any file changing.
@@ -229,12 +233,28 @@ public sealed class BoardReadSignatureSource(
                 activity = TaskRunActivityClassifier.Classify(
                     runners.GetRunActivityForJob(job.Id, job.ProjectName), execution, outcomeIssue: null);
                 hash.Add(activity);
-                hash.Add(runners.ResolveRunnerBadge(job.TaskKey));
+                hash.Add(runners.ResolveRunnerBadge(job));
                 hash.Add(runners.GetQuotaFallbackForJob(job.Id, job.ProjectName));
             }
             if (job.State == TaskStates.AutoReview)
             {
                 hash.Add(reviewQueue.PositionOf(job.ProjectName, job.Id));
+                // AGT-3094: the queue line names the review's lease holder or
+                // its terminal outcome, which change without the position
+                // moving. Fold exactly the snapshot fields the mapper reads.
+                // Lease expiry already reaches the tag through the position.
+                authority ??= attemptAuthority.ReadBoardAuthoritySnapshot();
+                var authorityKey = TaskLiveStatusProjection.CanonicalAuthorityKey(job, authority);
+                hash.Add(authorityKey);
+                if (authorityKey is not null && authority.Reviews.TryGetValue(authorityKey, out var review))
+                {
+                    hash.Add(review.AttemptId);
+                    hash.Add(review.State);
+                    hash.Add(review.Outcome);
+                    hash.Add(review.ExecutorId);
+                    hash.Add(review.AcquiredAt);
+                    hash.Add(review.PendingInfrastructureRetryAt);
+                }
             }
 
             // Folded as the projected value rather than as its inputs: the run

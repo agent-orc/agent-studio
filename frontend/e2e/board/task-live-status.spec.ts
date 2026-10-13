@@ -109,6 +109,48 @@ const QUEUED = task(
   '2026-07-24T19:59:40Z',
 );
 
+// AGT-3094: a review executor holds the lease, so the card names it rather
+// than the registry's first active executor.
+const REVIEWING = task(
+  'agt-reviewing',
+  'Leased canonical review',
+  '4-auto-review',
+  {
+    attempt: 1,
+    activeStep: null,
+    nextSteps: [],
+    queue: {
+      kind: 'review',
+      state: 'reviewing',
+      executorId: 'kori-review',
+      since: '2026-07-24T19:46:00Z',
+      reason: 'reviewing on kori-review since 2026-07-24 19:46:00Z',
+    },
+    latestEventAt: '2026-07-24T19:46:00Z',
+  },
+  '2026-07-24T19:46:00Z',
+);
+
+// AGT-3094: the retry budget is spent and nothing is pending (QS-123).
+const REVIEW_STALLED = task(
+  'agt-review-stalled',
+  'Review nobody will retry',
+  '4-auto-review',
+  {
+    attempt: 1,
+    activeStep: null,
+    nextSteps: [],
+    queue: {
+      kind: 'review',
+      state: 'stalled',
+      outcome: 'infrastructureFailure',
+      reason: 'review ended (infrastructureFailure); no new review attempt; operator decision needed',
+    },
+    latestEventAt: '2026-07-24T19:40:00Z',
+  },
+  '2026-07-24T19:40:00Z',
+);
+
 const DEGRADED = task(
   'agt-result-degraded',
   'Reviewable concept with degraded Result',
@@ -180,7 +222,7 @@ const STALLED = task(
   '2026-07-24T19:48:40Z',
 );
 
-const TASKS = [ACTIVE, QUEUED, DEGRADED, PRE_STEP, STALLED];
+const TASKS = [ACTIVE, QUEUED, REVIEWING, REVIEW_STALLED, DEGRADED, PRE_STEP, STALLED];
 
 function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({
@@ -225,7 +267,7 @@ async function installRoutes(page: Page): Promise<void> {
         failedPickup: [],
         codeNotComplete: [],
         review: [],
-        autoReview: [ACTIVE, QUEUED, DEGRADED],
+        autoReview: [ACTIVE, QUEUED, REVIEWING, REVIEW_STALLED, DEGRADED],
         humanReview: [],
         escalated: [],
         completed: [],
@@ -286,6 +328,16 @@ test.describe('task live status', () => {
     await expect(activeCard.getByTestId('task-live-status')).toContainText('via Codex');
     await expect(activeCard.getByTestId('task-live-next')).toContainText('Grade → Gate → Merge');
     await expect(queuedCard.getByTestId('task-live-current')).toContainText('Waiting for review slot · position 3');
+    const reviewingCard = page.locator('[data-testid="task-card"]', { hasText: 'Leased canonical review' });
+    const reviewStalledCard = page.locator('[data-testid="task-card"]', { hasText: 'Review nobody will retry' });
+    await expect(reviewingCard.getByTestId('task-live-status')).toHaveAttribute('data-live-tone', 'active');
+    await expect(reviewingCard.getByTestId('task-live-current')).toContainText('Reviewing on kori-review since');
+    await expect(reviewingCard).not.toContainText('waiting for review executor');
+    await expect(reviewStalledCard.getByTestId('task-live-status')).toHaveAttribute('data-live-tone', 'stalled');
+    await expect(reviewStalledCard.getByTestId('task-live-current'))
+      .toContainText('Review stalled · operator decision needed');
+    await expect(reviewStalledCard.getByTestId('task-live-status'))
+      .toContainText('review ended (infrastructureFailure); no new review attempt; operator decision needed');
     await expect(degradedCard.getByTestId('task-card-review')).toHaveText(/result degraded/);
     await degradedCard.getByTestId('task-card-review').hover();
     await expect(page.getByTestId('cac-tooltip')).toContainText('3/3 summary attempts');
@@ -306,6 +358,13 @@ test.describe('task live status', () => {
       await page.screenshot({
         path: join(RESULTS, `task-live-status-card--mocked--${theme}.png`),
         fullPage: true,
+      });
+      // AGT-3094: the two review states the lane scroll can hide in the board shot.
+      await reviewingCard.screenshot({
+        path: join(RESULTS, `task-live-status-review-reviewing--mocked--${theme}.png`),
+      });
+      await reviewStalledCard.screenshot({
+        path: join(RESULTS, `task-live-status-review-stalled--mocked--${theme}.png`),
       });
     }
   });

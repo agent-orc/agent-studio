@@ -1605,6 +1605,13 @@ missed heartbeat becomes acute only after the stale window; once the heartbeat
 is older than the lease it was renewing, the run is `remote-stale` and carries
 `lastRunnerEvent`, the last event the server can honestly name. A renewed lease
 returns to healthy without a page reload through the normal task push/poll path.
+The lease is looked up by the card's authority key (`TaskIdentity.AuthorityKey`:
+the task.json `key`, then the composite `taskKey`, then the slug), the key the
+claim files the RunAttempt under (AGT-3094). A released lease in Progress means
+the attempt already ended: the card keeps the job-folder verdict with
+`leaseState: released` and its owner, never the phantom verdict. Outside
+Progress, a released or expired lease keeps the no-active-execution
+presentation; only an active lease (a steered card) projects `remote-running`.
 Run-start session events capture the execution projection so finished run
 history keeps its stable runner-id attribution with `historical: true` and renders
 quietly. The wire contract is

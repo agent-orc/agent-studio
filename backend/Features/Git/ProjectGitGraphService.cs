@@ -232,7 +232,7 @@ public sealed partial class ProjectGitGraphService
         foreach (var task in tasks.Where(task => task.State == TaskStates.Progress))
         {
             var facts = _runner.GetRunActivityForJob(task.Id, task.ProjectName);
-            var runnerBadge = _runner.ResolveRunnerBadge(task.TaskKey);
+            var runnerBadge = _runner.ResolveRunnerBadge(task);
             var isActive = facts.SlotActive
                 || runnerBadge is not null
                 || string.Equals(projectStatus?.ActiveJobId, task.Id, StringComparison.OrdinalIgnoreCase);

@@ -42,7 +42,7 @@ public sealed class SteeringFeedbackProjection
 
     public TaskSteeringFeedback Build(TaskInfo task, bool includeArchived = true)
     {
-        var authority = _attempts.GetTaskProjection(task.TaskKey, includeArchived);
+        var authority = _attempts.GetTaskProjection(TaskIdentity.AuthorityKey(task), includeArchived);
         var facts = new List<SteeringFeedbackFact>();
         var runs = authority.RunAttempts.ToDictionary(run => run.AttemptId, StringComparer.Ordinal);
         string Root(string id)

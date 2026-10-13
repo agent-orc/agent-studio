@@ -372,6 +372,16 @@ task's `liveStatus.queue.reason`, e.g. `waiting for review executor:
 agent-runner-01-review is registered and active`, instead of an unexplained
 empty queue.
 
+Since AGT-3094 that local wait state only speaks for legacy cards, report-only
+modes, a missing executor registration, and a canonical card whose review
+already passed. The availability detail names the first active executor in the
+registry, not the lease holder, so for every other canonical card the queue
+line comes from the current ReviewAttempt in the authority's board snapshot:
+`reviewing` names the executor that holds the lease and since when, `queued`
+carries the claimable position or a scheduled infrastructure retry, and
+`stalled` names a terminal non-Pass outcome with nothing scheduled (or a
+delivery without any review attempt) as needing an operator decision.
+
 ## Restart-safe resume of the post-review delivery sequence (AGT-2860)
 
 The report endpoint settles the ReviewAttempt, decides the delivery gate from

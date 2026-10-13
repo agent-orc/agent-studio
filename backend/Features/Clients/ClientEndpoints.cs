@@ -402,7 +402,7 @@ public static class ClientEndpoints
         foreach (var task in scanner.ScanAllJobs())
         {
             if (task.Fixture || task.State != TaskStates.Progress) continue;
-            var key = task.Key ?? task.TaskKey ?? task.Id;
+            var key = TaskIdentity.AuthorityKey(task);
             if (string.IsNullOrWhiteSpace(key)) continue;
             var inspection = leases.Inspect(key);
             if (inspection.Lease is null) continue;

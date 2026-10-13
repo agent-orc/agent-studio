@@ -2071,7 +2071,22 @@ export interface TaskLiveQueue {
   position?: number | null;
   /** Human-readable reason there is no `position`, e.g. "waiting for review executor: ...". */
   reason?: string | null;
+  /**
+   * AGT-3094: `reviewing` while a review executor holds the ReviewAttempt lease,
+   * `stalled` when nothing will review the delivery without an operator, else
+   * `queued`. Runner queues and legacy review queues are always `queued`.
+   * Absent on payloads from older servers; read it as `queued`.
+   */
+  state?: TaskLiveQueueState;
+  /** Executor holding the review lease; set only while `reviewing`. */
+  executorId?: string | null;
+  /** UTC instant the review lease was acquired; set only while `reviewing`. */
+  since?: string | null;
+  /** Terminal review outcome token behind a `stalled` or retrying review. */
+  outcome?: string | null;
 }
+
+export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled';
 
 export interface TaskLiveStatus {
   attempt: number;

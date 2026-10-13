@@ -117,6 +117,59 @@ describe('TaskLiveStatusComponent', () => {
       'Waiting for review slot · waiting for review executor: agent-runner-01-review is registered and active');
   });
 
+  it('names the executor that holds the review lease instead of a slot wait', () => {
+    const since = new Date(Date.now() - 5 * 60_000);
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          state: 'reviewing',
+          executorId: 'kori-review',
+          since: since.toISOString(),
+          reason: 'reviewing on kori-review since 2026-10-12 17:46:00Z',
+        },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.dataset['liveTone']).toBe('active');
+    expect(root.textContent).toContain(
+      `Reviewing on kori-review since ${since.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`);
+    expect(root.textContent).not.toContain('Waiting for review slot');
+    expect(root.textContent).not.toContain('waiting for review executor');
+  });
+
+  it('calls out a review that nothing will pick up again as stalled', () => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          state: 'stalled',
+          outcome: 'infrastructureFailure',
+          reason: 'review ended (infrastructureFailure); no new review attempt; operator decision needed',
+        },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.dataset['liveTone']).toBe('stalled');
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent)
+      .toContain('Review stalled · operator decision needed');
+    expect(root.textContent).toContain(
+      'review ended (infrastructureFailure); no new review attempt; operator decision needed');
+    expect(root.textContent).not.toContain('Waiting for review slot');
+  });
+
   it('keeps detail status to compact CURRENT and NEXT rows', () => {
     fixture.componentRef.setInput('variant', 'detail');
     fixture.componentRef.setInput('task', task({

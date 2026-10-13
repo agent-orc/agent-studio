@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text.Json;
+
 using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
@@ -16,7 +19,8 @@ public sealed class TaskLiveStatusProjection(
     StepPromptLog promptLog,
     ProjectSettingsService projectSettings,
     TaskRunnerService runners,
-    AutoReviewPostProcessingQueue reviewQueue)
+    AutoReviewPostProcessingQueue reviewQueue,
+    AttemptAuthorityService attemptAuthority)
 {
     private static readonly HashSet<string> VisibleStates = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -31,10 +35,19 @@ public sealed class TaskLiveStatusProjection(
         var jobList = jobs.Where(job => VisibleStates.Contains(job.State)).ToList();
         var runnerStatus = runners.GetStatus().Projects;
         var result = new Dictionary<string, TaskLiveStatus>(StringComparer.OrdinalIgnoreCase);
+        // AGT-3094: both reads are the authority's immutable board snapshot, so
+        // the review queue line stays lock-free and costs one read per call.
+        BoardAuthoritySnapshot? authority = null;
+        IReadOnlyDictionary<string, ReviewQueueEntry>? reviewQueueEntries = null;
+        if (jobList.Any(job => job.State == TaskStates.AutoReview))
+        {
+            authority = attemptAuthority.ReadBoardAuthoritySnapshot();
+            reviewQueueEntries = attemptAuthority.ReadReviewQueue();
+        }
 
         foreach (var job in jobList)
         {
-            var queue = ResolveQueue(job, runnerStatus);
+            var queue = ResolveQueue(job, runnerStatus, authority, reviewQueueEntries);
             var execution = pipelineLog.Read(job.FolderPath);
             var settings = PipelineTypeSettings.ForTask(projectSettings.Get(job.ProjectName), job)!;
             var pipeline = ProjectPipelineOrder.Apply(
@@ -140,7 +153,9 @@ public sealed class TaskLiveStatusProjection(
 
     private TaskLiveQueue? ResolveQueue(
         TaskInfo job,
-        IReadOnlyDictionary<string, ProjectRunnerStatus> runnerStatus)
+        IReadOnlyDictionary<string, ProjectRunnerStatus> runnerStatus,
+        BoardAuthoritySnapshot? authority,
+        IReadOnlyDictionary<string, ReviewQueueEntry>? reviewQueueEntries)
     {
         if (job.State == TaskStates.Ready
             && runnerStatus.TryGetValue(job.ProjectName, out var project))
@@ -152,22 +167,139 @@ public sealed class TaskLiveStatusProjection(
 
         if (job.State == TaskStates.AutoReview)
         {
-            var position = reviewQueue.PositionOf(job.ProjectName, job.Id);
-            if (position.HasValue)
-                return new TaskLiveQueue { Kind = "review", Position = position.Value };
-
-            // Between two post-processing passes a deferred card has left the
-            // local slot queue (it has no Position) but is not actually idle -
-            // it is waiting out its backoff, most commonly for the canonical
-            // remote review executor to claim it. Naming that wait keeps the
-            // card from reading as an unexplained empty queue (AGT-2842).
-            var wait = reviewQueue.WaitStateOf(job.ProjectName, job.Id);
-            if (wait is not null)
-                return new TaskLiveQueue { Kind = "review", Reason = DescribeWait(wait) };
+            var authorityKey = CanonicalAuthorityKey(job, authority);
+            BoardReviewActivity? current = null;
+            ReviewQueueEntry? queued = null;
+            if (authorityKey is not null)
+            {
+                if (authority!.Reviews.TryGetValue(authorityKey, out var activity)) current = activity;
+                if (reviewQueueEntries?.TryGetValue(authorityKey, out var entry) == true) queued = entry;
+            }
+            return ReviewQueueFor(
+                authorityKey is not null,
+                current,
+                queued,
+                reviewQueue.PositionOf(job.ProjectName, job.Id),
+                reviewQueue.WaitStateOf(job.ProjectName, job.Id),
+                DateTime.UtcNow);
         }
 
         return null;
     }
+
+    /// <summary>
+    /// The key a canonical card's ReviewAttempt is filed under, or null for a
+    /// legacy or report-only card. Mirrors the rule the post-processing queue
+    /// uses (<c>ReviewDecisionOrchestrator</c>): report-only modes never get a
+    /// ReviewAttempt, and the first card identity the authority knows wins.
+    /// </summary>
+    internal static string? CanonicalAuthorityKey(TaskInfo job, BoardAuthoritySnapshot? authority)
+    {
+        if (authority is null || TaskModes.IsReportOnly(job.Mode)) return null;
+        return new[] { TaskIdentity.AuthorityKey(job), job.TaskKey, job.Id }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .FirstOrDefault(value => authority.KnownTaskKeys.Contains(value.Trim()))
+            ?.Trim();
+    }
+
+    /// <summary>
+    /// AGT-3094: the queue line of an Auto Review card. A canonical card is
+    /// described from its current ReviewAttempt in the authority snapshot, so
+    /// a leased review names its actual lease holder and a review that nothing
+    /// will pick up again reads as stalled instead of as a normal wait. Legacy
+    /// cards, and a canonical card whose review already passed and now waits
+    /// on integration, keep the local post-processing wait (AGT-2842, AGT-2860).
+    /// Pure, so every state is pinned directly.
+    /// </summary>
+    internal static TaskLiveQueue? ReviewQueueFor(
+        bool canonical,
+        BoardReviewActivity? current,
+        ReviewQueueEntry? queued,
+        int? localPosition,
+        AutoReviewQueueWaitState? localWait,
+        DateTime nowUtc)
+    {
+        if (!canonical) return LocalReviewQueue(localPosition, localWait);
+
+        // A priority-only entry reads as Completed but has no attempt behind it.
+        if (current is not { AttemptId: not null } review)
+            return Stalled("no review attempt for this delivery; operator decision needed", outcome: null);
+
+        var leaseLive = review.LeaseExpiresAt is { } expires && expires > nowUtc;
+        if (review.State == AttemptLifecycleState.Leased && leaseLive)
+        {
+            var executor = string.IsNullOrWhiteSpace(review.ExecutorId) ? "an unnamed executor" : review.ExecutorId;
+            return new TaskLiveQueue
+            {
+                Kind = "review",
+                State = TaskLiveQueueStates.Reviewing,
+                ExecutorId = review.ExecutorId,
+                Since = review.AcquiredAt,
+                Reason = review.AcquiredAt is { } since
+                    ? $"reviewing on {executor} since {Utc(since)}"
+                    : $"reviewing on {executor}",
+            };
+        }
+
+        if (review.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
+        {
+            // Pending, or a lease that ran out and waits to be re-claimed: the
+            // same set ReadReviewQueue numbers. Only a missing executor
+            // registration is worth a sentence; the position says the rest.
+            var registrationWait = localWait is not null
+                && localWait.Reason == PostProcessingCardResult.AwaitingReviewExecutorRegistration;
+            return new TaskLiveQueue
+            {
+                Kind = "review",
+                Position = queued?.Position,
+                Reason = registrationWait ? DescribeWait(localWait!)
+                    : queued?.Position is null ? "review attempt pending" : null,
+            };
+        }
+
+        if (review.Outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
+            return LocalReviewQueue(localPosition, localWait);
+
+        var outcome = OutcomeToken(review);
+        if (review.PendingInfrastructureRetryAt is { } retryAt)
+        {
+            return new TaskLiveQueue
+            {
+                Kind = "review",
+                Outcome = outcome,
+                Reason = $"review ended ({outcome}); retry scheduled for {Utc(retryAt)}",
+            };
+        }
+
+        return Stalled($"review ended ({outcome}); no new review attempt; operator decision needed", outcome);
+    }
+
+    private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait)
+    {
+        if (localPosition.HasValue)
+            return new TaskLiveQueue { Kind = "review", Position = localPosition.Value };
+
+        // Between two post-processing passes a deferred card has left the
+        // local slot queue (it has no Position) but is not actually idle -
+        // it is waiting out its backoff. Naming that wait keeps the card from
+        // reading as an unexplained empty queue (AGT-2842).
+        return localWait is null ? null : new TaskLiveQueue { Kind = "review", Reason = DescribeWait(localWait) };
+    }
+
+    private static TaskLiveQueue Stalled(string reason, string? outcome) => new()
+    {
+        Kind = "review",
+        State = TaskLiveQueueStates.Stalled,
+        Outcome = outcome,
+        Reason = reason,
+    };
+
+    private static string OutcomeToken(BoardReviewActivity review)
+        => JsonNamingPolicy.CamelCase.ConvertName(
+            review.Outcome?.ToString() ?? review.State.ToString());
+
+    private static string Utc(DateTime value)
+        => value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Says what the card is actually waiting for. The four canonical waits used

@@ -49,12 +49,12 @@ public sealed class TaskCoreRuntime(
         } : null;
         var activity = inProgress ? TaskRunActivityClassifier.Classify(
             runners.GetRunActivityForJob(core.Id, core.ProjectName), execution, issue) : null;
-        var runner = inProgress ? runners.ResolveRunnerBadge(core.TaskKey) : null;
+        var runner = inProgress ? runners.ResolveRunnerBadge(core) : null;
         // Peek returns only a currently leased, unexpired attempt. A steered
         // card can be Ready while that remote attempt still owns its lease.
         // Connection health is separate: a disconnected owner retains lease
         // authority until expiry, so the card must still expose that owner.
-        var leaseReply = leases.Peek(core.TaskKey);
+        var leaseReply = leases.Peek(TaskIdentity.AuthorityKey(core));
         var lease = leaseReply?.Lease;
         var summaryState = runners.SummaryService.GetState(core.TaskKey);
         return new TaskCoreRuntimeSnapshot

@@ -610,6 +610,27 @@ public sealed record TaskLiveQueue
     /// known. Never used for machine matching.
     /// </summary>
     public string? Reason { get; init; }
+    /// <summary>
+    /// AGT-3094: one of the <see cref="TaskLiveQueueStates"/> tokens. Runner
+    /// queues and legacy review queues are always <c>queued</c>; a canonical
+    /// review card says whether its ReviewAttempt is leased (<c>reviewing</c>)
+    /// or needs an operator because nothing will review it (<c>stalled</c>).
+    /// </summary>
+    public string State { get; init; } = TaskLiveQueueStates.Queued;
+    /// <summary>Executor holding the review lease; set only while <c>reviewing</c>.</summary>
+    public string? ExecutorId { get; init; }
+    /// <summary>UTC instant the review lease was acquired; set only while <c>reviewing</c>.</summary>
+    public DateTime? Since { get; init; }
+    /// <summary>Terminal review outcome token (e.g. <c>infrastructureFailure</c>) behind a <c>stalled</c> or retrying review.</summary>
+    public string? Outcome { get; init; }
+}
+
+/// <summary>Wire tokens for <see cref="TaskLiveQueue.State"/>.</summary>
+public static class TaskLiveQueueStates
+{
+    public const string Queued = "queued";
+    public const string Reviewing = "reviewing";
+    public const string Stalled = "stalled";
 }
 
 /// <summary>

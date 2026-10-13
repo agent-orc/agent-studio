@@ -57,7 +57,7 @@ public sealed class TaskReader
         var cliOutputLines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(info.FolderPath));
         var ledger = _timeline.ReadAll(info.FolderPath);
         var runnerEvents = AgentStudio.Projection.RunnerEventSource.ReadRecords(info);
-        var runAttempts = _attempts.GetTaskProjection(info.TaskKey, includeArchived: true).RunAttempts;
+        var runAttempts = _attempts.GetTaskProjection(TaskIdentity.AuthorityKey(info), includeArchived: true).RunAttempts;
 
         return new TaskReadModel(
             detail,
