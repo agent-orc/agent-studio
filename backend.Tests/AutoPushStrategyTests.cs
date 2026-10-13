@@ -460,7 +460,7 @@ public sealed class AutoPushStrategyTests : IDisposable
             ? new TaskIntegrationStatusService(
                 git,
                 settings,
-                new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+                new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
                 NullLogger<TaskIntegrationStatusService>.Instance,
                 new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance))
             : null;

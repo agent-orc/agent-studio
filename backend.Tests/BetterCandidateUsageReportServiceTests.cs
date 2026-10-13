@@ -21,7 +21,7 @@ public sealed class BetterCandidateUsageReportServiceTests
             Call(withoutCandidate.AddMinutes(30), "gpt-5.6-sol", 9_000, 800),
         };
 
-        var line = Assert.Single(BetterCandidateUsageReportService.Aggregate(
+        var line = Assert.Single(BetterCandidateUsageReportService.Aggregate(TokenTestServices.Pricing(),
             "Agent Studio",
             admissions,
             calls,

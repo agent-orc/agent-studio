@@ -24,7 +24,7 @@ public class WorkspaceTokensTimelineTests
                 Entry(to, "unknown", 99, 0)]),
         };
 
-        var timeline = WorkspaceTokensTimelineService.BuildFromEntries(selected, from, to, 60);
+        var timeline = WorkspaceTimelineFold.Build(selected.Select(project => (project.Item1, TokenTestServices.Pricing().Price(project.Item2))).ToList(), from, to, 60);
 
         Assert.Equal(from.ToString("o"), timeline.WindowStart);
         Assert.Equal(to.ToString("o"), timeline.WindowEnd);
@@ -92,7 +92,7 @@ public class WorkspaceTokensTimelineTests
             ("charlie", projectC),
         };
 
-        var t = WorkspaceTokensTimelineService.BuildFromEntries(input, windowStart, windowEnd, bucketMinutes);
+        var t = WorkspaceTimelineFold.Build(input.Select(project => (project.Item1, TokenTestServices.Pricing().Price(project.Item2))).ToList(), windowStart, windowEnd, bucketMinutes);
 
         // Window stats.
         Assert.Equal(6, t.WindowHours);
@@ -166,9 +166,7 @@ public class WorkspaceTokensTimelineTests
             Entry(windowStart.AddMinutes(20), "claude-haiku-4-5", 1_000, 100)
         };
 
-        var t = WorkspaceTokensTimelineService.BuildFromEntries(
-            new[] { ("solo", (IReadOnlyList<OrchestratorLogEntry>)entries) },
-            windowStart, windowEnd, 60);
+        var t = WorkspaceTimelineFold.Build(new[] { ("solo", (IReadOnlyList<OrchestratorLogEntry>)entries) }.Select(project => (project.Item1, TokenTestServices.Pricing().Price(project.Item2))).ToList(), windowStart, windowEnd, 60);
 
         var cell = Assert.Single(t.Cells);
         Assert.Equal("solo", cell.Project);
@@ -185,7 +183,7 @@ public class WorkspaceTokensTimelineTests
     [InlineData(72, 24)]     // out of range -> default
     public void ResolveWindowHours_SnapsToAllowedSetOrDefault(int requested, int expected)
     {
-        Assert.Equal(expected, WorkspaceTokensTimelineService.ResolveWindowHours(requested));
+        Assert.Equal(expected, WorkspaceTimelineFold.ResolveWindowHours(requested));
     }
 
     [Theory]
@@ -197,7 +195,7 @@ public class WorkspaceTokensTimelineTests
     [InlineData(120, 60)]    // out of range -> default
     public void ResolveBucketMinutes_SnapsToAllowedSetOrDefault(int requested, int expected)
     {
-        Assert.Equal(expected, WorkspaceTokensTimelineService.ResolveBucketMinutes(requested));
+        Assert.Equal(expected, WorkspaceTimelineFold.ResolveBucketMinutes(requested));
     }
 
     [Fact]
@@ -205,9 +203,7 @@ public class WorkspaceTokensTimelineTests
     {
         var windowEnd = new DateTime(2026, 5, 5, 12, 0, 0, DateTimeKind.Utc);
         var windowStart = windowEnd.AddHours(-24);
-        var t = WorkspaceTokensTimelineService.BuildFromEntries(
-            Array.Empty<(string, IReadOnlyList<OrchestratorLogEntry>)>(),
-            windowStart, windowEnd, 60);
+        var t = WorkspaceTimelineFold.Build(Array.Empty<(string, IReadOnlyList<OrchestratorLogEntry>)>().Select(project => (project.Item1, TokenTestServices.Pricing().Price(project.Item2))).ToList(), windowStart, windowEnd, 60);
 
         Assert.Equal(24, t.WindowHours);
         Assert.Equal(60, t.BucketMinutes);

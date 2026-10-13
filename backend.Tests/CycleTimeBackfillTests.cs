@@ -244,7 +244,7 @@ public sealed class CycleTimeBackfillTests : IDisposable
         var service = new ProjectCycleTimeService(
             scanner,
             new TimelineLog(NullLogger<TimelineLog>.Instance),
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<ProjectCycleTimeService>.Instance);
 
         // Without a sidecar the legacy task stays excluded.

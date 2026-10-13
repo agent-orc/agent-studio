@@ -354,7 +354,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
         var integration = new TaskIntegrationStatusService(
             git,
             settings,
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<TaskIntegrationStatusService>.Instance,
             _clock);
         var sweep = new DeliveryClaimSweep(

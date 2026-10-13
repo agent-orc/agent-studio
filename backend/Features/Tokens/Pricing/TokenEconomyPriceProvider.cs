@@ -12,6 +12,18 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
     private static readonly EconomyPricing.ModelPriceCatalog Source =
         EconomyPricing.ModelPriceCatalog.Default;
 
+    public static IReadOnlyDictionary<string, EconomyPricing.ModelListing> Catalog { get; } =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, EconomyPricing.ModelListing>(
+            Source.Listings.ToDictionary(x => x.ModelId, StringComparer.OrdinalIgnoreCase));
+
+    public static string Version { get; } =
+        $"TokenEconomy/{typeof(EconomyPricing.ModelPriceCatalog).Assembly.GetName().Version}";
+
+    internal static EconomyPricing.ModelListing? FindListing(string modelId) => Source.Find(modelId);
+
+    internal static EconomyPricing.ModelPrice? CurrentPrice(string modelId)
+        => Source.ResolvePrice(modelId, DateTime.UtcNow).Price;
+
     public TokenCostEstimate Estimate(
         string? modelId,
         long inputTokens,

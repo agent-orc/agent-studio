@@ -1,7 +1,7 @@
 namespace AgentStudio.Runner;
 
 /// <summary>In-process activity and completed usage for local interactive turns.</summary>
-public sealed class LocalChatUsageTracker
+public sealed class LocalChatUsageTracker(ITokenPricing pricing)
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, ActiveTurn> _active = new(StringComparer.Ordinal);
@@ -18,7 +18,7 @@ public sealed class LocalChatUsageTracker
         lock (_gate)
         {
             if (!_active.Remove(turnId, out var active) || usage is null) return;
-            var estimate = TokenPricing.Estimate(usage.Model ?? model,
+            var estimate = pricing.Estimate(usage.Model ?? model,
                 usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens,
                 usage.CacheCreationTokens, finishedAt);
             var hasPrevious = _completed.TryGetValue(active.Project, out var previous);

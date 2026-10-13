@@ -458,7 +458,7 @@ public sealed class BoardMergeStatusServiceTests : IDisposable
         var integration = new TaskIntegrationStatusService(
             git,
             settings,
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<TaskIntegrationStatusService>.Instance,
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance));
         return new BoardMergeStatusService(

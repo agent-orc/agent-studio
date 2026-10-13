@@ -36,7 +36,7 @@ public interface IModelEquivalenceCatalog
 public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 {
     private static readonly ModelRoutingKnowledgeBase Knowledge = ModelRoutingKnowledgeBase.Default;
-    private static readonly ModelPriceCatalog Prices = ModelPriceCatalog.Default;
+
     private static readonly ModelMigrationCatalogRegistry MigrationCatalog = new();
     public string Version { get; } = BuildVersion();
     public IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
@@ -192,7 +192,7 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
     }
 
     private static ModelPrice? CurrentPrice(string modelId)
-        => Prices.ResolvePrice(modelId, DateTime.UtcNow).Price;
+        => TokenEconomyPriceProvider.CurrentPrice(modelId);
 
     private static string? DefaultThinkingFor(string modelId)
         => Knowledge.Routes

@@ -646,7 +646,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         settings.SetAutoPushStrategy(Project, AutoPushStrategies.Never);
         settings.SetBuildProfile(Project, new BuildProfile { BuildCmds = ["cd ."] });
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
         var gate = new ScriptedBuildTestGateRunner(gateEnvironmentFails, onGateRun);

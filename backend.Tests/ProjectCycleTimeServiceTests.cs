@@ -543,7 +543,7 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         var service = new ProjectCycleTimeService(
             scanner,
             new TimelineLog(NullLogger<TimelineLog>.Instance),
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<ProjectCycleTimeService>.Instance);
 
         var week = service.Build("Demo", "7d");

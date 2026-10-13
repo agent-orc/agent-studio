@@ -19,7 +19,7 @@ public sealed class PipelineExecutionLogReadCacheTests : IDisposable
     {
         _jobFolder = Path.Combine(Path.GetTempPath(), "pipeline-read-cache-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_jobFolder);
-        _log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        _log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
     }
 
     public void Dispose()

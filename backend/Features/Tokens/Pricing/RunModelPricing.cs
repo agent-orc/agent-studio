@@ -5,9 +5,9 @@ namespace AgentStudio.Tokens;
 /// prices them at that model. Calls that recorded a model, and calls of
 /// other participants, keep their own model and price.
 /// </summary>
-public static class RunModelFallback
+public sealed class RunModelPricing(ITokenPricing pricing)
 {
-    public static TaskTokenSummary Apply(TaskTokenSummary summary, string? runModel)
+    public TaskTokenSummary Apply(TaskTokenSummary summary, string? runModel)
     {
         var fallbackLabel = ModelIdentity.Label(runModel);
         if (string.IsNullOrWhiteSpace(fallbackLabel)) return summary;
@@ -33,9 +33,9 @@ public static class RunModelFallback
         };
     }
 
-    private static TaskTokenCall Reprice(TaskTokenCall call, string? runModel)
+    private TaskTokenCall Reprice(TaskTokenCall call, string? runModel)
     {
-        var cost = TokenPricing.Estimate(runModel, call.InputTokens, call.OutputTokens,
+        var cost = pricing.Estimate(runModel, call.InputTokens, call.OutputTokens,
             call.CacheReadTokens, call.CacheCreationTokens, call.Ts);
         return call with
         {

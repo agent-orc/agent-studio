@@ -24,7 +24,7 @@ public sealed class PromptCallTelemetryServiceTests : IDisposable
         var promptPath = Path.Combine(_root, "prompts", name);
         File.WriteAllText(promptPath, "Hello {{name}}");
         var config = Configuration();
-        var telemetry = new PromptCallTelemetryService(
+        var telemetry = new PromptCallTelemetryService(TokenTestServices.Pricing(),
             config,
             NullLogger<PromptCallTelemetryService>.Instance);
         var prompts = new RuntimePromptService(
@@ -74,7 +74,7 @@ public sealed class PromptCallTelemetryServiceTests : IDisposable
         var promptPath = Path.Combine(_root, "prompts", name);
         File.WriteAllText(promptPath, "Summary");
         var config = Configuration();
-        var telemetry = new PromptCallTelemetryService(
+        var telemetry = new PromptCallTelemetryService(TokenTestServices.Pricing(),
             config,
             NullLogger<PromptCallTelemetryService>.Instance);
         var prompts = new RuntimePromptService(
@@ -101,7 +101,7 @@ public sealed class PromptCallTelemetryServiceTests : IDisposable
         const string name = "review-aspect-code-quality.md";
         File.WriteAllText(Path.Combine(_root, "prompts", name), "Default prompt");
         var config = Configuration();
-        var telemetry = new PromptCallTelemetryService(
+        var telemetry = new PromptCallTelemetryService(TokenTestServices.Pricing(),
             config,
             NullLogger<PromptCallTelemetryService>.Instance);
         var prompts = new RuntimePromptService(

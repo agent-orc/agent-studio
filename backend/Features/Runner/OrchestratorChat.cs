@@ -467,6 +467,7 @@ public sealed record ChatNavigationContext(
 /// </summary>
 public class OrchestratorChatService
 {
+    private readonly ITokenPricing _pricing;
     private readonly OrchestratorChat _chat;
     private readonly OrchestratorRunner _runner;
     private readonly GlobalOrchestratorBootstrap _bootstrap;
@@ -496,7 +497,7 @@ public class OrchestratorChatService
     /// </summary>
     private static readonly SemaphoreSlim SessionGate = new(1, 1);
 
-    public OrchestratorChatService(
+    public OrchestratorChatService(ITokenPricing pricing,
         OrchestratorChat chat,
         OrchestratorRunner runner,
         GlobalOrchestratorSessionStore sessionStore,
@@ -521,6 +522,7 @@ public class OrchestratorChatService
         AdHocUsageRecorder? chatUsage = null,
         LocalChatUsageTracker? localChatUsage = null)
     {
+        _pricing = pricing;
         _chat = chat;
         _runner = runner;
         _bootstrap = bootstrap;
@@ -769,7 +771,7 @@ public class OrchestratorChatService
                     Role = OrchestratorChatRoles.Orchestrator,
                     Text = "",
                     Model = requestedModel,
-                    Metadata = ChatTurnMetadata.Create(
+                    Metadata = ChatTurnMetadata.Create(_pricing,
                         requestedModel, thinkingLevel, null,
                         remoteResult?.HostName ?? Environment.MachineName,
                         remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
@@ -808,7 +810,7 @@ public class OrchestratorChatService
                     ConfiguredModel = result.ConfiguredModel,
                     QuotaFallbackReason = result.QuotaFallbackReason,
                     TokenUsage = result.TokenUsage,
-                    Metadata = ChatTurnMetadata.Create(
+                    Metadata = ChatTurnMetadata.Create(_pricing,
                         result.Model, remoteResult?.ThinkingLevel ?? thinkingLevel,
                         remoteResult?.ProviderThreadId ?? result.ProviderThreadId ?? result.CapturedSessionId,
                         remoteResult?.HostName ?? Environment.MachineName,
@@ -839,7 +841,7 @@ public class OrchestratorChatService
                 ConfiguredModel = result.ConfiguredModel,
                 QuotaFallbackReason = result.QuotaFallbackReason,
                 TokenUsage = result.TokenUsage,
-                Metadata = ChatTurnMetadata.Create(
+                Metadata = ChatTurnMetadata.Create(_pricing,
                     result.Model, remoteResult?.ThinkingLevel ?? thinkingLevel,
                     remoteResult?.ProviderThreadId ?? result.ProviderThreadId ?? result.CapturedSessionId,
                     remoteResult?.HostName ?? Environment.MachineName,

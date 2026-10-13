@@ -39,7 +39,7 @@ public sealed class ProjectTokenReceiptReaderTests : IDisposable
         Assert.True(healed.SourceAvailable);
         Assert.Equal(0, healed.FailedTaskCount);
 
-        var healedSummary = TokenSummaryService.Summarize("Demo", healed.Entries);
+        var healedSummary = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(healed.Entries));
 
         var freshEntries = new[]
         {
@@ -57,7 +57,7 @@ public sealed class ProjectTokenReceiptReaderTests : IDisposable
                 },
             },
         };
-        var freshSummary = TokenSummaryService.Summarize("Demo", freshEntries);
+        var freshSummary = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(freshEntries));
 
         Assert.True(freshSummary.AllModelsPriced);
         Assert.True(healedSummary.AllModelsPriced);

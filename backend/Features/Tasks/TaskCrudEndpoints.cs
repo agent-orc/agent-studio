@@ -14,6 +14,7 @@ public static class TaskCrudEndpoints
 {
     public static void MapTaskCrudEndpoints(this RouteGroupBuilder group)
     {
+        var pricing = ((IEndpointRouteBuilder)group).ServiceProvider.GetRequiredService<ITokenPricing>();
         group.MapGet("/commit-owner/{sha}", (string sha, HttpContext context,
             TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
         {
@@ -146,7 +147,7 @@ public static class TaskCrudEndpoints
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
                 return raw.Select(job => betterCandidates.Attach(
-                                  WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
+                                  WithRuntime(pricing, job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
                                   projectSettings.Get(job.ProjectName)))
                               .WithLiveStatus(liveLookup)
                               .WithMergeSignal(gitLookup.Merge)
@@ -246,7 +247,7 @@ public static class TaskCrudEndpoints
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
                 var jobs = raw.Select(job => betterCandidates.Attach(
-                                  WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
+                                  WithRuntime(pricing, job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
                                   projectSettings.Get(job.ProjectName)))
                               .WithLiveStatus(liveLookup)
                               .WithMergeSignal(gitLookup.Merge)
@@ -465,7 +466,7 @@ public static class TaskCrudEndpoints
                 .FilterTasks(context, scanner.ScanAllJobs(), projects)
                 .Where(job => !job.Fixture);
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
-            var withRuntime = WithRuntime(detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
+            var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
                 Info = betterCandidates.Attach(withRuntime.Info, projectSettings.Get(withRuntime.Info.ProjectName)),

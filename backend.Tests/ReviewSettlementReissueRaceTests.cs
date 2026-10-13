@@ -397,7 +397,7 @@ public sealed class ReviewSettlementReissueRaceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipeline.Begin(folder, PipelineCatalogue.Standard, Project, jobId);
         var queue = new IntegrationPushQueue();
         return (new MergeIntoDevelopRunner(git, pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
@@ -553,7 +553,7 @@ public sealed class ReviewSettlementReissueRaceTests : IDisposable
         settings.SetIntegrationBranch(Project, "develop");
         settings.SetAutoPushStrategy(Project, AutoPushStrategies.Never);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);

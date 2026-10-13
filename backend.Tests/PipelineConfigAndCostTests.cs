@@ -131,7 +131,7 @@ public class PipelineConfigAndCostTests
     [Fact]
     public void Summarize_EmptyRecord_IsZeroCost()
     {
-        var summary = PipelineCostCalculator.Summarize(null);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(null);
         Assert.Empty(summary.Steps);
         Assert.Equal(0, summary.TotalTokens);
         Assert.Equal(0m, summary.TotalCostUsd);
@@ -167,7 +167,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.Summarize(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(record);
         Assert.Equal(2, summary.Steps.Count);
 
         var haiku = summary.Steps[0];
@@ -211,7 +211,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.Summarize(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(record);
         Assert.True(summary.AnyModelUnknown);
         Assert.Equal(1, summary.UnpricedRuns);
         Assert.False(summary.Steps[0].ModelKnown);
@@ -259,7 +259,7 @@ public class PipelineConfigAndCostTests
                 ],
             };
 
-        var summary = PipelineCostCalculator.SummarizeWithLedger(record, ledger);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeWithLedger(record, ledger);
 
         Assert.Equal(2.00m, summary.TotalCostUsd);
         Assert.False(summary.AnyModelUnknown);
@@ -270,7 +270,7 @@ public class PipelineConfigAndCostTests
     [Fact]
     public void SummarizeByModel_EmptyRecord_IsZero()
     {
-        var summary = PipelineCostCalculator.SummarizeByModel(null);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(null);
         Assert.Empty(summary.Runs);
         Assert.Empty(summary.TotalByModel);
         Assert.Equal(0, summary.TotalTokens);
@@ -310,7 +310,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(record);
 
         var run = Assert.Single(summary.Runs);
         // The record carries a CompletedAt stamp, so it is the newest run but
@@ -373,7 +373,7 @@ public class PipelineConfigAndCostTests
             PreviousAttempts = { older },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(current);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(current);
 
         // Oldest first: Run #1 then the current Run #2.
         Assert.Equal(2, summary.Runs.Count);
@@ -414,7 +414,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(record);
 
         var run = Assert.Single(summary.Runs);
         Assert.Equal(expectedCurrent, run.Current);
@@ -448,7 +448,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(null, sessions, null);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(null, sessions, null);
 
         Assert.Equal(2, summary.Runs.Count);
         // An older session never carries the marker, whatever the newest one does.
@@ -473,7 +473,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(record);
 
         Assert.Equal(5.50m, summary.TotalCostUsd);
         Assert.False(summary.AnyModelUnknown);
@@ -533,7 +533,7 @@ public class PipelineConfigAndCostTests
             ],
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(null, sessions, tokens);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(null, sessions, tokens);
 
         Assert.Equal(6, summary.Runs.Count);
         Assert.Equal(4, summary.MissingTokenRuns);
@@ -580,7 +580,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(record);
 
         var run = Assert.Single(summary.Runs);
         Assert.Equal(3, run.Models.Count);
@@ -649,7 +649,7 @@ public class PipelineConfigAndCostTests
             ],
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(null, sessions, tokens);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(null, sessions, tokens);
 
         var run = Assert.Single(summary.Runs);
         var identities = run.Models
@@ -677,7 +677,7 @@ public class PipelineConfigAndCostTests
             })
             .ToList();
 
-        var summary = PipelineCostCalculator.SummarizeByModel(null, sessions, null);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(null, sessions, null);
 
         Assert.Equal(6, summary.Runs.Count);
         Assert.Equal(6, summary.MissingTokenRuns);
@@ -719,7 +719,7 @@ public class PipelineConfigAndCostTests
             PreviousAttempts = { priced },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(current);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(current);
 
         Assert.Equal(2.00m, summary.TotalCostUsd);
         Assert.True(summary.AnyModelUnknown);
@@ -754,7 +754,7 @@ public class PipelineConfigAndCostTests
             },
         };
 
-        var summary = PipelineCostCalculator.SummarizeByModel(record);
+        var summary = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(record);
 
         var model = Assert.Single(summary.TotalByModel);
         Assert.Equal("unknown", model.Model);
@@ -804,7 +804,7 @@ public class PipelineConfigAndCostTests
                 }),
         };
 
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 3, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 3, nowUtc: now);
 
         // Dense axis: one cell per requested day even when idle.
         Assert.Equal(3, timeline.Days.Count);
@@ -858,7 +858,7 @@ public class PipelineConfigAndCostTests
                 }),
         };
 
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 90, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 90, nowUtc: now);
 
         // Two distinct steps, summed across runs, most-expensive (by tokens) first.
         Assert.Equal(2, timeline.Steps.Count);
@@ -896,7 +896,7 @@ public class PipelineConfigAndCostTests
                 }),
         };
 
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 90, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 90, nowUtc: now);
 
         var step = Assert.Single(timeline.Steps);
         Assert.Equal("aspect-code-quality", step.StepId);
@@ -929,7 +929,7 @@ public class PipelineConfigAndCostTests
                 }),
         };
 
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 2, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 2, nowUtc: now);
 
         Assert.Equal(1, timeline.TaskCount); // the old run dropped out
         Assert.True(timeline.AnyModelUnknown);
@@ -959,7 +959,7 @@ public class PipelineConfigAndCostTests
                 }),
         };
 
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 7, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 7, nowUtc: now);
 
         Assert.Equal(2.00m, timeline.TotalCostUsd);
         Assert.Equal(1, timeline.UnpricedRuns);
@@ -976,7 +976,7 @@ public class PipelineConfigAndCostTests
     [Fact]
     public void PipelineTimeline_EmptyWhenNoRecords()
     {
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", Array.Empty<PipelineExecutionRecord>(), days: 7);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", Array.Empty<PipelineExecutionRecord>(), days: 7);
         Assert.False(timeline.HasData);
         Assert.Empty(timeline.Kinds);
         Assert.Empty(timeline.Steps);
@@ -996,7 +996,7 @@ public class PipelineConfigAndCostTests
         };
 
         var records = ProjectPipelineCostService.BuildReceiptRecords("P", entries);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 7, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", records, days: 7, nowUtc: now);
 
         Assert.Equal(1_870, timeline.TotalTokens);
         Assert.Equal(new[] { "core", "aspect", "orchestrator" }, timeline.Kinds.Select(kind => kind.Kind));

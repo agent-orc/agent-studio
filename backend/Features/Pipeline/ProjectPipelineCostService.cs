@@ -20,6 +20,7 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class ProjectPipelineCostService
 {
+    private readonly ITokenPricing _pricing;
     public const int DefaultDays = 30;
     public const int MaxDays = 180;
 
@@ -30,11 +31,12 @@ public sealed class ProjectPipelineCostService
     private readonly ProjectTokenReceiptReader _receipts;
     private readonly ConcurrentDictionary<string, (DateTime At, ProjectPipelineCostTimeline Value)> _cache = new();
 
-    public ProjectPipelineCostService(
+    public ProjectPipelineCostService(ITokenPricing pricing,
         TaskScannerService scanner,
         PipelineExecutionLog log,
         ProjectTokenReceiptReader receipts)
     {
+        _pricing = pricing;
         _scanner = scanner;
         _log = log;
         _receipts = receipts;
@@ -84,9 +86,9 @@ public sealed class ProjectPipelineCostService
                 }
             }
         }
-        records.AddRange(MergeSources(receiptRecords, taskLogs));
+        records.AddRange(MergeSources(_pricing, receiptRecords, taskLogs));
 
-        var timeline = BuildFromRecords(projectName, records, d, nowUtc);
+        var timeline = BuildFromRecords(_pricing, projectName, records, d, nowUtc);
         var distinctWarnings = warnings.Distinct(StringComparer.Ordinal).ToList();
         var freshness = timeline.Freshness with
         {
@@ -108,7 +110,7 @@ public sealed class ProjectPipelineCostService
     /// Pure overload: aggregate pre-loaded execution records. Used by unit
     /// tests to avoid filesystem round-trips.
     /// </summary>
-    public static ProjectPipelineCostTimeline BuildFromRecords(
+    public static ProjectPipelineCostTimeline BuildFromRecords(ITokenPricing pricing,
         string projectName,
         IReadOnlyList<PipelineExecutionRecord> records,
         int days,
@@ -152,11 +154,11 @@ public sealed class ProjectPipelineCostService
             {
                 // Every execution of the step in this attempt, repeats across
                 // review rounds included, each priced at its own model.
-                foreach (var run in StepCostMeasurement.Executions(s))
+                foreach (var run in StepCostMeasurement.Executions(pricing, s))
                 {
                     var stepTokens = StepCostMeasurement.Tokens(run);
                     var est = stepTokens > 0
-                        ? TokenPricing.Estimate(
+                        ? pricing.Estimate(
                             run.Model, run.InputTokens, run.OutputTokens, run.CacheReadTokens, run.CacheCreationTokens,
                             run.StartedAt ?? ts)
                         : null;
@@ -339,7 +341,7 @@ public sealed class ProjectPipelineCostService
     /// run count. Before AGT-3015 a receipt task's log was skipped entirely,
     /// which is why no orchestrator step reached this ledger.
     /// </summary>
-    internal static IReadOnlyList<PipelineExecutionRecord> MergeSources(
+    internal static IReadOnlyList<PipelineExecutionRecord> MergeSources(ITokenPricing pricing,
         IReadOnlyList<PipelineExecutionRecord> receiptRecords,
         IEnumerable<(string JobId, PipelineExecutionRecord Record)> taskLogs)
     {
@@ -370,7 +372,7 @@ public sealed class ProjectPipelineCostService
             foreach (var step in attempts.SelectMany(attempt => attempt.Steps))
             {
                 if (ReconciledFamily(step.Kind) is not { } family) continue;
-                foreach (var run in StepCostMeasurement.Executions(step))
+                foreach (var run in StepCostMeasurement.Executions(pricing, step))
                 {
                     if (StepCostMeasurement.Tokens(run) <= 0) continue;
                     measuredCalls.Add(ReceiptMatchKey(jobId, family, run.Model, run.InputTokens, run.OutputTokens,

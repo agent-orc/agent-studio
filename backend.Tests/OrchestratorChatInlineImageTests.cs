@@ -201,8 +201,7 @@ public class OrchestratorChatInlineImageTests
         Directory.CreateDirectory(tempWatch);
         try
         {
-            var chat = new OrchestratorChat(
-                new Microsoft.Extensions.Logging.Abstractions.NullLogger<OrchestratorChat>());
+            var chat = new OrchestratorChat(new Microsoft.Extensions.Logging.Abstractions.NullLogger<OrchestratorChat>());
 
             var turn = new OrchestratorChatTurn
             {

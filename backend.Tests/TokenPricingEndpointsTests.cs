@@ -18,7 +18,7 @@ public class TokenPricingEndpointsTests
     public void CalculateItems_LabelsIdsAndBareAliasesUseTheSameCatalogPrices()
     {
         var at = new DateTime(2026, 10, 11, 0, 0, 0, DateTimeKind.Utc);
-        var rows = TokenPricingEndpoints.CalculateItems(new TokenPriceCalculationRequest([
+        var rows = TokenPricingEndpoints.CalculateItems(TokenTestServices.Pricing(), new TokenPriceCalculationRequest([
             new("GPT-6 Sol", 1_000_000, 100_000, 0, 0, at, RecordedCostUsd: 2.5m, RecordedModelPriced: true),
             new("gpt-6-sol", 1_000_000, 100_000, 0, 0, at),
             new("Claude Opus 5.5", 1_000_000, 100_000, 0, 0, at),
@@ -35,7 +35,7 @@ public class TokenPricingEndpointsTests
     [Fact]
     public void SelectUnpricedModels_ReturnsOnlyRowsAbsentFromCatalog()
     {
-        var aggregate = TokenSummaryService.AggregateSummaries([
+        var aggregate = TokenSummaryFold.ForWorkspace([
             ("proj-a", new TokenSummary(
                 "proj-a", 2, 2, 1_100, 100, 0, 0, 1.23m, AllModelsPriced: false, UnknownModelCount: 1,
                 ByModel: [
@@ -43,7 +43,7 @@ public class TokenPricingEndpointsTests
                     Model("Future Model", calls: 1, input: 100, output: 10, inCatalog: false)
                         with { ModelId = "some-future-model" },
                 ],
-                FirstActivity: null, LastActivity: null, Disclaimer: TokenSummaryService.DefaultDisclaimer)),
+                FirstActivity: null, LastActivity: null, Disclaimer: TokenCostDisclaimer.Text)),
         ]);
 
         var unpriced = TokenPricingEndpoints.SelectUnpricedModels(aggregate);
@@ -58,11 +58,11 @@ public class TokenPricingEndpointsTests
     [Fact]
     public void SelectUnpricedModels_EveryModelKnown_ReturnsEmpty()
     {
-        var aggregate = TokenSummaryService.AggregateSummaries([
+        var aggregate = TokenSummaryFold.ForWorkspace([
             ("proj-a", new TokenSummary(
                 "proj-a", 1, 1, 1_000, 100, 0, 0, 1.23m, AllModelsPriced: true, UnknownModelCount: 0,
                 ByModel: [Model("claude-opus-4-7", calls: 1, input: 1_000, output: 100, inCatalog: true)],
-                FirstActivity: null, LastActivity: null, Disclaimer: TokenSummaryService.DefaultDisclaimer)),
+                FirstActivity: null, LastActivity: null, Disclaimer: TokenCostDisclaimer.Text)),
         ]);
 
         Assert.Empty(TokenPricingEndpoints.SelectUnpricedModels(aggregate));

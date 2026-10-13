@@ -15,13 +15,14 @@ namespace AgentStudio.Tests;
 /// a warm poll where nothing changed reuses the snapshot, and a new receipt
 /// becomes visible within one generation (the next mutation/watcher/TTL rescan).
 /// </summary>
-public sealed class BusBackedProjectTokenUsageReaderCacheTests : IDisposable
+// clock-independent: receipt dates are fixture data; assertions compare cache generations and token totals.
+public sealed class TokenAggregationServiceCacheTests : IDisposable
 {
     private const string ProjectName = "agent-taskboard";
     private readonly string _workspace;
     private readonly string _watchPath;
 
-    public BusBackedProjectTokenUsageReaderCacheTests()
+    public TokenAggregationServiceCacheTests()
     {
         _workspace = Path.Combine(Path.GetTempPath(), "token-snapshot-cache-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_workspace);
@@ -44,14 +45,14 @@ public sealed class BusBackedProjectTokenUsageReaderCacheTests : IDisposable
         var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
         scanner.SetIndexCache(indexCache);
         var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
-        var reader = new BusBackedProjectTokenUsageReader(
+        var reader = TokenTestServices.Aggregator(
             new AgentMessageBusStore(), config, stats, new ProjectTokenReceiptReader(), indexCache);
 
         WriteReceipt("AGT-1", totalTokens: 5_500, inputTokens: 5_000, outputTokens: 500);
         // Publish an initial generation so the reader has a stable version stamp.
         indexCache.GetSnapshot();
 
-        var first = reader.BuildPerJob(ProjectName, _watchPath);
+        var first = reader.WorkspacePerJob(ProjectName, _watchPath);
         Assert.True(first.TryGetValue("AGT-1", out var firstSummary));
         var firstTotal = firstSummary!.TotalTokens;
         Assert.True(firstTotal > 0);
@@ -60,13 +61,13 @@ public sealed class BusBackedProjectTokenUsageReaderCacheTests : IDisposable
         // index cache: the generation is unchanged, so the memoized snapshot must
         // still report the original total.
         WriteReceipt("AGT-1", totalTokens: 99_000, inputTokens: 90_000, outputTokens: 9_000);
-        var cached = reader.BuildPerJob(ProjectName, _watchPath);
+        var cached = reader.WorkspacePerJob(ProjectName, _watchPath);
         Assert.Equal(firstTotal, cached["AGT-1"].TotalTokens);
 
         // Advancing the generation (a mutation-class refresh) makes the new
         // receipt visible on the next read.
         indexCache.ForceRefresh();
-        var refreshed = reader.BuildPerJob(ProjectName, _watchPath);
+        var refreshed = reader.WorkspacePerJob(ProjectName, _watchPath);
         Assert.True(refreshed["AGT-1"].TotalTokens > firstTotal);
     }
 

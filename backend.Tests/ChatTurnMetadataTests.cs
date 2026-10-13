@@ -12,14 +12,14 @@ public sealed class ChatTurnMetadataTests
     public void Prices_normalized_cached_input_once_and_preserves_timing()
     {
         var queued = new DateTime(2026, 9, 26, 9, 0, 0, DateTimeKind.Utc);
-        var metadata = ChatTurnMetadata.Create("gpt-5.6-sol", "medium", "thread-1", "runner-01",
+        var metadata = ChatTurnMetadata.Create(TokenTestServices.Pricing(), "gpt-5.6-sol", "medium", "thread-1", "runner-01",
             queued, queued.AddSeconds(3), queued.AddSeconds(8), new OrchestratorTokenUsage
             {
                 Model = "gpt-5.6-sol", InputTokens = 20, CacheReadTokens = 80,
                 OutputTokens = 10, ReasoningTokens = 4, InputIncludesCached = true,
             }, "codex");
 
-        var expected = TokenPricing.Estimate("gpt-5.6-sol", 20, 10, 80, 0, queued.AddSeconds(8));
+        var expected = TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 20, 10, 80, 0, queued.AddSeconds(8));
         Assert.Equal(expected.Total, metadata.Cost);
         Assert.Equal(20, metadata.InputTokens);
         Assert.Equal(80, metadata.CachedInputTokens);
@@ -49,7 +49,7 @@ public sealed class ChatTurnMetadataTests
     public void Missing_catalog_price_stays_unknown_while_tokens_and_durations_remain_available()
     {
         var started = new DateTime(2026, 9, 26, 9, 0, 0, DateTimeKind.Utc);
-        var metadata = ChatTurnMetadata.Create("unlisted-model", null, null, "runner-01",
+        var metadata = ChatTurnMetadata.Create(TokenTestServices.Pricing(), "unlisted-model", null, null, "runner-01",
             started.AddSeconds(-2), started, started.AddSeconds(4),
             new OrchestratorTokenUsage { InputTokens = 5, OutputTokens = 2 }, "codex");
         Assert.Null(metadata.Cost);
@@ -64,9 +64,9 @@ public sealed class ChatTurnMetadataTests
     public void Known_model_before_first_price_has_no_chat_cost_or_cost_capability()
     {
         const string model = "gpt-5-codex";
-        var firstPrice = TokenPricing.Catalog[model].History.Min(price => price.ValidFrom);
+        var firstPrice = TokenEconomyPriceProvider.Catalog[model].History.Min(price => price.ValidFrom);
         var finished = firstPrice.AddTicks(-1);
-        var metadata = ChatTurnMetadata.Create(model, "medium", "thread-1", "runner-01",
+        var metadata = ChatTurnMetadata.Create(TokenTestServices.Pricing(), model, "medium", "thread-1", "runner-01",
             finished.AddSeconds(-5), finished.AddSeconds(-4), finished,
             new OrchestratorTokenUsage { Model = model, InputTokens = 100, OutputTokens = 20 }, "codex");
 
@@ -83,8 +83,8 @@ public sealed class ChatTurnMetadataTests
     public void Local_chat_tracker_keeps_project_cost_unknown_after_unpriced_known_model()
     {
         const string model = "gpt-5-codex";
-        var firstPrice = TokenPricing.Catalog[model].History.Min(price => price.ValidFrom);
-        var tracker = new LocalChatUsageTracker();
+        var firstPrice = TokenEconomyPriceProvider.Catalog[model].History.Min(price => price.ValidFrom);
+        var tracker = new LocalChatUsageTracker(TokenTestServices.Pricing());
         tracker.Start("unpriced", "Agent Studio", firstPrice.AddMinutes(-1), firstPrice.AddSeconds(-2));
         tracker.Complete("unpriced", new OrchestratorTokenUsage
         {
@@ -107,7 +107,7 @@ public sealed class ChatTurnMetadataTests
     [Fact]
     public void Local_chat_tracker_reports_heavy_activity_and_completed_project_cost()
     {
-        var tracker = new LocalChatUsageTracker();
+        var tracker = new LocalChatUsageTracker(TokenTestServices.Pricing());
         var start = new DateTime(2026, 9, 26, 9, 0, 0, DateTimeKind.Utc);
         tracker.Start("turn-1", "Agent Studio", start.AddSeconds(-2), start);
         var active = Assert.Single(tracker.GetUsage(start.AddSeconds(31)));
@@ -123,7 +123,7 @@ public sealed class ChatTurnMetadataTests
         var completed = Assert.Single(tracker.GetUsage(start.AddSeconds(36)));
         Assert.Equal(0, completed.ActiveTurns);
         Assert.Equal(110, completed.Tokens);
-        Assert.Equal(TokenPricing.Estimate("gpt-5.6-sol", 20, 10, 80, 0,
+        Assert.Equal(TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 20, 10, 80, 0,
             start.AddSeconds(35)).Total, completed.CostUsd);
     }
 }
