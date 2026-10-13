@@ -46,6 +46,8 @@ public sealed record CauseBreakerRecord
     public string? CauseWatchPath { get; init; }
     public string? ProbeTaskKey { get; init; }
     public string? ProbeAttemptId { get; init; }
+    /// <summary>Current outcome of the reserved probe, projected for the operator list.</summary>
+    public string? ProbeState { get; init; }
     public List<CauseBreakerObservation> Observations { get; init; } = [];
     public List<CauseBreakerWaitingCard> Waiting { get; init; } = [];
     /// <summary>
@@ -137,7 +139,36 @@ public sealed class CauseBreakerService
             return Records()
                 .Where(record => !openOnly || record.IsOpen)
                 .OrderByDescending(record => record.OpenedAt ?? record.FirstSeenAt)
+                .Select(record => record with { ProbeState = ProbeStateOf(record) })
                 .ToArray();
+        }
+    }
+
+    private string? ProbeStateOf(CauseBreakerRecord record)
+    {
+        if (!record.IsOpen || string.IsNullOrWhiteSpace(record.ProbeAttemptId)
+            || string.IsNullOrWhiteSpace(record.ProbeTaskKey)) return null;
+        var review = _authority.GetTaskProjection(record.ProbeTaskKey).ReviewAttempts
+            .FirstOrDefault(item => Same(item.AttemptId, record.ProbeAttemptId));
+        if (review is null || review.TerminalAt is null) return "running";
+        return review.Outcome == ReviewTerminalOutcome.Pass ? "passed" : "failed";
+    }
+
+    /// <summary>Disabling a project resolves every open cause that observed it.</summary>
+    public int CloseForDisabledProject(string projectName)
+    {
+        lock (_gate)
+        {
+            var records = Records();
+            var closed = 0;
+            foreach (var record in records.Where(item => item.IsOpen && item.CloseReason is null
+                         && item.Observations.Any(observation => Same(observation.Project, projectName))).ToArray())
+            {
+                CloseLocked(records, record, CauseBreakerCloseReason.Disabled, exceptTaskKey: null);
+                closed++;
+            }
+            if (closed > 0) Persist(records);
+            return closed;
         }
     }
 
@@ -424,9 +455,10 @@ public sealed class CauseBreakerService
                 && Same(item.ProbeAttemptId, attemptId));
             if (record is null) return null;
             if (CauseBreakerPolicy.Close(null, probeGreen: true) != CauseBreakerCloseReason.ProbeGreen) return null;
-            _logger.LogInformation(
-                "cause-breaker-probe-green fingerprint={Fingerprint} cause={CauseKey} probe={TaskKey} attempt={AttemptId}",
-                record.Fingerprint, record.CauseKey, taskKey, attemptId);
+            if (record.CloseReason is null)
+                _logger.LogInformation(
+                    "cause-breaker-probe-green fingerprint={Fingerprint} cause={CauseKey} probe={TaskKey} attempt={AttemptId}",
+                    record.Fingerprint, record.CauseKey, taskKey, attemptId);
             var closed = CloseLocked(records, record, CauseBreakerCloseReason.ProbeGreen, exceptTaskKey: taskKey);
             Persist(records);
             return closed;
@@ -474,8 +506,19 @@ public sealed class CauseBreakerService
         {
             var records = Records();
             var closed = 0;
-            foreach (var record in records.Where(item => item.IsOpen).ToArray())
+            foreach (var record in records.Where(item => item.IsOpen
+                         || item.CloseReason == "disabled" && item.Waiting.Count > 0).ToArray())
             {
+                // A previous process may have projected the passed evidence
+                // before this closure path existed. Reconcile that durable
+                // verdict even if the card has since left Auto Review.
+                if (record.IsOpen && record.CloseReason is null
+                    && ProbeStateOf(record) == "passed")
+                {
+                    var green = ObserveGreen(record.ProbeTaskKey!, record.ProbeAttemptId!);
+                    if (green is { IsOpen: false }) closed++;
+                    continue;
+                }
                 // The mutation service returns a folder slug, while the card's
                 // stable key survives a lane move. Resolve by key first.
                 var cause = string.IsNullOrWhiteSpace(record.CauseKey)
@@ -488,14 +531,16 @@ public sealed class CauseBreakerService
                 {
                     "probe-green" => CauseBreakerCloseReason.ProbeGreen,
                     "cause-integrated" => CauseBreakerCloseReason.CauseIntegrated,
+                    "disabled" => CauseBreakerCloseReason.Disabled,
                     _ => CauseBreakerPolicy.Close(cause?.State, probeGreen: false),
                 };
                 if (reason == CauseBreakerCloseReason.None) continue;
                 var updated = CloseLocked(records, record, reason, exceptTaskKey: null);
-                if (!updated.IsOpen) closed++;
+                if (record.IsOpen && !updated.IsOpen) closed++;
             }
             var reconciled = ReconcileMarkersLocked(records);
-            if (records.Any(item => item.IsOpen && item.CloseReason is not null) || closed > 0 || reconciled)
+            if (records.Any(item => item.CloseReason is not null && item.Waiting.Count > 0)
+                || closed > 0 || reconciled)
                 Persist(records);
             return closed;
         }
@@ -531,7 +576,7 @@ public sealed class CauseBreakerService
         }
 
         var accounted = records
-            .Where(item => item.IsOpen)
+            .Where(item => item.IsOpen || item.CloseReason == "disabled" && item.Waiting.Count > 0)
             .SelectMany(item => item.Waiting.Select(card => card.TaskKey))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var task in _scanner.ScanAllAutomationJobs().Where(item => item.CauseWait is not null))
@@ -680,7 +725,12 @@ public sealed class CauseBreakerService
         string? exceptTaskKey)
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var closeReason = reason == CauseBreakerCloseReason.CauseIntegrated ? "cause-integrated" : "probe-green";
+        var closeReason = reason switch
+        {
+            CauseBreakerCloseReason.CauseIntegrated => "cause-integrated",
+            CauseBreakerCloseReason.Disabled => "disabled",
+            _ => "probe-green",
+        };
         var stillWaiting = new List<CauseBreakerWaitingCard>();
         foreach (var waiting in record.Waiting)
         {
@@ -726,11 +776,15 @@ public sealed class CauseBreakerService
         }
         var closed = record with
         {
-            State = stillWaiting.Count == 0 ? CauseBreakerStates.Closed : CauseBreakerStates.Open,
-            ClosedAt = stillWaiting.Count == 0 ? now : null,
+            State = stillWaiting.Count == 0 || reason == CauseBreakerCloseReason.Disabled
+                ? CauseBreakerStates.Closed : CauseBreakerStates.Open,
+            ClosedAt = stillWaiting.Count == 0 || reason == CauseBreakerCloseReason.Disabled
+                ? now : null,
             CloseReason = closeReason,
-            ProbeTaskKey = null,
-            ProbeAttemptId = null,
+            ProbeTaskKey = stillWaiting.Count > 0 && reason == CauseBreakerCloseReason.ProbeGreen
+                ? record.ProbeTaskKey : null,
+            ProbeAttemptId = stillWaiting.Count > 0 && reason == CauseBreakerCloseReason.ProbeGreen
+                ? record.ProbeAttemptId : null,
             Observations = stillWaiting.Count == 0 ? [] : record.Observations,
             Waiting = stillWaiting,
         };

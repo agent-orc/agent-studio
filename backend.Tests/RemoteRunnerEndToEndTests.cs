@@ -17,6 +17,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -3559,7 +3560,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Func<DateTime>? authorityNow = null,
         int? remoteClaimFailureBudget = null,
         Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null,
-        ICauseWaitMarkerStore? causeWaitMarkers = null) =>
+        ICauseWaitMarkerStore? causeWaitMarkers = null,
+        TimeProvider? clock = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3592,7 +3594,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     cfg.AddInMemoryCollection(values);
                 });
                 if (writer is not null || summaryOneShot is not null || authorityNow is not null
-                    || causeWaitReleaseFactory is not null || causeWaitMarkers is not null)
+                    || causeWaitReleaseFactory is not null || causeWaitMarkers is not null
+                    || clock is not null)
                 {
                     b.ConfigureTestServices(services =>
                     {
@@ -3602,6 +3605,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                             services.AddSingleton(causeWaitReleaseFactory);
                         if (causeWaitMarkers is not null)
                             services.AddSingleton(causeWaitMarkers);
+                        if (clock is not null)
+                            services.AddSingleton(clock);
                         if (summaryOneShot is not null)
                         {
                             services.AddSingleton(
@@ -6339,8 +6344,9 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
-    public void Cause_breaker_rechecks_pending_review_after_project_is_enabled()
+    public async Task Cause_breaker_disable_endpoint_closes_open_records_before_reenable()
     {
+        var clock = new FakeTimeProvider();
         const string nextTaskKey = "AGT-RUNNER-E2E-NEXT";
         SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
         SeedTask(TaskStates.AutoReview, nextTaskKey, "Pending affected review", "Build and verify.");
@@ -6352,14 +6358,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
         var nextTaskFolder = TaskStorageLayout.JobDir(_watchPath, 0, nextTaskKey);
         Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, nextTaskKey), nextTaskFolder);
-        using var factory = BuildFactory();
+        using var factory = BuildFactory(clock: clock);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: nextTaskKey);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var next = Assert.IsType<TaskInfo>(scanner.FindJob(nextTaskKey, _watchPath));
         Assert.Equal(TaskStates.AutoReview, next.State);
         var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
-        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
         var first = scanner.FindJob(TaskKey, _watchPath)!;
         var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
             StderrTail: "npm ci: command not found");
@@ -6370,14 +6377,21 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(first.ProjectName, next.ProjectName);
         Assert.NotNull(scanner.FindJob(nextTaskKey, _watchPath));
 
-        settings.SetCauseBreaker(ProjectName, false, 3, 2, 24);
+        var disabled = await http.PutAsJsonAsync($"/api/projects/{Uri.EscapeDataString(ProjectName)}/cause-breaker",
+            new { enabled = false, attemptThreshold = 3, cardThreshold = 2, windowHours = 24 });
+        disabled.EnsureSuccessStatusCode();
+        Assert.Empty(breaker.List(openOnly: true));
+        Assert.Equal("disabled", Assert.Single(breaker.List()).CloseReason);
         Assert.DoesNotContain(nextTaskKey, breaker.HoldPendingReviews());
         Assert.Null(CauseWaitMarker.TryRead(nextTaskFolder));
 
-        settings.SetCauseBreaker(ProjectName, true, 3, 2, 24);
+        var enabled = await http.PutAsJsonAsync($"/api/projects/{Uri.EscapeDataString(ProjectName)}/cause-breaker",
+            new { enabled = true, attemptThreshold = 3, cardThreshold = 2, windowHours = 24 });
+        enabled.EnsureSuccessStatusCode();
         Assert.True(breaker.IsEnabled(ProjectName));
-        Assert.Contains(nextTaskKey, breaker.HoldPendingReviews());
-        Assert.NotNull(CauseWaitMarker.TryRead(nextTaskFolder));
+        Assert.Empty(breaker.List(openOnly: true));
+        Assert.DoesNotContain(nextTaskKey, breaker.HoldPendingReviews());
+        Assert.Null(CauseWaitMarker.TryRead(nextTaskFolder));
     }
 
     [Fact]
@@ -6586,6 +6600,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var probe = breaker.RequestProbe(fingerprint.Value)!;
         Assert.Equal(TaskKey, probe.ProbeTaskKey);
         Assert.False(string.IsNullOrWhiteSpace(probe.ProbeAttemptId));
+        Assert.Equal("running", Assert.Single(breaker.List(openOnly: true)).ProbeState);
         Assert.NotEqual(firstReview.AttemptId, probe.ProbeAttemptId);
         Assert.Null(breaker.ObserveGreen(TaskKey, "unrelated-passing-attempt"));
         Assert.True(Assert.Single(breaker.List()).IsOpen);
@@ -6623,9 +6638,179 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var thirdProbe = breaker.RequestProbe(fingerprint.Value)!;
         Assert.NotEqual(secondProbeReview.AttemptId, thirdProbe.ProbeAttemptId);
         Assert.Null(breaker.ObserveGreen(TaskKey, secondProbeReview.AttemptId));
+        var claimedThirdProbe = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var thirdProbeReview = Assert.IsType<ReviewAttemptDto>(claimedThirdProbe.ReviewAttempt);
+        Assert.Equal(thirdProbe.ProbeAttemptId, thirdProbeReview.AttemptId);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(thirdProbeReview.AttemptId, thirdProbeReview.LastFence,
+                thirdProbeReview.AuthorityEpoch, "green-probe"),
+            thirdProbeReview.Subject.ExpectedResultSha, ReviewTerminalOutcome.Pass,
+            null, "probe passed")).Status);
+        Assert.Equal("passed", Assert.Single(breaker.List(openOnly: true)).ProbeState);
         Assert.NotNull(breaker.ObserveGreen(TaskKey, thirdProbe.ProbeAttemptId!));
+        Assert.Null(breaker.ObserveGreen(TaskKey, thirdProbe.ProbeAttemptId!));
         Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
         Assert.False(Assert.Single(breaker.List()).IsOpen);
+    }
+
+    [Fact]
+    public async Task Cause_breaker_report_endpoint_closes_a_passing_probe_even_if_delivery_stalls()
+    {
+        var clock = new FakeTimeProvider();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Probe report", "Build and verify.");
+        Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
+            TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
+        using var factory = BuildFactory(clock: clock);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(task, TaskKey, $"report-rva-{number}", fingerprint,
+                evidence, evidence.StderrTail);
+        var probe = breaker.RequestProbe(fingerprint.Value)!;
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        var listed = await http.GetFromJsonAsync<List<CauseBreakerRecord>>(
+            "/api/cause-breakers?openOnly=true");
+        Assert.Equal("running", Assert.Single(listed!).ProbeState);
+
+        const string executor = "probe-review-worker";
+        const string instance = "probe-review-host:1";
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claim = Assert.IsType<ReviewAttemptDto>(authority.ClaimNextReview(
+            executor, "review-host", instance, 120).ReviewAttempt);
+        Assert.Equal(probe.ProbeAttemptId, claim.AttemptId);
+        var lease = Assert.IsType<AttemptLeaseDto>(claim.Lease);
+        var isolation = authority.GetReviewLeaseIsolation(claim.AttemptId, lease.LeaseId)!;
+        var report = new Contract.ReviewReportRequest(
+            executor, instance, lease.LeaseId, claim.LastFence,
+            "green-breaker-probe", "Pass", null, "Probe passed.",
+            new Contract.ReviewWorkspaceProofDto(claim.Subject.RepositoryId,
+                claim.Subject.ExpectedResultSha, claim.Subject.ExpectedResultSha,
+                new string('a', 40), false, false, new string('c', 64),
+                isolation.ResourceNamespace),
+            new Contract.ReviewEnvironmentDto("review-host", executor, instance,
+                "linux", "x64", "10.0", new Dictionary<string, string>(),
+                new Dictionary<string, string>()),
+            [], [], [new Contract.ReviewVerdictDto("build-tests", "pass", "Verified", "Probe passed.")],
+            claim.AuthorityEpoch);
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{Uri.EscapeDataString(claim.AttemptId)}/report", report);
+        Assert.True(authority.GetReview(claim.AttemptId)?.Outcome == ReviewTerminalOutcome.Pass,
+            $"Report status {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+
+        Assert.Empty(breaker.List(openOnly: true));
+        Assert.Equal("probe-green", Assert.Single(breaker.List()).CloseReason);
+        await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{Uri.EscapeDataString(claim.AttemptId)}/report", report);
+        Assert.Empty(breaker.List(openOnly: true));
+    }
+
+    [Fact]
+    public async Task Cause_breaker_evidence_projection_closes_a_passing_probe()
+    {
+        var clock = new FakeTimeProvider();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Evidence probe", "Build and verify.");
+        using var factory = BuildFactory(clock: clock);
+        var (breaker, task, review) = SettlePassingProbe(factory.Services, "green-evidence");
+        var report = new Contract.ReviewReportRequest(
+            "review-worker", "review-instance", "review-lease", review.LastFence,
+            "green-evidence", "Pass", null, "Probe passed.",
+            new Contract.ReviewWorkspaceProofDto(review.Subject.RepositoryId,
+                review.Subject.ExpectedResultSha, review.TestedResultSha!,
+                new string('a', 40), false, false, "workspace", "namespace"),
+            new Contract.ReviewEnvironmentDto("review-host", "review-worker", "review-instance",
+                "linux", "x64", "10.0", new Dictionary<string, string>(),
+                new Dictionary<string, string>()),
+            [], [], [], review.AuthorityEpoch);
+        RemoteReviewSettlementJournal.Write(task.FolderPath, new RemoteReviewSettlementEntry
+        {
+            AttemptId = review.AttemptId,
+            TaskKey = review.TaskKey,
+            IdempotencyKey = report.IdempotencyKey,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Report = report,
+            ReceivedAtUtc = clock.GetUtcNow().UtcDateTime,
+            EvidenceComplete = true,
+        });
+        var worker = new RemoteReviewEvidenceProjectionWorker(
+            factory.Services.GetRequiredService<RemoteReviewEvidenceProjectionQueue>(),
+            factory.Services.GetRequiredService<TaskScannerService>(),
+            factory.Services.GetRequiredService<AttemptAuthorityService>(),
+            factory.Services.GetRequiredService<RemotePipelineReviewEvidenceProjector>(),
+            NullLogger<RemoteReviewEvidenceProjectionWorker>.Instance, breaker);
+        await worker.ProcessAsync(new RemoteReviewEvidenceProjectionRequest(
+            review.AttemptId, review.TaskKey, review, report,
+            RemoteReviewReportEvidence.EvidenceFileName(review.AttemptId),
+            RemoteReviewSettlementJournal.Hash(report),
+            clock.GetUtcNow().UtcDateTime, clock.GetUtcNow().UtcDateTime), CancellationToken.None);
+
+        Assert.Empty(breaker.List(openOnly: true));
+        Assert.Equal("probe-green", Assert.Single(breaker.List()).CloseReason);
+    }
+
+    [Fact]
+    public async Task Cause_breaker_delivery_resume_closes_a_passing_probe_before_delivery_progress()
+    {
+        var clock = new FakeTimeProvider();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Resume probe", "Build and verify.");
+        using var factory = BuildFactory(clock: clock);
+        var (breaker, task, _) = SettlePassingProbe(factory.Services, "green-resume");
+
+        await factory.Services.GetRequiredService<AutoReviewDeliveryResumeService>()
+            .ResumeAsync(task, "probe-test");
+
+        Assert.Empty(breaker.List(openOnly: true));
+        Assert.Equal("probe-green", Assert.Single(breaker.List()).CloseReason);
+    }
+
+    [Fact]
+    public void Cause_breaker_sweep_reconciles_an_already_passed_probe()
+    {
+        var clock = new FakeTimeProvider();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Previously passed probe", "Build and verify.");
+        using var factory = BuildFactory(clock: clock);
+        var (breaker, _, _) = SettlePassingProbe(factory.Services, "green-before-restart");
+
+        Assert.Equal(1, breaker.Sweep());
+        Assert.Empty(breaker.List(openOnly: true));
+        Assert.Equal("probe-green", Assert.Single(breaker.List()).CloseReason);
+        Assert.Equal(0, breaker.Sweep());
+    }
+
+    private (CauseBreakerService Breaker, TaskInfo Task, ReviewAttemptDto Review) SettlePassingProbe(
+        IServiceProvider services, string idempotencyKey)
+    {
+        SeedReviewAttempt(services, includeResultEnvelope: true);
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var authority = services.GetRequiredService<AttemptAuthorityService>();
+        var breaker = services.GetRequiredService<CauseBreakerService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(task, TaskKey, $"settlement-rva-{number}", fingerprint,
+                evidence, evidence.StderrTail);
+        var probe = breaker.RequestProbe(fingerprint.Value)!;
+        var claimed = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var review = Assert.IsType<ReviewAttemptDto>(claimed.ReviewAttempt);
+        Assert.Equal(probe.ProbeAttemptId, review.AttemptId);
+        var settled = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(review.AttemptId, review.LastFence,
+                review.AuthorityEpoch, idempotencyKey),
+            review.Subject.ExpectedResultSha, ReviewTerminalOutcome.Pass, null, "Probe passed."));
+        Assert.Equal(AttemptWriteStatus.Accepted, settled.Status);
+        Assert.Equal("passed", Assert.Single(breaker.List(openOnly: true)).ProbeState);
+        return (breaker, task, settled.ReviewAttempt!);
     }
 
     [Fact]

@@ -598,6 +598,9 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         try
         {
             var resumed = await _deliveryResume.ResumeAsync(info, "post-processing-deferral", ct);
+            if (resumed.Reason == "delivery-resume-exhausted")
+                return PostProcessingCardResult.Blocked(
+                    "delivery-resume-exhausted: " + (resumed.Detail ?? "no progress after five tries"));
             if (!resumed.Resumed) return outcome;
 
             // The pass did reach a terminal decision for this card, so its

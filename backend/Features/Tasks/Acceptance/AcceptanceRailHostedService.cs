@@ -628,6 +628,9 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
         var moved = _scanner.FindJob(job.Id, job.WatchPath);
         if (moved is null) return false;
+        if (previousSettlement is not null)
+            AgentStudio.Runner.AutoReviewResumeRetryStore.Clear(
+                moved.FolderPath, previousSettlement.ReviewAttemptId);
         AppendAction(moved, AcceptanceRailReceipts.InfrastructureRequeueAction, reason, retryNumber);
         return true;
     }
