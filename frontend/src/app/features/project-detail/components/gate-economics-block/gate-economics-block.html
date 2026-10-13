@@ -1,0 +1,49 @@
+<section class="ge" data-testid="gate-economics">
+  <header class="ge__head">
+    <div><h2>Gate economics and integration lane</h2><p>Shared host capacity and delivery flow across projects</p></div>
+    <div class="ge__windows" aria-label="Measurement window">
+      <button type="button" [attr.aria-pressed]="window() === '7d'" (click)="setWindow('7d')">7 days</button>
+      <button type="button" [attr.aria-pressed]="window() === '30d'" (click)="setWindow('30d')">30 days</button>
+    </div>
+  </header>
+  @if (data(); as projection) {
+    <div class="ge__scroll"><table>
+      <thead><tr><th scope="col">Project</th><th scope="col">Gated merges</th><th scope="col">Gate median / p90</th><th scope="col">Queue p90</th><th scope="col">Reuse exact / disjoint</th><th scope="col">Full suite</th><th scope="col">Same SHA retest</th><th scope="col">Nightly guard</th><th scope="col">Lag p50 / p95</th><th scope="col">Oldest waiting</th></tr></thead>
+      <tbody>
+        @for (row of projection.rows; track row.project) {
+          <tr [attr.data-project]="row.project" [attr.data-testid]="row.project === 'All projects' ? 'gate-economics-all' : 'gate-economics-project'">
+            <th scope="row"><span class="ge__project">@if (row.project !== 'All projects') { <i class="ge__mark" [style.background]="row.projectColor || color(row.project)" aria-hidden="true"></i><span class="ge__code">{{ row.projectShortCode || '?' }}</span> }<span>{{ row.project }}</span></span></th>
+            <td>{{ row.gatedMerges }}</td>
+            <td>{{ format(row.gateMinutesMedian, ' min') }} / {{ format(row.gateMinutesP90, ' min') }}</td>
+            <td>{{ format(row.queueWaitP90Ms == null ? null : row.queueWaitP90Ms / 60000, ' min') }}</td>
+            <td>{{ percent(row.exactReuseRate) }} / {{ percent(row.disjointReuseRate) }}</td>
+            <td>{{ percent(row.fullSuiteShare) }}</td><td>{{ percent(row.sameShaRetestRate) }}</td>
+            <td>{{ row.lastNightlyGuard || 'Not available' }}</td>
+            <td>{{ format(row.deliveryLagP50Minutes, ' min') }} / {{ format(row.deliveryLagP95Minutes, ' min') }}</td>
+            <td>{{ format(row.oldestWaitingMinutes, ' min') }}</td>
+          </tr>
+        }
+      </tbody>
+    </table></div>
+    <div class="ge__subhead">Integration lane · last 24 hours</div>
+    <div class="ge__scroll"><table data-testid="integration-lane-metrics">
+      <thead><tr><th scope="col">Project</th><th scope="col">Queue / prepared / gating / ready</th><th scope="col">Preparation p50</th><th scope="col">Token wait p50 / p95</th><th scope="col">Merge lock p95</th><th scope="col">Publication lock p95</th><th scope="col">Gate duration p50 / p95</th><th scope="col">Gate green / red / cancelled</th><th scope="col">Ejections conflict / agent round / red / error</th><th scope="col">Arrivals / merges per hour</th></tr></thead>
+      <tbody>
+        @for (row of projection.rows; track row.project) {
+          <tr [attr.data-project]="row.project">
+            <th scope="row"><span class="ge__project">@if (row.project !== 'All projects') { <i class="ge__mark" [style.background]="row.projectColor || color(row.project)" aria-hidden="true"></i><span class="ge__code">{{ row.projectShortCode || '?' }}</span> }<span>{{ row.project }}</span></span></th>
+            <td>{{ row.queued }} / {{ row.prepared }} / {{ row.gating }} / {{ row.readyToPublish }}</td>
+            <td>{{ format(row.preparationP50Minutes, ' min') }}</td>
+            <td>{{ format(row.gateTokenWaitP50Ms == null ? null : row.gateTokenWaitP50Ms / 60000, ' min') }} / {{ format(row.gateTokenWaitP95Ms == null ? null : row.gateTokenWaitP95Ms / 60000, ' min') }} @if (row.gateHoldingProject) { · held by {{ row.gateHoldingProject }} }</td>
+            <td>{{ format(row.mergeLockWaitP95Ms == null ? null : row.mergeLockWaitP95Ms / 60000, ' min') }}</td>
+            <td>{{ format(row.publicationLockWaitP95Ms == null ? null : row.publicationLockWaitP95Ms / 60000, ' min') }}</td>
+            <td>{{ format(row.laneGateDurationP50Minutes, ' min') }} / {{ format(row.laneGateDurationP95Minutes, ' min') }}</td>
+            <td>{{ row.laneGateGreen }} / {{ row.laneGateRed }} / {{ row.laneGateCancelled }}</td>
+            <td>{{ row.ejectedConflict }} / {{ row.ejectedAgentRound }} / {{ row.ejectedRed }} / {{ row.ejectedError }}</td>
+            <td>{{ format(row.arrivalsPerHour, '/h') }} / {{ format(row.mergesPerHour, '/h') }}</td>
+          </tr>
+        }
+      </tbody>
+    </table></div>
+  } @else { <p class="ge__empty">Loading gate measurements…</p> }
+</section>

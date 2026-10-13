@@ -279,7 +279,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
 
             completion = new TaskCompletionSource<MergeIntoIntegrationResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
-            sequence = Interlocked.Increment(ref _sequence);
+            sequence = NextSequence();
             _deliveryReplays[deliveryKey] = new DeliveryReplay(
                 sequence,
                 completion,
@@ -301,6 +301,11 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             }
         }
 
+        var reenter = discardCompletedReplay && IntegrationLaneEvents.Read(request.JobFolderPath)
+            .Any(e => e.Kind == "ejected" && e.Outcome is ("AgentRoundRequired" or "Conflict"));
+        IntegrationLaneEvents.Append(request.JobFolderPath, request.Project, request.JobId,
+            reenter ? "agent-round-re-entry" : "enqueued",
+            sequence: sequence, deliveredAtUtc: request.DeliveredAtUtc);
         if (startDrain) _ = DrainProjectAsync(request.Project, projectQueue);
         return completion.Task;
     }
@@ -352,6 +357,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     delivery.Request.JobId,
                     delivery.Sequence,
                     delivery.Request.DeliveredAtUtc);
+                IntegrationLaneEvents.Append(delivery.Request.JobFolderPath,
+                    delivery.Request.Project, delivery.Request.JobId, "dequeued",
+                    sequence: delivery.Sequence);
                 var result = await _integrate(delivery.Request).ConfigureAwait(false);
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
@@ -386,6 +394,12 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         continuation.Started,
                         continuation.Reason);
                 }
+                IntegrationLaneEvents.Append(delivery.Request.JobFolderPath,
+                    delivery.Request.Project, delivery.Request.JobId,
+                    result.Outcome.IsSuccessfulIntegration() ? "ready-to-publish" : "ejected",
+                    sequence: delivery.Sequence, outcome: result.Outcome.ToString(),
+                    reason: result.Error,
+                    receipt: result.Outcome.IsSuccessfulIntegration() ? result.MergedSha : null);
                 CompleteDelivery(delivery, result);
             }
             catch (Exception ex)
@@ -404,6 +418,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 CompleteDelivery(delivery, MergeIntoIntegrationResult.Failed(
                     AcceptedIntegrationFailureCodes.IntegrationError,
                     ex.Message));
+                IntegrationLaneEvents.Append(delivery.Request.JobFolderPath,
+                    delivery.Request.Project, delivery.Request.JobId, "ejected",
+                    sequence: delivery.Sequence, outcome: "error", reason: ex.Message);
             }
         }
     }
@@ -449,6 +466,17 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.ReviewAttemptId ?? string.Empty,
             request.DeliveredAtUtc.ToUniversalTime().Ticks.ToString(
                 System.Globalization.CultureInfo.InvariantCulture));
+
+    private long NextSequence()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _sequence);
+            var next = Math.Max(DateTime.UtcNow.Ticks, current + 1);
+            if (Interlocked.CompareExchange(ref _sequence, next, current) == current)
+                return next;
+        }
+    }
 
     private sealed class ProjectQueue
     {

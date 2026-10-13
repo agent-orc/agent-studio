@@ -2469,6 +2469,11 @@ export class TaskService {
     );
   }
 
+  getGateEconomics(window: '7d' | '30d' = '7d') {
+    return this.http.get<import('../features/task-pipeline/models/gate-economics.model').GateEconomicsResponse>(
+      `${this.baseUrl}/gate-economics?window=${window}`);
+  }
+
   /** AGT-3011: operator sweep health, per-card round budget and reasons. Read-only. */
   getProjectOperatorSweeps(projectName: string) {
     return this.http.get<OperatorSweepProjection>(

@@ -209,6 +209,13 @@ public sealed class PipelineHealthDetector
         }
     }
 
+    public string? HoldingProject()
+    {
+        lock (_sync)
+            return _activeGates.Values.OrderBy(item => item.AcquiredAtUtc)
+                .FirstOrDefault()?.Project;
+    }
+
     public static PipelineLaneDrainHealth MeasureLane(
         string lane,
         IReadOnlyList<DateTime> queuedAtUtc,
@@ -285,6 +292,8 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
     }
 
     public void GateAcquired(PipelineGateContext gate) => _detector.GateAcquired(gate);
+
+    public string? HoldingProject() => _detector.HoldingProject();
 
     public void GateCompleted(PipelineGateCompletion completion)
     {

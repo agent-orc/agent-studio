@@ -45,6 +45,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly RefMutationLeaseService? _refMutationLeases;
     private readonly BatchIntegrationReservationService? _batchReservations;
+    private readonly PipelineHealthService? _pipelineHealth;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -66,6 +67,8 @@ public sealed partial class MergeIntoDevelopRunner
     /// <summary>Error prefix of an integration refused by a successor review generation.</summary>
     public const string SupersededReviewGenerationError = "superseded-review-generation";
     private int _mergeGateUsers;
+    private readonly AsyncLocal<long?> _mergeLockWaitMs = new();
+    private string? _mergeGateHoldingProject;
 
     public MergeIntoDevelopRunner(
         GitService git,
@@ -88,7 +91,8 @@ public sealed partial class MergeIntoDevelopRunner
         IConfiguration? configuration = null,
         AgentStudio.Tasks.TimelineLog? timeline = null,
         RefMutationLeaseService? refMutationLeases = null,
-        BatchIntegrationReservationService? batchReservations = null)
+        BatchIntegrationReservationService? batchReservations = null,
+        PipelineHealthService? pipelineHealth = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -111,6 +115,7 @@ public sealed partial class MergeIntoDevelopRunner
         _timeline = timeline;
         _refMutationLeases = refMutationLeases;
         _batchReservations = batchReservations;
+        _pipelineHealth = pipelineHealth;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
@@ -182,7 +187,13 @@ public sealed partial class MergeIntoDevelopRunner
                 : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
+            var mergeWait = System.Diagnostics.Stopwatch.StartNew();
+            var holdingProject = Volatile.Read(ref _mergeGateHoldingProject);
             await _mergeGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            _mergeLockWaitMs.Value = mergeWait.ElapsedMilliseconds;
+            Volatile.Write(ref _mergeGateHoldingProject, project);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "merge-lock-acquired",
+                mergeLockWaitMs: mergeWait.ElapsedMilliseconds, holdingProject: holdingProject);
             try
             {
                 return await RunSerializedAsync(
@@ -191,6 +202,8 @@ public sealed partial class MergeIntoDevelopRunner
             }
             finally
             {
+                _mergeLockWaitMs.Value = null;
+                Volatile.Write(ref _mergeGateHoldingProject, null);
                 _mergeGate.Release();
             }
         }
@@ -957,7 +970,8 @@ public sealed partial class MergeIntoDevelopRunner
                 FailureKind = BuildTestGateFailureKind.MissingSource,
             };
             IntegrationGateReceipts.Record(
-                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, missingAnchor, _timeline);
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, missingAnchor, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
             IntegrationGateJournal.Clear(jobFolderPath);
             return (
                 MergeIntoIntegrationResult.Failed(
@@ -996,11 +1010,14 @@ public sealed partial class MergeIntoDevelopRunner
         else
         {
             var (preDevelopTimeout, preDevelopTimeoutSource) = ResolveGateTimeout(project, _preDevelopTimeout);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-requested",
+                level: reuse.Reused ? "exact" : "full");
             gate = await _preDevelopBuildGate.RunAsync(
                 new BuildTestGateRequest(repoRoot, gatedSha, "merge-into-develop-build-gate")
                 {
                     Project = project,
                     JobId = jobId,
+                    WatchPath = repoRoot,
                     Lane = TaskStates.Completed,
                     TestExecution = TestExecutionFor(project),
                     JobFolderPath = jobFolderPath,
@@ -1008,6 +1025,11 @@ public sealed partial class MergeIntoDevelopRunner
                     TimeoutBudgetSource = preDevelopTimeoutSource,
                     InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                     CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
+                    OnMachineGateWaiting = () => IntegrationLaneEvents.Append(
+                        jobFolderPath, project, jobId, "gate-token-waiting",
+                        holdingProject: _pipelineHealth?.HoldingProject()),
+                    OnMachineGateAcquired = () => IntegrationLaneEvents.Append(
+                        jobFolderPath, project, jobId, "gate-token-acquired"),
                 },
                 changedPaths,
                 profile,
@@ -1019,7 +1041,13 @@ public sealed partial class MergeIntoDevelopRunner
                 reuse.Reused).ConfigureAwait(false);
         }
         IntegrationGateReceipts.Record(
-            jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse);
+            jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse,
+            _mergeLockWaitMs.Value);
+        IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+            level: reuse.Reused ? "exact" : "full", durationMs: gate.DurationMs,
+            queueWaitMs: gate.GateQueueWaitMs, outcome: gate.Verdict.ToString(),
+            reuseToken: reuse.Token, reason: reuse.Reason,
+            collisionDetected: gate.GateCollisionDetected);
 
         // A verdict exists, in either direction: this process is no longer the
         // only thing standing between the branch and an un-gated merge.
@@ -1603,6 +1631,7 @@ public sealed partial class MergeIntoDevelopRunner
                 ReviewSubjectStore.Read(jobFolderPath))
             ? null
             : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
+        var publicationWait = System.Diagnostics.Stopwatch.StartNew();
         await _pushGate.WaitAsync(ct);
         try
         {
@@ -1613,6 +1642,8 @@ public sealed partial class MergeIntoDevelopRunner
                 ? null
                 : await _refMutationLeases.AcquireAsync(
                     project, repoRoot, integrationBranch, ct).ConfigureAwait(false);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "publication-lock-acquired",
+                publicationLockWaitMs: publicationWait.ElapsedMilliseconds);
             if (!string.IsNullOrWhiteSpace(repoRoot)
                 && IsReleaseBranch(integrationBranch)
                 && HasDevelopLine(repoRoot))
@@ -1666,7 +1697,11 @@ public sealed partial class MergeIntoDevelopRunner
                 approvedSha,
                 ct);
             if (pushed.Success && pushed.Status is ("pushed" or "already-remote" or "no-remote"))
+            {
                 _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
+                IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "published",
+                    outcome: pushed.Status, receipt: pushed.Sha);
+            }
             return pushed;
         }
         finally

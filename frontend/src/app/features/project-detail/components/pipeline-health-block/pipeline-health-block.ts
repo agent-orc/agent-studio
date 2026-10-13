@@ -3,6 +3,7 @@ import { TaskService } from '../../../../services/task.service';
 import { laneName } from '../../../../models/lane-presentation';
 import type { PipelineHealthAlert, PipelineHealthSnapshot, PipelineLaneDrainHealth } from '../../../task-pipeline';
 import { OperatorSweepsBlockComponent } from '../operator-sweeps-block/operator-sweeps-block';
+import type { GateEconomicsRow } from '../../../task-pipeline/models/gate-economics.model';
 
 @Component({
   selector: 'app-pipeline-health-block',
@@ -15,6 +16,7 @@ import { OperatorSweepsBlockComponent } from '../operator-sweeps-block/operator-
 export class PipelineHealthBlockComponent implements OnDestroy {
   readonly projectName = input.required<string>();
   readonly health = signal<PipelineHealthSnapshot | null>(null);
+  readonly economics = signal<GateEconomicsRow | null>(null);
   /** Workspace repositories whose evidence flush keeps failing (AGT-3000). */
   readonly evidenceFlushStalls = computed<PipelineHealthAlert[]>(() =>
     (this.health()?.alerts ?? []).filter(alert => alert.kind === 'evidence-flush-stalled'));
@@ -47,5 +49,16 @@ export class PipelineHealthBlockComponent implements OnDestroy {
       next: snapshot => this.health.set(snapshot),
       error: () => { /* additive signal: keep the last known snapshot */ },
     });
+    this.tasks.getGateEconomics().subscribe({
+      next: response => {
+        if (this.projectName() === project)
+          this.economics.set(response.rows.find(row => row.project === project) ?? null);
+      },
+      error: () => { /* Preserve the last complete projection. */ },
+    });
+  }
+
+  metric(value: number | null, unit = ''): string {
+    return value == null ? 'Unknown' : `${value.toLocaleString('en-US', { maximumFractionDigits: 1 })}${unit}`;
   }
 }

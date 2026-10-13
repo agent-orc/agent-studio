@@ -1474,7 +1474,7 @@ public sealed class BatchGatePilotService
             run.BatchId, run.BatchRunId, result.TestedSha ?? run.CandidateSha,
             result.Verdict.ToString(), Environment.MachineName, started,
             _time.GetUtcNow(), result.GateQueueWaitMs, overloadMinutes,
-            run.EvidencePath));
+            run.EvidencePath, result.DurationMs));
         return result;
     }
 
