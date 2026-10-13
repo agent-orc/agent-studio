@@ -149,7 +149,7 @@ public sealed class TaskListProjectFilterEndpointTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory() =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) =>

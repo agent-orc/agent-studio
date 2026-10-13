@@ -221,7 +221,7 @@ public sealed class PromptAdminEndpointsTests : IDisposable
 
     private WebApplicationFactory<Program> CreateFactory()
     {
-        return new WebApplicationFactory<Program>()
+        return new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");

@@ -67,7 +67,7 @@ public sealed class BoardConditionalReadTests : IDisposable
     /// <c>MergeEndpointsIntegrationTests</c> does, removes that coupling.
     /// </summary>
     private WebApplicationFactory<Program> BuildFactory() =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        new TestHostFactory().WithWebHostBuilder(b =>
         {
             b.UseEnvironment("Test");
             b.ConfigureAppConfiguration((_, cfg) =>

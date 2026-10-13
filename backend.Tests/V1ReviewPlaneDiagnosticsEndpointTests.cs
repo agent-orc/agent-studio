@@ -827,7 +827,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
     private WebApplicationFactory<Program> BuildFactory(
         string? runnerPrincipalId = null,
         IReadOnlyDictionary<string, string?>? extraConfiguration = null) =>
-        new WebApplicationFactory<Program>()
+        new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
