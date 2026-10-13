@@ -6,7 +6,7 @@ namespace AgentStudio.Tokens;
 /// and the four token counters match; each earlier entry absorbs at most one
 /// later twin. The result is ordered by timestamp.
 /// </summary>
-internal static class TokenLedgerMerge
+public static class TokenLedgerMerge
 {
     public static IReadOnlyList<OrchestratorLogEntry> WithoutDuplicates(
         IReadOnlyList<OrchestratorLogEntry> historical,
