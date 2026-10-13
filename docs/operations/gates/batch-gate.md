@@ -7,6 +7,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 
 ## Delivered
 
+- Pending continuation intents and cards already queued in Progress exclude the
+  old delivery from batch planning. A review is eligible only while its subject
+  SHA matches the current run's immutable delivery. The same checks apply to
+  waiting cards and upcoming reviews before delivery diff reads.
+  Before a formed batch starts, an affected member retires the immutable
+  manifest; its audit state records each removed task and reason. Remaining
+  members return to planning, and a batch below the minimum size dissolves.
+  A newly passed review restores eligibility. Running batches retain the existing
+  supersession, StaleBase, and abandon behavior.
 - Code scope and look-ahead settings are validated per project. Queued review
   attempts are replanned against their immutable result refs in the background
   when settings change. Claims may proceed while selection is computed.

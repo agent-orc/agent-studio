@@ -481,16 +481,16 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public void Snapshot_sends_a_card_without_a_computable_diff_to_the_per_task_gate()
     {
-        using var factory = BuildFactory();
+        using var factory = BuildFactory(authorityOnTestClock: true);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         SeedMember(factory, "DOC-MISSING-RESULT", "docs/missing.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var seeded = Assert.Single(store.ListPending());
-        var missingSha = string.Concat(Enumerable.Repeat("dead", 10));
-        var missing = seeded with { Subject = seeded.Subject with { ResultSha = missingSha } };
+        var missing = seeded with { RepositoryPath = Path.Combine(_workspace, "unavailable-repository") };
         var log = new CapturingLog();
         var builder = Builder(factory, log);
 
@@ -502,7 +502,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.True(card.Risk >= .55, $"Risk {card.Risk} is below the balanced limit.");
         var entry = Assert.Single(log.Entries, entry =>
             entry.Contains("batch-gate-diff-unavailable", StringComparison.Ordinal));
-        Assert.Contains($"task={seeded.Subject.TaskKey} sha={missingSha}", entry);
+        Assert.Contains($"task={seeded.Subject.TaskKey} sha={seeded.Subject.ResultSha}", entry);
         Assert.Equal(1, builder.DiffReadCount);
     }
 
@@ -1883,13 +1883,244 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             .ListPending()).Subject.TaskKey);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Snapshot_excludes_pending_continuations_before_reading_the_delivery_diff()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var waiting = SeedMember(factory, "DOC-INTENT-WAITING", "docs/waiting.md");
+        var upcoming = SeedMember(factory, "DOC-INTENT-UPCOMING", "docs/upcoming.md",
+            settleReview: false);
+        SaveContinuation(factory, waiting);
+        SaveContinuation(factory, upcoming);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var builder = Builder(factory);
+
+        var snapshot = builder.Build(ProjectName, "develop", store.ListPending(),
+            new BatchGateFormationOptions(), _clock);
+
+        Assert.Empty(snapshot.Waiting);
+        Assert.Empty(snapshot.Upcoming);
+        Assert.Equal(0, builder.DiffReadCount);
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Snapshot_excludes_a_superseded_review_subject(bool settledReview)
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-SUBJECT", "docs/subject.md",
+            settleReview: settledReview);
+        ReplaceDelivery(factory, member);
+        var builder = Builder(factory);
+
+        var snapshot = builder.Build(ProjectName, "develop",
+            factory.Services.GetRequiredService<BatchGateStore>().ListPending(),
+            Settings(factory), _clock);
+
+        Assert.Empty(snapshot.Waiting);
+        Assert.Empty(snapshot.Upcoming);
+        Assert.Equal(0, builder.DiffReadCount);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Snapshot_excludes_the_old_delivery_when_a_continuation_is_queued_in_progress()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-PROGRESS", "docs/progress.md");
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var task = scanner.FindJob(member.Key, _watchPath)!;
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, member.Key);
+        Directory.Move(task.FolderPath, progressFolder);
+        var taskPath = Path.Combine(progressFolder, "task.json");
+        var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(taskPath))!;
+        document["state"] = TaskStates.Progress;
+        File.WriteAllText(taskPath, document.ToJsonString());
+        scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Progress, scanner.FindJob(member.Key, _watchPath)!.State);
+
+        var snapshot = BuildSnapshot(factory);
+
+        Assert.Empty(snapshot.Waiting);
+        Assert.DoesNotContain(snapshot.Upcoming, card => card.Stage == "review");
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(2, false)]
+    [InlineData(3, false)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    public void Formed_batch_removal_replans_survivors_or_dissolves_below_minimum(
+        int size, bool supersededReview)
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: size);
+        var members = Enumerable.Range(0, size).Select(index =>
+            SeedMember(factory, $"DOC-REPLAN-{index}", $"docs/replan-{index}.md")).ToArray();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var manifest = ClosePendingBatch(factory);
+        if (supersededReview) ReplaceDelivery(factory, members[0]);
+        else SaveContinuation(factory, members[0]);
+
+        factory.Services.GetRequiredService<BatchGatePilotService>().ReconcileFormedBatches();
+
+        var retired = AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(_clock, retired.RecordedAtUtc);
+        Assert.Contains(members[0].Key + ": " + (supersededReview
+            ? "review-subject-mismatch" : "pending-continue-intent"), retired.Reason);
+        Assert.Empty(store.ListRecoverableManifests());
+        Assert.Empty(store.ListRuns(manifest.BatchId));
+        Assert.All(members, member => Assert.Null(Ownership(member.Key)?.BatchId));
+        var snapshot = BuildSnapshot(factory) with { CloseNow = true };
+        Assert.Equal(size - 1, snapshot.Waiting.Count);
+        var plan = BatchGateLookAheadPlanner.Plan(snapshot);
+        Assert.Equal(size == 2 ? "per-task" : "close", plan.Decision);
+        Assert.Equal(members.Skip(1).Select(member => member.Key), plan.ProposedMembers);
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Running_batch_is_untouched_by_eligibility_reconciliation(bool supersededReview)
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-RUNNING-A", "docs/running-a.md");
+        SeedMember(factory, "DOC-RUNNING-B", "docs/running-b.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var manifest = ClosePendingBatch(factory);
+        var running = new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Running, member.ResultSha, 1, _clock);
+        store.AppendState(running);
+        if (supersededReview) ReplaceDelivery(factory, member);
+        else SaveContinuation(factory, member);
+
+        factory.Services.GetRequiredService<BatchGatePilotService>().ReconcileFormedBatches();
+
+        Assert.Equal(running, store.LatestState(manifest.BatchId));
+        Assert.Equal(manifest.BatchId, Ownership(member.Key)?.BatchId);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Tick_replans_a_formed_batch_before_starting_its_gate()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var removed = SeedMember(factory, "DOC-TICK-REMOVE", "docs/remove.md");
+        SeedMember(factory, "DOC-TICK-A", "docs/a.md");
+        SeedMember(factory, "DOC-TICK-B", "docs/b.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var manifest = ClosePendingBatch(factory);
+        SaveContinuation(factory, removed);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.RequestCloseNow(ProjectName);
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Empty(store.ListRuns(manifest.BatchId));
+        var successor = Assert.Single(store.ListManifests(), item => item.BatchId != manifest.BatchId);
+        Assert.DoesNotContain(successor.Members, member => member.TaskKey == removed.Key);
+        Assert.Equal(2, successor.Members.Count);
+        AssertPhase(store, successor.BatchId, BatchPhase.Published);
+        AssertLane(removed.Key, TaskStates.AutoReview);
+    }
+
+    private BatchGateManifest ClosePendingBatch(WebApplicationFactory<Program> factory)
+    {
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = store.ListPending();
+        var first = pending[0].Subject;
+        var scope = new BatchGateScope(first.Project, first.Repository, first.IntegrationBranch,
+            first.GateProfile, first.GateProfileDigest, first.PlatformVersion);
+        var formed = BatchGatePolicy.Close(pending.Select(item => item.Subject), scope,
+            RemoteTip(), Settings(factory), pending.Select(item => item.Subject.TaskKey).ToArray(), _clock);
+        var manifest = Assert.IsType<BatchGateManifest>(formed.Manifest);
+        store.CloseManifest(manifest);
+        foreach (var item in pending)
+            BatchGateOwnershipStore.Write(item.JobFolderPath,
+                new BatchGateOwnership(item.ReviewAttemptId, item.Subject, manifest.BatchId));
+        return manifest;
+    }
+
+    private static void ReplaceDelivery(WebApplicationFactory<Program> factory, SeededMember member)
+    {
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(member.Key, RepositoryId, null, "coding-runner",
+            "coding-host", 600, "replacement-" + member.Key).RunAttempt!;
+        var sha = new string('b', 40);
+        var settled = authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch,
+                "replacement-settle-" + member.Key),
+            Outcome = "done", ResultSha = sha,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope(RepositoryId, run.AttemptId,
+                member.ResultSha, sha, "refs/heads/agent-studio/results/replacement-" + member.Key,
+                null, new string('a', 64)),
+        });
+        Assert.True(settled.Accepted, settled.Message);
+    }
+
+    private void SaveContinuation(WebApplicationFactory<Program> factory, SeededMember member)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var task = scanner.FindJob(member.Key, _watchPath)!;
+        File.WriteAllText(Path.Combine(task.FolderPath, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = "Fix the review findings.", SavedAt = _clock.UtcDateTime,
+            }));
+        scanner.InvalidateCache();
+        Assert.NotNull(scanner.FindJob(member.Key, _watchPath)!.PendingIntent);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void New_delivery_returns_to_planning_after_its_review_passes()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var old = SeedMember(factory, "DOC-RETURN", "docs/old.md");
+        SaveContinuation(factory, old);
+        Assert.Empty(BuildSnapshot(factory).Waiting);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        File.Delete(Path.Combine(scanner.FindJob(old.Key, _watchPath)!.FolderPath, "pending-intent.json"));
+        var replacement = SeedMember(factory, old.Key, "docs/new.md",
+            settleReview: false, parentSha: old.ResultSha, generation: "-replacement");
+        Assert.Empty(BuildSnapshot(factory).Waiting);
+        var passed = Settle(factory, replacement, ReviewTerminalOutcome.Pass);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(
+            scanner.FindJob(old.Key, _watchPath)!, passed,
+            authority.GetRun(replacement.RunAttemptId)!, _clock);
+
+        Assert.Equal(old.Key, Assert.Single(BuildSnapshot(factory).Waiting).TaskKey);
+    }
+
     private sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);
 
     private SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,
         string changedFile, bool settleReview = true, string? parentSha = null,
         bool deferredPlan = true, string? taskId = null,
         Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
-        string? mergeFrom = null)
+        string? mergeFrom = null, string generation = "")
     {
         var baseSha = Git(_repo, "rev-parse", "origin/develop");
         var resultRef = "refs/heads/agent-studio/results/" + key;
@@ -1908,11 +2139,11 @@ public sealed class BatchGatePilotServiceTests : IDisposable
 
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var run = authority.AcquireRun(key, RepositoryId, null, "coding-runner", "coding-host",
-            600, "acquire-" + key).RunAttempt!;
+            600, "acquire-" + key + generation).RunAttempt!;
         var settledRun = authority.SettleRun(new SettleRunAttemptRequest
         {
             Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch,
-                "settle-" + key),
+                "settle-" + key + generation),
             Outcome = "done",
             ResultSha = resultSha,
             ResultEnvelope = new Contract.ImmutableResultEnvelope(RepositoryId, run.AttemptId,
@@ -1955,7 +2186,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             BuildTestDeferredToBatch: deferredPlan);
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             key, RepositoryId, resultSha, run.AttemptId, "requirements", "policy", [],
-            "create-" + key, ResultRef: resultRef, Plan: plan));
+            "create-" + key + generation, ResultRef: resultRef, Plan: plan));
         Assert.True(created.Accepted, created.Message);
         var reviewId = created.ReviewAttempt!.AttemptId;
         factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();

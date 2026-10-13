@@ -52,7 +52,7 @@ public sealed class BatchGateSnapshotBuilder
             .SelectMany(task => task!.Tags)
             .Where(tag => tag.StartsWith("area:", StringComparison.OrdinalIgnoreCase))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var ready = waiting.Select(item =>
+        var ready = waiting.Where(item => PendingExclusion(item) is null).Select(item =>
         {
             var task = _scanner.FindJob(item.Subject.TaskKey, item.WatchPath);
             var diff = Diff(item.RepositoryPath, branch, item.Subject.TaskKey,
@@ -80,7 +80,8 @@ public sealed class BatchGateSnapshotBuilder
                 var currentRun = _authority.GetTaskProjection(review.TaskKey).CurrentRunAttempt;
                 if (!BatchPlanUpcomingEligibility.IsCandidate(review.Subject.Plan,
                         string.Equals(currentRun?.AttemptId, review.SourceRunAttemptId,
-                            StringComparison.Ordinal)))
+                            StringComparison.Ordinal), ContinuationPending(task),
+                        review.Subject.ExpectedResultSha, currentRun?.ResultEnvelope?.ResultSha))
                     return null;
                 var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
                 var diff = Diff(repo, branch, review.TaskKey,
@@ -93,7 +94,7 @@ public sealed class BatchGateSnapshotBuilder
             }).Where(item => item is not null).Cast<BatchPlanUpcoming>();
         var coding = _scanner.ScanAllJobsWithArchive()
             .Where(task => task.ProjectName == project && task.State == TaskStates.Progress
-                && !waitingKeys.Contains(task.Id))
+                && task.PendingIntent is null && !waitingKeys.Contains(task.Id))
             .Select(task => new BatchPlanUpcoming(task.Id, "coding", null,
                 task.Tags.Any(redAreaTags.Contains) ? .25 : .15,
                 task.Tags.Where(tag => tag.StartsWith("area:", StringComparison.OrdinalIgnoreCase))
@@ -103,6 +104,22 @@ public sealed class BatchGateSnapshotBuilder
             options.LookAheadMinutes, options.EffectiveUrgentTags, options.RiskPolicy,
             options.Overlap, closeNow, idleGateHost);
     }
+
+    internal string? PendingExclusion(BatchGatePendingRecord pending)
+    {
+        var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
+        var projection = _authority.GetTaskProjection(pending.Subject.TaskKey);
+        var deliverySha = projection.CurrentRunAttempt?.ResultEnvelope?.ResultSha;
+        return BatchPlanUpcomingEligibility.DeliveryExclusion(
+                task is not null && ContinuationPending(task),
+                projection.CurrentReviewAttempt?.Subject.ExpectedResultSha, deliverySha)
+            ?? BatchPlanUpcomingEligibility.DeliveryExclusion(false,
+                pending.Subject.ResultSha, deliverySha);
+    }
+
+    // Progress covers a queued continuation after its persisted intent was consumed.
+    private static bool ContinuationPending(TaskInfo task)
+        => task.PendingIntent is not null || task.State == TaskStates.Progress;
 
     /// <summary>
     /// The card's own diff from the result SHA, never from a ref name. A

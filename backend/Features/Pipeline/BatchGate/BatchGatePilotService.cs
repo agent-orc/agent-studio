@@ -313,6 +313,7 @@ public sealed class BatchGatePilotService
             RecoverInterrupted();
             await ResolvePausedAsync(fetchedBases, ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
+            ReconcileFormedBatches();
             StartClosedBatches(ct);
             foreach (var item in _store.ListPending().Where(item =>
                          _store.HasEject(item.Subject.Project, item.Subject.TaskKey)
@@ -364,7 +365,8 @@ public sealed class BatchGatePilotService
             // Grouping on the stored values would exclude it from its own
             // batch on every subsequent tick.
             waiting = _store.ListPending().Select(Refresh)
-                .Where(item => !HeldOnRedBase(item)).ToArray();
+                .Where(item => _snapshots.PendingExclusion(item) is null
+                    && !HeldOnRedBase(item)).ToArray();
             foreach (var group in waiting.GroupBy(item =>
                          (item.Subject.Project, item.Subject.Repository,
                              item.Subject.IntegrationBranch, item.Subject.GateProfileDigest,
@@ -561,6 +563,41 @@ public sealed class BatchGatePilotService
             }
             finally { _leases.Release(recovery); }
         }
+    }
+
+    internal void ReconcileFormedBatches()
+    {
+        foreach (var manifest in _store.ListRecoverableManifests()
+                     .Where(manifest => _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed))
+        {
+            BatchCoordinatorLease? lease;
+            try { lease = _leases.TryAcquire(manifest.Scope, "formed-batch-replan"); }
+            catch (IOException) { continue; }
+            if (lease is null) continue;
+            try { ReconcileFormedBatch(manifest, lease.Fence); }
+            finally { _leases.Release(lease); }
+        }
+    }
+
+    private bool ReconcileFormedBatch(BatchGateManifest manifest, long fence)
+    {
+        if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Formed) return false;
+        var waiting = _store.ListPending();
+        var exclusions = manifest.Members.Select(member =>
+        {
+            var pending = waiting.FirstOrDefault(item => item.Subject.TaskKey == member.TaskKey
+                && item.Subject.RunAttempt == member.RunAttempt);
+            var reason = pending is null ? null : _snapshots.PendingExclusion(pending);
+            return reason is null ? null : $"{member.TaskKey}: {reason}";
+        }).Where(reason => reason is not null).ToArray();
+        if (exclusions.Length == 0) return false;
+
+        // Closed manifests are immutable. Retire this snapshot with a per-member
+        // audit reason, then let the normal planner select the eligible survivors.
+        State(manifest, BatchPhase.Abandoned, null, fence,
+            "formed-batch-replanned; removed " + string.Join("; ", exclusions));
+        ReturnToPending(manifest);
+        return true;
     }
 
     private void StartClosedBatches(CancellationToken ct)
@@ -969,6 +1006,11 @@ public sealed class BatchGatePilotService
         var heartbeat = HeartbeatAsync(lease, cancellation);
         try
         {
+            // A formed flight may have waited on the project reservation while a
+            // continuation arrived or another tick retired its manifest.
+            if (_store.LatestState(manifest.BatchId).Phase != BatchPhase.Formed
+                || ReconcileFormedBatch(manifest, lease.Fence))
+                return;
             if (!RouteEnabled())
             {
                 AbandonRollback();
