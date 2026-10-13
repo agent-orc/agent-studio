@@ -131,7 +131,13 @@ from the trailing sha of a stamped release id such as
 build without a revision (`+sha.unknown`) reports no commit. The build instant
 comes from `RUNNER_RELEASE_BUILT_AT` or from the release id stamp, in second
 (`T064049Z`) or minute (`T1211Z`) precision. The Stable side only has a build
-instant when the server runs from a release `build-manifest.json`.
+instant when the server runs from a release `build-manifest.json`. A Stable
+without a manifest reports the legacy identity, whose `builtAt` stays null on
+purpose: that identity also feeds `/api/system/version` and must never claim
+timestamp freshness (`BuildIdentityTests`). On such an installation
+`behindByHours` is null for every host and the page shows the observed
+duration instead. Giving a legacy Stable a build instant needs a deploy-side
+source and is tracked as a follow-up, not part of AGT-2826.
 
 A host that is more than 24 hours older than Stable produces one operator-feed
 `host_release_drift` alarm, and one only - the alarm re-arms after the host
