@@ -101,6 +101,22 @@ describe('OrchestratorChatUsageHeaderComponent', () => {
     http.verify();
   });
 
+  it('cancels a pending project read before applying the next project default', async () => {
+    const { fixture, preferences, http } = await makeFixture();
+    fixture.componentRef.setInput('project', 'Project A');
+    fixture.detectChanges();
+    const previous = http.expectOne(url('Project A'));
+
+    fixture.componentRef.setInput('project', 'Project B');
+    fixture.detectChanges();
+    expect(previous.cancelled).toBe(true);
+    http.expectOne(url('Project B')).flush({ chatMetadataEnabled: false });
+    expect(preferences.chatMetadataProjectDefault()).toBe(false);
+    expect(() => previous.flush({ chatMetadataEnabled: true })).toThrow();
+    expect(preferences.chatMetadataProjectDefault()).toBe(false);
+    http.verify();
+  });
+
   it('consumes a network failure and falls back to the default-on setting', async () => {
     const { fixture, preferences, http } = await makeFixture();
     preferences.chatMetadataProjectDefault.set(false);

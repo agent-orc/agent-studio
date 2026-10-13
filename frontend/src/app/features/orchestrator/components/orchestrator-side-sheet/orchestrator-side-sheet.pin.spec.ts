@@ -120,6 +120,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     // Render the usage header for the stale project first (the ordering a slow
     // full-suite run produces) so its superseded chat-metadata read is covered.
     await fixture.whenStable();
+    const staleMetadata = http.expectOne('/api/projects/stale-project/chat-metadata');
     fixture.componentRef.setInput('composerContext', {
       project: 'Quality Studio',
       surface: 'Task',
@@ -129,6 +130,10 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
       taskTitle: 'Explain status.md relevance',
       taskState: '3-progress',
     });
+    // Input changes schedule the header's effect. Wait for its cleanup before
+    // asserting that the previous project's read was cancelled.
+    await fixture.whenStable();
+    expect(staleMetadata.cancelled).toBe(true);
 
     for (const text of ['Why is status.md relevant?', 'What does it say now?']) {
       await c.onSubmit({ text, attachments: [] } as never);
