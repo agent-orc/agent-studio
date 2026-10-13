@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Globalization;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
@@ -190,6 +191,22 @@ public sealed partial class TaskServerStore
                AND result.action = 'Reissue'
                AND run.status IN ('reissued', 'escalated');
             """, ct, transaction, ("$task", request.TaskId)) ?? 0L, CultureInfo.InvariantCulture);
+        var frozenPayload = request.PayloadJson;
+        var decisionPayload = System.Text.Json.Nodes.JsonNode.Parse(request.PayloadJson);
+        if (decisionPayload is System.Text.Json.Nodes.JsonObject decisionObject
+            && decisionObject["verdicts"] is System.Text.Json.Nodes.JsonArray)
+        {
+            var priorPayloads = await ReadPriorDecisionPayloadsAsync(connection, transaction, request.TaskId, string.Empty, ct);
+            var priorReports = priorPayloads.AsEnumerable().Reverse().Select(payload =>
+                JsonSerializer.Deserialize<StagePayload>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))!)
+                .ToArray();
+            decisionObject["maximumReissues"] = definition.MaxReissueAttempts;
+            decisionObject["automaticRoundsUsed"] = priorReissues;
+            decisionObject["concernRoundsUsed"] = StageDecisionPolicy.ConcernRoundsUsed(priorReports);
+            decisionObject["deliveredRounds"] = JsonSerializer.SerializeToNode(
+                StageDecisionPolicy.DeliveredHistory(priorReports), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            frozenPayload = decisionObject.ToJsonString();
+        }
         var now = UtcNow;
         var runId = $"orch_{Guid.NewGuid():N}";
         await ExecuteAsync(connection, """
@@ -210,7 +227,7 @@ public sealed partial class TaskServerStore
             ("$stages", JsonSerializer.Serialize(definition.Stages)),
             ("$max_reissues", definition.MaxReissueAttempts),
             ("$stage", definition.Stages[0].ToString()),
-            ("$payload", request.PayloadJson),
+            ("$payload", frozenPayload),
             ("$key", request.IdempotencyKey),
             ("$reissues", priorReissues),
             ("$now", Iso(now)));
@@ -506,6 +523,11 @@ public sealed partial class TaskServerStore
                     priorDecisionPayloads,
                     OrchestrationDefaults.MaxIdenticalAspectBlockRounds);
             }
+            var stagePayload = JsonSerializer.Deserialize<StagePayload>(run.PayloadJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var transition = stagePayload?.Verdicts is not null
+                ? TaskServerTransitionAdapter.Decide(StageDecisionPolicy.Facts(run.TaskId, run.ReissueAttempts, stagePayload))
+                : null;
             var decision = OrchestrationSettlementPolicy.Decide(
                 request.Action,
                 stages,
@@ -515,7 +537,18 @@ public sealed partial class TaskServerStore
                 currentTaskState,
                 run.TaskVersion,
                 currentTaskVersion,
-                repeatedBlock);
+                repeatedBlock, transition);
+            if (decision.Transition?.RequiresLinkedFollowUp == true)
+                await ApplyDecisionFollowUpAsync(connection, transaction, run, decision.Transition, actorId, now, ct);
+            if (decision.Transition?.ContinuationBase is { } continuationBase
+                && stagePayload?.RunAttemptId is { } sourceRunId)
+                await ExecuteAsync(connection, """
+                    INSERT INTO task_starting_points(task_id, source_run_id, result_ref, result_sha)
+                    VALUES ($task, $run, $ref, $sha)
+                    ON CONFLICT(task_id) DO UPDATE SET source_run_id = excluded.source_run_id,
+                        result_ref = excluded.result_ref, result_sha = excluded.result_sha;
+                    """, ct, transaction, ("$task", run.TaskId), ("$run", sourceRunId),
+                    ("$ref", continuationBase.ResultRef), ("$sha", continuationBase.ResultSha));
             var completedAt = decision.IsTerminal ? now : (DateTime?)null;
 
             await ExecuteAsync(connection, """
@@ -614,6 +647,7 @@ public sealed partial class TaskServerStore
                     reissueAttempts = decision.ReissueAttempts,
                     decision.SupersededReason,
                     decision.SettlementReason,
+                    decision.Transition,
                 }),
                 ct);
             result = await ReadOrchestrationRunAsync(connection, transaction, runId, ct)
@@ -1001,5 +1035,29 @@ public sealed partial class TaskServerStore
                 Enum.Parse<OrchestrationAction>(reader.GetString(3)),
                 reader.GetString(4),
                 Parse(reader.GetString(5))));
+    }
+    private async Task ApplyDecisionFollowUpAsync(
+        SqliteConnection connection, SqliteTransaction transaction, OrchestrationRunDto run,
+        TransitionDecision decision, string actorId, DateTime now, CancellationToken ct)
+    {
+        var (prefix, next) = await ReadProjectCounterAsync(connection, transaction, run.ProjectId, ct);
+        var followUpId = "follow-up:" + run.RunId;
+        var followUpKey = $"{prefix}-{next}";
+        var findings = string.Join("\n", decision.Findings.Select(item =>
+            $"- {item.Aspect}: {item.Finding ?? item.Summary}"));
+        await ExecuteAsync(connection, """
+            INSERT INTO tasks(id, project_id, task_key, title, body, state, version, created_at, updated_at)
+            VALUES ($id, $project, $key, $title, $body, '1-inbox', 1, $now, $now);
+            """, ct, transaction, ("$id", followUpId), ("$project", run.ProjectId),
+            ("$key", followUpKey), ("$title", $"Review follow-up for {run.TaskId}"),
+            ("$body", $"Follow-up for /tasks/{run.TaskId} from review {decision.Receipt.AttemptId}.\n\n{findings}"),
+            ("$now", Iso(now)));
+        await ExecuteAsync(connection,
+            "UPDATE projects SET next_task_number = MAX(next_task_number, $next), updated_at = $now WHERE id = $id;",
+            ct, transaction, ("$next", next + 1), ("$now", Iso(now)), ("$id", run.ProjectId));
+        await ExecuteAsync(connection, "UPDATE tasks SET body = body || $link WHERE id = $id;",
+            ct, transaction, ("$id", run.TaskId), ("$link", $"\n\nReview budget follow-up: [{followUpKey}](/tasks/{followUpId})."));
+        await AuditAsync(connection, transaction, actorId, "task.created", "task", followUpId,
+            JsonSerializer.Serialize(new { run.ProjectId, followUpKey, sourceTaskId = run.TaskId, decision.Receipt }), ct);
     }
 }

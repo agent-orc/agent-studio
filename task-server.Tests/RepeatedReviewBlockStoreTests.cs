@@ -9,7 +9,7 @@ namespace TaskServer.Tests;
 public sealed class RepeatedReviewBlockStoreTests
 {
     [Fact]
-    public async Task Same_requirement_fit_block_escalates_task_wide_instead_of_reissuing_again()
+    public async Task Same_requirement_fit_block_degrades_with_linked_follow_up_when_budget_is_spent()
     {
         using var temp = new TempDirectory();
         var store = new TaskServerStore(
@@ -53,15 +53,22 @@ public sealed class RepeatedReviewBlockStoreTests
 
         var second = await SettleAsync(store, project.ProjectId, task.TaskId, payload, 2);
 
-        Assert.Equal("escalated", second.Status);
-        Assert.Equal(2, second.ReissueAttempts);
-        Assert.Equal(
-            "5e-escalated",
-            (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        Assert.Equal("reissued", second.Status);
+        ready = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskId,
+            new UpdateTaskRequest(null, null, "4-auto-review", ready.Version), "test", default);
+        var third = await SettleAsync(store, project.ProjectId, task.TaskId, payload, 3);
+        Assert.Equal("completed", third.Status);
+        Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        var followUp = Assert.Single(await store.ListTasksAsync(project.ProjectId, default),
+            item => item.TaskId != task.TaskId);
+        Assert.Contains("Required S1 slice left undelivered", followUp.Body);
+        Assert.Contains(task.TaskId, followUp.Body);
+        Assert.Contains(followUp.TaskKey, (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.Body);
         var settlementAudit = (await store.ListAuditAsync(0, default))
             .Last(record => record.Action == "orchestration.stage-completed");
-        Assert.Contains("SettlementReason", settlementAudit.DetailJson);
-        Assert.Contains("Required S1 slice left undelivered", settlementAudit.DetailJson);
+        Assert.Contains("RequiresLinkedFollowUp", settlementAudit.DetailJson);
+
     }
 
     private static async Task<OrchestrationRunDto> SettleAsync(
@@ -71,6 +78,9 @@ public sealed class RepeatedReviewBlockStoreTests
         string payload,
         int round)
     {
+        var reviewPayload = System.Text.Json.Nodes.JsonNode.Parse(payload)!;
+        reviewPayload["reviewAttemptId"] = $"review-{round}";
+        payload = reviewPayload.ToJsonString();
         var run = await store.CreateOrchestrationRunAsync(
             projectId,
             new CreateOrchestrationRunRequest(taskId, payload, $"run-{round}"),

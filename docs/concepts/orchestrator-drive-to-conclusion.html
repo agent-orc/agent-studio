@@ -2971,6 +2971,12 @@
           <td>The review hosts ran workers older than the AGT-2916 diagnosis contract, which never report a <code>Diagnosis</code> or a clean repeat, and every <code>ReviewInfra</code> result was retried. The runner cached a test-failures baseline that exited non-zero without a parsed failure name and reused it for 24 hours as a red merge base.</td>
           <td>Each card used 2 of 3 retries. Now an unrun test-failures baseline ends as <code>ReviewInfra/BaselineUnavailable</code> and is never cached. Parser version 4 makes every older cache entry a miss. A report from a pre-diagnosis worker (outcome other than ReviewInfra, an undiagnosed failed deterministic command, no clean repeat) is graded <code>ReviewInfra/DiagnosisContractUnsupported</code>. It is not retried and escalates as <code>environmental</code>, naming the executor and the worker release. Upgrading the review hosts is an operator action.</td>
         </tr>
+        <tr id="case-shared-transition-decisions">
+          <td>2026-10-13</td><td><code>AGT-3057</code><br>shared-transition-decisions</td>
+          <td>Code reconstruction found different Council, budget, and settlement rules in the monolith and standalone paths. This was a policy extraction, not a new observed CLI crash.</td>
+          <td>Separate policy implementations selected different terminal actions for the same review facts.</td>
+          <td>The shared <a href="../system/contracts/orchestration-decisions.md">decision library</a> owns the rules. The monolith still applies effects; golden scenarios pin actions and receipts across adapters.</td>
+        </tr>
         <tr id="case-review-fix-round-unavailable-base">
           <td>2026-10-13</td>
           <td><code>AGT-3056</code><br><span class="small">review-fix-round-unavailable-base</span></td>

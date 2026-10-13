@@ -1,3 +1,4 @@
+using AgentStudio.Orchestration.Decisions;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -1507,7 +1508,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Branch 1: empty / placeholder prompt -> escalate. The agent's
         // NOOP is justified; the human needs to scope the task before any
         // run is worthwhile.
-        if (!promptUsable)
+        if (LocalLoopDecisionPolicy.UnusablePrompt(promptUsable))
         {
             var reason = "Task prompt is empty or placeholder; agent's [[TASK_NOOP]] is justified.";
             await EscalateNoOpAsync(workspace, entry, pending, reason, ct);
@@ -1521,11 +1522,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // recoverable by another sharpened prompt. Escalate it to
         // 5-human-review so it is not picked again automatically.
         var noProgressEvidence = InspectNoOpProgressSinceLastRecovery(pending);
-        if (prior > 0
-            && noProgressEvidence.SawNoOpRecoveryReissue
-            && noProgressEvidence.ToolCalls == 0
-            && noProgressEvidence.FileChanges == 0
-            && noProgressEvidence.AgentSubstanceChars == 0)
+        if (LocalLoopDecisionPolicy.RepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
+            noProgressEvidence.ToolCalls, noProgressEvidence.FileChanges, noProgressEvidence.AgentSubstanceChars))
         {
             var count = prior + 1;
             var reason =
@@ -1543,7 +1541,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // with the existing NEEDS_INPUT-driven reissues so a job that has
         // already been retried multiple times by either path doesn't get
         // double-spent here.
-        if (prior >= maxReissues)
+        if (LocalLoopDecisionPolicy.BudgetSpent(prior, maxReissues))
         {
             var reason = $"NOOP after {prior} prior orchestrator reissue(s); user attention required.";
             await EscalateNoOpAsync(workspace, entry, pending, reason, ct);
@@ -1659,7 +1657,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         // Empty / placeholder prompt: re-running cannot help because there is
         // nothing actionable to drive toward a sentinel. Hand to a human.
-        if (!promptUsable)
+        if (LocalLoopDecisionPolicy.UnusablePrompt(promptUsable))
         {
             var reason = "Run finished without a terminal sentinel and the task prompt is empty or placeholder; cannot auto-recover.";
             await EscalateNoCompletionSignalAsync(workspace, entry, pending, reason, ct);
@@ -1671,7 +1669,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Budget exhausted: stop looping and hand to a human. Crucially we do
         // not fall back to "accept as done" - the deterministic completion
         // signal never arrived, so a human must judge the work.
-        if (prior >= maxReissues)
+        if (LocalLoopDecisionPolicy.BudgetSpent(prior, maxReissues))
         {
             var reason = $"Run finished without a terminal sentinel after {prior} prior orchestrator reissue(s); user attention required.";
             await EscalateNoCompletionSignalAsync(workspace, entry, pending, reason, ct);
@@ -2678,25 +2676,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             projectedRounds.Where(round => round.AttemptId != localAttemptId).ToArray());
         var blockedAspects = report.Verdicts.Where(verdict => verdict.Status == AspectStatus.Block)
             .Select(verdict => verdict.Aspect).ToArray();
-        var roundBudget = ReviewRoundBudgetPolicy.Decide(
-            roundSeed, localAttemptId, blockedAspects,
-            _projectSettings?.Get(entry.Name).MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
-            ConfiguredIdenticalBlockRounds(),
-            CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues(entry.Name));
         var cardBudget = CardRoundBudget.Evaluate(
             ReviewDecisionLog.ReadAll(workspace, entry.Name),
             _timeline?.ReadAll(current.FolderPath) ?? [], current.Id,
             CardRoundBudget.ResolveAllowed(_configuration));
-        var cardAction = CardRoundBudget.DecideForReview(cardBudget, blockedAspects,
-            initialFollowUpDecision.Action == ReviewFollowUpAction.ReviewConcernRound);
-        if (cardAction == CardRoundBudgetAction.DegradeToFollowUp)
-            roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
-                roundBudget.MaximumRounds,
-                blockedAspects.Length > 0 ? blockedAspects : report.Verdicts
-                    .Where(verdict => verdict.Status == AspectStatus.Concerns)
-                    .Select(verdict => verdict.Aspect).ToArray(),
-                "card-round-budget");
+        var budgetDecision = MonolithTransitionAdapter.ReviewBudget(new ReviewBudgetFacts(
+            blockedAspects.Length > 0 ? "ProductFailure" : "Pass",
+            report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
+                verdict.Aspect, AspectVerdictParsing.StatusToken(verdict.Status), verdict.Summary,
+                Finding: LocalAspectFinding(verdict), Classification: verdict.ConcernTagId,
+                InfrastructureFailure: verdict.IsInfraFailure, ReportBody: verdict.Body)).ToArray(),
+            ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
+            ConfiguredMaxConcernRounds(entry.Name), cardBudget, roundSeed, localAttemptId,
+            _projectSettings?.Get(entry.Name).MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
+            ConfiguredIdenticalBlockRounds(), CountPriorReissues(workspace, entry.Name, current.Id),
+            ConfiguredMaxReissues(entry.Name)));
+        var roundBudget = budgetDecision.RoundBudget;
+        var cardAction = budgetDecision.CardAction;
         ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
             new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
                 SpentBy: roundBudget.SpentBy));
@@ -6405,7 +6401,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var lastGateCacheDecision = BuildTestGateRunner.DependencyCacheDecisionSummary(
             result.DependencyCacheDecision);
 
-        if (priorBuildGateReissues >= 1 || taskReissueCeilingReached)
+        if (LocalLoopDecisionPolicy.RepeatedGateFailure(priorBuildGateReissues, taskReissueCeilingReached))
         {
             var reason = priorBuildGateReissues >= 1
                 ? $"build-test gate failed twice for the same product retry identity ({failureIdentity}; {result.Reason}); " +
@@ -6579,7 +6575,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         && r.Reason != null
                         && r.Reason.StartsWith(LintScssReissueReasonPrefix, StringComparison.Ordinal));
 
-        if (priorLintReissues >= 1)
+        if (LocalLoopDecisionPolicy.RepeatedGateFailure(priorLintReissues, false))
         {
             var reason = $"lint-scss failed twice in a row (exit {result.ExitCode}); escalating per ASS-46 infinite-spin guard.";
             var move = GuardedMoveJob(
