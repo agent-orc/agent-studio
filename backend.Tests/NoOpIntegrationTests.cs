@@ -15,6 +15,7 @@ namespace AgentStudio.Tests;
 /// 60 to 75 minute merge gate on the shared gate host while two formed batches
 /// waited behind the reservation.
 /// </summary>
+[Trait("Category", "MachineBound")]
 public sealed class NoOpIntegrationTests : IDisposable
 {
     private readonly string _tempDir;
@@ -184,8 +185,10 @@ public sealed class NoOpIntegrationTests : IDisposable
         Assert.Equal(published, verification.ContainmentSha);
     }
 
-    [Fact]
-    public async Task NoOpCarryingAPassedBatchCandidate_IsVerifiedWithoutAGateOrAnOverride()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NoOpCarryingAnAbandonedPassedBatchCandidate_IsVerifiedWithoutAGateOrAnOverride(bool corruptOtherManifest)
     {
         // The operator fast path of 13.10.2026: a batch candidate that replays
         // the delivery is pushed to develop, then the original delivery is
@@ -208,7 +211,13 @@ public sealed class NoOpIntegrationTests : IDisposable
         var published = RemoteSha(remote, "develop");
 
         var batchGates = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
-        RecordPassedBatchMember(batchGates, "AGT-65", baseSha, resultSha, candidate);
+        RecordPassedBatchRun(batchGates, "AGT-65", baseSha, resultSha, candidate);
+        if (corruptOtherManifest)
+        {
+            var corruptDirectory = batchGates.BatchDirectory("unreadable-batch");
+            Directory.CreateDirectory(corruptDirectory);
+            File.WriteAllText(Path.Combine(corruptDirectory, "manifest.json"), "{broken");
+        }
         var harness = Harness(repo, "65", batchGates);
         var outcome = await harness.Runner.RunAsync(
             "Fixture", "65", harness.JobFolder, repo, "develop", CancellationToken.None);
@@ -250,7 +259,7 @@ public sealed class NoOpIntegrationTests : IDisposable
         RunGit(repo, "push -q -u origin develop");
 
         var batchGates = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
-        RecordPassedBatchMember(batchGates, "AGT-66", baseSha, resultSha, candidate);
+        RecordPassedBatchRun(batchGates, "AGT-66", baseSha, resultSha, candidate);
         var harness = Harness(repo, "66", batchGates);
         var outcome = await harness.Runner.RunAsync(
             "Fixture", "66", harness.JobFolder, repo, "develop", CancellationToken.None);
@@ -265,9 +274,9 @@ public sealed class NoOpIntegrationTests : IDisposable
     /// <summary>
     /// Writes the batch gate's durable evidence for one passed member through
     /// the store's own validation: manifest, assembled state, run, verdict,
-    /// admitted replay, and the member record.
+    /// admitted replay, and StaleBase abandonment without publication or release.
     /// </summary>
-    private void RecordPassedBatchMember(
+    private void RecordPassedBatchRun(
         BatchGateStore store, string taskKey, string baseSha, string resultSha, string candidate)
     {
         var scope = new BatchGateScope("Fixture", "repo", "develop", "full", "digest", "v1");
@@ -292,10 +301,12 @@ public sealed class NoOpIntegrationTests : IDisposable
         store.RecordReplay(new BatchGateReplayRecord(manifest.BatchId, manifest.MembershipDigest,
             taskKey, resultSha, baseSha, candidate,
             [new AgentStudio.Git.RebasedCommitReplacement(resultSha, candidate)], [], "admitted", RecordedAt));
-        store.RecordMember(new BatchGateMemberRecord(
-            taskKey, member.RunAttempt, member.DeliveryEpoch, resultSha, [candidate],
-            manifest.BatchId, manifest.MembershipDigest, baseSha, candidate, "digest",
-            run.BatchRunId, "pass", evidence, RecordedAt));
+        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Green, candidate, 1, RecordedAt, BatchRunId: run.BatchRunId));
+        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, candidate, 1, RecordedAt, "StaleBase", run.BatchRunId));
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        Assert.Null(store.TryReadMember(manifest.BatchId, taskKey, run.BatchRunId));
     }
 
     private static readonly DateTimeOffset RecordedAt = new(2026, 10, 13, 2, 0, 0, TimeSpan.Zero);

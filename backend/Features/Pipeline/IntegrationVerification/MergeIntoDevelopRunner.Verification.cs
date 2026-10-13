@@ -64,7 +64,7 @@ public sealed partial class MergeIntoDevelopRunner
         var sha = containmentSha ?? _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
         var integrationRecords = ReadIntegrationRecords(jobId, watchPath);
         var carried = noOp
-            ? CarriedVerifiedTree(jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
+            ? CarriedVerifiedTree(project, jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
             : null;
         var tree = ReviewSubjectStore.IsValidResultSha(sha) ? _git.GetCommitTree(repoRoot, sha!) : null;
         bool SameTree(string candidate)
@@ -216,6 +216,7 @@ public sealed partial class MergeIntoDevelopRunner
     /// the tip moves on; later commits belong to the cards that brought them.
     /// </summary>
     private CarriedTree? CarriedVerifiedTree(
+        string project,
         string jobFolderPath,
         string repoRoot,
         string branch,
@@ -243,64 +244,60 @@ public sealed partial class MergeIntoDevelopRunner
             .FirstOrDefault(Carries);
         return recorded is not null
             ? new(recorded)
-            : CarriedBatchCandidate(repoRoot, branch, tip, deliveryShas);
+            : CarriedBatchCandidate(project, repoRoot, branch, tip, deliveryShas);
     }
 
     /// <summary>
-    /// AGT-3103 (operator review decision): the operator fast path pushes a
-    /// batch candidate to the integration branch before the members' reviews
-    /// settle. That candidate's batch gate already tested every member on the
-    /// candidate tree, so a passed member record counts as a carried tree when
-    /// the published tip still carries the candidate. Matching is by the
-    /// member's original result SHA: the candidate holds its replayed commits.
-    /// Without such a record the no-op stays integrated-unverified.
+    /// A passed batch run and admitted replay survive an operator publication
+    /// followed by StaleBase abandonment. Publication and member-release records
+    /// do not exist in that flow. The tested candidate must still be carried by
+    /// the published tip; the original result is covered through its replay.
     /// </summary>
     private CarriedTree? CarriedBatchCandidate(
-        string repoRoot, string branch, string tip, IReadOnlyList<string> deliveryShas)
+        string project, string repoRoot, string branch, string tip, IReadOnlyList<string> deliveryShas)
     {
         if (_batchGates is null || deliveryShas.Count == 0) return null;
+        void Unreadable(Exception ex) => _logger.LogWarning(ex,
+            "merge-into-develop could not read batch gate evidence for branch {Branch}", branch);
         try
         {
-            foreach (var manifest in _batchGates.ListManifests()
-                         .Where(manifest => IntegrationVerificationProjection.SameBranch(manifest.Scope.IntegrationBranch, branch))
-                         .OrderByDescending(manifest => manifest.ClosedAtUtc))
+            foreach (var manifest in _batchGates.FindDeliveryManifests(project, branch, deliveryShas, Unreadable))
             {
-                foreach (var member in manifest.Members.Where(member => deliveryShas.Contains(member.ResultSha, StringComparer.OrdinalIgnoreCase)))
+                try
                 {
-                    foreach (var run in _batchGates.ListRuns(manifest.BatchId))
+                    foreach (var member in manifest.Members.Where(member => deliveryShas.Contains(member.ResultSha, StringComparer.OrdinalIgnoreCase)))
                     {
-                        var record = _batchGates.TryReadMember(manifest.BatchId, member.TaskKey, run.BatchRunId);
-                        if (record is null
-                            || !string.Equals(record.Verdict, "pass", StringComparison.Ordinal)
-                            || !ReviewSubjectStore.IsValidResultSha(record.TestedCandidateSha)
-                            || !_git.IsAncestor(repoRoot, record.TestedCandidateSha, tip))
+                        var replay = _batchGates.TryReadReplay(manifest.BatchId, member.TaskKey);
+                        foreach (var run in _batchGates.ListRuns(manifest.BatchId))
                         {
-                            continue;
-                        }
+                            var verdict = _batchGates.ReadVerdict(manifest.BatchId, run.BatchRunId);
+                            if (!BatchGateCarryPolicy.Accepts(manifest, member, replay, run, verdict)
+                                || !_git.IsAncestor(repoRoot, run.CandidateSha, tip)
+                                || !_git.IsAncestor(repoRoot, replay!.TipAfterSha!, run.CandidateSha)
+                                || !deliveryShas.All(deliverySha
+                                    => string.Equals(deliverySha, member.ResultSha, StringComparison.OrdinalIgnoreCase)
+                                       || _git.IsAncestor(repoRoot, deliverySha, run.CandidateSha)))
+                            {
+                                continue;
+                            }
 
-                        var candidate = record.TestedCandidateSha;
-                        // Every delivery commit is this member's result or
-                        // already sits below the tested candidate.
-                        if (!deliveryShas.All(deliverySha
-                                => string.Equals(deliverySha, record.OriginalResultSha, StringComparison.OrdinalIgnoreCase)
-                                   || _git.IsAncestor(repoRoot, deliverySha, candidate)))
-                        {
-                            continue;
+                            _logger.LogInformation(
+                                "merge-into-develop carried batch candidate batch={BatchId} run={RunId} candidate={Candidate} result={ResultSha}",
+                                manifest.BatchId, run.BatchRunId, run.CandidateSha, member.ResultSha);
+                            return new(run.CandidateSha, deliveryShas.Select(sha => sha.ToLowerInvariant()).ToArray());
                         }
-
-                        _logger.LogInformation(
-                            "merge-into-develop carried batch candidate batch={BatchId} run={RunId} candidate={Candidate} result={ResultSha}",
-                            manifest.BatchId, run.BatchRunId, candidate, record.OriginalResultSha);
-                        return new(candidate, [record.OriginalResultSha.ToLowerInvariant()]);
                     }
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                {
+                    // One unreadable batch cannot hide another batch's evidence.
+                    Unreadable(ex);
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
-            // Unreadable batch evidence proves nothing; the no-op stays
-            // integrated-unverified, which an operator can still override.
-            _logger.LogWarning(ex, "merge-into-develop could not read batch gate evidence for branch {Branch}", branch);
+            Unreadable(ex);
         }
 
         return null;

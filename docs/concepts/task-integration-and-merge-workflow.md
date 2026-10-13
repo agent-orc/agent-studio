@@ -513,19 +513,31 @@ now a no-op integration:
   tree is an earlier verified tree that the published tip still carries and
   that already contained every delivery commit: the card's own verified record,
   an `integrated-verified` record that names its `integrationSha`, or a passed
-  batch gate member record for this delivery (see below). A carried verdict is
-  recorded against that earlier tree (evidence `carried-tree`). This is the
+  batch run verdict with an admitted replay for this delivery (see below).
+  A carried verdict is recorded against that earlier tree (evidence `carried-tree`). This is the
   same carry the board projection applies after the tip moves on.
 - **Batch candidate evidence.** The operator fast path pushes a batch
   candidate to the branch before its members' reviews settle. The batch gate
-  already tested each member on that candidate tree and wrote a member record
-  (`batch-gates/<batchId>/members/<taskKey>/<runId>.json`, verdict `pass`).
-  When the published tip still carries that tested candidate and the record's
-  original result SHA is the delivery, the candidate counts as the carried
-  tree. The verification record names the candidate SHA and lists the
-  original result SHA in `deliveryShas`, because the candidate holds the
-  replayed commits rather than the original ones. A candidate that never
-  reached the branch, or a member record without `pass`, proves nothing.
+  already tested the candidate and wrote a run verdict (`outcome: pass`,
+  `testedCandidateSha`) plus an `admitted` replay for each included delivery.
+  The lookup requires matching manifest, run, verdict and replay identities,
+  the same project and integration branch, an admitted replay tip contained
+  in the tested candidate, and that candidate contained in the published tip.
+  These facts remain valid when the pilot abandons the batch as `StaleBase`
+  after an operator push. No publication or member-release record is required:
+  the pilot only writes those after its own publication.
+  Records live below `batch-gates/<SafeName(batchId)>/`, with run verdicts in
+  `runs/<SafeName(runId)>.verdict.json` and replays in
+  `replays/<SafeName(taskKey)>.json`. `SafeName` is the lowercase SHA-256 of
+  the UTF-8 identifier; member-release records, when present, use
+  `members/<SafeName(taskKey)>/<SafeName(runId)>.json`.
+  Closed manifests are indexed by delivery SHA once per store lifetime;
+  closing a new manifest updates that index. An unreadable manifest is logged
+  and skipped independently. Matching runs and replays are read on each lookup.
+  The verification record names the tested candidate SHA and lists covered
+  original result SHAs in `deliveryShas`, because the candidate holds replayed
+  commits. A missing or non-passing verdict, non-admitted replay, mismatched
+  identity, or candidate absent from the branch proves nothing.
 - **No evidence.** The card is `integrated-unverified`, with the reason that
   the no-op ran no gate. The integration step still passes, so a settling
   review moves the card to Human Review as usual. Acceptance follows the rule
@@ -538,12 +550,14 @@ now a no-op integration:
   AGT-3103, a contained delivery without evidence ran one gate on the tip and
   completed as `integrated-verified`. That gate is exactly the 60 to 75 minute
   run this change removes, so it does not come back for the no-op. The cost
-  is limited instead: a card that reached the branch through a gated batch
-  candidate is verified by that candidate's gate (above) and needs no
-  override. Only a delivery that reached the branch with no gate evidence at
-  all, such as a hand-merged branch, stays `integrated-unverified` and needs
-  an operator override to be accepted. The release line (`main`) follows the
-  same rule: an out-of-band push to `main` is not followed by the mandatory
+  is limited when the retained evidence satisfies the checks above: such a
+  card is verified by its batch candidate's gate and needs no override, even
+  for an abandoned batch without publication or member-release records.
+  Missing, unreadable or mismatched evidence still leaves the delivery
+  `integrated-unverified`, including an operator fast-path delivery whose
+  batch evidence is unavailable. Accepting it requires evidence or an operator
+  override; containment alone is insufficient. The release line (`main`) follows
+  the same rule: an out-of-band push to `main` is not followed by the mandatory
   full suite. Only evidence on `main` itself verifies it: a
   `pre-main-test-gate` receipt, or a verified or `integrated-verified` record
   for a tree on `main`. Work-line batch evidence never counts for `main`.
