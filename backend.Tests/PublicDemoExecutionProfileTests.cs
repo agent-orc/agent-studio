@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -17,7 +18,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class PublicDemoExecutionProfileTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(
@@ -89,195 +89,174 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
     [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
-        var previousProfile = Environment.GetEnvironmentVariable("Security__Profile");
-        Environment.SetEnvironmentVariable(
-            "Security__Profile",
-            ExecutionAdmissionPolicy.PublicDemoProfile);
-        try
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            using var factory = BuildFactory();
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-            {
-                HandleCookies = false,
-            });
+            HandleCookies = false,
+        });
 
-            var admission = factory.Services.GetRequiredService<StartupExecutionAdmission>();
-            Assert.True(admission.IsPublicDemo);
-            Assert.Equal(ExecutionAdmissionPolicy.PublicDemoProfile, admission.StartupProfile);
+        var admission = factory.Services.GetRequiredService<StartupExecutionAdmission>();
+        Assert.True(admission.IsPublicDemo);
+        Assert.Equal(ExecutionAdmissionPolicy.PublicDemoProfile, admission.StartupProfile);
 
-            var hostedServices = factory.Services.GetServices<IHostedService>();
-            Assert.DoesNotContain(hostedServices, service => service is TaskRunnerService);
+        var hostedServices = factory.Services.GetServices<IHostedService>();
+        Assert.DoesNotContain(hostedServices, service => service is TaskRunnerService);
 
-            var runner = factory.Services.GetRequiredService<TaskRunnerService>();
-            Assert.Throws<ExecutionAdmissionDeniedException>(() =>
-                runner.RequestModeChange("forged-project", "auto-continuous"));
-            Assert.Throws<ExecutionAdmissionDeniedException>(() =>
-                runner.StartRunner("forged-project"));
-            await Assert.ThrowsAsync<ExecutionAdmissionDeniedException>(() =>
-                runner.StartJobAsync("forged-task"));
-            await Assert.ThrowsAsync<ExecutionAdmissionDeniedException>(() =>
-                runner.ContinueJobAsync("forged-task", "continue"));
+        var runner = factory.Services.GetRequiredService<TaskRunnerService>();
+        Assert.Throws<ExecutionAdmissionDeniedException>(() =>
+            runner.RequestModeChange("forged-project", "auto-continuous"));
+        Assert.Throws<ExecutionAdmissionDeniedException>(() =>
+            runner.StartRunner("forged-project"));
+        await Assert.ThrowsAsync<ExecutionAdmissionDeniedException>(() =>
+            runner.StartJobAsync("forged-task"));
+        await Assert.ThrowsAsync<ExecutionAdmissionDeniedException>(() =>
+            runner.ContinueJobAsync("forged-task", "continue"));
 
-            var turns = factory.Services.GetRequiredService<OrchestratorTurnService>();
-            Assert.Throws<ExecutionAdmissionDeniedException>(() =>
-                turns.Enqueue("global", new OrchestratorTurnRequest("forged chat")));
+        var turns = factory.Services.GetRequiredService<OrchestratorTurnService>();
+        Assert.Throws<ExecutionAdmissionDeniedException>(() =>
+            turns.Enqueue("global", new OrchestratorTurnRequest("forged chat")));
 
-            var routes = ExecutionRoutes(factory.Services);
-            // Security inventory tripwire: adding, removing, or reclassifying an
-            // executable endpoint requires an explicit update to this matrix.
-            // AGT-2817 added POST /api/projects/{projectId}/delivery-claims/reconcile
-            // on the Review path: it is the acceptance-rail audit that repairs the
-            // integration records of already reviewed deliveries, the same admission
-            // path its sibling POST /api/projects/{projectId}/completed-lane/audit
-            // carries. The two read-only delivery-claim reports stay unmarked,
-            // like every other GET that only re-derives git state.
-            // AGT-3001 added GET /api/cli/quota/history on Preview: read-only
-            // quota history is denied in public demo like GET /api/cli/quota.
-            // Decision-card decide, reopen, and prose migration are execution mutations on Start.
-            // The revoked-reference post step and older-brief decision are
-            // execution mutations and must remain in the denial inventory.
-            // Project model migration is an operator-triggered Preview mutation.
-            // AGT-3072 added POST /api/attempts/checkpoint: an operator-forced authority
-            // checkpoint writes the store, so it is an execution mutation and denied.
-            Assert.Equal(93, routes.Count);
-            // Pin their identities too: an unrelated route must not mask the loss
-            // of either decision mutation from the denial inventory.
-            foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
-            {
-                var decisionRoute = Assert.Single(routes, route => route.RoutePattern.RawText == decisionPath);
-                Assert.Equal(ExecutionAdmissionPath.Start,
-                    decisionRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
-                Assert.Contains("POST", decisionRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
-            }
-            foreach (var (routePath, admissionPath) in new[]
-            {
-                ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
-                ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue)
-            })
-            {
-                var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
-                Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
-                Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
-            }
-            var migrationRoute = Assert.Single(routes, route =>
-                route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
-            Assert.Equal(ExecutionAdmissionPath.Preview,
-                migrationRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
-            Assert.Equal(
-                ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
-                routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
-                    .Distinct()
-                    .OrderBy(path => path));
-            Assert.Equal(
-                new Dictionary<ExecutionAdmissionPath, int>
-                {
-                    [ExecutionAdmissionPath.Claim] = 6,
-                    [ExecutionAdmissionPath.Start] = 15,
-                    [ExecutionAdmissionPath.Continue] = 15,
-                    [ExecutionAdmissionPath.Review] = 9,
-                    [ExecutionAdmissionPath.Chat] = 9,
-                    [ExecutionAdmissionPath.Preview] = 26,
-                    [ExecutionAdmissionPath.PostStep] = 13,
-                },
-                routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
-                    .ToDictionary(group => group.Key, group => group.Count()));
-
-            foreach (var route in routes)
-            {
-                var execution = route.Metadata.GetMetadata<ExecutionRouteMetadata>()!;
-                var expectation = route.Metadata.GetMetadata<PublicDemoExecutionExpectationMetadata>();
-                Assert.NotNull(expectation);
-                Assert.Equal(execution.Path, expectation!.Path);
-                Assert.Equal(ExecutionAdmissionPolicy.ExecutionDisabledCode, expectation.ExpectedCode);
-
-                var methods = route.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods ?? ["GET"];
-                foreach (var method in methods)
-                {
-                    using var request = new HttpRequestMessage(
-                        new HttpMethod(method),
-                        Materialize(route.RoutePattern));
-                    if (method is not "GET" and not "HEAD")
-                        request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
-
-                    using var response = await client.SendAsync(request);
-                    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-                    using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-                    Assert.Equal(
-                        ExecutionAdmissionPolicy.ExecutionDisabledCode,
-                        body.RootElement.GetProperty("error").GetString());
-                    Assert.Equal(
-                        ExecutionAdmissionPolicy.PublicDemoProfile,
-                        body.RootElement.GetProperty("profile").GetString());
-                    Assert.Equal(
-                        ExecutionAdmissionPolicy.PathName(execution.Path),
-                        body.RootElement.GetProperty("admissionPath").GetString());
-                }
-            }
+        var routes = ExecutionRoutes(factory.Services);
+        // Security inventory tripwire: adding, removing, or reclassifying an
+        // executable endpoint requires an explicit update to this matrix.
+        // AGT-2817 added POST /api/projects/{projectId}/delivery-claims/reconcile
+        // on the Review path: it is the acceptance-rail audit that repairs the
+        // integration records of already reviewed deliveries, the same admission
+        // path its sibling POST /api/projects/{projectId}/completed-lane/audit
+        // carries. The two read-only delivery-claim reports stay unmarked,
+        // like every other GET that only re-derives git state.
+        // AGT-3001 added GET /api/cli/quota/history on Preview: read-only
+        // quota history is denied in public demo like GET /api/cli/quota.
+        // Decision-card decide, reopen, and prose migration are execution mutations on Start.
+        // The revoked-reference post step and older-brief decision are
+        // execution mutations and must remain in the denial inventory.
+        // Project model migration is an operator-triggered Preview mutation.
+        // AGT-3072 added POST /api/attempts/checkpoint: an operator-forced authority
+        // checkpoint writes the store, so it is an execution mutation and denied.
+        Assert.Equal(93, routes.Count);
+        // Pin their identities too: an unrelated route must not mask the loss
+        // of either decision mutation from the denial inventory.
+        foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
+        {
+            var decisionRoute = Assert.Single(routes, route => route.RoutePattern.RawText == decisionPath);
+            Assert.Equal(ExecutionAdmissionPath.Start,
+                decisionRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+            Assert.Contains("POST", decisionRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
-        finally
+        foreach (var (routePath, admissionPath) in new[]
         {
-            Environment.SetEnvironmentVariable("Security__Profile", previousProfile);
+            ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
+            ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue)
+        })
+        {
+            var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
+            Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+            Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
+        }
+        var migrationRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
+        Assert.Equal(ExecutionAdmissionPath.Preview,
+            migrationRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Equal(
+            ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
+            routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
+                .Distinct()
+                .OrderBy(path => path));
+        Assert.Equal(
+            new Dictionary<ExecutionAdmissionPath, int>
+            {
+                [ExecutionAdmissionPath.Claim] = 6,
+                [ExecutionAdmissionPath.Start] = 15,
+                [ExecutionAdmissionPath.Continue] = 15,
+                [ExecutionAdmissionPath.Review] = 9,
+                [ExecutionAdmissionPath.Chat] = 9,
+                [ExecutionAdmissionPath.Preview] = 26,
+                [ExecutionAdmissionPath.PostStep] = 13,
+            },
+            routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
+                .ToDictionary(group => group.Key, group => group.Count()));
+
+        foreach (var route in routes)
+        {
+            var execution = route.Metadata.GetMetadata<ExecutionRouteMetadata>()!;
+            var expectation = route.Metadata.GetMetadata<PublicDemoExecutionExpectationMetadata>();
+            Assert.NotNull(expectation);
+            Assert.Equal(execution.Path, expectation!.Path);
+            Assert.Equal(ExecutionAdmissionPolicy.ExecutionDisabledCode, expectation.ExpectedCode);
+
+            var methods = route.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods ?? ["GET"];
+            foreach (var method in methods)
+            {
+                using var request = new HttpRequestMessage(
+                    new HttpMethod(method),
+                    Materialize(route.RoutePattern));
+                if (method is not "GET" and not "HEAD")
+                    request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+
+                using var response = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+                using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                Assert.Equal(
+                    ExecutionAdmissionPolicy.ExecutionDisabledCode,
+                    body.RootElement.GetProperty("error").GetString());
+                Assert.Equal(
+                    ExecutionAdmissionPolicy.PublicDemoProfile,
+                    body.RootElement.GetProperty("profile").GetString());
+                Assert.Equal(
+                    ExecutionAdmissionPolicy.PathName(execution.Path),
+                    body.RootElement.GetProperty("admissionPath").GetString());
+            }
         }
     }
 
     [Fact]
     public async Task Public_demo_denies_unsafe_standalone_task_server_proxy_requests_before_forwarding()
     {
-        var previousProfile = Environment.GetEnvironmentVariable("Security__Profile");
-        Environment.SetEnvironmentVariable(
-            "Security__Profile",
-            ExecutionAdmissionPolicy.PublicDemoProfile);
-        try
+        using var factory = BuildFactory(new Dictionary<string, string?>
         {
-            using var factory = BuildFactory(new Dictionary<string, string?>
-            {
-                ["TaskServer:BaseUrl"] = "http://127.0.0.1:1",
-            });
-            using var client = factory.CreateClient();
-            using var request = new HttpRequestMessage(
-                HttpMethod.Post,
-                "/api/v1/runners/forged-runner/claims")
-            {
-                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
-            };
-
-            using var response = await client.SendAsync(request);
-
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            Assert.Equal(
-                ExecutionAdmissionPolicy.ExecutionDisabledCode,
-                body.RootElement.GetProperty("error").GetString());
-            Assert.Equal(
-                ExecutionAdmissionPolicy.PublicDemoProfile,
-                body.RootElement.GetProperty("profile").GetString());
-        }
-        finally
+            ["TaskServer:BaseUrl"] = "http://127.0.0.1:1",
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/v1/runners/forged-runner/claims")
         {
-            Environment.SetEnvironmentVariable("Security__Profile", previousProfile);
-        }
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+        };
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(
+            ExecutionAdmissionPolicy.ExecutionDisabledCode,
+            body.RootElement.GetProperty("error").GetString());
+        Assert.Equal(
+            ExecutionAdmissionPolicy.PublicDemoProfile,
+            body.RootElement.GetProperty("profile").GetString());
     }
 
+    // UseSetting reaches the startup admission Program.cs reads before
+    // Build(), and it belongs to this one host, so the class runs in parallel.
     private WebApplicationFactory<Program> BuildFactory(
-        IReadOnlyDictionary<string, string?>? overrides = null) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        IReadOnlyDictionary<string, string?>? overrides = null)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _workspace,
+            ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
+        };
+        if (overrides is not null)
+        {
+            foreach (var (key, value) in overrides)
+                values[key] = value;
+        }
+        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, configuration) =>
-            {
-                var values = new Dictionary<string, string?>
-                {
-                    ["TaskRepository"] = _workspace,
-                    ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
-                };
-                if (overrides is not null)
-                {
-                    foreach (var (key, value) in overrides)
-                        values[key] = value;
-                }
-                configuration.AddInMemoryCollection(values);
-            });
+            builder.UseTestSettings(values);
         });
+    }
 
     private static IReadOnlyList<RouteEndpoint> ExecutionRoutes(IServiceProvider services) =>
         services.GetServices<EndpointDataSource>()
@@ -319,8 +298,5 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
         return path.StartsWith('/') ? path : "/" + path;
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_workspace, true); } catch { }
-    }
+    public void Dispose() => TestTempRoot.TryDelete(_workspace);
 }

@@ -94,7 +94,6 @@ public sealed class InFlightRequestTrackerTests
     }
 }
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class TestHostFactoryTests : IDisposable
 {
     private const string HoldHeader = "X-Test-Hold-Request";

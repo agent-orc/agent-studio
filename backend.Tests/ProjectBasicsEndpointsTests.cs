@@ -11,13 +11,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[CollectionDefinition(ProjectRegistryApiCollection.Name, DisableParallelization = true)]
-public sealed class ProjectRegistryApiCollection
-{
-    public const string Name = "Project registry API";
-}
-
-[Collection(ProjectRegistryApiCollection.Name)]
 public sealed class ProjectBasicsEndpointsTests
 {
     [Theory]

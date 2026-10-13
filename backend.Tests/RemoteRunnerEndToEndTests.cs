@@ -77,9 +77,9 @@ namespace AgentStudio.Tests;
 /// </summary>
 // MachineBound: real server/API, git processes, persisted timestamps, and host
 // scheduling make these end-to-end cases intentionally machine-dependent.
+[Collection(RemoteRunnerSerialCollection.Name)]
 [Trait("Category", "MachineBound")]
 [Trait("Category", "ReviewFlaky")]
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class RemoteRunnerEndToEndTests : IDisposable
 {
     private static readonly JsonSerializerOptions ApiJson = CreateApiJson();
