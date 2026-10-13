@@ -808,6 +808,38 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.False(exception.Evidence.Workspace.DirtyAfter);
     }
 
+    [Fact]
+    public async Task Missing_eslint_is_tool_unavailable_and_discards_candidate_dependency_cache()
+    {
+        var sha = await SeedOriginAsync();
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-1",
+            PosixShell.RequirePath(),
+            ["-c", "mkdir -p node_modules && printf ready > node_modules/prepared"],
+            DependencyScopes: [new ReviewDependencyScopeDto("", [])]);
+        var (workspace, subject) = Workspace(
+            "attempt-eslint-missing",
+            sha,
+            [new ReviewCommandDto(
+                "verify-lint",
+                "lint",
+                PosixShell.RequirePath(),
+                ["-c", "echo 'Error when running ESLint: Unable to find ESLint. Ensure ESLint is installed.' >&2; exit 1"])],
+            24015,
+            preparation: [preparation]);
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("ToolUnavailable", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+        Assert.False(Directory.Exists(Path.Combine(workspace.RepositoryPath, "node_modules")));
+        var cacheRoot = DependencyCacheSession.CachePath(
+            workspace.DependencyCacheRoot, subject.RepositoryId, "candidate");
+        Assert.False(Directory.Exists(Path.Combine(cacheRoot, "content")));
+    }
+
     /// <summary>
     /// AGT-2750: a review worker whose <c>/tmp</c> mount was torn down by a
     /// <c>PrivateTmp=true</c> unit restart mid-build produces no parseable

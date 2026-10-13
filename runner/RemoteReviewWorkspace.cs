@@ -456,7 +456,8 @@ public sealed class RemoteReviewWorkspace
                         ct);
                 }
 
-                if (MissingToolchain(execution.Process)
+                var missingToolchain = MissingToolchain(execution.Process);
+                if (missingToolchain
                     || AgentCommandUnavailable(command, execution.Process))
                 {
                     commands.Add(await AddCommandEvidenceAsync(
@@ -482,7 +483,16 @@ public sealed class RemoteReviewWorkspace
                         ct,
                         command,
                         execution.AgentUsage));
-                    SaveCaches(candidateCache);
+                    if (missingToolchain && candidateCache is not null)
+                    {
+                        foreach (var message in candidateCache.DiscardIncludingWorkspace("toolchain-missing"))
+                            _log(message);
+                        candidateCache = null;
+                    }
+                    else
+                    {
+                        SaveCaches(candidateCache);
+                    }
                     throw await InfrastructureFailureAsync(
                         "ToolUnavailable",
                         $"Review command '{command.StepId}' could not use its declared toolchain: " +
@@ -599,7 +609,12 @@ public sealed class RemoteReviewWorkspace
                                 dependencyCache: null,
                                 artifacts,
                                 ct));
-                            SaveCaches(candidateCache);
+                            if (candidateCache is not null)
+                            {
+                                foreach (var message in candidateCache.DiscardIncludingWorkspace("toolchain-missing"))
+                                    _log(message);
+                                candidateCache = null;
+                            }
                             throw await InfrastructureFailureAsync(
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
@@ -1479,11 +1494,17 @@ public sealed class RemoteReviewWorkspace
     }
 
     private static bool MissingToolchain(ProcessResult process)
-        => process.ExitCode == 127
-           || (process.ExitCode != 0
-               && (process.StdOut + "\n" + process.StdErr).Contains(
+    {
+        if (process.ExitCode == 127) return true;
+        if (process.ExitCode == 0) return false;
+        var output = process.StdOut + "\n" + process.StdErr;
+        return output.Contains(
                    "node_modules/@angular/cli/bin/ng.js",
-                   StringComparison.OrdinalIgnoreCase));
+                   StringComparison.OrdinalIgnoreCase)
+               || output.Contains(
+                   "Unable to find ESLint. Ensure ESLint is installed.",
+                   StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// AGT-2750: a <c>PrivateTmp=true</c> unit restart deletes the detached
@@ -1771,7 +1792,10 @@ public sealed class RemoteReviewWorkspace
                 ct));
             if (MissingToolchain(execution.Process))
             {
-                SaveCaches(baselineCache, candidateCache);
+                if (baselineCache is not null)
+                    foreach (var message in baselineCache.DiscardIncludingWorkspace("toolchain-missing"))
+                        _log(message);
+                SaveCaches(candidateCache);
                 throw await InfrastructureFailureAsync(
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +

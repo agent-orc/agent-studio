@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.TaskServer.Contracts;
 
@@ -49,9 +50,13 @@ public static class DependencyPreparationState
             return Evidence(scope, "miss", "marker-unreadable", hash, present, installRan);
         }
 
-        return string.Equals(stamped, hash, StringComparison.Ordinal)
+        if (!string.Equals(stamped, hash, StringComparison.Ordinal))
+            return Evidence(scope, "miss", "lock-changed", hash, present, installRan);
+
+        var missingDependency = MissingDirectNpmDependency(installRoot, present, dependencyDirectory);
+        return missingDependency is null
             ? Evidence(scope, "hit", "lock-unchanged", hash, present, installRan)
-            : Evidence(scope, "miss", "lock-changed", hash, present, installRan);
+            : Evidence(scope, "miss", missingDependency, hash, present, installRan);
     }
 
     public static void Stamp(string installRoot, string lockHash)
@@ -87,6 +92,46 @@ public static class DependencyPreparationState
         }
         stream.Position = 0;
         return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+    }
+
+    private static string? MissingDirectNpmDependency(
+        string installRoot,
+        IReadOnlyList<string> lockfiles,
+        string dependencyDirectory)
+    {
+        if (!lockfiles.Any(name => name is "package-lock.json" or "npm-shrinkwrap.json"))
+            return null;
+
+        var manifest = Path.Combine(installRoot, "package.json");
+        if (!File.Exists(manifest)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(manifest));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return "manifest-unreadable";
+            foreach (var group in new[] { "dependencies", "devDependencies" })
+            {
+                if (!document.RootElement.TryGetProperty(group, out var dependencies)) continue;
+                if (dependencies.ValueKind != JsonValueKind.Object) return "manifest-unreadable";
+                foreach (var dependency in dependencies.EnumerateObject())
+                {
+                    var name = dependency.Name;
+                    var segments = name.Split('/');
+                    if (segments.Length is < 1 or > 2
+                        || segments.Any(segment => segment.Length == 0 || segment is "." or "..")
+                        || name.Contains('\\'))
+                        return "manifest-invalid-dependency";
+                    var installed = Path.Combine(dependencyDirectory, Path.Combine(segments));
+                    if (!Directory.Exists(installed)) return $"dependency-missing:{name}";
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return "manifest-unreadable";
+        }
+
+        return null;
     }
 
     private static ReviewDependencyCacheEvidenceDto Evidence(

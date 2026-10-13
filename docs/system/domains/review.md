@@ -730,6 +730,11 @@ counter. `environment` evacuates the participating dependency cache entry and
 frozen review state. An unavailable fingerprint store cannot establish a
 card-specific failure, so it cannot produce `product`.
 
+A verification command that reports Angular's missing ESLint tool is
+`ReviewInfra / ToolUnavailable` before baseline comparison. The runner discards
+the candidate dependency cache and its workspace copy instead of saving the
+incomplete tree, so the next review installs dependencies again.
+
 The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
 reports, but does not authorize a new card charge. For evidence that carries a
 diagnosis and a measured baseline it defers to the diagnosis: only `product`

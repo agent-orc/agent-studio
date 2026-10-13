@@ -1261,8 +1261,11 @@ move-error dialog.
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
   Candidate and baseline caches use distinct role namespaces while sharing the
-  same transfer and lock-digest protocol as local exact-subject gates. A failed
-  preparation, including a missing toolchain, is `ReviewInfra / PreparationFailed`;
+  same transfer and lock-digest protocol as local exact-subject gates. A matching
+  npm lock marker is not enough for a cache hit: every direct dependency from
+  `package.json` must exist in `node_modules`, or preparation runs `npm ci` again.
+  Failed preparation, including a missing toolchain, is
+  `ReviewInfra / PreparationFailed`;
   it is never a product verdict. Its exact command, exit code, named budget, and
   complete stdout and stderr artifacts are retained in the Remote Review grade.
   A missing preparation directory is also copied into the grade Detail line so

@@ -63,6 +63,27 @@ public sealed class DependencyCacheSessionTests : IDisposable
     }
 
     [Fact]
+    public void Evaluate_MatchingMarkerButMissingDirectNpmDependency_IsMiss()
+    {
+        var installRoot = Path.Combine(_root, "install-root");
+        Directory.CreateDirectory(Path.Combine(installRoot, "node_modules", "@angular", "cli"));
+        File.WriteAllText(Path.Combine(installRoot, "package-lock.json"), "{}");
+        File.WriteAllText(Path.Combine(installRoot, "package.json"),
+            """{"devDependencies":{"@angular/cli":"1.0.0","eslint":"1.0.0"}}""");
+        var scope = new ReviewDependencyScopeDto("", ["package-lock.json"]);
+        DependencyPreparationState.Stamp(
+            installRoot, DependencyPreparationState.ComputeLockHash(installRoot, scope.Lockfiles));
+
+        var evidence = DependencyPreparationState.Evaluate(installRoot, scope);
+
+        Assert.Equal("miss", evidence.State);
+        Assert.Equal("dependency-missing:eslint", evidence.Reason);
+
+        Directory.CreateDirectory(Path.Combine(installRoot, "node_modules", "eslint"));
+        Assert.Equal("hit", DependencyPreparationState.Evaluate(installRoot, scope).State);
+    }
+
+    [Fact]
     public void RestoreVerified_MarkerHashMismatch_IsRefusedAndEvictedBeforeMove()
     {
         var cacheParent = Path.Combine(_root, "cache-parent");
