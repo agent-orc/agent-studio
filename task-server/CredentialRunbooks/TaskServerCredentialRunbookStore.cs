@@ -15,7 +15,9 @@ public sealed partial class TaskServerStore
     private static readonly Regex RunbookIncident = new("^incident:[A-Za-z0-9._:-]{1,120}$", RegexOptions.Compiled);
     private static readonly Regex RunbookFactCode = new("^[a-z][a-z_]{0,39}$", RegexOptions.Compiled);
     private static readonly Regex RunbookEvidenceValue = new("^[A-Za-z0-9._:-]{1,80}$", RegexOptions.Compiled);
-    private static readonly string[] RunbookSecretMarkers = ["sk-", "ghp_", "gho_", "ghs_", "github_pat_", "xoxb-"];
+    private static readonly Regex RunbookSecretMarker = new(
+        "(?<![A-Za-z0-9])(?:sk-|ghp_|gho_|ghs_|github_pat_|xoxb-)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private CredentialRunbookCatalogueDto? _runbookCatalogue;
 
     internal CredentialRunbookCatalogueDto RunbookCatalogue
@@ -80,7 +82,7 @@ public sealed partial class TaskServerStore
             if (existing is not null)
             {
                 if (existing.ExpectedGeneration != request.ExpectedGeneration || existing.Facts != facts ||
-                    existing.ActorId != actorId || existing.Intent != request.Intent)
+                    existing.ActorId != actorId || (existing.InitialIntent ?? existing.Intent) != request.Intent)
                     throw new TaskServerConflictException("runbook-idempotency-conflict",
                         "Operation key belongs to another runbook intent.");
                 operationId = existing.OperationId;
@@ -93,7 +95,7 @@ public sealed partial class TaskServerStore
             if (await ScalarAsync(connection, """
                 SELECT 1 FROM credential_runbook_operations
                  WHERE installation_id = $installation AND host_id = $host AND credential_id = $credential
-                   AND state NOT IN ('complete','failed','recovery-required','diagnosis-only') LIMIT 1;
+                   AND state NOT IN ('complete','failed','cancelled','recovery-required','diagnosis-only') LIMIT 1;
                 """, ct, transaction, ("$installation", request.InstallationId), ("$host", request.HostId),
                 ("$credential", request.CredentialId)) is not null)
                 throw new TaskServerConflictException("runbook-binding-busy",
@@ -102,7 +104,7 @@ public sealed partial class TaskServerStore
                 "credrb_" + Guid.NewGuid().ToString("N"), selection.RunbookId, selection.RunbookVersion!.Value,
                 selection.Mode, request.Intent, request.InstallationId, request.HostId, request.CredentialId,
                 request.ExpectedGeneration, actorId, request.IdempotencyKey, request.IncidentRef, evidence, facts,
-                selection.Policy, CredentialRunbookStates.Requested, null, null, null, null, UtcNow, UtcNow);
+                selection.Policy, CredentialRunbookStates.Requested, null, null, null, null, UtcNow, UtcNow, InitialIntent: request.Intent);
             await ExecuteAsync(connection, """
                 INSERT INTO credential_runbook_operations(operation_id, installation_id, host_id,
                     credential_id, idempotency_key, state, payload_json)
@@ -131,8 +133,51 @@ public sealed partial class TaskServerStore
             ?? throw new KeyNotFoundException("Runbook operation was not found.");
         if (request.Intent == CredentialRunbookIntents.Repair && operation.Intent != CredentialRunbookIntents.Repair &&
             !CredentialRunbookStates.IsTerminal(operation.State))
-            await journal.UpdateOperationAsync(operation with { Intent = CredentialRunbookIntents.Repair }, ct);
+            await journal.UpdateOperationAsync(operation with
+            {
+                InitialIntent = operation.InitialIntent ?? operation.Intent,
+                Intent = CredentialRunbookIntents.Repair,
+            }, ct);
         await RunbookExecutor().RunAsync(operationId, actorId, ct);
+        return (await GetCredentialRunbookAsync(operationId, ct))!;
+    }
+
+    public async Task<CredentialRunbookRunDto> CancelCredentialRunbookAsync(
+        string operationId, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        RequireRenewalId(operationId);
+        RequireRenewalId(actorId);
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var operation = await ReadRunbookOperationAsync(connection, transaction,
+                "SELECT payload_json FROM credential_runbook_operations WHERE operation_id = $id;", ct,
+                ("$id", operationId)) ?? throw new KeyNotFoundException("Runbook operation was not found.");
+            if (CredentialRunbookStates.IsTerminal(operation.State)) return;
+            var steps = new List<string>();
+            await using (var command = Command(connection,
+                "SELECT step_id FROM credential_runbook_receipts WHERE operation_id = $id;", ("$id", operationId)))
+            {
+                command.Transaction = transaction;
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct)) steps.Add(reader.GetString(0));
+            }
+            if (!CredentialRunbookPolicy.CanCancel(operation.State, operation.CurrentStep,
+                    operation.LinkedRenewalOperationId is not null, steps))
+                throw new TaskServerConflictException("runbook-recovery-required",
+                    "Credential work was dispatched; complete or roll back through its owning renewal flow first.");
+            var cancelled = operation with
+            {
+                State = CredentialRunbookStates.Cancelled, Detail = "operator-cancelled", CurrentStep = null,
+                UpdatedAt = UtcNow, Revision = operation.Revision + 1,
+            };
+            await ExecuteAsync(connection, """
+                UPDATE credential_runbook_operations SET state = $state, payload_json = $payload
+                 WHERE operation_id = $id;
+                """, ct, transaction, ("$id", operationId), ("$state", cancelled.State),
+                ("$payload", JsonSerializer.Serialize(cancelled, RunbookJson)));
+            await AuditRunbookAsync(connection, transaction, actorId, "credential-runbook.cancelled", cancelled, null, ct);
+        }, ct);
         return (await GetCredentialRunbookAsync(operationId, ct))!;
     }
 
@@ -229,7 +274,7 @@ public sealed partial class TaskServerStore
 
     private static bool IsRunbookSafe(string value)
         => IsRenewalId(value) &&
-           !RunbookSecretMarkers.Any(marker => value.Contains(marker, StringComparison.OrdinalIgnoreCase));
+           !RunbookSecretMarker.IsMatch(value);
 
     private static string RunbookEvidenceRef(string kind, string? value)
         => "evidence:" + kind + ":" + (value is not null && RunbookEvidenceValue.IsMatch(value) && IsRunbookSafe(value)
@@ -280,6 +325,9 @@ public sealed partial class TaskServerStore
             string operationId, CancellationToken ct)
         {
             await using var connection = await store.OpenReadyAsync(ct);
+            var operation = await ReadRunbookOperationAsync(connection, null,
+                "SELECT payload_json FROM credential_runbook_operations WHERE operation_id = $id;", ct,
+                ("$id", operationId));
             await using var command = Command(connection,
                 "SELECT payload_json FROM credential_runbook_receipts WHERE operation_id = $id;", ("$id", operationId));
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -287,7 +335,7 @@ public sealed partial class TaskServerStore
             while (await reader.ReadAsync(ct))
                 receipts.Add(JsonSerializer.Deserialize<CredentialRunbookStepReceiptDto>(reader.GetString(0), RunbookJson)!);
             var order = store.RunbookCatalogue.Runbooks
-                .FirstOrDefault(runbook => receipts.Count > 0 && runbook.PlatformSteps.Contains(receipts[0].StepId))
+                .SingleOrDefault(runbook => runbook.Id == operation?.RunbookId && runbook.Version == operation.RunbookVersion)
                 ?.PlatformSteps.ToList() ?? [];
             return receipts.OrderBy(receipt => order.IndexOf(receipt.StepId)).ToArray();
         }
@@ -329,6 +377,12 @@ public sealed partial class TaskServerStore
                         throw new TaskServerConflictException("runbook-receipt-conflict",
                             "The step already has a different final receipt.");
                 }
+                var current = await ReadRunbookOperationAsync(connection, transaction,
+                    "SELECT payload_json FROM credential_runbook_operations WHERE operation_id = $id;", ct,
+                    ("$id", operation.OperationId));
+                if (current is null || current.Revision != operation.Revision || CredentialRunbookStates.IsTerminal(current.State))
+                    throw new TaskServerConflictException("runbook-operation-conflict",
+                        "Runbook operation changed; reload it before submitting a receipt.");
                 await ExecuteAsync(connection, """
                     INSERT INTO credential_runbook_receipts(operation_id, step_id, outcome, payload_json)
                     VALUES($id, $step, $outcome, $payload)
@@ -346,17 +400,20 @@ public sealed partial class TaskServerStore
         public async Task<CredentialRunbookOperationDto> UpdateOperationAsync(
             CredentialRunbookOperationDto operation, CancellationToken ct)
         {
-            var updated = operation with { UpdatedAt = store.UtcNow };
+            var updated = operation with { UpdatedAt = store.UtcNow, Revision = operation.Revision + 1 };
             await store.InWriteTransactionAsync(async (connection, transaction) =>
             {
                 var previous = await ScalarAsync(connection,
                     "SELECT state FROM credential_runbook_operations WHERE operation_id = $id;", ct, transaction,
                     ("$id", updated.OperationId)) as string;
-                await ExecuteAsync(connection, """
+                var changed = await ExecuteAsync(connection, """
                     UPDATE credential_runbook_operations SET state = $state, payload_json = $payload
-                     WHERE operation_id = $id;
-                    """, ct, transaction, ("$state", updated.State),
+                     WHERE operation_id = $id AND COALESCE(json_extract(payload_json, '$.revision'), 0) = $revision;
+                    """, ct, transaction, ("$state", updated.State), ("$revision", operation.Revision),
                     ("$payload", JsonSerializer.Serialize(updated, RunbookJson)), ("$id", updated.OperationId));
+                if (changed != 1)
+                    throw new TaskServerConflictException("runbook-operation-conflict",
+                        "Runbook operation changed; reload it before retrying.");
                 await store.AuditRunbookAsync(connection, transaction, updated.ActorId,
                     previous == updated.State ? "credential-runbook.updated" : "credential-runbook." + updated.State,
                     updated, null, ct);

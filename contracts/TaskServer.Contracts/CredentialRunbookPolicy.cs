@@ -13,6 +13,13 @@ public static partial class CredentialRunbookPolicy
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly int[] IncidentRetrySeconds = [60, 120, 300];
 
+    /// <summary>Cancellation cannot withdraw custody work already dispatched to a host or renewal.</summary>
+    public static bool CanCancel(string state, string? currentStep, bool linkedRenewal, IEnumerable<string> receiptSteps)
+        => !linkedRenewal &&
+           !(state is CredentialRunbookStates.AwaitingHost or CredentialRunbookStates.AwaitingHuman &&
+             currentStep is not null && CredentialRunbookProtocol.Steps[currentStep].ChangesCustody) &&
+           !receiptSteps.Any(step => CredentialRunbookProtocol.Steps[step].ChangesCustody);
+
     public static CredentialRunbookCatalogueDto Parse(string json)
     {
         CredentialRunbookCatalogueDto? catalogue;

@@ -196,10 +196,11 @@ public static class CredentialRunbookStates
     public const string DiagnosisOnly = "diagnosis-only";
     public const string Complete = "complete";
     public const string Failed = "failed";
+    public const string Cancelled = "cancelled";
     public const string RecoveryRequired = "recovery-required";
 
     public static bool IsTerminal(string state)
-        => state is Complete or Failed or RecoveryRequired or DiagnosisOnly;
+        => state is Complete or Failed or Cancelled or RecoveryRequired or DiagnosisOnly;
 }
 
 public static class CredentialRunbookStepOutcomes
@@ -256,7 +257,9 @@ public sealed record CredentialRunbookOperationDto(
     string? LinkedRenewalKey,
     string? LinkedRenewalOperationId,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    string? InitialIntent = null,
+    long Revision = 0);
 
 /// <summary>Property names are exactly the runbook receiptFields; no secret field exists.</summary>
 public sealed record CredentialRunbookStepReceiptDto(

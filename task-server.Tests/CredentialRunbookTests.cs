@@ -1,9 +1,15 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -24,7 +30,8 @@ public sealed class CredentialRunbookTests
     {
         var docs = CredentialRunbookPolicy.Parse(File.ReadAllText(
             Path.Combine(Root, "docs", "credentials-and-logins", "runbooks.json")));
-        var embedded = Store(Path.GetTempPath(), TimeProvider.System)
+        using var temp = new TempDirectory();
+        var embedded = Store(temp.Path, new ManualTimeProvider(Start))
             .GetCredentialRunbookCatalogue();
         Assert.Equal(JsonSerializer.Serialize(docs, Json), JsonSerializer.Serialize(embedded, Json));
         Assert.Equal(["RB-CLAUDE-ROTATION", "RB-CODEX-INCIDENT", "RB-GITHUB-WORKSPACE"],
@@ -145,6 +152,8 @@ public sealed class CredentialRunbookTests
         run = await store.ContinueCredentialRunbookAsync(run.Operation.OperationId, new("diagnose"), "operator", default);
 
         Assert.Equal(CredentialRunbookStates.Complete, run.Operation!.State);
+        Assert.Equal(store.GetCredentialRunbookCatalogue().Runbooks.Single(book => book.Id == "RB-CODEX-INCIDENT").PlatformSteps,
+            run.Receipts.Select(receipt => receipt.StepId));
         Assert.Equal("generation-a", run.Receipts.Single(receipt => receipt.StepId == "advertise_generation").ObservedGeneration);
         Assert.Empty(await store.ListProviderHealthItemsAsync(default));
         Assert.Equal(0, await CountAsync(temp.Path, "provider_renewal_operations"));
@@ -393,14 +402,14 @@ public sealed class CredentialRunbookTests
             var crashed = false;
             store.RunbookAdapterOverride = _ => host.Adapters(() => ++writes == crashAt && (crashed = true));
             store.RunbookJournalDecorator = inner => new CrashingJournal(inner, () => ++writes == crashAt && (crashed = true));
-            try
+            var error = await Record.ExceptionAsync(() => store.BeginCredentialRunbookAsync(
+                Begin("host-a", "claude-env", "repair", ClaudeFacts), "operator", default));
+            if (!crashed)
             {
-                await store.BeginCredentialRunbookAsync(Begin("host-a", "claude-env", "repair", ClaudeFacts), "operator", default);
+                Assert.Null(error);
+                break;
             }
-            catch (SimulatedCrash)
-            {
-            }
-            if (!crashed) break;
+            Assert.IsType<SimulatedCrash>(error);
             crashPoints++;
 
             var restarted = Store(temp.Path, clock);
@@ -431,6 +440,137 @@ public sealed class CredentialRunbookTests
                 retired with { Outcome = CredentialRunbookStepOutcomes.Failed }, default));
         }
         Assert.True(crashPoints >= 15, $"Only {crashPoints} crash points were exercised.");
+    }
+
+    [Fact]
+    public async Task Diagnosis_begin_retry_after_repair_upgrade_keeps_the_same_operation()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedCredentialAsync(store, clock, "host-a", "claude-env", "claude_oauth_token", "claude", "environment-file");
+        store.RunbookAdapterOverride = _ => new FakeHost().Adapters(() => false);
+        var request = Begin("host-a", "claude-env", "diagnose", ClaudeFacts);
+        var diagnosed = await store.BeginCredentialRunbookAsync(request, "operator", default);
+        Assert.Equal(CredentialRunbookStates.AwaitingRepair, diagnosed.Operation!.State);
+        await store.ContinueCredentialRunbookAsync(diagnosed.Operation.OperationId, new("repair"), "operator", default);
+        var retried = await store.BeginCredentialRunbookAsync(request, "operator", default);
+        Assert.Equal(diagnosed.Operation.OperationId, retried.Operation!.OperationId);
+        Assert.Equal(CredentialRunbookStates.Complete, retried.Operation.State);
+        Assert.Equal("repair", retried.Operation.Intent);
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => store.BeginCredentialRunbookAsync(
+            request with { Intent = "repair" }, "operator", default));
+    }
+
+    [Fact]
+    public async Task Evidence_accepts_task_identifiers_but_rejects_provider_token_prefixes()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedCredentialAsync(store, clock, "host-a", "claude-env", "claude_oauth_token", "claude", "environment-file");
+        var request = Begin("host-a", "claude-env", "diagnose", ClaudeFacts);
+        var run = await store.BeginCredentialRunbookAsync(request with { EvidenceRefs = ["evidence:task-2979"] },
+            "operator", default);
+        Assert.Contains("evidence:task-2979", run.Operation!.EvidenceRefs);
+        foreach (var prefix in new[] { string.Concat("s", "k-"), string.Concat("gh", "p_"), string.Concat("gh", "o_"),
+                     string.Concat("gh", "s_"), string.Concat("github", "_pat_"), string.Concat("xox", "b-") })
+            await Assert.ThrowsAsync<ArgumentException>(() => store.BeginCredentialRunbookAsync(
+                request with { EvidenceRefs = ["evidence:" + prefix + Guid.NewGuid().ToString("N")] }, "operator", default));
+    }
+
+    [Fact]
+    public async Task Stale_journal_update_and_receipt_cannot_overwrite_newer_operation_state()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedCredentialAsync(store, clock, "host-a", "workspace-key", "github_deploy_key", "github",
+            "ssh-private-key", repositoryPurpose: "workspace");
+        ICredentialRunbookJournal? journal = null;
+        store.RunbookJournalDecorator = inner => journal = inner;
+        var run = await store.BeginCredentialRunbookAsync(Begin("host-a", "workspace-key", "repair",
+            new(RepositoryRequiredAccessVerified: false)), "operator", default);
+        var original = run.Operation!;
+        // Fake time does not advance: concurrency must be fenced by state, not timestamp alone.
+        await journal!.UpdateOperationAsync(original with { Detail = "newer-state" }, default);
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => journal.UpdateOperationAsync(
+            original with { State = CredentialRunbookStates.Failed }, default));
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => journal.RecordReceiptAsync(original,
+            new(original.OperationId, "probe_exact_origin", "host", original.HostId, original.CredentialId,
+                original.ExpectedGeneration, null, "succeeded", [], clock.GetUtcNow().UtcDateTime), default));
+        var current = (await store.GetCredentialRunbookAsync(original.OperationId, default))!;
+        Assert.Equal("newer-state", current.Operation!.Detail);
+        Assert.DoesNotContain(current.Receipts, receipt => receipt.StepId == "probe_exact_origin");
+    }
+
+    [Fact]
+    public async Task Cancel_route_is_idempotent_and_releases_only_a_binding_without_custody_effects()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        await using var factory = new RunbookApiFactory(temp.Path, clock);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
+        client.DefaultRequestHeaders.Add("X-Client-Id", "runbook-test");
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+        await SeedCredentialAsync(store, clock, "host-a", "workspace-key", "github_deploy_key", "github",
+            "ssh-private-key", repositoryPurpose: "workspace");
+        var request = Begin("host-a", "workspace-key", "repair", new(RepositoryRequiredAccessVerified: false));
+        var run = await store.BeginCredentialRunbookAsync(request, "operator", default);
+        var id = run.Operation!.OperationId;
+        var route = $"/api/v1/management/credential-runbook-operations/{id}/cancel";
+        var response = await client.PostAsync(route, null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var cancelled = (await response.Content.ReadFromJsonAsync<CredentialRunbookRunDto>(Json))!;
+        Assert.Equal("cancelled", cancelled.Operation!.State);
+        var retry = await client.PostAsync(route, null);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal(JsonSerializer.Serialize(cancelled, Json),
+            JsonSerializer.Serialize(await retry.Content.ReadFromJsonAsync<CredentialRunbookRunDto>(Json), Json));
+        Assert.Equal("cancelled", (await store.ContinueCredentialRunbookAsync(id, new("repair"), "operator", default)).Operation!.State);
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => store.RecordCredentialRunbookStepAsync(id,
+            new("probe_exact_origin", "succeeded", null, []), "host", default));
+        var replacement = await store.BeginCredentialRunbookAsync(request with { IdempotencyKey = "replacement" }, "operator", default);
+        Assert.NotEqual(id, replacement.Operation!.OperationId);
+        id = replacement.Operation.OperationId;
+        await store.RecordCredentialRunbookStepAsync(id, new("probe_exact_origin", "succeeded", null, []), "host", default);
+        // Even before a host submits 'started', authorizing the custody step makes cancellation unsafe.
+        var refused = await client.PostAsync($"/api/v1/management/credential-runbook-operations/{id}/cancel", null);
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Equal("generate_host_key", (await store.GetCredentialRunbookAsync(id, default))!.Operation!.CurrentStep);
+    }
+
+    [Theory]
+    [InlineData("awaiting-repair", "begin_host_login", false, null, true)]
+    [InlineData("awaiting-host", "probe_exact_origin", false, "discover_repository_binding", true)]
+    [InlineData("awaiting-host", "generate_host_key", false, null, false)]
+    [InlineData("awaiting-human", "register_public_key", false, null, false)]
+    [InlineData("requested", null, true, null, false)]
+    [InlineData("requested", null, false, "install_generation", false)]
+    [InlineData("requested", null, false, "begin_host_login", false)]
+    public void Cancellation_policy_requires_no_dispatched_custody_work(
+        string state, string? step, bool linked, string? receiptStep, bool allowed)
+        => Assert.Equal(allowed, CredentialRunbookPolicy.CanCancel(state, step, linked,
+            receiptStep is null ? [] : [receiptStep]));
+
+    private sealed class RunbookApiFactory(string dataDirectory, TimeProvider clock) : WebApplicationFactory<Program>
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskServer:DataDirectory"] = dataDirectory,
+                    ["TaskServer:ListenUrl"] = string.Empty,
+                    ["TaskServer:RetentionSchedulerEnabled"] = "false",
+                }));
+            builder.ConfigureServices(services => services.AddSingleton(clock));
+        }
     }
 
     private static readonly CredentialIncidentFacts ClaudeFacts =

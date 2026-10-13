@@ -230,3 +230,19 @@ sign-in must reach Task Server as the same actor that started the operation;
 a different actor gets `renewal-idempotency-conflict` and no second login is issued. Deploy-key
 steps are recorded by the host operator or the repository administrator
 through the steps route; Task Server never contacts GitHub or the host.
+
+A retry of the original diagnosis request keeps its operation after repair is
+explicitly authorized through `/run`. The operation retains `initialIntent`
+separately from its current `intent`. Receipt order follows that operation's
+runbook and version. Journal updates compare a durable revision, so a stale
+request receives `runbook-operation-conflict`; reload the operation before
+retrying. Matching final step receipts remain idempotent.
+
+`POST /api/v1/management/credential-runbook-operations/{operationId}/cancel`
+cancels an operation before credential custody changes are dispatched. It is
+idempotent and requires the same management scope. Once a host or provider
+renewal has been authorized to issue, stage, install or retire credentials,
+the route returns `runbook-recovery-required`. Finish or roll back through
+the existing host/provider renewal flow and submit its proof before settling
+the runbook. Cancellation never revokes credentials or clears a provider
+incident hold. Completed operations retain their terminal outcome.

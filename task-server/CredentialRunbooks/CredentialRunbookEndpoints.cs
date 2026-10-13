@@ -29,6 +29,10 @@ public static class CredentialRunbookEndpoints
             TaskServerStore store, CancellationToken ct)
             => TaskServerEndpoints.InvokeAsync(() => store.ContinueCredentialRunbookAsync(
                 operationId, request, TaskServerEndpoints.Actor(context), ct)));
+        management.MapPost("/credential-runbook-operations/{operationId}/cancel", (
+            HttpContext context, string operationId, TaskServerStore store, CancellationToken ct)
+            => TaskServerEndpoints.InvokeAsync(() => store.CancelCredentialRunbookAsync(
+                operationId, TaskServerEndpoints.Actor(context), ct)));
         management.MapPost("/credential-runbook-operations/{operationId}/steps", (
             HttpContext context, string operationId, RecordCredentialRunbookStepRequest request,
             TaskServerStore store, CancellationToken ct)
