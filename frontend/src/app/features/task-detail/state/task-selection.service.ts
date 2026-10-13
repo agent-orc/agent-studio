@@ -487,6 +487,7 @@ export class TaskSelectionService {
         olderBriefDelivery: null, relatedWikiPages: [], creationSource: undefined,
         completionClaim: null, parkedBlocker: null, needsInput: null,
         reviewProjection: null, provenance: null, references: undefined, waitsOn: null,
+        acceptanceAttemptGap: null,
       }),
     };
   }

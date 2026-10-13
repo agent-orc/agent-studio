@@ -3,6 +3,7 @@ import { firstValueFrom } from 'rxjs';
 import { TaskInfo, type TaskDeliveryClaimAnswer } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
+import { NotificationService } from '../../../services/notification.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import { UndoController } from '../../../services/undo.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
@@ -35,6 +36,7 @@ import {
 export class TriageController {
   private readonly jobService = inject(TaskService);
   private readonly errorDialog = inject(ErrorDialogService);
+  private readonly notifications = inject(NotificationService);
   private readonly confirmDialog = inject(ConfirmDialogService);
   private readonly jobSelection = inject(TaskSelectionService);
   private readonly lanePager = inject(LanePagerService);
@@ -259,6 +261,19 @@ export class TriageController {
         // spot is the job they tried to act on.
         this.jobSelection.openDetail(info);
         this.clearActing();
+        if (ev.targetState === '6-completed' && err?.status === 409
+            && err?.error?.code === 'run-attempt-missing') {
+          // AGT-3096: checked before the integration match below, whose
+          // pattern also hits this refusal's "delivery evidence" wording.
+          // The reopened core-first detail reads the gap from its overview
+          // and offers the override; the toast names the refusal meanwhile.
+          this.notifications.warning(
+            typeof err.error.error === 'string' && err.error.error.trim()
+              ? err.error.error
+              : 'No run attempt in the current authority epoch. Accept with an operator override and a written reason.',
+            'Acceptance needs an operator override');
+          return;
+        }
         if (ev.targetState === '6-completed'
             && err?.status === 409
             && (err?.error?.code === 'integration-dead-end'

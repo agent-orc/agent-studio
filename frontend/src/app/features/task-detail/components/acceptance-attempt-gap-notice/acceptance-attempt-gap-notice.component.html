@@ -9,8 +9,36 @@
       <p class="attempt-gap__hint" data-testid="acceptance-attempt-gap-reason">{{ gap.reason }}</p>
       <p class="attempt-gap__hint">
         Recorded run <code>{{ gap.subjectRunAttemptId }}</code>, delivery <code>{{ gap.resultSha.slice(0, 12) }}</code>.
-        The override records the acceptance against this delivery evidence.
+        An override with a written reason records the acceptance against this delivery evidence.
       </p>
+      @if (overrideOpen()) {
+        <div class="attempt-gap__form" data-testid="acceptance-attempt-gap-form">
+          <label class="attempt-gap__label" for="attempt-gap-reason-{{ job().id }}">Reason for the override</label>
+          <textarea
+            id="attempt-gap-reason-{{ job().id }}"
+            class="attempt-gap__input"
+            data-testid="acceptance-attempt-gap-override-reason"
+            rows="3"
+            placeholder="Why this delivery is accepted without its run attempt"
+            [value]="reason()"
+            [disabled]="busy()"
+            (input)="onReasonInput($event)"></textarea>
+          @if (error(); as message) {
+            <p class="attempt-gap__error" data-testid="acceptance-attempt-gap-error" role="alert">{{ message }}</p>
+          }
+          <div class="attempt-gap__actions">
+            <button type="button" class="attempt-gap__primary" data-testid="acceptance-attempt-gap-submit"
+              [disabled]="!canSubmit()" (click)="acceptWithOverride()">Accept with override</button>
+            <button type="button" data-testid="acceptance-attempt-gap-cancel"
+              [disabled]="busy()" (click)="cancelOverride()">Cancel</button>
+          </div>
+        </div>
+      } @else {
+        <div class="attempt-gap__actions">
+          <button type="button" data-testid="acceptance-attempt-gap-override"
+            (click)="openOverride()">Accept with operator override</button>
+        </div>
+      }
     </div>
   </section>
 }
