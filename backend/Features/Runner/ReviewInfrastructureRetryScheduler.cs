@@ -215,7 +215,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
     /// immutable ReviewSubject identity (result SHA, requirements, policy,
     /// evidence) is unchanged; only the execution plan is renewed.
     /// After a ReviewInfra outcome the fresh plan also names the failed
-    /// attempts whose passed verify results the executor may carry over
+    /// attempt whose passed verify results the executor may carry over
     /// (<see cref="ReviewVerifyReusePolicy"/>); only commands of this plan that
     /// still match are reused.
     /// </summary>
@@ -236,7 +236,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             review.Subject.ExpectedResultSha,
             RemoteReviewPlanBuilder.DeliveryChangedFiles(
                 _git, repositoryPath, integrationRef, review.Subject.ExpectedResultSha));
-        var reuseSources = ReviewVerifyReusePolicy.SourceAttemptIds(review, _authority.GetReview);
+        var reuseSources = ReviewVerifyReusePolicy.SourceAttemptIds(review);
         if (reuseSources.Count > 0)
             plan = plan with { VerifyReuseFromAttemptIds = reuseSources };
 

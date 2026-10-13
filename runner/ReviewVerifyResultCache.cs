@@ -44,11 +44,13 @@ internal sealed record VerifyCacheEntry(
 /// deterministic command is stored here once per repository, Result-SHA,
 /// command and toolchain; a successor whose plan names the failed attempt in
 /// <c>VerifyReuseFromAttemptIds</c> re-attaches the stored result instead of
-/// executing the command. Follows the AGT-2843 baseline cache
+/// executing the command, and re-stores it under its own attempt id so only
+/// its own successor can carry it further. Follows the AGT-2843 baseline cache
 /// (<see cref="ReviewBaselineResultCache"/>).
 ///
-/// A failed result is never stored and never reused: whatever failed or did
-/// not run in the source attempt executes again.
+/// A failed result is never stored and never reused, and a command that
+/// executes drops the stored pass of its key first: whatever failed or did not
+/// run in the source attempt executes again.
 /// </summary>
 internal static class ReviewVerifyResultCache
 {
@@ -176,7 +178,21 @@ internal static class ReviewVerifyResultCache
         }
     }
 
-    /// <summary>Drops every entry past <see cref="MaximumAge"/> for one repository.</summary>
+    /// <summary>
+    /// Drops the stored result of one key before the command executes again,
+    /// so a run that does not pass never leaves an older pass behind.
+    /// </summary>
+    internal static bool Delete(string root, ReviewVerifyCacheKey key, Action<string> log)
+    {
+        var path = EntryPath(root, key);
+        return File.Exists(path) && TryDeleteFile(path, log);
+    }
+
+    /// <summary>
+    /// Drops every entry past <see cref="MaximumAge"/> for one repository. A
+    /// concurrent attempt on this host may delete a Result-SHA directory while
+    /// the prune walks it; that directory simply has nothing left to prune.
+    /// </summary>
     internal static async Task<int> PruneAsync(
         string root,
         string repositoryId,
@@ -187,16 +203,16 @@ internal static class ReviewVerifyResultCache
         var repository = RepositoryDirectory(root, repositoryId);
         if (!Directory.Exists(repository)) return 0;
         var removed = 0;
-        foreach (var directory in Directory.EnumerateDirectories(repository))
+        foreach (var directory in Snapshot(() => Directory.GetDirectories(repository), repository, log))
         {
             ct.ThrowIfCancellationRequested();
-            foreach (var file in Directory.EnumerateFiles(directory, "*.json"))
+            foreach (var file in Snapshot(() => Directory.GetFiles(directory, "*.json"), directory, log))
             {
                 var entry = await ReadEntryAsync(file, ct);
                 if (entry is not null && Age(entry, utcNow) <= MaximumAge) continue;
                 if (TryDeleteFile(file, log)) removed++;
             }
-            TryDeleteEmptyDirectory(directory);
+            TryDeleteEmptyDirectory(directory, log);
         }
         if (removed > 0)
             log($"review verify cache prune repository={repositoryId} removed={removed} " +
@@ -233,16 +249,35 @@ internal static class ReviewVerifyResultCache
         }
     }
 
-    private static void TryDeleteEmptyDirectory(string path)
+    /// <summary>Lists a cache directory eagerly; one that is already gone lists nothing.</summary>
+    internal static string[] Snapshot(Func<string[]> list, string path, Action<string> log)
     {
         try
         {
-            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
+            return list();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return [];
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            log($"review verify cache prune skipped path={path}: {exception.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>An empty directory left behind is harmless; the next prune retries.</summary>
+    private static void TryDeleteEmptyDirectory(string path, Action<string> log)
+    {
+        try
+        {
+            if (Directory.Exists(path) && Directory.GetFileSystemEntries(path).Length == 0)
                 Directory.Delete(path);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // An empty directory left behind is harmless; the next prune retries.
+            log($"review verify cache directory delete failed path={path}: {exception.Message}");
         }
     }
 

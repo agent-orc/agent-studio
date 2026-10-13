@@ -117,6 +117,108 @@ public sealed class ReviewVerifyResultReuseTests : IDisposable
                 .ToArray());
     }
 
+    [Fact]
+    public async Task A_command_that_failed_in_the_direct_predecessor_executes_even_if_an_older_attempt_passed_it()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (sha, _) = await SeedOriginAsync();
+        var toolGone = Path.Combine(_root, "tool-gone-once");
+        // The command line is identical in every attempt; only its toolchain
+        // goes missing once, in the second attempt.
+        IReadOnlyList<ReviewCommandDto> plan =
+        [
+            Verify("verify-1"),
+            Verify("verify-3", $"if [ -f '{toolGone}' ]; then rm '{toolGone}'; exit 127; fi"),
+            await TimeoutOnceAspectAsync(),
+        ];
+
+        // A1 passes verify-1 and verify-3, then its aspect times out.
+        var first = Workspace("attempt-1", sha, plan);
+        await first.PrepareAsync(null!, default);
+        await Assert.ThrowsAsync<ReviewInfrastructureException>(() => first.ExecutePlanAsync(default));
+        await first.CleanupAsync();
+        Assert.Equal(2, StoredResults(first).Count);
+
+        // A2 executes everything (planned without a source, as a lazily planned
+        // requeue or a claim on another host would be) and verify-3 fails.
+        await File.WriteAllTextAsync(toolGone, "");
+        _now = _now.AddMinutes(3);
+        var second = Workspace("attempt-2", sha, plan);
+        await second.PrepareAsync(null!, default);
+        var toolUnavailable = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => second.ExecutePlanAsync(default));
+        Assert.Equal("ToolUnavailable", toolUnavailable.Classification);
+        await second.CleanupAsync();
+        // The pass A1 stored for verify-3 did not survive A2's failed run.
+        Assert.Single(StoredResults(second));
+
+        // Even a plan that still named the whole chain cannot bring A1's pass back.
+        _now = _now.AddMinutes(3);
+        var third = Workspace("attempt-3", sha, plan, reuseFrom: ["attempt-2", "attempt-1"]);
+        await third.PrepareAsync(null!, default);
+        var evidence = await third.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(2, Invocations("verify-1"));
+        Assert.Equal(3, Invocations("verify-3"));
+        Assert.Null(Assert.Single(evidence.Commands, item => item.StepId == "verify-3").VerifyReusedFromAttemptId);
+        Assert.Equal(
+            "attempt-2",
+            Assert.Single(evidence.Commands, item => item.StepId == "verify-1").VerifyReusedFromAttemptId);
+    }
+
+    [Fact]
+    public async Task A_reused_pass_carries_to_the_next_successor_under_the_attempt_that_reused_it()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (sha, _) = await SeedOriginAsync();
+        IReadOnlyList<ReviewCommandDto> plan = [Verify("verify-1"), await TimeoutOnceAspectAsync(timeouts: 2)];
+
+        var first = Workspace("attempt-1", sha, plan);
+        await first.PrepareAsync(null!, default);
+        await Assert.ThrowsAsync<ReviewInfrastructureException>(() => first.ExecutePlanAsync(default));
+        await first.CleanupAsync();
+
+        _now = _now.AddMinutes(3);
+        var second = Workspace("attempt-2", sha, plan, reuseFrom: ["attempt-1"]);
+        await second.PrepareAsync(null!, default);
+        await Assert.ThrowsAsync<ReviewInfrastructureException>(() => second.ExecutePlanAsync(default));
+        await second.CleanupAsync();
+
+        // The successor of A2 names only A2, the attempt the pass was carried into.
+        _now = _now.AddMinutes(9);
+        var third = Workspace("attempt-3", sha, plan, reuseFrom: ["attempt-2"]);
+        await third.PrepareAsync(null!, default);
+        var evidence = await third.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(1, Invocations("verify-1"));
+        Assert.Equal(3, Invocations("aspect"));
+        var reused = Assert.Single(evidence.Commands, item => item.StepId == "verify-1");
+        Assert.Equal("attempt-2", reused.VerifyReusedFromAttemptId);
+        // The age counts from the run that executed the command; the evidence
+        // row carries this attempt's time, not the earlier run's.
+        Assert.Equal(720, reused.VerifyReusedAgeSeconds);
+        Assert.Equal(_now, reused.StartedAt);
+        Assert.Equal(_now, reused.FinishedAt);
+        Assert.Contains(
+            "verify result reused from attempt attempt-2 (12m)",
+            Assert.Single(evidence.Verdicts, item => item.EvidenceChecked == "command:verify-1").Summary,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_directory_deleted_while_the_prune_lists_it_yields_nothing_to_prune()
+    {
+        var logged = new List<string>();
+
+        Assert.Empty(ReviewVerifyResultCache.Snapshot(
+            () => throw new DirectoryNotFoundException("deleted by a settled attempt"),
+            Path.Combine(_root, "gone"),
+            logged.Add));
+        Assert.Empty(logged);
+    }
+
     [Theory]
     [InlineData("other result sha")]
     [InlineData("other command line")]
@@ -225,7 +327,7 @@ public sealed class ReviewVerifyResultReuseTests : IDisposable
             PosixShell.RequirePath(),
             ["-c", $"printf '{stepId}\\n' >> '{InvocationLog}'; {prefix}; printf '{stepId} output\\n'"]);
 
-    private async Task<ReviewCommandDto> TimeoutOnceAspectAsync()
+    private async Task<ReviewCommandDto> TimeoutOnceAspectAsync(int timeouts = 1)
     {
         Directory.CreateDirectory(_root);
         var marker = Path.Combine(_root, "aspect-timed-out");
@@ -234,7 +336,7 @@ public sealed class ReviewVerifyResultReuseTests : IDisposable
             fakeCodex,
             "#!/bin/sh\n"
             + $"printf 'aspect\\n' >> '{InvocationLog}'\n"
-            + $"if [ ! -f '{marker}' ]; then touch '{marker}'; exit 124; fi\n"
+            + $"if [ $(cat '{marker}' 2>/dev/null | wc -l) -lt {timeouts} ]; then echo x >> '{marker}'; exit 124; fi\n"
             + "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"[[ASPECT_VERDICT: status=pass; summary=Aspect inspected the exact subject.]]\"}}'\n");
         File.SetUnixFileMode(
             fakeCodex,

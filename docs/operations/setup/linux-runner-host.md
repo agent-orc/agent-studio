@@ -1480,15 +1480,19 @@ passed instead of running them again (AGT-2841). The executor stores every
 passed verify command under
 `$RUNNER_REVIEW_WORKDIR/.verify-cache/<repository-hash>/<result-sha>/<command-hash>.<toolchain>.json`
 with the complete stdout and stderr. Only a successor whose plan names the
-failed attempt reads an entry, and only for the same Result-SHA, command line
-and toolchain; failed results are never stored. Entries older than 24 hours are
-pruned, and a Result-SHA whose review settles without `ReviewInfra` loses all
-its entries. The store is per host, so a successor on another review host runs
+failed attempt (its direct predecessor) reads an entry, and only for the same
+Result-SHA, command line and toolchain; failed results are never stored, and a
+command that executes drops its stored entry first. A reused entry is stored
+again under the successor's attempt id. Entries older than 24 hours are pruned,
+and a Result-SHA whose review settles without `ReviewInfra` loses all its
+entries. The store is per host, so a successor on another review host runs
 every command.
 
 The grade shows the reuse as `verifyReused: true`, a `Result` column in the
 command evidence table, and `verify result reused from attempt <id> (<age>)` in
-the verdict summary. The journal line is `review verify result reused ...`.
+the verdict summary; that grade is the place to check it. The review commands
+run in the detached review worker, which does not write workspace log lines to
+the journal, so there is no journal line for a reuse or a failed store.
 Clearing the tree is always safe; the next successor simply runs the commands:
 
 ```bash

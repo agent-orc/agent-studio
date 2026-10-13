@@ -285,6 +285,10 @@ public sealed class RemoteReviewWorkspace
                     await SaveCheckpointAsync();
                     continue;
                 }
+                // The command executes: whatever pass an earlier attempt stored
+                // for it must not outlive a run that fails or never finishes.
+                if (!ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind))
+                    ReviewVerifyResultCache.Delete(VerifyCacheRoot, VerifyCacheKey(plannedCommand), _log);
 
                 // AGT-2820: the plan froze a budget for the prompt as authored.
                 // The authoritative diff is appended here, at execution time, so
@@ -2115,6 +2119,9 @@ public sealed class RemoteReviewWorkspace
     /// Re-attaches a stored passed result as this attempt's candidate evidence:
     /// the full streams become this attempt's artefacts, the verdict is the
     /// pass the exit code yields, and its summary cites the source attempt.
+    /// The entry is then stored again under this attempt, keeping its original
+    /// time, because a pass this attempt carried is a pass in this attempt: its
+    /// own ReviewInfra successor names only this attempt.
     /// </summary>
     private async Task ReuseVerifyResultAsync(
         ReviewCommandDto command,
@@ -2124,7 +2131,8 @@ public sealed class RemoteReviewWorkspace
         ICollection<ReviewVerdictDto> verdicts,
         CancellationToken ct)
     {
-        var age = ReviewVerifyResultCache.Age(cached, _utcNow());
+        var now = _utcNow();
+        var age = ReviewVerifyResultCache.Age(cached, now);
         var process = new ProcessResult(cached.ExitCode, cached.StdOut, cached.StdErr);
         commands.Add(await AddCommandEvidenceAsync(
             command.StepId,
@@ -2134,8 +2142,8 @@ public sealed class RemoteReviewWorkspace
             cached.HeadSha,
             cached.TreeSha,
             process,
-            cached.CreatedAt,
-            cached.CreatedAt,
+            now,
+            now,
             signal: null,
             command.TimeoutSeconds,
             "verification",
@@ -2158,6 +2166,7 @@ public sealed class RemoteReviewWorkspace
         _log(
             $"review verify result reused repository={_subject.RepositoryId} sha={_subject.ExpectedResultSha} " +
             $"step={command.StepId} reusedFromAttempt={cached.AttemptId} ageMinutes={age.TotalMinutes:F0}");
+        await WriteVerifyResultAsync(command, cached with { AttemptId = _lease.AttemptId }, ct);
     }
 
     /// <summary>
@@ -2172,24 +2181,40 @@ public sealed class RemoteReviewWorkspace
         CancellationToken ct)
     {
         var key = VerifyCacheKey(command);
+        await WriteVerifyResultAsync(
+            command,
+            new VerifyCacheEntry(
+                key.RepositoryId,
+                key.ResultSha,
+                key.CommandHash,
+                key.ToolchainFingerprint,
+                _lease.AttemptId,
+                command.StepId,
+                headSha,
+                treeSha,
+                process.ExitCode,
+                "pass",
+                process.StdOut,
+                process.StdErr,
+                _utcNow()),
+            ct);
+    }
+
+    /// <summary>
+    /// Writes one entry, pruning this repository's expired entries first on
+    /// the first write of the attempt. A store failure costs only the reuse.
+    /// </summary>
+    private async Task WriteVerifyResultAsync(ReviewCommandDto command, VerifyCacheEntry entry, CancellationToken ct)
+    {
         try
         {
+            await PruneVerifyCacheAsync(ct);
             await ReviewVerifyResultCache.WriteAsync(
-                ReviewVerifyResultCache.EntryPath(VerifyCacheRoot, key),
-                new VerifyCacheEntry(
-                    key.RepositoryId,
-                    key.ResultSha,
-                    key.CommandHash,
-                    key.ToolchainFingerprint,
-                    _lease.AttemptId,
-                    command.StepId,
-                    headSha,
-                    treeSha,
-                    process.ExitCode,
-                    "pass",
-                    process.StdOut,
-                    process.StdErr,
-                    _utcNow()),
+                ReviewVerifyResultCache.EntryPath(
+                    VerifyCacheRoot,
+                    new ReviewVerifyCacheKey(
+                        entry.RepositoryId, entry.ResultSha, entry.CommandHash, entry.ToolchainFingerprint)),
+                entry,
                 ct);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

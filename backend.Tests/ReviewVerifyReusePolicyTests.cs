@@ -7,9 +7,9 @@ namespace AgentStudio.Tests;
 // clock-independent: attempt timestamps are inert policy inputs; nothing compares them to now.
 
 /// <summary>
-/// AGT-2841: which failed attempts a freshly planned review successor may take
-/// passed verify results from. Only a ReviewInfra chain of the same
-/// Result-SHA qualifies.
+/// AGT-2841: which failed attempt a freshly planned review successor may take
+/// passed verify results from. Only a ReviewInfra outcome qualifies, and only
+/// the failed attempt itself - never an older attempt of the retry chain.
 /// </summary>
 public sealed class ReviewVerifyReusePolicyTests
 {
@@ -25,64 +25,23 @@ public sealed class ReviewVerifyReusePolicyTests
     {
         var failed = Review("review-1", outcome);
 
-        Assert.Equal(reusable ? ["review-1"] : [], ReviewVerifyReusePolicy.SourceAttemptIds(failed, _ => null));
+        Assert.Equal(reusable ? ["review-1"] : [], ReviewVerifyReusePolicy.SourceAttemptIds(failed));
     }
 
     [Fact]
-    public void A_retry_chain_names_every_review_infra_attempt_of_the_same_result()
+    public void A_retry_chain_names_only_the_direct_predecessor()
     {
-        var reviews = new[]
-        {
-            Review("review-1", ReviewTerminalOutcome.InfrastructureFailure),
-            Review("review-2", ReviewTerminalOutcome.InfrastructureFailure, source: "review-1"),
-            Review("review-3", ReviewTerminalOutcome.InfrastructureFailure, source: "review-2"),
-        }.ToDictionary(review => review.AttemptId);
-
-        Assert.Equal(
-            ["review-3", "review-2", "review-1"],
-            ReviewVerifyReusePolicy.SourceAttemptIds(reviews["review-3"], reviews.GetValueOrDefault));
-    }
-
-    [Theory]
-    [InlineData("product failure predecessor")]
-    [InlineData("other result sha")]
-    [InlineData("unknown predecessor")]
-    public void The_chain_stops_at_a_predecessor_that_cannot_contribute(string variant)
-    {
-        var predecessor = variant switch
-        {
-            "product failure predecessor" => Review("review-1", ReviewTerminalOutcome.ProductFailure),
-            "other result sha" => Review(
-                "review-1", ReviewTerminalOutcome.InfrastructureFailure, sha: new string('2', 40)),
-            "unknown predecessor" => null,
-            _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null),
-        };
+        // review-1 may have passed a command that failed in review-2; a pass of
+        // review-1 must not stand in for that failure in review-3.
         var failed = Review("review-2", ReviewTerminalOutcome.InfrastructureFailure, source: "review-1");
 
-        Assert.Equal(
-            ["review-2"],
-            ReviewVerifyReusePolicy.SourceAttemptIds(failed, id => id == "review-1" ? predecessor : null));
-    }
-
-    [Fact]
-    public void A_cyclic_link_does_not_loop()
-    {
-        var reviews = new[]
-        {
-            Review("review-1", ReviewTerminalOutcome.InfrastructureFailure, source: "review-2"),
-            Review("review-2", ReviewTerminalOutcome.InfrastructureFailure, source: "review-1"),
-        }.ToDictionary(review => review.AttemptId);
-
-        Assert.Equal(
-            ["review-2", "review-1"],
-            ReviewVerifyReusePolicy.SourceAttemptIds(reviews["review-2"], reviews.GetValueOrDefault));
+        Assert.Equal(["review-2"], ReviewVerifyReusePolicy.SourceAttemptIds(failed));
     }
 
     private static ReviewAttemptDto Review(
         string attemptId,
         ReviewTerminalOutcome outcome,
-        string? source = null,
-        string sha = Sha)
+        string? source = null)
     {
         var at = new DateTime(2026, 10, 12, 21, 0, 0, DateTimeKind.Utc);
         return new ReviewAttemptDto(
@@ -91,7 +50,7 @@ public sealed class ReviewVerifyReusePolicyTests
             "repo",
             "run-1",
             source,
-            new ReviewSubjectDto("subject-1", "repo", sha, "run-1", "requirements", "policy", [], at),
+            new ReviewSubjectDto("subject-1", "repo", Sha, "run-1", "requirements", "policy", [], at),
             AttemptLifecycleState.Completed,
             null,
             1,
@@ -100,7 +59,7 @@ public sealed class ReviewVerifyReusePolicyTests
             at,
             outcome,
             null,
-            sha,
+            Sha,
             null,
             []);
     }
