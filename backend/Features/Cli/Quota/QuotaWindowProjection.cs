@@ -32,6 +32,7 @@ public static class QuotaWindowProjection
     private const double MaxProjectedToUsedRatio = 4d;
     private const double SuspiciousEarlyFraction = 0.25;
     private static readonly TimeSpan StartAnchorTolerance = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan WeeklyLength = TimeSpan.FromDays(7);
 
     /// <summary>
     /// Project one window to the end of its current period. Returns null when
@@ -88,6 +89,14 @@ public static class QuotaWindowProjection
     /// Carry the first observed start of an active reset cycle forward. A reset
     /// timestamp that moves while the anchored cycle is still active is retained
     /// for display but marked unusable for projection until a reset is observed.
+    /// <para>
+    /// A weekly window can reset early. A usage drop of more than
+    /// <see cref="QuotaForecastPolicy.ResetDropPct"/> together with a later reset
+    /// time counts as that observed reset and re-anchors the window. This relies on
+    /// <see cref="QuotaService"/> running <see cref="QuotaPlausibilityGate"/> first,
+    /// so a weekly decrease only gets here after a second probe confirmed it. A reset
+    /// time that moves without such a drop (the AGT-2107 poisoned reset) stays suspicious.
+    /// </para>
     /// </summary>
     public static QuotaSnapshot AnchorWindowStarts(
         QuotaSnapshot? previous, QuotaSnapshot candidate, DateTime nowUtc)
@@ -111,6 +120,15 @@ public static class QuotaWindowProjection
             }
 
             var impliedStart = current.ResetAt.Value - length.Value;
+            if (IsObservedEarlyWeeklyReset(length.Value, prior, current, impliedStart, priorStart.Value))
+            {
+                return current with
+                {
+                    ObservedStartAt = impliedStart,
+                    ProjectionSuspiciousReason = null,
+                };
+            }
+
             var shifted = (impliedStart - priorStart.Value).Duration() > StartAnchorTolerance;
             return current with
             {
@@ -122,6 +140,14 @@ public static class QuotaWindowProjection
         }).ToList();
         return candidate with { Windows = windows };
     }
+
+    private static bool IsObservedEarlyWeeklyReset(
+        TimeSpan length, QuotaWindow? prior, QuotaWindow current, DateTime impliedStart, DateTime priorStart)
+        => length == WeeklyLength
+            && prior?.UsedPct is double priorUsed
+            && current.UsedPct is double currentUsed
+            && priorUsed - currentUsed > QuotaForecastPolicy.ResetDropPct
+            && impliedStart > priorStart;
 
     /// <summary>Explain why a snapshot was deliberately excluded from projection.</summary>
     public static QuotaProjectionWarning? FindWarning(QuotaSnapshot? snapshot, DateTime nowUtc)

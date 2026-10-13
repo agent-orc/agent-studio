@@ -146,6 +146,11 @@ public static class RemoteDeliveryParkReason
     public static string ForCode(string failureCode) => Prefix + failureCode;
 }
 
+/// <param name="ReviewAttemptId">The settled ReviewAttempt that earned this integration; null for a batch member.</param>
+/// <param name="ReviewedResultSha">
+/// The exact Result-SHA that review passed (AGT-3091). The merge runner refuses
+/// a delivery that resolves to any other SHA; null keeps the unpinned merge.
+/// </param>
 public sealed record RemoteDeliveryIntegrationRequest(
     string Project,
     string JobId,
@@ -155,7 +160,8 @@ public sealed record RemoteDeliveryIntegrationRequest(
     string IntegrationStrategy,
     string PipelineType,
     DateTimeOffset DeliveredAtUtc,
-    string? ReviewAttemptId = null);
+    string? ReviewAttemptId = null,
+    string? ReviewedResultSha = null);
 
 /// <summary>
 /// Serializes immediately eligible fenced deliveries per project in delivery
@@ -175,7 +181,11 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Action<RemoteDeliveryIntegrationRequest, string, string, string> _recordFailure;
     private readonly ILogger<RemoteDeliveryIntegrationCoordinator> _logger;
     private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isCurrentReview;
+    private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isAdmissibleDelivery;
     private long _sequence;
+
+    /// <summary>Error prefix of a review-driven delivery refused at dequeue because its card was reissued (AGT-3091).</summary>
+    public const string ReviewedDeliverySupersededError = "reviewed-delivery-superseded";
 
     public RemoteDeliveryIntegrationCoordinator(
         MergeIntoDevelopRunner runner,
@@ -194,7 +204,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 provenance,
                 timeline,
                 request.ReviewAttemptId is { } reviewAttemptId
-                    ? apply => authority.TryApplyForCurrentReview(reviewAttemptId, apply)
+                    ? apply => authority.TryApplyForCurrentReviewedDelivery(reviewAttemptId, apply)
                     : null),
             logger,
             (request, failureCode, summary, detail) => RecordPreReviewFailure(
@@ -208,22 +218,41 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request => request.ReviewAttemptId is null
                 || authority.GetReview(request.ReviewAttemptId) is { } review
                    && authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId
-                       == request.ReviewAttemptId)
+                       == request.ReviewAttemptId,
+            request => IsReviewedDeliveryAdmissible(request, scanner, authority))
     {
     }
+
+    /// <summary>
+    /// A review-driven delivery is still owed only while its card sits in
+    /// <c>4-auto-review</c> and the reviewed RunAttempt is still the task's
+    /// current settled one. A concern or finding reissue changes neither the
+    /// review generation nor the queued request, so the review check alone let
+    /// AGT-2951's superseded delivery hold the gate for 11.6 minutes.
+    /// </summary>
+    internal static bool IsReviewedDeliveryAdmissible(
+        RemoteDeliveryIntegrationRequest request,
+        TaskScannerService scanner,
+        AttemptAuthorityService authority)
+        => request.ReviewAttemptId is not { } reviewAttemptId
+           || scanner.FindJob(request.JobId, request.WatchPath) is { } card
+              && string.Equals(card.State, TaskStates.AutoReview, StringComparison.Ordinal)
+              && authority.IsReviewedDeliveryCurrent(reviewAttemptId);
 
     internal RemoteDeliveryIntegrationCoordinator(
         Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>> integrate,
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
         Action<RemoteDeliveryIntegrationRequest, string, string, string>? recordFailure = null,
         Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>>? startAgentRound = null,
-        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null)
+        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null,
+        Func<RemoteDeliveryIntegrationRequest, bool>? isAdmissibleDelivery = null)
     {
         _integrate = integrate;
         _startAgentRound = startAgentRound ?? ((_, _) => Task.FromResult(
             new IntegrationAgentRoundStartResult(false, "No automatic agent-round boundary was configured.")));
         _recordFailure = recordFailure ?? ((_, _, _, _) => { });
         _isCurrentReview = isCurrentReview ?? (_ => true);
+        _isAdmissibleDelivery = isAdmissibleDelivery ?? (_ => true);
         _logger = logger;
     }
 
@@ -251,6 +280,28 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     public Task<MergeIntoIntegrationResult> EnqueueAsync(
         RemoteDeliveryIntegrationRequest request,
         bool discardCompletedReplay = false)
+        => Enqueue(request, discardCompletedReplay, joinInFlight: true)!;
+
+    /// <summary>
+    /// Like <see cref="EnqueueAsync"/>, but never joins an integration of the
+    /// same card that another caller is already driving (AGT-3091). Returns
+    /// false and no task in that case. A recovery sweep that coalesced onto the
+    /// report request's integration waited out that whole gate, and every card
+    /// behind it was then judged on a lane snapshot that old.
+    /// </summary>
+    public bool TryEnqueueUnlessInFlight(
+        RemoteDeliveryIntegrationRequest request,
+        bool discardCompletedReplay,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Task<MergeIntoIntegrationResult>? result)
+    {
+        result = Enqueue(request, discardCompletedReplay, joinInFlight: false);
+        return result is not null;
+    }
+
+    private Task<MergeIntoIntegrationResult>? Enqueue(
+        RemoteDeliveryIntegrationRequest request,
+        bool discardCompletedReplay,
+        bool joinInFlight)
     {
         ArgumentNullException.ThrowIfNull(request);
         var deliveryKey = DeliveryKey(request);
@@ -266,6 +317,12 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 && finished.CompletedAtUtc is not null)
             {
                 _deliveryReplays.Remove(deliveryKey);
+            }
+            if (!joinInFlight
+                && _deliveryReplays.Values.Any(inFlight => inFlight.CompletedAtUtc is null
+                                                           && IsSameCard(inFlight.Request, request)))
+            {
+                return null;
             }
             if (_deliveryReplays.TryGetValue(deliveryKey, out var replay))
             {
@@ -283,7 +340,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             _deliveryReplays[deliveryKey] = new DeliveryReplay(
                 sequence,
                 completion,
-                CompletedAtUtc: null);
+                CompletedAtUtc: null,
+                request);
             if (!_projectQueues.TryGetValue(request.Project, out projectQueue!))
             {
                 projectQueue = new ProjectQueue();
@@ -344,6 +402,23 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
                         MergeIntoIntegrationOutcome.Error,
                         error: MergeIntoDevelopRunner.SupersededReviewGenerationError));
+                    continue;
+                }
+                // AGT-3091: a delivery may wait here behind a whole gate. A
+                // reissue in that time moves the card and leases a new run
+                // without a new review generation, so both are re-read now.
+                if (delivery.Request.ReviewAttemptId is not null
+                    && !_isAdmissibleDelivery(delivery.Request))
+                {
+                    _logger.LogInformation(
+                        "remote-delivery-integration skipped project={Project} job={JobId} sequence={Sequence} reason={Reason}",
+                        delivery.Request.Project,
+                        delivery.Request.JobId,
+                        delivery.Sequence,
+                        ReviewedDeliverySupersededError);
+                    CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
+                        MergeIntoIntegrationOutcome.Error,
+                        error: $"{ReviewedDeliverySupersededError}: the card left Auto Review or its reviewed RunAttempt is no longer current; nothing was merged."));
                     continue;
                 }
                 _logger.LogInformation(
@@ -447,8 +522,13 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.IntegrationStrategy,
             request.PipelineType,
             request.ReviewAttemptId ?? string.Empty,
+            request.ReviewedResultSha?.ToLowerInvariant() ?? string.Empty,
             request.DeliveredAtUtc.ToUniversalTime().Ticks.ToString(
                 System.Globalization.CultureInfo.InvariantCulture));
+
+    private static bool IsSameCard(RemoteDeliveryIntegrationRequest left, RemoteDeliveryIntegrationRequest right)
+        => string.Equals(left.Project, right.Project, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.JobId, right.JobId, StringComparison.Ordinal);
 
     private sealed class ProjectQueue
     {
@@ -465,7 +545,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private sealed record DeliveryReplay(
         long Sequence,
         TaskCompletionSource<MergeIntoIntegrationResult> Completion,
-        DateTimeOffset? CompletedAtUtc);
+        DateTimeOffset? CompletedAtUtc,
+        RemoteDeliveryIntegrationRequest Request);
 
     private sealed class QueuedDeliveryComparer : IComparer<QueuedDelivery>
     {
@@ -518,7 +599,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             CancellationToken.None,
             request.IntegrationStrategy,
             request.PipelineType,
-            publicationFence).ConfigureAwait(false);
+            publicationFence,
+            request.ReviewedResultSha).ConfigureAwait(false);
 
         var job = scanner.FindJob(request.JobId, request.WatchPath);
         if (job is null) return result;

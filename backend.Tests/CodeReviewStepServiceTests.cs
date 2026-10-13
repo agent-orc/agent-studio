@@ -351,6 +351,50 @@ public class CodeReviewStepServiceTests : IDisposable
         Assert.Equal("code-review-grade", generation.Kind);
     }
 
+    [Fact]
+    public async Task GradeMode_IdenticalRequestWithSameInputKey_GradesAfreshEveryCall()
+    {
+        // The operator-triggered grade calls the service directly, so reuse of
+        // an unchanged grade lives only in the orchestrator, never here.
+        var cliCalls = 0;
+        var service = BuildService((_, _, _, _, _) =>
+        {
+            Interlocked.Increment(ref cliCalls);
+            return Task.FromResult("[[CODE_REVIEW_GRADE: grade=D; summary=Misses the goal.]]");
+        });
+        var request = BuildGradeRequest();
+        request = request with { InputKey = CodeReviewGradeReuse.ComputeInputKey(request) };
+
+        var first = await service.RunAsync(request, CancellationToken.None);
+        // File names have millisecond resolution; free the slot without sleeping.
+        var rotated = first.FilePath + ".bak";
+        File.Move(first.FilePath, rotated);
+        var second = await service.RunAsync(request, CancellationToken.None);
+
+        Assert.Equal(2, cliCalls);
+        Assert.True(File.Exists(rotated));
+        Assert.True(File.Exists(second.FilePath));
+        Assert.NotEqual(rotated, second.FilePath);
+    }
+
+    [Fact]
+    public async Task GradeMode_PersistsInputKeyInFrontmatter_OnlyWhenProvided()
+    {
+        var service = BuildService((_, _, _, _, _) =>
+            Task.FromResult("[[CODE_REVIEW_GRADE: grade=B; summary=ok]]"));
+        var request = BuildGradeRequest();
+        var inputKey = CodeReviewGradeReuse.ComputeInputKey(request);
+
+        var keyed = await service.RunAsync(request with { InputKey = inputKey }, CancellationToken.None);
+        File.Move(keyed.FilePath, keyed.FilePath + ".bak");
+        var unkeyed = await service.RunAsync(request, CancellationToken.None);
+
+        var keyedFields = FrontmatterParser.Parse(File.ReadAllText(keyed.FilePath + ".bak")).Fields;
+        Assert.Equal(inputKey, keyedFields[CodeReviewGradeReuse.InputKeyField]);
+        Assert.StartsWith("sha256:", inputKey);
+        Assert.DoesNotContain("inputKey:", File.ReadAllText(unkeyed.FilePath));
+    }
+
     private CodeReviewStepRequest BuildGradeRequest(string model = "claude-opus-4-8") => BuildRequest(model) with
     {
         Mode = CodeReviewMode.Grade,

@@ -114,6 +114,171 @@ public sealed class BatchGateReviewPlanTests
         }
     }
 
+    /// <summary>
+    /// AGT-3085: a deferred plan for a backend-only delivery runs the test
+    /// classes that name the changed types, read from the exact result commit
+    /// through one <c>git cat-file --batch</c>. The added test file exists only
+    /// at the result SHA, and its non-ASCII comment precedes the changed
+    /// production file in the batch output, so a decoded-string parser would
+    /// read the wrong bytes for it.
+    /// </summary>
+    [Fact]
+    public void BackendDeliveryDefersWithAClassFilteredTestCommandReadFromTheResultCommit()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            File.WriteAllText(Path.Combine(repo, "backend", "FooService.cs"),
+                "// Größenprüfung für den Dienst, 日本語のコメント\n"
+                + "namespace AgentStudio;\npublic sealed class FooService { }\n"
+                + "public sealed record FooReceipt(int Id);\n");
+            // Its own folder: a changed test file also selects its directory
+            // siblings, and this fixture's project root is small.
+            Directory.CreateDirectory(Path.Combine(repo, "backend.Tests", "Delivery"));
+            File.WriteAllText(Path.Combine(repo, "backend.Tests", "Delivery", "NewFooTests.cs"),
+                "// Prüfung: überträgt Größen, ½ und 日本\n"
+                + "namespace AgentStudio.Tests;\npublic sealed class NewFooTests\n{\n"
+                + "    [Fact]\n    public void Runs() => _ = new FooService();\n}\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "backend change");
+            var resultSha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+            Assert.False(File.Exists(Path.Combine(repo, "backend.Tests", "Delivery", "NewFooTests.cs")));
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") }, "develop",
+                resultSha, ["backend.Tests/Delivery/NewFooTests.cs", "backend/FooService.cs"], resultRef);
+
+            Assert.True(plan.BuildTestDeferredToBatch);
+            Assert.Equal("work-package", plan.TestLevel);
+            var test = Assert.Single(plan.Commands, command =>
+                command.Arguments.Any(argument => argument.Contains("dotnet test", StringComparison.Ordinal)));
+            Assert.Equal(
+                "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter "
+                + "\"(Category!=MachineBound)&(FullyQualifiedName~FooServiceTests"
+                + "|FullyQualifiedName~NewFooTests|FullyQualifiedName~ReceiptTests)\"",
+                test.Arguments[1]);
+
+            var limited = AgentStudio.TaskServer.Contracts.ReviewPlanResourcePolicy.Apply(plan);
+            var shell = Assert.Single(limited.Commands, command => command.StepId == test.StepId).Arguments[1];
+            var filter = System.Text.RegularExpressions.Regex.Match(shell, "--filter (\"[^\"]*\")(?:\\s|$)");
+            Assert.True(filter.Success, shell);
+            Assert.Equal(
+                "\"(Category!=MachineBound)&(FullyQualifiedName~FooServiceTests"
+                + "|FullyQualifiedName~NewFooTests|FullyQualifiedName~ReceiptTests)\"",
+                filter.Groups[1].Value);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    /// <summary>
+    /// AGT-3085: when no test class names the only changed type and no other
+    /// test command remains, the deferred plan would verify nothing, so the
+    /// review keeps the ordinary per-card gate.
+    /// </summary>
+    [Fact]
+    public void UnreferencedProductionChangeWithNoOtherTestCommandKeepsDeferralOff()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            File.WriteAllText(Path.Combine(repo, "backend", "RunnerReleaseIdentity.cs"),
+                "namespace AgentStudio;\ninternal static class RunnerReleaseIdentity { }\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "unreferenced change");
+            var resultSha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") }, "develop",
+                resultSha, ["backend/RunnerReleaseIdentity.cs"], resultRef);
+
+            Assert.False(plan.BuildTestDeferredToBatch);
+            Assert.Null(plan.TestLevel);
+            Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    /// <summary>
+    /// A develop checkout with one backend project, its test project, and a
+    /// result branch checked out for the delivery's commit.
+    /// </summary>
+    private static string BackendRepository(string repo, string folder)
+    {
+        Git(repo, "init", "-q", "-b", "develop");
+        Git(repo, "config", "user.email", "batch-test@example.invalid");
+        Git(repo, "config", "user.name", "Batch Test");
+        Git(repo, "config", "core.autocrlf", "false");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
+            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build: [echo build]\n  test: [echo test]\n"
+            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        Directory.CreateDirectory(Path.Combine(repo, "backend.Tests"));
+        File.WriteAllText(Path.Combine(repo, "backend", "OrchestratorApi.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        File.WriteAllText(Path.Combine(repo, "backend", "FooService.cs"),
+            "namespace AgentStudio;\npublic sealed class FooService { }\n");
+        File.WriteAllText(Path.Combine(repo, "backend.Tests", "OrchestratorApi.Tests.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+            + "  <PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup>\n"
+            + "  <ItemGroup><ProjectReference Include=\"..\\backend\\OrchestratorApi.csproj\" /></ItemGroup>\n"
+            + "</Project>\n");
+        File.WriteAllText(Path.Combine(repo, "backend.Tests", "FooServiceTests.cs"),
+            "namespace AgentStudio.Tests;\npublic sealed class FooServiceTests\n{\n"
+            + "    [Fact]\n    public void Runs() => _ = new FooService();\n}\n");
+        // Names a type that only the delivery's version of FooService.cs declares.
+        File.WriteAllText(Path.Combine(repo, "backend.Tests", "ReceiptTests.cs"),
+            "namespace AgentStudio.Tests;\npublic sealed class ReceiptTests\n{\n"
+            + "    [Fact]\n    public void Runs() => _ = new FooReceipt(1);\n}\n");
+        foreach (var name in new[] { "BarTests", "BazTests", "QuxTests", "QuuxTests" })
+        {
+            File.WriteAllText(Path.Combine(repo, "backend.Tests", $"{name}.cs"),
+                $"namespace AgentStudio.Tests;\npublic sealed class {name}\n{{\n    [Fact]\n    public void Runs() {{ }}\n}}\n");
+        }
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-qm", "base");
+        Git(repo, "switch", "-qc", "agent-studio/results/backend-task");
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Change the backend.\n");
+        return "refs/heads/agent-studio/results/backend-task";
+    }
+
+    private static RemoteReviewPlanBuilder PlanBuilder()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        var aspects = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        return new RemoteReviewPlanBuilder(aspects, config, git);
+    }
+
+    private static TaskInfo AutoReviewTask(string repo, string folder) => new()
+    {
+        Id = "task", TaskKey = "task", ProjectName = "project",
+        WatchPath = repo, FolderPath = folder, State = TaskStates.AutoReview,
+    };
+
     // Git for Windows writes object files read-only, and Directory.Delete
     // refuses read-only files there; clear the attribute first so cleanup
     // cannot fail the test on the Windows merge gate.

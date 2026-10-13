@@ -173,6 +173,42 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task IndexRun_PublishesItsConfigCaptureIntoTheSharedOriginStore()
+    {
+        // AGT-3083: integration lookups read the origin the index already
+        // captured, so they spawn no `git config` of their own.
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        Directory.Delete(Path.Combine(repoPath, ".git"), recursive: true);
+        RunGit(repoPath, "init", "-q");
+        RunGit(repoPath, "remote", "add", "origin", "https://example.invalid/indexed.git");
+        var captures = 0;
+        var store = new GitOriginStore(root =>
+        {
+            Interlocked.Increment(ref captures);
+            return GitConfigSignature.Capture(root);
+        });
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var builder = new FakeBuilder();
+        using var service = new GitStateIndexService(
+            scanner, BuildWatcher(scanner), new TaskListGitProjectionCache(), builder.BuildAsync, _ => { },
+            NullLogger.Instance, FastOptions(), new FakeTimeProvider(), originStore: store);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1);
+            Assert.Equal("https://example.invalid/indexed.git", store.ReadOrigin(repoPath));
+            Assert.Equal(0, Volatile.Read(ref captures));
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task RequestRefresh_BurstOfTriggersDuringDebounceWindow_CollapsesToOneRun()
     {
         var jobsPath = NewRepoWatchPath("proj");

@@ -33,6 +33,25 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
 
+// AGT-3074: scheduled release-category coverage run, started by agent-coverage-run.timer.
+if (args is ["coverage-run", ..])
+{
+    using var coverageStop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; coverageStop.Cancel(); };
+    using var coverageSigterm = OperatingSystem.IsWindows()
+        ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; coverageStop.Cancel(); });
+    try
+    {
+        return await CoverageRunCommand.RunAsync(args[1..], Console.Out, Console.Error, coverageStop.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        Console.Error.WriteLine("coverage-run cancelled");
+        return 130;
+    }
+}
+
 if (args.Length is 3 or 4 && args[0] == "--renew-repository-access"
     && (args.Length == 3 || args[3] == "--drained"))
 {

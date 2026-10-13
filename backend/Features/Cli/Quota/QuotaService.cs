@@ -150,6 +150,8 @@ public sealed class QuotaService
             else
             {
                 snap = await ReconcileSuspiciousDropAsync(cliType, probe, previous, snap, ct);
+                // Keep this order: AnchorWindowStarts treats a weekly drop as an observed
+                // reset, which is only safe once the gate above has confirmed the drop.
                 snap = QuotaWindowProjection.AnchorWindowStarts(previous, snap, DateTime.UtcNow);
             }
             _cache[cliType] = snap;

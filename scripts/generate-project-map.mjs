@@ -10,7 +10,7 @@ const DEFAULT_HISTORY = 'docs/system/architecture/project-map-history';
 
 function parseArguments(argv) {
   const options = {
-    api: 'http://localhost:5030',
+    api: 'http://127.0.0.1:5030',
     project: 'AGT',
     output: DEFAULT_OUTPUT,
     historyDir: DEFAULT_HISTORY,
@@ -271,9 +271,9 @@ function renderMarkdown(snapshot, generatedAtUtc, historyReference, source) {
   }
 
   lines.push('', '## Regeneration', '', 'Render the persisted current capture without walking repositories:', '',
-    '```sh', 'node scripts/generate-project-map.mjs --api http://localhost:5030 --project PROJ-002', '```', '',
+    '```sh', 'node scripts/generate-project-map.mjs --api http://127.0.0.1:5030 --project PROJ-002', '```', '',
     'Create a fresh explicit portfolio capture, persist it as current plus API history, and render that exact snapshot:', '',
-    '```sh', 'node scripts/generate-project-map.mjs --api http://localhost:5030 --project PROJ-002 --capture', '```', '',
+    '```sh', 'node scripts/generate-project-map.mjs --api http://127.0.0.1:5030 --project PROJ-002 --capture', '```', '',
     'For a reviewed or archived API response:', '', '```sh',
     'node scripts/generate-project-map.mjs --snapshot path/to/project-graph.json', '```', '',
     `Each documentation command atomically replaces ${code(DEFAULT_OUTPUT)} and appends a dated JSON provenance envelope under ${code(DEFAULT_HISTORY)}.`, '');
