@@ -163,7 +163,7 @@ describe('core-attach versioned routes', () => {
       throw new Error('stop after withUrl');
     });
     try {
-      const hub = new JobsHubClient();
+      const hub = TestBed.runInInjectionContext(() => new JobsHubClient());
       expect(() => hub.start({})).toThrow('stop after withUrl');
       expect(withUrl).toHaveBeenCalledWith('/hubs/v1/studio');
     } finally {

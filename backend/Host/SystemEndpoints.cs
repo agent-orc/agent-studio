@@ -223,11 +223,12 @@ public static class SystemEndpoints
             return Results.Ok();
         });
 
-        app.MapGet("/healthz", (HttpContext context) =>
+        app.MapGet("/healthz", (HttpContext context, PublishedArtifactSha published) =>
         {
             var identity = ReadBuildIdentity();
             context.Response.Headers["X-Agent-Studio-Tag"] = identity.Tag;
-            context.Response.Headers["X-Agent-Studio-Commit"] = identity.Commit;
+            if (published.Value is not null)
+                context.Response.Headers["X-Agent-Studio-Commit"] = published.Value;
             return Results.Ok("ok");
         });
 
