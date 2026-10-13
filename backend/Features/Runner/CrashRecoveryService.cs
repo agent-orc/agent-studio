@@ -114,7 +114,23 @@ public sealed class CrashRecoveryService
             // Phase 3, which requeues the interrupted job out of 3-progress;
             // the orphan-attribution here needs that job still in the lane to
             // pin the rescued commit to the right job.
-            RecoverOrphanChanges(entry, decisions);
+            try
+            {
+                RecoverOrphanChanges(entry, decisions);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var failed = new RecoveryDecision
+                {
+                    At = DateTime.UtcNow,
+                    Kind = RecoveryDecisionKinds.OrphanScanFailed,
+                    ProjectName = entry.Name,
+                    Reason = $"orphan recovery failed: {ex.Message}"
+                };
+                decisions.Add(failed);
+                AppendRecoveryEntry(failed);
+                _logger.LogError(ex, "CrashRecoveryService: orphan recovery failed for {Project}; continuing boot recovery.", entry.Name);
+            }
 
             // Phase 3: requeue runs that were interrupted mid-flight (a backend
             // restart / crash after the runner stamped the pickup lock but
@@ -247,13 +263,13 @@ public sealed class CrashRecoveryService
         var repoRoot = _git.ResolveRepoRootForProject(entry.Name);
         if (string.IsNullOrWhiteSpace(repoRoot)) return;
         // Status must stay readable even when a stale index.lock is present.
-        // GitService's status reader disables optional index refresh locks.
-        if (_git.GetStatusForRepoRoot(repoRoot).Files.Count == 0)
+        // The recovery status reader disables optional index refresh locks.
+        var initialFiles = ReadPendingFiles(repoRoot, null);
+        if (initialFiles.Count == 0)
         {
             _dismissals.Remove(entry.Name, repoRoot);
             return;
         }
-        var initialFiles = ReadPendingFiles(repoRoot, null);
         var refDrift = CrashRecoveryGitScan.Inspect(repoRoot, initialFiles, includeBlobs: false).RefDrift;
 
         // Attribute orphan changes to the most-recently-active job in
@@ -627,15 +643,7 @@ public sealed class CrashRecoveryService
         if (pathspecs is { Count: > 0 })
             return CrashRecoveryGitScan.ExpandUntrackedDirectories(repoRoot, pathspecs);
 
-        var status = _git.GetStatusForRepoRoot(repoRoot);
-        if (!status.IsRepo || status.Files.Count == 0) return [];
-        var files = status.Files
-            .Select(f => f.Path)
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        return CrashRecoveryGitScan.ExpandUntrackedDirectories(repoRoot, files);
+        return CrashRecoveryGitScan.ReadDirtyFiles(repoRoot);
     }
 
     private void AttachCommitToJob(PendingCrashRecovery pending, string? sha)
@@ -695,15 +703,7 @@ public sealed class CrashRecoveryService
         string? jobFolder,
         string repoRoot)
     {
-        var status = _git.GetStatusForRepoRoot(repoRoot);
-        var allPaths = status.IsRepo
-            ? status.Files
-                .Select(file => file.Path)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray()
-            : [];
+        var allPaths = CrashRecoveryGitScan.ReadDirtyFiles(repoRoot);
         var all = new CrashRecoveryCommitPlan(CrashRecoveryCommitScope.Scoped, allPaths);
         if (string.IsNullOrWhiteSpace(jobId) || string.IsNullOrWhiteSpace(jobFolder))
             return all;
@@ -712,28 +712,28 @@ public sealed class CrashRecoveryService
         if (firstActivityUtc == null)
             return all;
 
-        if (!status.IsRepo || status.Files.Count == 0)
+        if (allPaths.Count == 0)
             return all;
 
         var scoped = new List<string>();
-        foreach (var file in status.Files)
+        foreach (var file in allPaths)
         {
-            if (string.IsNullOrWhiteSpace(file.Path)) continue;
-            var fullPath = Path.Combine(repoRoot, file.Path.Replace('/', Path.DirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(file)) continue;
+            var fullPath = Path.Combine(repoRoot, file.Replace('/', Path.DirectorySeparatorChar));
             try
             {
                 if (!File.Exists(fullPath))
                 {
-                    scoped.Add(file.Path);
+                    scoped.Add(file);
                     continue;
                 }
 
                 if (File.GetLastWriteTimeUtc(fullPath) >= firstActivityUtc.Value)
-                    scoped.Add(file.Path);
+                    scoped.Add(file);
             }
             catch
             {
-                scoped.Add(file.Path);
+                scoped.Add(file);
             }
         }
 
@@ -1166,6 +1166,7 @@ public static class RecoveryDecisionKinds
     public const string OrphanDismissalKept = "orphan-dismissal-kept";
     public const string OrphanCommitted = "orphan-committed";
     public const string OrphanCommitFailed = "orphan-commit-failed";
+    public const string OrphanScanFailed = "orphan-scan-failed";
     /// <summary>An orphan action was skipped or the operator left changes uncommitted.</summary>
     public const string OrphanSkipped = "orphan-skipped";
     /// <summary>An interrupted mid-flight run was requeued from 3-progress back to 2-ready.</summary>

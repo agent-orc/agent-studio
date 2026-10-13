@@ -420,6 +420,91 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         Assert.Equal(pending.Id, Assert.Single(recovery.GetPendingOrphanRecoveries()).Id);
     }
 
+    [Theory]
+    [InlineData("Übersicht.md", false)]
+    [InlineData("docs/Änderung.md", false)]
+    [InlineData("Übersicht.md", true)]
+    [InlineData("docs/Änderung.md", true)]
+    [InlineData("renamed.md", true)]
+    public async Task RecoverAsync_QuotedOrRenamedPath_EditOffersFindingAgain(string path, bool rename)
+    {
+        RunGit(_repoRoot, "config core.quotePath true");
+        var full = Path.Combine(_repoRoot, path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        if (rename) RunGit(_repoRoot, $"mv README.md {path}");
+        else File.WriteAllText(full, "original bytes\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        var original = Assert.Single(first.GetPendingOrphanRecoveries());
+        Assert.Contains(path, original.Files);
+        if (!rename) Assert.Contains(path, original.UnknownBlobs);
+        Assert.Equal(CrashRecoveryActionStatuses.Dismissed, first.DismissPendingOrphanRecovery(original.Id).Status);
+
+        var (unchanged, _) = BuildRecovery();
+        await unchanged.RecoverAsync();
+        Assert.Empty(unchanged.GetPendingOrphanRecoveries());
+        File.AppendAllText(full, "edited bytes\n");
+        var (changed, _) = BuildRecovery();
+        await changed.RecoverAsync();
+        var offered = Assert.Single(changed.GetPendingOrphanRecoveries());
+        Assert.NotEqual(original.ContentFingerprint, offered.ContentFingerprint);
+        Assert.Contains(path, offered.UnknownBlobs);
+    }
+
+    [Fact]
+    public void Inspect_UnresolvablePath_UsesUnreadableSentinel()
+    {
+        var finding = CrashRecoveryGitScan.Inspect(_repoRoot, ["../outside.txt"]);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes("../outside.txt\tunreadable"))), finding.ContentFingerprint);
+    }
+
+    [Fact]
+    public void Inspect_HashFailure_UsesUnreadableSentinelAndRecoversWhenReadable()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, ".gitattributes"), "*.txt filter=recovery-test\n");
+        File.WriteAllText(Path.Combine(_repoRoot, "locked.txt"), "bytes\n");
+        RunGit(_repoRoot, "config filter.recovery-test.clean false");
+        RunGit(_repoRoot, "config filter.recovery-test.required true");
+        var finding = CrashRecoveryGitScan.Inspect(_repoRoot, ["locked.txt"]);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes("locked.txt\tunreadable"))), finding.ContentFingerprint);
+        RunGit(_repoRoot, "config filter.recovery-test.clean cat");
+        Assert.NotEqual(finding.ContentFingerprint,
+            CrashRecoveryGitScan.Inspect(_repoRoot, ["locked.txt"]).ContentFingerprint);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_CleanupWriteFails_ContinuesInterruptedRunsAndLaterProjects()
+    {
+        var path = Path.Combine(_repoRoot, "cleaned.txt");
+        File.WriteAllText(path, "discarded\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        first.DismissPendingOrphanRecovery(Assert.Single(first.GetPendingOrphanRecoveries()).Id);
+        File.Delete(path);
+        WriteJob(TaskStates.Progress, "interrupted");
+        var clock = new FakeTimeProvider();
+        WriteRawLock(Path.Combine(_watchPath, TaskStates.Progress, "interrupted"), new PickupLockInfo
+        {
+            Pid = int.MaxValue, Hostname = Environment.MachineName,
+            Role = RunnerRoles.Orchestrator, BackendName = "stable",
+            AcquiredAt = clock.GetUtcNow().UtcDateTime.AddHours(-1),
+        });
+        var laterRepo = Path.Combine(_tempDir, "later-repo");
+        Directory.CreateDirectory(laterRepo);
+        RunGit(laterRepo, "init -q -b main");
+        RunGit(laterRepo, "config user.email test@example.com");
+        RunGit(laterRepo, "config user.name test");
+        RunGit(laterRepo, "commit --allow-empty -q -m seed");
+        File.WriteAllText(Path.Combine(laterRepo, "later.txt"), "later project\n");
+        var (restarted, _) = BuildRecovery(writer: new FailingDismissalWriter(), laterRepo: laterRepo);
+        await restarted.RecoverAsync();
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "interrupted")));
+        Assert.Equal("later", Assert.Single(restarted.GetPendingOrphanRecoveries()).ProjectName);
+        Assert.Contains("Injected dismissal write failure", File.ReadAllText(restarted.RecoveryLogPath));
+    }
+
     private sealed class FailingDismissalWriter : IAtomicJsonFileWriter
     {
         public void Write(string path, string content) => throw new IOException("Injected dismissal write failure.");
@@ -847,7 +932,7 @@ public sealed class CrashRecoveryServiceTests : IDisposable
 
     private (CrashRecoveryService Recovery, TaskScannerService Scanner) BuildRecovery(
         Action<ProjectSettingsService>? configureSettings = null,
-        TimeProvider? clock = null, IAtomicJsonFileWriter? writer = null)
+        TimeProvider? clock = null, IAtomicJsonFileWriter? writer = null, string? laterRepo = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -855,6 +940,10 @@ public sealed class CrashRecoveryServiceTests : IDisposable
             ["WatchPaths:0:Path"] = _watchPath,
             ["WatchPaths:0:RootPath"] = _repoRoot,
             ["WatchPaths:0:RepositoryPath"] = _repoRoot,
+            ["WatchPaths:1:Name"] = "later",
+            ["WatchPaths:1:Path"] = laterRepo,
+            ["WatchPaths:1:RootPath"] = laterRepo,
+            ["WatchPaths:1:RepositoryPath"] = laterRepo,
             ["TaskRepository"] = _tempDir,
             ["Logging:BackendFile:LogDirectory"] = _logDir
         }).Build();

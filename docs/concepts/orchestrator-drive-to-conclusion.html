@@ -2971,6 +2971,13 @@
           <td>The review hosts ran workers older than the AGT-2916 diagnosis contract, which never report a <code>Diagnosis</code> or a clean repeat, and every <code>ReviewInfra</code> result was retried. The runner cached a test-failures baseline that exited non-zero without a parsed failure name and reused it for 24 hours as a red merge base.</td>
           <td>Each card used 2 of 3 retries. Now an unrun test-failures baseline ends as <code>ReviewInfra/BaselineUnavailable</code> and is never cached. Parser version 4 makes every older cache entry a miss. A report from a pre-diagnosis worker (outcome other than ReviewInfra, an undiagnosed failed deterministic command, no clean repeat) is graded <code>ReviewInfra/DiagnosisContractUnsupported</code>. It is not retried and escalates as <code>environmental</code>, naming the executor and the worker release. Upgrading the review hosts is an operator action.</td>
         </tr>
+        <tr id="case-orphan-scan-aborts-boot-recovery">
+          <td>2026-10-13</td>
+          <td><code>AGT-3111</code><br><span class="small">orphan-scan-aborts-boot-recovery</span></td>
+          <td>Review reproduced a quoted top-level Unicode dirty path resolving outside the worktree on Windows. The orphan scan could throw and skip later projects and interrupted-run recovery at every boot.</td>
+          <td>Porcelain-v1 quoting was stripped without decoding; hash failures and dismissal cleanup writes could also escape the orphan phase.</td>
+          <td>The boot sweep previously aborted without recovering later projects. Recovery now reads literal NUL-delimited paths, fingerprints unreadable paths with a sentinel, and records orphan-phase failures while continuing interrupted-run recovery and later projects. Regression coverage pins the Ready requeue and later orphan finding.</td>
+        </tr>
       </tbody>
     </table>
 

@@ -458,6 +458,11 @@ rollout decision.
   may rediscover dirty files, but a matching dismissal keeps the finding out of
   the default response. These fields distinguish discovery from file age. Expiry
   never commits or discards recovered files.
+  Recovery reads NUL-delimited Git status so Unicode names and rename paths
+  retain their literal identity. Missing paths use `deleted` in the fingerprint;
+  unresolvable or unhashable paths use `unreadable`. An orphan scan or dismissal
+  cleanup failure records `orphan-scan-failed` and leaves interrupted-run recovery
+  and later projects eligible for the rest of the boot sweep.
   Before queuing, the scan checks branch and HEAD reflogs, whether the index
   tree matches a strict ancestor of HEAD, and whether staged changes mostly
   reverse a recent ancestor diff. A moved branch ref produces a
