@@ -14,6 +14,7 @@ release yet.
 
 ### Fixed
 
+- A card integrated through a curated mapping reads `released: true` once the mapped integration commit is on `main`; the answer was taken from the source commit, which never reaches `main`. The delivery-claim sweep no longer reports a card whose containment status is `integrated` as `unintegrated-delivery` when one of its commit lines misses containment (a second commit of a curated-mapped attempt, or a repository-key mismatch) (AGT-3097).
 - The runner's slot attempt id is the lease's attempt id, so no consumer of the slot can drift from the attempt the server fenced; on the legacy runner plane it was the lease id (AGT-2985).
 - Integration lookups read the Git origin from one process-wide store that the Git state index refreshes, and post-processing one Auto Review card classifies only that card; `board/integration-status` no longer spawns one `git config` per single-card lookup (about 140 per minute measured on Stable) (AGT-3083).
 - `/api/admin/git-telemetry` counts every call and spawn of a busy label in the window; it understated `board/integration-status` by 3.3 to 4.9 times because counts came from a 2,000-sample cap. `percentileSampleCount` names the sample behind p50/p95 (AGT-3083).

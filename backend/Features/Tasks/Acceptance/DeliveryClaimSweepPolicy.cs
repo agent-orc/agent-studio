@@ -188,6 +188,14 @@ public static class DeliveryClaimSweepPolicy
         if (expectations.All(commit => commit.Contained))
             return DeliveryClaimClasses.IntegratedDelivery;
 
+        // AGT-3097 - the card-level verdict already proved containment. Its
+        // per-commit lines can still miss a commit: a second commit of a
+        // curated-mapped attempt never reaches the branch itself, and a group
+        // keyed to another repository is evaluated against that one. Neither
+        // is evidence that the delivery did not land.
+        if (CompletionContractPolicy.IsContained(facts.ContainmentStatus))
+            return DeliveryClaimClasses.IntegratedDelivery;
+
         if (CompletionContractPolicy.IsUnknown(facts.ContainmentStatus))
             return DeliveryClaimClasses.Unknown;
 

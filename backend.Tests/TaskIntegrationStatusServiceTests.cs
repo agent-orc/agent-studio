@@ -1785,6 +1785,73 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.True(commit.OnIntegrationBranch);
     }
 
+    /// <summary>
+    /// AGT-3097 - a curated source commit is never itself on main; the mapped
+    /// integration commit is. Released is answered for that mapped commit, so
+    /// it turns true once the curated integration reaches main.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildLookup_CurrentResultCuratedMapping_AnswersReleasedForTheMappedIntegrationSha(bool released)
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/curated");
+        File.WriteAllText(Path.Combine(repo, "curated.txt"), "reviewed work");
+        Commit(repo, "feat: reviewed work");
+        var source = RunGit(repo, "rev-parse task/curated").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "curated.txt"), "reviewed work, curated");
+        Commit(repo, "merge(AGT-3097): curated integration");
+        var integrated = RunGit(repo, "rev-parse develop").Out.Trim();
+        if (released)
+        {
+            RunGit(repo, "checkout -q main");
+            RunGit(repo, "merge -q --ff-only develop");
+        }
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("curated-release", "AGT-3097", project, repo, log,
+            commits: [Commit(source) with { RunAttemptId = "run-curated" }]) with
+        {
+            IntegrationRecords =
+            [
+                new TaskIntegrationRecord
+                {
+                    Id = "curated-mapping",
+                    Classification = IntegrationRecordClasses.CuratedMapping,
+                    IntegrationBranch = "develop",
+                    SourceSha = source,
+                    IntegrationSha = integrated,
+                    DeliveryEpoch = "run-curated",
+                },
+            ],
+        };
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!,
+            RunAttemptId = "run-curated",
+            Project = project,
+            Repository = repo,
+            ResultSha = source,
+            AttemptChainId = "attempt-curated",
+            CompletedAtUtc = NewClock().GetUtcNow(),
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal("current-result-curated-mapping", status.Detail);
+        Assert.Equal(released, status.CurrentResultReleased);
+        Assert.Equal(released, status.Released);
+        var repository = Assert.Single(status.Repositories);
+        Assert.Equal(released, repository.OnReleaseBranch);
+        var commit = Assert.Single(repository.Commits);
+        Assert.Equal(source, commit.Sha);
+        Assert.Equal(released, commit.OnReleaseBranch);
+    }
+
     // --- helpers -----------------------------------------------------------
 
     private static (GitOriginStore Store, Func<int> Captures) CountingOriginStore()

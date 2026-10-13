@@ -292,11 +292,26 @@ public record TaskIntegrationStatus
     /// also contained in the released line? True only when every attributed
     /// repository reports full release membership. Null when the card has no
     /// repository evidence to roll up, which is "not yet checked", not "no".
+    /// A verdict proven by the current result answers from that result's
+    /// release membership instead (<see cref="CurrentResultReleased"/>).
     /// </summary>
     public bool? Released
-        => Repositories.Count == 0
-            ? null
-            : Repositories.All(repository => repository.OnReleaseBranch);
+        => CurrentResultReleased
+           ?? (Repositories.Count == 0
+               ? null
+               : Repositories.All(repository => repository.OnReleaseBranch));
+
+    /// <summary>
+    /// AGT-3097 - release membership of the commit an integrated current-result
+    /// verdict anchors on: the result SHA itself, or the mapped integration SHA
+    /// of a curated mapping, whose source commit never reaches the release
+    /// branch. The per-commit lines can miss another commit of the same attempt
+    /// or the whole repository line, so the rollup alone would read "not
+    /// released". Null on every other verdict. Not on the wire: it surfaces
+    /// through <see cref="Released"/>.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool? CurrentResultReleased { get; init; }
 
     /// <summary>Release branch the <see cref="Released"/> rollup was computed against.</summary>
     public string ReleaseBranch { get; init; } = "main";
