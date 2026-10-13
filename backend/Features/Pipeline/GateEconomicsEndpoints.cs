@@ -135,8 +135,13 @@ public static class GateEconomicsEndpoints
         var knownLevels = receipts.Where(r => r.TestLevel is not null and not "unknown")
             .Concat(batchRuns).ToArray();
         var outcomes = receipts.Where(r => r.Rung != "none").Concat(batchRuns).ToArray();
+        // Infrastructure retries retain separate execution facts and gate
+        // costs, but publication releases the members of a batch run once.
+        var publishedMembers = batches.Where(sample => sample.Published)
+            .GroupBy(sample => (sample.Fact.BatchId, sample.Fact.BatchRunId))
+            .Sum(run => run.Max(sample => sample.Members));
         var gatedMerges = receipts.Count(r => r.Verdict is "Ok" or "Warn")
-            + batches.Where(sample => sample.Published).Sum(sample => sample.Members);
+            + publishedMembers;
 
         var enqueued = events.Where(e => e.Kind is "enqueued" or "agent-round-re-entry").ToArray();
         var published = events.Where(e => e.Kind == "published").ToArray();
