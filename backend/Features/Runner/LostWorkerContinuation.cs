@@ -79,7 +79,8 @@ public static class LostWorkerContinuationPolicy
 /// The commit a continuation round starts its worktree from, saved on the card
 /// so the next claim can hand it to the runner. Single use: the claim that reads
 /// it clears it, because a later round of the same card must not silently start
-/// on a stale generation's salvage.
+/// on a stale generation's salvage. A review fix-round base lives until its run
+/// completes (<see cref="ContinuationBaseStore.ConsumeForClaim"/>).
 /// </summary>
 /// <param name="Ref">Full <c>refs/heads/...</c> name of the salvage ref.</param>
 public sealed record ContinuationBaseRecord(
@@ -140,12 +141,36 @@ public static class ContinuationBaseStore
         }
     }
 
-    /// <summary>Reads the record and removes it in one step, for the claim path.</summary>
+    /// <summary>Reads the record and removes it in one step.</summary>
     public static ContinuationBaseRecord? Consume(string folderPath)
     {
         var record = Read(folderPath);
         if (record is not null) Clear(folderPath);
         return record;
+    }
+
+    /// <summary>
+    /// The claim path's read. Every base is single use and cleared by the claim
+    /// that reads it, except a review fix round's (AGT-3056): a claim that fails
+    /// before the agent starts must not leave the retry to begin silently on the
+    /// integration branch, so that base stays until a run of the card completes
+    /// (<see cref="ClearAfterCompletion"/>) or a later round replaces it.
+    /// </summary>
+    public static ContinuationBaseRecord? ConsumeForClaim(string folderPath)
+    {
+        var record = Read(folderPath);
+        if (record is not null && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
+        return record;
+    }
+
+    /// <summary>
+    /// Retires a review fix-round base once a run that started from it settled.
+    /// A base of any other reason was already consumed by its claim, or belongs
+    /// to a round this completion has just opened, and is left alone.
+    /// </summary>
+    public static void ClearAfterCompletion(string folderPath)
+    {
+        if (ReviewFixRoundBase.IsFixRound(Read(folderPath)?.Reason)) Clear(folderPath);
     }
 
     public static void Clear(string folderPath)

@@ -104,7 +104,9 @@ public sealed class RemoteTaskRunner
         AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? previousSession = null,
         AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? mechanicalDelta = null,
         string? freshRunReason = null,
-        IReadOnlyList<string>? requiredCapabilities = null)
+        IReadOnlyList<string>? requiredCapabilities = null,
+        // AGT-3056: "review-fix-round" makes the base required for the worktree.
+        string? continuationBaseReason = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -136,7 +138,8 @@ public sealed class RemoteTaskRunner
             sourceRunAttemptId: runId ?? lease.AttemptId ?? lease.LeaseId,
             fencingToken: lease.FencingToken,
             continuationBaseRef: continuationBaseRef,
-            continuationBaseSha: continuationBaseSha);
+            continuationBaseSha: continuationBaseSha,
+            continuationBaseReason: continuationBaseReason);
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);

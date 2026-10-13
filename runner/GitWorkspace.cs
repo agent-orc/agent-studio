@@ -24,6 +24,7 @@ public sealed class GitWorkspace
     private readonly long? _fencingToken;
     private readonly string? _continuationBaseRef;
     private readonly string? _continuationBaseSha;
+    private readonly bool _continuationBaseRequired;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
     private readonly string? _restoredBaseSha;
@@ -45,7 +46,8 @@ public sealed class GitWorkspace
         string? sourceRunAttemptId = null,
         long? fencingToken = null,
         string? continuationBaseRef = null,
-        string? continuationBaseSha = null)
+        string? continuationBaseSha = null,
+        string? continuationBaseReason = null)
     {
         _options = options;
         _log = log;
@@ -83,7 +85,11 @@ public sealed class GitWorkspace
             ? null
             : continuationBaseSha.Trim();
         var continuationComplete = continuationBranch is not null && continuationSha is not null;
-        _continuationBaseRef = continuationComplete ? continuationBranch : null;
+        // AGT-3056: a review fix round exists to continue the graded delivery.
+        // Its base is never swapped for the integration branch, and a half
+        // reference keeps its known half for the typed failure.
+        _continuationBaseRequired = ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _continuationBaseRef = continuationComplete || _continuationBaseRequired ? continuationBranch : null;
         _continuationBaseSha = continuationComplete ? continuationSha : null;
     }
 
@@ -314,41 +320,72 @@ public sealed class GitWorkspace
     /// null when the claim named none. A ref that disappeared or moved is
     /// reported and skipped rather than failing the round: the card's prompt
     /// still names the salvage, and a round on the integration branch is a
-    /// worse outcome than no round at all only if it is silent.
+    /// worse outcome than no round at all only if it is silent. A review fix
+    /// round's base is required instead: any of those cases throws
+    /// <see cref="ContinuationBaseUnavailableException"/> (AGT-3056).
     /// </summary>
     private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
     {
-        if (_continuationBaseRef is null || _continuationBaseSha is null) return null;
+        if (_continuationBaseRef is null || _continuationBaseSha is null)
+        {
+            if (_continuationBaseRequired)
+                throw Unavailable(ContinuationBaseUnavailableException.Incomplete, observedSha: null);
+            return null;
+        }
+        string? head;
         try
         {
-            var head = await FetchRemoteBranchHeadAsync(_continuationBaseRef, ct);
-            if (head is null)
-            {
-                _log(
-                    $"worktree-continuation-base-missing ref=refs/heads/{_continuationBaseRef} " +
-                    $"expectedSha={_continuationBaseSha}; starting from the integration branch");
-                return null;
-            }
-            if (!string.Equals(head, _continuationBaseSha, StringComparison.OrdinalIgnoreCase))
-            {
-                _log(
-                    $"worktree-continuation-base-moved ref=refs/heads/{_continuationBaseRef} " +
-                    $"expectedSha={_continuationBaseSha} observedSha={head}; " +
-                    "starting from the integration branch");
-                return null;
-            }
-            _log(
-                $"worktree-continuation-base ref=refs/heads/{_continuationBaseRef} " +
-                $"sha={head} path={RepoPath}");
-            return new SalvageContinuationBase(_continuationBaseRef, head);
+            head = await FetchRemoteBranchHeadAsync(_continuationBaseRef, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            if (_continuationBaseRequired)
+                throw Unavailable(ContinuationBaseUnavailableException.Unreadable, observedSha: null, ex);
             _log(
                 $"worktree-continuation-base-unreadable ref=refs/heads/{_continuationBaseRef} " +
                 $"error={OneLine(ex.Message)}; starting from the integration branch");
             return null;
         }
+        if (head is null)
+        {
+            if (_continuationBaseRequired)
+                throw Unavailable(ContinuationBaseUnavailableException.Missing, observedSha: null);
+            _log(
+                $"worktree-continuation-base-missing ref=refs/heads/{_continuationBaseRef} " +
+                $"expectedSha={_continuationBaseSha}; starting from the integration branch");
+            return null;
+        }
+        if (!string.Equals(head, _continuationBaseSha, StringComparison.OrdinalIgnoreCase))
+        {
+            if (_continuationBaseRequired)
+                throw Unavailable(ContinuationBaseUnavailableException.Moved, head);
+            _log(
+                $"worktree-continuation-base-moved ref=refs/heads/{_continuationBaseRef} " +
+                $"expectedSha={_continuationBaseSha} observedSha={head}; " +
+                "starting from the integration branch");
+            return null;
+        }
+        _log(
+            $"worktree-continuation-base ref=refs/heads/{_continuationBaseRef} " +
+            $"sha={head} required={_continuationBaseRequired.ToString().ToLowerInvariant()} path={RepoPath}");
+        return new SalvageContinuationBase(_continuationBaseRef, head);
+    }
+
+    private ContinuationBaseUnavailableException Unavailable(
+        string reasonCode, string? observedSha, Exception? inner = null)
+    {
+        var failure = new ContinuationBaseUnavailableException(
+            reasonCode,
+            _continuationBaseRef is null ? null : $"refs/heads/{_continuationBaseRef}",
+            _continuationBaseSha,
+            observedSha,
+            inner);
+        _log(
+            $"worktree-{reasonCode} ref={failure.Ref ?? "none"} expectedSha={failure.ExpectedSha ?? "none"} " +
+            $"observedSha={observedSha ?? "none"} required=true" +
+            (inner is null ? string.Empty : $" error={OneLine(inner.Message)}") +
+            "; not starting from the integration branch");
+        return failure;
     }
 
     private static string ToBranchName(string value)
@@ -1379,6 +1416,40 @@ public sealed record ProjectDeliveryPreflightResult(
 
 /// <summary>The exact commit a continuation round starts its worktree from.</summary>
 public sealed record SalvageContinuationBase(string Branch, string CommitSha);
+
+/// <summary>
+/// A review fix round's base could not be used (AGT-3056). The round fails its
+/// preparation with this typed reason instead of silently starting on the
+/// integration branch, which would discard the graded delivery the prompt asks
+/// the agent to correct.
+/// </summary>
+public sealed class ContinuationBaseUnavailableException : InvalidOperationException
+{
+    public const string Missing = "continuation-base-missing";
+    public const string Moved = "continuation-base-moved";
+    public const string Unreadable = "continuation-base-unreadable";
+    public const string Incomplete = "continuation-base-incomplete";
+
+    public ContinuationBaseUnavailableException(
+        string reasonCode, string? reference, string? expectedSha, string? observedSha, Exception? inner = null)
+        : base(
+            $"{reasonCode}: the review fix round must start from {reference ?? "an unnamed ref"} at " +
+            $"{expectedSha ?? "an unnamed commit"}" +
+            (observedSha is null ? string.Empty : $" (origin now has {observedSha})") +
+            "; it was not restarted from the integration branch",
+            inner)
+    {
+        ReasonCode = reasonCode;
+        Ref = reference;
+        ExpectedSha = expectedSha;
+        ObservedSha = observedSha;
+    }
+
+    public string ReasonCode { get; }
+    public string? Ref { get; }
+    public string? ExpectedSha { get; }
+    public string? ObservedSha { get; }
+}
 
 public sealed record WorktreeTeardownResult(
     bool SecuredWork,

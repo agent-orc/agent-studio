@@ -153,6 +153,39 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("1", details.GetProperty("notTransferredCount").GetString());
     }
 
+    /// <summary>
+    /// AGT-3056: the claim of a review fix round hands the reviewed fenced
+    /// result to the runner with its reason, through the runner's own wire
+    /// types, and the base stays on the card until a run of it completes.
+    /// </summary>
+    [Fact]
+    public async Task Remote_claim_of_a_fix_round_carries_the_reviewed_result_as_continuation_base()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Fix round", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        var reviewedSha = new string('a', 40);
+        var resultRef = Contract.FencedGitRefs.ImmutableResult("run_reviewed", 4, reviewedSha);
+        Assert.True(AgentStudio.Runner.ContinuationBaseStore.Save(readyFolder,
+            AgentStudio.Runner.ReviewFixRoundBase.Decide(
+                "rev_reviewed", resultRef, reviewedSha, new DateTime(2026, 10, 13, 8, 0, 0, DateTimeKind.Utc))!));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/fix-round.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(resultRef, claim.ContinuationBaseRef);
+        Assert.Equal(reviewedSha, claim.ContinuationBaseSha);
+        Assert.Equal(Contract.ContinuationBaseReasons.ReviewFixRound, claim.ContinuationBaseReason);
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, TaskKey);
+        Assert.Equal(resultRef, AgentStudio.Runner.ContinuationBaseStore.Read(progressFolder)?.Ref);
+    }
+
     [Fact]
     public async Task Remote_claim_stashes_follow_up_and_start_hash_consumes_it_into_run_history()
     {

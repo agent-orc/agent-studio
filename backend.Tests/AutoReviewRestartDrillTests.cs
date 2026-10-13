@@ -122,6 +122,44 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Single(restarted.Authority.GetTaskProjection(card.TaskKey).ReviewAttempts);
     }
 
+    /// <summary>
+    /// AGT-3056: the review-plane finding round continues on the delivery the
+    /// review graded. The base reaches Ready with the folder, the next claim
+    /// hands the reviewed result ref to the runner, and the timeline names it.
+    /// </summary>
+    [Fact]
+    public void Settled_finding_round_hands_the_reviewed_result_to_the_next_claim()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "finding-base",
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        var resultRef = Contract.FencedGitRefs.ImmutableResult("run-reviewed", 1, card.DeliverySha);
+        var review = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        var fixRoundBase = ReviewFixRoundBase.ForReview(
+            review with { Subject = review.Subject with { ResultRef = resultRef } }, null,
+            new DateTime(2026, 10, 13, 8, 0, 0, DateTimeKind.Utc))!;
+        var entry = FindingRoundEntry(card, stack);
+        RemoteReviewSettlementJournal.Write(card.FolderPath,
+            entry with { Continuation = entry.Continuation! with { Base = fixRoundBase } });
+
+        Reconciler(stack).Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!);
+
+        var moved = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, moved.State);
+        var claimed = ContinuationBaseStore.ConsumeForClaim(moved.FolderPath)!;
+        Assert.Equal(resultRef, claimed.Ref);
+        Assert.Equal(card.DeliverySha, claimed.CommitSha);
+        Assert.Equal(ReviewFixRoundBase.Reason, claimed.Reason);
+        Assert.Equal(card.ReviewAttemptId, claimed.AttemptId);
+        var recorded = Assert.Single(stack.Timeline.ReadAll(moved.FolderPath),
+            item => item.Kind == TimelineEventKinds.ContinuationBaseRecorded);
+        Assert.Equal(resultRef, recorded.Details!["ref"]);
+        Assert.Equal(ReviewFixRoundBase.SourceReviewPlane, recorded.Details["source"]);
+        var receipt = Assert.Single(stack.Timeline.ReadAll(moved.FolderPath),
+            item => item.Kind == TimelineEventKinds.QualityLoopReopened);
+        Assert.Equal(resultRef, receipt.Details!["continuationBaseRef"]);
+    }
+
     [Fact]
     public void Settled_finding_round_reopens_once_after_restart()
     {

@@ -93,16 +93,53 @@ public sealed class OperatorSweepFixRoundTransactionTests : IDisposable
             OperatorSweepActions.FixRoundTransaction.ReadTags(_readyFolder)!);
     }
 
+    [Fact]
+    public async Task SuccessfulMove_CarriesTheReviewedBaseIntoReady_ForTheNextClaim()
+    {
+        var result = await RunAsync(_ =>
+        {
+            // The base is in place before the card can be claimed from Ready.
+            Assert.Equal(ReviewedBase.Ref, ContinuationBaseStore.Read(_reviewFolder)?.Ref);
+            Directory.Move(_reviewFolder, _readyFolder);
+            return Task.FromResult(new MoveJobOutcome(MoveJobStatus.Success, null, _readyFolder));
+        }, fixRoundBase: ReviewedBase);
+
+        Assert.True(result.Started);
+        var claimed = ContinuationBaseStore.ConsumeForClaim(_readyFolder)!;
+        Assert.Equal(ReviewedBase.Ref, claimed.Ref);
+        Assert.Equal(ReviewedBase.CommitSha, claimed.CommitSha);
+        Assert.Equal(ReviewFixRoundBase.Reason, claimed.Reason);
+    }
+
+    [Fact]
+    public async Task RefusedMove_RemovesTheBase_SoNoLaterClaimStartsFromIt()
+    {
+        var result = await RunAsync(
+            _ => Task.FromResult(new MoveJobOutcome(MoveJobStatus.SourceStateMismatch, "lane changed")),
+            fixRoundBase: ReviewedBase);
+
+        Assert.False(result.Started);
+        AssertFolderRestored();
+        Assert.Null(ContinuationBaseStore.Read(_reviewFolder));
+    }
+
+    private static readonly ContinuationBaseRecord ReviewedBase = ReviewFixRoundBase.Decide(
+        "review_1",
+        AgentStudio.TaskServer.Contracts.FencedGitRefs.ImmutableResult("run_reviewed", 1, new string('e', 40)),
+        new string('e', 40),
+        new DateTime(2026, 10, 13, 8, 0, 0, DateTimeKind.Utc))!;
+
     private Task<OperatorSweepActionResult> RunAsync(
         Func<CancellationToken, Task<MoveJobOutcome>> move,
         Func<bool>? appendNote = null,
-        Func<bool>? stillInSourceLane = null)
+        Func<bool>? stillInSourceLane = null,
+        ContinuationBaseRecord? fixRoundBase = null)
     {
         var promptPath = Path.Combine(_reviewFolder, "prompt.md");
         return OperatorSweepActions.FixRoundTransaction.RunAsync(
             _reviewFolder,
             "card",
-            new OperatorSweepFixRound("review_1", "Fix the failing gate."),
+            new OperatorSweepFixRound("review_1", "Fix the failing gate.", fixRoundBase),
             appendNote ?? (() =>
             {
                 File.AppendAllText(promptPath, "\n## Continuous Session Note\n\nFix the failing gate.\n");

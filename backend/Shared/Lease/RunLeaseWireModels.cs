@@ -237,7 +237,11 @@ public sealed record RunnerClaimResponse(
     IReadOnlyList<string>? ReprobeCapabilities = null,
     AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? PreviousSession = null,
     AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? MechanicalDelta = null,
-    string? FreshRunReason = null);
+    string? FreshRunReason = null,
+    // AGT-3056: why the base was recorded. A runner treats a
+    // "review-fix-round" base as the only correct start of the round and fails
+    // the preparation instead of falling back to the integration branch.
+    string? ContinuationBaseReason = null);
 
 /// <summary>Fenced request for the server-rendered Epic decomposition prompt.</summary>
 public sealed record RemoteEpicPlanningPromptRequest(

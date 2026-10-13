@@ -2,6 +2,7 @@ using System.Text.Json;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using AgentStudio.Runner;
 
@@ -24,6 +25,7 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
     private readonly string _tempDir;
     private readonly string _workspaceRoot;
     private readonly string _watchPath;
+    private readonly FakeTimeProvider _clock = new(DateTimeOffset.Parse("2026-10-13T08:30:00Z"));
 
     public FollowUpAdmissionServiceTests()
     {
@@ -588,6 +590,93 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             Path.Combine(_watchPath, TaskStates.HumanReview, "pre-start-failure"))!.Prompt);
     }
 
+    /// <summary>
+    /// AGT-3056: an operator continue after a ProductFailure is a fix round. The
+    /// reviewed fenced result is written as the card's continuation base before
+    /// the card reaches Ready, the claim hands it to the runner, and the queued
+    /// prompt states where the round starts.
+    /// </summary>
+    [Fact]
+    public async Task ContinueAfterProductFailure_QueuesAFixRound_OnTheReviewedResult()
+    {
+        WriteJob("fix-me", TaskStates.HumanReview);
+        var harness = Build();
+        var (reviewAttemptId, resultRef, sha) = SeedSettledReview(harness, "fix-me", ReviewTerminalOutcome.ProductFailure);
+        harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
+
+        var response = await harness.Service.ContinueJobAsync(
+            "fix-me", "Address the review findings.", _watchPath, mode: ContinueModes.Extend);
+
+        Assert.Equal("queued", response.Status);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "fix-me");
+        var claimed = ContinuationBaseStore.ConsumeForClaim(readyFolder)!;
+        Assert.Equal(resultRef, claimed.Ref);
+        Assert.Equal(sha, claimed.CommitSha);
+        Assert.Equal(ReviewFixRoundBase.Reason, claimed.Reason);
+        Assert.Equal(reviewAttemptId, claimed.AttemptId);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, claimed.SavedAtUtc);
+        var intent = ReadIntent(readyFolder)!;
+        Assert.StartsWith("Address the review findings.", intent.Prompt, StringComparison.Ordinal);
+        Assert.Contains(ReviewFixRoundBase.PromptSentence(true), intent.Prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(sha, intent.Prompt, StringComparison.Ordinal);
+        var recorded = Assert.Single(harness.Timeline.ReadAll(readyFolder),
+            row => row.Kind == TimelineEventKinds.ContinuationBaseRecorded);
+        Assert.Equal(ReviewFixRoundBase.SourceOperatorContinue, recorded.Details!["source"]);
+        Assert.Equal(resultRef, recorded.Details["ref"]);
+    }
+
+    [Fact]
+    public async Task ContinueAfterAPassingReview_KeepsTodaysBase()
+    {
+        WriteJob("passed", TaskStates.HumanReview);
+        var harness = Build();
+        SeedSettledReview(harness, "passed", ReviewTerminalOutcome.Pass);
+        harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
+
+        var response = await harness.Service.ContinueJobAsync(
+            "passed", "Tighten the wording.", _watchPath, mode: ContinueModes.Extend);
+
+        Assert.Equal("queued", response.Status);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "passed");
+        Assert.Null(ContinuationBaseStore.Read(readyFolder));
+        Assert.Equal("Tighten the wording.", ReadIntent(readyFolder)!.Prompt.Trim());
+    }
+
+    private (string ReviewAttemptId, string ResultRef, string Sha) SeedSettledReview(
+        Harness harness, string slug, ReviewTerminalOutcome outcome)
+    {
+        var job = harness.Scanner.FindJob(slug, _watchPath)!;
+        var taskKey = job.Key ?? job.TaskKey;
+        var sha = new string('f', 40);
+        var run = harness.Authority.AcquireRun(taskKey, "repo", null, "runner", "host", 600, "run-" + slug).RunAttempt!;
+        Assert.True(harness.Authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "run-done-" + slug),
+            Outcome = "done",
+            ResultSha = sha,
+        }).Accepted);
+        var resultRef = AgentStudio.TaskServer.Contracts.FencedGitRefs.ImmutableResult(run.AttemptId, run.LastFence, sha);
+        var review = harness.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            taskKey, "repo", sha, run.AttemptId, "requirements", "policy", [], "review-" + slug,
+            ResultRef: resultRef)).ReviewAttempt!;
+        var claimed = harness.Authority.ClaimReview(review.AttemptId, "reviewer", "review-host", 600, "claim-" + slug)
+            .ReviewAttempt!;
+        Assert.True(harness.Authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "settle-" + slug),
+            sha, outcome)).Accepted);
+        AgentStudio.Pipeline.ReviewSubjectStore.Write(job.FolderPath, new AgentStudio.Pipeline.ReviewSubjectRecord
+        {
+            TaskKey = taskKey,
+            RunAttemptId = run.AttemptId,
+            AttemptChainId = "chain-" + slug,
+            Project = ProjectName,
+            ResultSha = sha,
+            ImmutableResultRef = resultRef,
+            CompletedAtUtc = _clock.GetUtcNow(),
+        });
+        return (review.AttemptId, resultRef, sha);
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────
 
     private sealed record Harness(
@@ -598,7 +687,8 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         TaskMutationService Mutations,
         TaskTransitionService Transitions,
         TaskSessionLog Sessions,
-        TimelineLog Timeline);
+        TimelineLog Timeline,
+        AttemptAuthorityService Authority);
 
     private Harness Build(int supersedeFailuresBeforeSuccess = 0)
     {
@@ -620,6 +710,8 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var authority = new AttemptAuthorityService(
+            config, NullLogger<AttemptAuthorityService>.Instance, () => _clock.GetUtcNow().UtcDateTime);
         var clients = new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance);
         var projects = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         var notifier = new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance);
@@ -693,10 +785,12 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             quota, quotaCaps, chatLog, orchestratorLog, orchestratorRunner, orchestratorSessions,
             globalBoot, git, pickupFailures, infraBreaker, taskAccess,
             timeline: timeline,
-            runnerIdentity: RunnerIdentity.Resolve(config));
+            runnerIdentity: RunnerIdentity.Resolve(config),
+            attemptAuthority: authority,
+            time: _clock);
 
         Assert.True(service.EnsureRunner(scanner.GetWatchPaths().First()), "the test runner must activate");
-        return new Harness(service, scanner, settings, router, mutations, transitions, sessions, timeline);
+        return new Harness(service, scanner, settings, router, mutations, transitions, sessions, timeline, authority);
     }
 
     private sealed class FailingSupersedeMutationService : TaskMutationService

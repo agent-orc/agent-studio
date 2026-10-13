@@ -1376,8 +1376,9 @@ public static class LeaseEndpoints
                 // AGT-2870: a continuation round opened for a lost worker starts
                 // its worktree on the salvage that round was opened for. The
                 // record is consumed here so a later, unrelated claim of the
-                // same card can never be prepared on a stale generation.
-                var continuationBase = ContinuationBaseStore.Consume(claimedFolderPath);
+                // same card can never be prepared on a stale generation. A
+                // review fix-round base (AGT-3056) stays until its run completes.
+                var continuationBase = ContinuationBaseStore.ConsumeForClaim(claimedFolderPath);
                 if (continuationBase is not null)
                 {
                     logger.LogInformation(
@@ -1402,6 +1403,7 @@ public static class LeaseEndpoints
                     RunSpec: runSpec,
                     ContinuationBaseRef: continuationBase?.Ref,
                     ContinuationBaseSha: continuationBase?.CommitSha,
+                    ContinuationBaseReason: continuationBase?.Reason,
                     PreviousSession: AgentStudio.Runner.SessionContinuationLedgerStore.Latest(claimedFolderPath),
                     MechanicalDelta: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeDelta(claimedFolderPath),
                     FreshRunReason: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeFreshReason(claimedFolderPath)), admission.ReasonCode));
@@ -1668,6 +1670,10 @@ public static class LeaseEndpoints
             // Settlement has already committed the attempt's terminal fact. The
             // stop receipt must be retired even if a later projection fails.
             var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
+            // AGT-3056: a fix round's base outlives a claim that never started
+            // the agent; once a run settled with any other outcome it is spent.
+            if (outcome != "environmentfailure")
+                ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
