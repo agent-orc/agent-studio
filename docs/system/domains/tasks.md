@@ -34,7 +34,13 @@ disconnected readers stop waiting without cancelling it. The response ETag is a
 hash of route, request variant and the built bytes, so a signature that moved
 without changing the board still validates the client's copy. The card carries
 no read-time counters for that reason: parked and pickup-hold ages are derived
-in the client from `parkedBlocker.parkedAt` and `pickupHold.sinceUtc`. ETag
+in the client from `parkedBlocker.parkedAt` and `pickupHold.sinceUtc`. Values a
+reader can restore stay off the card as well: `tokenSummary.totalTokens` when it
+is the sum of the four counters, `allModelsPriced: true`, false `mergeSignal`
+flags, `resolved: true` and the target lane on waits-on items, and the lane and
+title of a fulfilled edge. The client restores them on the parsed grouped cards
+(`restoreBoardCardDefaults` in `task.service.ts`). The production-shaped Human
+Review fixture in `BoardCardSummaryTests` holds the card to 2 KB on average. ETag
 validation remains a separate HTTP optimization from the card contract.
 
 ## Execution modes
