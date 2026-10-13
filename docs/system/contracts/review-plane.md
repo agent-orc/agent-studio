@@ -280,7 +280,10 @@ attempt before selection, so it is not leased (no fence, no claim event) and
 the next claimable attempt of any project is handed out on the same poll.
 Only a visibility or URL change between selection and hand-out reaches the
 backend's post-selection recheck, which leases and then defers that one
-attempt; the next poll's filter skips it. See
+attempt; the next poll's filter skips it. Host placement (AGT-3069) counts
+another idle host as able to serve a private review only when that host holds
+the same proven read key, so the coding host keeps a review no other host can
+clone. See
 [review.md](../domains/review.md#private-repository-access-agt-3077).
 
 ## Runner-side changes

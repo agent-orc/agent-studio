@@ -321,12 +321,61 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         Assert.Contains(Contract.ReviewCapabilities.ReviewExecutor, revoked);
     }
 
-    private static async Task RegisterAsync(HttpClient http, IReadOnlyCollection<string> capabilities)
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Coding_host_with_the_read_key_does_not_yield_a_private_review_to_a_keyless_host(
+        bool privateRepository)
+    {
+        // AGT-3077 x AGT-3069: website cards are coded and reviewed on
+        // agent-runner-01, the only host with the read key, while kori-review
+        // idles without it. Yielding the private review to kori-review, whose
+        // claim filter skips it, would leave it unreviewed. A public review
+        // still yields, which proves the placement path is live here.
+        SeedTask("WEB-28");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(WriteCredentials()), host: "coding-host");
+        await RegisterAsync(
+            http, Registration(credentialsFile: null), runnerId: "kori-review", host: "kori-host",
+            instance: "kori-host:8485");
+        var clock = factory.Services.GetRequiredService<TimeProvider>();
+        factory.Services.GetRequiredService<V1ReviewExecutorRegistry>().AdvertiseCapabilities(
+            RunnerId,
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId, Instance, Contract.CapabilityProtocol.CurrentSchemaVersion,
+                clock.GetUtcNow().UtcDateTime, 180, 1,
+                [new Contract.AdvertisedCapabilityDto(WebsiteKey, "source", "ready")]));
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var website = CreatePendingReviewAttempt(
+            authority, "WEB-28", new string('2', 40), Plan(privateRepository));
+
+        var claim = await ClaimAsync(http);
+
+        if (privateRepository)
+        {
+            Assert.Equal("claimed", claim.Status);
+            Assert.Equal(website, claim.Attempt!.AttemptId);
+            Assert.Equal("coding-host", claim.Attempt.HostId);
+        }
+        else
+        {
+            Assert.Equal("empty", claim.Status);
+            Assert.Equal(Contract.ReviewClaimEmptyReasons.DifferentHostPreferred, claim.Reason);
+        }
+    }
+
+    private static async Task RegisterAsync(
+        HttpClient http,
+        IReadOnlyCollection<string> capabilities,
+        string runnerId = RunnerId,
+        string host = "review-host",
+        string instance = Instance)
     {
         var registration = await http.PutAsJsonAsync(
-            $"/api/v1/runners/{RunnerId}",
+            $"/api/v1/runners/{runnerId}",
             new Contract.RegisterRunnerRequest(
-                RunnerId, "review-host", Instance, "1.0.0", Contract.TaskServerProtocol.Current,
+                runnerId, host, instance, "1.0.0", Contract.TaskServerProtocol.Current,
                 [.. capabilities]));
         registration.EnsureSuccessStatusCode();
     }

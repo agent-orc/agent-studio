@@ -76,8 +76,42 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal([PrivateReadKey], empty.MissingCapabilities);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Coding_host_with_the_read_key_does_not_yield_a_private_review_to_a_host_without_it(
+        bool otherHostRegistersAnUnprovenKey)
+    {
+        // AGT-3077 x AGT-3069: website cards are coded and reviewed on the only
+        // host holding the read key. An idle review host without a proven key
+        // skips the private review, so yielding to it would strand the review.
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(store, plan: PrivatePlan(), codingHost: "host-private");
+        await RegisterPrivateReviewerAsync(store, clock, readProofStatus: "ready");
+        if (otherHostRegistersAnUnprovenKey)
+            await RegisterPrivateReviewerAsync(
+                store, clock, readProofStatus: "unavailable", id: "review-b", instance: "instance-b", host: "host-b");
+        else
+            await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
+
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-private", "instance-private"), "review-private", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(subject.SubjectId, claim.Subject!.SubjectId);
+        Assert.Equal("host-private", claim.Attempt!.HostId);
+    }
+
     private static async Task RegisterPrivateReviewerAsync(
-        TaskServerStore store, ManualTimeProvider clock, string? readProofStatus)
+        TaskServerStore store,
+        ManualTimeProvider clock,
+        string? readProofStatus,
+        string id = "review-private",
+        string instance = "instance-private",
+        string host = "host-private")
     {
         string[] keys =
         [
@@ -90,16 +124,15 @@ public sealed partial class RemoteReviewAuthorityTests
             PrivateReadKey,
         ];
         await store.RegisterRunnerAsync(
-            "review-private",
-            new RegisterRunnerRequest(
-                "review-private", "host-private", "instance-private", "1.0.0", TaskServerProtocol.Current, keys),
-            "review-private",
+            id,
+            new RegisterRunnerRequest(id, host, instance, "1.0.0", TaskServerProtocol.Current, keys),
+            id,
             default);
         if (readProofStatus is null) return;
         await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-            "review-private", "instance-private", CapabilityProtocol.CurrentSchemaVersion,
+            id, instance, CapabilityProtocol.CurrentSchemaVersion,
             clock.GetUtcNow().UtcDateTime, 300, 1,
-            [new AdvertisedCapabilityDto(PrivateReadKey, "source", readProofStatus)]), "review-private", default);
+            [new AdvertisedCapabilityDto(PrivateReadKey, "source", readProofStatus)]), id, default);
     }
 
     private static ReviewPlanDto PrivatePlan()

@@ -529,9 +529,9 @@ public sealed partial class TaskServerStore
         string codingHostId,
         CancellationToken ct)
     {
-        var alternatives = new List<(string RunnerId, string HostId, IReadOnlySet<string> Capabilities)>();
+        var alternatives = new List<(string RunnerId, string HostId, string InstanceId, IReadOnlySet<string> Capabilities)>();
         await using (var command = Command(connection, """
-            SELECT id, host_id, capabilities_json
+            SELECT id, host_id, capabilities_json, instance_id
               FROM runners
              WHERE status = 'active'
                AND host_id <> $host
@@ -552,12 +552,17 @@ public sealed partial class TaskServerStore
                     .ToHashSet(StringComparer.Ordinal);
                 if (capabilities.Contains(ReviewCapabilities.ReviewExecutor)
                     && !capabilities.Contains(ReviewCapabilities.CodingExecutor))
-                    alternatives.Add((reader.GetString(0), reader.GetString(1), capabilities));
+                    alternatives.Add((reader.GetString(0), reader.GetString(1), reader.GetString(3), capabilities));
             }
         }
         foreach (var other in alternatives)
         {
-            if (MissingSubjectCapabilities(new ReviewExecutorRow(other.HostId, other.Capabilities), subject).Count > 0)
+            // AGT-3077: judge the alternative by its proven read keys, like its
+            // own claim would; yielding to a host that skips the review strands it.
+            var otherExecutor = await WithProvenRepositoryReadAsync(
+                connection, transaction, new ReviewExecutorRow(other.HostId, other.Capabilities),
+                other.RunnerId, other.InstanceId, ct);
+            if (MissingSubjectCapabilities(otherExecutor, subject).Count > 0)
                 continue;
             var requirements = RequiredReviewCapabilities(request.RequiredCapabilities, subject);
             var admission = await EvaluateCapabilityAdmissionAsync(

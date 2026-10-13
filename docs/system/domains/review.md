@@ -380,6 +380,14 @@ budget.
   the attempt as the executor would receive it (a sealed plan and a stored URL
   outrank the project). Such an attempt is skipped, not leased and deferred,
   so an executor without the key keeps claiming every other project's reviews.
+- **Host placement.** The coding host yields a review (AGT-3069) only to an
+  idle host that also holds this repository's proven read key, judged by the
+  same `ReviewClaimRepositoryAccessPolicy` facts. A website card coded on the
+  only host with the key is therefore reviewed there, instead of being yielded
+  to a keyless review host whose claim filter skips it. The standalone Task
+  Server judges the alternative host the same way
+  (`HasIdleEligibleDifferentReviewHostAsync` checks its proven read keys with
+  `MissingSubjectCapabilities`).
 - **Read proof.** A line in the credentials file is not a working token. The
   review daemon proves each credential with a credentialed `git ls-remote`
   (`runner/ReviewRepositoryReadProbe.cs`, re-proved every 10 minutes when
