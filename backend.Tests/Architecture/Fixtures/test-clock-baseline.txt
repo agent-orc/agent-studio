@@ -334,7 +334,6 @@ fixed-date backend.Tests/CodexTurnUsageBusEmitTests.cs
 fixed-date backend.Tests/CommitAttributionServiceTests.cs
 fixed-date backend.Tests/CompletedLaneAuditServiceTests.cs
 fixed-date backend.Tests/CompletionClaimPersistenceTests.cs
-fixed-date backend.Tests/CrashRecoveryServiceTests.cs
 fixed-date backend.Tests/CycleTimeBackfillTests.cs
 fixed-date backend.Tests/DecisionCardPolicyTests.cs
 fixed-date backend.Tests/DemoReplayScopeCompromiseTests.cs

@@ -601,6 +601,7 @@ builder.Services.AddSingleton<SystemKeepAwake>(sp =>
 });
 builder.Services.AddSingleton<TaskRunnerService>();
 builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
+builder.Services.AddSingleton<CrashRecoveryDismissalStore>();
 builder.Services.AddSingleton<CrashRecoveryService>();
 builder.Services.AddSingleton<StaleProgressArchiver>();
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor

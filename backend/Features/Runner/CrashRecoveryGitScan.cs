@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace AgentStudio.Runner;
 
 internal sealed record CrashRecoveryGitFinding(
     bool RefDrift, string Branch, string HeadSha, int BehindCommits,
     IReadOnlyList<string> UnknownBlobs, int Insertions, int Deletions,
-    string? IndexLock);
+    string? IndexLock, string ContentFingerprint);
 
 /// <summary>Read-only worktree evidence used before offering a recovery commit.</summary>
 internal static class CrashRecoveryGitScan
@@ -111,16 +113,24 @@ internal static class CrashRecoveryGitScan
 
         var unknown = new List<string>();
         var candidates = new List<string>();
+        var blobIds = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in includeBlobs ? files : [])
         {
             var full = Path.GetFullPath(Path.Combine(root, file));
             if (!full.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-                || !File.Exists(full)) continue;
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                throw new InvalidDataException($"Recovery file escapes the worktree: {file}");
+            if (!File.Exists(full))
+            {
+                blobIds[file] = "deleted";
+                continue;
+            }
             if (full.Contains('\n') || full.Contains('\r'))
             {
                 var hash = Git(root, "hash-object", "--", full);
-                if (hash.Code == 0 && Git(root, "cat-file", "-e", hash.Output.Trim() + "^{blob}").Code != 0)
+                if (hash.Code != 0) throw new IOException($"Cannot hash recovery file: {file}");
+                blobIds[file] = hash.Output.Trim();
+                if (Git(root, "cat-file", "-e", blobIds[file] + "^{blob}").Code != 0)
                     unknown.Add(file);
                 continue;
             }
@@ -135,6 +145,7 @@ internal static class CrashRecoveryGitScan
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(hash => hash.Trim()).ToArray();
                 if (hashes.Length == paths.Length)
                 {
+                    for (var i = 0; i < hashes.Length; i++) blobIds[candidates[i]] = hashes[i];
                     var objects = GitInput(root, string.Join('\n', hashes) + "\n", "cat-file", "--batch-check").Output
                         .Split('\n', StringSplitOptions.RemoveEmptyEntries);
                     if (objects.Length == hashes.Length)
@@ -155,11 +166,19 @@ internal static class CrashRecoveryGitScan
                 foreach (var file in candidates)
                 {
                     var hash = Git(root, "hash-object", "--", Path.Combine(root, file));
-                    if (hash.Code == 0 && Git(root, "cat-file", "-e", hash.Output.Trim() + "^{blob}").Code != 0)
+                    if (hash.Code != 0) throw new IOException($"Cannot hash recovery file: {file}");
+                    blobIds[file] = hash.Output.Trim();
+                    if (Git(root, "cat-file", "-e", blobIds[file] + "^{blob}").Code != 0)
                         unknown.Add(file);
                 }
             }
         }
+
+        var fingerprintLines = files.OrderBy(file => file, StringComparer.Ordinal)
+            .Select(file => file + "\t" + blobIds[file]);
+        var fingerprint = includeBlobs
+            ? Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', fingerprintLines))))
+            : "";
 
         var added = 0;
         var deleted = 0;
@@ -182,7 +201,7 @@ internal static class CrashRecoveryGitScan
             catch (IOException ex) { SilentCatch.Note(ex, "Crash recovery: file changed during numstat scan."); }
             catch (UnauthorizedAccessException ex) { SilentCatch.Note(ex, "Crash recovery: file became unreadable during numstat scan."); }
         }
-        return new(drift, branch, head, behind, unknown, added, deleted, indexLock);
+        return new(drift, branch, head, behind, unknown, added, deleted, indexLock, fingerprint);
     }
 
     private static (string Sha, long At)? LastReflog(string path)
