@@ -132,7 +132,7 @@ public class PipelineExecutionParallelTests : IDisposable
         // aspect with the post-run status, model, and duration. We seed
         // the file via Begin() because the aspect runner does not write
         // it on its own (the orchestrator owns lifecycle).
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(_jobFolder, PipelineCatalogue.Standard, project: "demo", jobId: "test-job");
 
         var runner = BuildRunner(_ => Task.FromResult("[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"),
@@ -175,7 +175,7 @@ public class PipelineExecutionParallelTests : IDisposable
         // The Overview pipeline-view will be served by a TS frontend, so
         // the JSON must be self-describing and round-trip cleanly through
         // a vanilla deserialiser (no custom converters).
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(_jobFolder, PipelineCatalogue.Standard, project: "demo", jobId: "test-job");
         pipelineLog.RecordStep(_jobFolder, new PipelineStepExecution
         {

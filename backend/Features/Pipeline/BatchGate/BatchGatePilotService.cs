@@ -46,7 +46,7 @@ public sealed class BatchGatePilotService
     /// <summary>Per-task gate starts per review generation before GateInfra (D8).</summary>
     internal const int FallbackGateStartBudget = 2;
 
-    public BatchGatePilotService(
+    public BatchGatePilotService(ITokenPricing pricing,
         BatchGateStore store, BatchGateLeaseService leases,
         RefMutationLeaseService refLeases, GitService git,
         IBuildTestGateRunner gate, AttemptAuthorityService authority,
@@ -79,7 +79,7 @@ public sealed class BatchGatePilotService
         _advisor = advisor;
         _reservations = reservations;
         _reservations?.LoadPersistedProjects(_settings.GetAll().Keys);
-        _pipelineLog = pipelineLog ?? new PipelineExecutionLog(
+        _pipelineLog = pipelineLog ?? new PipelineExecutionLog(pricing,
             NullLogger<PipelineExecutionLog>.Instance);
     }
 

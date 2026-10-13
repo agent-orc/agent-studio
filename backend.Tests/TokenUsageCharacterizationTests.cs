@@ -87,9 +87,9 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
         var expensive = aggregator.ProjectExpensiveJobs("alpha", _alpha, 10);
         var detail = aggregator.ProjectJobDetail("alpha", _alpha, "AGT-1");
 
-        var ledger = services.GetRequiredService<BusBackedProjectTokenUsageReader>();
+        var ledger = services.GetRequiredService<ProjectTokenLedger>();
         var calendar = UsageCockpitProjection.Calendar(Now, "Etc/UTC", DayOfWeek.Monday);
-        var cockpit = UsageCockpitProjection.Cost(calendar,
+        var cockpit = UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar,
         [
             new UsageCostInput("alpha", "alpha", ledger.LoadSnapshot("alpha", _alpha).Entries,
                 ledger.LoadSnapshot("alpha", _alpha).Freshness),
@@ -135,9 +135,9 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
                 .Select(pair => new { job = pair.Key, summary = Task(pair.Value) }).ToList(),
             runModelFallback = new
             {
-                noModel = Task(TokenSummaryService.WithModelFallback(perJob["AGT-7"], "claude-opus-5")),
-                labelledFallback = Task(TokenSummaryService.WithModelFallback(perJob["AGT-7"], "Claude Sonnet 5")),
-                alreadyModelled = Task(TokenSummaryService.WithModelFallback(perJob["AGT-1"], "claude-opus-5")),
+                noModel = Task(new RunModelPricing(TokenTestServices.Pricing()).Apply(perJob["AGT-7"], "claude-opus-5")),
+                labelledFallback = Task(new RunModelPricing(TokenTestServices.Pricing()).Apply(perJob["AGT-7"], "Claude Sonnet 5")),
+                alreadyModelled = Task(new RunModelPricing(TokenTestServices.Pricing()).Apply(perJob["AGT-1"], "claude-opus-5")),
             },
             timeline = Timeline(timeline),
             history = Timeline(history),
@@ -248,12 +248,12 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
             },
             pipeline = new
             {
-                summarize = Cost(PipelineCostCalculator.Summarize(record)),
-                withLedger = Cost(PipelineCostCalculator.SummarizeWithLedger(record, ledgerCalls)),
-                byModel = Usage(PipelineCostCalculator.SummarizeByModel(record)),
-                byModelWithSessions = Usage(PipelineCostCalculator.SummarizeByModel(
+                summarize = Cost(new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(record)),
+                withLedger = Cost(new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeWithLedger(record, ledgerCalls)),
+                byModel = Usage(new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(record)),
+                byModelWithSessions = Usage(new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeByModel(
                     record, sessions, perJob["AGT-2"])),
-                decision = Decision(PipelineCostCalculator.SummarizeDecisionCost(record, ledgerCalls)),
+                decision = Decision(new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeDecisionCost(record, ledgerCalls)),
             },
         };
     }
@@ -499,15 +499,7 @@ public sealed class TokenUsageCharacterizationTests : IDisposable
         services.AddSingleton<TaskScannerService>();
         services.AddSingleton<JobStatsMetadataCache>();
         services.AddSingleton<BusAggregationCache>();
-        services.AddSingleton<TokenSummaryCacheStore>();
-        services.AddSingleton<TokenPricingDriftMonitor>();
-        services.AddSingleton<ProjectTokenReceiptReader>();
-        services.AddSingleton<ProjectTokenLedger>();
-        services.AddSingleton<BusAdHocUsageReader>();
-        services.AddSingleton<ITokenPriceProvider, TokenEconomyPriceProvider>();
-        services.AddSingleton<ITokenPricing, TokenPricingService>();
-        services.AddSingleton<BusBackedProjectTokenUsageReader>();
-        services.AddSingleton<ITokenAggregator, TokenAggregationService>();
+        services.AddTokenUsage();
         return services.BuildServiceProvider();
     }
 

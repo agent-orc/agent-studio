@@ -11,6 +11,7 @@ namespace AgentStudio.Tokens;
 /// </summary>
 public sealed class OpenAiUsageHistoryRepair
 {
+    private readonly ITokenPricing _pricing;
     public const string ReportFileName = "openai-usage-input-v1.json";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -21,7 +22,7 @@ public sealed class OpenAiUsageHistoryRepair
     private readonly ILogger<OpenAiUsageHistoryRepair> _logger;
     private readonly string _reportPath;
 
-    public OpenAiUsageHistoryRepair(
+    public OpenAiUsageHistoryRepair(ITokenPricing pricing,
         TaskScannerService scanner,
         TaskMutationService mutations,
         PipelineExecutionLog pipelines,
@@ -29,7 +30,7 @@ public sealed class OpenAiUsageHistoryRepair
         WorkspaceTokensCacheStore workspaceCache,
         IConfiguration configuration,
         ILogger<OpenAiUsageHistoryRepair> logger)
-        : this(
+        : this(pricing,
             new OpenAiUsageHistoryRepairStore(
                 scanner,
                 mutations,
@@ -46,11 +47,12 @@ public sealed class OpenAiUsageHistoryRepair
     {
     }
 
-    internal OpenAiUsageHistoryRepair(
+    internal OpenAiUsageHistoryRepair(ITokenPricing pricing,
         IOpenAiUsageHistoryRepairStore store,
         string reportPath,
         ILogger<OpenAiUsageHistoryRepair> logger)
     {
+        _pricing = pricing;
         _store = store;
         _reportPath = reportPath;
         _logger = logger;
@@ -90,7 +92,7 @@ public sealed class OpenAiUsageHistoryRepair
             var taskSummaryKey = $"{task.TaskKey}:task.json tokenSummary";
             if (task.TokenSummary is { } summary)
             {
-                var repair = RepairSummary(summary, task.Project, task.TaskKey, untouched);
+                var repair = RepairSummary(_pricing, summary, task.Project, task.TaskKey, untouched);
                 if (repair.Changed)
                 {
                     if (_store.ReplaceTokenSummary(task.FolderPath, repair.Summary))
@@ -116,7 +118,7 @@ public sealed class OpenAiUsageHistoryRepair
             var pipelineKey = $"{task.TaskKey}:pipeline-execution.json";
             var pipeline = _store.ReadPipeline(task.FolderPath);
             if (pipeline is null) continue;
-            var pipelineRepair = RepairPipeline(pipeline, task.Project, task.TaskKey, untouched);
+            var pipelineRepair = RepairPipeline(_pricing, pipeline, task.Project, task.TaskKey, untouched);
             if (!pipelineRepair.Changed)
             {
                 if (HasNormalizedOpenAiUsage(pipeline))
@@ -200,7 +202,7 @@ public sealed class OpenAiUsageHistoryRepair
                        StringComparison.Ordinal)))
            || record.PreviousAttempts.Any(HasNormalizedOpenAiUsage);
 
-    internal static TaskSummaryRepair RepairSummary(
+    internal static TaskSummaryRepair RepairSummary(ITokenPricing pricing,
         TaskTokenSummary summary,
         string project,
         string taskKey,
@@ -213,7 +215,7 @@ public sealed class OpenAiUsageHistoryRepair
         decimal after = 0;
         foreach (var entry in sourceEntries)
         {
-            var repaired = RepairCall(entry, project, taskKey, "task.json tokenSummary.Entries", untouched);
+            var repaired = RepairCall(pricing, entry, project, taskKey, "task.json tokenSummary.Entries", untouched);
             entries.Add(repaired.Entry);
             if (!repaired.Changed) continue;
             corrected++;
@@ -239,7 +241,7 @@ public sealed class OpenAiUsageHistoryRepair
         return new TaskSummaryRepair(rebuilt, true, corrected, before, after);
     }
 
-    private static TaskCallRepair RepairCall(
+    private static TaskCallRepair RepairCall(ITokenPricing pricing,
         TaskTokenCall entry,
         string project,
         string taskKey,
@@ -265,9 +267,9 @@ public sealed class OpenAiUsageHistoryRepair
         }
 
         var normalized = ProviderUsageNormalization.OpenAi(entry.InputTokens, entry.CacheReadTokens);
-        var oldCost = TokenPricing.Estimate(entry.Model, entry.InputTokens, entry.OutputTokens,
+        var oldCost = pricing.Estimate(entry.Model, entry.InputTokens, entry.OutputTokens,
             entry.CacheReadTokens, entry.CacheCreationTokens, entry.Ts);
-        var newCost = TokenPricing.Estimate(entry.Model, normalized.InputTokens, entry.OutputTokens,
+        var newCost = pricing.Estimate(entry.Model, normalized.InputTokens, entry.OutputTokens,
             normalized.CacheReadTokens, entry.CacheCreationTokens, entry.Ts);
         return new TaskCallRepair(entry with
         {
@@ -280,7 +282,7 @@ public sealed class OpenAiUsageHistoryRepair
         }, true, oldCost.Total, newCost.Total);
     }
 
-    internal static PipelineRepair RepairPipeline(
+    internal static PipelineRepair RepairPipeline(ITokenPricing pricing,
         PipelineExecutionRecord record,
         string project,
         string taskKey,
@@ -315,9 +317,9 @@ public sealed class OpenAiUsageHistoryRepair
 
                 var normalized = ProviderUsageNormalization.OpenAi(step.InputTokens, step.CacheReadTokens);
                 var at = step.CompletedAt ?? step.StartedAt ?? current.CompletedAt ?? current.StartedAt;
-                before += TokenPricing.Estimate(step.Model, step.InputTokens, step.OutputTokens,
+                before += pricing.Estimate(step.Model, step.InputTokens, step.OutputTokens,
                     step.CacheReadTokens, step.CacheCreationTokens, at).Total;
-                after += TokenPricing.Estimate(step.Model, normalized.InputTokens, step.OutputTokens,
+                after += pricing.Estimate(step.Model, normalized.InputTokens, step.OutputTokens,
                     normalized.CacheReadTokens, step.CacheCreationTokens, at).Total;
                 corrected++;
                 return step with

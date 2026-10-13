@@ -24,7 +24,7 @@ public class PipelineExecutionRestartTests : IDisposable
     {
         _jobFolder = Path.Combine(Path.GetTempPath(), "pipeline-restart-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_jobFolder);
-        _log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        _log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
     }
 
     public void Dispose()
@@ -228,7 +228,7 @@ public class PipelineExecutionRestartTests : IDisposable
         // A fresh service instance represents the replacement WebApplication.
         // The pipeline file is the attempt-fenced checkpoint; only unfinished
         // steps enter the replacement executor.
-        var replacement = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var replacement = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var executed = chain
             .Where(stepId => replacement.ReadRestartCheckpoint(_jobFolder, stepId) is null)
             .ToArray();

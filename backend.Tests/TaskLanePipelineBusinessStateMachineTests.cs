@@ -1197,7 +1197,7 @@ internal sealed class TaskLanePipelineFixture : IDisposable
         => new(
             Git,
             Settings,
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<TaskIntegrationStatusService>.Instance);
 
     public AttemptAuthorityService CreateAttemptAuthority(Func<DateTime> utcNow)

@@ -663,7 +663,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var card = SeedPassedDelivery(stack, "journal-evidence-race");
         var entry = JournalEntry(card, stack);
         RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
-        var projector = new RemotePipelineReviewEvidenceProjector(
+        var projector = new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(),
             stack.Pipeline,
             stack.Timeline,
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
@@ -854,7 +854,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             new RemoteReviewEvidenceProjectionQueue(),
             stack.Scanner,
             stack.Authority,
-            new RemotePipelineReviewEvidenceProjector(
+            new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(),
                 stack.Pipeline,
                 stack.Timeline,
                 new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
@@ -1442,7 +1442,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         settings.SetIntegrationBranch(Project, "develop");
         settings.SetAutoPushStrategy(Project, AutoPushStrategies.Never);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance,

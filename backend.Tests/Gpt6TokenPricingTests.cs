@@ -18,7 +18,7 @@ public sealed class Gpt6TokenPricingTests
     [InlineData("gpt-6.1-sol", 2.0, 0.10, 10.0)]
     public void Gpt6_prices_resolve_from_TokenEconomy(string model, double input, double cached, double output)
     {
-        var estimate = TokenPricing.Estimate(model, 1_000_000, 1_000_000, 1_000_000, 0, AfterRelease);
+        var estimate = TokenTestServices.Pricing().Estimate(model, 1_000_000, 1_000_000, 1_000_000, 0, AfterRelease);
 
         Assert.True(estimate.ModelKnown);
         Assert.Equal((decimal)input, estimate.PriceBasis!.InputPerMillion);
@@ -30,7 +30,7 @@ public sealed class Gpt6TokenPricingTests
     [Fact]
     public void Gpt61Sol_UsesThePublishedCacheWritePrice()
     {
-        var estimate = TokenPricing.Estimate(ModelIds.Gpt61Sol, 0, 0, 0, 1_000_000, AfterRelease);
+        var estimate = TokenTestServices.Pricing().Estimate(ModelIds.Gpt61Sol, 0, 0, 0, 1_000_000, AfterRelease);
 
         Assert.True(estimate.ModelKnown);
         Assert.Equal(2.50m, estimate.PriceBasis!.CacheWritePerMillion);
@@ -49,7 +49,7 @@ public sealed class Gpt6TokenPricingTests
             0, stdout, "", "gpt-6-sol", started, started.AddSeconds(1),
             new CodexUsageParser(), new CliModelRegistry());
         var usage = result.Usage!;
-        var estimate = TokenPricing.Estimate(
+        var estimate = TokenTestServices.Pricing().Estimate(
             "gpt-6-sol", usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, 0, AfterRelease);
 
         Assert.Equal(200_000, usage.InputTokens);

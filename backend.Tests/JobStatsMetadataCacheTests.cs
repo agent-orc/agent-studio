@@ -46,7 +46,7 @@ public sealed class JobStatsMetadataCacheTests : IDisposable
         Assert.Equal(2, byId.Count);
         Assert.Equal(TaskStates.Archive, byId["support-archived"].State);
         Assert.Equal("Security audit of token flow", byId["support-archived"].Title);
-        Assert.Equal(ProjectTokenCategory.Supporting, ProjectTokenUsageService.Categorize("support-archived", byId));
+        Assert.Equal(ProjectTokenCategory.Supporting, ProjectTokenCategory.Of("support-archived", byId));
     }
 
     [Fact]

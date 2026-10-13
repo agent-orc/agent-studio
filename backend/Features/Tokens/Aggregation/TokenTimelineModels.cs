@@ -59,8 +59,8 @@ public sealed record TokenTimelineHostShare(string Host, int Calls, long Total);
 
 /// <summary>
 /// One (project, bucket) cell. <see cref="AllModelsPriced"/> is false
-/// when at least one call in the bucket used a model that is not in
-/// <see cref="TokenPricing.Catalog"/>; <see cref="Dollars"/> in that
+/// when at least one call in the bucket could not be priced by
+/// <see cref="ITokenPricing"/>; <see cref="Dollars"/> in that
 /// case covers only the priced subset. <see cref="AgentTokens"/> +
 /// <see cref="SupportingTokens"/> + <see cref="OrchestratorTokens"/> add
 /// up to <see cref="Total"/>; the split lets the UI show the orchestrator

@@ -33,7 +33,7 @@ public static class UsageCockpitProjection
         _ => value.ToUniversalTime(),
     };
 
-    public static UsageRun Run(ProjectRecord project, ProjectRunnerStatus status, TaskInfo? task,
+    public static UsageRun Run(ITokenPricing pricing,ProjectRecord project, ProjectRunnerStatus status, TaskInfo? task,
         UsageCalendar calendar, IReadOnlyList<OrchestratorLogEntry> entries, string? observedCli = null)
     {
         var execution = status.ActiveExecution;
@@ -49,7 +49,7 @@ public static class UsageCockpitProjection
             receiptCount++;
             try
             {
-                var price = TokenPricing.Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
+                var price = pricing.Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
                     usage.CacheReadTokens, usage.CacheCreationTokens, AsUtc(entry.Ts));
                 if (price.ModelKnown) provisional += price.Total;
                 else hasUnpriced = true;
@@ -93,7 +93,7 @@ public static class UsageCockpitProjection
         return TimeZoneInfo.ConvertTimeToUtc(wall, zone);
     }
 
-    public static UsageCostProjection Cost(UsageCalendar calendar, IReadOnlyList<UsageCostInput> sources)
+    public static UsageCostProjection Cost(ITokenPricing pricing,UsageCalendar calendar, IReadOnlyList<UsageCostInput> sources)
     {
         var children = new List<UsageProjectCost>(sources.Count);
         foreach (var source in sources)
@@ -115,7 +115,7 @@ public static class UsageCockpitProjection
                 TokenCostEstimate estimate;
                 try
                 {
-                    estimate = TokenPricing.Estimate(usage.Model, usage.InputTokens,
+                    estimate = pricing.Estimate(usage.Model, usage.InputTokens,
                         usage.OutputTokens, usage.CacheReadTokens, usage.CacheCreationTokens, at);
                 }
                 catch (Exception) { unpriced = true; continue; }
@@ -154,7 +154,7 @@ public static class UsageCockpitProjection
                 children.Select(child => child.Coverage.ObservedAt).Max(),
                 ProjectTokenLedger.SnapshotTtlSeconds,
                 overall == "complete" ? null : "Known totals may omit unavailable or unpriced usage."),
-            $"TokenEconomy/{typeof(TokenEconomy.ModelPriceCatalog).Assembly.GetName().Version?.ToString() ?? "unknown"}",
+            TokenEconomyPriceProvider.Version,
             ProviderUsageNormalization.OpenAiInputIncludesCachedV1,
             "/api/projects/{project}/token-usage/summary",
             LatestReceiptAt: children.Select(child => child.LatestReceiptAt).Max());

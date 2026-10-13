@@ -38,12 +38,13 @@ public static class TokenPricingEndpoints
 {
     public static void MapTokenPricingEndpoints(this WebApplication app)
     {
+        var pricing = app.Services.GetRequiredService<ITokenPricing>();
         app.MapPost("/api/token-pricing/calculate", (TokenPriceCalculationRequest request) =>
         {
             if (request.Items.Count is < 1 or > 100)
                 return Results.BadRequest(new { error = "Provide between 1 and 100 pricing items." });
 
-            var rows = CalculateItems(request);
+            var rows = CalculateItems(pricing, request);
             return Results.Ok(new { items = rows, provider = "TokenEconomy" });
         });
 
@@ -67,7 +68,7 @@ public static class TokenPricingEndpoints
             });
     }
 
-    internal static IReadOnlyList<TokenPriceCalculationResult> CalculateItems(TokenPriceCalculationRequest request)
+    internal static IReadOnlyList<TokenPriceCalculationResult> CalculateItems(ITokenPricing pricing,TokenPriceCalculationRequest request)
     {
         return request.Items.Select(item =>
         {
@@ -80,7 +81,7 @@ public static class TokenPricingEndpoints
                 Math.Max(0, item.OutputTokens),
                 Math.Max(0, item.CacheReadTokens),
                 Math.Max(0, item.CacheWriteTokens),
-                TokenPricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
+                pricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
                     item.CacheReadTokens, item.CacheWriteTokens, at),
                 item.RecordedCostUsd, item.RecordedModelPriced);
         }).ToList();

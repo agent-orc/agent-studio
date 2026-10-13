@@ -114,10 +114,8 @@ public sealed class WorkspaceTokensTimelineCategoryTests : IDisposable
         var generation = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, generation);
         var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
-        var ledger = new BusBackedProjectTokenUsageReader(store, config, stats, new ProjectTokenReceiptReader());
-        return BusBackedWorkspaceTimelineReader.BuildFromLedger(
-            ledger, new[] { ("studio", Path.Combine(_workspace, "studio")) },
-            windowHours: 24, bucketMinutes: 60, nowUtc: now);
+        var ledger = TokenTestServices.Aggregator(store, config, stats, new ProjectTokenReceiptReader());
+        return ledger.WorkspaceTimeline(new[] { ("studio", Path.Combine(_workspace, "studio")) }, windowHours: 24, bucketMinutes: 60, nowUtc: now);
     }
 
     private (AgentMessageBusBridge bridge, AgentMessageBusStore store) BuildStack()

@@ -225,7 +225,7 @@ public class AspectRunnerTests : IDisposable
     [Fact]
     public async Task Backend_restart_with_two_of_four_graded_aspects_resumes_only_remaining_aspects()
     {
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipeline.Begin(_jobFolder, PipelineCatalogue.Standard, "demo", "test-job");
         foreach (var aspect in new[] { "requirement-fit", "code-quality" })
         {
@@ -257,7 +257,7 @@ public class AspectRunnerTests : IDisposable
         var replacement = new AspectRunnerService(
             prompts,
             NullLogger<AspectRunnerService>.Instance,
-            pipelineLog: new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance));
+            pipelineLog: new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance));
         replacement.CliRunner = (aspect, _, _, _, _, _) =>
         {
             lock (calls) calls.Add(aspect);

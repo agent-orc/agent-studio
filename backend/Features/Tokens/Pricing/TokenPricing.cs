@@ -63,38 +63,3 @@ public sealed class TokenPricingService(ITokenPriceProvider provider) : ITokenPr
                 usage.CacheReadTokens, usage.CacheCreationTokens, entry.Ts)
             : null)).ToList();
 }
-
-/// <summary>
-/// The only Studio pricing entry point. Model catalog, aliases, rates, cache
-/// policy, and price history all come from TokenEconomy.
-/// </summary>
-public static class TokenPricing
-{
-    private static readonly EconomyPricing.ModelPriceCatalog Source = EconomyPricing.ModelPriceCatalog.Default;
-
-    /// <summary>
-    /// Configured pricing provider. Internal visibility lets focused tests pin
-    /// the package adapter without exposing provider selection through the API.
-    /// </summary>
-    internal static ITokenPriceProvider Provider { get; } = new TokenEconomyPriceProvider();
-    private static readonly ITokenPricing Service = new TokenPricingService(Provider);
-
-    /// <summary>Read-only TokenEconomy catalog projection retained for catalog consumers.</summary>
-    public static IReadOnlyDictionary<string, EconomyPricing.ModelListing> Catalog { get; } =
-        Source.Listings.ToDictionary(x => x.ModelId, StringComparer.OrdinalIgnoreCase);
-
-    public static TokenCostEstimate Estimate(
-        string? modelId,
-        long inputTokens,
-        long outputTokens,
-        long cacheReadTokens,
-        long cacheCreationTokens,
-        DateTime? recordedAt = null)
-    {
-        return Service.Estimate(modelId, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
-    }
-
-    /// <summary>Price every ledger entry at its own timestamp, one result per entry.</summary>
-    public static IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
-        => Service.Price(ledger);
-}
