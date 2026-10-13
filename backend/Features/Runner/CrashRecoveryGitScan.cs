@@ -15,10 +15,18 @@ internal static class CrashRecoveryGitScan
 {
     public static IReadOnlyList<string> ReadDirtyFiles(string root)
     {
+        if (!Directory.Exists(root)) return [];
         // NUL records preserve literal names, including Unicode, quotes and
         // whitespace. Renames contain destination then source as two records.
         var status = Git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all");
-        if (status.Code != 0) throw new IOException("Cannot read crash recovery worktree status.");
+        if (status.Code != 0)
+        {
+            var worktree = Git(root, "rev-parse", "--is-inside-work-tree");
+            if ((worktree.Code == 0 && worktree.Output.Trim() == "false")
+                || (worktree.Code != 0 && worktree.Error.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)))
+                return [];
+            throw new IOException($"Cannot read crash recovery worktree status: {status.Error.Trim()}");
+        }
         var records = status.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         var paths = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < records.Length; i++)
@@ -265,9 +273,9 @@ internal static class CrashRecoveryGitScan
         return result;
     }
 
-    private static (string Output, int Code) Git(string root, params string[] args) => GitWithIndex(root, null, args);
+    private static (string Output, int Code, string Error) Git(string root, params string[] args) => GitWithIndex(root, null, args);
 
-    private static (string Output, int Code) GitWithIndex(string root, string? index, params string[] args)
+    private static (string Output, int Code, string Error) GitWithIndex(string root, string? index, params string[] args)
     {
         var psi = new ProcessStartInfo("git")
         {
@@ -279,9 +287,9 @@ internal static class CrashRecoveryGitScan
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         using var process = Process.Start(psi)!;
         var output = process.StandardOutput.ReadToEnd();
-        process.StandardError.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
-        return (output, process.ExitCode);
+        return (output, process.ExitCode, error);
     }
 
     private static (string Output, int Code) GitInput(string root, string input, params string[] args)

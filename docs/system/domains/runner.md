@@ -463,6 +463,8 @@ rollout decision.
   unresolvable or unhashable paths use `unreadable`. An orphan scan or dismissal
   cleanup failure records `orphan-scan-failed` and leaves interrupted-run recovery
   and later projects eligible for the rest of the boot sweep.
+  Missing repository paths and watched folders without a Git worktree have no
+  orphan findings and do not produce a scan failure.
   Before queuing, the scan checks branch and HEAD reflogs, whether the index
   tree matches a strict ancestor of HEAD, and whether staged changes mostly
   reverse a recent ancestor diff. A moved branch ref produces a

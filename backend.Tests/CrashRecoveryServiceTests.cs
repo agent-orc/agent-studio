@@ -505,6 +505,39 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         Assert.Contains("Injected dismissal write failure", File.ReadAllText(restarted.RecoveryLogPath));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RecoverAsync_NonGitOrMissingRepository_SkipsOrphanScan(bool rootExists)
+    {
+        var root = Path.Combine(_tempDir, "not-a-repository");
+        var storage = Path.Combine(root, ".orchestrator", "jobs");
+        if (rootExists) Directory.CreateDirectory(storage);
+        var (recovery, _) = rootExists
+            ? BuildRecovery(primaryWatchPath: storage, deriveRepoFromStorage: true)
+            : BuildRecovery(primaryRepo: root);
+
+        var decisions = await recovery.RecoverAsync();
+
+        Assert.Empty(CrashRecoveryGitScan.ReadDirtyFiles(root));
+        Assert.DoesNotContain(decisions, decision => decision.Kind == RecoveryDecisionKinds.OrphanScanFailed);
+        Assert.Empty(recovery.GetPendingOrphanRecoveries());
+        Assert.False(File.Exists(recovery.RecoveryLogPath));
+    }
+
+    [Fact]
+    public async Task RecoverAsync_StatusFailureInGitWorktree_RecordsScanFailure()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, ".git", "index"), "invalid index");
+        var (recovery, _) = BuildRecovery();
+
+        var decisions = await recovery.RecoverAsync();
+
+        var failed = Assert.Single(decisions, decision => decision.Kind == RecoveryDecisionKinds.OrphanScanFailed);
+        Assert.Contains("Cannot read crash recovery worktree status:", failed.Reason);
+        Assert.Contains("index", failed.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class FailingDismissalWriter : IAtomicJsonFileWriter
     {
         public void Write(string path, string content) => throw new IOException("Injected dismissal write failure.");
@@ -932,14 +965,15 @@ public sealed class CrashRecoveryServiceTests : IDisposable
 
     private (CrashRecoveryService Recovery, TaskScannerService Scanner) BuildRecovery(
         Action<ProjectSettingsService>? configureSettings = null,
-        TimeProvider? clock = null, IAtomicJsonFileWriter? writer = null, string? laterRepo = null)
+        TimeProvider? clock = null, IAtomicJsonFileWriter? writer = null, string? laterRepo = null,
+        string? primaryRepo = null, string? primaryWatchPath = null, bool deriveRepoFromStorage = false)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["WatchPaths:0:Name"] = ProjectName,
-            ["WatchPaths:0:Path"] = _watchPath,
-            ["WatchPaths:0:RootPath"] = _repoRoot,
-            ["WatchPaths:0:RepositoryPath"] = _repoRoot,
+            ["WatchPaths:0:Path"] = primaryWatchPath ?? _watchPath,
+            ["WatchPaths:0:RootPath"] = deriveRepoFromStorage ? null : (primaryRepo ?? _repoRoot),
+            ["WatchPaths:0:RepositoryPath"] = deriveRepoFromStorage ? null : (primaryRepo ?? _repoRoot),
             ["WatchPaths:1:Name"] = "later",
             ["WatchPaths:1:Path"] = laterRepo,
             ["WatchPaths:1:RootPath"] = laterRepo,
