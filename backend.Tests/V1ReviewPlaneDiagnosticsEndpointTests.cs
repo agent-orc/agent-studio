@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -660,12 +662,16 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
     /// canonical, unclaimed ReviewAttempts (state Pending) - the legacy local
     /// post-processing queue the advisor used to read stays at zero the whole
     /// time. Five pending attempts at or above the default raise threshold must
-    /// move the recommendation the same way five legacy-queued cards already did.
+    /// move the recommendation the same way five legacy-queued cards already did,
+    /// once a fresh review host snapshot shows headroom (AGT-3073).
     /// </summary>
     [Fact]
     public async Task Pending_canonical_review_attempts_drive_a_raise()
     {
-        using var factory = BuildFactory();
+        var clock = new FakeTimeProvider();
+        using var factory = BuildFactory(advisorClock: clock);
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutor(http);
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         for (var i = 0; i < 5; i++)
             CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
@@ -676,10 +682,37 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal(5, queue.PendingReviewAttempts);
         Assert.Equal(5, queue.QueueDepth);
 
-        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh(DateTime.MaxValue);
+        // The advertisement refreshes the advisor, so its decision is the raise.
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await AdvertiseReviewHostHeadroom(http, clock);
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Current;
 
         Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
         Assert.Equal(3, decision.RecommendedParallelism);
+        Assert.Contains("host headroom", decision.Reason);
+    }
+
+    /// <summary>
+    /// AGT-3073: without a fresh review host snapshot the advisor cannot prove
+    /// headroom, so a backlog holds and the recommendation endpoint says why.
+    /// </summary>
+    [Fact]
+    public async Task Pending_canonical_review_attempts_wait_for_a_fresh_host_budget()
+    {
+        using var factory = BuildFactory();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        for (var i = 0; i < 5; i++)
+            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
+        factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+
+        using var http = factory.CreateClient();
+        using var response = JsonDocument.Parse(await http.GetStringAsync(
+            "/api/runner/auto-review-parallelism-recommendation"));
+
+        Assert.Equal(2, response.RootElement.GetProperty("recommendedParallelism").GetInt32());
+        Assert.Equal(
+            "raise refused: no fresh review plane budget",
+            response.RootElement.GetProperty("reason").GetString());
     }
 
     /// <summary>
@@ -694,10 +727,16 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
     [Fact]
     public async Task A_raised_baseline_is_adopted_at_runtime_without_a_restart()
     {
-        using var factory = BuildFactory(extraConfiguration: new Dictionary<string, string?>
-        {
-            ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "2",
-        });
+        var clock = new FakeTimeProvider();
+        using var factory = BuildFactory(
+            extraConfiguration: new Dictionary<string, string?>
+            {
+                ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "2",
+            },
+            advisorClock: clock);
+        using var http = factory.CreateClient();
+        await RegisterReviewExecutor(http);
+        await AdvertiseReviewHostHeadroom(http, clock);
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         CreatePendingReviewAttempt(authority, "AGT-1", "sha-1");
 
@@ -730,7 +769,8 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
     [Fact]
     public async Task Capability_advertisement_never_exceeds_the_executors_own_bootstrap()
     {
-        using var factory = BuildFactory();
+        var clock = new FakeTimeProvider();
+        using var factory = BuildFactory(advisorClock: clock);
         using var http = factory.CreateClient();
         var registration = await http.PutAsJsonAsync(
             $"/api/v1/runners/{RunnerId}",
@@ -741,7 +781,9 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         for (var i = 0; i < 5; i++)
             CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
         factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
-        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh(DateTime.MaxValue);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await AdvertiseReviewHostHeadroom(http, clock);
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
         Assert.Equal(3, decision.RecommendedParallelism);
 
         var advertisement = await http.PostAsJsonAsync(
@@ -760,6 +802,49 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
             .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
 
         Assert.Equal(2, snapshot!.RoleMaxParallelism);
+    }
+
+    private static async Task RegisterReviewExecutor(HttpClient http)
+    {
+        var registration = await http.PutAsJsonAsync($"/api/v1/runners/{RunnerId}", Registration(Instance));
+        registration.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Advertises a review host snapshot with headroom: an unthrottled 12-core
+    /// plane, load 4 on 12 cores and 42 of 62 GB available, observed on the
+    /// advisor's clock so it counts as fresh.
+    /// </summary>
+    private static async Task AdvertiseReviewHostHeadroom(HttpClient http, TimeProvider clock)
+    {
+        var observedAt = clock.GetUtcNow().UtcDateTime;
+        var advertisement = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId,
+                Instance,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                observedAt,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")],
+                Telemetry: new Contract.HostTelemetrySnapshotDto(
+                    observedAt,
+                    CpuPercent: null,
+                    Load1: 4,
+                    Load5: null,
+                    Load15: null,
+                    MemoryUsedBytes: 20L << 30,
+                    MemoryTotalBytes: 62L << 30,
+                    SwapInBytesPerSecond: null,
+                    SwapOutBytesPerSecond: null,
+                    CpuStealPercent: null,
+                    IoWaitPercent: null,
+                    CpuCores: 12,
+                    ActiveSlots: 1,
+                    ReviewPlane: new Contract.ReviewPlaneBudgetDto(
+                        observedAt, "1200000 100000", 12, 1200, 12, 2.4, 480, 3, 900, 0, false))));
+        advertisement.EnsureSuccessStatusCode();
     }
 
     private static void CreatePendingReviewAttempt(AttemptAuthorityService authority, string taskKey, string sha)
@@ -826,7 +911,8 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
 
     private WebApplicationFactory<Program> BuildFactory(
         string? runnerPrincipalId = null,
-        IReadOnlyDictionary<string, string?>? extraConfiguration = null) =>
+        IReadOnlyDictionary<string, string?>? extraConfiguration = null,
+        TimeProvider? advisorClock = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -850,6 +936,19 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
                 {
                     builder.ConfigureTestServices(services => services.AddSingleton<IStartupFilter>(
                         new RunnerPrincipalStartupFilter(runnerPrincipalId)));
+                }
+                if (advisorClock is not null)
+                {
+                    builder.ConfigureTestServices(services =>
+                    {
+                        services.RemoveAll<AdaptiveReviewParallelismAdvisor>();
+                        services.AddSingleton(sp => new AdaptiveReviewParallelismAdvisor(
+                            sp.GetRequiredService<AutoReviewQueueStagnationWatchdog>(),
+                            sp.GetRequiredService<IConfiguration>(),
+                            sp.GetRequiredService<ILogger<AdaptiveReviewParallelismAdvisor>>(),
+                            sp.GetRequiredService<V1ReviewExecutorRegistry>(),
+                            advisorClock));
+                    });
                 }
             });
 

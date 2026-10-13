@@ -3683,22 +3683,24 @@ public sealed class V1ReviewExecutorRegistry
     }
 
     /// <summary>
-    /// The freshest review-role cgroup budget. The advisor is global today, so
-    /// multiple review identities are combined fail-safe by selecting the
-    /// smallest CPU plane; ties prefer the newest observation.
+    /// The host snapshot carrying the freshest review-role cgroup budget, so
+    /// the advisor reads plane budget, load and memory from one observation.
+    /// The advisor is global today, so multiple review identities are combined
+    /// fail-safe by selecting the smallest CPU plane; ties prefer the newest
+    /// observation.
     /// </summary>
-    public Contract.ReviewPlaneBudgetDto? LatestReviewPlaneBudget(DateTime nowUtc)
+    public Contract.HostTelemetrySnapshotDto? LatestReviewHostTelemetry(DateTime nowUtc)
     {
         lock (_gate)
         {
             return _registrations
                 .Where(entry => entry.Value.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
-                .Select(entry => _capabilityStates.GetValueOrDefault(entry.Key)?.Telemetry?.ReviewPlane)
-                .Where(budget => budget is not null
-                                 && nowUtc.ToUniversalTime() - budget.ObservedAt.ToUniversalTime()
-                                 <= TimeSpan.FromMinutes(3))
-                .OrderBy(budget => budget!.PlaneCpuCores)
-                .ThenByDescending(budget => budget!.ObservedAt)
+                .Select(entry => _capabilityStates.GetValueOrDefault(entry.Key)?.Telemetry)
+                .Where(telemetry => telemetry?.ReviewPlane is { } budget
+                                    && nowUtc.ToUniversalTime() - budget.ObservedAt.ToUniversalTime()
+                                    <= TimeSpan.FromMinutes(3))
+                .OrderBy(telemetry => telemetry!.ReviewPlane!.PlaneCpuCores)
+                .ThenByDescending(telemetry => telemetry!.ReviewPlane!.ObservedAt)
                 .FirstOrDefault();
         }
     }
