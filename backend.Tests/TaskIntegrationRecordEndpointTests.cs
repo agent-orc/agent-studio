@@ -185,6 +185,84 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
         Assert.Single(second.RootElement.GetProperty("integrationRecords").EnumerateArray());
     }
 
+    [Fact]
+    public async Task AppendOperatorMergeRecord_AttributesTheMergeCommit_Agt2798()
+    {
+        // AGT-3045 regression fixture: AGT-2798 was merged card-scoped by the
+        // operator as 5d480157f; the record must attribute that commit so the
+        // card stops reading "no code change".
+        WriteTask(TaskStates.Completed);
+        await using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var path = $"/api/tasks/{TaskKey}/integration-records?watchPath={Uri.EscapeDataString(_watchPath)}";
+        var request = Request() with
+        {
+            Id = "operator-merge-2026-09-15-agt-2798",
+            IntegrationBranch = "develop",
+            CommitShas = ["5d480157f"],
+            Evidence = "Operator card-scoped merge 5d480157f (merge(AGT-2798): integrate reviewed delivery).",
+        };
+
+        using var first = await client.PostAsJsonAsync(path, request);
+        first.EnsureSuccessStatusCode();
+        using var replay = await client.PostAsJsonAsync(path, request);
+        replay.EnsureSuccessStatusCode();
+
+        using var detailResponse = await client.GetAsync(
+            $"/api/tasks/{TaskKey}?watchPath={Uri.EscapeDataString(_watchPath)}");
+        detailResponse.EnsureSuccessStatusCode();
+        using var detail = JsonDocument.Parse(await detailResponse.Content.ReadAsStringAsync());
+        var commit = Assert.Single(detail.RootElement.GetProperty("info").GetProperty("commits").EnumerateArray());
+        Assert.Equal("5d480157f", commit.GetProperty("sha").GetString());
+        Assert.Equal(CommitAttributionKinds.Manual, commit.GetProperty("attribution").GetString());
+        Assert.Equal("develop", commit.GetProperty("branch").GetString());
+    }
+
+    [Fact]
+    public async Task AppendNonOperatorRecord_DoesNotAttributeCommits()
+    {
+        WriteTask(TaskStates.HumanReview);
+        await using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var path = $"/api/tasks/{TaskKey}/integration-records?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        using var response = await client.PostAsJsonAsync(path, Request());
+        response.EnsureSuccessStatusCode();
+
+        using var detailResponse = await client.GetAsync(
+            $"/api/tasks/{TaskKey}?watchPath={Uri.EscapeDataString(_watchPath)}");
+        using var detail = JsonDocument.Parse(await detailResponse.Content.ReadAsStringAsync());
+        Assert.Empty(detail.RootElement.GetProperty("info").GetProperty("commits").EnumerateArray());
+    }
+
+    [Fact]
+    public void OperatorMergePolicy_PicksMergeShaAndSkipsAttributedCommits()
+    {
+        var merge = new string('a', 40);
+        var delivery = new string('b', 40);
+        var record = new TaskIntegrationRecord
+        {
+            Id = "operator-merge-agt-2706-aaaaaaaaa",
+            Classification = IntegrationRecordClasses.IntegratedVerified,
+            CommitShas = [merge, delivery],
+            Evidence = "merge",
+        };
+        Assert.Equal([merge], OperatorMergeCommitAttribution.MergeShas(record));
+        Assert.Equal(["aaaaaaaaa"], OperatorMergeCommitAttribution.MergeShas(record with { CommitShas = [] }));
+        Assert.Equal([delivery], OperatorMergeCommitAttribution.MergeShas(record with { Id = "operator-merge-x" , CommitShas = [delivery] }));
+
+        var attributed = OperatorMergeCommitAttribution.CommitsToAttribute(record, [], _ => null);
+        Assert.Equal(merge, Assert.Single(attributed).Sha);
+        Assert.Empty(OperatorMergeCommitAttribution.CommitsToAttribute(
+            record, [new TaskCommitInfo { Sha = merge }], _ => null));
+        Assert.Empty(OperatorMergeCommitAttribution.CommitsToAttribute(
+            record with { Id = "sweep-agt-2706" }, [], _ => null));
+        Assert.Empty(OperatorMergeCommitAttribution.CommitsToAttribute(
+            record with { Classification = IntegrationRecordClasses.NoCodeExpected }, [], _ => null));
+    }
+
     private AppendTaskIntegrationRecordRequest Request() => new()
     {
         Id = "operator-gpt-verification-2026-08-11",

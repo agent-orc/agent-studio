@@ -3,6 +3,10 @@
 Status: accepted architecture, foundation stage delivered in AGT-2907, 2026-09-26.
 [ADR-0076](../architecture/decisions/adr-archive.md#adr-0076---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
 records D1, D2 and D4. The
+[ADR-0078](../architecture/decisions/adr-archive.md#adr-0078---engine-placement-and-execution-rule-2026-10-11)
+sets the five-role target, process separation and execution rule. Start at the
+[North star](../../operations/nordstern/index.html) for the complete target.
+The
 [source dossier](../../operations/operations-server-backchannel/index.html)
 records the selected D3 scope and original constraints. The operator's
 2026-09-26 instruction places the expansion on AGT-2907 and accepts this
@@ -38,13 +42,27 @@ the baseline card nor its delivery is blocked by the later parity work.
 | Resource | Authority |
 |---|---|
 | Tasks, lanes, runs, reviews, accepted evidence, projects and workspace identity | Task Server |
-| Orchestrator sessions, context, budgets, model policy, decisions and accepted responses | Task Server |
+| Orchestrator sessions, context, budgets, accepted intents and responses | Task Server |
+| Transition decisions, planners, advisors and decision receipts | Orchestrator Engine, with Task Server validation and durable acceptance |
 | Operation catalogue, command idempotency, bounded attempts and operational events | Operations Server |
 | Host tools, roots, filesystem and isolated executable actions | Operations Agent |
 | Human sessions, browser Origin and CSRF, server-side upstream credentials | Connector or separate LAN browser edge |
 
-Existing coding and review Runner protocols continue to use Task Server. The
-new channel does not replace their admission or outcome handling.
+All claimable work uses Task Server runner protocols: coding, review, gate and
+batch attempts and orchestrator chat turns, including model calls, preparation,
+builds, tests, commits and pushes. The Operations Server executes only
+non-claimable host operations such as developer-seat files and Git actions,
+host lifecycle, diagnostics and person- or frontend-requested rendering or
+capture. No pipeline step executes through it. An operation result does not
+itself change task state. The new channel does not replace claim admission or
+outcome handling.
+
+Engine and Operations Server are separate processes, even when they share a
+deployment unit. One Engine instance serves workstation and one-box profiles;
+two interchangeable instances under per-occurrence leases serve the distributed
+profile. Documentation and UI call Operations Server the **Operations Broker**:
+it brokers host operations and is not a message broker. Code identifiers,
+images, routes and contracts retain **Operations Server**.
 
 ## Protocol and access
 

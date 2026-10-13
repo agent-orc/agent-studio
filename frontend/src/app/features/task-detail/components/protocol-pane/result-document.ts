@@ -18,6 +18,7 @@
  * the view thin and lets the case + metric logic be hammered branch by branch.
  */
 import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
+import { integrationRecordTooltip, latestIntegratedRecord } from '../../../../models/task.model';
 import { formatTokens } from '../../../../services/format.util';
 import { buildTokenCostTooltip } from '../../../tokens';
 import type { ProtocolVerdict } from './protocol-verdict';
@@ -324,6 +325,14 @@ function buildMetrics(detail: TaskDetail, verdict: ProtocolVerdict, markdown: st
     });
   } else if (info.codeActivityDetected === true) {
     metrics.push({ id: 'commits', label: 'Commits', value: 'pending', tooltip: 'Work landed but the attributed commit chain is still resolving.' });
+  } else if (latestIntegratedRecord(info.integrationRecords)) {
+    // AGT-3045: an integration record proves delivery; never "no code change".
+    metrics.push({
+      id: 'commits',
+      label: 'Commits',
+      value: 'integrated via operator merge',
+      tooltip: integrationRecordTooltip(latestIntegratedRecord(info.integrationRecords)!),
+    });
   } else if (info.codeActivityDetected === false) {
     metrics.push({ id: 'commits', label: 'Commits', value: 'no code change', tooltip: 'The run moved no code (analysis / docs / investigation).' });
   }

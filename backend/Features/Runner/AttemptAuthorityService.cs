@@ -685,6 +685,7 @@ public sealed class AttemptAuthorityService
                     EvidenceDigestInputs = evidence,
                     RepositoryUrl = NormalizeNull(request.RepositoryUrl),
                     ResultRef = NormalizeNull(request.ResultRef),
+                    CodingHostId = run.Lease?.HostId,
                     Plan = sealedPlan,
                     CreatedAt = now,
                 };
@@ -969,7 +970,8 @@ public sealed class AttemptAuthorityService
         string instanceId,
         int? requestedTtlSeconds,
         IReadOnlySet<string>? capabilities = null,
-        IReadOnlySet<string>? heldTaskKeys = null)
+        IReadOnlySet<string>? heldTaskKeys = null,
+        Func<ReviewAttemptDto, bool>? admission = null)
     {
         if (Blank(executorId) || Blank(hostId) || Blank(instanceId))
             return new AttemptWriteResult(
@@ -1005,6 +1007,7 @@ public sealed class AttemptAuthorityService
                         || capabilities is null
                         || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
                             review.Subject.Plan, capabilities))
+                    .Where(review => admission is null || admission(ToDto(review)))
                     .OrderByDescending(review => review.Priority == "urgent")
                     .ThenBy(review => review.CreatedAt)
                     .ThenBy(review => review.AttemptId)
@@ -3120,7 +3123,8 @@ public sealed class AttemptAuthorityService
         CreatedAt: subject.CreatedAt,
         RepositoryUrl: subject.RepositoryUrl,
         ResultRef: subject.ResultRef,
-        Plan: subject.Plan);
+        Plan: subject.Plan,
+        CodingHostId: subject.CodingHostId);
 
     private static ReviewSubjectRecord CopySubjectWithPlan(
         ReviewSubjectRecord subject,
@@ -3136,6 +3140,7 @@ public sealed class AttemptAuthorityService
             EvidenceDigestInputs = [.. subject.EvidenceDigestInputs],
             RepositoryUrl = subject.RepositoryUrl,
             ResultRef = subject.ResultRef,
+            CodingHostId = subject.CodingHostId,
             Plan = plan,
             CreatedAt = subject.CreatedAt,
         };
@@ -3368,6 +3373,7 @@ public sealed class AttemptAuthorityService
         public List<string> EvidenceDigestInputs { get; set; } = [];
         public string? RepositoryUrl { get; set; }
         public string? ResultRef { get; set; }
+        public string? CodingHostId { get; set; }
         public AgentStudio.TaskServer.Contracts.ReviewPlanDto? Plan { get; set; }
         public DateTime CreatedAt { get; set; }
     }

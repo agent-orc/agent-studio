@@ -436,6 +436,154 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Null(reviewed.Phase);
     }
 
+    /// <summary>
+    /// AGT-3076 - AGT-3042 and three siblings were integrated and deployed,
+    /// but the rebuilt authority store had lost their RunAttempts. Without an
+    /// override the refusal is a 409 that names the missing run attempt, not
+    /// the content gaps that are only its symptoms.
+    /// </summary>
+    [Fact]
+    public async Task Accept_RunAttemptLostFromRebuiltAuthorityStore_WithoutOverride_IsRefusedWithTheReason()
+    {
+        var deliverySha = PublishDelivery("lost-attempt.txt", "integrated before the crash\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, authorityRebuilt: true, guarded: true);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(IntegrationStatuses.Integrated, deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey].Status);
+
+        var refused = await deps.Transitions.MoveAsync(
+            Slug, TaskStates.Completed, _watchPath, cause: TimelineActors.Human("operator"));
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.StartsWith(AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal, refused.Message);
+        Assert.Contains("(2)", refused.Message);
+        Assert.Contains("operator override", refused.Message);
+        var stillReviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, stillReviewed.State);
+        Assert.Null(stillReviewed.CompletionClaim);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(stillReviewed.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt);
+    }
+
+    /// <summary>
+    /// AGT-3076 - the same card accepted with a written override completes and
+    /// says in its timeline that no run attempt was available, next to the
+    /// delivery evidence the acceptance rests on.
+    /// </summary>
+    [Fact]
+    public async Task Accept_RunAttemptLostFromRebuiltAuthorityStore_WithOverride_RecordsDeliveryEvidence()
+    {
+        var deliverySha = PublishDelivery("lost-attempt-override.txt", "integrated before the crash\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, authorityRebuilt: true, guarded: true);
+        const string reason = "Integrated and deployed; the run attempt was lost in the epoch 2 rebuild.";
+
+        var accepted = await deps.Transitions.MoveAsync(
+            Slug,
+            TaskStates.Completed,
+            _watchPath,
+            cause: TimelineActors.Human("operator"),
+            reason: reason,
+            operatorOverride: true);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.Equal(CompletionClaimBases.OperatorOverride, completed.CompletionClaim?.Basis);
+        Assert.Equal(reason, completed.CompletionClaim?.Reason);
+        Assert.Equal(deliverySha, completed.CompletionClaim?.ResultSha);
+        Assert.Contains("No run attempt was available", completed.CompletionClaim?.Evidence);
+        var recorded = Assert.Single(deps.Timeline.ReadAll(completed.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt);
+        Assert.Contains("No run attempt was available", recorded.Summary);
+        Assert.Contains("authority epoch 2", recorded.Summary);
+        var details = recorded.Details!;
+        Assert.Equal(reason, details["reason"]);
+        Assert.Equal("2", details["authorityEpoch"]);
+        Assert.Equal(IntegrationStatuses.Integrated, details["integrationStatus"]);
+        Assert.Equal(deliverySha, details["resultSha"]);
+        Assert.Contains(DeliveryRef, details["deliveryRef"]);
+        Assert.Contains(deliverySha, details["commits"]);
+        Assert.False(string.IsNullOrWhiteSpace(details["subjectRunAttemptId"]));
+    }
+
+    /// <summary>
+    /// AGT-3076 - the HTTP contract the operator hit: 409 with a typed code
+    /// instead of 500, the card detail says why an override is needed, and
+    /// the override is accepted.
+    /// </summary>
+    [Fact]
+    public async Task AcceptHttp_RunAttemptLostFromRebuiltAuthorityStore_Answers409ThenAcceptsOverride()
+    {
+        var deliverySha = PublishDelivery("lost-attempt-http.txt", "integrated before the crash\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, authorityRebuilt: true, guarded: true);
+
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Test");
+                builder.ConfigureAppConfiguration((_, config) =>
+                {
+                    config.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["TaskRepository"] = _tempDir,
+                        ["WatchPaths:0:Name"] = Project,
+                        ["WatchPaths:0:Path"] = _watchPath,
+                        ["WatchPaths:0:RootPath"] = _repo,
+                        ["WatchPaths:0:RepositoryPath"] = _repo,
+                        ["DeliveryChain:Guarded"] = "true",
+                    });
+                });
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IHostedService>();
+                    services.RemoveAll<ProjectSettingsService>();
+                    services.AddSingleton(deps.Settings);
+                    services.RemoveAll<AttemptAuthorityService>();
+                    services.AddSingleton(deps.Authority);
+                });
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var query = $"?watchPath={Uri.EscapeDataString(_watchPath)}";
+        var route = $"/api/tasks/{Slug}/move{query}";
+
+        using (var detail = await client.GetAsync($"/api/tasks/{Slug}{query}").WaitAsync(AsyncTestDeadline))
+        {
+            Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+            using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+            var gap = body.RootElement.GetProperty("info").GetProperty("acceptanceAttemptGap");
+            Assert.Equal(2, gap.GetProperty("authorityEpoch").GetInt64());
+            Assert.Equal(deliverySha, gap.GetProperty("resultSha").GetString());
+            Assert.StartsWith(AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal,
+                gap.GetProperty("reason").GetString());
+        }
+
+        using (var refused = await client.PostAsJsonAsync(route,
+                   new { targetState = TaskStates.Completed }).WaitAsync(AsyncTestDeadline))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+            using var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            Assert.Equal("run-attempt-missing", body.RootElement.GetProperty("code").GetString());
+            Assert.Contains("no run attempt in the current authority epoch",
+                body.RootElement.GetProperty("error").GetString());
+        }
+
+        using var accepted = await client.PostAsJsonAsync(route, new
+        {
+            targetState = TaskStates.Completed,
+            operatorOverride = true,
+            reason = "Integrated and deployed; the run attempt was lost in the epoch 2 rebuild.",
+        }).WaitAsync(AsyncTestDeadline);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var completed = factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(completed.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt);
+    }
+
     [Fact]
     public async Task AcceptHttp_DoesNotStartColdGateForPendingDelivery()
     {
@@ -2328,7 +2476,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         string initialState = TaskStates.HumanReview,
         string mode = TaskModes.Coding,
         string? briefVersion = null,
-        bool seedContent = true)
+        bool seedContent = true,
+        bool authorityRebuilt = false,
+        bool guarded = false)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -2338,7 +2488,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 ["WatchPaths:0:RootPath"] = _repo,
                 ["WatchPaths:0:RepositoryPath"] = _repo,
                 ["TaskRepository"] = _tempDir,
-                ["DeliveryChain:Guarded"] = "false",
+                ["DeliveryChain:Guarded"] = guarded ? "true" : "false",
             })
             .Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
@@ -2462,6 +2612,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
+        // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
+        // epoch 2; the card keeps its review subject and delivery evidence,
+        // but the store no longer holds the RunAttempt the subject names.
+        if (authorityRebuilt) authority = RebuiltAuthority();
 
         var transitions = new TaskTransitionService(
             scanner,
@@ -2490,6 +2644,21 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             provenance,
             acceptedQueue,
             authority);
+    }
+
+    private AttemptAuthorityService RebuiltAuthority()
+    {
+        var root = Path.Combine(_tempDir, "rebuilt-authority");
+        var store = Path.Combine(root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(store)!);
+        File.WriteAllText(store, """{"authorityEpoch":2}""");
+        var rebuilt = new AttemptAuthorityService(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = root })
+                .Build(),
+            NullLogger<AttemptAuthorityService>.Instance);
+        Assert.Equal(2, rebuilt.AuthorityEpoch);
+        return rebuilt;
     }
 
     private static object Commit(string sha) => new

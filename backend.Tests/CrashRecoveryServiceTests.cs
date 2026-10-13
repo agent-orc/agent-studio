@@ -104,6 +104,8 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         // new untracked file. Both must end up in the recovery commit.
         File.WriteAllText(Path.Combine(_repoRoot, "README.md"), "modified post-crash");
         File.WriteAllText(Path.Combine(_repoRoot, "new-file.txt"), "agent left this behind");
+        Directory.CreateDirectory(Path.Combine(_repoRoot, "new-dir"));
+        File.WriteAllText(Path.Combine(_repoRoot, "new-dir", "nested.txt"), "another new blob");
 
         var (recovery, scanner) = BuildRecovery();
         var decisions = await recovery.RecoverAsync();
@@ -113,6 +115,12 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         Assert.Equal("active-task", pending.JobId);
         Assert.Contains("README.md", pending.Files);
         Assert.Contains("new-file.txt", pending.Files);
+        Assert.Contains("new-dir/nested.txt", pending.Files);
+        Assert.Equal(CrashRecoveryClassifications.ReviewRequired, pending.Classification);
+        Assert.Contains("README.md", pending.UnknownBlobs);
+        Assert.Contains("new-file.txt", pending.UnknownBlobs);
+        Assert.Contains("new-dir/nested.txt", pending.UnknownBlobs);
+        Assert.Equal(pending.UnknownBlobs.Count, pending.UnknownBlobs.Distinct(StringComparer.Ordinal).Count());
 
         var queuedDecision = Assert.Single(decisions, d => d.Kind == RecoveryDecisionKinds.OrphanPending);
         Assert.Equal("active-task", queuedDecision.JobId);
@@ -188,6 +196,118 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         Assert.True(recovered.DetectedAt >= original.DetectedAt);
         Assert.Equal(64, recovered.Id.Length);
         Assert.All(recovered.Id, c => Assert.True(char.IsAsciiHexDigitLower(c)));
+    }
+
+    [Fact]
+    public async Task RecoverAsync_RefMovedUnderCheckout_RefusesCommitAndCanDismiss()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "README.md"), "new committed content\n");
+        File.WriteAllText(Path.Combine(_repoRoot, "added.txt"), "committed addition\n");
+        RunGit(_repoRoot, "add -A");
+        var baseSha = RunGitCapture(_repoRoot, "rev-parse HEAD").Trim();
+        var tree = RunGitCapture(_repoRoot, "write-tree").Trim();
+        var commit = RunGitCapture(_repoRoot, $"commit-tree {tree} -p {baseSha} -m advanced").Trim();
+        // Restore the original index and worktree, then advance only the ref.
+        RunGit(_repoRoot, "reset --hard HEAD");
+        RunGit(_repoRoot, $"update-ref refs/heads/main {commit}");
+        File.WriteAllText(Path.Combine(_repoRoot, "unique.txt"), "only in worktree\n");
+
+        var (recovery, _) = BuildRecovery();
+        await recovery.RecoverAsync();
+        var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());
+        Assert.Equal(CrashRecoveryClassifications.RefDrift, pending.Classification);
+        Assert.Equal(1, pending.BehindCommits);
+        Assert.Contains("unique.txt", pending.UnknownBlobs);
+        Assert.Single(pending.UnknownBlobs);
+        Assert.DoesNotContain("added.txt", pending.UnknownBlobs);
+        Assert.DoesNotContain("README.md", pending.UnknownBlobs);
+        var refused = recovery.CommitPendingOrphanRecovery(pending.Id);
+        Assert.Equal(CrashRecoveryActionStatuses.Failed, refused.Status);
+        Assert.Contains("reverse diff", refused.Error);
+        Assert.Equal(commit, RunGitCapture(_repoRoot, "rev-parse HEAD").Trim());
+        Assert.Equal(CrashRecoveryActionStatuses.Dismissed, recovery.DismissPendingOrphanRecovery(pending.Id).Status);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_OrphanAfterEmptyCommit_IsNotRefDrift()
+    {
+        RunGit(_repoRoot, "commit --allow-empty -q -m empty");
+        File.WriteAllText(Path.Combine(_repoRoot, "orphan.txt"), "new content\n");
+
+        var (recovery, _) = BuildRecovery();
+        await recovery.RecoverAsync();
+
+        var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());
+        Assert.NotEqual(CrashRecoveryClassifications.RefDrift, pending.Classification);
+        Assert.Contains("orphan.txt", pending.UnknownBlobs);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_IndexLock_ReportsAgeAndSize()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "orphan.txt"), "uncommitted\n");
+        var lockPath = Path.Combine(_repoRoot, ".git", "index.lock");
+        // A fresh lock file reports "0 seconds old"; the scan formats the age in
+        // seconds against the file system clock, so no wall-clock read is needed.
+        File.WriteAllText(lockPath, "stale");
+        var (recovery, _) = BuildRecovery();
+        await recovery.RecoverAsync();
+        var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());
+        Assert.Contains("5 bytes", pending.IndexLock);
+        Assert.Contains("seconds old", pending.IndexLock);
+    }
+
+    [Fact]
+    public async Task CommitPendingOrphanRecovery_RefMovesAfterScan_RefusesCommit()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "orphan.txt"), "uncommitted\n");
+        var (recovery, _) = BuildRecovery();
+        await recovery.RecoverAsync();
+        var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());
+
+        var baseSha = RunGitCapture(_repoRoot, "rev-parse HEAD").Trim();
+        var tree = RunGitCapture(_repoRoot, "rev-parse HEAD^{tree}").Trim();
+        var commit = RunGitCapture(_repoRoot, $"commit-tree {tree} -p {baseSha} -m advanced").Trim();
+        RunGit(_repoRoot, $"update-ref refs/heads/main {commit}");
+
+        var refused = recovery.CommitPendingOrphanRecovery(pending.Id);
+        Assert.Equal(CrashRecoveryActionStatuses.Failed, refused.Status);
+        Assert.Single(recovery.GetPendingOrphanRecoveries());
+    }
+
+    [Fact]
+    public async Task RecoverAsync_StagedDiffMostlyReversesAncestor_ClassifiesDrift()
+    {
+        var ancestor = RunGitCapture(_repoRoot, "rev-parse HEAD").Trim();
+        File.WriteAllText(Path.Combine(_repoRoot, "README.md"), string.Join('\n', Enumerable.Range(0, 40)) + "\n");
+        RunGit(_repoRoot, "add README.md");
+        RunGit(_repoRoot, "commit -q -m advanced");
+        RunGit(_repoRoot, $"read-tree {ancestor}");
+        File.WriteAllText(Path.Combine(_repoRoot, "extra.txt"), "extra\n");
+        RunGit(_repoRoot, "add extra.txt");
+
+        var (recovery, _) = BuildRecovery();
+        await recovery.RecoverAsync();
+        var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());
+        Assert.Equal(CrashRecoveryClassifications.RefDrift, pending.Classification);
+        Assert.Equal(1, pending.BehindCommits);
+    }
+
+    [Theory]
+    [InlineData(201, 0, 0, true)]
+    [InlineData(2, 10, 150, true)]
+    [InlineData(2, 10, 20, false)]
+    public void UnattributedRecovery_LargeChangePolicy_RequiresSecondConfirmation(
+        int fileCount, int insertions, int deletions, bool expected)
+    {
+        var pending = new PendingCrashRecovery
+        {
+            Files = Enumerable.Range(0, fileCount).Select(i => $"file-{i}.txt").ToArray(),
+            Insertions = insertions,
+            Deletions = deletions,
+        };
+        Assert.Equal(expected, pending.RequiresSecondConfirmation);
+        Assert.False((pending with { JobId = "AGT-1" }).RequiresSecondConfirmation);
     }
 
     [Fact]
