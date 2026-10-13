@@ -95,10 +95,9 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     }
 
     [Fact]
-    public async Task Exhausted_delivery_resume_does_not_start_integration_after_restart()
+    public async Task Legacy_exhausted_record_does_not_strand_a_passed_delivery_after_restart()
     {
         var clock = new FakeTimeProvider();
-        var starts = 0;
         var seeded = Build(clock: clock);
         var card = SeedPassedDelivery(seeded, "bounded-resume");
         RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
@@ -106,29 +105,116 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             card.ReviewAttemptId, AutoReviewResumeRetryPolicy.MaxAttempts,
             clock.GetUtcNow(), "lane write could not progress"));
 
-        var restarted = Build(
-            integrate: _ =>
-            {
-                starts++;
-                throw new InvalidOperationException("integration must not start");
-            },
-            clock: clock);
+        var restarted = Build(clock: clock);
         var outcome = await restarted.Resume.ResumeAsync(
             restarted.Scanner.FindJob(card.Id, _watchPath)!, "bounded-restart");
 
-        Assert.Equal("delivery-resume-exhausted", outcome.Reason);
-        Assert.Equal("lane write could not progress", outcome.Detail);
-        Assert.Equal(0, starts);
-        Assert.Equal(TaskStates.AutoReview,
+        Assert.True(outcome.Resumed);
+        Assert.Equal(TaskStates.HumanReview,
             restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
-        var surfaced = await restarted.Worker.ResumeDeliveryIfOwedAsync(
+        Assert.Null(AutoReviewResumeRetryStore.Read(
+            restarted.Scanner.FindJob(card.Id, _watchPath)!.FolderPath, card.ReviewAttemptId));
+    }
+
+    [Fact]
+    public async Task Resume_failure_budget_is_bounded_and_a_changed_verdict_reopens_it()
+    {
+        var clock = new FakeTimeProvider();
+        var stack = Build(clock: clock);
+        var card = SeedPassedDelivery(stack, "bounded-service-resume");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: false));
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        var occupiedTarget = Path.Combine(_watchPath, TaskStates.HumanReview, card.Id);
+        File.WriteAllText(occupiedTarget, "occupied target");
+
+        // Recording the refused delivery gate advances the settlement sidecar
+        // once. That is real progress and starts a fresh budget for the stable
+        // verdict exercised below.
+        Assert.False((await stack.Resume.ResumeAsync(task, "gate-recorded")).Resumed);
+
+        for (var attempt = 1; attempt <= AutoReviewResumeRetryPolicy.MaxAttempts; attempt++)
+        {
+            var failure = await stack.Resume.ResumeAsync(task, "bounded-service-test");
+            Assert.False(failure.Resumed);
+            var saved = Assert.IsType<AutoReviewResumeRetryRecord>(
+                AutoReviewResumeRetryStore.Read(card.FolderPath, card.ReviewAttemptId));
+            Assert.Equal(attempt, saved.Attempts);
+            var skipped = await stack.Resume.ResumeAsync(task, "same-window");
+            Assert.Equal(attempt == AutoReviewResumeRetryPolicy.MaxAttempts
+                ? "delivery-resume-exhausted" : "delivery-resume-backoff", skipped.Reason);
+            clock.Advance(AutoReviewResumeRetryPolicy.Delay(attempt));
+        }
+
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        var surfaced = await stack.Worker.ResumeDeliveryIfOwedAsync(
             new AutoReviewPostProcessingRequest(Project, card.Id, _watchPath,
-                clock.GetUtcNow().UtcDateTime, "bounded-restart", Attempt: 5),
-            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingDeliveryIntegration),
+                clock.GetUtcNow().UtcDateTime, "bounded-service-test", Attempt: 5),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingIntegrationCompletion),
             CancellationToken.None);
-        Assert.Equal(PostProcessingCardStatus.Blocked, surfaced.Status);
-        Assert.Contains("lane write could not progress", surfaced.Reason);
-        Assert.Equal(0, starts);
+        Assert.Equal(PostProcessingCardStatus.Deferred, surfaced.Status);
+
+        // A later owner changes the durable integration verdict. The old
+        // budget cannot veto its continuation.
+        File.Delete(occupiedTarget);
+        RemoteDeliverySettlementStore.RecordIntegration(card.FolderPath, "Recovered", null);
+        var reopened = await stack.Resume.ResumeAsync(task, "verdict-changed");
+        Assert.True(reopened.Resumed);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+    }
+
+    [Fact]
+    public void Deferred_delivery_keeps_the_integrating_phase_for_the_reconciler()
+    {
+        var clock = new FakeTimeProvider();
+        var stack = Build(clock: clock);
+        var card = SeedPassedDelivery(stack, "deferred-integrating");
+        Assert.True(PostProcessingLifecycleStore.BeginPostProcessing(
+            card.FolderPath, clock.GetUtcNow().UtcDateTime,
+            PipelineCatalogue.OrchestratorDecisionStepId, "retry pass",
+            NullLogger.Instance, replaceChecks: false));
+        stack.Mutations.SetJobPhase(card.FolderPath, LifecyclePhases.Integrating);
+        using var cancellation = new CancellationTokenSource();
+
+        stack.Worker.ApplyOutcome(new AutoReviewPostProcessingRequest(
+                Project, card.Id, _watchPath, clock.GetUtcNow().UtcDateTime,
+                "phase-test", Attempt: 0),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingIntegrationCompletion),
+            cancellation.Token);
+        cancellation.Cancel();
+
+        Assert.Equal(LifecyclePhases.Integrating,
+            stack.Scanner.FindJob(card.Id, _watchPath)!.Phase);
+    }
+
+    [Fact]
+    public async Task Refused_integration_transition_waits_for_its_owner_without_spending_resume_budget()
+    {
+        var clock = new FakeTimeProvider();
+        var integrations = 0;
+        var stack = Build(_ =>
+        {
+            integrations++;
+            return Task.FromResult(MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Merged, mergedSha: new string('a', 40)));
+        }, clock: clock, guardedTransitions: true);
+        var card = SeedPassedDelivery(stack, "integration-owner");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+
+        for (var pass = 0; pass < 12; pass++)
+        {
+            var outcome = await stack.Resume.ResumeAsync(task, "integration-owner-test");
+            Assert.Equal(AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait, outcome.Reason);
+            clock.Advance(TimeSpan.FromMinutes(10));
+        }
+
+        Assert.Equal(1, integrations);
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        Assert.Equal(LifecyclePhases.Integrating, stack.Scanner.FindJob(card.Id, _watchPath)!.Phase);
+        var retry = Assert.IsType<AutoReviewResumeRetryRecord>(
+            AutoReviewResumeRetryStore.Read(card.FolderPath, card.ReviewAttemptId));
+        Assert.True(retry.WaitingForIntegration);
+        Assert.Equal(0, retry.Attempts);
     }
 
     [Fact]
@@ -1510,7 +1596,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     private Stack Build(
         Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>>? integrate = null,
         GitOriginStore? originStore = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        bool guardedTransitions = false)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -1541,7 +1628,11 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         // The state machine writes the lane_changed rows a journaled
         // continuation reads back to tell a landed move from a missing one;
         // production wires the same TimelineLog into it.
-        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance, timeline: timeline);
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
+            timeline: timeline,
+            integrationStatus: guardedTransitions ? integration : null,
+            configuration: guardedTransitions ? configuration : null,
+            attemptAuthority: guardedTransitions ? authority : null);
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(configuration, NullLogger<ClientIdentityStore>.Instance),

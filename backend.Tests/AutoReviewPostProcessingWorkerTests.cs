@@ -587,6 +587,33 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
     }
 
     [Fact]
+    public void ApplyOutcome_ExhaustedResume_StopsQueueAndPreservesIntegratingPhase()
+    {
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        SeedNoOpReviewJob("integrating-task");
+        var deps = BuildDeps();
+        var worker = BuildWorker(deps, maxParallelism: 1);
+        var dir = Path.Combine(_watchPath, TaskStates.AutoReview, "integrating-task");
+        BeginLifecycle(dir);
+        deps.Mutations.SetJobPhase(dir, LifecyclePhases.Integrating);
+        deps.Queue.SetWaitState(Project, "integrating-task", new AutoReviewQueueWaitState(
+            "delivery-resume-exhausted", "lane write failed", 5, clock.GetUtcNow().UtcDateTime));
+        using var cancellation = new CancellationTokenSource();
+
+        worker.ApplyOutcome(
+            Request("integrating-task") with { EnqueuedAtUtc = clock.GetUtcNow().UtcDateTime },
+            PostProcessingCardResult.Deferred("delivery-resume-exhausted"),
+            cancellation.Token);
+        cancellation.Cancel();
+
+        Assert.Null(deps.Queue.PositionOf(Project, "integrating-task"));
+        Assert.Equal("delivery-resume-exhausted",
+            deps.Queue.WaitStateOf(Project, "integrating-task")?.Reason);
+        Assert.Equal(LifecyclePhases.Integrating,
+            deps.Scanner.FindJob("integrating-task", _watchPath)!.Phase);
+    }
+
+    [Fact]
     public async Task ApplyOutcome_IntegrationCompletionWait_NeverExhaustsTheDeferralBudget()
     {
         SeedNoOpReviewJob("completion-task");

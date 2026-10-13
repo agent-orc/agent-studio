@@ -610,11 +610,15 @@ reservation. A later explicit probe creates a new attempt from current settings.
 With the breaker disabled for a project, the opt-in
 `post-failure-intervention` step keeps its previous first-failure behaviour.
 
-Delivery resume stores its retry count, next attempt time, and failure reason
-in `logs/remote-delivery-resume-retry.json`. An attempt that cannot advance waits with
-exponential backoff and stops after five starts. The post-processing queue
-shows the latest reason on the card; a later operator requeue resets the
-budget for a fresh delivery decision.
+Delivery resume stores its retry count, next attempt time, failure reason, and
+observed integration verdict in `logs/remote-delivery-resume-retry.json`.
+Repeated failures use exponential backoff and stop after five starts for the
+same verdict. An integration-owned wait does not consume that budget. A changed
+integration or settlement verdict resets the budget so the reconciler can
+advance the card after automated recovery. The card stays in the integrating
+phase. After exhaustion the post-processing queue stops re-enqueuing it and
+shows the specific stop reason; the integration reconciler still watches it.
+An unreadable retry file loses its backoff rather than exhausting a delivery.
 
 Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
 retries have all failed, no further retry is scheduled and the card is parked

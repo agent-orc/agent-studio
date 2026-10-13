@@ -162,7 +162,9 @@ public sealed class CauseBreakerService
             var records = Records();
             var closed = 0;
             foreach (var record in records.Where(item => item.IsOpen && item.CloseReason is null
-                         && item.Observations.Any(observation => Same(observation.Project, projectName))).ToArray())
+                         && (item.Observations.Any(observation => Same(observation.Project, projectName))
+                             || item.Waiting.Any(waiting => Same(waiting.Project, projectName)
+                                 || Same(ResolveWaitingTask(item, waiting)?.ProjectName, projectName)))).ToArray())
             {
                 CloseLocked(records, record, CauseBreakerCloseReason.Disabled, exceptTaskKey: null);
                 closed++;

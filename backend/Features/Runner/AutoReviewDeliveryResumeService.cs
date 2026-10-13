@@ -53,6 +53,8 @@ public sealed class AutoReviewDeliveryResumeService
         /// driving this card's integration; this pass does not wait for it.
         /// </summary>
         public const string IntegrationInFlight = "integration-in-flight";
+
+        public const string IntegrationOwnedWait = "integration-owned-wait";
     }
 
     private readonly TaskScannerService _scanner;
@@ -220,7 +222,8 @@ public sealed class AutoReviewDeliveryResumeService
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
             settlement = null;
 
-        var deliveryMerged = ReadIntegrationStatus(task) == IntegrationStatuses.Integrated;
+        var integrationStatus = ReadIntegrationStatus(task);
+        var deliveryMerged = integrationStatus == IntegrationStatuses.Integrated;
         var decision = AutoReviewResumePolicy.Decide(
             task.State,
             task.Fixture,
@@ -239,13 +242,29 @@ public sealed class AutoReviewDeliveryResumeService
         if (Superseded(task, review!) is { } superseded)
             return superseded;
 
-        // The retry record belongs to this exact review generation. It retains
-        // the budget across restarts and across both resume callers.
+        // A changed integration or settlement verdict is fresh progress. In
+        // particular, a later gate ladder rung or push backstop must be able
+        // to resume a card whose earlier transition was refused.
+        var progressKey = string.Join("|", decision.Action, decision.Reason,
+            integrationStatus, settlement?.Stage, settlement?.IntegrationOutcome,
+            settlement?.IntegrationDetail);
         var now = _time.GetUtcNow();
         var retry = AutoReviewResumeRetryStore.Read(task.FolderPath, review!.AttemptId);
+        if (retry is not null && retry.ProgressKey != progressKey)
+        {
+            AutoReviewResumeRetryStore.Clear(task.FolderPath, review.AttemptId);
+            retry = null;
+            _queue?.ClearWaitState(task.ProjectName, task.Id);
+        }
         var resumeAttempts = retry?.Attempts ?? 0;
         var nextResumeAt = retry?.NextAtUtc;
         var resumeReason = retry?.Reason;
+        if (retry?.WaitingForIntegration == true)
+        {
+            ShowResumeWait(task, resumeAttempts, nextResumeAt, resumeReason, integrationOwned: true);
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                Reasons.IntegrationOwnedWait, false, resumeReason);
+        }
         if (resumeAttempts >= AutoReviewResumeRetryPolicy.MaxAttempts)
         {
             ShowResumeWait(task, resumeAttempts, nextResumeAt, resumeReason);
@@ -253,13 +272,16 @@ public sealed class AutoReviewDeliveryResumeService
                 "delivery-resume-exhausted", false, resumeReason);
         }
         if (!AutoReviewResumeRetryPolicy.CanStart(resumeAttempts, nextResumeAt, now))
+        {
+            ShowResumeWait(task, resumeAttempts, nextResumeAt, resumeReason);
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
                 "delivery-resume-backoff", false, resumeReason);
+        }
 
         AutoReviewResumeRetryStore.Write(task.FolderPath, new AutoReviewResumeRetryRecord(
             review.AttemptId, resumeAttempts + 1,
             now + AutoReviewResumeRetryPolicy.Delay(resumeAttempts + 1),
-            "resume interrupted before progress"));
+            "resume interrupted before progress", progressKey));
 
         Task<MergeIntoIntegrationResult>? pendingIntegration = null;
         if (decision.Action == AutoReviewResumeAction.StartIntegration)
@@ -338,7 +360,12 @@ public sealed class AutoReviewDeliveryResumeService
                     source,
                     ct)
                 .ConfigureAwait(false);
-            if (completed.Resumed || CurrentAutoReviewCard(task) is null)
+            if (completed.Resumed)
+                ClearResumeFailure(task, review.AttemptId);
+            else if (completed.Reason == Reasons.IntegrationOwnedWait)
+                RecordResumeFailure(task, review.AttemptId,
+                    completed.Detail ?? completed.Reason, waitingForIntegration: true);
+            else if (CurrentAutoReviewCard(task) is null)
                 ClearResumeFailure(task, review.AttemptId);
             else if (completed.Action != AutoReviewResumeAction.None)
                 RecordResumeFailure(task, review.AttemptId, completed.Detail ?? completed.Reason);
@@ -355,22 +382,32 @@ public sealed class AutoReviewDeliveryResumeService
         }
     }
 
-    private void RecordResumeFailure(TaskInfo task, string attemptId, string reason)
+    private void RecordResumeFailure(TaskInfo task, string attemptId, string reason,
+        bool waitingForIntegration = false)
     {
         var retry = AutoReviewResumeRetryStore.Read(task.FolderPath, attemptId);
         if (retry is null) return;
-        AutoReviewResumeRetryStore.Write(task.FolderPath, retry with { Reason = reason });
-        ShowResumeWait(task, retry.Attempts, retry.NextAtUtc, reason);
+        var recorded = retry with
+        {
+            Reason = reason,
+            WaitingForIntegration = waitingForIntegration,
+            Attempts = waitingForIntegration ? Math.Max(0, retry.Attempts - 1) : retry.Attempts,
+            NextAtUtc = waitingForIntegration ? null : retry.NextAtUtc,
+        };
+        AutoReviewResumeRetryStore.Write(task.FolderPath, recorded);
+        ShowResumeWait(task, recorded.Attempts, recorded.NextAtUtc, reason, waitingForIntegration);
         _logger.LogWarning(
             "auto-review-delivery-resume-deferred project={Project} job={JobId} attempt={AttemptId} tries={Tries} next={Next} reason={Reason}",
-            task.ProjectName, task.Id, attemptId, retry.Attempts, retry.NextAtUtc, reason);
+            task.ProjectName, task.Id, attemptId, recorded.Attempts, recorded.NextAtUtc, reason);
     }
 
-    private void ShowResumeWait(TaskInfo task, int attempts, DateTimeOffset? nextAt, string? reason)
+    private void ShowResumeWait(TaskInfo task, int attempts, DateTimeOffset? nextAt, string? reason,
+        bool integrationOwned = false)
     {
         var exhausted = attempts >= AutoReviewResumeRetryPolicy.MaxAttempts;
         _queue?.SetWaitState(task.ProjectName, task.Id, new AutoReviewQueueWaitState(
-            exhausted ? "delivery-resume-exhausted" : "delivery-resume-backoff",
+            integrationOwned ? Reasons.IntegrationOwnedWait
+                : exhausted ? "delivery-resume-exhausted" : "delivery-resume-backoff",
             reason, attempts,
             (nextAt ?? _time.GetUtcNow()).UtcDateTime));
     }
@@ -461,7 +498,7 @@ public sealed class AutoReviewDeliveryResumeService
                 decision.Action, decision.Reason, Resumed: false, moved.Message);
         }
         if (moved.Status == MoveJobStatus.IntegrationFailed)
-            return new AutoReviewResumeOutcome(decision.Action, decision.Reason,
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, Reasons.IntegrationOwnedWait,
                 Resumed: false, moved.Message);
         if (moved.Status != MoveJobStatus.Success)
         {
