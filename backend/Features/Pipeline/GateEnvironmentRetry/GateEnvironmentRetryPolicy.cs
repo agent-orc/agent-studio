@@ -189,6 +189,12 @@ public static class GateEnvironmentRetryPolicy
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(options);
 
+        // A shutdown cancellation gets one replay from this existing ledger.
+        // Other environment failures retain the configured ladder.
+        if (integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted
+            && integration.Failure.Reason?.Contains("Gate cancelled: shutdown.", StringComparison.Ordinal) == true)
+            options = options with { Backoff = options.Backoff.Take(1).ToArray() };
+
         var spent = Math.Clamp(attemptsSpent, 0, options.MaxAttempts);
         if (!options.Enabled)
             return Ignore(GateEnvironmentRetryReasons.Disabled, spent, options);

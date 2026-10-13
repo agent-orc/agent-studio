@@ -260,6 +260,27 @@ public sealed class GateEnvironmentRetryPolicyTests
         Assert.Equal(TimeSpan.FromMinutes(15), decision.Wait);
     }
 
+    [Theory]
+    [InlineData(0, GateEnvironmentRetryAction.Retry)]
+    [InlineData(1, GateEnvironmentRetryAction.Park)]
+    public void Shutdown_cancellation_spends_only_one_existing_infrastructure_rung(
+        int spent, GateEnvironmentRetryAction expected)
+    {
+        var status = Status(AcceptedIntegrationFailureCodes.GateInterrupted) with
+        {
+            Failure = new TaskIntegrationFailure
+            {
+                Code = AcceptedIntegrationFailureCodes.GateInterrupted,
+                Reason = "Gate cancelled: shutdown.",
+            },
+        };
+        var result = GateEnvironmentRetryPolicy.Decide(Task(TaskStates.AutoReview), status,
+            reviewPassed: true, attemptsSpent: spent, lastAttemptAt: null, failedAt: Failed,
+            GateEnvironmentRetryOptions.Default, now: Failed.AddHours(1));
+        Assert.Equal(expected, result.Action);
+        Assert.Equal(1, result.MaxAttempts);
+    }
+
     private static GateEnvironmentRetryDecision Decide(
         string state = TaskStates.HumanReview,
         string failureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
