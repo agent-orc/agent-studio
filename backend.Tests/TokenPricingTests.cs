@@ -246,15 +246,15 @@ public class TokenPricingTests
     [InlineData("gpt-5.5")]
     [InlineData("GPT-5.5")]
     [InlineData("gpt-5.5-2026-04-23")]
-    public void CanonicalModelId_ResolvesIdAliasAndDisplayNameToTheSameId(string value)
+    public void ModelIdentity_ResolvesIdAliasAndDisplayNameToTheSameId(string value)
     {
-        Assert.Equal("gpt-5.5", TokenPricing.CanonicalModelId(value));
+        Assert.Equal("gpt-5.5", ModelIdentity.Resolve(value)!.ModelId);
     }
 
     [Fact]
-    public void CanonicalModelId_UnknownModel_ReturnsNull()
+    public void ModelIdentity_UnknownModel_KeepsItsSpellingAsTheId()
     {
-        Assert.Null(TokenPricing.CanonicalModelId("not-a-real-model"));
+        Assert.Equal("not-a-real-model", ModelIdentity.Resolve(" not-a-real-model ")!.ModelId);
     }
 
     [Theory]
@@ -263,13 +263,13 @@ public class TokenPricingTests
     [InlineData("GPT-6 Sol", ModelIds.Gpt6Sol)]
     [InlineData("GPT-6 Luna", ModelIds.Gpt6Luna)]
     public void New_model_labels_and_aliases_fold_to_the_priced_id(string value, string expected)
-        => Assert.Equal(expected, TokenPricing.CanonicalModelId(value));
+        => Assert.Equal(expected, ModelIdentity.Resolve(value)!.ModelId);
 
     [Fact]
-    public void CanonicalModelId_NullOrBlank_ReturnsNull()
+    public void ModelIdentity_NullOrBlank_ReturnsNull()
     {
-        Assert.Null(TokenPricing.CanonicalModelId(null));
-        Assert.Null(TokenPricing.CanonicalModelId("   "));
+        Assert.Null(ModelIdentity.Resolve(null));
+        Assert.Null(ModelIdentity.Resolve("   "));
     }
 
     [Theory]
