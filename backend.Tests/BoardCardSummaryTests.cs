@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Diagnostics;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Time.Testing;
@@ -67,6 +68,47 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.True(document.RootElement.GetProperty("parkedBlocker").TryGetProperty("parkedAt", out _));
         Assert.False(document.RootElement.GetProperty("pickupHold").TryGetProperty("heldForSeconds", out _));
         Assert.True(document.RootElement.GetProperty("pickupHold").TryGetProperty("sinceUtc", out _));
+    }
+
+    /// <summary>
+    /// The per-card budget on the cards that weigh the most on a live board:
+    /// Human Review cards that are parked and carry an integration
+    /// verification, an execution location, a merge signal and waits-on
+    /// edges. The fixture is 44 such cards taken from the Agent Studio board on
+    /// Stable (12.10.2026), converted back to the task model and sanitized
+    /// (text, keys, ids, paths and SHAs replaced by filler of the same length).
+    /// Those cards averaged 4.4 KB on the wire before this budget existed.
+    /// </summary>
+    [Fact]
+    public void Production_shaped_human_review_cards_average_under_two_kilobytes()
+    {
+        var cards = ProductionHumanReviewCards();
+        Assert.Equal(44, cards.Length);
+        Assert.All(cards, card =>
+        {
+            Assert.Equal(TaskStates.HumanReview, card.State);
+            Assert.NotNull(card.ParkedBlocker);
+            Assert.NotNull(card.Integration?.Verification);
+            Assert.NotNull(card.ExecutionLocation);
+            Assert.NotNull(card.MergeSignal);
+            Assert.NotNull(card.WaitsOn);
+        });
+
+        var sizes = cards.Select(card => BoardCardSummary.Serialize(card).Length).ToArray();
+        var average = sizes.Average();
+        output.WriteLine($"44 production-shaped Human Review cards: average {average:F0} B, max {sizes.Max()} B, total {sizes.Sum()} B");
+        Assert.True(average < 2048, $"Average card was {average:F0} bytes; budget is 2048");
+        Assert.True(sizes.Max() < 3072, $"Largest card was {sizes.Max()} bytes");
+    }
+
+    private static TaskInfo[] ProductionHumanReviewCards()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "board-cards", "human-review-cards.sanitized.json");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        };
+        return JsonSerializer.Deserialize<TaskInfo[]>(File.ReadAllText(path), options)!;
     }
 
     [Fact]
