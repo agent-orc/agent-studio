@@ -1436,15 +1436,35 @@ public static class ProjectSettingsEndpoints
             var resultRef = review.Subject.ResultRef;
             // The bare result ref exists only under refs/remotes/origin in the
             // Studio checkout, so diff the immutable result SHA like the completion path.
-            var changedFiles = !string.IsNullOrWhiteSpace(repositoryPath)
-                && ReviewSubjectStore.IsValidResultSha(resultSha)
-                ? RemoteReviewPlanBuilder.DeliveryChangedFiles(
-                    git, repositoryPath, integrationRef, resultSha)
-                : null;
+            var changedFiles = ReplanChangedFiles(git, repositoryPath, integrationRef, review.Subject);
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings,
                 integrationRef, resultSha, changedFiles, resultRef);
         });
     }
+
+    /// <summary>
+    /// AGT-3079: the replan diffs the immutable result SHA against the
+    /// integration ref, as the review retry scheduler does and as the creation
+    /// path does for its no-change decision
+    /// (<see cref="RemoteReviewPlanBuilder.CompletionChangedFiles"/>). The
+    /// Studio checkout usually holds the result ref only under
+    /// <c>refs/remotes/origin</c>, so a diff against
+    /// <see cref="ReviewSubjectDto.ResultRef"/> failed and turned a pending
+    /// no-change plan back into the full plan. A legacy subject without a
+    /// result ref keeps its diff-independent plan, as before, and so does a
+    /// subject without a resolved repository or a full Result-SHA.
+    /// </summary>
+    internal static IReadOnlyList<string>? ReplanChangedFiles(
+        GitService git,
+        string? repositoryPath,
+        string? integrationRef,
+        ReviewSubjectDto subject)
+        => !string.IsNullOrWhiteSpace(repositoryPath)
+           && !string.IsNullOrWhiteSpace(subject.ResultRef)
+           && ReviewSubjectStore.IsValidResultSha(subject.ExpectedResultSha)
+            ? RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                git, repositoryPath, integrationRef, subject.ExpectedResultSha)
+            : null;
 
     private static object BatchGateSettingsResponse(BatchGateFormationOptions value) => new
     {

@@ -2420,10 +2420,7 @@ public static class V1ReviewPlaneEndpoints
                 CompareToBaseline: true,
                 BaselineMode: Contract.ReviewBaselineModes.ExitStatus)));
         if (commands.Count == 0)
-        {
-            commands.Add(new Contract.ReviewCommandDto(
-                "verify-subject", "completion", "git", ["rev-parse", "--verify", "HEAD"]));
-        }
+            commands.Add(CompletionOnlyCommand());
         return new Contract.ReviewPlanDto(
             commands,
             commands.Select(command => command.Aspect)
@@ -2435,6 +2432,13 @@ public static class V1ReviewPlaneEndpoints
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
             LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
     }
+
+    /// <summary>
+    /// The command a plan carries when it has nothing else to run, so a frozen
+    /// plan is never empty: it only proves the subject SHA materialized.
+    /// </summary>
+    internal static Contract.ReviewCommandDto CompletionOnlyCommand()
+        => new("verify-subject", "completion", "git", ["rev-parse", "--verify", "HEAD"]);
 
     /// <summary>
     /// Writes the resolved integration line back onto a card whose recorded

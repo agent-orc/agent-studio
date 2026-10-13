@@ -62,6 +62,35 @@ public sealed class RemoteDeliveryIntegrationPolicyTests
 
         Assert.True(decision.ShouldIntegrate);
         Assert.Equal(RemoteBuildTestGateClass.NotApplicable, decision.BuildTestGate);
+
+        // AGT-3079: a no-change plan records its skipped tool aspects. A skip
+        // is not a planned build/test gate, so a Pass review stays admissible.
+        var noChange = new Contract.ReviewPlanDto(
+            [
+                new Contract.ReviewCommandDto("aspect-requirement-fit", "requirement-fit", "claude", [],
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect),
+                new Contract.ReviewCommandDto("aspect-code-quality", "code-quality", "claude", [],
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect),
+            ],
+            ["requirement-fit", "code-quality"],
+            IntegrationRef: "develop",
+            Preparation: [],
+            SkippedAspects:
+            [
+                new("build-tests", "Result has no changed path against its merge base with develop."),
+                new("lint", "Result has no changed path against its merge base with develop."),
+            ]);
+        var noChangeDecision = RemoteDeliveryIntegrationPolicy.Decide(
+            hasSettledResultEnvelope: true,
+            reviewOutcome: "Pass",
+            noChange,
+            [
+                new Contract.ReviewVerdictDto("requirement-fit", "pass", "Verified", "The brief is satisfied."),
+                new Contract.ReviewVerdictDto("code-quality", "pass", "Verified", "No change to judge."),
+            ]);
+
+        Assert.True(noChangeDecision.ShouldIntegrate);
+        Assert.Equal(RemoteBuildTestGateClass.NotApplicable, noChangeDecision.BuildTestGate);
     }
 
     [Fact]
