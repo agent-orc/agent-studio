@@ -1,53 +1,26 @@
-
-
 namespace AgentStudio.Tokens;
 
 /// <summary>
 /// Read path for the workspace tokens timeline
-/// (<c>GET /api/workspace/tokens/timeline</c>). In production every project
-/// reads the merged usage ledger (bus history plus durable task receipts,
-/// see <see cref="BuildFromLedger"/>), so remote runner completions, remote
+/// (<c>GET /api/workspace/tokens/timeline</c>). Every project reads the
+/// merged usage ledger (bus history plus durable task receipts, see
+/// <see cref="BuildFromLedger"/>), so remote runner completions, remote
 /// review attempts, and chat turns count alongside local runs (AGT-2986).
-/// The bus-only projection below remains for the parity fixtures: for every
-/// (project, watchPath) pair it queries the bus for that project's
-/// <c>kind=token-usage</c>
-/// messages across <b>every</b> participant (coding-agent runs, supporting
-/// analysis loops, and orchestrator meta-turns), converts them into
-/// transient <see cref="OrchestratorLogEntry"/> records, and folds them
-/// through the pure-function bucketing in
+/// The entries fold through
 /// <see cref="WorkspaceTokensTimelineService.BuildFromEntries"/>, which
 /// splits each project's spend into Agent / Supporting / Orchestrator
 /// subtotals off the participant prefix.
 /// </summary>
-/// <remarks>
-/// <para>
-/// The view used to load <see cref="BusTokenEntryConverter.LoadOrchestratorEntries"/>
-/// (orchestrator participant only), so the nightly agent runs - the bulk
-/// of the spend - never showed up and the per-project totals read far too
-/// small (AGT-2038). It now loads
-/// <see cref="BusTokenEntryConverter.LoadTokenUsageEntries"/> so the total
-/// per project is the true sum, with the orchestrator share broken out
-/// separately.
-/// </para>
-/// <para>
-/// Reusing the shared bucketer keeps window snapping, bucket alignment,
-/// per-bucket dollar accounting, and the per-project rollup ordering in
-/// one place. The parity test
-/// (<c>WorkspaceTokensTimelineBusParityTests</c>) drives both readers over
-/// an orchestrator-only data set and asserts numeric equality for every
-/// cell and every per-project total.
-/// </para>
-/// </remarks>
 public sealed class BusBackedWorkspaceTimelineReader
 {
     private readonly AgentMessageBusStore _store;
     private readonly IConfiguration _config;
-    private readonly BusBackedProjectTokenUsageReader? _ledger;
+    private readonly BusBackedProjectTokenUsageReader _ledger;
 
     public BusBackedWorkspaceTimelineReader(
         AgentMessageBusStore store,
         IConfiguration config,
-        BusBackedProjectTokenUsageReader? ledger = null)
+        BusBackedProjectTokenUsageReader ledger)
     {
         _store = store;
         _config = config;
@@ -56,30 +29,21 @@ public sealed class BusBackedWorkspaceTimelineReader
 
     /// <summary>
     /// Build the workspace timeline view across every supplied project.
-    /// With the project ledger wired (production), every project reads the
-    /// same deduplicated union of bus history and durable task receipts that
-    /// the project and card surfaces read, so remote runner usage is part of
-    /// the timeline (AGT-2986). Without it (parity fixtures) the reader
-    /// falls back to the bus-only projection.
+    /// Every project reads the same deduplicated union of bus history and
+    /// durable task receipts that the project and card surfaces read, so
+    /// remote runner usage is part of the timeline (AGT-2986).
     /// </summary>
     public TokenTimeline Build(
         IEnumerable<(string Name, string WatchPath)> projects,
         int windowHours,
         int bucketMinutes,
         DateTime? nowUtc = null)
-    {
-        if (_ledger is not null)
-            return BuildFromLedger(_ledger, projects, windowHours, bucketMinutes, nowUtc);
+        => BuildFromLedger(_ledger, projects, windowHours, bucketMinutes, nowUtc);
 
-        var workspace = _config["TaskRepository"];
-        if (string.IsNullOrWhiteSpace(workspace))
-        {
-            return BuildFromStore(_store, workspaceRoot: "(unconfigured)", projects, windowHours, bucketMinutes, nowUtc);
-        }
-        return BuildFromStore(_store, workspace!, projects, windowHours, bucketMinutes, nowUtc);
-    }
-
-    /// <summary>Build a timeline for exact UTC calendar boundaries.</summary>
+    /// <summary>
+    /// Build a timeline for exact UTC calendar boundaries. This range view
+    /// reads the token bus only; it does not merge task receipts.
+    /// </summary>
     public TokenTimeline BuildRange(
         IEnumerable<(string Name, string WatchPath)> projects,
         DateTime fromUtc,
@@ -91,40 +55,6 @@ public sealed class BusBackedWorkspaceTimelineReader
             (IReadOnlyList<OrchestratorLogEntry>)BusTokenEntryConverter.LoadTokenUsageEntries(_store, workspaceRoot, p.Name)))
             .ToList();
         return WorkspaceTokensTimelineService.BuildFromEntries(entries, fromUtc, toUtc, bucketMinutes);
-    }
-
-    /// <summary>
-    /// Pure overload used by the parity test. The window math lives in
-    /// <see cref="WorkspaceTokensTimelineService.BuildFromEntries"/> so
-    /// the bus path cannot disagree with the legacy reader on snapping,
-    /// bucket span, or the empty-bucket-count derivation.
-    /// </summary>
-    public static TokenTimeline BuildFromStore(
-        AgentMessageBusStore store,
-        string workspaceRoot,
-        IEnumerable<(string Name, string WatchPath)> projects,
-        int windowHours,
-        int bucketMinutes,
-        DateTime? nowUtc = null)
-    {
-        var w = WorkspaceTokensTimelineService.ResolveWindowHours(windowHours);
-        var b = WorkspaceTokensTimelineService.ResolveBucketMinutes(bucketMinutes);
-        var now = nowUtc ?? DateTime.UtcNow;
-        var windowEnd = AlignDown(now, b);
-        var windowStart = windowEnd.AddHours(-w);
-
-        var perProjectEntries = new List<(string Project, IReadOnlyList<OrchestratorLogEntry> Entries)>();
-        foreach (var (name, _) in projects)
-        {
-            // All participants, not just the orchestrator: agent runs and
-            // supporting loops are the bulk of a project's spend and must
-            // be part of the workspace total (AGT-2038). Participant ids ride
-            // along so BuildFromEntries can split Agent/Supporting/Orchestrator.
-            var entries = BusTokenEntryConverter.LoadTokenUsageEntries(store, workspaceRoot, name);
-            perProjectEntries.Add((name, entries));
-        }
-
-        return WorkspaceTokensTimelineService.BuildFromEntries(perProjectEntries, windowStart, windowEnd, b);
     }
 
     /// <summary>
