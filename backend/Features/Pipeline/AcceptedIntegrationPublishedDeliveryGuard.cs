@@ -15,12 +15,15 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
         if (job.State != TaskStates.Completed || git is null ||
             failureCode is not (AcceptedIntegrationFailureCodes.BranchSyncFailed or
                 AcceptedIntegrationFailureCodes.WorktreeUnavailable)) return false;
-        var subject = ReviewSubjectStore.Read(job.FolderPath);
-        if (subject is null || !ReviewSubjectStore.IsValidResultSha(subject.ResultSha)) return false;
         var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        var delivery = DeliveryRefResolver.Resolve(job.Id, job.FolderPath);
+        var deliverySha = delivery.ExpectedResultSha;
+        if (!ReviewSubjectStore.IsValidResultSha(deliverySha) && !delivery.IsRemote && repo is not null)
+            deliverySha = git.GetBranchTip(repo, delivery.Ref);
+        if (!ReviewSubjectStore.IsValidResultSha(deliverySha)) return false;
         var containment = repo is null
             ? PublishedDeliveryContainment.Unavailable
-            : git.CheckPublishedDelivery(repo, branch, subject.ResultSha);
+            : git.CheckPublishedDelivery(repo, branch, deliverySha!);
         if (containment == PublishedDeliveryContainment.Missing) return false;
 
         var key = $"{repo ?? job.WatchPath}|{branch}";
@@ -28,13 +31,13 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
         {
             logger.LogWarning(
                 "Acceptance integration needs operator attention for {Project} {Branch} at {Repository}: delivery {DeliverySha} is {Containment} on the published branch; completed cards remain completed",
-                job.ProjectName, branch, repo, subject.ResultSha, containment);
+                job.ProjectName, branch, repo, deliverySha, containment);
             if (bus is not null)
             {
                 try
                 {
                     bus.EmitAcceptanceLaneBlockedAsync(job.ProjectName, branch, repo,
-                        subject.ResultSha, containment.ToString()).GetAwaiter().GetResult();
+                        deliverySha!, containment.ToString()).GetAwaiter().GetResult();
                 }
                 catch (Exception ex)
                 {
