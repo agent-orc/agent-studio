@@ -11,6 +11,38 @@ public sealed class CapabilityAdmissionTests
         new(2026, 7, 25, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Unverified_recovery_from_a_limit_can_claim_coding_work()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 1);
+        var provider = CapabilityProtocol.ProviderAuthentication("claude");
+        await RegisterAndAdvertiseAsync(store, clock, "coding", "instance", "host-a",
+            CapabilityProtocol.CodingExecutor, provider);
+
+        await Advertise("limited", "rate-limited", "quota_exhausted", 2);
+        Assert.NotEqual("claimed", (await Claim()).Status);
+        clock.Advance(TimeSpan.FromMinutes(60));
+        await Advertise("ready", "ok", "unverified", 3);
+        Assert.Equal("claimed", (await Claim()).Status);
+
+        Task<ClaimResponse> Claim() => store.ClaimAsync(new ClaimRequest("coding", "instance",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, provider]), "coding", default);
+
+        Task Advertise(string status, string signal, string outcome, long generation)
+            => store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                "coding", "instance", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+                 new AdvertisedCapabilityDto(provider, "provider-auth", status, Signal: signal,
+                     CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                     EffectiveSource: "native-cli-store", HealthOutcome: outcome,
+                     ServiceAvailability: "unknown", CredentialHealth: "unknown")],
+                CredentialHealthVersion: 2), "coding", default);
+    }
+
+    [Fact]
     public async Task Confirmed_incident_signal_blocks_a_ready_provider_capability()
     {
         using var temp = new TempDirectory();

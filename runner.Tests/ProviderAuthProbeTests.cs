@@ -541,16 +541,25 @@ public sealed class ProviderAuthProbeTests
         now = now.AddMinutes(2);
         var duringReprobe = probe.Current("claude");
 
-        Assert.Equal(ProviderAuthProbe.Degraded, duringReprobe.Status);
-        await WaitUntil(() => probe.Current("claude").Status == ProviderAuthProbe.Ready);
+        Assert.Equal(ProviderAuthProbe.Ready, duringReprobe.Status);
+        Assert.Equal(ProviderProbeOutcome.Unverified, duringReprobe.Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, duringReprobe.Signal);
+        await WaitUntil(() => Volatile.Read(ref calls) > 1);
         Assert.Equal(ProviderAuthProbe.Ready, probe.Current("claude").Status);
     }
 
     [Fact]
-    public async Task Successful_run_after_an_expired_limit_still_forces_auth_reprobe()
+    public async Task Successful_run_after_an_expired_limit_stays_claimable_through_indeterminate_reprobe()
     {
         var now = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
-        var probe = Probe(Answers(0, "Logged in"), clock: () => now);
+        var calls = 0;
+        var probe = Probe(
+            (_, _, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(new ProcessResult(1, "", "unknown command: auth"));
+            },
+            clock: () => now);
         await probe.RefreshAsync("claude", CancellationToken.None);
         probe.RecordProcessResult(
             "claude",
@@ -560,9 +569,15 @@ public sealed class ProviderAuthProbeTests
         now = now.AddMinutes(2);
         var afterRun = probe.RecordProcessResult("claude", new ProcessResult(0, "done", ""));
 
-        Assert.Equal(ProviderAuthProbe.Degraded, afterRun.Status);
+        Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
         Assert.Equal(now, afterRun.LastRealSuccessAt);
-        await WaitUntil(() => probe.Current("claude").Status == ProviderAuthProbe.Ready);
+        Assert.Equal(ProviderAuthProbe.SignalOk, afterRun.Signal);
+        Assert.Equal(ProviderProbeOutcome.Healthy, afterRun.Outcome);
+        Assert.Null(afterRun.LimitedUntil);
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        Assert.Equal(2, Volatile.Read(ref calls));
+        Assert.Equal(ProviderProbeOutcome.Healthy, probe.Current("claude").Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, probe.Current("claude").Signal);
     }
 
     [Fact]

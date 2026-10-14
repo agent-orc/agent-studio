@@ -310,7 +310,7 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("Credential evidence references must be bounded opaque identifiers.");
         if (request.CredentialHealthVersion == 2 &&
             (capability.HealthOutcome is not null and not
-                ("healthy" or "indeterminate" or "credential_invalid" or "provider_incident" or
+                ("healthy" or "unverified" or "indeterminate" or "credential_invalid" or "provider_incident" or
                  "quota_exhausted" or "network_failure") ||
              capability.ServiceAvailability is not null and not
                 ("available" or "unavailable" or "limited" or "unknown") ||
