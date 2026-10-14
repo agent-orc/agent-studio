@@ -101,6 +101,28 @@
   gap: var(--studio-spacing-3);
 }
 
+.pbc__checkout {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pbc__checkout-action {
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  cursor: pointer;
+}
+
 .pbc__feedback {
   flex: 1 1 auto;
   color: var(--studio-fg-muted);

@@ -2888,9 +2888,10 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
         Assert.Contains(
-            "Integration branch 'develop' diverged from origin - heal or recreate it via project settings before accepting deliveries.",
+            "Integration branch 'develop' diverged from origin",
             outcome.Error);
         Assert.Contains(lane, outcome.Error);
+        Assert.Contains(RunGit(repo, "rev-parse task/64a").Out.Trim(), outcome.Error);
         Assert.Equal(first.MergedSha, RunGit(repo, $"rev-parse {lane}").Out.Trim());
         Assert.Equal(remoteTip, RemoteSha(remote, "develop"));
         Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
@@ -2899,6 +2900,48 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("error", step.Verdict);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Run_LocalDelivery_DivergedLaneWithPublishedDelivery_RestartsAtOrigin(bool patchEqual)
+    {
+        var (repo, remote) = SeedRepoWithOrigin("develop-published-lane");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        RunGit(repo, "checkout -q -b task/first");
+        File.WriteAllText(Path.Combine(repo, "first.txt"), "first delivery");
+        Commit(repo, "feat: first delivery");
+        RunGit(repo, "checkout -q -b task/second develop");
+        File.WriteAllText(Path.Combine(repo, "second.txt"), "second delivery");
+        Commit(repo, "feat: second delivery");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: new IntegrationPushQueue(), projectSettings: settings);
+        var first = runner.Run("Fixture", "first", BeginRun(log, repo, "first"), repo, "develop");
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, first.Outcome);
+        var lane = GitService.IntegrationLaneRef("develop");
+
+        RunGit(repo, "checkout -q -b operator-candidate develop");
+        if (patchEqual)
+            Assert.Equal(0, RunGit(repo, "cherry-pick task/first").Code);
+        else
+            RunGit(repo, "merge -q --no-ff -m published-first task/first");
+        File.WriteAllText(Path.Combine(repo, "operator.txt"), "operator change");
+        Commit(repo, "chore: operator candidate");
+        RunGit(repo, "push -q origin operator-candidate:develop");
+        RunGit(repo, "checkout -q develop");
+        var published = RemoteSha(remote, "develop");
+        Assert.NotEqual(first.MergedSha, published);
+
+        var second = runner.Run("Fixture", "second", BeginRun(log, repo, "second"), repo, "develop");
+        Assert.True(second.Outcome == MergeIntoIntegrationOutcome.Merged, second.Error);
+        Assert.Equal(published, RunGit(repo, $"rev-parse {second.MergedSha}^1").Out.Trim());
+        Assert.Equal(second.MergedSha, RunGit(repo, $"rev-parse {lane}").Out.Trim());
     }
 
     /// <summary>

@@ -1025,6 +1025,133 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Empty(recorder.Entries);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task DivergedLane_CompletedCardFallsBackOnlyWhenDeliveryIsMissing(bool publishDelivery, bool patchEqual)
+    {
+        var deliverySha = PublishDelivery("guarded-delivery.txt", "reviewed work\n");
+        var deps = Build(deliverySha, backgroundIntegration: true);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        var moved = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+
+        RunGit(_repo, "checkout", "-q", "-b", "unpublished", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "unpublished.txt"), "still pending\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "pending delivery");
+        RunGit(_repo, "checkout", "-q", "-b", "lane-build", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "pending merge", "unpublished");
+        var laneSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), laneSha);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "lane-build");
+
+        RunGit(_repo, "checkout", "-q", "-b", "operator-candidate", "origin/develop");
+        if (patchEqual)
+            RunGit(_repo, "cherry-pick", deliverySha);
+        else if (publishDelivery)
+            RunGit(_repo, "merge", "-q", "--no-ff", "-m", "published delivery", deliverySha);
+        File.WriteAllText(Path.Combine(_repo, "operator.txt"), "operator change\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "operator candidate");
+        RunGit(_repo, "push", "-q", "origin", "operator-candidate:develop");
+        RunGit(_repo, "checkout", "-q", "main");
+
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        Assert.Equal(_repo, git.ResolveRepoRootForWatchPath(_watchPath));
+        Assert.Equal(publishDelivery ? PublishedDeliveryContainment.Contained : PublishedDeliveryContainment.Missing,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        var workerLog = new RecordingLogger<AcceptedIntegrationWorker>();
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!, deps.Merge, deps.Scanner, deps.Mutations, deps.Provenance,
+            workerLog, deps.Transitions, deps.Timeline, git);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(_watchPath, completed.WatchPath);
+        Assert.True(AcceptanceIntegrationPolicy.IsIntegrationRequired(completed));
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Contains("unpublished", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(publishDelivery ? PublishedDeliveryContainment.Contained : PublishedDeliveryContainment.Missing,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        Assert.True(deps.Scanner.FindJob(Slug, _watchPath)!.State
+                    == (publishDelivery ? TaskStates.Completed : TaskStates.HumanReview),
+            string.Join("\n", workerLog.Snapshot().Select(entry => entry.Message)));
+    }
+
+    [Fact]
+    public async Task DivergedLane_MergeResolutionMissingFromOrigin_KeepsLaneAndReturnsCompletedCardToReview()
+    {
+        var ordinarySha = PublishDelivery("ordinary.txt", "published patch\n");
+        var baseSha = Git(_repo, "rev-parse", "origin/develop").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "-b", "delivery-merge", ordinarySha);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "delivery side\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "delivery side change");
+        var deliverySideSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+
+        RunGit(_repo, "checkout", "-q", "-b", "other-side", baseSha);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "other side\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "other side change");
+        var otherSideSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+
+        RunGit(_repo, "checkout", "-q", "delivery-merge");
+        Assert.NotEqual(0, Git(_repo, "merge", "--no-ff", "other-side").Code);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "delivery resolution\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "delivery conflict resolution");
+        var deliverySha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "--force", "origin", $"{deliverySha}:refs/heads/{DeliveryRef}");
+
+        var deps = Build(deliverySha, backgroundIntegration: true);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+
+        RunGit(_repo, "checkout", "-q", "-b", "lane-build", baseSha);
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "lane delivery", deliverySha);
+        var laneSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), laneSha);
+
+        RunGit(_repo, "checkout", "-q", "-b", "published-main", baseSha);
+        RunGit(_repo, "cherry-pick", ordinarySha);
+        RunGit(_repo, "cherry-pick", deliverySideSha);
+        RunGit(_repo, "checkout", "-q", "-b", "published-side", baseSha);
+        RunGit(_repo, "cherry-pick", otherSideSha);
+        RunGit(_repo, "checkout", "-q", "published-main");
+        Assert.NotEqual(0, Git(_repo, "merge", "--no-ff", "published-side").Code);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "published resolution\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "published conflict resolution");
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "checkout", "-q", "main");
+
+        var integrationWorktree = Path.Combine(_tempDir, "integration-worktree");
+        RunGit(_repo, "worktree", "add", "-q", "--detach", integrationWorktree, "main");
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        Assert.Equal(PublishedDeliveryContainment.Missing,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        var sync = git.SynchronizeIntegrationBranch(integrationWorktree, "develop");
+        Assert.Equal(IntegrationBranchSyncOutcome.Diverged, sync.Outcome);
+        Assert.Contains(deliverySha, sync.Error);
+        Assert.Equal(laneSha, Git(_repo, "rev-parse", GitService.IntegrationLaneRef("develop")).Out.Trim());
+
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!, deps.Merge, deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
     /// <summary>
     /// AGT-2793 requirement 2(a): the live pre-Human-Review merge, not the
     /// legacy <see cref="AcceptedIntegrationWorker"/>, is the path every Remote
@@ -2411,7 +2538,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
             deps.Transitions,
             deps.Timeline,
-            deps.Pipeline);
+            deps.Pipeline,
+            git: new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration));
 
         Assert.Equal(0, backstop.RunOnce());
 
@@ -2473,6 +2601,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate);
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
         File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
         var worker = new AcceptedIntegrationWorker(
             deps.AcceptedQueue!,
             VerifyingRunner(deps, gate),
@@ -2481,12 +2612,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             deps.Provenance,
             NullLogger<AcceptedIntegrationWorker>.Instance,
             deps.Transitions,
-            deps.Timeline);
+            deps.Timeline,
+            git);
 
         var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
             Project,
             Slug,
-            reviewed.FolderPath,
+            completed.FolderPath,
             _watchPath,
             "develop",
             IntegrationStrategies.DirectMerge));

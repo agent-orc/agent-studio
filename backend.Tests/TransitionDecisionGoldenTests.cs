@@ -68,6 +68,7 @@ public sealed class TransitionDecisionGoldenTests
         if (expected == TransitionAction.DegradeWithFollowUp)
         {
             Assert.True(monolith.RequiresLinkedFollowUp);
+            Assert.Equal(TaskStates.Ready, monolith.LinkedFollowUpLane);
             Assert.NotEmpty(monolith.Findings);
             Assert.Equal(DecisionAuthority.LinkedFollowUp, monolith.Candidates[0].AuthorityFloor);
         }

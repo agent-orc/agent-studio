@@ -83,8 +83,8 @@ public sealed record DotNetReferenceSelectionAudit
     public string? FallbackReason { get; init; }
 
     /// <summary>
-    /// One line per changed project the test project references at process
-    /// level, naming the trait classes it selected (AGT-3108).
+    /// Process launch selections from traits or an explicit compiled-reference
+    /// mapping, with the selected classes named in each line.
     /// </summary>
     public IReadOnlyList<string> ProcessReferences { get; init; } = [];
     public string Summary { get; init; } = "";
@@ -239,6 +239,8 @@ internal static class DotNetSourceScanner
 /// (<c>ReferenceOutputAssembly="false"</c>) adds the test classes whose
 /// <c>ProcessReference</c> trait names it, except those that are MachineBound
 /// at class level (AGT-3108).</item>
+/// <item>The backend test project's compiled Task Server reference also selects
+/// <c>ConnectorNegativeMatrixTests</c>, which starts the Task Server process.</item>
 /// <item>An empty combined selection gets no command; a combined selection
 /// above half of the project's classes or a filter above 16 KB runs the whole
 /// project.</item>
@@ -450,6 +452,24 @@ internal sealed class DotNetReferenceSelectionPlanner
                 .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(file => file.Path, StringComparer.Ordinal)
                 .ToList();
+        }
+        if (testProject.Equals("backend.Tests/OrchestratorApi.Tests.csproj", StringComparison.OrdinalIgnoreCase)
+            && productionChanges.Keys.Any(project =>
+                project.Equals("task-server/TaskServer.csproj", StringComparison.OrdinalIgnoreCase)))
+        {
+            const string processTest = "ConnectorNegativeMatrixTests";
+            var mappedFiles = files.Where(file => file.TestClasses.Contains(processTest, StringComparer.Ordinal))
+                .ToList();
+            var runnable = mappedFiles.Count > 0
+                && mappedFiles.All(file => !file.MachineBoundTypes.Contains(processTest));
+            if (runnable)
+            {
+                classes.Add(processTest);
+                selectedFiles = selectedFiles.Concat(mappedFiles)
+                    .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(file => file.Path, StringComparer.Ordinal).ToList();
+                processLines.Add("compiled TaskServer process launch: ConnectorNegativeMatrixTests");
+            }
         }
         var fileCount = selectedFiles.Count;
 

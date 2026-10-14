@@ -2813,7 +2813,7 @@ public static class V1ReviewPlaneEndpoints
                 ThinkingLevel = source.ThinkingLevel,
                 WatchPath = source.WatchPath,
                 PromptMarkdown = $"Review round {budget.RoundNumber} of {budget.MaximumRounds} spent the source card's budget at {budget.SpentBy}. Address these open findings in a linked follow-up. Source card: {source.Key ?? source.Id}.\n\n{findings}",
-                TargetState = TaskStates.Ready,
+                TargetState = TransitionDecisionPolicy.LinkedFollowUpLane,
                 TaskType = TaskTypes.Bug,
                 OwnerClientId = source.OwnerClientId,
                 CreationSource = "review-budget-follow-up",

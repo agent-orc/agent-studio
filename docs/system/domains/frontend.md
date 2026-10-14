@@ -619,6 +619,10 @@ occur. It is not a claim about tunnel transfer time.
   local-runner hot reload: changing the display name, repository checkout, or
   working directory requires a backend restart before the already-instantiated
   local runner may pick up work.
+- Project basics also shows the observed checkout's lag behind origin. Its
+  status request fetches the published branch; a clean, unlocked checkout that
+  is behind offers **Sync checkout**, which calls the explicit project checkout
+  sync endpoint and reports the resulting state.
 - `frontend/src/app/services/task.service.ts`: task API integration, optimistic
   lane moves, reorder, and rollback.
 - Board card context menus offer neighbouring visible manual lanes (container
