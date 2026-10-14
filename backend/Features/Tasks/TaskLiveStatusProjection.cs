@@ -314,6 +314,9 @@ public sealed class TaskLiveStatusProjection(
             PostProcessingCardResult.AwaitingCanonicalReviewVerdict => "waiting for review executor",
             PostProcessingCardResult.AwaitingDeliveryIntegration => "waiting for delivery integration",
             PostProcessingCardResult.AwaitingIntegrationCompletion => "waiting to leave auto review",
+            "delivery-resume-exhausted" => "delivery resume stopped; operator action needed",
+            "delivery-resume-backoff" => "delivery resume will retry",
+            AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait => "waiting for integration recovery",
             _ => null,
         };
         if (headline is null) return $"waiting to retry ({wait.Reason})";

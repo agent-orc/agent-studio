@@ -803,16 +803,19 @@ public static class ProjectSettingsEndpoints
             string projectName,
             SetCauseBreakerRequest req,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            CauseBreakerService breakers) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            return Results.Ok(settings.SetCauseBreaker(
+            var updated = settings.SetCauseBreaker(
                 projectName,
                 req.Enabled,
                 req.AttemptThreshold,
                 req.CardThreshold,
-                req.WindowHours));
+                req.WindowHours);
+            if (!req.Enabled) breakers.CloseForDisabledProject(projectName);
+            return Results.Ok(updated);
         });
 
         // Per-project CLI permission modes. GET returns the resolved mode +

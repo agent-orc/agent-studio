@@ -31,6 +31,8 @@ public enum CauseBreakerCloseReason
     CauseIntegrated,
     /// <summary>An affected card's review ran through the same toolchain without an infrastructure failure.</summary>
     ProbeGreen,
+    /// <summary>The operator disabled the breaker for an affected project.</summary>
+    Disabled,
 }
 
 /// <summary>

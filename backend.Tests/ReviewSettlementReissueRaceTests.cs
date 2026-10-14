@@ -342,6 +342,68 @@ public sealed class ReviewSettlementReissueRaceTests : IDisposable
         Assert.Equal(new[] { "report-driven", "sweep-driven" }, calls);
     }
 
+    [Fact]
+    public async Task Concurrent_resume_skips_the_owned_gate_and_the_sweep_reaches_the_next_card()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stack = Build(async _ =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+            return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged, mergedSha: new string('f', 40));
+        });
+        var held = SeedPassedDelivery(stack, "resume-held");
+        RemoteDeliverySettlementStore.Write(held.FolderPath, Settlement(held, shouldIntegrate: true));
+        TaskJsonFile.UpdateField(held.FolderPath, "order", 0, NullLogger.Instance);
+        var next = SeedPassedDelivery(stack, "resume-next");
+        RemoteDeliverySettlementStore.Write(next.FolderPath, Settlement(next, shouldIntegrate: false));
+        var task = stack.Scanner.FindJob(held.Id, _watchPath)!;
+        using var cancellation = new CancellationTokenSource();
+        var owner = stack.Resume.ResumeAsync(task, "first-resume");
+        Task<AutoReviewResumeOutcome>? duplicate = null;
+        try
+        {
+            await entered.Task.WaitAsync(Bounded);
+            duplicate = stack.Resume.ResumeAsync(task, "post-processing-deferral", cancellation.Token);
+            Assert.True(duplicate.IsCompleted, "A duplicate resume must return while the owner's gate is held.");
+            var skipped = await duplicate;
+            Assert.Equal(AutoReviewResumeAction.None, skipped.Action);
+            Assert.Equal(AutoReviewDeliveryResumeService.Reasons.IntegrationInFlight, skipped.Reason);
+            Assert.False(skipped.Resumed);
+
+            var sweep = await stack.Resume.RunOnceAsync("boot-backstop", cancellation.Token).WaitAsync(Bounded);
+            Assert.Equal(2, sweep.Scanned);
+            Assert.Equal(0, sweep.Integrated);
+            Assert.Equal(1, sweep.Completed);
+            Assert.Equal(0, sweep.Failed);
+            Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(next.Id, _watchPath)!.State);
+            Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(held.Id, _watchPath)!.State);
+            Assert.False(owner.IsCompleted);
+            Assert.Equal(1, stack.IntegrateCalls);
+            Assert.Equal(1, AutoReviewResumeRetryStore.Read(held.FolderPath, held.ReviewAttemptId)!.Attempts);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            release.TrySetResult();
+            await owner.WaitAsync(Bounded);
+            if (duplicate is not null)
+            {
+                try { await duplicate; }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                {
+                    Assert.True(duplicate.IsCanceled);
+                }
+            }
+        }
+
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(held.Id, _watchPath)!.State);
+        var completed = await stack.Resume.ResumeAsync(task, "after-release");
+        Assert.Equal(AutoReviewResumePolicy.Reasons.OutsideAutoReview, completed.Reason);
+        Assert.Equal(1, stack.IntegrateCalls);
+    }
+
     // ---- harness -------------------------------------------------------------
 
     private async Task AssertRefusedWithoutMerging(string repo, string folder, string jobId, string reviewedSha)
@@ -601,7 +663,8 @@ public sealed class ReviewSettlementReissueRaceTests : IDisposable
             coordinator,
             transitions,
             escalation,
-            resumeLogger ?? NullLogger<AutoReviewDeliveryResumeService>.Instance);
+            resumeLogger ?? NullLogger<AutoReviewDeliveryResumeService>.Instance,
+            time: _time);
         var reconciler = new RemoteReviewSettlementReconciler(
             scanner, authority, new RemoteReviewEvidenceProjectionQueue(), resume,
             NullLogger<RemoteReviewSettlementReconciler>.Instance);
