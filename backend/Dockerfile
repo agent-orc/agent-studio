@@ -40,6 +40,7 @@ COPY --from=build /app ./
 RUN rm -f /app/appsettings.Local.json /app/appsettings.Development.json
 # Runtime prompt material read via AgentRules:CorePath (relative to content root).
 COPY agent-rules/ ./agent-rules/
+COPY scripts/monolith-seed-cli-auth.sh /usr/local/bin/monolith-seed-cli-auth.sh
 ENV ASPNETCORE_URLS=http://0.0.0.0:5031 \
     TaskRepository=/data/workspace
 # /data/workspace: task repository (cards, metadata). /data/projects: project checkouts.

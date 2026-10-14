@@ -79,6 +79,14 @@ fi
 docker compose -f "$compose_file" up -d --no-build
 docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'test "$(getent passwd 10001 | cut -d: -f6)" = /data/home && ssh -G github.com | grep -q "^userknownhostsfile /data/home/.ssh/known_hosts$" && command -v claude && command -v codex && command -v gemini' >/dev/null
 docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'for provider in claude codex gemini; do test -f "/data/home/.$provider/smoke-marker" && test -w "/data/home/.$provider" && ! touch "/run/cli-auth/$provider/smoke-marker"; done' >/dev/null 2>&1
+docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'printf "refreshed\n" > /data/home/.codex/smoke-marker'
+docker run --rm --user 10001:10001 -v "$MONOLITH_CODEX_AUTH_DIR:/seed" --entrypoint sh node:22.16.0-alpine -c 'printf "new seed\n" > /seed/smoke-marker'
+docker compose -f "$compose_file" restart orchestrator-api >/dev/null
+docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'test "$(cat /data/home/.codex/smoke-marker)" = refreshed'
+docker compose -f "$compose_file" stop orchestrator-api >/dev/null
+docker compose -f "$compose_file" run --rm --no-deps --entrypoint /bin/sh orchestrator-api /usr/local/bin/monolith-seed-cli-auth.sh --force codex >/dev/null
+docker compose -f "$compose_file" up -d --no-build >/dev/null
+docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'test "$(cat /data/home/.codex/smoke-marker)" = "new seed"'
 for attempt in $(seq 1 90); do
   if curl -fsS "http://127.0.0.1:$MONOLITH_API_PORT/healthz" >/dev/null && curl -fsS "http://127.0.0.1:$MONOLITH_STUDIO_PORT/" >/dev/null; then break; fi
   if [ "$attempt" -eq 90 ]; then echo 'Monolith did not become healthy' >&2; exit 1; fi
