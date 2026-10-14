@@ -177,6 +177,53 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_shadow_records_the_monolith_receipt_only_after_the_lane_move_applied()
+    {
+        // AGT-3138: a failed MoveAsync must not leave a monolith Continue
+        // receipt that an engine receipt can match for the switch streak.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        rollout.Switch("GateResult", "shadow", "operator", "compare batch gate outcomes");
+        var member = SeedMember(factory, "DOC-SHADOW", "docs/shadow.md");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path makes the lane move fail.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var shadow = Assert.Single(orchestration.List(ProjectName, null));
+        Assert.True(orchestration.GetOccurrence(shadow.RunId)!.Shadow);
+        Assert.Null(orchestration.GetOccurrence(shadow.RunId)!.MonolithReceipt);
+        var claim = orchestration.Claim(new("engine", "shadow",
+            [Contract.OrchestrationStage.GateDispatch]));
+        var output = JsonSerializer.Serialize(new
+        {
+            transition = AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.Create(
+                AgentStudio.OrchestrationDecisions.TransitionAction.Continue,
+                "The build and test gate passed.", member.Key, member.ReviewAttemptId, 0, 1),
+        });
+        await orchestration.CompleteAsync(shadow.RunId, new("engine", "shadow",
+            claim.Lease!.LeaseId, claim.Lease.Fence, Contract.OrchestrationStage.GateDispatch,
+            Contract.OrchestrationAction.Continue, output, "complete:batch-shadow"), default);
+        Assert.NotNull(orchestration.GetOccurrence(shadow.RunId)!.EngineReceipt);
+        var unapplied = rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(0, unapplied.Streak);
+        Assert.Equal(0, unapplied.MismatchCount);
+
+        File.Delete(blocker);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Equal("Continue", orchestration.GetOccurrence(shadow.RunId)!.MonolithReceipt!.Action);
+        Assert.Equal(1, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+    }
+
+    [Fact]
     public void Snapshot_reuses_diff_stats_for_the_same_result_sha()
     {
         using var factory = BuildFactory();

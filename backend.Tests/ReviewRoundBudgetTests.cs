@@ -39,6 +39,85 @@ public sealed class ReviewRoundBudgetTests
         }
         finally { Directory.Delete(folder, recursive: true); }
     }
+
+    [Theory]
+    [InlineData("productfailure")]
+    [InlineData("PRODUCTFAILURE")]
+    [InlineData("pass")]
+    [InlineData("integrationbranchdefect")]
+    public void Accepted_engine_review_with_any_outcome_casing_is_recorded(string outcome)
+    {
+        // The report endpoint accepts outcome tokens case-insensitively (AGT-3138).
+        var folder = Path.Combine(Path.GetTempPath(), "engine-review-casing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var payload = new StagePayload(ReviewOutcome: outcome, ReviewAttemptId: "round-one",
+                Verdicts: [new ReviewVerdictDto("code-quality", "block", "quality:concerns", "A finding.")]);
+
+            ReviewRoundBudgetStore.RecordAcceptedEngineReview(folder, payload);
+
+            var round = Assert.Single(ReviewRoundBudgetStore.Read(folder).Rounds);
+            Assert.Equal("round-one", round.AttemptId);
+            Assert.Equal(["code-quality"], round.BlockingAspects);
+            Assert.Equal("round-one", Assert.Single(StageDecisionPolicy.DeliveredHistory([payload]).Rounds).AttemptId);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
+    public void Engine_review_ledger_counts_blocks_exactly_as_the_transition_decision()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "engine-review-uncited-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var seed = new ReviewRoundBudgetLedger([
+                new DeliveredReviewRound("round-one", ["code-quality"], []),
+                new DeliveredReviewRound("round-two", ["code-quality"], []),
+            ]);
+            ReviewVerdictDto[] verdicts =
+            [
+                new("code-quality", "block", ReviewVerdictCitationPolicy.BlockWithoutCitation, "Uncited block."),
+                new("requirement-fit", "block", "requirement:gap", "Cited block.", "src/a.cs", "The missing test."),
+            ];
+            var payload = new StagePayload(ReviewOutcome: ReviewOutcomeKinds.ProductFailure,
+                ReviewAttemptId: "round-three", Verdicts: verdicts, DeliveredRounds: seed,
+                MaximumDeliveredRounds: 4);
+            var decision = StageDecisionPolicy.Council("card", 0, payload).Transition!;
+
+            ReviewRoundBudgetStore.RecordAcceptedEngineReview(folder, payload);
+
+            var recorded = ReviewRoundBudgetStore.Read(folder).Rounds.Single(round => round.AttemptId == "round-three");
+            Assert.Equal(["requirement-fit"], recorded.BlockingAspects);
+            Assert.Equal(["requirement-fit"], ReviewRoundBudgetPolicy.CountedBlockingAspects(verdicts));
+            Assert.Equal(["requirement-fit"], decision.Findings
+                .Where(finding => ReviewGradingPolicy.IsBlockingToken(finding.Status)).Select(finding => finding.Aspect));
+            // The uncited code-quality block neither degrades this round nor starts a block streak.
+            Assert.Empty(recorded.DegradedAspects);
+            Assert.Null(recorded.SpentBy);
+            Assert.NotEqual(TransitionAction.DegradeWithFollowUp, decision.Action);
+            Assert.Equal(["requirement-fit"], Assert.Single(
+                StageDecisionPolicy.DeliveredHistory([payload]).Rounds).BlockingAspects);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData("block", "requirement:gap", true)]
+    [InlineData("BLOCK", "requirement:gap", true)]
+    [InlineData("block", "block-without-citation", false)]
+    [InlineData("block", "BLOCK-WITHOUT-CITATION", false)]
+    [InlineData("concerns", "requirement:gap", false)]
+    [InlineData("pass", "", false)]
+    public void Counted_blocking_aspects_exclude_uncited_and_non_blocking_verdicts(
+        string status, string classification, bool counted)
+    {
+        var aspects = ReviewRoundBudgetPolicy.CountedBlockingAspects(
+            [new ReviewVerdictDto("code-quality", status, classification, "A verdict.")]);
+        Assert.Equal(counted, aspects.Count == 1);
+    }
+
     [Fact]
     public void EpochAndOperatorContinuation_DoNotResetDeliveredRoundBudget()
     {

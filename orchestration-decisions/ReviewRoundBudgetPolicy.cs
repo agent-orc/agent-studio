@@ -29,6 +29,36 @@ public static class ReviewRoundBudgetPolicy
     public const int DefaultMaximumRounds = 4;
     public const int DefaultConsecutiveBlockRounds = 2;
 
+    /// <summary>
+    /// A report with one of these outcomes delivered a review round. The report
+    /// endpoint accepts outcome tokens case-insensitively, so the ledger must too.
+    /// </summary>
+    public static bool IsDeliveredOutcome(string? outcome)
+        => string.Equals(outcome, ReviewOutcomeKinds.Pass, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(outcome, ReviewOutcomeKinds.ProductFailure, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(outcome, ReviewOutcomeKinds.IntegrationBranchDefect, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>An uncited block is not an actionable finding for any transition or budget decision.</summary>
+    public static bool IsUncitedBlock(string? classification)
+        => string.Equals(classification, AgentStudio.TaskServer.Contracts.ReviewVerdictCitationPolicy.BlockWithoutCitation,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The blocking aspects one delivered round charges. TransitionDecisionPolicy
+    /// and every ledger write count them here, so the stored block history
+    /// matches the decision made for that round.
+    /// </summary>
+    public static IReadOnlyList<string> CountedBlockingAspects(
+        IEnumerable<AgentStudio.TaskServer.Contracts.ReviewFollowUpFinding> findings)
+        => findings.Where(item => !IsUncitedBlock(item.Classification)
+                && AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(item.Status))
+            .Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    public static IReadOnlyList<string> CountedBlockingAspects(
+        IEnumerable<AgentStudio.TaskServer.Contracts.ReviewVerdictDto> verdicts)
+        => CountedBlockingAspects(verdicts.Select(verdict => new AgentStudio.TaskServer.Contracts.ReviewFollowUpFinding(
+            verdict.Aspect, verdict.Status, verdict.Summary, Classification: verdict.Classification)));
+
     public static AgentStudio.TaskServer.Contracts.ReviewReportRequest ApplyRemoteReport(
         AgentStudio.TaskServer.Contracts.ReviewReportRequest request,
         ReviewRoundBudgetDecision decision)
