@@ -32,7 +32,7 @@ public sealed class MonolithOrchestrationStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly object _gate = new();
-    private readonly string _directory;
+    private readonly string? _directory;
     private readonly TimeProvider _time;
     private readonly IMonolithOrchestrationApplier _applier;
     private readonly Dictionary<string, MonolithOrchestrationOccurrence> _runs = new(StringComparer.Ordinal);
@@ -40,15 +40,20 @@ public sealed class MonolithOrchestrationStore
 
     public MonolithOrchestrationStore(IConfiguration configuration, TimeProvider time,
         IMonolithOrchestrationApplier applier)
-        : this(Path.Combine(configuration["TaskRepository"]
-            ?? throw new InvalidOperationException("TaskRepository is required for orchestration authority."),
-            ".orchestration-occurrences"), time, applier) { }
+        : this(string.IsNullOrWhiteSpace(configuration["TaskRepository"])
+            ? null
+            : Path.Combine(configuration["TaskRepository"]!, ".orchestration-occurrences"), time, applier) { }
 
-    public MonolithOrchestrationStore(string directory, TimeProvider time, IMonolithOrchestrationApplier applier)
+    /// <param name="directory">
+    /// Without a TaskRepository the store keeps occurrences in memory only, like
+    /// AttemptAuthorityService, so hosts without a workspace still start.
+    /// </param>
+    public MonolithOrchestrationStore(string? directory, TimeProvider time, IMonolithOrchestrationApplier applier)
     {
         _directory = directory;
         _time = time;
         _applier = applier;
+        if (directory is null) return;
         Directory.CreateDirectory(directory);
         foreach (var file in Directory.EnumerateFiles(directory, "orch_*.json"))
         {
@@ -316,6 +321,7 @@ public sealed class MonolithOrchestrationStore
 
     private void Save(MonolithOrchestrationOccurrence occurrence)
     {
+        if (_directory is null) return;
         var path = Path.Combine(_directory, occurrence.Run.RunId + ".json");
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
