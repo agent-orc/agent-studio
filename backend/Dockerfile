@@ -12,6 +12,9 @@ RUN dotnet publish backend/OrchestratorApi.csproj -c Release -o /app /p:UseAppHo
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
+ARG CODEX_CLI_VERSION=0.154.0
+ARG CLAUDE_CLI_VERSION=2.1.269
+ARG GEMINI_CLI_VERSION=0.39.1
 LABEL org.opencontainers.image.title="agent-studio-api" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$SHA" \
@@ -19,11 +22,17 @@ LABEL org.opencontainers.image.title="agent-studio-api" \
 # curl: Compose uses the public health endpoint as its readiness contract.
 # git: GitService shells out for merges, worktrees, and integration pushes.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl git openssh-client \
+ && apt-get install -y --no-install-recommends curl git openssh-client ca-certificates \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install --global \
+      "@openai/codex@${CODEX_CLI_VERSION}" \
+      "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" \
+      "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system safe.directory '*' \
  && groupadd --system --gid 10001 agentstudio \
- && useradd --system --uid 10001 --gid agentstudio --home-dir /nonexistent --shell /usr/sbin/nologin agentstudio
+ && useradd --system --uid 10001 --gid agentstudio --home-dir /data/home --shell /usr/sbin/nologin agentstudio
 WORKDIR /app
 COPY --from=build /app ./
 # Defense in depth: machine-local overrides must never reach the image even if
@@ -34,7 +43,7 @@ COPY agent-rules/ ./agent-rules/
 ENV ASPNETCORE_URLS=http://0.0.0.0:5031 \
     TaskRepository=/data/workspace
 # /data/workspace: task repository (cards, metadata). /data/projects: project checkouts.
-RUN mkdir -p /data/workspace /data/projects && chown -R agentstudio:agentstudio /app /data
+RUN mkdir -p /data/workspace /data/projects /data/home && chown -R agentstudio:agentstudio /app /data
 VOLUME ["/data/workspace", "/data/projects"]
 EXPOSE 5031
 USER agentstudio

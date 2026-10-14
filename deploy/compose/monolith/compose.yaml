@@ -1,0 +1,64 @@
+name: agent-studio-monolith
+
+x-logs: &logs
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+
+services:
+  orchestrator-api:
+    image: ${MONOLITH_API_IMAGE:?Set MONOLITH_API_IMAGE to a pinned release tag}
+    # For a source build: docker compose build orchestrator-api, then up -d --no-deps.
+    build:
+      context: ../../..
+      dockerfile: backend/Dockerfile
+      args: {VERSION: "${MONOLITH_VERSION:?Set MONOLITH_VERSION to the repository VERSION}"}
+    user: "10001:10001"
+    restart: unless-stopped
+    cpu_shares: 2048
+    ports:
+      - "127.0.0.1:${MONOLITH_API_PORT:-5031}:5031"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      TaskRepository: /data/workspace
+      RemoteGate__SshHost: ${MONOLITH_REMOTE_GATE_SSH_HOST:?Set MONOLITH_REMOTE_GATE_SSH_HOST to the SSH host alias}
+      RemoteGate__WorkerPath: ${MONOLITH_REMOTE_GATE_WORKER_PATH:?Set MONOLITH_REMOTE_GATE_WORKER_PATH to the absolute remote OrchestratorApi.dll path}
+      HOME: /data/home
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: credential.helper
+      GIT_CONFIG_VALUE_0: store --file=/run/git-credentials
+      GIT_CONFIG_KEY_1: core.sshCommand
+      GIT_CONFIG_VALUE_1: ssh -F /data/home/.ssh/config
+    volumes:
+      - ${MONOLITH_WORKSPACE_DIR:?Set MONOLITH_WORKSPACE_DIR}:/data/workspace
+      - ${MONOLITH_PROJECT_CHECKOUT:?Set MONOLITH_PROJECT_CHECKOUT}:/data/projects/${MONOLITH_PROJECT_NAME:?Set MONOLITH_PROJECT_NAME}
+      - ${MONOLITH_CONFIG_FILE:?Set MONOLITH_CONFIG_FILE}:/app/appsettings.Production.json:ro
+      - ${MONOLITH_GIT_CREDENTIALS_FILE:?Set MONOLITH_GIT_CREDENTIALS_FILE}:/run/git-credentials:ro
+      - ${MONOLITH_SSH_DIR:?Set MONOLITH_SSH_DIR}:/data/home/.ssh:ro
+      - ${MONOLITH_HOME_DIR:?Set MONOLITH_HOME_DIR}:/data/home
+      - ${MONOLITH_CLAUDE_AUTH_DIR:?Set MONOLITH_CLAUDE_AUTH_DIR}:/run/cli-auth/claude:ro
+      - ${MONOLITH_CODEX_AUTH_DIR:?Set MONOLITH_CODEX_AUTH_DIR}:/run/cli-auth/codex:ro
+      - ${MONOLITH_GEMINI_AUTH_DIR:?Set MONOLITH_GEMINI_AUTH_DIR}:/run/cli-auth/gemini:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /data/home/.claude /data/home/.codex /data/home/.gemini
+        cp -R /run/cli-auth/claude/. /data/home/.claude/
+        cp -R /run/cli-auth/codex/. /data/home/.codex/
+        cp -R /run/cli-auth/gemini/. /data/home/.gemini/
+        chmod -R u+rwX /data/home/.claude /data/home/.codex /data/home/.gemini
+        exec dotnet /app/OrchestratorApi.dll
+    logging: *logs
+
+  studio:
+    image: node:22.16.0-alpine
+    user: "10001:10001"
+    restart: unless-stopped
+    # The existing prebuilt server binds loopback and accepts a loopback API.
+    network_mode: host
+    command: ["node", "/srv/serve-prebuilt-frontend.mjs", "/srv/studio", "${MONOLITH_STUDIO_PORT:-4011}", "http://127.0.0.1:${MONOLITH_API_PORT:-5031}"]
+    volumes:
+      - ../../../frontend/scripts/serve-prebuilt-frontend.mjs:/srv/serve-prebuilt-frontend.mjs:ro
+      - ${MONOLITH_STUDIO_DIST_DIR:?Set MONOLITH_STUDIO_DIST_DIR}:/srv/studio:ro
+    depends_on:
+      orchestrator-api: {condition: service_healthy}
+    logging: *logs
