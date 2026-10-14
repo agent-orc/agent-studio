@@ -107,25 +107,18 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     AttemptAuthorityService authority,
     OrchestrationRolloutStore rollout,
     OrchestratorLog operatorLog,
+    TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
+    private static readonly TimeSpan PreparationGrace = TimeSpan.FromSeconds(30);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            var tasks = scanner.ScanAllJobs();
-            ActivateSettledReviews();
-            foreach (var occurrence in store.WaitingOccurrences())
-            {
-                var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
-                    && item.ProjectName == occurrence.Run.ProjectId);
-                if (card is not null && card.State == occurrence.ExpectedSourceState)
-                    EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
-            }
-            scanner.InvalidateCache();
             while (!stoppingToken.IsCancellationRequested)
             {
-                ActivateSettledReviews();
+                RecoverOnce();
                 try { await store.RecoverApplyingAsync(stoppingToken); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -133,7 +126,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 }
                 await RecoverRolledBackAsync(stoppingToken);
                 AlertLongWaits();
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                await Task.Delay(PreparationGrace, time, stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
@@ -211,9 +204,12 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
 
     private void AlertLongWaits()
     {
+        var now = time.GetUtcNow().UtcDateTime;
         foreach (var occurrence in store.WaitingOccurrences().Where(item =>
-            item.Run.Status == "pending" && !rollout.IsRolledBack(item.Profile)
-            && DateTime.UtcNow - item.Run.CreatedAt > TimeSpan.FromMinutes(1)))
+            !rollout.IsRolledBack(item.Profile)
+            && (item.Run.Status == "pending" && now - item.Run.CreatedAt > TimeSpan.FromMinutes(1)
+                || item.Run.Status == "leased" && item.Lease is { ExpiresAt: var expiry }
+                    && expiry <= now)))
         {
             var card = scanner.ScanAllJobs().FirstOrDefault(item =>
                 item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
@@ -226,22 +222,37 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 Topic = topic,
                 JobId = card.Id,
                 Summary = $"{card.Key ?? card.Id} is waiting for the Orchestrator Engine.",
-                Reasoning = "The occurrence remains pending and will resume after an engine instance claims it.",
+                Reasoning = "The occurrence remains uncompleted and will resume after an engine instance claims or reclaims it.",
             });
         }
     }
 
-    private void ActivateSettledReviews()
+    internal void RecoverOnce()
     {
+        var tasks = scanner.ScanAllJobs();
         foreach (var occurrence in store.AwaitingActivation())
         {
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
             try
             {
+                if (card is not null)
+                    EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId);
                 var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
                     report.AuthorityStatus == AttemptWriteStatus.Accepted
                     && occurrence.IdempotencyKey ==
                         $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
-                if (accepted) store.Activate(occurrence.Run.RunId);
+                if (accepted)
+                {
+                    store.Activate(occurrence.Run.RunId);
+                    if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
+                        EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                }
+                else
+                {
+                    if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
+                        store.CancelUnactivated(occurrence.Run.RunId, "review-settlement-not-accepted");
+                }
             }
             catch (Exception exception)
             {
@@ -249,5 +260,20 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     occurrence.Run.RunId);
             }
         }
+        foreach (var occurrence in store.WaitingOccurrences())
+        {
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is not null && card.State == occurrence.ExpectedSourceState)
+                EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+        }
+        foreach (var cancelled in store.List(null, "cancelled"))
+        {
+            var card = tasks.FirstOrDefault(item => item.Id == cancelled.TaskId
+                && item.ProjectName == cancelled.ProjectId);
+            if (card is not null)
+                EngineDecisionWaitMarker.Clear(card.FolderPath, cancelled.RunId);
+        }
+        scanner.InvalidateCache();
     }
 }

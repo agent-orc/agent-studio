@@ -929,13 +929,15 @@ public static class V1ReviewPlaneEndpoints
                         reviewTask.ProjectName, reviewTask.Id),
                     DeliveredRounds: ReviewRoundBudgetStore.Read(reviewTask.FolderPath, rounds),
                     MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds);
-                var occurrence = orchestration.GetByIdempotencyKey(reviewOccurrenceKey)
-                    ?? orchestration.Create(reviewTask.ProjectName, reviewTask.Id,
-                    Contract.OrchestrationStage.ReviewDecision,
-                    JsonSerializer.Serialize(payload, Json),
-                    reviewOccurrenceKey,
-                    reviewTask.State, attemptId, request.Fence, request.AuthorityEpoch,
-                    claimable: false, profile: "ReviewReport");
+                var existingOccurrence = orchestration.GetByIdempotencyKey(reviewOccurrenceKey);
+                var occurrence = existingOccurrence is { Status: not "cancelled" }
+                    ? existingOccurrence
+                    : orchestration.Create(reviewTask.ProjectName, reviewTask.Id,
+                        Contract.OrchestrationStage.ReviewDecision,
+                        JsonSerializer.Serialize(payload, Json),
+                        reviewOccurrenceKey,
+                        reviewTask.State, attemptId, request.Fence, request.AuthorityEpoch,
+                        claimable: false, profile: "ReviewReport");
                 AttemptWriteResult engineSettled;
                 try
                 {
@@ -959,16 +961,34 @@ public static class V1ReviewPlaneEndpoints
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
+                    if (authority.GetReview(attemptId)?.Reports.Any(item =>
+                            item.AuthorityStatus == AttemptWriteStatus.Accepted
+                            && item.IdempotencyKey == request.IdempotencyKey) != true)
+                    {
+                        orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-failed");
+                        EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
+                        scanner.InvalidateCache();
+                    }
                     logger.LogError(exception, "engine-review-settlement-failed attempt={AttemptId}", attemptId);
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
                         "The review report could not be journaled."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
                 }
                 if (RemoteReviewSettlementJournal.IsIdempotencyConflict(engineSettled))
+                {
+                    orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-rejected");
+                    EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
+                    scanner.InvalidateCache();
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
+                }
                 if (!engineSettled.Accepted || engineSettled.ReviewAttempt is null)
+                {
+                    orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-rejected");
+                    EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
+                    scanner.InvalidateCache();
                     return AttemptError(engineSettled);
+                }
                 orchestration.Activate(occurrence.RunId);
                 if (occurrence.Status is "pending" or "leased" or "applying")
                     EngineDecisionWaitMarker.Write(reviewTask.FolderPath, occurrence.RunId);

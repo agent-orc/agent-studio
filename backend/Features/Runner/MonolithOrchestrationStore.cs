@@ -21,7 +21,8 @@ public sealed record MonolithOrchestrationOccurrence(
     string? Profile = null,
     bool Shadow = false,
     OrchestrationDecisionReceipt? MonolithReceipt = null,
-    OrchestrationDecisionReceipt? EngineReceipt = null);
+    OrchestrationDecisionReceipt? EngineReceipt = null,
+    string? CancellationReason = null);
 
 public interface IMonolithOrchestrationApplier
 {
@@ -86,12 +87,36 @@ public sealed class MonolithOrchestrationStore
             if (existing is not null)
             {
                 if (existing.Run.ProjectId != projectId || existing.Run.TaskId != taskId
-                    || existing.Run.CurrentStage != stage || existing.Run.PayloadJson != payloadJson
+                    || existing.Run.CurrentStage != stage
                     || existing.ExpectedSourceState != expectedSourceState
                     || existing.AuthorityAttemptId != authorityAttemptId
-                    || existing.AuthorityFence != authorityFence
-                    || existing.AuthorityEpoch != authorityEpoch)
+                    || existing.Run.Status != "cancelled" &&
+                       (existing.Run.PayloadJson != payloadJson
+                        || existing.AuthorityFence != authorityFence
+                        || existing.AuthorityEpoch != authorityEpoch))
                     throw new InvalidOperationException("orchestration-idempotency-conflict");
+                if (existing.Run.Status == "cancelled")
+                {
+                    var resumedAt = _time.GetUtcNow().UtcDateTime;
+                    existing = existing with
+                    {
+                        Run = existing.Run with { Status = "pending", PayloadJson = payloadJson,
+                            UpdatedAt = resumedAt, CompletedAt = null },
+                        AuthorityFence = authorityFence,
+                        AuthorityEpoch = authorityEpoch,
+                        Claimable = claimable,
+                        Profile = profile,
+                        Shadow = shadow,
+                        MonolithReceipt = monolithAction is null ? null : OrchestrationRolloutStore.Receipt(
+                            existing.Run.RunId, idempotencyKey, payloadJson, monolithAction,
+                            monolithReason ?? string.Empty,
+                            $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith"),
+                        EngineReceipt = null,
+                        CancellationReason = null,
+                    };
+                    Save(existing);
+                    _runs[existing.Run.RunId] = existing;
+                }
                 return existing.Run;
             }
             var now = _time.GetUtcNow().UtcDateTime;
@@ -160,7 +185,8 @@ public sealed class MonolithOrchestrationStore
 
     public IReadOnlyList<MonolithOrchestrationOccurrence> AwaitingActivation()
     {
-        lock (_gate) return _runs.Values.Where(item => !item.Claimable).ToArray();
+        lock (_gate) return _runs.Values.Where(item => !item.Claimable
+            && item.Run.Status is ("pending" or "cancelled")).ToArray();
     }
 
     public void Activate(string runId)
@@ -169,7 +195,34 @@ public sealed class MonolithOrchestrationStore
         {
             var item = Required(runId);
             if (item.Claimable) return;
-            item = item with { Claimable = true };
+            if (item.Run.Status is not ("pending" or "cancelled"))
+                throw new InvalidOperationException("orchestration-activation-state-mismatch");
+            item = item with
+            {
+                Claimable = true,
+                CancellationReason = null,
+                Run = item.Run with { Status = "pending", UpdatedAt = _time.GetUtcNow().UtcDateTime,
+                    CompletedAt = null },
+            };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
+
+    public void CancelUnactivated(string runId, string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (item.Run.Status == "cancelled") return;
+            if (item.Claimable || item.Run.Status != "pending") return;
+            var now = _time.GetUtcNow().UtcDateTime;
+            item = item with
+            {
+                CancellationReason = reason,
+                Run = item.Run with { Status = "cancelled", UpdatedAt = now, CompletedAt = now },
+            };
             Save(item);
             _runs[runId] = item;
         }

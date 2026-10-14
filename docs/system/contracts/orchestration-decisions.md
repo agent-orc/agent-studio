@@ -26,6 +26,11 @@ answers protocol negotiation with the `engine` client kind and the
 uses the exclusive `orchestration.write` credential scope. The occurrence
 journal lives under `<TaskRepository>/.orchestration-occurrences`; it preserves
 pending work, lease fences and completed stage receipts across restarts.
+Review-report occurrences are prepared before authority settlement but become
+claimable only after an accepted report. Recovery restores wait markers only for
+claimable occurrences. An unaccepted preparation has no wait marker and, after
+a bounded grace period, receives a durable cancellation receipt. A later valid
+report can prepare the same idempotency key again.
 
 AGT-3059 adds a per-profile rollout journal at
 `<TaskRepository>/.orchestration-rollout.json`. Coding completion, review report,
