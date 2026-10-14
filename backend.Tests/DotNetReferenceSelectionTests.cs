@@ -227,6 +227,20 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
     }
 
     [Fact]
+    public void CompiledTaskServerReference_SelectsTheConnectorProcessTest()
+    {
+        TaskServerFixture("""<ProjectReference Include="../task-server/TaskServer.csproj" Aliases="TaskServerAssembly" />""",
+            connectorTrait: false);
+
+        var result = Plan(["task-server/LeaseStore.cs"]);
+
+        Assert.Contains("ConnectorNegativeMatrixTests", result.Audit.SelectedTestClasses);
+        Assert.Contains("FullyQualifiedName~ConnectorNegativeMatrixTests", DotNetTestCommand(result));
+        Assert.Equal(["compiled TaskServer process launch: ConnectorNegativeMatrixTests"],
+            Assert.Single(result.Audit.ReferenceSelections).ProcessReferences);
+    }
+
+    [Fact]
     public void ProcessLevelAndProductionDiff_SelectsTheUnionOfTraitAndReferenceSelection()
     {
         TaskServerFixture(TaskServerProcessReference);
@@ -837,7 +851,8 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
     /// to task-server, the one class that starts it, a class that names a
     /// task-server type anyway, and two unrelated classes.
     /// </summary>
-    private void TaskServerFixture(string reference, bool connectorMachineBound = false)
+    private void TaskServerFixture(string reference, bool connectorMachineBound = false,
+        bool connectorTrait = true)
     {
         BackendRepository(reference);
         Write("task-server/TaskServer.csproj", """
@@ -847,10 +862,11 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
             """);
         Write("task-server/LeaseStore.cs", "namespace AgentStudio.TaskServer;\npublic sealed class LeaseStore { }\n");
         var machineBound = connectorMachineBound ? "[Trait(\"Category\", \"MachineBound\")]\n" : "";
+        var processTrait = connectorTrait ? "[Trait(\"ProcessReference\", \"TaskServer\")]\n" : "";
         Write("backend.Tests/ConnectorNegativeMatrixTests.cs", $$"""
             namespace AgentStudio.Tests;
             [Collection("serial")]
-            {{machineBound}}[Trait("ProcessReference", "TaskServer")]
+            {{machineBound}}{{processTrait}}
             public sealed class ConnectorNegativeMatrixTests
             {
                 [Fact]

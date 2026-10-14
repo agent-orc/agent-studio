@@ -800,6 +800,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             await pilot.TickAsync(CancellationToken.None);
             AssertLane(admitted.Key, TaskStates.HumanReview);
             AssertLane(ejected.Key, TaskStates.AutoReview);
+            var fact = Assert.Single(store.ListExecutions(ProjectName).Where(f => f.BatchRunId is not null));
+            Assert.Equal([admitted.Key], fact.MemberKeys);
+            Assert.Equal(2, store.ReadManifest(fact.BatchId!).Members.Count);
+            var row = GateEconomicsEndpoints.ProjectRow(ProjectName, [],
+                since: fact.StartedAtUtc.AddDays(-1), now: fact.CompletedAtUtc,
+                retest: null, batchMetrics:
+                [new BatchGateMetric(ProjectName, fact.MemberKeys!.Count, fact, Published: true)]);
+            Assert.Equal(1, row.GatedMerges);
         }
         finally { release.TrySetResult(); }
     }

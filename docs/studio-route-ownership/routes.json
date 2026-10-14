@@ -25,22 +25,22 @@
     ]
   },
   "counts": {
-    "frontendOperations": 456,
-    "frontendApiOperations": 455,
+    "frontendOperations": 457,
+    "frontendApiOperations": 456,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 346,
+      "task-server": 347,
       "dev-seat": 110,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
     "frontendV1Operations": 70,
     "frontendV1OperationsExistingInStandaloneTaskServer": 296,
-    "d4bRoutesToAdd": 50
+    "d4bRoutesToAdd": 51
   },
   "d4bEstimate": {
     "method": "Each must-add route is sized S=1, M=2, L=3, XL=8 weighted route points. Six points equal one engineering day after shared foundations. Add 15 days for connector security, version negotiation, replayable WebSocket infrastructure, contract harnesses, and cutover controls.",
-    "weightedRoutePoints": 80,
+    "weightedRoutePoints": 81,
     "routeImplementationDays": 14,
     "sharedFoundationDays": 15,
     "baselineEngineeringDays": 29,
@@ -2473,6 +2473,43 @@
       "ownershipCaveat": null,
       "d4bPriority": null,
       "estimate": null
+    },
+    {
+      "id": "fe-457",
+      "method": "GET",
+      "path": "/api/gate-economics",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "window"
+          ]
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "must-add",
+      "targetRoute": "/api/v1/studio/gate-economics",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:2515"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
+      "ownershipCaveat": null,
+      "d4bPriority": "P3",
+      "estimate": {
+        "size": "S",
+        "weightedRoutePoints": 1,
+        "basis": "GET contract plus authorization, compatibility, and route-level tests"
+      }
     },
     {
       "id": "fe-083",

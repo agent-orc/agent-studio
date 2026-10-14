@@ -307,6 +307,8 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Empty(outcome.RebasedCommits);
         Assert.Equal(1, gateRunner.Invocations);
         Assert.Equal(outcome.MergedSha, gateRunner.Request!.ExpectedSha);
+        // AGT-3070: integration gates stay outside the pipeline-health registry.
+        Assert.Null(gateRunner.Request.WatchPath);
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Passed, step!.Status);
@@ -2120,6 +2122,8 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(1, gateRunner.Invocations);
         Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
         Assert.Contains("backend/Rule.cs", gateRunner.ChangedFiles!);
+        // AGT-3070: the verification gate registers no health context either.
+        Assert.Null(gateRunner.Request.WatchPath);
         Assert.Equal(IntegrationVerificationStates.Verified,
             IntegrationVerificationStore.Read(jobFolder)?.State);
     }
@@ -2508,8 +2512,10 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.True(queue.Reader.TryRead(out _));
     }
 
-    [Fact]
-    public async Task RunAsync_DevelopTarget_GreenBuildGate_KeepsTheMergeAndEnqueuesThePush()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_DevelopTarget_GreenBuildGate_KeepsTheMergeAndEnqueuesThePush(bool restart)
     {
         var (repo, remote) = SeedRepoWithOrigin("develop-gate-green");
         RunGit(repo, "checkout -q -b develop");
@@ -2533,8 +2539,11 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
             preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
             preDevelopTimeout: TimeSpan.FromSeconds(30));
 
-        var outcome = await runner.RunAsync(
-            "Fixture", "61", jobFolder, repo, "develop", CancellationToken.None);
+        MergeIntoIntegrationResult outcome;
+        using (IntegrationLaneEvents.BeginDelivery(3070))
+            outcome = await runner.RunAsync(
+                "Fixture", "61", jobFolder, repo, "develop", CancellationToken.None);
+        Assert.Null(IntegrationLaneEvents.CurrentSequence);
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         var laneAfter = RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim();
@@ -2546,10 +2555,21 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("develop", queued!.IntegrationBranch);
         // AGT-2996: the push worker has not run yet, so develop has not moved.
         Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
-        await new IntegrationPushWorker(queue, runner, NullLogger<IntegrationPushWorker>.Instance)
-            .ProcessAsync(queued, CancellationToken.None);
+        Assert.Equal(3070, queued.DeliverySequence);
+        if (restart)
+            await runner.PushIntegrationBranchAsync("Fixture", "61", jobFolder, repo,
+                "develop", approvedSha: queued.ApprovedSha);
+        else
+            await new IntegrationPushWorker(queue, runner, NullLogger<IntegrationPushWorker>.Instance)
+                .ProcessAsync(queued, CancellationToken.None);
         Assert.Equal(laneAfter, RemoteSha(remote, "develop"));
         Assert.Equal(laneAfter, RunGit(repo, "rev-parse develop").Out.Trim());
+
+        var events = IntegrationLaneEvents.Read(jobFolder);
+        Assert.Contains(events, e => e.Kind == "publication-lock-acquired" && e.Sequence == 3070);
+        var published = Assert.Single(events.Where(e => e.Kind == "published"));
+        Assert.Equal(3070, published.Sequence);
+        Assert.Equal(laneAfter, published.Receipt);
 
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
@@ -2867,9 +2887,10 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
         Assert.Contains(
-            "Integration branch 'develop' diverged from origin - heal or recreate it via project settings before accepting deliveries.",
+            "Integration branch 'develop' diverged from origin",
             outcome.Error);
         Assert.Contains(lane, outcome.Error);
+        Assert.Contains(RunGit(repo, "rev-parse task/64a").Out.Trim(), outcome.Error);
         Assert.Equal(first.MergedSha, RunGit(repo, $"rev-parse {lane}").Out.Trim());
         Assert.Equal(remoteTip, RemoteSha(remote, "develop"));
         Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
@@ -2878,6 +2899,48 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("error", step.Verdict);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Run_LocalDelivery_DivergedLaneWithPublishedDelivery_RestartsAtOrigin(bool patchEqual)
+    {
+        var (repo, remote) = SeedRepoWithOrigin("develop-published-lane");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        RunGit(repo, "checkout -q -b task/first");
+        File.WriteAllText(Path.Combine(repo, "first.txt"), "first delivery");
+        Commit(repo, "feat: first delivery");
+        RunGit(repo, "checkout -q -b task/second develop");
+        File.WriteAllText(Path.Combine(repo, "second.txt"), "second delivery");
+        Commit(repo, "feat: second delivery");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: new IntegrationPushQueue(), projectSettings: settings);
+        var first = runner.Run("Fixture", "first", BeginRun(log, repo, "first"), repo, "develop");
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, first.Outcome);
+        var lane = GitService.IntegrationLaneRef("develop");
+
+        RunGit(repo, "checkout -q -b operator-candidate develop");
+        if (patchEqual)
+            Assert.Equal(0, RunGit(repo, "cherry-pick task/first").Code);
+        else
+            RunGit(repo, "merge -q --no-ff -m published-first task/first");
+        File.WriteAllText(Path.Combine(repo, "operator.txt"), "operator change");
+        Commit(repo, "chore: operator candidate");
+        RunGit(repo, "push -q origin operator-candidate:develop");
+        RunGit(repo, "checkout -q develop");
+        var published = RemoteSha(remote, "develop");
+        Assert.NotEqual(first.MergedSha, published);
+
+        var second = runner.Run("Fixture", "second", BeginRun(log, repo, "second"), repo, "develop");
+        Assert.True(second.Outcome == MergeIntoIntegrationOutcome.Merged, second.Error);
+        Assert.Equal(published, RunGit(repo, $"rev-parse {second.MergedSha}^1").Out.Trim());
+        Assert.Equal(second.MergedSha, RunGit(repo, $"rev-parse {lane}").Out.Trim());
     }
 
     /// <summary>

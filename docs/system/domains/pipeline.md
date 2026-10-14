@@ -165,9 +165,13 @@ minus classes that are MachineBound at class level; the audit names them, for
 example `process-level reference TaskServer: 1 class
 (ConnectorNegativeMatrixTests)`. `ProcessReferenceTraitGuardTests` fails a class
 that starts such a program's built output without the trait and a trait for a
-project that is not a process-level reference. The whole project still runs,
-with the reason in the audit, for a changed non-C# input or repository build
-input, a composition root (`Program.cs`, `Startup.cs`, `Host/`), a deleted,
+project that is not a process-level reference.
+For the compiled Task Server reference in `backend.Tests`, the selector also
+maps Task Server changes to `ConnectorNegativeMatrixTests`, which launches
+`task-server.dll`; this class does not carry the process-level trait.
+The whole project still runs, with the reason in the audit, for a changed
+non-C# input or repository build input, a composition root (`Program.cs`,
+`Startup.cs`, `Host/`), a deleted,
 unreadable, or type-less changed file, a combined selection above half of the
 classes, or a filter above 16,384 characters. A project whose combined
 selection is empty gets no command and leaves its coverage to the batch gate's
@@ -834,7 +838,14 @@ comparison before Quality Studio's verdict contract can decide a review.
   developer's lagging local branch as the next merge base. Checkout sync is a
   separate `POST /api/projects/{project}/checkout/sync` action. Local task
   worktrees cut and rebase from the published ref, without taking unapproved
-  merges from the Studio lane.
+  merges from the Studio lane. If an outside push makes the lane diverge,
+  synchronization drops only lane
+  merges whose delivery is already on origin by ancestry or patch equality.
+  It restarts the lane at origin when every lane merge is published; otherwise
+  it refuses and names the unpublished merges. Before a legacy acceptance
+  sweep moves a Completed card back to Human Review, it fetches origin and
+  checks the card's delivery there. A contained delivery stays Completed and
+  a lane-scoped operator feed warning replaces the per-card fallback.
   Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See

@@ -33,11 +33,14 @@ public sealed record DecisionReceipt(string Rule, string CardKey, string Attempt
 public sealed record CandidateAction(TransitionAction Action, DecisionUnion Union, DecisionAuthority AuthorityFloor);
 public sealed record TransitionDecision(TransitionAction Action, string Reason, DecisionReceipt Receipt,
     IReadOnlyList<CandidateAction> Candidates, IReadOnlyList<ReviewFollowUpFinding> Findings,
-    ContinuationBase? ContinuationBase = null, bool RequiresLinkedFollowUp = false);
+    ContinuationBase? ContinuationBase = null, bool RequiresLinkedFollowUp = false,
+    string? LinkedFollowUpLane = null);
 
 /// <summary>Deterministic fallback and candidate constraints for AGT-W73. No boundary access.</summary>
 public static class TransitionDecisionPolicy
 {
+    public const string LinkedFollowUpLane = TaskStates.Ready;
+
     public static TransitionDecision Decide(TransitionFacts facts)
     {
         // An uncited block is not an actionable finding. The former Council loop
@@ -122,7 +125,8 @@ public static class TransitionDecisionPolicy
             [new(action, Union(action), Floor(action))], items,
             action is TransitionAction.FindingRound or TransitionAction.ConcernRound
                 or TransitionAction.SalvageContinuation ? continuationBase : null,
-            action == TransitionAction.DegradeWithFollowUp);
+            action == TransitionAction.DegradeWithFollowUp,
+            action == TransitionAction.DegradeWithFollowUp ? LinkedFollowUpLane : null);
     }
 
     public static DecisionUnion Union(TransitionAction action) => action switch
