@@ -39,3 +39,6 @@ jobs:
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh
+
+      - name: Verify monolith Docker placement
+        run: bash scripts/monolith-compose-smoke.sh

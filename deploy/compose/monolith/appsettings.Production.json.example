@@ -1,0 +1,13 @@
+{
+  "TaskRepository": "/data/workspace",
+  "Orchestration": { "ExecutionMode": "Monolith" },
+  "UpdateService": { "ProbeEnabled": false },
+  "WatchPaths": [
+    {
+      "Name": "Demo",
+      "Path": "/data/workspace/projects/demo",
+      "RootPath": "/data/projects/demo",
+      "RepositoryPath": "/data/projects/demo"
+    }
+  ]
+}
