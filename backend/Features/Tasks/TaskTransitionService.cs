@@ -286,10 +286,17 @@ public sealed class TaskTransitionService
             if (!contentDecision.Accepted)
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
         }
+        var recordedContainment = false;
         if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
              || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
-            && BatchGateReleaseFailure(info) is { } batchFailure)
-            return new MoveJobOutcome(MoveJobStatus.Failure, batchFailure, info.FolderPath);
+            && BatchGateReleaseFailure(info, ct, out recordedContainment,
+                repairContainedFallback: fromState == TaskStates.HumanReview) is { } batchFailure)
+            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, batchFailure, info.FolderPath);
+        // AGT-3139: the containment mapping is integration evidence. The status
+        // checks below and the delivery reconciler read it from the card.
+        if (recordedContainment && _scanner.FindJob(jobId, watchPath) is { } contained
+            && contained.State == fromState)
+            info = contained;
         var projectName = info.ProjectName;
 
         // Human acceptance is a quality decision, never an integration trigger.
@@ -1627,8 +1634,10 @@ public sealed class TaskTransitionService
             reviewed.FolderPath);
     }
 
-    private string? BatchGateReleaseFailure(TaskInfo task)
+    private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct,
+        out bool recordedContainment, bool repairContainedFallback)
     {
+        recordedContainment = false;
         AgentStudio.Pipeline.BatchGateOwnership? ownership;
         try { ownership = AgentStudio.Pipeline.BatchGateOwnershipStore.Read(task.FolderPath); }
         catch { return "batch-gate-evidence-missing"; }
@@ -1642,8 +1651,67 @@ public sealed class TaskTransitionService
             .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask)
             ?? task.Key ?? task.Id;
         var projection = _attemptAuthority.GetTaskProjection(authorityKey);
-        return AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
+        var failure = AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
             ownership, projection, _batchGateStore, task.FolderPath);
+        if (failure is null)
+        {
+            if (ownership.ContainedInSha is not null
+                && AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(ownership, projection))
+                recordedContainment = RecordContainmentMapping(task, ownership);
+            return null;
+        }
+        // Batch publication recovery owns Auto Review release. Repairing its
+        // marker here can move a card before the published batch is recovered.
+        if (!repairContainedFallback) return failure;
+        if (!AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(
+                ownership, projection)) return failure;
+        try
+        {
+            var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
+            if (repo is null) return failure;
+            var tip = _git.FetchBatchIntegrationTip(repo, ownership.Subject.IntegrationBranch, ct);
+            if (tip is null || !_git.IsDeliveryPublished(repo, ownership.Subject.ResultSha, tip))
+                return failure;
+            // The review and marker can both change while the network fetch runs.
+            projection = _attemptAuthority.GetTaskProjection(authorityKey);
+            if (!AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(
+                    ownership, projection)) return failure;
+            var contained = AgentStudio.Pipeline.BatchGateOwnershipStore.TryRecordContainment(
+                task.FolderPath, ownership, tip, _time);
+            if (contained is null) return failure;
+            var release = AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
+                contained, projection, _batchGateStore, task.FolderPath);
+            if (release is null) recordedContainment = RecordContainmentMapping(task, contained);
+            return release;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Batch gate containment repair failed for {TaskKey}", task.TaskKey);
+            return failure;
+        }
+    }
+
+    /// <summary>
+    /// Persists a containment record as the card's epoch-bound mapping to the
+    /// published SHA. Containment by an equivalent tree has no ancestry, so
+    /// without it the integration status, and therefore the delivery
+    /// reconciler, would read the accepted delivery as missing. True when a
+    /// record was added.
+    /// </summary>
+    private bool RecordContainmentMapping(TaskInfo task,
+        AgentStudio.Pipeline.BatchGateOwnership contained)
+    {
+        var mapping = AgentStudio.Pipeline.BatchGateOwnershipStore.ContainmentMapping(
+            contained, _time.GetUtcNow());
+        if (task.IntegrationRecords.Any(record =>
+                string.Equals(record.Id, mapping.Id, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var written = _mutations.AppendIntegrationRecordOnFolder(task.FolderPath, mapping);
+        if (!written.Succeeded)
+            _logger.LogWarning("Batch containment mapping could not be recorded for {TaskKey}",
+                task.TaskKey);
+        return written.Appended;
     }
 
     /// <summary>
