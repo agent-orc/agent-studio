@@ -57,7 +57,7 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_NoEntries_ReturnsZeros()
     {
-        var s = TokenSummaryService.Summarize("Demo", Array.Empty<OrchestratorLogEntry>());
+        var s = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(Array.Empty<OrchestratorLogEntry>()));
         Assert.Equal("Demo", s.Project);
         Assert.Equal(0, s.OrchestratorLlmCalls);
         Assert.Equal(0L, s.TotalInputTokens);
@@ -76,7 +76,7 @@ public class TokenSummaryTests
             new OrchestratorLogEntry { Summary = "no usage" },
             Entry("claude-haiku-4-5", 1_000, 100)
         };
-        var s = TokenSummaryService.Summarize("Demo", entries);
+        var s = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(entries));
         Assert.Equal(2, s.OrchestratorEntries);
         Assert.Equal(1, s.OrchestratorLlmCalls);
     }
@@ -90,7 +90,7 @@ public class TokenSummaryTests
             Entry("claude-opus-4-7",  50_000,  5_000),
             Entry("claude-haiku-4-5", 200_000, 20_000)
         };
-        var s = TokenSummaryService.Summarize("Demo", entries);
+        var s = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(entries));
 
         Assert.Equal(3, s.OrchestratorLlmCalls);
         Assert.Equal(350_000L, s.TotalInputTokens);
@@ -117,7 +117,7 @@ public class TokenSummaryTests
             Ts = new DateTime(2026, 7, 11, 0, 0, 0, DateTimeKind.Utc),
         };
 
-        var summary = TokenSummaryService.Summarize("MKT-20", [entry]);
+        var summary = TokenSummaryFold.ForProject("MKT-20", TokenTestServices.Pricing().Price([entry]));
 
         Assert.True(summary.AllModelsPriced);
         Assert.Equal(0, summary.UnknownModelCount);
@@ -136,7 +136,7 @@ public class TokenSummaryTests
             Ts = new DateTime(2026, 10, 4, 0, 0, 0, DateTimeKind.Utc),
         };
 
-        var summary = TokenSummaryService.Summarize("Agent Studio", [entry]);
+        var summary = TokenSummaryFold.ForProject("Agent Studio", TokenTestServices.Pricing().Price([entry]));
 
         Assert.Equal(0, summary.UnknownModelCount);
         var model = Assert.Single(summary.ByModel);
@@ -153,7 +153,7 @@ public class TokenSummaryTests
             Entry("claude-opus-4-7", 1_000, 100),
             Entry("unknown-catalog-model", 1_000, 100)
         };
-        var s = TokenSummaryService.Summarize("Demo", entries);
+        var s = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(entries));
         Assert.False(s.AllModelsPriced);
         Assert.Equal(1, s.UnknownModelCount);
         var unknown = s.ByModel.Single(m => m.Model == "unknown-catalog-model");
@@ -165,13 +165,13 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_KnownModelWithoutPrice_IsUnpricedButNotCatalogDrift()
     {
-        var firstPrice = TokenPricing.Catalog["gpt-5-codex"].History.Min(price => price.ValidFrom);
+        var firstPrice = TokenEconomyPriceProvider.Catalog["gpt-5-codex"].History.Min(price => price.ValidFrom);
         var entry = Entry("gpt-5-codex", 1_000, 100) with
         {
             Ts = firstPrice.AddTicks(-1),
         };
 
-        var summary = TokenSummaryService.Summarize("Demo", [entry]);
+        var summary = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price([entry]));
 
         Assert.False(summary.AllModelsPriced);
         Assert.Equal(0, summary.UnknownModelCount);
@@ -183,9 +183,7 @@ public class TokenSummaryTests
     [Fact]
     public void DriftMonitor_UnknownActiveModel_LogsOneWarning()
     {
-        var summary = TokenSummaryService.Summarize(
-            "Demo",
-            [Entry("unknown-catalog-model", 1_000, 100)]);
+        var summary = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price([Entry("unknown-catalog-model", 1_000, 100)]));
         var logger = new LevelCapturingLogger<TokenPricingDriftMonitor>();
         var monitor = new TokenPricingDriftMonitor(logger);
 
@@ -207,7 +205,7 @@ public class TokenSummaryTests
             Entry("claude-sonnet-4.6", 1_000, 100),
         };
 
-        var s = TokenSummaryService.Summarize("Demo", entries);
+        var s = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(entries));
 
         Assert.Contains(s.ByModel, m => m.Model == "GPT-5 Codex");
         Assert.Contains(s.ByModel, m => m.Model == "Claude Sonnet 4.6");
@@ -216,7 +214,7 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_DisclaimerIsAlwaysPresent()
     {
-        var s = TokenSummaryService.Summarize("Demo", Array.Empty<OrchestratorLogEntry>());
+        var s = TokenSummaryFold.ForProject("Demo", TokenTestServices.Pricing().Price(Array.Empty<OrchestratorLogEntry>()));
         Assert.Contains("subscription", s.Disclaimer, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("comparison", s.Disclaimer, StringComparison.OrdinalIgnoreCase);
     }
@@ -231,7 +229,7 @@ public class TokenSummaryTests
             JobEntry("claude-haiku-4.5", 2_000, 200, t.AddMinutes(5), participantId: "orchestrator:Demo"),
         };
 
-        var summary = TokenSummaryService.SummarizePerJob(entries)["job-a"];
+        var summary = TaskTokenSummaryFold.PerJob(TokenTestServices.Pricing().Price(entries))["job-a"];
 
         Assert.Equal(3_300, summary.TotalTokens);
         Assert.Equal("GPT-5 Codex", summary.LastModel);
@@ -259,7 +257,7 @@ public class TokenSummaryTests
             pinnedModel: "claude-opus-5-5",
             modelMismatch: true);
 
-        var summary = TokenSummaryService.SummarizePerJob([entry])["job-a"];
+        var summary = TaskTokenSummaryFold.PerJob(TokenTestServices.Pricing().Price([entry]))["job-a"];
 
         var receipt = Assert.Single(summary.Entries);
         Assert.Equal("claude-haiku-4-5", receipt.Model);
@@ -276,14 +274,14 @@ public class TokenSummaryTests
     [Fact]
     public void SummarizePerJob_PricesEachCallAtItsRecordedTimestamp()
     {
-        var transition = TokenPricing.Catalog["claude-sonnet-5"].History.Max(price => price.ValidFrom);
+        var transition = TokenEconomyPriceProvider.Catalog["claude-sonnet-5"].History.Max(price => price.ValidFrom);
         var entries = new[]
         {
             JobEntry("claude-sonnet-5", 1_000_000, 0, transition.AddTicks(-1)),
             JobEntry("claude-sonnet-5", 1_000_000, 0, transition),
         };
 
-        var summary = TokenSummaryService.SummarizePerJob(entries)["job-a"];
+        var summary = TaskTokenSummaryFold.PerJob(TokenTestServices.Pricing().Price(entries))["job-a"];
 
         Assert.Equal(summary.Entries.All(entry => entry.ModelPriced), summary.AllModelsPriced);
         Assert.Equal(2, summary.Entries.Count);
@@ -299,16 +297,16 @@ public class TokenSummaryTests
     public void SummarizePerJob_PricesPinnedOpus55ReceiptFromPublishedCatalog()
     {
         var at = new DateTime(2026, 9, 25, 0, 0, 0, DateTimeKind.Utc);
-        var summary = TokenSummaryService.SummarizePerJob([
+        var summary = TaskTokenSummaryFold.PerJob(TokenTestServices.Pricing().Price([
             JobEntry(ModelIds.ClaudeOpus55, 1_000_000, 100_000, at,
                 participantId: "agent:claude")
-        ])["job-a"];
+        ]))["job-a"];
 
         var receipt = Assert.Single(summary.Entries);
         Assert.Equal(ModelIds.ClaudeOpus55, receipt.Model);
         Assert.Equal("Claude Opus 5.5", receipt.DisplayModel);
         Assert.True(receipt.ModelPriced);
-        Assert.Equal(TokenPricing.Estimate(ModelIds.ClaudeOpus55,
+        Assert.Equal(TokenTestServices.Pricing().Estimate(ModelIds.ClaudeOpus55,
             1_000_000, 100_000, 0, 0, at).Total, receipt.EstimatedApiCostUsd);
     }
 
@@ -323,7 +321,7 @@ public class TokenSummaryTests
             JobEntry("claude-haiku-4.5", 500, 50, t.AddMinutes(10), participantId: "orchestrator:Demo"),
         };
 
-        var summary = TokenSummaryService.SummarizePerJob(entries)["job-a"];
+        var summary = TaskTokenSummaryFold.PerJob(TokenTestServices.Pricing().Price(entries))["job-a"];
 
         Assert.Equal("GPT-5 Codex", summary.LastModel);
         Assert.Equal("gpt-5-codex", summary.Entries[0].Model);
@@ -353,7 +351,7 @@ public class TokenSummaryTests
             ]
         };
 
-        var filled = TokenSummaryService.WithModelFallback(summary, "claude-sonnet-4.6");
+        var filled = new RunModelPricing(TokenTestServices.Pricing()).Apply(summary, "claude-sonnet-4.6");
 
         Assert.Equal("Claude Sonnet 4.6", filled.LastModel);
         Assert.Equal("claude-sonnet-4-6", filled.Entries[0].Model);
@@ -387,7 +385,7 @@ public class TokenSummaryTests
             ]
         };
 
-        var filled = TokenSummaryService.WithModelFallback(summary, "gpt-5-codex");
+        var filled = new RunModelPricing(TokenTestServices.Pricing()).Apply(summary, "gpt-5-codex");
 
         Assert.Equal("GPT-5 Codex", filled.LastModel);
         Assert.Equal("gpt-5-codex", filled.Entries[0].Model);
@@ -415,7 +413,7 @@ public class TokenSummaryTests
             ]
         };
 
-        var filled = TokenSummaryService.WithModelFallback(summary, "gpt-5-codex");
+        var filled = new RunModelPricing(TokenTestServices.Pricing()).Apply(summary, "gpt-5-codex");
 
         Assert.Null(filled.LastModel);
         Assert.Null(filled.Entries[0].Model);

@@ -1987,7 +1987,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         // A legacy or torn record with no exact approval cannot authorize the
         // backstop to publish whatever happens to be at the lane tip.
         deps.Pipeline.RecordStep(archivedFolder, mergeStep with { ApprovedIntegrationSha = null });
-        var recoveredPipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var recoveredPipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var backstop = new IntegrationPushBackstopHostedService(
             deps.Scanner,
             deps.Settings,
@@ -2771,7 +2771,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         if (gateRunner != null)
             settings.SetBuildProfile(Project, new BuildProfile { BuildCmds = ["cd ."] });
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var authority = new AttemptAuthorityService(
             config,
             NullLogger<AttemptAuthorityService>.Instance);

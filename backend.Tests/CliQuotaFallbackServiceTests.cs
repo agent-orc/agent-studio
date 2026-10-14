@@ -126,7 +126,7 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
         Assert.Equal(ModelIds.Gpt56Sol, decision.Model);
         Assert.Equal("high", decision.ThinkingLevel);
         Assert.Equal("catalogue", decision.FallbackSource);
-        Assert.Equal(new ModelEquivalenceCatalog().Version, decision.CatalogueVersion);
+        Assert.Equal(new ModelEquivalenceCatalog(TokenTestServices.Pricing()).Version, decision.CatalogueVersion);
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
         new(_config, NullLogger<CliQuotaFallbackService>.Instance);
 
     private CliQuotaFallbackService NewServiceWithCatalog() =>
-        new(_config, NullLogger<CliQuotaFallbackService>.Instance, new ModelEquivalenceCatalog());
+        new(_config, NullLogger<CliQuotaFallbackService>.Instance, new ModelEquivalenceCatalog(TokenTestServices.Pricing()));
 
     public void Dispose()
     {

@@ -59,7 +59,7 @@ public sealed class FileGenerationIndexTests : IDisposable
     [Fact]
     public void ReadForJob_CachesLegacyPipelineProjectionIntoSidecar()
     {
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var started = new DateTime(2026, 6, 9, 9, 0, 0, DateTimeKind.Utc);
         pipelineLog.EnsureRun(_jobFolder, PipelineCatalogue.Standard, "demo", "job-1", started);
         pipelineLog.RecordStep(_jobFolder, new PipelineStepExecution
@@ -92,7 +92,7 @@ public sealed class FileGenerationIndexTests : IDisposable
     [Fact]
     public void CurrentRunIndex_ReturnsCurrentPipelineAttempt()
     {
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(_jobFolder, PipelineCatalogue.Standard, "demo", "job-1");
         pipelineLog.Begin(_jobFolder, PipelineCatalogue.Standard, "demo", "job-1");
         var index = new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance, pipelineLog);

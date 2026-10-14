@@ -229,7 +229,7 @@ public sealed class JobsHubTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var machine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var proxy = new CapturingClientProxy();
-        _ = new TaskHubBroadcaster(
+        _ = new TaskHubBroadcaster(TokenTestServices.Pricing(),
             new FakeHubContext(new FakeHubClients(proxy)),
             scanner,
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),

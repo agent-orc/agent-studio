@@ -1,0 +1,3440 @@
+{
+  "alphaSummary": {
+    "Project": "alpha",
+    "OrchestratorEntries": 14,
+    "OrchestratorLlmCalls": 14,
+    "TotalInputTokens": 287500,
+    "TotalOutputTokens": 54700,
+    "TotalCacheReadTokens": 368000,
+    "TotalCacheCreationTokens": 14000,
+    "cost": "0.99365",
+    "AllModelsPriced": false,
+    "UnknownModelCount": 2,
+    "firstActivity": "2026-07-15T10:00:00.0000000Z",
+    "lastActivity": "2026-10-13T08:15:00.0000000Z",
+    "byModel": [
+      {
+        "Model": "GPT-5.6 Luna",
+        "ModelId": "gpt-5.6-luna",
+        "Cli": "codex",
+        "Calls": 2,
+        "InputTokens": 200000,
+        "OutputTokens": 40000,
+        "CacheReadTokens": 80000,
+        "CacheCreationTokens": 0,
+        "cost": "0.2688",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Opus 5",
+        "ModelId": "claude-opus-5",
+        "Cli": "claude",
+        "Calls": 3,
+        "InputTokens": 30000,
+        "OutputTokens": 5200,
+        "CacheReadTokens": 170000,
+        "CacheCreationTokens": 9000,
+        "cost": "0.42125",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Sonnet 5",
+        "ModelId": "claude-sonnet-5",
+        "Cli": "claude",
+        "Calls": 3,
+        "InputTokens": 19000,
+        "OutputTokens": 4500,
+        "CacheReadTokens": 81000,
+        "CacheCreationTokens": 5000,
+        "cost": "0.1117",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "GPT-5.5",
+        "ModelId": "gpt-5.5",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 20000,
+        "OutputTokens": 2000,
+        "CacheReadTokens": 30000,
+        "CacheCreationTokens": 0,
+        "cost": "0.175",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "zeta-model-9",
+        "ModelId": "zeta-model-9",
+        "Cli": null,
+        "Calls": 1,
+        "InputTokens": 7000,
+        "OutputTokens": 900,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false,
+        "ModelInCatalog": false
+      },
+      {
+        "Model": "Claude Opus 5.5",
+        "ModelId": "claude-opus-5-5",
+        "Cli": "claude",
+        "Calls": 1,
+        "InputTokens": 4000,
+        "OutputTokens": 1000,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Haiku 4.5",
+        "ModelId": "claude-haiku-4-5",
+        "Cli": "claude",
+        "Calls": 1,
+        "InputTokens": 3000,
+        "OutputTokens": 500,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0.0055",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "GPT-6 Sol",
+        "ModelId": "gpt-6-sol",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 3000,
+        "OutputTokens": 400,
+        "CacheReadTokens": 7000,
+        "CacheCreationTokens": 0,
+        "cost": "0.0114",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "(unknown)",
+        "ModelId": "(unknown)",
+        "Cli": null,
+        "Calls": 1,
+        "InputTokens": 1500,
+        "OutputTokens": 200,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false,
+        "ModelInCatalog": false
+      }
+    ]
+  },
+  "betaSummary": {
+    "Project": "beta",
+    "OrchestratorEntries": 4,
+    "OrchestratorLlmCalls": 4,
+    "TotalInputTokens": 17000,
+    "TotalOutputTokens": 3800,
+    "TotalCacheReadTokens": 6000,
+    "TotalCacheCreationTokens": 0,
+    "cost": "0.1242",
+    "AllModelsPriced": true,
+    "UnknownModelCount": 0,
+    "firstActivity": "2026-10-08T10:00:00.0000000Z",
+    "lastActivity": "2026-10-13T10:00:00.0000000Z",
+    "byModel": [
+      {
+        "Model": "GPT-5.6 Sol",
+        "ModelId": "gpt-5.6-sol",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 10000,
+        "OutputTokens": 3000,
+        "CacheReadTokens": 5000,
+        "CacheCreationTokens": 0,
+        "cost": "0.102",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Sonnet 5",
+        "ModelId": "claude-sonnet-5",
+        "Cli": "claude",
+        "Calls": 2,
+        "InputTokens": 5000,
+        "OutputTokens": 700,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0.017",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "GPT-6 Sol",
+        "ModelId": "gpt-6-sol",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 2000,
+        "OutputTokens": 100,
+        "CacheReadTokens": 1000,
+        "CacheCreationTokens": 0,
+        "cost": "0.0052",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      }
+    ]
+  },
+  "workspace": {
+    "Projects": 2,
+    "OrchestratorEntries": 18,
+    "OrchestratorLlmCalls": 18,
+    "TotalInputTokens": 304500,
+    "TotalOutputTokens": 58500,
+    "TotalCacheReadTokens": 374000,
+    "TotalCacheCreationTokens": 14000,
+    "cost": "1.11785",
+    "AllModelsPriced": false,
+    "firstActivity": "2026-07-15T10:00:00.0000000Z",
+    "lastActivity": "2026-10-13T10:00:00.0000000Z",
+    "byModel": [
+      {
+        "Model": "GPT-5.6 Luna",
+        "ModelId": "gpt-5.6-luna",
+        "Cli": "codex",
+        "Calls": 2,
+        "InputTokens": 200000,
+        "OutputTokens": 40000,
+        "CacheReadTokens": 80000,
+        "CacheCreationTokens": 0,
+        "cost": "0.2688",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Opus 5",
+        "ModelId": "claude-opus-5",
+        "Cli": "claude",
+        "Calls": 3,
+        "InputTokens": 30000,
+        "OutputTokens": 5200,
+        "CacheReadTokens": 170000,
+        "CacheCreationTokens": 9000,
+        "cost": "0.42125",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Sonnet 5",
+        "ModelId": "claude-sonnet-5",
+        "Cli": "claude",
+        "Calls": 5,
+        "InputTokens": 24000,
+        "OutputTokens": 5200,
+        "CacheReadTokens": 81000,
+        "CacheCreationTokens": 5000,
+        "cost": "0.1287",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "GPT-5.5",
+        "ModelId": "gpt-5.5",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 20000,
+        "OutputTokens": 2000,
+        "CacheReadTokens": 30000,
+        "CacheCreationTokens": 0,
+        "cost": "0.175",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "GPT-5.6 Sol",
+        "ModelId": "gpt-5.6-sol",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 10000,
+        "OutputTokens": 3000,
+        "CacheReadTokens": 5000,
+        "CacheCreationTokens": 0,
+        "cost": "0.102",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "zeta-model-9",
+        "ModelId": "zeta-model-9",
+        "Cli": null,
+        "Calls": 1,
+        "InputTokens": 7000,
+        "OutputTokens": 900,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false,
+        "ModelInCatalog": false
+      },
+      {
+        "Model": "GPT-6 Sol",
+        "ModelId": "gpt-6-sol",
+        "Cli": "codex",
+        "Calls": 2,
+        "InputTokens": 5000,
+        "OutputTokens": 500,
+        "CacheReadTokens": 8000,
+        "CacheCreationTokens": 0,
+        "cost": "0.0166",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Opus 5.5",
+        "ModelId": "claude-opus-5-5",
+        "Cli": "claude",
+        "Calls": 1,
+        "InputTokens": 4000,
+        "OutputTokens": 1000,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "Claude Haiku 4.5",
+        "ModelId": "claude-haiku-4-5",
+        "Cli": "claude",
+        "Calls": 1,
+        "InputTokens": 3000,
+        "OutputTokens": 500,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0.0055",
+        "ModelPriced": true,
+        "ModelInCatalog": true
+      },
+      {
+        "Model": "(unknown)",
+        "ModelId": "(unknown)",
+        "Cli": null,
+        "Calls": 1,
+        "InputTokens": 1500,
+        "OutputTokens": 200,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false,
+        "ModelInCatalog": false
+      }
+    ],
+    "byProject": [
+      {
+        "Project": "alpha",
+        "OrchestratorLlmCalls": 14,
+        "InputTokens": 287500,
+        "OutputTokens": 54700,
+        "CacheReadTokens": 368000,
+        "CacheCreationTokens": 14000,
+        "cost": "0.99365"
+      },
+      {
+        "Project": "beta",
+        "OrchestratorLlmCalls": 4,
+        "InputTokens": 17000,
+        "OutputTokens": 3800,
+        "CacheReadTokens": 6000,
+        "CacheCreationTokens": 0,
+        "cost": "0.1242"
+      }
+    ]
+  },
+  "perJob": [
+    {
+      "job": "AGT-1",
+      "summary": {
+        "Calls": 3,
+        "InputTokens": 17000,
+        "OutputTokens": 4200,
+        "CacheReadTokens": 80000,
+        "CacheCreationTokens": 5000,
+        "TotalTokens": 106200,
+        "cost": "0.099",
+        "AllModelsPriced": true,
+        "LastModel": "Claude Sonnet 5",
+        "LastModelId": "claude-sonnet-5",
+        "LastUpdate": "2026-10-12T10:30:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-10-11T08:00:00Z",
+            "Model": "claude-haiku-4-5",
+            "DisplayModel": "Claude Haiku 4.5",
+            "ParticipantId": "agent:claude",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 3000,
+            "OutputTokens": 500,
+            "CacheReadTokens": 0,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": null,
+            "cost": "0.0055",
+            "ModelPriced": true
+          },
+          {
+            "Ts": "2026-10-12T09:00:00Z",
+            "Model": "claude-sonnet-5",
+            "DisplayModel": "Claude Sonnet 5",
+            "ParticipantId": "agent:claude",
+            "CliType": "claude",
+            "Host": null,
+            "InputTokens": 12000,
+            "OutputTokens": 3400,
+            "CacheReadTokens": 80000,
+            "CacheCreationTokens": 5000,
+            "InputIncludesCached": null,
+            "cost": "0.0865",
+            "ModelPriced": true
+          },
+          {
+            "Ts": "2026-10-12T10:30:00Z",
+            "Model": "claude-sonnet-5",
+            "DisplayModel": "Claude Sonnet 5",
+            "ParticipantId": "support:summary-gen",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 2000,
+            "OutputTokens": 300,
+            "CacheReadTokens": 0,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": null,
+            "cost": "0.007",
+            "ModelPriced": true
+          }
+        ]
+      }
+    },
+    {
+      "job": "AGT-2",
+      "summary": {
+        "Calls": 3,
+        "InputTokens": 24000,
+        "OutputTokens": 4400,
+        "CacheReadTokens": 157000,
+        "CacheCreationTokens": 6000,
+        "TotalTokens": 191400,
+        "cost": "0.3289",
+        "AllModelsPriced": true,
+        "LastModel": "Claude Opus 5",
+        "LastModelId": "claude-opus-5",
+        "LastUpdate": "2026-10-12T17:00:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-10-12T15:00:00Z",
+            "Model": "claude-opus-5",
+            "DisplayModel": "Claude Opus 5",
+            "ParticipantId": "agent:remote-runner:att-1",
+            "CliType": "claude",
+            "Host": "agent-runner-01",
+            "InputTokens": 20000,
+            "OutputTokens": 4000,
+            "CacheReadTokens": 150000,
+            "CacheCreationTokens": 6000,
+            "InputIncludesCached": null,
+            "cost": "0.3125",
+            "ModelPriced": true
+          },
+          {
+            "Ts": "2026-10-12T16:00:00Z",
+            "Model": "gpt-6-sol",
+            "DisplayModel": "GPT-6 Sol",
+            "ParticipantId": "support:remote-review:rev-1",
+            "CliType": "codex",
+            "Host": "agent-runner-01",
+            "InputTokens": 3000,
+            "OutputTokens": 400,
+            "CacheReadTokens": 7000,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": true,
+            "cost": "0.0114",
+            "ModelPriced": true
+          },
+          {
+            "Ts": "2026-10-12T17:00:00Z",
+            "Model": "claude-opus-5",
+            "DisplayModel": "Claude Opus 5",
+            "ParticipantId": "agent:task-receipt",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 1000,
+            "OutputTokens": 0,
+            "CacheReadTokens": 0,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": null,
+            "cost": "0.005",
+            "ModelPriced": true
+          }
+        ]
+      }
+    },
+    {
+      "job": "AGT-3",
+      "summary": {
+        "Calls": 1,
+        "InputTokens": 9000,
+        "OutputTokens": 1200,
+        "CacheReadTokens": 20000,
+        "CacheCreationTokens": 3000,
+        "TotalTokens": 33200,
+        "cost": "0.10375",
+        "AllModelsPriced": true,
+        "LastModel": "Claude Opus 5",
+        "LastModelId": "claude-opus-5",
+        "LastUpdate": "2026-10-13T08:15:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-10-13T08:15:00Z",
+            "Model": "claude-opus-5",
+            "DisplayModel": "Claude Opus 5",
+            "ParticipantId": "agent:claude",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 9000,
+            "OutputTokens": 1200,
+            "CacheReadTokens": 20000,
+            "CacheCreationTokens": 3000,
+            "InputIncludesCached": null,
+            "cost": "0.10375",
+            "ModelPriced": true
+          }
+        ]
+      }
+    },
+    {
+      "job": "AGT-4",
+      "summary": {
+        "Calls": 2,
+        "InputTokens": 27000,
+        "OutputTokens": 2900,
+        "CacheReadTokens": 30000,
+        "CacheCreationTokens": 0,
+        "TotalTokens": 59900,
+        "cost": "0.175",
+        "AllModelsPriced": false,
+        "LastModel": "zeta-model-9",
+        "LastModelId": "zeta-model-9",
+        "LastUpdate": "2026-10-10T14:00:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-10-09T16:00:00Z",
+            "Model": "gpt-5.5",
+            "DisplayModel": "GPT-5.5",
+            "ParticipantId": "agent:codex",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 20000,
+            "OutputTokens": 2000,
+            "CacheReadTokens": 30000,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": true,
+            "cost": "0.175",
+            "ModelPriced": true
+          },
+          {
+            "Ts": "2026-10-10T14:00:00Z",
+            "Model": "zeta-model-9",
+            "DisplayModel": "zeta-model-9",
+            "ParticipantId": "agent:codex",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 7000,
+            "OutputTokens": 900,
+            "CacheReadTokens": 0,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": null,
+            "cost": "0",
+            "ModelPriced": false
+          }
+        ]
+      }
+    },
+    {
+      "job": "AGT-5",
+      "summary": {
+        "Calls": 2,
+        "InputTokens": 200000,
+        "OutputTokens": 40000,
+        "CacheReadTokens": 80000,
+        "CacheCreationTokens": 0,
+        "TotalTokens": 320000,
+        "cost": "0.2688",
+        "AllModelsPriced": true,
+        "LastModel": "GPT-5.6 Luna",
+        "LastModelId": "gpt-5.6-luna",
+        "LastUpdate": "2026-08-15T10:00:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-07-15T10:00:00Z",
+            "Model": "gpt-5.6-luna",
+            "DisplayModel": "GPT-5.6 Luna",
+            "ParticipantId": "agent:codex",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 100000,
+            "OutputTokens": 20000,
+            "CacheReadTokens": 40000,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": true,
+            "cost": "0.224",
+            "ModelPriced": true
+          },
+          {
+            "Ts": "2026-08-15T10:00:00Z",
+            "Model": "gpt-5.6-luna",
+            "DisplayModel": "GPT-5.6 Luna",
+            "ParticipantId": "agent:codex",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 100000,
+            "OutputTokens": 20000,
+            "CacheReadTokens": 40000,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": true,
+            "cost": "0.0448",
+            "ModelPriced": true
+          }
+        ]
+      }
+    },
+    {
+      "job": "AGT-6",
+      "summary": {
+        "Calls": 1,
+        "InputTokens": 4000,
+        "OutputTokens": 1000,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "TotalTokens": 5000,
+        "cost": "0",
+        "AllModelsPriced": false,
+        "LastModel": "Claude Opus 5.5",
+        "LastModelId": "claude-opus-5-5",
+        "LastUpdate": "2026-09-01T10:00:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-09-01T10:00:00Z",
+            "Model": "claude-opus-5-5",
+            "DisplayModel": "Claude Opus 5.5",
+            "ParticipantId": "agent:claude",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 4000,
+            "OutputTokens": 1000,
+            "CacheReadTokens": 0,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": null,
+            "cost": "0",
+            "ModelPriced": false
+          }
+        ]
+      }
+    },
+    {
+      "job": "AGT-7",
+      "summary": {
+        "Calls": 1,
+        "InputTokens": 1500,
+        "OutputTokens": 200,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "TotalTokens": 1700,
+        "cost": "0",
+        "AllModelsPriced": false,
+        "LastModel": null,
+        "LastModelId": null,
+        "LastUpdate": "2026-10-12T13:00:00Z",
+        "HasModelMismatch": false,
+        "entries": [
+          {
+            "Ts": "2026-10-12T13:00:00Z",
+            "Model": null,
+            "DisplayModel": null,
+            "ParticipantId": "agent:claude",
+            "CliType": null,
+            "Host": null,
+            "InputTokens": 1500,
+            "OutputTokens": 200,
+            "CacheReadTokens": 0,
+            "CacheCreationTokens": 0,
+            "InputIncludesCached": null,
+            "cost": "0",
+            "ModelPriced": false
+          }
+        ]
+      }
+    }
+  ],
+  "runModelFallback": {
+    "noModel": {
+      "Calls": 1,
+      "InputTokens": 1500,
+      "OutputTokens": 200,
+      "CacheReadTokens": 0,
+      "CacheCreationTokens": 0,
+      "TotalTokens": 1700,
+      "cost": "0.0125",
+      "AllModelsPriced": true,
+      "LastModel": "Claude Opus 5",
+      "LastModelId": "claude-opus-5",
+      "LastUpdate": "2026-10-12T13:00:00Z",
+      "HasModelMismatch": false,
+      "entries": [
+        {
+          "Ts": "2026-10-12T13:00:00Z",
+          "Model": "claude-opus-5",
+          "DisplayModel": "Claude Opus 5",
+          "ParticipantId": "agent:claude",
+          "CliType": null,
+          "Host": null,
+          "InputTokens": 1500,
+          "OutputTokens": 200,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "InputIncludesCached": null,
+          "cost": "0.0125",
+          "ModelPriced": true
+        }
+      ]
+    },
+    "labelledFallback": {
+      "Calls": 1,
+      "InputTokens": 1500,
+      "OutputTokens": 200,
+      "CacheReadTokens": 0,
+      "CacheCreationTokens": 0,
+      "TotalTokens": 1700,
+      "cost": "0.005",
+      "AllModelsPriced": true,
+      "LastModel": "Claude Sonnet 5",
+      "LastModelId": "claude-sonnet-5",
+      "LastUpdate": "2026-10-12T13:00:00Z",
+      "HasModelMismatch": false,
+      "entries": [
+        {
+          "Ts": "2026-10-12T13:00:00Z",
+          "Model": "claude-sonnet-5",
+          "DisplayModel": "Claude Sonnet 5",
+          "ParticipantId": "agent:claude",
+          "CliType": null,
+          "Host": null,
+          "InputTokens": 1500,
+          "OutputTokens": 200,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "InputIncludesCached": null,
+          "cost": "0.005",
+          "ModelPriced": true
+        }
+      ]
+    },
+    "alreadyModelled": {
+      "Calls": 3,
+      "InputTokens": 17000,
+      "OutputTokens": 4200,
+      "CacheReadTokens": 80000,
+      "CacheCreationTokens": 5000,
+      "TotalTokens": 106200,
+      "cost": "0.099",
+      "AllModelsPriced": true,
+      "LastModel": "Claude Sonnet 5",
+      "LastModelId": "claude-sonnet-5",
+      "LastUpdate": "2026-10-12T10:30:00Z",
+      "HasModelMismatch": false,
+      "entries": [
+        {
+          "Ts": "2026-10-11T08:00:00Z",
+          "Model": "claude-haiku-4-5",
+          "DisplayModel": "Claude Haiku 4.5",
+          "ParticipantId": "agent:claude",
+          "CliType": null,
+          "Host": null,
+          "InputTokens": 3000,
+          "OutputTokens": 500,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "InputIncludesCached": null,
+          "cost": "0.0055",
+          "ModelPriced": true
+        },
+        {
+          "Ts": "2026-10-12T09:00:00Z",
+          "Model": "claude-sonnet-5",
+          "DisplayModel": "Claude Sonnet 5",
+          "ParticipantId": "agent:claude",
+          "CliType": "claude",
+          "Host": null,
+          "InputTokens": 12000,
+          "OutputTokens": 3400,
+          "CacheReadTokens": 80000,
+          "CacheCreationTokens": 5000,
+          "InputIncludesCached": null,
+          "cost": "0.0865",
+          "ModelPriced": true
+        },
+        {
+          "Ts": "2026-10-12T10:30:00Z",
+          "Model": "claude-sonnet-5",
+          "DisplayModel": "Claude Sonnet 5",
+          "ParticipantId": "support:summary-gen",
+          "CliType": null,
+          "Host": null,
+          "InputTokens": 2000,
+          "OutputTokens": 300,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "InputIncludesCached": null,
+          "cost": "0.007",
+          "ModelPriced": true
+        }
+      ]
+    }
+  },
+  "timeline": {
+    "windowStart": "2026-10-06T12:00:00.0000000Z",
+    "windowEnd": "2026-10-13T12:00:00.0000000Z",
+    "WindowHours": 168,
+    "BucketMinutes": 60,
+    "BucketCount": 168,
+    "freshness": {
+      "Status": "complete",
+      "asOf": "2026-10-13T10:00:00.0000000Z",
+      "Sources": [
+        "historical-token-bus",
+        "task-token-receipts",
+        "chat-usage-fallback"
+      ]
+    },
+    "projects": [
+      {
+        "Project": "alpha",
+        "Calls": 11,
+        "Input": 83500,
+        "Output": 13700,
+        "CacheRead": 288000,
+        "CacheWrite": 14000,
+        "Total": 399200,
+        "dollars": "0.72485",
+        "AllModelsPriced": false,
+        "peakBucketStart": "2026-10-12T15:00:00.0000000Z",
+        "PeakBucketTotal": 180000,
+        "lastActivity": "2026-10-13T08:15:00.0000000Z",
+        "AgentTokens": 379700,
+        "SupportingTokens": 12700,
+        "OrchestratorTokens": 6800,
+        "hosts": [
+          {
+            "Host": "local",
+            "Calls": 9,
+            "Total": 208800
+          },
+          {
+            "Host": "agent-runner-01",
+            "Calls": 2,
+            "Total": 190400
+          }
+        ]
+      },
+      {
+        "Project": "beta",
+        "Calls": 4,
+        "Input": 17000,
+        "Output": 3800,
+        "CacheRead": 6000,
+        "CacheWrite": 0,
+        "Total": 26800,
+        "dollars": "0.1242",
+        "AllModelsPriced": true,
+        "peakBucketStart": "2026-10-08T10:00:00.0000000Z",
+        "PeakBucketTotal": 18000,
+        "lastActivity": "2026-10-13T10:00:00.0000000Z",
+        "AgentTokens": 23700,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 3100,
+        "hosts": [
+          {
+            "Host": "local",
+            "Calls": 3,
+            "Total": 23700
+          },
+          {
+            "Host": "agent-runner-02",
+            "Calls": 1,
+            "Total": 3100
+          }
+        ]
+      }
+    ],
+    "cells": [
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-08T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 10000,
+        "Output": 3000,
+        "CacheRead": 5000,
+        "CacheWrite": 0,
+        "Total": 18000,
+        "dollars": "0.102",
+        "AllModelsPriced": true,
+        "AgentTokens": 18000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-09T16:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 2000,
+        "CacheRead": 30000,
+        "CacheWrite": 0,
+        "Total": 52000,
+        "dollars": "0.175",
+        "AllModelsPriced": true,
+        "AgentTokens": 52000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-10T14:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 7000,
+        "Output": 900,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 7900,
+        "dollars": null,
+        "AllModelsPriced": false,
+        "AgentTokens": 7900,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-11T08:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 500,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 3500,
+        "dollars": "0.0055",
+        "AllModelsPriced": true,
+        "AgentTokens": 3500,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T09:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 12000,
+        "Output": 3400,
+        "CacheRead": 80000,
+        "CacheWrite": 5000,
+        "Total": 100400,
+        "dollars": "0.0865",
+        "AllModelsPriced": true,
+        "AgentTokens": 100400,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 2000,
+        "Output": 300,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 2300,
+        "dollars": "0.007",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 2300,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T11:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 5000,
+        "Output": 800,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 6800,
+        "dollars": "0.0182",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 6800
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-12T12:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 4000,
+        "Output": 600,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 4600,
+        "dollars": "0.014",
+        "AllModelsPriced": true,
+        "AgentTokens": 4600,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T13:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 1500,
+        "Output": 200,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1700,
+        "dollars": null,
+        "AllModelsPriced": false,
+        "AgentTokens": 1700,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T15:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 4000,
+        "CacheRead": 150000,
+        "CacheWrite": 6000,
+        "Total": 180000,
+        "dollars": "0.3125",
+        "AllModelsPriced": true,
+        "AgentTokens": 180000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T16:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 400,
+        "CacheRead": 7000,
+        "CacheWrite": 0,
+        "Total": 10400,
+        "dollars": "0.0114",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 10400,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T17:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 1000,
+        "Output": 0,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1000,
+        "dollars": "0.005",
+        "AllModelsPriced": true,
+        "AgentTokens": 1000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-13T08:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 9000,
+        "Output": 1200,
+        "CacheRead": 20000,
+        "CacheWrite": 3000,
+        "Total": 33200,
+        "dollars": "0.10375",
+        "AllModelsPriced": true,
+        "AgentTokens": 33200,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-13T09:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 1000,
+        "Output": 100,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1100,
+        "dollars": "0.003",
+        "AllModelsPriced": true,
+        "AgentTokens": 1100,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-13T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 2000,
+        "Output": 100,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 3100,
+        "dollars": "0.0052",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 3100
+      }
+    ],
+    "models": [
+      {
+        "Project": "alpha",
+        "Model": "claude-opus-5",
+        "ModelLabel": "Claude Opus 5",
+        "Host": "agent-runner-01",
+        "CliTypes": [
+          "claude"
+        ],
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 4000,
+        "CacheRead": 150000,
+        "CacheWrite": 6000,
+        "Total": 180000,
+        "dollars": "0.3125",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-sonnet-5",
+        "ModelLabel": "Claude Sonnet 5",
+        "Host": "local",
+        "CliTypes": [
+          "claude"
+        ],
+        "Calls": 2,
+        "Input": 14000,
+        "Output": 3700,
+        "CacheRead": 80000,
+        "CacheWrite": 5000,
+        "Total": 102700,
+        "dollars": "0.0935",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "gpt-5.5",
+        "ModelLabel": "GPT-5.5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 2000,
+        "CacheRead": 30000,
+        "CacheWrite": 0,
+        "Total": 52000,
+        "dollars": "0.175",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-opus-5",
+        "ModelLabel": "Claude Opus 5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 2,
+        "Input": 10000,
+        "Output": 1200,
+        "CacheRead": 20000,
+        "CacheWrite": 3000,
+        "Total": 34200,
+        "dollars": "0.10875",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "beta",
+        "Model": "gpt-5.6-sol",
+        "ModelLabel": "gpt-5.6-sol",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 10000,
+        "Output": 3000,
+        "CacheRead": 5000,
+        "CacheWrite": 0,
+        "Total": 18000,
+        "dollars": "0.102",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "gpt-6-sol",
+        "ModelLabel": "GPT-6 Sol",
+        "Host": "agent-runner-01",
+        "CliTypes": [
+          "codex"
+        ],
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 400,
+        "CacheRead": 7000,
+        "CacheWrite": 0,
+        "Total": 10400,
+        "dollars": "0.0114",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "zeta-model-9",
+        "ModelLabel": "zeta-model-9",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 7000,
+        "Output": 900,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 7900,
+        "dollars": null,
+        "AllModelsPriced": false
+      },
+      {
+        "Project": "alpha",
+        "Model": "sonnet",
+        "ModelLabel": "sonnet",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 5000,
+        "Output": 800,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 6800,
+        "dollars": "0.0182",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "beta",
+        "Model": "claude-sonnet-5",
+        "ModelLabel": "Claude Sonnet 5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 2,
+        "Input": 5000,
+        "Output": 700,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 5700,
+        "dollars": "0.017",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-haiku-4-5",
+        "ModelLabel": "Claude Haiku 4.5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 500,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 3500,
+        "dollars": "0.0055",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "beta",
+        "Model": "gpt-6-sol",
+        "ModelLabel": "GPT-6 Sol",
+        "Host": "agent-runner-02",
+        "CliTypes": [
+          "codex"
+        ],
+        "Calls": 1,
+        "Input": 2000,
+        "Output": 100,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 3100,
+        "dollars": "0.0052",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "(unknown)",
+        "ModelLabel": "(unknown)",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 1500,
+        "Output": 200,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1700,
+        "dollars": null,
+        "AllModelsPriced": false
+      }
+    ]
+  },
+  "history": {
+    "windowStart": "2026-07-01T00:00:00.0000000Z",
+    "windowEnd": "2026-10-13T12:00:00.0000000Z",
+    "WindowHours": 2508,
+    "BucketMinutes": 60,
+    "BucketCount": 2508,
+    "freshness": {
+      "Status": "complete",
+      "asOf": null,
+      "Sources": []
+    },
+    "projects": [
+      {
+        "Project": "alpha",
+        "Calls": 11,
+        "Input": 263500,
+        "Output": 50300,
+        "CacheRead": 211000,
+        "CacheWrite": 8000,
+        "Total": 532800,
+        "dollars": "0.66475",
+        "AllModelsPriced": false,
+        "peakBucketStart": "2026-07-15T10:00:00.0000000Z",
+        "PeakBucketTotal": 160000,
+        "lastActivity": "2026-10-13T08:15:00.0000000Z",
+        "AgentTokens": 523700,
+        "SupportingTokens": 2300,
+        "OrchestratorTokens": 6800,
+        "hosts": [
+          {
+            "Host": "local",
+            "Calls": 11,
+            "Total": 532800
+          }
+        ]
+      },
+      {
+        "Project": "beta",
+        "Calls": 3,
+        "Input": 15000,
+        "Output": 3700,
+        "CacheRead": 5000,
+        "CacheWrite": 0,
+        "Total": 23700,
+        "dollars": "0.119",
+        "AllModelsPriced": true,
+        "peakBucketStart": "2026-10-08T10:00:00.0000000Z",
+        "PeakBucketTotal": 18000,
+        "lastActivity": "2026-10-13T09:00:00.0000000Z",
+        "AgentTokens": 23700,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0,
+        "hosts": [
+          {
+            "Host": "local",
+            "Calls": 3,
+            "Total": 23700
+          }
+        ]
+      }
+    ],
+    "cells": [
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-07-15T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 100000,
+        "Output": 20000,
+        "CacheRead": 40000,
+        "CacheWrite": 0,
+        "Total": 160000,
+        "dollars": "0.224",
+        "AllModelsPriced": true,
+        "AgentTokens": 160000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-08-15T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 100000,
+        "Output": 20000,
+        "CacheRead": 40000,
+        "CacheWrite": 0,
+        "Total": 160000,
+        "dollars": "0.0448",
+        "AllModelsPriced": true,
+        "AgentTokens": 160000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-09-01T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 4000,
+        "Output": 1000,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 5000,
+        "dollars": null,
+        "AllModelsPriced": false,
+        "AgentTokens": 5000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-08T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 10000,
+        "Output": 3000,
+        "CacheRead": 5000,
+        "CacheWrite": 0,
+        "Total": 18000,
+        "dollars": "0.102",
+        "AllModelsPriced": true,
+        "AgentTokens": 18000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-09T16:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 2000,
+        "CacheRead": 30000,
+        "CacheWrite": 0,
+        "Total": 52000,
+        "dollars": "0.175",
+        "AllModelsPriced": true,
+        "AgentTokens": 52000,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-10T14:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 7000,
+        "Output": 900,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 7900,
+        "dollars": null,
+        "AllModelsPriced": false,
+        "AgentTokens": 7900,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-11T08:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 500,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 3500,
+        "dollars": "0.0055",
+        "AllModelsPriced": true,
+        "AgentTokens": 3500,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T09:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 12000,
+        "Output": 3400,
+        "CacheRead": 80000,
+        "CacheWrite": 5000,
+        "Total": 100400,
+        "dollars": "0.0865",
+        "AllModelsPriced": true,
+        "AgentTokens": 100400,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T10:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 2000,
+        "Output": 300,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 2300,
+        "dollars": "0.007",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 2300,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T11:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 5000,
+        "Output": 800,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 6800,
+        "dollars": "0.0182",
+        "AllModelsPriced": true,
+        "AgentTokens": 0,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 6800
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-12T12:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 4000,
+        "Output": 600,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 4600,
+        "dollars": "0.014",
+        "AllModelsPriced": true,
+        "AgentTokens": 4600,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-12T13:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 1500,
+        "Output": 200,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1700,
+        "dollars": null,
+        "AllModelsPriced": false,
+        "AgentTokens": 1700,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "alpha",
+        "bucketStart": "2026-10-13T08:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 9000,
+        "Output": 1200,
+        "CacheRead": 20000,
+        "CacheWrite": 3000,
+        "Total": 33200,
+        "dollars": "0.10375",
+        "AllModelsPriced": true,
+        "AgentTokens": 33200,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      },
+      {
+        "Project": "beta",
+        "bucketStart": "2026-10-13T09:00:00.0000000Z",
+        "Calls": 1,
+        "Input": 1000,
+        "Output": 100,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1100,
+        "dollars": "0.003",
+        "AllModelsPriced": true,
+        "AgentTokens": 1100,
+        "SupportingTokens": 0,
+        "OrchestratorTokens": 0
+      }
+    ],
+    "models": [
+      {
+        "Project": "alpha",
+        "Model": "gpt-5.6-luna",
+        "ModelLabel": "GPT-5.6 Luna",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 2,
+        "Input": 200000,
+        "Output": 40000,
+        "CacheRead": 80000,
+        "CacheWrite": 0,
+        "Total": 320000,
+        "dollars": "0.2688",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-sonnet-5",
+        "ModelLabel": "Claude Sonnet 5",
+        "Host": "local",
+        "CliTypes": [
+          "claude"
+        ],
+        "Calls": 2,
+        "Input": 14000,
+        "Output": 3700,
+        "CacheRead": 80000,
+        "CacheWrite": 5000,
+        "Total": 102700,
+        "dollars": "0.0935",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "gpt-5.5",
+        "ModelLabel": "GPT-5.5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 20000,
+        "Output": 2000,
+        "CacheRead": 30000,
+        "CacheWrite": 0,
+        "Total": 52000,
+        "dollars": "0.175",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-opus-5",
+        "ModelLabel": "Claude Opus 5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 9000,
+        "Output": 1200,
+        "CacheRead": 20000,
+        "CacheWrite": 3000,
+        "Total": 33200,
+        "dollars": "0.10375",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "beta",
+        "Model": "gpt-5.6-sol",
+        "ModelLabel": "gpt-5.6-sol",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 10000,
+        "Output": 3000,
+        "CacheRead": 5000,
+        "CacheWrite": 0,
+        "Total": 18000,
+        "dollars": "0.102",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "zeta-model-9",
+        "ModelLabel": "zeta-model-9",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 7000,
+        "Output": 900,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 7900,
+        "dollars": null,
+        "AllModelsPriced": false
+      },
+      {
+        "Project": "alpha",
+        "Model": "sonnet",
+        "ModelLabel": "sonnet",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 5000,
+        "Output": 800,
+        "CacheRead": 1000,
+        "CacheWrite": 0,
+        "Total": 6800,
+        "dollars": "0.0182",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "beta",
+        "Model": "claude-sonnet-5",
+        "ModelLabel": "Claude Sonnet 5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 2,
+        "Input": 5000,
+        "Output": 700,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 5700,
+        "dollars": "0.017",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-opus-5-5",
+        "ModelLabel": "Claude Opus 5.5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 4000,
+        "Output": 1000,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 5000,
+        "dollars": null,
+        "AllModelsPriced": false
+      },
+      {
+        "Project": "alpha",
+        "Model": "claude-haiku-4-5",
+        "ModelLabel": "Claude Haiku 4.5",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 3000,
+        "Output": 500,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 3500,
+        "dollars": "0.0055",
+        "AllModelsPriced": true
+      },
+      {
+        "Project": "alpha",
+        "Model": "(unknown)",
+        "ModelLabel": "(unknown)",
+        "Host": "local",
+        "CliTypes": [],
+        "Calls": 1,
+        "Input": 1500,
+        "Output": 200,
+        "CacheRead": 0,
+        "CacheWrite": 0,
+        "Total": 1700,
+        "dollars": null,
+        "AllModelsPriced": false
+      }
+    ]
+  },
+  "projectUsage": {
+    "HasData": true,
+    "LifetimeTotalTokens": 724200,
+    "LifetimeJobTokens": 704700,
+    "LifetimeSupportingTokens": 12700,
+    "LifetimeOrchestratorTokens": 6800,
+    "LifetimeCalls": 14,
+    "Last24hTotalTokens": 226300,
+    "Last24hJobTokens": 215900,
+    "Last24hSupportingTokens": 10400,
+    "Last24hOrchestratorTokens": 0,
+    "Last24hCalls": 5,
+    "Last7dTotalTokens": 399200,
+    "Last7dCalls": 11,
+    "firstActivity": "2026-07-15T10:00:00.0000000Z",
+    "lastActivity": "2026-10-13T08:15:00.0000000Z",
+    "freshness": {
+      "Status": "complete",
+      "asOf": "2026-10-13T08:15:00.0000000Z",
+      "Sources": [
+        "historical-token-bus",
+        "task-token-receipts",
+        "chat-usage-fallback"
+      ]
+    }
+  },
+  "heatmap": {
+    "Days": [
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25",
+      "2026-09-26",
+      "2026-09-27",
+      "2026-09-28",
+      "2026-09-29",
+      "2026-09-30",
+      "2026-10-01",
+      "2026-10-02",
+      "2026-10-03",
+      "2026-10-04",
+      "2026-10-05",
+      "2026-10-06",
+      "2026-10-07",
+      "2026-10-08",
+      "2026-10-09",
+      "2026-10-10",
+      "2026-10-11",
+      "2026-10-12",
+      "2026-10-13"
+    ],
+    "jobs": [
+      {
+        "JobId": "AGT-2",
+        "Category": "job",
+        "Total": 191400,
+        "Calls": 3,
+        "lastActivity": "2026-10-12T17:00:00.0000000Z",
+        "cells": [
+          {
+            "Day": "2026-09-14",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-15",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-16",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-17",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-18",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-19",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-20",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-21",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-22",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-23",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-24",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-25",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-26",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-27",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-28",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-29",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-30",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-01",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-02",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-03",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-04",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-05",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-06",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-07",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-08",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-09",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-10",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-11",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-12",
+            "Total": 191400
+          },
+          {
+            "Day": "2026-10-13",
+            "Total": 0
+          }
+        ]
+      },
+      {
+        "JobId": "AGT-1",
+        "Category": "job",
+        "Total": 106200,
+        "Calls": 3,
+        "lastActivity": "2026-10-12T10:30:00.0000000Z",
+        "cells": [
+          {
+            "Day": "2026-09-14",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-15",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-16",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-17",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-18",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-19",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-20",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-21",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-22",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-23",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-24",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-25",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-26",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-27",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-28",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-29",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-30",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-01",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-02",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-03",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-04",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-05",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-06",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-07",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-08",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-09",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-10",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-11",
+            "Total": 3500
+          },
+          {
+            "Day": "2026-10-12",
+            "Total": 102700
+          },
+          {
+            "Day": "2026-10-13",
+            "Total": 0
+          }
+        ]
+      },
+      {
+        "JobId": "AGT-4",
+        "Category": "job",
+        "Total": 59900,
+        "Calls": 2,
+        "lastActivity": "2026-10-10T14:00:00.0000000Z",
+        "cells": [
+          {
+            "Day": "2026-09-14",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-15",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-16",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-17",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-18",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-19",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-20",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-21",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-22",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-23",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-24",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-25",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-26",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-27",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-28",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-29",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-30",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-01",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-02",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-03",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-04",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-05",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-06",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-07",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-08",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-09",
+            "Total": 52000
+          },
+          {
+            "Day": "2026-10-10",
+            "Total": 7900
+          },
+          {
+            "Day": "2026-10-11",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-12",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-13",
+            "Total": 0
+          }
+        ]
+      },
+      {
+        "JobId": "AGT-3",
+        "Category": "job",
+        "Total": 33200,
+        "Calls": 1,
+        "lastActivity": "2026-10-13T08:15:00.0000000Z",
+        "cells": [
+          {
+            "Day": "2026-09-14",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-15",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-16",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-17",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-18",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-19",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-20",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-21",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-22",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-23",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-24",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-25",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-26",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-27",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-28",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-29",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-30",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-01",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-02",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-03",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-04",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-05",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-06",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-07",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-08",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-09",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-10",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-11",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-12",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-13",
+            "Total": 33200
+          }
+        ]
+      },
+      {
+        "JobId": "AGT-7",
+        "Category": "job",
+        "Total": 1700,
+        "Calls": 1,
+        "lastActivity": "2026-10-12T13:00:00.0000000Z",
+        "cells": [
+          {
+            "Day": "2026-09-14",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-15",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-16",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-17",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-18",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-19",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-20",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-21",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-22",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-23",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-24",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-25",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-26",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-27",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-28",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-29",
+            "Total": 0
+          },
+          {
+            "Day": "2026-09-30",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-01",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-02",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-03",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-04",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-05",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-06",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-07",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-08",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-09",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-10",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-11",
+            "Total": 0
+          },
+          {
+            "Day": "2026-10-12",
+            "Total": 1700
+          },
+          {
+            "Day": "2026-10-13",
+            "Total": 0
+          }
+        ]
+      }
+    ]
+  },
+  "expensive": [
+    {
+      "JobId": "AGT-5",
+      "Category": "job",
+      "TotalTokens": 320000,
+      "Calls": 2,
+      "LastModel": "GPT-5.6 Luna",
+      "lastActivity": "2026-08-15T10:00:00.0000000Z"
+    },
+    {
+      "JobId": "AGT-2",
+      "Category": "job",
+      "TotalTokens": 191400,
+      "Calls": 3,
+      "LastModel": "Claude Opus 5",
+      "lastActivity": "2026-10-12T17:00:00.0000000Z"
+    },
+    {
+      "JobId": "AGT-1",
+      "Category": "job",
+      "TotalTokens": 106200,
+      "Calls": 3,
+      "LastModel": "Claude Sonnet 5",
+      "lastActivity": "2026-10-12T10:30:00.0000000Z"
+    },
+    {
+      "JobId": "AGT-4",
+      "Category": "job",
+      "TotalTokens": 59900,
+      "Calls": 2,
+      "LastModel": "zeta-model-9",
+      "lastActivity": "2026-10-10T14:00:00.0000000Z"
+    },
+    {
+      "JobId": "AGT-3",
+      "Category": "job",
+      "TotalTokens": 33200,
+      "Calls": 1,
+      "LastModel": "Claude Opus 5",
+      "lastActivity": "2026-10-13T08:15:00.0000000Z"
+    },
+    {
+      "JobId": "AGT-6",
+      "Category": "job",
+      "TotalTokens": 5000,
+      "Calls": 1,
+      "LastModel": "Claude Opus 5.5",
+      "lastActivity": "2026-09-01T10:00:00.0000000Z"
+    },
+    {
+      "JobId": "AGT-7",
+      "Category": "job",
+      "TotalTokens": 1700,
+      "Calls": 1,
+      "LastModel": null,
+      "lastActivity": "2026-10-12T13:00:00.0000000Z"
+    }
+  ],
+  "jobDetail": {
+    "Category": "job",
+    "TotalTokens": 106200,
+    "InputTokens": 17000,
+    "OutputTokens": 4200,
+    "CacheReadTokens": 80000,
+    "CacheCreationTokens": 5000,
+    "Calls": 3,
+    "firstActivity": "2026-10-11T08:00:00.0000000Z",
+    "lastActivity": "2026-10-12T10:30:00.0000000Z",
+    "LastModel": "Claude Sonnet 5",
+    "runs": [
+      {
+        "Index": 0,
+        "ts": "2026-10-11T08:00:00.0000000Z",
+        "Model": "Claude Haiku 4.5",
+        "InputTokens": 3000,
+        "OutputTokens": 500,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "Total": 3500,
+        "DeltaVsPrev": null
+      },
+      {
+        "Index": 1,
+        "ts": "2026-10-12T09:00:00.0000000Z",
+        "Model": "Claude Sonnet 5",
+        "InputTokens": 12000,
+        "OutputTokens": 3400,
+        "CacheReadTokens": 80000,
+        "CacheCreationTokens": 5000,
+        "Total": 100400,
+        "DeltaVsPrev": 96900
+      },
+      {
+        "Index": 2,
+        "ts": "2026-10-12T10:30:00.0000000Z",
+        "Model": "Claude Sonnet 5",
+        "InputTokens": 2000,
+        "OutputTokens": 300,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "Total": 2300,
+        "DeltaVsPrev": -98100
+      }
+    ]
+  },
+  "cockpit": {
+    "today": "0.11195",
+    "week": "0.56655",
+    "Status": "partial",
+    "projects": [
+      {
+        "Name": "alpha",
+        "today": "0.10375",
+        "week": "0.54435",
+        "Status": "partial",
+        "Reason": "Some models have no historical USD price."
+      },
+      {
+        "Name": "beta",
+        "today": "0.0082",
+        "week": "0.0222",
+        "Status": "complete",
+        "Reason": null
+      }
+    ]
+  },
+  "adhoc": {
+    "Calls": 5,
+    "InputTokens": 16700,
+    "OutputTokens": 1790,
+    "CacheReadTokens": 5000,
+    "CacheCreationTokens": 0,
+    "cost": "0.03285",
+    "AllModelsPriced": false,
+    "bySource": [
+      {
+        "Source": "SummaryGen",
+        "Calls": 2,
+        "InputTokens": 5000,
+        "cost": "0.0144"
+      },
+      {
+        "Source": "TitleGen",
+        "Calls": 2,
+        "InputTokens": 1700,
+        "cost": "0.00215"
+      },
+      {
+        "Source": "Triage",
+        "Calls": 1,
+        "InputTokens": 10000,
+        "cost": "0.0163"
+      }
+    ],
+    "byDay": [
+      {
+        "Date": "2026-10-12",
+        "Calls": 2,
+        "InputTokens": 1700,
+        "cost": "0.00215"
+      },
+      {
+        "Date": "2026-10-11",
+        "Calls": 1,
+        "InputTokens": 4000,
+        "cost": "0.0144"
+      },
+      {
+        "Date": "2026-10-10",
+        "Calls": 1,
+        "InputTokens": 1000,
+        "cost": "0"
+      },
+      {
+        "Date": "2026-07-20",
+        "Calls": 1,
+        "InputTokens": 10000,
+        "cost": "0.0163"
+      }
+    ],
+    "byModel": [
+      {
+        "Model": "GPT-5.6 Luna",
+        "ModelId": "gpt-5.6-luna",
+        "Cli": "codex",
+        "Calls": 1,
+        "InputTokens": 10000,
+        "OutputTokens": 1000,
+        "CacheReadTokens": 3000,
+        "CacheCreationTokens": 0,
+        "cost": "0.0163",
+        "ModelPriced": true
+      },
+      {
+        "Model": "Claude Sonnet 5",
+        "ModelId": "claude-sonnet-5",
+        "Cli": "claude",
+        "Calls": 1,
+        "InputTokens": 4000,
+        "OutputTokens": 600,
+        "CacheReadTokens": 2000,
+        "CacheCreationTokens": 0,
+        "cost": "0.0144",
+        "ModelPriced": true
+      },
+      {
+        "Model": "Claude Haiku 4.5",
+        "ModelId": "claude-haiku-4-5",
+        "Cli": "claude",
+        "Calls": 2,
+        "InputTokens": 1700,
+        "OutputTokens": 90,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0.00215",
+        "ModelPriced": true
+      },
+      {
+        "Model": "zeta-model-9",
+        "ModelId": "zeta-model-9",
+        "Cli": null,
+        "Calls": 1,
+        "InputTokens": 1000,
+        "OutputTokens": 100,
+        "CacheReadTokens": 0,
+        "CacheCreationTokens": 0,
+        "cost": "0",
+        "ModelPriced": false
+      }
+    ]
+  },
+  "pipeline": {
+    "summarize": {
+      "steps": [
+        {
+          "StepId": "coding",
+          "Model": "claude-opus-5",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 20000,
+          "OutputTokens": 4000,
+          "CacheReadTokens": 150000,
+          "CacheCreationTokens": 6000,
+          "TotalTokens": 180000,
+          "input": "0.1",
+          "output": "0.1",
+          "cacheRead": "0.075",
+          "cacheCreation": "0.0375",
+          "cost": "0.3125",
+          "Runs": 1
+        },
+        {
+          "StepId": "remote-coding",
+          "Model": "claude-opus-5",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 1,
+          "OutputTokens": 1,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 2,
+          "input": "0.000005",
+          "output": "0.000025",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0.00003",
+          "Runs": 1
+        },
+        {
+          "StepId": "review",
+          "Model": "gpt-6-sol",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 11000,
+          "OutputTokens": 1300,
+          "CacheReadTokens": 9000,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 21300,
+          "input": "0.046",
+          "output": "0.031",
+          "cacheRead": "0.0024",
+          "cacheCreation": "0",
+          "cost": "0.0794",
+          "Runs": 2
+        },
+        {
+          "StepId": "label-model",
+          "Model": "Claude Sonnet 5",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 1000,
+          "OutputTokens": 200,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 1200,
+          "input": "0.002",
+          "output": "0.002",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0.004",
+          "Runs": 1
+        },
+        {
+          "StepId": "bare-alias",
+          "Model": "sonnet",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 2500,
+          "OutputTokens": 300,
+          "CacheReadTokens": 400,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 3200,
+          "input": "0.005",
+          "output": "0.003",
+          "cacheRead": "0.00008",
+          "cacheCreation": "0",
+          "cost": "0.00808",
+          "Runs": 1
+        },
+        {
+          "StepId": "unknown-model",
+          "Model": "zeta-model-9",
+          "TokenUsageSource": null,
+          "ModelKnown": false,
+          "PricingGaps": [
+            {
+              "ModelId": "zeta-model-9",
+              "Reason": "UnknownModel",
+              "AffectedRuns": 1
+            }
+          ],
+          "InputTokens": 700,
+          "OutputTokens": 70,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 770,
+          "input": "0",
+          "output": "0",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0",
+          "Runs": 1
+        },
+        {
+          "StepId": "tool",
+          "Model": null,
+          "TokenUsageSource": null,
+          "ModelKnown": false,
+          "PricingGaps": [],
+          "InputTokens": 0,
+          "OutputTokens": 0,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 0,
+          "input": "0",
+          "output": "0",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0",
+          "Runs": 1
+        }
+      ],
+      "TotalTokens": 206472,
+      "input": "0.153005",
+      "output": "0.136025",
+      "cacheRead": "0.07748",
+      "cacheCreation": "0.0375",
+      "total": "0.40401",
+      "AnyModelUnknown": true,
+      "UnpricedRuns": 1,
+      "PricingGaps": [
+        {
+          "ModelId": "zeta-model-9",
+          "Reason": "UnknownModel",
+          "AffectedRuns": 1
+        }
+      ]
+    },
+    "withLedger": {
+      "steps": [
+        {
+          "StepId": "coding",
+          "Model": "claude-opus-5",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 20000,
+          "OutputTokens": 4000,
+          "CacheReadTokens": 150000,
+          "CacheCreationTokens": 6000,
+          "TotalTokens": 180000,
+          "input": "0.1",
+          "output": "0.1",
+          "cacheRead": "0.075",
+          "cacheCreation": "0.0375",
+          "cost": "0.3125",
+          "Runs": 1
+        },
+        {
+          "StepId": "remote-coding",
+          "Model": "claude-opus-5",
+          "TokenUsageSource": "Remote token ledger \u00B7 4 calls",
+          "ModelKnown": false,
+          "PricingGaps": [
+            {
+              "ModelId": "zeta-model-9",
+              "Reason": "UnknownModel",
+              "AffectedRuns": 1
+            }
+          ],
+          "InputTokens": 21800,
+          "OutputTokens": 4180,
+          "CacheReadTokens": 150000,
+          "CacheCreationTokens": 6000,
+          "TotalTokens": 181980,
+          "input": "0.174091",
+          "output": "0.163409",
+          "cacheRead": "0.12",
+          "cacheCreation": "0.06",
+          "cost": "0.5175",
+          "Runs": 1
+        },
+        {
+          "StepId": "review",
+          "Model": "gpt-6-sol",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 11000,
+          "OutputTokens": 1300,
+          "CacheReadTokens": 9000,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 21300,
+          "input": "0.046",
+          "output": "0.031",
+          "cacheRead": "0.0024",
+          "cacheCreation": "0",
+          "cost": "0.0794",
+          "Runs": 2
+        },
+        {
+          "StepId": "label-model",
+          "Model": "Claude Sonnet 5",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 1000,
+          "OutputTokens": 200,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 1200,
+          "input": "0.002",
+          "output": "0.002",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0.004",
+          "Runs": 1
+        },
+        {
+          "StepId": "bare-alias",
+          "Model": "sonnet",
+          "TokenUsageSource": null,
+          "ModelKnown": true,
+          "PricingGaps": [],
+          "InputTokens": 2500,
+          "OutputTokens": 300,
+          "CacheReadTokens": 400,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 3200,
+          "input": "0.005",
+          "output": "0.003",
+          "cacheRead": "0.00008",
+          "cacheCreation": "0",
+          "cost": "0.00808",
+          "Runs": 1
+        },
+        {
+          "StepId": "unknown-model",
+          "Model": "zeta-model-9",
+          "TokenUsageSource": null,
+          "ModelKnown": false,
+          "PricingGaps": [
+            {
+              "ModelId": "zeta-model-9",
+              "Reason": "UnknownModel",
+              "AffectedRuns": 1
+            }
+          ],
+          "InputTokens": 700,
+          "OutputTokens": 70,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 770,
+          "input": "0",
+          "output": "0",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0",
+          "Runs": 1
+        },
+        {
+          "StepId": "tool",
+          "Model": null,
+          "TokenUsageSource": null,
+          "ModelKnown": false,
+          "PricingGaps": [],
+          "InputTokens": 0,
+          "OutputTokens": 0,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 0,
+          "input": "0",
+          "output": "0",
+          "cacheRead": "0",
+          "cacheCreation": "0",
+          "cost": "0",
+          "Runs": 1
+        }
+      ],
+      "TotalTokens": 388450,
+      "input": "0.327091",
+      "output": "0.299409",
+      "cacheRead": "0.19748",
+      "cacheCreation": "0.0975",
+      "total": "0.92148",
+      "AnyModelUnknown": true,
+      "UnpricedRuns": 1,
+      "PricingGaps": [
+        {
+          "ModelId": "zeta-model-9",
+          "Reason": "UnknownModel",
+          "AffectedRuns": 1
+        }
+      ]
+    },
+    "byModel": {
+      "runs": [
+        {
+          "Attempt": 1,
+          "Current": false,
+          "TotalTokens": 108900,
+          "cost": "0.591",
+          "AnyModelUnknown": true,
+          "PricingGaps": [
+            {
+              "ModelId": "claude-opus-5-5",
+              "Reason": "NoPriceForDate",
+              "AffectedRuns": 1
+            }
+          ],
+          "TokenUsageAvailable": true,
+          "models": [
+            {
+              "Model": "gpt-5.6-sol",
+              "ThinkingLevel": "high",
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 60000,
+              "OutputTokens": 9000,
+              "CacheReadTokens": 30000,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 99000,
+              "cost": "0.585"
+            },
+            {
+              "Model": "claude-opus-5-5",
+              "ThinkingLevel": null,
+              "ModelKnown": false,
+              "UnpricedRuns": 1,
+              "PricingGaps": [
+                {
+                  "ModelId": "claude-opus-5-5",
+                  "Reason": "NoPriceForDate",
+                  "AffectedRuns": 1
+                }
+              ],
+              "Steps": 1,
+              "InputTokens": 5000,
+              "OutputTokens": 500,
+              "CacheReadTokens": 0,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 5500,
+              "cost": "0"
+            },
+            {
+              "Model": "claude-haiku-4-5-20251001",
+              "ThinkingLevel": null,
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 4000,
+              "OutputTokens": 400,
+              "CacheReadTokens": 0,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 4400,
+              "cost": "0.006"
+            }
+          ]
+        },
+        {
+          "Attempt": 2,
+          "Current": true,
+          "TotalTokens": 195572,
+          "cost": "0.33601",
+          "AnyModelUnknown": true,
+          "PricingGaps": [
+            {
+              "ModelId": "zeta-model-9",
+              "Reason": "UnknownModel",
+              "AffectedRuns": 1
+            }
+          ],
+          "TokenUsageAvailable": true,
+          "models": [
+            {
+              "Model": "claude-opus-5",
+              "ThinkingLevel": "high",
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 2,
+              "InputTokens": 20001,
+              "OutputTokens": 4001,
+              "CacheReadTokens": 150000,
+              "CacheCreationTokens": 6000,
+              "TotalTokens": 180002,
+              "cost": "0.31253"
+            },
+            {
+              "Model": "gpt-6-sol",
+              "ThinkingLevel": "medium",
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 3000,
+              "OutputTokens": 400,
+              "CacheReadTokens": 7000,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 10400,
+              "cost": "0.0114"
+            },
+            {
+              "Model": "sonnet",
+              "ThinkingLevel": null,
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 2500,
+              "OutputTokens": 300,
+              "CacheReadTokens": 400,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 3200,
+              "cost": "0.00808"
+            },
+            {
+              "Model": "Claude Sonnet 5",
+              "ThinkingLevel": null,
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 1000,
+              "OutputTokens": 200,
+              "CacheReadTokens": 0,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 1200,
+              "cost": "0.004"
+            },
+            {
+              "Model": "zeta-model-9",
+              "ThinkingLevel": null,
+              "ModelKnown": false,
+              "UnpricedRuns": 1,
+              "PricingGaps": [
+                {
+                  "ModelId": "zeta-model-9",
+                  "Reason": "UnknownModel",
+                  "AffectedRuns": 1
+                }
+              ],
+              "Steps": 1,
+              "InputTokens": 700,
+              "OutputTokens": 70,
+              "CacheReadTokens": 0,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 770,
+              "cost": "0"
+            }
+          ]
+        }
+      ],
+      "totalByModel": [
+        {
+          "Model": "claude-opus-5",
+          "ThinkingLevel": "high",
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 2,
+          "InputTokens": 20001,
+          "OutputTokens": 4001,
+          "CacheReadTokens": 150000,
+          "CacheCreationTokens": 6000,
+          "TotalTokens": 180002,
+          "cost": "0.31253"
+        },
+        {
+          "Model": "gpt-5.6-sol",
+          "ThinkingLevel": "high",
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 60000,
+          "OutputTokens": 9000,
+          "CacheReadTokens": 30000,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 99000,
+          "cost": "0.585"
+        },
+        {
+          "Model": "gpt-6-sol",
+          "ThinkingLevel": "medium",
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 3000,
+          "OutputTokens": 400,
+          "CacheReadTokens": 7000,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 10400,
+          "cost": "0.0114"
+        },
+        {
+          "Model": "claude-opus-5-5",
+          "ThinkingLevel": null,
+          "ModelKnown": false,
+          "UnpricedRuns": 1,
+          "PricingGaps": [
+            {
+              "ModelId": "claude-opus-5-5",
+              "Reason": "NoPriceForDate",
+              "AffectedRuns": 1
+            }
+          ],
+          "Steps": 1,
+          "InputTokens": 5000,
+          "OutputTokens": 500,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 5500,
+          "cost": "0"
+        },
+        {
+          "Model": "claude-haiku-4-5-20251001",
+          "ThinkingLevel": null,
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 4000,
+          "OutputTokens": 400,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 4400,
+          "cost": "0.006"
+        },
+        {
+          "Model": "sonnet",
+          "ThinkingLevel": null,
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 2500,
+          "OutputTokens": 300,
+          "CacheReadTokens": 400,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 3200,
+          "cost": "0.00808"
+        },
+        {
+          "Model": "Claude Sonnet 5",
+          "ThinkingLevel": null,
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 1000,
+          "OutputTokens": 200,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 1200,
+          "cost": "0.004"
+        },
+        {
+          "Model": "zeta-model-9",
+          "ThinkingLevel": null,
+          "ModelKnown": false,
+          "UnpricedRuns": 1,
+          "PricingGaps": [
+            {
+              "ModelId": "zeta-model-9",
+              "Reason": "UnknownModel",
+              "AffectedRuns": 1
+            }
+          ],
+          "Steps": 1,
+          "InputTokens": 700,
+          "OutputTokens": 70,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 770,
+          "cost": "0"
+        }
+      ],
+      "TotalTokens": 304472,
+      "cost": "0.92701",
+      "AnyModelUnknown": true,
+      "UnpricedRuns": 2,
+      "PricingGaps": [
+        {
+          "ModelId": "claude-opus-5-5",
+          "Reason": "NoPriceForDate",
+          "AffectedRuns": 1
+        },
+        {
+          "ModelId": "zeta-model-9",
+          "Reason": "UnknownModel",
+          "AffectedRuns": 1
+        }
+      ],
+      "MissingTokenRuns": 0
+    },
+    "byModelWithSessions": {
+      "runs": [
+        {
+          "Attempt": 1,
+          "Current": false,
+          "TotalTokens": 180000,
+          "cost": "0.3125",
+          "AnyModelUnknown": false,
+          "PricingGaps": [],
+          "TokenUsageAvailable": true,
+          "models": [
+            {
+              "Model": "claude-opus-5",
+              "ThinkingLevel": "high",
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 20000,
+              "OutputTokens": 4000,
+              "CacheReadTokens": 150000,
+              "CacheCreationTokens": 6000,
+              "TotalTokens": 180000,
+              "cost": "0.3125"
+            }
+          ]
+        },
+        {
+          "Attempt": 2,
+          "Current": true,
+          "TotalTokens": 11400,
+          "cost": "0.0164",
+          "AnyModelUnknown": false,
+          "PricingGaps": [],
+          "TokenUsageAvailable": true,
+          "models": [
+            {
+              "Model": "gpt-6-sol",
+              "ThinkingLevel": null,
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 3000,
+              "OutputTokens": 400,
+              "CacheReadTokens": 7000,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 10400,
+              "cost": "0.0114"
+            },
+            {
+              "Model": "claude-opus-5",
+              "ThinkingLevel": null,
+              "ModelKnown": true,
+              "UnpricedRuns": 0,
+              "PricingGaps": [],
+              "Steps": 1,
+              "InputTokens": 1000,
+              "OutputTokens": 0,
+              "CacheReadTokens": 0,
+              "CacheCreationTokens": 0,
+              "TotalTokens": 1000,
+              "cost": "0.005"
+            }
+          ]
+        }
+      ],
+      "totalByModel": [
+        {
+          "Model": "claude-opus-5",
+          "ThinkingLevel": "high",
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 20000,
+          "OutputTokens": 4000,
+          "CacheReadTokens": 150000,
+          "CacheCreationTokens": 6000,
+          "TotalTokens": 180000,
+          "cost": "0.3125"
+        },
+        {
+          "Model": "gpt-6-sol",
+          "ThinkingLevel": null,
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 3000,
+          "OutputTokens": 400,
+          "CacheReadTokens": 7000,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 10400,
+          "cost": "0.0114"
+        },
+        {
+          "Model": "claude-opus-5",
+          "ThinkingLevel": null,
+          "ModelKnown": true,
+          "UnpricedRuns": 0,
+          "PricingGaps": [],
+          "Steps": 1,
+          "InputTokens": 1000,
+          "OutputTokens": 0,
+          "CacheReadTokens": 0,
+          "CacheCreationTokens": 0,
+          "TotalTokens": 1000,
+          "cost": "0.005"
+        }
+      ],
+      "TotalTokens": 191400,
+      "cost": "0.3289",
+      "AnyModelUnknown": false,
+      "UnpricedRuns": 0,
+      "PricingGaps": [],
+      "MissingTokenRuns": 0
+    },
+    "decision": {
+      "deciding": {
+        "Tokens": 3200,
+        "priced": "0.00808",
+        "UnpricedTokens": 0,
+        "Runs": 1,
+        "UnpricedRuns": 0
+      },
+      "agentRuns": {
+        "Tokens": 460980,
+        "priced": "1.415",
+        "UnpricedTokens": 330,
+        "Runs": 3,
+        "UnpricedRuns": 1
+      },
+      "other": {
+        "Tokens": 33170,
+        "priced": "0.0894",
+        "UnpricedTokens": 6270,
+        "Runs": 7,
+        "UnpricedRuns": 2
+      }
+    }
+  }
+}

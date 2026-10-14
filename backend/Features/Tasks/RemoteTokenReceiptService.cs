@@ -14,19 +14,21 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public sealed class RemoteTokenReceiptService
 {
+    private readonly ITokenPricing _pricing;
     private readonly CliUsageParserRegistry _parsers;
     private readonly ICliModelRegistry _models;
     private readonly TaskMutationService _mutations;
     private readonly TaskSessionLog _sessions;
     private readonly ILogger<RemoteTokenReceiptService> _logger;
 
-    public RemoteTokenReceiptService(
+    public RemoteTokenReceiptService(ITokenPricing pricing,
         CliUsageParserRegistry parsers,
         ICliModelRegistry models,
         TaskMutationService mutations,
         TaskSessionLog sessions,
         ILogger<RemoteTokenReceiptService> logger)
     {
+        _pricing = pricing;
         _parsers = parsers;
         _models = models;
         _mutations = mutations;
@@ -137,7 +139,7 @@ public sealed class RemoteTokenReceiptService
         if (entries.Count == 0)
             return new RemoteTokenReceiptResult(false, 0, "The remote CLI log contains no token usage frames.");
 
-        var summary = TokenSummaryService.SummarizePerJob(entries).GetValueOrDefault(task.Id);
+        var summary = TaskTokenSummaryFold.PerJob(_pricing.Price(entries)).GetValueOrDefault(task.Id);
         if (summary is null)
             return new RemoteTokenReceiptResult(false, 0, "Token usage frames could not be summarized.");
 

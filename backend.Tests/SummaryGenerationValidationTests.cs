@@ -24,7 +24,7 @@ public sealed class SummaryGenerationValidationTests : IDisposable
         """;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "summary-validation-" + Guid.NewGuid().ToString("N"));
-    private readonly PipelineExecutionLog _pipeline = new(NullLogger<PipelineExecutionLog>.Instance);
+    private readonly PipelineExecutionLog _pipeline = new(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
     private static readonly TerminalRunOutcome CompletedOutcome = new(
         TerminalRunOutcomeKinds.Success, "Success", ShouldMoveToReview: true,
         ShouldShowFailureToast: false, Reason: "agent emitted TASK_DONE");

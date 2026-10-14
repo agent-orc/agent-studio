@@ -250,7 +250,7 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var taskIntegration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
         return new ProjectIntegrationViewService(git, scanner, settings, taskIntegration);

@@ -16,6 +16,7 @@ public static class TaskRunnerEndpoints
 {
     public static void MapTaskRunnerEndpoints(this RouteGroupBuilder group)
     {
+        var pricing = ((IEndpointRouteBuilder)group).ServiceProvider.GetRequiredService<ITokenPricing>();
         group.MapPost("/{jobId}/start", async (string jobId, string? project, string? watchPath, StartJobRequest? req, TaskRunnerService runner, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -222,7 +223,7 @@ public static class TaskRunnerEndpoints
             {
                 if (!string.IsNullOrWhiteSpace(key) && tokenLookup.TryGetValue(key, out var found))
                 {
-                    tokenSummary = TokenSummaryService.WithModelFallback(found, info.Model);
+                    tokenSummary = new RunModelPricing(pricing).Apply(found, info.Model);
                     break;
                 }
             }

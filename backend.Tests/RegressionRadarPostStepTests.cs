@@ -112,7 +112,7 @@ public class RegressionRadarPostStepTests : IDisposable
         // raw JSON: the on-disk writer serialises the status enum as a number,
         // so the Overview's "status + duration" is verified through the field
         // values the API surface (and the FE) actually consume.
-        var record = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance).Read(reviewFolder);
+        var record = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance).Read(reviewFolder);
         Assert.NotNull(record);
         var radarStep = record!.Steps.First(s =>
             string.Equals(s.StepId, PipelineCatalogue.RegressionRadarStepId, StringComparison.OrdinalIgnoreCase));
@@ -166,7 +166,7 @@ public class RegressionRadarPostStepTests : IDisposable
 
         Assert.False(analyzerCalled);
         var reviewFolder = Path.Combine(_watchPath, TaskStates.HumanReview, "radar-condition");
-        var record = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance).Read(reviewFolder);
+        var record = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance).Read(reviewFolder);
         Assert.NotNull(record);
         var radarStep = record!.Steps.First(s =>
             string.Equals(s.StepId, PipelineCatalogue.RegressionRadarStepId, StringComparison.OrdinalIgnoreCase));
@@ -229,7 +229,7 @@ public class RegressionRadarPostStepTests : IDisposable
             scanner, mutations, stateMachine, transitions, indexCache,
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
 
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
 
         var orchestrator = new ReviewDecisionOrchestrator(
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner,

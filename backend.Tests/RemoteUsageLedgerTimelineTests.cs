@@ -62,8 +62,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
             },
             _now.AddMinutes(-30));
 
-        var timeline = BusBackedWorkspaceTimelineReader.BuildFromLedger(
-            ledger, [(Project, _watchPath)], windowHours: 24, bucketMinutes: 60, nowUtc: _now);
+        var timeline = ledger.WorkspaceTimeline([(Project, _watchPath)], windowHours: 24, bucketMinutes: 60, nowUtc: _now);
 
         var project = Assert.Single(timeline.Projects);
         Assert.Equal(5, project.Calls);
@@ -109,8 +108,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
                 InputIncludesCached = true,
             }, at);
 
-        var timeline = BusBackedWorkspaceTimelineReader.BuildFromLedger(
-            ledger, [(Project, _watchPath)], windowHours: 24, bucketMinutes: 60, nowUtc: _now);
+        var timeline = ledger.WorkspaceTimeline([(Project, _watchPath)], windowHours: 24, bucketMinutes: 60, nowUtc: _now);
 
         var project = Assert.Single(timeline.Projects);
         Assert.Equal(1, project.Calls);
@@ -126,8 +124,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
             Entry("agent:remote-runner:b", "claude-opus-5-5", "agent-runner-01", _now.AddHours(-1)),
         };
 
-        var timeline = WorkspaceTokensTimelineService.BuildFromEntries(
-            [(Project, entries)], _now.AddHours(-24), _now, 60);
+        var timeline = WorkspaceTimelineFold.Build(new List<(string Project, IReadOnlyList<OrchestratorLogEntry> Entries)> { (Project, entries) }.Select(project => (project.Item1, TokenTestServices.Pricing().Price(project.Item2))).ToList(), _now.AddHours(-24), _now, 60);
 
         Assert.Equal("zeta-model-9", Assert.Single(timeline.Models, row => row.Model == "zeta-model-9").ModelLabel);
         Assert.Equal("Claude Opus 5.5", Assert.Single(timeline.Models, row => row.Model == "claude-opus-5-5").ModelLabel);
@@ -148,8 +145,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         await EmitAsync(bridge, store, AgentMessageBusBridge.ParticipantOrchestratorFor(Project),
             null, usage, at);
 
-        var timeline = BusBackedWorkspaceTimelineReader.BuildFromLedger(
-            ledger, [(Project, _watchPath)], 24, 60, _now);
+        var timeline = ledger.WorkspaceTimeline([(Project, _watchPath)], 24, 60, _now);
         Assert.Equal(1, Assert.Single(timeline.Projects).Calls);
         Assert.Equal(3_100, Assert.Single(timeline.Models).Total);
     }
@@ -167,17 +163,16 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
     public void ModelIdentity_StoresIdsAndResolvesLabelsOnlyForTheSameModel(
         string recorded, string storedId, string label)
     {
-        Assert.Equal(storedId, TokenModelDisplay.StoredId(recorded));
-        Assert.Equal(label, TokenModelDisplay.Label(TokenModelDisplay.StoredId(recorded)));
+        Assert.Equal(storedId, ModelIdentity.StoredId(recorded));
+        Assert.Equal(label, ModelIdentity.Label(ModelIdentity.StoredId(recorded)));
     }
 
     [Fact]
     public void CardSummary_KeepsTheObservedIdAndLabel_ForAnAliasedGeneration()
     {
-        var summary = TokenSummaryService.SummarizePerJob(
-        [
+        var summary = TaskTokenSummaryFold.PerJob(TokenTestServices.Pricing().Price([
             Entry("agent:remote-runner:a", "claude-opus-5-5", "agent-runner-01", _now) with { JobId = TaskId },
-        ])[TaskId];
+        ]))[TaskId];
 
         Assert.Equal("claude-opus-5-5", summary.LastModelId);
         Assert.Equal("Claude Opus 5.5", summary.LastModel);
@@ -218,7 +213,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
             [],
             []);
 
-        var calls = RemotePipelineReviewEvidenceProjector.BuildReviewUsageCalls(ReviewAttempt(), report);
+        var calls = RemotePipelineReviewEvidenceProjector.BuildReviewUsageCalls(TokenTestServices.Pricing(), ReviewAttempt(), report);
 
         var call = Assert.Single(calls);
         Assert.Equal("gpt-6-sol", call.Model);
@@ -255,7 +250,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
             result with { TokenUsage = new OrchestratorTokenUsage() }, "local", null));
     }
 
-    private (AgentMessageBusBridge Bridge, AgentMessageBusStore Store, BusBackedProjectTokenUsageReader Ledger) BuildStack()
+    private (AgentMessageBusBridge Bridge, AgentMessageBusStore Store, TokenAggregationService Ledger) BuildStack()
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -270,7 +265,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         var generation = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, generation);
         var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
-        var ledger = new BusBackedProjectTokenUsageReader(store, config, stats, new ProjectTokenReceiptReader());
+        var ledger = TokenTestServices.Aggregator(store, config, stats, new ProjectTokenReceiptReader());
         return (bridge, store, ledger);
     }
 

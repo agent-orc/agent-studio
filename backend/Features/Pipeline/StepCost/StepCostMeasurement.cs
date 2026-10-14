@@ -84,7 +84,7 @@ public static class StepCostMeasurement
     /// non-terminal row is returned unchanged. An unpriced model leaves the
     /// cost null with <c>ModelPriced = false</c>; it is never a zero.
     /// </summary>
-    public static PipelineStepExecution Stamp(PipelineStepExecution row)
+    public static PipelineStepExecution Stamp(ITokenPricing pricing, PipelineStepExecution row)
     {
         if (!IsTerminal(row.Status)) return row;
 
@@ -96,7 +96,7 @@ public static class StepCostMeasurement
 
         if (tokens > 0 || (modelBacked && hasModel && !explicitlyDeterministic && Ran(row.Status)))
         {
-            var estimate = TokenPricing.Estimate(
+            var estimate = pricing.Estimate(
                 row.Model,
                 row.InputTokens,
                 row.OutputTokens,
@@ -155,7 +155,7 @@ public static class StepCostMeasurement
     /// start time replaces a terminal row that started at another time. The
     /// replaced execution moves into <see cref="PipelineStepExecution.EarlierRuns"/>.
     /// </summary>
-    public static PipelineStepExecution CarryRuns(PipelineStepExecution? existing, PipelineStepExecution incoming)
+    public static PipelineStepExecution CarryRuns(ITokenPricing pricing, PipelineStepExecution? existing, PipelineStepExecution incoming)
     {
         var earlier = existing?.EarlierRuns ?? [];
         var existingRuns = existing?.Runs ?? 0;
@@ -190,7 +190,7 @@ public static class StepCostMeasurement
             };
         }
 
-        var history = earlier.Append(Summarize(existing)).ToList();
+        var history = earlier.Append(Summarize(pricing, existing)).ToList();
         if (history.Count > MaxEarlierRuns)
             history = history.Skip(history.Count - MaxEarlierRuns).ToList();
         return incoming with
@@ -205,20 +205,20 @@ public static class StepCostMeasurement
     /// the row itself when it executed. Used by the cost rollups and the
     /// transition view so a repeated decision is neither lost nor merged.
     /// </summary>
-    public static IReadOnlyList<PipelineStepRunSummary> Executions(PipelineStepExecution row)
+    public static IReadOnlyList<PipelineStepRunSummary> Executions(ITokenPricing pricing, PipelineStepExecution row)
     {
         var list = new List<PipelineStepRunSummary>(row.EarlierRuns ?? []);
-        if (Executed(row)) list.Add(Summarize(row, keepTokens: true));
+        if (Executed(row)) list.Add(Summarize(pricing, row, keepTokens: true));
         return list;
     }
 
     /// <summary>How many times the step executed in this attempt, legacy rows included.</summary>
-    public static int RunCount(PipelineStepExecution row)
-        => row.Runs > 0 ? row.Runs : Executions(row).Count;
+    public static int RunCount(ITokenPricing pricing, PipelineStepExecution row)
+        => row.Runs > 0 ? row.Runs : Executions(pricing, row).Count;
 
-    private static PipelineStepRunSummary Summarize(PipelineStepExecution row, bool keepTokens = false)
+    private static PipelineStepRunSummary Summarize(ITokenPricing pricing, PipelineStepExecution row, bool keepTokens = false)
     {
-        var stamped = Stamp(row);
+        var stamped = Stamp(pricing, row);
         var dropTokens = !keepTokens && AccumulatesInPlace(row.Kind);
         return new PipelineStepRunSummary
         {

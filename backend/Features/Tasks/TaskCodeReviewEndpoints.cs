@@ -55,6 +55,7 @@ public static class TaskCodeReviewEndpoints
 
     public static void MapTaskCodeReviewEndpoints(this RouteGroupBuilder group)
     {
+        var pricing = ((IEndpointRouteBuilder)group).ServiceProvider.GetRequiredService<ITokenPricing>();
         // GET /api/tasks/code-review/defaults
         // The configured default CLI + model for the user-triggered review
         // step. The panel seeds its picker from this when the operator has
@@ -94,7 +95,7 @@ public static class TaskCodeReviewEndpoints
                             var fm = AgentStudio.Cli.FrontmatterParser.Parse(content);
                             var fields = fm.Ok ? fm.Fields : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                             var generation = generated.GetValueOrDefault(fileName);
-                            var usage = ResolveReviewUsage(generation, fields);
+                            var usage = ResolveReviewUsage(pricing, generation, fields);
                             entries.Add(new CodeReviewListEntry
                             {
                                 FileName = fileName,
@@ -294,12 +295,12 @@ public static class TaskCodeReviewEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
     }
 
-    internal static ReviewUsage ResolveReviewUsage(
+    internal static ReviewUsage ResolveReviewUsage(ITokenPricing pricing,
         FileGenerationMeta? generation,
         IReadOnlyDictionary<string, string> fields)
     {
         if (generation == null)
-            return ReviewUsage.Empty;
+            return ReviewUsage.Empty(pricing);
 
         var input = generation.TokensIn;
         var output = generation.TokensOut;
@@ -323,7 +324,7 @@ public static class TaskCodeReviewEndpoints
         {
             recordedAt = parsedRunAt;
         }
-        var cost = TokenPricing.Estimate(model, input, output, cacheRead, cacheCreation, recordedAt);
+        var cost = pricing.Estimate(model, input, output, cacheRead, cacheCreation, recordedAt);
         return new ReviewUsage(input, output, cacheRead, cacheCreation, total, cost,
             PriceKnown: cost.ModelKnown && !hasLegacyCacheRemainder);
     }
@@ -337,9 +338,9 @@ public static class TaskCodeReviewEndpoints
         TokenCostEstimate Cost,
         bool PriceKnown)
     {
-        public static ReviewUsage Empty { get; } = new(
+        public static ReviewUsage Empty(ITokenPricing pricing) => new(
             0, 0, 0, 0, 0,
-            TokenPricing.Estimate(null, 0, 0, 0, 0),
+            pricing.Estimate(null, 0, 0, 0, 0),
             PriceKnown: false);
     }
 

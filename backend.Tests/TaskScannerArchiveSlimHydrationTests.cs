@@ -16,7 +16,7 @@ namespace AgentStudio.Tests;
 /// <list type="bullet">
 ///   <item>header fields - Id, Title, State, Commits - survive, so archived
 ///   cards render and the token-stats drill-down
-///   (<c>BusBackedProjectTokenUsageReader.BuildJobsById</c>) still resolves an
+///   (<c>TokenAggregationService.BuildJobsById</c>) still resolves an
 ///   archived top-spender's title;</item>
 ///   <item>the enrichment fields that require a disk walk are defaulted
 ///   (no outcome chip, no session-log code-activity scan), proving the walk was

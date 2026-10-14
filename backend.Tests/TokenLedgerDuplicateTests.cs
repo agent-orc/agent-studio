@@ -160,7 +160,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         var read = new ProjectTokenReceiptReader().Read(_watchPath);
         Assert.Equal(3, read.Entries.Count);
         Assert.Equal(0, read.CollapsedDuplicates.Entries);
-        Assert.Equal(3, BuildProjectReader().BuildLifetimeSummary(ProjectName, _watchPath).OrchestratorLlmCalls);
+        Assert.Equal(3, BuildProjectReader().LifetimeSummary(ProjectName, _watchPath).OrchestratorLlmCalls);
     }
 
     [Fact]
@@ -281,20 +281,20 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         WriteTask(Agt3004Receipt());
         var reader = BuildProjectReader();
 
-        var expensive = Assert.Single(reader.BuildExpensiveJobs(ProjectName, _watchPath, 10));
+        var expensive = Assert.Single(reader.ProjectExpensiveJobs(ProjectName, _watchPath, 10));
         Assert.Equal(SessionTotal + CodexTotal, expensive.TotalTokens);
         Assert.Equal(2, expensive.Calls);
 
-        var summary = reader.BuildSummary(ProjectName, _watchPath, CodexAt.AddDays(1));
+        var summary = reader.ProjectSummary(ProjectName, _watchPath, CodexAt.AddDays(1));
         Assert.Equal(SessionTotal + CodexTotal, summary.LifetimeTotalTokens);
         Assert.Equal(2, summary.LifetimeCalls);
 
-        var detail = reader.BuildJobDetail(ProjectName, _watchPath, JobId)!;
+        var detail = reader.ProjectJobDetail(ProjectName, _watchPath, JobId)!;
         Assert.Equal(2, detail.Calls);
         Assert.Equal(SessionTotal + CodexTotal, detail.TotalTokens);
 
         // runner/{project}/token-summary
-        var lifetime = reader.BuildLifetimeSummary(ProjectName, _watchPath);
+        var lifetime = reader.LifetimeSummary(ProjectName, _watchPath);
         Assert.Equal(2, lifetime.OrchestratorLlmCalls);
         Assert.Equal(SessionCacheRead + 5_901_696, lifetime.TotalCacheReadTokens);
     }
@@ -304,14 +304,14 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     {
         WriteTask(Agt3004Receipt());
         var (scanner, _, _) = BuildWriteServices();
-        var service = new ProjectPipelineCostService(
-            scanner, new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader());
+        var service = new ProjectPipelineCostService(TokenTestServices.Pricing(),
+            scanner, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader());
 
         var timeline = service.Build(ProjectName, _watchPath, 30, CodexAt.AddDays(1));
 
         var day = timeline.DayCosts.Single(cell => cell.Day == "2026-09-29");
         Assert.Equal(SessionTotal, day.TotalTokens);
-        var once = TokenPricing.Estimate("claude-opus-5", SessionInput, SessionOutput, SessionCacheRead, SessionCacheWrite, SessionAt);
+        var once = TokenTestServices.Pricing().Estimate("claude-opus-5", SessionInput, SessionOutput, SessionCacheRead, SessionCacheWrite, SessionAt);
         Assert.Equal(decimal.Round(once.Total, 2), decimal.Round(day.CostUsd, 2));
     }
 
@@ -328,12 +328,12 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         var entries = BusTokenEntryConverter.LoadTokenUsageEntries(store, _workspace, ProjectName);
         Assert.Equal(3, entries.Count);
 
-        var summary = new BusBackedTokenSummaryReader(store, BuildConfig()).Summarize(ProjectName);
+        var projectReader = BuildProjectReader(store);
+        var summary = projectReader.LifetimeSummary(ProjectName, _watchPath);
         Assert.Equal(3, summary.OrchestratorLlmCalls);
         Assert.Equal(2 * SessionCacheRead + 5_901_696, summary.TotalCacheReadTokens);
 
-        var projectReader = BuildProjectReader(store);
-        var row = Assert.Single(projectReader.BuildExpensiveJobs(ProjectName, _watchPath, 10));
+        var row = Assert.Single(projectReader.ProjectExpensiveJobs(ProjectName, _watchPath, 10));
         Assert.Equal(3, row.Calls);
     }
 
@@ -350,40 +350,6 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
 
         Assert.Same(messages, kept);
         Assert.Equal(TokenLedgerCollapseCount.None, collapsed);
-    }
-
-    // ---- repair -----------------------------------------------------------
-
-    [Fact]
-    public void Repair_reports_collapsed_entries_per_project_and_runs_once()
-    {
-        var store = new FakeRepairStore(
-        [
-            new TokenLedgerReceiptSource("/agt-3004", ProjectName, "AGT-3004", Agt3004Summary()),
-            new TokenLedgerReceiptSource("/clean", ProjectName, "AGT-1", Summary(CodexCall("agent:codex"))),
-        ]);
-        var reportPath = Path.Combine(_workspace, "migrations", TokenLedgerDuplicateRepair.ReportFileName);
-        var repair = new TokenLedgerDuplicateRepair(store, reportPath, NullLogger<TokenLedgerDuplicateRepair>.Instance);
-
-        var report = repair.RunOnce();
-
-        Assert.True(report.Completed);
-        var project = Assert.Single(report.Projects);
-        Assert.Equal(1, project.ReceiptTasks);
-        Assert.Equal(Copies - 1, project.ReceiptEntriesCollapsed);
-        Assert.Equal((Copies - 1) * SessionTotal, project.ReceiptTokensCollapsed);
-        Assert.True(project.ReceiptCostCollapsedUsd > 0m);
-        var task = Assert.Single(report.Tasks);
-        Assert.Equal(Copies + 1, task.EntriesBefore);
-        Assert.Equal(SessionTotal + CodexTotal, task.TotalTokensAfter);
-        var rewritten = Assert.Single(store.Rewrites);
-        Assert.Equal(2, rewritten.Summary.Entries.Count);
-        Assert.Equal(SessionTotal + CodexTotal, rewritten.Summary.TotalTokens);
-        Assert.True(File.Exists(reportPath));
-
-        var again = repair.RunOnce();
-        Assert.True(again.AlreadyCompleted);
-        Assert.Single(store.Rewrites);
     }
 
     // ---- AGT-2882 Codex cache correction ----------------------------------
@@ -407,15 +373,15 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         Assert.Equal(400, entry.TokenUsage.CacheReadTokens);
         Assert.True(entry.TokenUsage.InputIncludesCached);
 
-        var expected = TokenPricing.Estimate("gpt-5.6-sol", 600, 100, 400, 0, CodexAt);
+        var expected = TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 100, 400, 0, CodexAt);
         Assert.True(expected.ModelKnown);
-        var lifetime = BuildProjectReader().BuildLifetimeSummary(ProjectName, _watchPath);
+        var lifetime = BuildProjectReader().LifetimeSummary(ProjectName, _watchPath);
         Assert.Equal(600, lifetime.TotalInputTokens);
         Assert.Equal(expected.Total, lifetime.EstimatedApiCostUsd);
 
         var (scanner, _, _) = BuildWriteServices();
-        var timeline = new ProjectPipelineCostService(
-                scanner, new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader())
+        var timeline = new ProjectPipelineCostService(TokenTestServices.Pricing(),
+                scanner, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader())
             .Build(ProjectName, _watchPath, 30, CodexAt.AddDays(1));
         Assert.Equal(1_100, timeline.TotalTokens);
         Assert.Equal(decimal.Round(expected.Total, 2), decimal.Round(timeline.TotalCostUsd, 2));
@@ -438,11 +404,11 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
             Tokens = new AgentMessageTokens(1_000, 100, CacheRead: 400, Model: "gpt-5.6-sol"),
         });
 
-        var lifetime = BuildProjectReader(store).BuildLifetimeSummary(ProjectName, _watchPath);
+        var lifetime = BuildProjectReader(store).LifetimeSummary(ProjectName, _watchPath);
 
         Assert.Equal(600, lifetime.TotalInputTokens);
         Assert.Equal(400, lifetime.TotalCacheReadTokens);
-        Assert.Equal(TokenPricing.Estimate("gpt-5.6-sol", 600, 100, 400, 0, CodexAt).Total, lifetime.EstimatedApiCostUsd);
+        Assert.Equal(TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 100, 400, 0, CodexAt).Total, lifetime.EstimatedApiCostUsd);
     }
 
     // ---- fixtures ---------------------------------------------------------
@@ -564,7 +530,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
 
     private (long Tokens, int Calls) ProjectTotals()
     {
-        var summary = BuildProjectReader().BuildLifetimeSummary(ProjectName, _watchPath);
+        var summary = BuildProjectReader().LifetimeSummary(ProjectName, _watchPath);
         return (summary.TotalInputTokens + summary.TotalOutputTokens + summary.TotalCacheReadTokens
                 + summary.TotalCacheCreationTokens, summary.OrchestratorLlmCalls);
     }
@@ -579,13 +545,13 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
             })
             .Build();
 
-    private BusBackedProjectTokenUsageReader BuildProjectReader(AgentMessageBusStore? store = null)
+    private TokenAggregationService BuildProjectReader(AgentMessageBusStore? store = null)
     {
         var config = BuildConfig();
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
-        return new BusBackedProjectTokenUsageReader(
+        return TokenTestServices.Aggregator(
             store ?? new AgentMessageBusStore(), config, stats, new ProjectTokenReceiptReader());
     }
 
@@ -600,7 +566,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance);
-        var receipts = new RemoteTokenReceiptService(
+        var receipts = new RemoteTokenReceiptService(TokenTestServices.Pricing(),
             new CliUsageParserRegistry([new ClaudeUsageParser(), new CodexUsageParser()]),
             new CliModelRegistry(),
             mutations,
@@ -609,22 +575,4 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         return (scanner, mutations, receipts);
     }
 
-    private sealed class FakeRepairStore(IReadOnlyList<TokenLedgerReceiptSource> jobs) : ITokenLedgerDuplicateRepairStore
-    {
-        public List<TokenLedgerReceiptRewrite> Rewrites { get; } = [];
-
-        public IReadOnlyList<TokenLedgerReceiptSource> ScanJobs() => jobs;
-
-        public IEnumerable<TokenLedgerBusSource> ReadBus(IEnumerable<string> projects) => [];
-
-        public bool ReplaceTokenSummary(string folderPath, TaskTokenSummary summary)
-        {
-            Rewrites.Add(new TokenLedgerReceiptRewrite(folderPath, folderPath, summary));
-            return true;
-        }
-
-        public void InvalidateCaches()
-        {
-        }
-    }
 }

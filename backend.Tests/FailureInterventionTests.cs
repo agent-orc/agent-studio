@@ -421,7 +421,7 @@ public sealed class FailureInterventionTests : IDisposable
             timeline, fileWriter: fileWriter);
         var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var service = new FailureInterventionService(mutations, scanner, timeline, log,
             NullLogger<FailureInterventionService>.Instance, prompts, pipelineLog: pipeline,
             decisionRequests: new DecisionCardRequests(scanner, mutations, NullLogger<DecisionCardRequests>.Instance));

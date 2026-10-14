@@ -24,9 +24,9 @@ public sealed class UsageCockpitContractTests
 
         var calendar = UsageCockpitProjection.Calendar(At, "Europe/Berlin", DayOfWeek.Monday);
         var entry = Entry("run-1", At, (int)normalized.Input, (int)normalized.CacheRead.Value);
-        var cost = UsageCockpitProjection.Cost(calendar,
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar,
             [new UsageCostInput("PROJ-001", "One", [entry], Complete)]);
-        var once = TokenPricing.Estimate("gpt-5.6-sol", 600, 0, 400, 0, At);
+        var once = TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 0, 400, 0, At);
         Assert.True(once.ModelKnown);
         Assert.Equal(once.Total, cost.TodayUsd);
         Assert.Equal(once.Total, cost.WeekUsd);
@@ -37,11 +37,11 @@ public sealed class UsageCockpitContractTests
     {
         var bus = Entry("active", At, 600, 400);
         var receipt = bus with { Topic = "task-token-receipt" };
-        var merged = ProjectTokenReceiptReader.MergeWithoutDuplicates([bus], [receipt]);
+        var merged = TokenLedgerMerge.WithoutDuplicates([bus], [receipt]);
         Assert.Single(merged);
         var other = Entry("other", At, 100, 0);
         var unattributed = Entry(null, At, 20, 0);
-        var cost = UsageCockpitProjection.Cost(
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(),
             UsageCockpitProjection.Calendar(At, "Europe/Berlin", DayOfWeek.Monday),
             [new UsageCostInput("PROJ-001", "One", merged, Complete, At),
              new UsageCostInput("PROJ-002", "Two", [other], Complete),
@@ -50,7 +50,7 @@ public sealed class UsageCockpitContractTests
         Assert.Equal(cost.Projects.Sum(project => project.WeekUsd), cost.WeekUsd);
         Assert.Equal(3, cost.Projects.Count);
         Assert.Equal(At, cost.LatestReceiptAt);
-        Assert.Equal(TokenPricing.Estimate("gpt-5.6-sol", 600, 0, 400, 0, At).Total,
+        Assert.Equal(TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 0, 400, 0, At).Total,
             cost.Projects[0].TodayUsd);
     }
 
@@ -63,12 +63,12 @@ public sealed class UsageCockpitContractTests
         var unpriced = new UsageCostInput("PROJ-002", "Two",
             [new OrchestratorLogEntry { Ts = At, TokenUsage = new OrchestratorTokenUsage
                 { Model = "unknown-model", InputTokens = 10 } }], Complete);
-        var cost = UsageCockpitProjection.Cost(calendar, [unavailable, unpriced]);
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable, unpriced]);
         Assert.Equal("partial", cost.Coverage.Status);
         Assert.Null(cost.Projects[0].TodayUsd);
         Assert.Equal("partial", cost.Projects[1].Coverage.Status);
         Assert.Equal(0m, cost.TodayUsd);
-        Assert.Null(UsageCockpitProjection.Cost(calendar, [unavailable]).TodayUsd);
+        Assert.Null(UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, [unavailable]).TodayUsd);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class UsageCockpitContractTests
                 Model = "claude-opus-5", ThinkingLevel = "high" },
             QuotaFallbackReason = "quota" };
         var project = new ProjectRecord { Id = "PROJ-001" };
-        var run = UsageCockpitProjection.Run(project, status, task,
+        var run = UsageCockpitProjection.Run(TokenTestServices.Pricing(), project, status, task,
             UsageCockpitProjection.Calendar(At, "Etc/UTC", null), [Entry("active", At, 600, 400)]);
         Assert.Equal("gpt-6-sol", run.ConfiguredModel);
         Assert.Equal("claude-opus-5", run.EffectiveModel);
@@ -137,7 +137,7 @@ public sealed class UsageCockpitContractTests
         Assert.Equal("xhigh", run.ConfiguredReasoning);
         Assert.Equal("high", run.EffectiveReasoning);
         Assert.True(run.IncludedInTotals);
-        Assert.Equal(TokenPricing.Estimate("gpt-5.6-sol", 600, 0, 400, 0, At).Total,
+        Assert.Equal(TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 0, 400, 0, At).Total,
             run.ProvisionalCostUsd);
     }
 

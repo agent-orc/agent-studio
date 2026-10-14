@@ -222,7 +222,7 @@ public class OrchestratorParallelReviewAndDecisionStepTests : IDisposable
             scanner, mutations, stateMachine, transitions, indexCache,
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
 
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         AgentStudio.Review.CodeReviewStepService? codeReviewStep = null;
         if (gradeReply is not null)
         {

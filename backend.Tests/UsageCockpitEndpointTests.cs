@@ -64,7 +64,7 @@ public sealed class UsageCockpitEndpointTests : IDisposable
         Assert.Equal(JsonValueKind.Null, emptyChild.GetProperty("latestReceiptAt").ValueKind);
         Assert.Equal("complete", busChild.GetProperty("coverage").GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, busChild.GetProperty("latestReceiptAt").ValueKind);
-        var expected = TokenPricing.Estimate("gpt-5.6-sol", 600, 0, 400, 0, now).Total;
+        var expected = TokenTestServices.Pricing().Estimate("gpt-5.6-sol", 600, 0, 400, 0, now).Total;
         Assert.Equal(expected, busChild.GetProperty("todayUsd").GetDecimal());
         Assert.Equal(expected, cost.GetProperty("todayUsd").GetDecimal());
         Assert.Equal(children.Sum(child => child.GetProperty("weekUsd").GetDecimal()),

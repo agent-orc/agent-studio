@@ -51,7 +51,7 @@ public static class ProjectTokenUsageEndpoints
             if (entry is null)
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             return Results.Ok(tokens.ProjectHeatmap(projectName, entry.Path,
-                days ?? ProjectTokenUsageService.DefaultHeatmapDays));
+                days ?? ProjectTokenUsageFold.DefaultHeatmapDays));
         });
 
         app.MapGet("/api/projects/{projectName}/token-usage/expensive", (
@@ -67,7 +67,7 @@ public static class ProjectTokenUsageEndpoints
             if (entry is null)
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             var list = tokens.ProjectExpensiveJobs(projectName, entry.Path,
-                limit ?? ProjectTokenUsageService.DefaultExpensiveLimit);
+                limit ?? ProjectTokenJobFold.DefaultExpensiveLimit);
             return Results.Ok(new { project = projectName, jobs = list });
         });
 

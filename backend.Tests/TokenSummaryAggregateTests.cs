@@ -3,7 +3,7 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Locks the workspace-wide fold in <c>TokenSummaryService.AggregateSummaries</c>:
+/// Locks the workspace-wide fold in <c>TokenSummaryFold.ForWorkspace</c>:
 /// per-project <c>byModel</c> rows fold into one workspace row per canonical
 /// model id, even when different projects' receipts recorded different label
 /// variants of the same model (AGT-2752 — the AGT-2740 receipt/label drift
@@ -31,7 +31,7 @@ public class TokenSummaryAggregateTests
             ByModel: models,
             FirstActivity: null,
             LastActivity: null,
-            Disclaimer: TokenSummaryService.DefaultDisclaimer));
+            Disclaimer: TokenCostDisclaimer.Text));
 
     [Fact]
     public void AggregateSummaries_DisplayNameAndCanonicalIdOfSameModel_FoldIntoOneRow()
@@ -42,7 +42,7 @@ public class TokenSummaryAggregateTests
         var a = Project("proj-a", Model("GPT-5.5", calls: 2, input: 1_000, output: 100, cost: 0.01m));
         var b = Project("proj-b", Model("gpt-5.5", calls: 3, input: 2_000, output: 200, cost: 0.02m));
 
-        var agg = TokenSummaryService.AggregateSummaries([a, b]);
+        var agg = TokenSummaryFold.ForWorkspace([a, b]);
 
         var row = Assert.Single(agg.ByModel);
         Assert.Equal(5, row.Calls);
@@ -63,7 +63,7 @@ public class TokenSummaryAggregateTests
         var a = Project("proj-a", Model("gpt-5.5-2026-04-23", calls: 1, input: 500, output: 50));
         var b = Project("proj-b", Model("gpt-5.5", calls: 1, input: 500, output: 50));
 
-        var agg = TokenSummaryService.AggregateSummaries([a, b]);
+        var agg = TokenSummaryFold.ForWorkspace([a, b]);
 
         var row = Assert.Single(agg.ByModel);
         Assert.Equal(2, row.Calls);
@@ -78,7 +78,7 @@ public class TokenSummaryAggregateTests
         var a = Project("proj-a", Model("totally-unknown-model-a", calls: 1, input: 100, output: 10, priced: false, inCatalog: false));
         var b = Project("proj-b", Model("totally-unknown-model-b", calls: 1, input: 200, output: 20, priced: false, inCatalog: false));
 
-        var agg = TokenSummaryService.AggregateSummaries([a, b]);
+        var agg = TokenSummaryFold.ForWorkspace([a, b]);
 
         Assert.Equal(2, agg.ByModel.Count);
         Assert.Contains(agg.ByModel, m => m.Model == "totally-unknown-model-a");
@@ -92,7 +92,7 @@ public class TokenSummaryAggregateTests
     public void AggregateSummaries_NewModelDisplayAndId_FoldIntoPricedRow(
         string display, string modelId)
     {
-        var aggregate = TokenSummaryService.AggregateSummaries([
+        var aggregate = TokenSummaryFold.ForWorkspace([
             Project("display", Model(display, 1, 100, 10)),
             Project("id", Model(modelId, 1, 100, 10))
         ]);

@@ -103,23 +103,23 @@ internal static class TaskEndpointHelpers
         _ => Results.Json(new { error = outcome.Message ?? "Failed to move job" }, statusCode: StatusCodes.Status500InternalServerError)
     };
 
-    internal static TaskInfo WithRuntime(TaskInfo job, CliRouter router, TaskRunnerService runners)
-        => WithRuntime(job, router, runners, tokensByJobId: null, verdictsByJobKey: null);
+    internal static TaskInfo WithRuntime(ITokenPricing pricing, TaskInfo job, CliRouter router, TaskRunnerService runners)
+        => WithRuntime(pricing, job, router, runners, tokensByJobId: null, verdictsByJobKey: null);
 
-    internal static TaskInfo WithRuntime(
+    internal static TaskInfo WithRuntime(ITokenPricing pricing,
         TaskInfo job,
         CliRouter router,
         TaskRunnerService runners,
         IReadOnlyDictionary<string, TaskTokenSummary>? tokensByJobId)
-        => WithRuntime(job, router, runners, tokensByJobId, verdictsByJobKey: null, waitsOnByJobKey: null, transitiveWaitersByJobKey: null);
+        => WithRuntime(pricing, job, router, runners, tokensByJobId, verdictsByJobKey: null, waitsOnByJobKey: null, transitiveWaitersByJobKey: null);
 
-    internal static TaskInfo WithRuntime(
+    internal static TaskInfo WithRuntime(ITokenPricing pricing,
         TaskInfo job,
         CliRouter router,
         TaskRunnerService runners,
         IReadOnlyDictionary<string, TaskTokenSummary>? tokensByJobId,
         IReadOnlyDictionary<string, string>? verdictsByJobKey)
-        => WithRuntime(job, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey: null, transitiveWaitersByJobKey: null);
+        => WithRuntime(pricing, job, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey: null, transitiveWaitersByJobKey: null);
 
     /// <summary>
     /// Overlay variant that also folds in per-job orchestrator token totals,
@@ -129,7 +129,7 @@ internal static class TaskEndpointHelpers
     /// <c>JobsEndpointPerfTests.WithRuntime_Over200Jobs_FinishesWellUnderOneSecond</c>
     /// still holds.
     /// </summary>
-    internal static TaskInfo WithRuntime(
+    internal static TaskInfo WithRuntime(ITokenPricing pricing,
         TaskInfo job,
         CliRouter router,
         TaskRunnerService runners,
@@ -161,7 +161,7 @@ internal static class TaskEndpointHelpers
         TaskTokenSummary? tokens = null;
         if (tokensByJobId != null && tokensByJobId.TryGetValue(job.TaskKey, out var t) && t.TotalTokens > 0)
         {
-            tokens = TokenSummaryService.WithModelFallback(t, exec?.Model ?? job.Model);
+            tokens = new RunModelPricing(pricing).Apply(t, exec?.Model ?? job.Model);
         }
         string? verdict = null;
         if (verdictsByJobKey != null && verdictsByJobKey.TryGetValue(job.TaskKey, out var v))
@@ -569,25 +569,25 @@ internal static class TaskEndpointHelpers
         return merged;
     }
 
-    internal static TaskDetail WithRuntime(TaskDetail detail, CliRouter router, TaskRunnerService runners)
-        => detail with { Info = WithRuntime(detail.Info, router, runners) };
+    internal static TaskDetail WithRuntime(ITokenPricing pricing, TaskDetail detail, CliRouter router, TaskRunnerService runners)
+        => detail with { Info = WithRuntime(pricing, detail.Info, router, runners) };
 
-    internal static TaskDetail WithRuntime(
+    internal static TaskDetail WithRuntime(ITokenPricing pricing,
         TaskDetail detail,
         CliRouter router,
         TaskRunnerService runners,
         IReadOnlyDictionary<string, TaskTokenSummary>? tokensByJobId)
-        => detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId) };
+        => detail with { Info = WithRuntime(pricing, detail.Info, router, runners, tokensByJobId) };
 
-    internal static TaskDetail WithRuntime(
+    internal static TaskDetail WithRuntime(ITokenPricing pricing,
         TaskDetail detail,
         CliRouter router,
         TaskRunnerService runners,
         IReadOnlyDictionary<string, TaskTokenSummary>? tokensByJobId,
         IReadOnlyDictionary<string, string>? verdictsByJobKey)
-        => detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey: null, transitiveWaitersByJobKey: null) };
+        => detail with { Info = WithRuntime(pricing, detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey: null, transitiveWaitersByJobKey: null) };
 
-    internal static TaskDetail WithRuntime(
+    internal static TaskDetail WithRuntime(ITokenPricing pricing,
         TaskDetail detail,
         CliRouter router,
         TaskRunnerService runners,
@@ -597,6 +597,6 @@ internal static class TaskEndpointHelpers
         IReadOnlyDictionary<string, TransitiveWaitersStatus>? transitiveWaitersByJobKey)
     {
         using var trace = TaskSwitchTrace.Span("runtime");
-        return detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey, transitiveWaitersByJobKey) };
+        return detail with { Info = WithRuntime(pricing, detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey, transitiveWaitersByJobKey) };
     }
 }

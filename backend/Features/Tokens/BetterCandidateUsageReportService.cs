@@ -6,13 +6,15 @@ namespace AgentStudio.Tokens;
 /// </summary>
 public sealed class BetterCandidateUsageReportService
 {
+    private readonly ITokenPricing _pricing;
     private readonly OrchestratorLog _log;
-    private readonly BusBackedProjectTokenUsageReader _tokenUsage;
+    private readonly ProjectTokenLedger _tokenUsage;
 
-    public BetterCandidateUsageReportService(
+    public BetterCandidateUsageReportService(ITokenPricing pricing,
         OrchestratorLog log,
-        BusBackedProjectTokenUsageReader tokenUsage)
+        ProjectTokenLedger tokenUsage)
     {
+        _pricing = pricing;
         _log = log;
         _tokenUsage = tokenUsage;
     }
@@ -29,7 +31,7 @@ public sealed class BetterCandidateUsageReportService
                 .Where(IsAdmissionBoundary)
                 .ToList();
             var calls = _tokenUsage.LoadSnapshot(name, watchPath).Entries;
-            lines.AddRange(Aggregate(name, admissions, calls, windowStart, windowEnd));
+            lines.AddRange(Aggregate(_pricing, name, admissions, calls, windowStart, windowEnd));
         }
         return lines
             .OrderBy(line => line.WeekStart)
@@ -38,7 +40,7 @@ public sealed class BetterCandidateUsageReportService
     }
 
     /// <summary>Pure fold used by regression tests.</summary>
-    internal static IReadOnlyList<BetterCandidateUsageLine> Aggregate(
+    internal static IReadOnlyList<BetterCandidateUsageLine> Aggregate(ITokenPricing pricing,
         string project,
         IReadOnlyList<OrchestratorLogEntry> admissions,
         IReadOnlyList<OrchestratorLogEntry> tokenCalls,
@@ -83,7 +85,7 @@ public sealed class BetterCandidateUsageReportService
             bucket.Calls++;
             bucket.Tokens += (long)usage.InputTokens + usage.OutputTokens
                 + usage.CacheReadTokens + usage.CacheCreationTokens;
-            var estimate = TokenPricing.Estimate(
+            var estimate = pricing.Estimate(
                 usage.Model,
                 usage.InputTokens,
                 usage.OutputTokens,
@@ -120,8 +122,8 @@ public sealed class BetterCandidateUsageReportService
 
     private static bool SameModel(string expected, string? actual)
         => string.Equals(
-            ModelMetadataRegistry.NormalizeId(expected),
-            ModelMetadataRegistry.NormalizeId(actual),
+            ModelIdentity.RegistryId(expected),
+            ModelIdentity.RegistryId(actual),
             StringComparison.OrdinalIgnoreCase);
 
     private static DateOnly StartOfWeek(DateTime timestamp)

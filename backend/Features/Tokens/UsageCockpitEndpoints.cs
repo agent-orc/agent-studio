@@ -30,10 +30,11 @@ public static class UsageCockpitEndpoints
 {
     public static void MapUsageCockpitEndpoints(this WebApplication app)
     {
+        var pricing = app.Services.GetRequiredService<ITokenPricing>();
         app.MapGet("/api/usage/cockpit", (HttpContext context, string? workspaceId,
             string? primaryCli, WorkspaceRegistry workspaces, WorkspaceSettingsService settings,
             ProjectRegistry projects, TaskScannerService scanner, QuotaService quota,
-            BusBackedProjectTokenUsageReader ledger, AgentMessageBusStore bus,
+            ProjectTokenLedger ledger, AgentMessageBusStore bus,
             TaskRunnerService runner, ClientIdentityStore clients,
             AttemptAuthorityService reviews,
             RemoteChatWorkBroker chatWork,
@@ -128,7 +129,7 @@ public static class UsageCockpitEndpoints
                     var current = costInputs[index];
                     costInputs[index] = current with
                     {
-                        Entries = ProjectTokenReceiptReader.MergeWithoutDuplicates(current.Entries, [entry])
+                        Entries = TokenLedgerMerge.WithoutDuplicates(current.Entries, [entry])
                     };
                 }
                 costInputs.Add(new UsageCostInput(null, "Unattributed", unattributed,
@@ -146,7 +147,7 @@ public static class UsageCockpitEndpoints
                     new ProjectTokenDataFreshness { Status = "unavailable",
                         Warning = "The workspace token bus could not be read." }));
             }
-            var cost = UsageCockpitProjection.Cost(calendar, costInputs);
+            var cost = UsageCockpitProjection.Cost(pricing, calendar, costInputs);
             sourceStates["cost"] = cost.Coverage;
 
             var runnerState = TryRead(() => runner.GetStatus(), now);
@@ -172,7 +173,7 @@ public static class UsageCockpitEndpoints
                     catch (Exception) { sourceStates["runs"] = new UsageSourceState("partial", now, null,
                         "One active task could not be read."); }
                     var entries = costInputs.First(input => input.ProjectId == project.Id).Entries;
-                    runs.Add(UsageCockpitProjection.Run(project,
+                    runs.Add(UsageCockpitProjection.Run(pricing, project,
                         status with { ActiveJobId = activeRun.JobId,
                             ActiveExecution = activeRun.Execution,
                             QuotaFallbackReason = activeRun.FallbackReason },

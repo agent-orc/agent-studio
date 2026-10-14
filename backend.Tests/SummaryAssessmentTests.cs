@@ -42,7 +42,7 @@ public sealed class SummaryAssessmentTests
     {
         var (info, folder) = LoadAgt2798();
         var bundle = SummaryEvidenceAssembler.ReadFromFolder(
-            info, new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            info, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             new TimelineLog(NullLogger<TimelineLog>.Instance), "NeedsInput");
         var status = File.ReadAllText(Path.Combine(folder, "status.md"));
 
@@ -74,7 +74,7 @@ public sealed class SummaryAssessmentTests
     {
         var (info, _) = LoadAgt2798();
         var bundle = SummaryEvidenceAssembler.ReadFromFolder(
-            info, new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            info, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             new TimelineLog(NullLogger<TimelineLog>.Instance), "NeedsInput");
 
         Assert.Equal("AGT-2798", bundle.TaskKey);
@@ -222,7 +222,7 @@ public sealed class SummaryAssessmentTests
     {
         var (info, folder) = LoadAgt2798();
         var bundle = SummaryEvidenceAssembler.ReadFromFolder(info,
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             new TimelineLog(NullLogger<TimelineLog>.Instance), "NeedsInput");
         var json = JsonSerializer.Serialize(new
         {
@@ -412,7 +412,7 @@ public sealed class SummaryAssessmentTests
                     ["PromptTemplates:RuntimePath"] = Path.Combine(Directory.GetCurrentDirectory(), "prompts", "runtime"),
                 })
                 .Build();
-            var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+            var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
             pipelineLog.Begin(root, PipelineCatalogue.Standard, "local", "job-1");
             var oneShot = new ScriptedOneShot(CleanStatus + "\n<assessment>{\"outcome\":\"delivered\",\"inconsistencies\":[]}</assessment>");
             var service = new SummaryGenerationService(

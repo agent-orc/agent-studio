@@ -13,7 +13,7 @@ namespace AgentStudio.Tasks;
 ///
 /// <para>
 /// The cost is computed on read from the already-recorded per-step
-/// tokens via the single <c>TokenPricing</c> table - cheap because one
+/// tokens via <c>ITokenPricing</c> - cheap because one
 /// task has only a handful of steps. The config block lets the Overview
 /// render "what ran, on which model, what did it cost" and the Settings
 /// panel render the per-step enable / model / mode controls without a
@@ -24,6 +24,7 @@ public static class TaskPipelineEndpoints
 {
     public static void MapTaskPipelineEndpoints(this RouteGroupBuilder group)
     {
+        var pricing = ((IEndpointRouteBuilder)group).ServiceProvider.GetRequiredService<ITokenPricing>();
         group.MapGet("/{jobId}/pipeline", (
             string jobId,
             string? project,
@@ -46,7 +47,7 @@ public static class TaskPipelineEndpoints
                 : projectSettings.Get(info.ProjectName);
             var settings = PipelineTypeSettings.ForTask(rawSettings, info);
             var pipeline = ProjectPipelineOrder.Apply(UiTaskPipelineRouter.Select(info, settings), settings);
-            var taskTokens = FindTaskTokens(
+            var taskTokens = FindTaskTokens(pricing,
                 tokens.WorkspacePerJob(info.ProjectName, info.WatchPath),
                 info);
             var sessionEvents = sessions.ReadSessionEvents(info.Id, info.WatchPath);
@@ -61,16 +62,16 @@ public static class TaskPipelineEndpoints
             // Remote rows use canonical ledger calls; unchanged local rows
             // retain their recorded step usage. Enrich only the response copy
             // with per-aspect concern detail for the Overview tooltip.
-            var cost = PipelineCostCalculator.SummarizeWithLedger(record, projected.LedgerCalls);
+            var cost = new PipelineCostCalculator(pricing).SummarizeWithLedger(record, projected.LedgerCalls);
             // The visible RUNS rows come from session events, so their token
             // total must use the same run boundaries. Canonical task-ledger
             // calls are attributed into those windows; a run without a call
             // stays explicitly missing instead of silently becoming zero.
-            var tokensByModel = PipelineCostCalculator.SummarizeByModel(
+            var tokensByModel = new PipelineCostCalculator(pricing).SummarizeByModel(
                 record, sessionEvents, taskTokens);
             // What deciding cost on this card against what its agent runs
             // cost, over every attempt, with the unpriced share stated.
-            var decisionCost = PipelineCostCalculator.SummarizeDecisionCost(record, projected.LedgerCalls);
+            var decisionCost = new PipelineCostCalculator(pricing).SummarizeDecisionCost(record, projected.LedgerCalls);
             var execution = AspectConcernReader.Enrich(record, info.FolderPath);
 
             var resultFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -223,14 +224,14 @@ public static class TaskPipelineEndpoints
         });
     }
 
-    private static TaskTokenSummary? FindTaskTokens(
+    private static TaskTokenSummary? FindTaskTokens(ITokenPricing pricing,
         IReadOnlyDictionary<string, TaskTokenSummary> lookup,
         TaskInfo task)
     {
         foreach (var key in new[] { task.TaskKey, task.Id, task.Key })
         {
             if (!string.IsNullOrWhiteSpace(key) && lookup.TryGetValue(key, out var summary))
-                return TokenSummaryService.WithModelFallback(summary, task.Model);
+                return new RunModelPricing(pricing).Apply(summary, task.Model);
         }
         return null;
     }

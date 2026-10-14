@@ -108,7 +108,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var reads = new List<string>();
         var service = new TaskIntegrationStatusService(git, settings, log,
             NullLogger<TaskIntegrationStatusService>.Instance, NewClock(),
@@ -1880,7 +1880,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetIntegrationBranch(projectName, "develop");
-        log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
             git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance,
             NewClock(), readOriginUrl: readOriginUrl, originStore: originStore);
@@ -1930,7 +1930,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetIntegrationBranch(projectName, "develop");
         settings.SetIntegrationBranch("Runner", "main");
-        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         return (new TaskIntegrationStatusService(
             git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance, registry), projectName, log);

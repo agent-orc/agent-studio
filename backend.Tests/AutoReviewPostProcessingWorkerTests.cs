@@ -910,7 +910,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             : null;
         var integration = withIntegrationStatus
             ? new TaskIntegrationStatusService(git, settings,
-                new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+                new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
                 NullLogger<TaskIntegrationStatusService>.Instance)
             : null;
         var orchestrator = new ReviewDecisionOrchestrator(

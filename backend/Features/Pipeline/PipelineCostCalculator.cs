@@ -124,15 +124,15 @@ public sealed record PipelineModelUsageSummary(
 
 /// <summary>
 /// Derives per-step and task-total cost from an already-recorded
-/// <see cref="PipelineExecutionRecord"/> using the single price table in
-/// <see cref="TokenPricing"/>. Pure and cheap: a task has a handful of
+/// <see cref="PipelineExecutionRecord"/> with the injected historical pricing service
+/// <see cref="ITokenPricing"/>. A task has a handful of
 /// steps, so this runs on read without a disk scan. Project-level
 /// aggregation across many tasks goes through a separate cached path so
 /// the Overview poll never triggers an O(N) price scan.
 /// </summary>
-public static class PipelineCostCalculator
+public sealed class PipelineCostCalculator(ITokenPricing pricing)
 {
-    public static PipelineCostSummary Summarize(PipelineExecutionRecord? record)
+    public PipelineCostSummary Summarize(PipelineExecutionRecord? record)
     {
         if (record == null || record.Steps.Count == 0)
         {
@@ -162,10 +162,10 @@ public static class PipelineCostCalculator
             // repeated decision) keeps each earlier execution; the row's cost
             // is the sum of every execution, each priced at its own model.
             var executions = s.EarlierRuns is { Count: > 0 }
-                ? StepCostMeasurement.Executions(s)
+                ? StepCostMeasurement.Executions(pricing, s)
                 : null;
             var est = executions is null
-                ? TokenPricing.Estimate(
+                ? pricing.Estimate(
                     s.Model, s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheCreationTokens,
                     record.StartedAt)
                 : SumEstimates(executions, record.StartedAt);
@@ -196,7 +196,7 @@ public static class PipelineCostCalculator
                 CacheReadCostUsd: Round(est.CacheReadUsd),
                 CacheCreationCostUsd: Round(est.CacheWriteUsd),
                 CostUsd: Round(est.Total),
-                Runs: StepCostMeasurement.RunCount(s)));
+                Runs: StepCostMeasurement.RunCount(pricing, s)));
 
             totalInput += input;
             totalOutput += output;
@@ -232,7 +232,7 @@ public static class PipelineCostCalculator
     /// add up; the result is unknown when any execution with tokens is
     /// unpriced, so the row never presents a partial sum as complete.
     /// </summary>
-    private static TokenCostEstimate SumEstimates(
+    private TokenCostEstimate SumEstimates(
         IReadOnlyList<PipelineStepRunSummary> executions,
         DateTime recordedAt)
     {
@@ -241,7 +241,7 @@ public static class PipelineCostCalculator
         decimal input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
         foreach (var run in executions)
         {
-            var estimate = TokenPricing.Estimate(
+            var estimate = pricing.Estimate(
                 run.Model, run.InputTokens, run.OutputTokens, run.CacheReadTokens, run.CacheCreationTokens,
                 run.StartedAt ?? recordedAt);
             first ??= estimate;
@@ -269,7 +269,7 @@ public static class PipelineCostCalculator
     /// model and run date; ledger calls replace a remote step's row tokens the
     /// same way <see cref="SummarizeWithLedger"/> does for the live attempt.
     /// </summary>
-    public static DecisionCostRollup SummarizeDecisionCost(
+    public DecisionCostRollup SummarizeDecisionCost(
         PipelineExecutionRecord? record,
         IReadOnlyDictionary<string, IReadOnlyList<TaskTokenCall>>? ledgerCalls = null)
     {
@@ -286,7 +286,7 @@ public static class PipelineCostCalculator
                     && ledgerCalls.TryGetValue(step.StepId, out var calls)
                     && calls.Count > 0)
                 {
-                    for (var i = 0; i < StepCostMeasurement.RunCount(step); i++)
+                    for (var i = 0; i < StepCostMeasurement.RunCount(pricing, step); i++)
                         acc.AddExecution(step.Kind, 0, null);
                     foreach (var call in calls)
                     {
@@ -297,19 +297,19 @@ public static class PipelineCostCalculator
                             acc.AddPricedTokens(step.Kind, tokens, call.EstimatedApiCostUsd);
                             continue;
                         }
-                        acc.AddTokens(step.Kind, tokens, TokenPricing.Estimate(
+                        acc.AddTokens(step.Kind, tokens, pricing.Estimate(
                             call.Model, call.InputTokens, call.OutputTokens,
                             call.CacheReadTokens, call.CacheCreationTokens, call.Ts));
                     }
                     continue;
                 }
 
-                foreach (var run in StepCostMeasurement.Executions(step))
+                foreach (var run in StepCostMeasurement.Executions(pricing, step))
                 {
                     var tokens = StepCostMeasurement.Tokens(run);
                     acc.AddExecution(step.Kind, tokens, tokens <= 0
                         ? null
-                        : TokenPricing.Estimate(
+                        : pricing.Estimate(
                             run.Model, run.InputTokens, run.OutputTokens,
                             run.CacheReadTokens, run.CacheCreationTokens,
                             run.StartedAt ?? attempt.StartedAt));
@@ -326,7 +326,7 @@ public static class PipelineCostCalculator
     /// per-call pricing and call counts out of <c>pipeline-execution.json</c>
     /// while making the task total reconcile with the ledger-backed Task tab.
     /// </summary>
-    public static PipelineCostSummary SummarizeWithLedger(
+    public PipelineCostSummary SummarizeWithLedger(
         PipelineExecutionRecord? record,
         IReadOnlyDictionary<string, IReadOnlyList<TaskTokenCall>> ledgerCalls)
     {
@@ -355,7 +355,7 @@ public static class PipelineCostCalculator
             MergePricingGaps(steps.SelectMany(step => step.PricingGaps), oneRun: true));
     }
 
-    private static PipelineStepCost CostFromLedger(
+    private PipelineStepCost CostFromLedger(
         PipelineStepCost baseline,
         IReadOnlyList<TaskTokenCall> calls)
     {
@@ -377,7 +377,7 @@ public static class PipelineCostCalculator
             cacheRead += call.CacheReadTokens;
             cacheCreation += call.CacheCreationTokens;
 
-            var estimate = TokenPricing.Estimate(
+            var estimate = pricing.Estimate(
                 call.Model,
                 call.InputTokens,
                 call.OutputTokens,
@@ -453,7 +453,7 @@ public static class PipelineCostCalculator
     /// then estimating equals estimating per step then summing). Steps with
     /// zero tokens are ignored; a null / empty model collapses to "unknown".
     /// </summary>
-    public static PipelineModelUsageSummary SummarizeByModel(PipelineExecutionRecord? record)
+    public PipelineModelUsageSummary SummarizeByModel(PipelineExecutionRecord? record)
     {
         if (record == null)
         {
@@ -483,7 +483,7 @@ public static class PipelineCostCalculator
     /// This avoids treating a pipeline attempt as a CLI run and keeps missing
     /// telemetry distinct from a genuine recorded zero.
     /// </summary>
-    public static PipelineModelUsageSummary SummarizeByModel(
+    public PipelineModelUsageSummary SummarizeByModel(
         PipelineExecutionRecord? record,
         IReadOnlyList<SessionEvent> sessionEvents,
         TaskTokenSummary? taskTokens)
@@ -526,7 +526,7 @@ public static class PipelineCostCalculator
         return BuildModelSummary(runs);
     }
 
-    private static PipelineModelUsageSummary BuildModelSummary(
+    private PipelineModelUsageSummary BuildModelSummary(
         IReadOnlyList<PipelineRunTokenUsage> runs)
     {
         // Identity is (model, level): the lifetime rollup must not merge the
@@ -569,7 +569,7 @@ public static class PipelineCostCalculator
             runs.Count(run => !run.TokenUsageAvailable));
     }
 
-    private static PipelineRunTokenUsage BuildRun(PipelineExecutionRecord run, bool current)
+    private PipelineRunTokenUsage BuildRun(PipelineExecutionRecord run, bool current)
     {
         var models = GroupByModel(run.Steps, run.StartedAt);
         return new PipelineRunTokenUsage(
@@ -586,7 +586,7 @@ public static class PipelineCostCalculator
             TokenUsageAvailable: true);
     }
 
-    private static List<TaskTokenCall> CanonicalCalls(TaskTokenSummary? summary)
+    private List<TaskTokenCall> CanonicalCalls(TaskTokenSummary? summary)
     {
         if (summary == null)
             return [];
@@ -622,7 +622,7 @@ public static class PipelineCostCalculator
         return calls;
     }
 
-    private static List<TaskTokenCall> PipelineCalls(PipelineExecutionRecord? record)
+    private List<TaskTokenCall> PipelineCalls(PipelineExecutionRecord? record)
     {
         if (record == null)
             return [];
@@ -647,7 +647,7 @@ public static class PipelineCostCalculator
             .ToList();
     }
 
-    private static int ResolveRunIndex(
+    private int ResolveRunIndex(
         DateTime recordedAt,
         IReadOnlyList<SessionEvent> sessions)
     {
@@ -664,7 +664,7 @@ public static class PipelineCostCalculator
         return index;
     }
 
-    private static IReadOnlyList<PipelineModelTokenUsage> GroupCallsByModel(
+    private IReadOnlyList<PipelineModelTokenUsage> GroupCallsByModel(
         IReadOnlyList<TaskTokenCall> calls,
         string? runModel,
         string? runThinkingLevel = null)
@@ -695,7 +695,7 @@ public static class PipelineCostCalculator
                 cacheCreation += call.CacheCreationTokens;
                 var tokens = call.InputTokens + call.OutputTokens
                     + call.CacheReadTokens + call.CacheCreationTokens;
-                var estimate = TokenPricing.Estimate(
+                var estimate = pricing.Estimate(
                     model,
                     call.InputTokens,
                     call.OutputTokens,
@@ -732,7 +732,7 @@ public static class PipelineCostCalculator
     }
 
     /// <summary>Canonical model id for a ledger call, falling back to the run's recorded model.</summary>
-    private static string ResolveCallModel(TaskTokenCall call, string? runModel)
+    private string ResolveCallModel(TaskTokenCall call, string? runModel)
         => string.IsNullOrWhiteSpace(call.Model)
             ? string.IsNullOrWhiteSpace(runModel) ? "unknown" : runModel.Trim()
             : call.Model.Trim();
@@ -744,7 +744,7 @@ public static class PipelineCostCalculator
     /// run-start session event persisted, so it is recorded data rather than a
     /// guess. Every other case stays null ("level unknown").
     /// </summary>
-    private static string? ResolveCallThinkingLevel(
+    private string? ResolveCallThinkingLevel(
         TaskTokenCall call,
         string? runModel,
         string? runThinkingLevel)
@@ -761,11 +761,11 @@ public static class PipelineCostCalculator
     /// Case-insensitive grouping key for one (model, reasoning level) identity.
     /// A missing level is its own bucket, never merged into a levelled one.
     /// </summary>
-    private static string IdentityKey(string model, string? thinkingLevel)
+    private string IdentityKey(string model, string? thinkingLevel)
         => $"{model.Trim().ToLowerInvariant()}\u0001{thinkingLevel?.Trim().ToLowerInvariant() ?? string.Empty}";
 
     // Sum a flat list of steps into per-model rows, busiest model first.
-    private static IReadOnlyList<PipelineModelTokenUsage> GroupByModel(
+    private IReadOnlyList<PipelineModelTokenUsage> GroupByModel(
         IEnumerable<PipelineStepExecution> steps,
         DateTime recordedAt)
     {
@@ -787,7 +787,7 @@ public static class PipelineCostCalculator
             long output = g.Sum(item => item.Step.OutputTokens);
             long cacheRead = g.Sum(item => item.Step.CacheReadTokens);
             long cacheCreation = g.Sum(item => item.Step.CacheCreationTokens);
-            var est = TokenPricing.Estimate(model, input, output, cacheRead, cacheCreation, recordedAt);
+            var est = pricing.Estimate(model, input, output, cacheRead, cacheCreation, recordedAt);
 
             byModel.Add(new PipelineModelTokenUsage(
                 Model: model,
@@ -811,7 +811,7 @@ public static class PipelineCostCalculator
             .ToList();
     }
 
-    private static IReadOnlyList<PipelinePricingGap> PricingGapsFor(
+    private IReadOnlyList<PipelinePricingGap> PricingGapsFor(
         TokenCostEstimate estimate,
         long totalTokens,
         string? displayModel)
@@ -824,7 +824,7 @@ public static class PipelineCostCalculator
         return [new PipelinePricingGap(modelId, estimate.Status.ToString(), 1)];
     }
 
-    private static IReadOnlyList<PipelinePricingGap> MergePricingGaps(
+    private IReadOnlyList<PipelinePricingGap> MergePricingGaps(
         IEnumerable<PipelinePricingGap> gaps,
         bool oneRun = false)
         => gaps
@@ -840,5 +840,5 @@ public static class PipelineCostCalculator
     // Costs are fractions of a cent for a single task; keep 6 dp so the
     // sub-cent detail survives the round-trip and the UI decides display
     // precision.
-    private static decimal Round(decimal value) => Math.Round(value, 6, MidpointRounding.AwayFromZero);
+    private decimal Round(decimal value) => Math.Round(value, 6, MidpointRounding.AwayFromZero);
 }

@@ -252,7 +252,7 @@ public sealed class RemotePipelineExecutionProjectionTests
                 PipelineStepStatus.Pending,
                 Step(projected.Execution, PipelineCatalogue.RegressionRadarStepId).Status);
 
-            var cost = PipelineCostCalculator.SummarizeWithLedger(
+            var cost = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeWithLedger(
                 projected.Execution,
                 projected.LedgerCalls);
             Assert.Equal(660, cost.TotalTokens);

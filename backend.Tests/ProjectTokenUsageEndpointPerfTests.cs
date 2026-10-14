@@ -66,17 +66,17 @@ public class ProjectTokenUsageEndpointPerfTests : IDisposable
         }
         WriteOrchestratorLog(jobCount, logEntries);
 
-        var (svc, _) = BuildRuntime(projectName);
+        var svc = BuildRuntime(projectName);
 
         // Warm — read once so the JIT / disk cache are settled. We are
         // measuring the rollup, not the first-touch cost.
         _ = svc.BuildSummary(projectName, _watchPath);
-        _ = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageService.DefaultHeatmapDays);
+        _ = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageFold.DefaultHeatmapDays);
 
         // Act — measure the two calls the panel mounts in parallel.
         var sw = Stopwatch.StartNew();
         var summary = svc.BuildSummary(projectName, _watchPath);
-        var heatmap = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageService.DefaultHeatmapDays);
+        var heatmap = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageFold.DefaultHeatmapDays);
         sw.Stop();
 
         // Assert — generous ceiling. The fast path is a few hundred ms
@@ -92,7 +92,7 @@ public class ProjectTokenUsageEndpointPerfTests : IDisposable
             sw.ElapsedMilliseconds < 1000,
             $"Summary + heatmap over {jobCount} jobs and {logEntries} log entries took " +
             $"{sw.ElapsedMilliseconds} ms; the prompt's perf bar is well under one second. " +
-            "If this assertion fires, look at ProjectTokenUsageService.BuildJobsById and any " +
+            "If this assertion fires, look at the job lookup and any " +
             "helper that introduces per-job disk I/O on the rollup path.");
     }
 
@@ -112,9 +112,9 @@ public class ProjectTokenUsageEndpointPerfTests : IDisposable
         }
         WriteOrchestratorLog(jobCount, logEntries);
 
-        var (svc, _) = BuildRuntime(projectName);
+        var svc = BuildRuntime(projectName);
 
-        var top5 = svc.BuildExpensiveJobs(projectName, _watchPath, 5);
+        var top5 = svc.BuildExpensiveJobs(_watchPath, 5);
 
         Assert.True(top5.Count <= 5);
         for (var i = 1; i < top5.Count; i++)
@@ -177,14 +177,35 @@ public class ProjectTokenUsageEndpointPerfTests : IDisposable
         File.WriteAllText(path, sb.ToString());
     }
 
-    private (ProjectTokenUsageService svc, TaskScannerService scanner) BuildRuntime(string projectName)
+    private ProjectTokenUsageFromLog BuildRuntime(string projectName)
     {
         var config = BuildConfig(projectName);
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
-        var svc = new ProjectTokenUsageService(log, scanner);
-        return (svc, scanner);
+        return new ProjectTokenUsageFromLog(log, scanner);
+    }
+
+    /// <summary>
+    /// Reads the project's orchestrator log once and the job folders once
+    /// per call, then runs the shared pure folds.
+    /// </summary>
+    private sealed class ProjectTokenUsageFromLog(OrchestratorLog log, TaskScannerService scanner)
+    {
+        public ProjectTokenUsageSummary BuildSummary(string projectName, string watchPath)
+            => ProjectTokenUsageFold.Summary(projectName, log.Read(watchPath), JobsById(watchPath));
+
+        public ProjectTokenHeatmap BuildHeatmap(string projectName, string watchPath, int days)
+            => ProjectTokenUsageFold.Heatmap(projectName, log.Read(watchPath), JobsById(watchPath), days);
+
+        public IReadOnlyList<ProjectExpensiveJob> BuildExpensiveJobs(string watchPath, int limit)
+            => ProjectTokenJobFold.ExpensiveJobs(log.Read(watchPath), JobsById(watchPath), limit);
+
+        private IReadOnlyDictionary<string, TaskInfo> JobsById(string watchPath)
+            => scanner.ScanAllAutomationJobs()
+                .Where(job => string.Equals(job.WatchPath, watchPath, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(job => job.Id, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
     }
 
     private IConfiguration BuildConfig(string projectName)
