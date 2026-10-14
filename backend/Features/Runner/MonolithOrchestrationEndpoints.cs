@@ -104,48 +104,56 @@ public static class MonolithOrchestrationEndpoints
 public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationStore store,
     TaskScannerService scanner,
     AttemptAuthorityService authority,
+    TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
+    private static readonly TimeSpan PreparationGrace = TimeSpan.FromSeconds(30);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            var tasks = scanner.ScanAllJobs();
-            ActivateSettledReviews();
-            foreach (var occurrence in store.WaitingOccurrences())
-            {
-                var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
-                    && item.ProjectName == occurrence.Run.ProjectId);
-                if (card is not null && card.State == occurrence.ExpectedSourceState)
-                    EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
-            }
-            scanner.InvalidateCache();
             while (!stoppingToken.IsCancellationRequested)
             {
-                ActivateSettledReviews();
+                RecoverOnce();
                 try { await store.RecoverApplyingAsync(stoppingToken); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
                 }
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                await Task.Delay(PreparationGrace, time, stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         catch (Exception exception) { logger.LogError(exception, "orchestration-recovery-incomplete"); }
     }
 
-    private void ActivateSettledReviews()
+    internal void RecoverOnce()
     {
+        var tasks = scanner.ScanAllJobs();
         foreach (var occurrence in store.AwaitingActivation())
         {
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
             try
             {
+                if (card is not null)
+                    EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId);
                 var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
                     report.AuthorityStatus == AttemptWriteStatus.Accepted
                     && occurrence.IdempotencyKey ==
                         $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
-                if (accepted) store.Activate(occurrence.Run.RunId);
+                if (accepted)
+                {
+                    store.Activate(occurrence.Run.RunId);
+                    if (card is not null && card.State == occurrence.ExpectedSourceState)
+                        EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                }
+                else
+                {
+                    if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
+                        store.CancelUnactivated(occurrence.Run.RunId, "review-settlement-not-accepted");
+                }
             }
             catch (Exception exception)
             {
@@ -153,5 +161,20 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     occurrence.Run.RunId);
             }
         }
+        foreach (var occurrence in store.WaitingOccurrences())
+        {
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is not null && card.State == occurrence.ExpectedSourceState)
+                EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+        }
+        foreach (var cancelled in store.List(null, "cancelled"))
+        {
+            var card = tasks.FirstOrDefault(item => item.Id == cancelled.TaskId
+                && item.ProjectName == cancelled.ProjectId);
+            if (card is not null)
+                EngineDecisionWaitMarker.Clear(card.FolderPath, cancelled.RunId);
+        }
+        scanner.InvalidateCache();
     }
 }
