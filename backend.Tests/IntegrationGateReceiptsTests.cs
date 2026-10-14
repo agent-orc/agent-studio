@@ -90,15 +90,19 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     [Fact]
     public void Economics_counts_legacy_fields_as_unknown_and_uses_gated_merges_for_reuse()
     {
+        var firstSha = new string('a', 40);
+        var secondSha = new string('b', 40);
         var postSteps = Path.Combine(_root, "post-steps");
         Directory.CreateDirectory(postSteps);
         File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
-            "verdict=Ok exit=0 durationMs=60000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=legacy\n" +
+            $"verdict=Ok exit=0 durationMs=60000 failureKind=None\nexpectedSha={firstSha} testedSha={firstSha}\nreason=legacy\n" +
             "--- test-selection.json ---\n{\"Level\":\"work-package\"}\n--- resource-evidence.json ---\n");
         File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-2.log"),
-            "verdict=Ok exit=0 durationMs=180000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=new\n" +
+            $"verdict=Ok exit=0 durationMs=180000 failureKind=None\nexpectedSha={secondSha} testedSha={secondSha}\nreason=new\n" +
             "gateRung=exact\ntestLevel=full\ngateQueueWaitMs=1000 mergeLockWaitMs=200\n--- last-300-lines ---\n");
         StampReceipts(postSteps, Now.AddHours(-1));
+        Published(_root, firstSha, 1);
+        Published(_root, secondSha, 2);
 
         var row = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
             since: Now.AddDays(-1), now: Now, retest: null);
@@ -187,6 +191,7 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     [Fact]
     public void Economics_excludes_red_gates_from_minutes_and_reuse()
     {
+        var sha = new string('c', 40);
         var postSteps = Path.Combine(_root, "post-steps");
         Directory.CreateDirectory(postSteps);
         File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
@@ -204,9 +209,10 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(1, redOnly.GateRed);
 
         File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-2.log"),
-            "verdict=Ok durationMs=120000\nexpectedSha=n/a\nreason=integrated\n" +
+            $"verdict=Ok durationMs=120000\nexpectedSha={sha} testedSha={sha}\nreason=integrated\n" +
             "gateRung=disjoint\n");
         StampReceipts(postSteps, Now.AddHours(-1));
+        Published(_root, sha, 1);
 
         var integrated = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
             since: Now.AddDays(-1), now: Now, retest: null);
@@ -214,6 +220,34 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(2, integrated.GateMinutesMedian);
         Assert.Equal(0, integrated.ExactReuseRate);
         Assert.Equal(1, integrated.DisjointReuseRate);
+    }
+
+    [Fact]
+    public void Economics_requires_publication_after_a_green_gate()
+    {
+        var sha = new string('a', 40);
+        var postSteps = Path.Combine(_root, "post-steps");
+        Directory.CreateDirectory(postSteps);
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
+            $"verdict=Ok durationMs=60000\nexpectedSha={sha} testedSha={sha}\nreason=green\n" +
+            "gateRung=exact\n");
+        StampReceipts(postSteps, Now.AddHours(-1));
+        IntegrationLaneEvents.Append(_root, "fixture", "card-1", "publication-queued",
+            sequence: 1, receipt: sha, atUtc: Now.AddMinutes(-5));
+
+        var failedPush = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            since: Now.AddDays(-1), now: Now, retest: null);
+        Assert.Equal(1, failedPush.GateGreen);
+        Assert.Equal(0, failedPush.GatedMerges);
+        Assert.Null(failedPush.GateMinutesMedian);
+        Assert.Null(failedPush.ExactReuseRate);
+
+        Published(_root, sha, 1);
+        var published = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            since: Now.AddDays(-1), now: Now, retest: null);
+        Assert.Equal(1, published.GatedMerges);
+        Assert.Equal(1, published.GateMinutesMedian);
+        Assert.Equal(1, published.ExactReuseRate);
     }
 
     [Fact]
@@ -234,6 +268,7 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     [Fact]
     public void Economics_places_receipts_by_recorded_time_not_by_file_time()
     {
+        var sha = new string('d', 40);
         var postSteps = Path.Combine(_root, "post-steps");
         Directory.CreateDirectory(postSteps);
         // A clone restamps every file; the receipt's own time still places it.
@@ -241,10 +276,11 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
             "verdict=Ok exit=0 durationMs=60000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=old\n" +
             $"verdictSource=Executed originalRunId=r1 originalCompletedAtUtc={Now.AddDays(-40):O}\n");
         File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-2.log"),
-            "verdict=Ok exit=0 durationMs=120000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=new\n" +
+            $"verdict=Ok exit=0 durationMs=120000 failureKind=None\nexpectedSha={sha} testedSha={sha}\nreason=new\n" +
             $"verdictSource=Executed originalRunId=r2 originalCompletedAtUtc={Now.AddDays(-40):O}\n" +
             $"gateRung=exact\ntestLevel=full\nrecordedAtUtc={Now.AddDays(-2):O}\n");
         StampReceipts(postSteps, Now.AddMinutes(-1));
+        Published(_root, sha, 1);
 
         var row = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
             since: Now.AddDays(-30), now: Now, retest: null);
@@ -256,16 +292,18 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     [Fact]
     public void Missing_source_gate_records_no_rung_and_counts_as_unknown()
     {
+        var sha = new string('e', 40);
         var missing = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
             "", "No pre-merge tip.", false, false)
         {
             FailureKind = BuildTestGateFailureKind.MissingSource,
         };
         var executed = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 120000,
-            "", "Passed.", false, false);
+            "", "Passed.", false, false) { ExpectedSha = sha, TestedSha = sha };
         var time = new FakeTimeProvider(Now.AddHours(-1));
         IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", missing, time: time);
         IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", executed, time: time);
+        Published(_root, sha, 1);
 
         var row = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
             since: Now.AddDays(-1), now: Now, retest: null);
@@ -281,16 +319,18 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     [Fact]
     public void Economics_aggregate_count_equals_sum_of_project_counts()
     {
+        var sha = new string('f', 40);
         var first = Path.Combine(_root, "first");
         var second = Path.Combine(_root, "second");
         Directory.CreateDirectory(Path.Combine(first, "post-steps"));
         Directory.CreateDirectory(Path.Combine(second, "post-steps"));
         File.WriteAllText(Path.Combine(first, "post-steps", "pre-develop-build-gate-1.log"),
-            "verdict=Ok durationMs=60000\nexpectedSha=n/a testedSha=n/a\nreason=old\n");
+            $"verdict=Ok durationMs=60000\nexpectedSha={sha} testedSha={sha}\nreason=old\n");
         File.WriteAllText(Path.Combine(second, "post-steps", "pre-develop-build-gate-1.log"),
             "verdict=Fail durationMs=120000\nexpectedSha=n/a testedSha=n/a\nreason=red\n");
         StampReceipts(Path.Combine(first, "post-steps"), Now.AddDays(-2));
         StampReceipts(Path.Combine(second, "post-steps"), Now.AddDays(-2));
+        Published(first, sha, 1);
         var a = GateEconomicsEndpoints.ProjectRow("A", [first], since: Now.AddDays(-7), now: Now, retest: null);
         var b = GateEconomicsEndpoints.ProjectRow("B", [second], since: Now.AddDays(-7), now: Now, retest: null);
         var all = GateEconomicsEndpoints.ProjectRow("All projects", [first, second],
@@ -306,6 +346,10 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         foreach (var path in Directory.EnumerateFiles(postSteps, "pre-develop-build-gate-*.log"))
             File.SetLastWriteTimeUtc(path, writtenAt.UtcDateTime);
     }
+
+    private static void Published(string folder, string sha, long sequence)
+        => IntegrationLaneEvents.Append(folder, "fixture", "card-1", "published",
+            sequence: sequence, receipt: sha, atUtc: Now.AddMinutes(-1));
 
     public void Dispose()
     {
