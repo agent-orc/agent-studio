@@ -103,6 +103,7 @@ public static class MonolithOrchestrationEndpoints
 
 public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationStore store,
     TaskScannerService scanner,
+    AttemptAuthorityService authority,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -110,6 +111,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         try
         {
             var tasks = scanner.ScanAllJobs();
+            ActivateSettledReviews();
             foreach (var occurrence in store.WaitingOccurrences())
             {
                 var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
@@ -120,6 +122,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             scanner.InvalidateCache();
             while (!stoppingToken.IsCancellationRequested)
             {
+                ActivateSettledReviews();
                 try { await store.RecoverApplyingAsync(stoppingToken); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -130,5 +133,25 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         catch (Exception exception) { logger.LogError(exception, "orchestration-recovery-incomplete"); }
+    }
+
+    private void ActivateSettledReviews()
+    {
+        foreach (var occurrence in store.AwaitingActivation())
+        {
+            try
+            {
+                var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
+                    report.AuthorityStatus == AttemptWriteStatus.Accepted
+                    && occurrence.IdempotencyKey ==
+                        $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
+                if (accepted) store.Activate(occurrence.Run.RunId);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "orchestration-review-activation-pending run={RunId}",
+                    occurrence.Run.RunId);
+            }
+        }
     }
 }

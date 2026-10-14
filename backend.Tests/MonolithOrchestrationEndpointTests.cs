@@ -95,8 +95,11 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         Assert.Equal(2, applier.Count);
     }
 
-    [Fact]
-    public async Task Engine_switch_holds_coding_and_review_reports_until_each_decision_is_applied()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Engine_switch_holds_coding_and_review_reports_until_each_decision_is_applied(
+        bool acceptReview)
     {
         const string project = "agent-runner-01";
         const string card = "AGT-ENGINE-HANDOFF";
@@ -133,6 +136,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                     ["Runner:RunLiveness:Enabled"] = "false",
                     ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
                     ["Supervisor:StuckResumeWindowMinutes"] = "0",
+                    ["DeliveryChain:Guarded"] = "false",
                     ["Orchestration:Transitions:CodingCompletion"] = "Engine",
                     ["Orchestration:Transitions:ReviewReport"] = "Engine",
                 }));
@@ -145,7 +149,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         Assert.True(lease.Granted);
         Assert.Equal(TaskStates.Progress, factory.Services.GetRequiredService<TaskScannerService>()
             .FindJob(card, projectPath)?.State);
-        var completion = await coding.CompleteRunAsync(new RRemoteComplete(
+        var completionRequest = new RRemoteComplete(
             card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, "Done",
             ResultSha: resultSha, AttemptChainId: lease.Lease.LeaseId,
             Repository: "https://example.invalid/agent-studio.git",
@@ -153,7 +157,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             IdempotencyKey: "engine-coding-completion", BaseSha: baseSha,
             ImmutableResultRef: FencedGitRefs.ImmutableResult(
                 lease.Lease.AttemptId!, lease.Lease.FencingToken, resultSha),
-            ArtifactManifestDigest: new string('a', 64)), CancellationToken.None);
+            ArtifactManifestDigest: new string('a', 64));
+        var completion = await coding.CompleteRunAsync(completionRequest, CancellationToken.None);
         Assert.True(completion!.TargetState == TaskStates.Progress,
             $"Completion reached {completion.TargetState}: {completion.Message}");
 
@@ -161,6 +166,9 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         var codingRun = Assert.Single(store.List(project, null));
         Assert.Equal("pending", codingRun.Status);
         Assert.Equal(codingRun.RunId, EngineDecisionWaitMarker.Read(cardFolder));
+        var codingReplay = await coding.CompleteRunAsync(completionRequest, CancellationToken.None);
+        Assert.Equal(completion!.TargetState, codingReplay!.TargetState);
+        Assert.Equal(codingRun.RunId, Assert.Single(store.List(project, null)).RunId);
 
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();
         var enrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("engine-one",
@@ -224,19 +232,34 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         Assert.Equal(reported.ReportId, duplicate.ReportId);
         Assert.Equal(2, store.List(project, null).Count);
 
-        var reviewDecision = TransitionDecisionPolicy.Create(TransitionAction.ConcernRound,
+        var reviewDecision = TransitionDecisionPolicy.Create(
+            acceptReview ? TransitionAction.HumanReview : TransitionAction.ConcernRound,
             "Fix the reviewed concern.", card, reviewClaim.Attempt.AttemptId, 0, 4,
             [new ReviewFollowUpFinding("code-quality", "concerns", "Remove the dead assertion.")],
             new ContinuationBase(subject.ResultRef, resultSha, reviewClaim.Attempt.AttemptId));
         var reviewStage = await fakeEngine.Claim();
         Assert.Equal(pending.RunId, reviewStage.Run!.RunId);
         Assert.Equal("completed", (await fakeEngine.Complete(reviewStage,
-            OrchestrationAction.Reissue,
+            acceptReview ? OrchestrationAction.Continue : OrchestrationAction.Reissue,
             JsonSerializer.Serialize(new { transition = reviewDecision }))).Status);
-        var readyFolder = Path.Combine(projectPath, TaskStates.Ready, card);
-        Assert.True(Directory.Exists(readyFolder));
-        Assert.Contains("Remove the dead assertion", File.ReadAllText(Path.Combine(readyFolder, "prompt.md")));
-        Assert.Null(EngineDecisionWaitMarker.Read(readyFolder));
+        var destination = Path.Combine(projectPath,
+            acceptReview ? TaskStates.HumanReview : TaskStates.Ready, card);
+        Assert.True(Directory.Exists(destination));
+        Assert.Null(EngineDecisionWaitMarker.Read(destination));
+        if (acceptReview)
+        {
+            Assert.Contains(ReviewDecisionLog.ReadAll(_workspace, project), record =>
+                record.JobId == card && record.Kind == ReviewDecisionKind.AcceptAsDone
+                && record.FailureKind == $"remote-review-park:{reviewClaim.Attempt.AttemptId}");
+        }
+        else
+        {
+            Assert.Contains("Remove the dead assertion", File.ReadAllText(Path.Combine(destination, "prompt.md")));
+            var budget = CardRoundBudget.Evaluate(
+                ReviewDecisionLog.ReadAll(_workspace, project),
+                factory.Services.GetRequiredService<TimelineLog>().ReadAll(destination), card, 4);
+            Assert.Equal(1, budget.Used);
+        }
     }
 
     public void Dispose()
@@ -250,7 +273,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         {
             var response = await client.PostAsJsonAsync("/api/v1/orchestration/claims",
                 new OrchestrationClaimRequest(engineId, "instance", [OrchestrationStage.ReviewDecision]));
-            response.EnsureSuccessStatusCode();
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<OrchestrationClaimResponse>())!;
         }
 
@@ -262,7 +285,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                 new CompleteOrchestrationStageRequest(engineId, "instance",
                     claim.Lease!.LeaseId, claim.Lease.Fence, OrchestrationStage.ReviewDecision,
                     action, outputJson, $"complete:{claim.Run.RunId}"));
-            response.EnsureSuccessStatusCode();
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<OrchestrationRunDto>())!;
         }
     }

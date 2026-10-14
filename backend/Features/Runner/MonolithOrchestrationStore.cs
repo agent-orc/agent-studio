@@ -15,7 +15,8 @@ public sealed record MonolithOrchestrationOccurrence(
     OrchestrationLeaseDto? Lease = null,
     long LastFence = 0,
     string? CompletionKey = null,
-    CompleteOrchestrationStageRequest? Completion = null);
+    CompleteOrchestrationStageRequest? Completion = null,
+    bool Claimable = true);
 
 public interface IMonolithOrchestrationApplier
 {
@@ -59,7 +60,8 @@ public sealed class MonolithOrchestrationStore
 
     public OrchestrationRunDto Create(string projectId, string taskId,
         OrchestrationStage stage, string payloadJson, string idempotencyKey,
-        string expectedSourceState, string authorityAttemptId, long authorityFence, long authorityEpoch)
+        string expectedSourceState, string authorityAttemptId, long authorityFence, long authorityEpoch,
+        bool claimable = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(authorityAttemptId);
@@ -82,7 +84,8 @@ public sealed class MonolithOrchestrationStore
             var run = new OrchestrationRunDto($"orch_{Guid.NewGuid():N}", projectId, taskId, 1,
                 "pending", stage, payloadJson, 0, now, now, null, []);
             var occurrence = new MonolithOrchestrationOccurrence(run, idempotencyKey,
-                expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch);
+                expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch,
+                Claimable: claimable);
             Save(occurrence);
             _runs.Add(run.RunId, occurrence);
             return run;
@@ -132,6 +135,23 @@ public sealed class MonolithOrchestrationStore
             is "pending" or "leased" or "applying").ToArray();
     }
 
+    public IReadOnlyList<MonolithOrchestrationOccurrence> AwaitingActivation()
+    {
+        lock (_gate) return _runs.Values.Where(item => !item.Claimable).ToArray();
+    }
+
+    public void Activate(string runId)
+    {
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (item.Claimable) return;
+            item = item with { Claimable = true };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
+
     public OrchestrationClaimResponse Claim(OrchestrationClaimRequest request)
     {
         ValidateIdentity(request.EngineId, request.InstanceId);
@@ -139,7 +159,7 @@ public sealed class MonolithOrchestrationStore
         lock (_gate)
         {
             ExpireLeases();
-            var item = _runs.Values.Where(value => value.Run.Status == "pending"
+            var item = _runs.Values.Where(value => value.Run.Status == "pending" && value.Claimable
                     && request.SupportedStages.Contains(value.Run.CurrentStage))
                 .OrderBy(value => value.Run.UpdatedAt).ThenBy(value => value.Run.RunId).FirstOrDefault();
             if (item is null) return new OrchestrationClaimResponse("empty");

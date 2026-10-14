@@ -93,6 +93,23 @@ public sealed class MonolithOrchestrationStoreTests
     }
 
     [Fact]
+    public void Prepared_review_occurrence_survives_restart_and_cannot_be_claimed_before_settlement()
+    {
+        using var fixture = new Fixture(_time);
+        var prepared = fixture.Store.Create("project", "card", OrchestrationStage.ReviewDecision,
+            "{}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
+            "review_attempt", 3, 4, claimable: false);
+        Assert.Equal("empty", fixture.Store.Claim(Claim("engine_one")).Status);
+
+        var restarted = fixture.Restart();
+        Assert.Equal(prepared.RunId, Assert.Single(restarted.AwaitingActivation()).Run.RunId);
+        Assert.Equal("empty", restarted.Claim(Claim("engine_one")).Status);
+        restarted.Activate(prepared.RunId);
+        Assert.Equal(prepared.RunId, restarted.Claim(Claim("engine_one")).Run!.RunId);
+        Assert.Empty(fixture.Restart().AwaitingActivation());
+    }
+
+    [Fact]
     public async Task Periodic_sweep_coalesces_until_the_prior_occurrence_is_applied()
     {
         using var fixture = new Fixture(_time);

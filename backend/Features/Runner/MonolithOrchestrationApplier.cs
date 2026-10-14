@@ -15,6 +15,7 @@ public sealed class MonolithOrchestrationApplier(
     TimelineLog timeline,
     AttemptAuthorityService authority,
     ReviewAttemptTaskLifecycleService reviewAttemptLifecycle,
+    HumanReviewEscalation escalation,
     RemoteDeliveryIntegrationCoordinator integration,
     BatchGatePilotService batches,
     AgentStudio.Projects.ProjectSettingsService settings,
@@ -149,6 +150,17 @@ public sealed class MonolithOrchestrationApplier(
         else if (task.State != target)
             throw new InvalidOperationException("orchestration-source-state-mismatch");
 
+        if (target == TaskStates.HumanReview
+            && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
+        {
+            using var reviewPayload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+            var outcome = reviewPayload.RootElement.GetProperty("reviewOutcome").GetString()
+                ?? throw new InvalidDataException("The review outcome is missing.");
+            escalation.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
+                task.FolderPath, outcome, decision?.Reason ?? string.Empty,
+                reviewAttemptId: occurrence.AuthorityAttemptId, requireJournal: true);
+        }
+
         if (target == TaskStates.AutoReview)
         {
             using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
@@ -187,14 +199,21 @@ public sealed class MonolithOrchestrationApplier(
             }
         }
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
-        if (!timeline.ReadAll(task.FolderPath).Any(entry => entry.Details is not null
+        if (decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
+            && !timeline.ReadAll(task.FolderPath).Any(entry => entry.Details is not null
             && entry.Details.TryGetValue("authorityWriteKey", out var recorded)
             && recorded == key))
             timeline.Append(task.FolderPath, TimelineEventKinds.QualityLoopReopened,
                 TimelineActors.System, $"Engine decision {decision?.Action.ToString() ?? completion.Action.ToString()} applied.",
                 occurrence.AuthorityAttemptId,
-                details: new Dictionary<string, string> { ["orchestrationRunId"] = occurrence.Run.RunId,
-                    ["authorityWriteKey"] = key });
+                details: new Dictionary<string, string>
+                {
+                    ["orchestrationRunId"] = occurrence.Run.RunId,
+                    ["authorityWriteKey"] = key,
+                    ["reviewAttemptId"] = occurrence.AuthorityAttemptId,
+                    ["cause"] = decision.Action == TransitionAction.ConcernRound
+                        ? "multi-aspect-concern" : "multi-aspect-block",
+                });
         scanner.InvalidateCache();
     }
 

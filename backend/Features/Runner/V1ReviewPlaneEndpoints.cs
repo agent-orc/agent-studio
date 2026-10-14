@@ -893,6 +893,38 @@ public static class V1ReviewPlaneEndpoints
                     new AttemptWriteReference(attemptId, request.Fence, request.AuthorityEpoch,
                         request.IdempotencyKey), request.Workspace.ActualHead, engineOutcome,
                     request.FailureClassification, request.Summary);
+                var rounds = projections.Read(reviewTask).Attempts.Where(round => round.AttemptId != attemptId).ToArray();
+                var engineCardBudget = CardRoundBudget.Evaluate(
+                    ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, reviewTask.ProjectName),
+                    timeline.ReadAll(reviewTask.FolderPath), reviewTask.Id,
+                    CardRoundBudget.ResolveAllowed(configuration));
+                var payload = new StagePayload(
+                    ReviewOutcome: request.Outcome,
+                    RunAttemptId: currentReview.SourceRunAttemptId,
+                    ReviewSubjectId: currentReview.Subject.SubjectId,
+                    ReviewAttemptId: attemptId,
+                    ResultSha: currentReview.Subject.ExpectedResultSha,
+                    ResultRef: currentReview.Subject.ResultRef,
+                    Verdicts: request.Verdicts,
+                    ReviewPlan: currentReview.Subject.Plan,
+                    FailureClassification: request.FailureClassification,
+                    AutomaticRoundsUsed: engineCardBudget.Used,
+                    MaximumCardRounds: engineCardBudget.Allowed,
+                    ConcernRoundsUsed: ReviewConcernRoundStore.Read(reviewTask.FolderPath)?.Used ?? 0,
+                    MaximumConcernRounds: settings.Get(reviewTask.ProjectName).MaxReviewConcernRounds,
+                    InfrastructureRetryAvailable: authority.HasReviewInfrastructureRetryBudget(attemptId),
+                    MaximumReissues: settings.Get(reviewTask.ProjectName).MaxAutoReissueAttempts
+                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
+                    DeliveredRounds: ReviewRoundBudgetStore.Read(reviewTask.FolderPath, rounds),
+                    MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds);
+                var occurrenceKey = $"review-report:{attemptId}:{request.IdempotencyKey}";
+                var occurrence = orchestration.GetByIdempotencyKey(occurrenceKey)
+                    ?? orchestration.Create(reviewTask.ProjectName, reviewTask.Id,
+                    Contract.OrchestrationStage.ReviewDecision,
+                    JsonSerializer.Serialize(payload, Json),
+                    occurrenceKey,
+                    reviewTask.State, attemptId, request.Fence, request.AuthorityEpoch,
+                    claimable: false);
                 AttemptWriteResult engineSettled;
                 try
                 {
@@ -926,38 +958,7 @@ public static class V1ReviewPlaneEndpoints
                         "The review report key is bound to a different payload."));
                 if (!engineSettled.Accepted || engineSettled.ReviewAttempt is null)
                     return AttemptError(engineSettled);
-                var rounds = projections.Read(reviewTask).Attempts.Where(round => round.AttemptId != attemptId).ToArray();
-                var engineCardBudget = CardRoundBudget.Evaluate(
-                    ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, reviewTask.ProjectName),
-                    timeline.ReadAll(reviewTask.FolderPath), reviewTask.Id,
-                    CardRoundBudget.ResolveAllowed(configuration));
-                var payload = new StagePayload(
-                    ReviewOutcome: request.Outcome,
-                    RunAttemptId: currentReview.SourceRunAttemptId,
-                    ReviewSubjectId: currentReview.Subject.SubjectId,
-                    ReviewAttemptId: attemptId,
-                    ResultSha: currentReview.Subject.ExpectedResultSha,
-                    ResultRef: currentReview.Subject.ResultRef,
-                    Verdicts: request.Verdicts,
-                    ReviewPlan: currentReview.Subject.Plan,
-                    FailureClassification: request.FailureClassification,
-                    AutomaticRoundsUsed: engineCardBudget.Used,
-                    MaximumCardRounds: engineCardBudget.Allowed,
-                    ConcernRoundsUsed: ReviewConcernRoundStore.Read(reviewTask.FolderPath)?.Used ?? 0,
-                    MaximumConcernRounds: settings.Get(reviewTask.ProjectName).MaxReviewConcernRounds,
-                    InfrastructureRetryAvailable: authority.HasReviewInfrastructureRetryBudget(attemptId),
-                    MaximumReissues: settings.Get(reviewTask.ProjectName).MaxAutoReissueAttempts
-                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
-                    DeliveredRounds: ReviewRoundBudgetStore.Read(reviewTask.FolderPath, rounds),
-                    MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds);
-                var occurrenceKey = $"review-report:{attemptId}:{request.IdempotencyKey}";
-                var occurrence = (acceptedReplay
-                        ? orchestration.GetByIdempotencyKey(occurrenceKey) : null)
-                    ?? orchestration.Create(reviewTask.ProjectName, reviewTask.Id,
-                    Contract.OrchestrationStage.ReviewDecision,
-                    JsonSerializer.Serialize(payload, Json),
-                    occurrenceKey,
-                    reviewTask.State, attemptId, request.Fence, request.AuthorityEpoch);
+                orchestration.Activate(occurrence.RunId);
                 if (occurrence.Status is "pending" or "leased" or "applying")
                     EngineDecisionWaitMarker.Write(reviewTask.FolderPath, occurrence.RunId);
                 scanner.InvalidateCache();

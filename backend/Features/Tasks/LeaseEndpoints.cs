@@ -2614,7 +2614,9 @@ public static class LeaseEndpoints
                         ResultRef = reviewAttemptRequest.ResultRef,
                         IntegrationBranch = deliveryRange?.IntegrationBranch
                             ?? TaskIntegrationBranch.NormalizeRef(req.IntegrationBranch),
-                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        CompletedAtUtc = new DateTimeOffset(DateTime.SpecifyKind(
+                            settled.RunAttempt.TerminalAt ?? settled.RunAttempt.CreatedAt,
+                            DateTimeKind.Utc)),
                     },
                 });
                 var occurrence = orchestration.Create(task.ProjectName, task.Id,
