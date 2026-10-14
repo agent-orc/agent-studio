@@ -30,6 +30,11 @@ public static class BatchGateOwnershipStore
         var folder = TaskPaths.LogsDir(taskFolder);
         Directory.CreateDirectory(folder);
         using var guard = Guard(folder);
+        WriteLocked(folder, ownership);
+    }
+
+    private static void WriteLocked(string folder, BatchGateOwnership ownership)
+    {
         var path = Path.Combine(folder, Name);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -86,6 +91,46 @@ public static class BatchGateOwnershipStore
             ContainedInSha = containedInSha,
         };
         Write(taskFolder, contained);
+        return contained;
+    }
+
+    /// <summary>
+    /// Repairs only the marker observed before the publication fetch. A newer
+    /// review may replace it while Git is running, so compare under the same
+    /// file lock used by marker writers before recording evidence.
+    /// </summary>
+    public static BatchGateOwnership? TryRecordContainment(string taskFolder,
+        BatchGateOwnership expected, string containedInSha, TimeProvider time)
+    {
+        var folder = TaskPaths.LogsDir(taskFolder);
+        Directory.CreateDirectory(folder);
+        using var guard = Guard(folder);
+        if (Read(taskFolder) != expected) return null;
+
+        var name = $"batch-contained-{expected.ReviewAttemptId}.json";
+        var path = Path.Combine(folder, name);
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, new
+            {
+                expected.ReviewAttemptId,
+                expected.Subject.TaskKey,
+                expected.Subject.ResultSha,
+                expected.Subject.IntegrationBranch,
+                ContainedInSha = containedInSha,
+                RecordedAtUtc = time.GetUtcNow(),
+            });
+            stream.Flush(flushToDisk: true);
+        }
+        File.Move(temp, path, overwrite: true);
+        var contained = expected with
+        {
+            FallbackEvidencePath = name,
+            FallbackIntegrated = true,
+            ContainedInSha = containedInSha,
+        };
+        WriteLocked(folder, contained);
         return contained;
     }
 

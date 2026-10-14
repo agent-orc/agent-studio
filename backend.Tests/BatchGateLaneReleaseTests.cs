@@ -1,5 +1,6 @@
 using AgentStudio.Pipeline;
 using AgentStudio.Shared;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -70,6 +71,39 @@ public sealed class BatchGateLaneReleaseTests
             Assert.Equal("old-review", BatchGateOwnershipStore.Read(root)?.ReviewAttemptId);
             BatchGateOwnershipStore.ClearIfReviewAttempt(root, "old-review");
             Assert.Null(BatchGateOwnershipStore.Read(root));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ContainmentRepairDoesNotReplaceMarkerWrittenDuringFetch()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-containment-race-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var subject = new BatchGateSubject(
+                "task", "project", "repo", "develop", "full", "profile", "v1",
+                "refs/heads/agent-studio/results/task", new string('a', 40),
+                "run", 1, 1, new string('a', 40),
+                true, true, true, true, false, null, true,
+                Now, 1);
+            var oldMarker = new BatchGateOwnership("old-review", subject);
+            var newMarker = oldMarker with { ReviewAttemptId = "new-review" };
+            BatchGateOwnershipStore.Write(root, oldMarker);
+            // The publication fetch begins with oldMarker, then a review writes
+            // its new marker before the old repair reaches the file lock.
+            BatchGateOwnershipStore.Write(root, newMarker);
+
+            var repaired = BatchGateOwnershipStore.TryRecordContainment(
+                root, oldMarker, new string('b', 40), new FakeTimeProvider(Now));
+
+            Assert.Null(repaired);
+            Assert.Equal(newMarker, BatchGateOwnershipStore.Read(root));
+            Assert.False(File.Exists(Path.Combine(TaskPaths.LogsDir(root),
+                "batch-contained-old-review.json")));
         }
         finally
         {

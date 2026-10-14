@@ -802,27 +802,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             new { targetState = TaskStates.Completed, operatorOverride = true,
                 reason = "Published delivery verified by operator." });
 
-        if (patchEquivalent)
-        {
-            // The ownership release accepts full-tree containment. The
-            // separate acceptance rail still needs its integration record.
-            Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
-            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            Assert.Equal("integration-dead-end", body.RootElement.GetProperty("code").GetString());
-            AssertLane(member.Key, TaskStates.HumanReview);
-        }
-        else
-        {
-            Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
-                await response.Content.ReadAsStringAsync());
-            AssertLane(member.Key, TaskStates.Completed);
-        }
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
+        AssertLane(member.Key, TaskStates.Completed);
         var ownership = Ownership(member.Key)!;
         Assert.Equal(containedIn, ownership.ContainedInSha);
         Assert.True(ownership.FallbackIntegrated);
         Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(
-            Path.Combine(_watchPath,
-                patchEquivalent ? TaskStates.HumanReview : TaskStates.Completed, member.Key)),
+            Path.Combine(_watchPath, TaskStates.Completed, member.Key)),
             ownership.FallbackEvidencePath!)));
         Assert.Equal(0, _gate.BatchRuns);
         Assert.Equal(0, _gate.FallbackRuns);

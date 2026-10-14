@@ -219,7 +219,8 @@ evidence with `batch-gate-evidence-missing`. A superseded pending review's
 marker is cleared; a prior successful marker does not govern later review
 generations.
 When the published integration tip already contains a current delivery, either
-by ancestry or by an equivalent full tree, the lane release check writes a
+by ancestry or by an equivalent full tree, batch recovery or the Human Review
+acceptance check writes a
 `batch-contained-<review-attempt>.json` record and updates the marker with the
 published tip. This also repairs a per-task fallback marker whose fallback did
 not integrate because another route published the delivery. An uncontained

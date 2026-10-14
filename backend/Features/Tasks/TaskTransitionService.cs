@@ -286,9 +286,11 @@ public sealed class TaskTransitionService
             if (!contentDecision.Accepted)
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
         }
+        AgentStudio.Pipeline.BatchGateOwnership? containedOwnership = null;
         if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
              || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
-            && BatchGateReleaseFailure(info, ct) is { } batchFailure)
+            && BatchGateReleaseFailure(info, ct, out containedOwnership,
+                repairContainedFallback: fromState == TaskStates.HumanReview) is { } batchFailure)
             return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, batchFailure, info.FolderPath);
         var projectName = info.ProjectName;
 
@@ -299,7 +301,7 @@ public sealed class TaskTransitionService
         if (acceptsIntegratedDelivery)
         {
             var integrationAdmission = ValidateIntegratedAcceptance(
-                info, settings, operatorOverride, acceptanceLineage);
+                info, settings, operatorOverride, acceptanceLineage, containedOwnership);
             if (integrationAdmission is not null) return integrationAdmission;
         }
 
@@ -325,6 +327,15 @@ public sealed class TaskTransitionService
             && fromState != TaskStates.Completed)
         {
             completionIntegrationStatus = _integrationStatus?.BuildForCompletion(info);
+            if (operatorOverride && containedOwnership?.ContainedInSha is { } containedInSha)
+                completionIntegrationStatus = (completionIntegrationStatus ?? new TaskIntegrationStatus()) with
+                {
+                    Status = IntegrationStatuses.Integrated,
+                    Sha = containedOwnership.Subject.ResultSha,
+                    IntegrationBranch = containedOwnership.Subject.IntegrationBranch,
+                    Detail = $"Delivery contained in published {containedInSha} by batch ownership evidence.",
+                    ReachUnavailable = false,
+                };
             completionContract = DecideCompletionContract(
                 info,
                 settings,
@@ -415,7 +426,8 @@ public sealed class TaskTransitionService
                 reason,
                 transitionCause,
                 transitionDetail,
-                decisionReopenPermit, archiveOverride);
+                decisionReopenPermit, archiveOverride,
+                publishedContainmentProven: operatorOverride && containedOwnership?.ContainedInSha is not null);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
@@ -1587,7 +1599,8 @@ public sealed class TaskTransitionService
         TaskInfo reviewed,
         ProjectSettings settings,
         bool operatorOverride,
-        AcceptanceLineageDecision? lineage)
+        AcceptanceLineageDecision? lineage,
+        AgentStudio.Pipeline.BatchGateOwnership? containedOwnership)
     {
         // A lineage refusal is a decision about this card, never a server
         // fault: it answers 409 with the reason.
@@ -1614,6 +1627,12 @@ public sealed class TaskTransitionService
                 reviewed.FolderPath);
         }
 
+        // The integration status projection counts ancestors. Batch ownership
+        // can also prove a full-tree patch equivalent publication. The operator
+        // override supplies the quality decision when that tree had no gate.
+        if (operatorOverride && containedOwnership?.ContainedInSha is not null)
+            return null;
+
         var integrationBranch = ResolveIntegrationBranch(reviewed, settings);
         var status = _integrationStatus?.BuildLookup([reviewed])
             .GetValueOrDefault(reviewed.TaskKey);
@@ -1627,8 +1646,11 @@ public sealed class TaskTransitionService
             reviewed.FolderPath);
     }
 
-    private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct)
+    private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct,
+        out AgentStudio.Pipeline.BatchGateOwnership? containedOwnership,
+        bool repairContainedFallback)
     {
+        containedOwnership = null;
         AgentStudio.Pipeline.BatchGateOwnership? ownership;
         try { ownership = AgentStudio.Pipeline.BatchGateOwnershipStore.Read(task.FolderPath); }
         catch { return "batch-gate-evidence-missing"; }
@@ -1644,7 +1666,17 @@ public sealed class TaskTransitionService
         var projection = _attemptAuthority.GetTaskProjection(authorityKey);
         var failure = AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
             ownership, projection, _batchGateStore, task.FolderPath);
-        if (failure is null || !AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(
+        if (failure is null)
+        {
+            if (ownership.ContainedInSha is not null
+                && AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(ownership, projection))
+                containedOwnership = ownership;
+            return null;
+        }
+        // Batch publication recovery owns Auto Review release. Repairing its
+        // marker here can move a card before the published batch is recovered.
+        if (!repairContainedFallback) return failure;
+        if (!AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(
                 ownership, projection)) return failure;
         try
         {
@@ -1653,10 +1685,17 @@ public sealed class TaskTransitionService
             var tip = _git.FetchBatchIntegrationTip(repo, ownership.Subject.IntegrationBranch, ct);
             if (tip is null || !_git.IsDeliveryPublished(repo, ownership.Subject.ResultSha, tip))
                 return failure;
-            var contained = AgentStudio.Pipeline.BatchGateOwnershipStore.RecordContainment(
-                task.FolderPath, ownership, tip, _time, fallbackIntegrated: true);
-            return AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
+            // The review and marker can both change while the network fetch runs.
+            projection = _attemptAuthority.GetTaskProjection(authorityKey);
+            if (!AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(
+                    ownership, projection)) return failure;
+            var contained = AgentStudio.Pipeline.BatchGateOwnershipStore.TryRecordContainment(
+                task.FolderPath, ownership, tip, _time);
+            if (contained is null) return failure;
+            var release = AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
                 contained, projection, _batchGateStore, task.FolderPath);
+            if (release is null) containedOwnership = contained;
+            return release;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
