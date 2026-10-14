@@ -41,11 +41,7 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        mkdir -p /data/home/.claude /data/home/.codex /data/home/.gemini
-        cp -R /run/cli-auth/claude/. /data/home/.claude/
-        cp -R /run/cli-auth/codex/. /data/home/.codex/
-        cp -R /run/cli-auth/gemini/. /data/home/.gemini/
-        chmod -R u+rwX /data/home/.claude /data/home/.codex /data/home/.gemini
+        /bin/sh /usr/local/bin/monolith-seed-cli-auth.sh
         exec dotnet /app/OrchestratorApi.dll
     logging: *logs
 
