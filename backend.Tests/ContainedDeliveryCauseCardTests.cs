@@ -63,7 +63,7 @@ public sealed class ContainedDeliveryCauseCardTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance,
             timeline);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetBuildProfile(Project, new BuildProfile { BuildCmds = ["cd ."] });
         var interventions = new FailureInterventionService(mutations, scanner, timeline,
@@ -130,7 +130,7 @@ public sealed class ContainedDeliveryCauseCardTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance,
             timeline);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetBuildProfile(Project, new BuildProfile { BuildCmds = ["cd ."] });
         var interventions = new FailureInterventionService(mutations, scanner, timeline,

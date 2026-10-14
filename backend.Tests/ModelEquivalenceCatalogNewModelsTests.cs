@@ -5,7 +5,7 @@ namespace AgentStudio.Tests;
 
 public sealed class ModelEquivalenceCatalogNewModelsTests
 {
-    private readonly ModelEquivalenceCatalog _catalogue = new();
+    private readonly ModelEquivalenceCatalog _catalogue = new(TokenTestServices.Pricing());
 
     [Theory]
     [InlineData(CliTypes.Claude, ModelIds.ClaudeOpus55, "high", CliTypes.Codex, ModelIds.Gpt56Sol, "high")]

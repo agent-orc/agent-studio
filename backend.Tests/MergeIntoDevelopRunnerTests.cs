@@ -1331,7 +1331,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetIntegrationBranch("Fixture", "develop");
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
         var transitions = new TaskTransitionService(
@@ -1734,7 +1734,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         settings.SetPipelineStep("Fixture", PipelineCatalogue.FailureInterventionStepId,
             new PipelineStepSetting { Enabled = true });
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var classified = 0;
         var interventions = new FailureInterventionService(
             mutations, scanner, timeline, new OrchestratorLog(NullLogger<OrchestratorLog>.Instance),
@@ -3454,7 +3454,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(gitLogger ?? NullLogger<GitService>.Instance, scanner, config);
-        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         return (git, log);
     }
 

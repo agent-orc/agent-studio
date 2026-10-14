@@ -28,7 +28,7 @@ public sealed class StepCostMeasurementTests : IDisposable
         try { Directory.Delete(_folder, recursive: true); } catch { /* best effort */ }
     }
 
-    private static PipelineExecutionLog NewLog() => new(NullLogger<PipelineExecutionLog>.Instance);
+    private static PipelineExecutionLog NewLog() => new(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
 
     // ---- model-backed policy matrix -------------------------------------
 
@@ -78,7 +78,7 @@ public sealed class StepCostMeasurementTests : IDisposable
                 Kind = StepKind.Orchestrator,
                 Status = PipelineStepStatus.Passed,
             };
-            var stamped = StepCostMeasurement.Stamp(row);
+            var stamped = StepCostMeasurement.Stamp(TokenTestServices.Pricing(), row);
             // Either a measured zero (rule gate) or a visible gap: never a
             // silent blank that reads as free.
             if (StepCostMeasurement.IsModelBacked(id, StepKind.Orchestrator))
@@ -159,7 +159,7 @@ public sealed class StepCostMeasurementTests : IDisposable
             Step(PipelineCatalogue.CodeReviewGradeStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000),
             Step(PipelineCatalogue.OrchestratorDecisionStepId, StepKind.Orchestrator, PricedModel, 500_000, 100_000));
 
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", [record], days: 7, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", [record], days: 7, nowUtc: now);
 
         var orchestrator = Assert.Single(timeline.Kinds, kind => kind.Kind == "orchestrator");
         Assert.Equal(1_800_000, orchestrator.TotalTokens);
@@ -191,9 +191,9 @@ public sealed class StepCostMeasurementTests : IDisposable
             Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core, PricedModel, 999_999, 999_999),
             Step(PipelineCatalogue.TaskSpawnerStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
             receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: now);
 
         var core = Assert.Single(timeline.Kinds, kind => kind.Kind == "core");
         Assert.Equal(110_000, core.TotalTokens); // the receipt, not the log's core row
@@ -227,8 +227,8 @@ public sealed class StepCostMeasurementTests : IDisposable
             PreviousAttempts = [previous],
         };
 
-        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", current)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: secondAttemptAt);
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", current)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: secondAttemptAt);
 
         var core = Assert.Single(timeline.Kinds, kind => kind.Kind == "core");
         // The first attempt is priced by its receipt (not its 999,999 log
@@ -236,8 +236,8 @@ public sealed class StepCostMeasurementTests : IDisposable
         Assert.Equal(110_000 + 220_000, core.TotalTokens);
         Assert.Equal(2, core.Runs);
         Assert.Equal(
-            TokenPricing.Estimate(PricedModel, 100_000, 10_000, 0, 0, firstAttemptAt).Total
-            + TokenPricing.Estimate(PricedModel, 200_000, 20_000, 0, 0, secondAttemptAt).Total,
+            TokenTestServices.Pricing().Estimate(PricedModel, 100_000, 10_000, 0, 0, firstAttemptAt).Total
+            + TokenTestServices.Pricing().Estimate(PricedModel, 200_000, 20_000, 0, 0, secondAttemptAt).Total,
             core.TotalCostUsd);
     }
 
@@ -268,9 +268,9 @@ public sealed class StepCostMeasurementTests : IDisposable
         var log = Record("J1", TestAt,
             Step(PipelineCatalogue.TaskSpawnerStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
             receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
 
         Assert.Equal(2, merged.Count); // measured step plus the unmatched receipt
         var spawner = Assert.Single(timeline.Steps, step => step.StepId == PipelineCatalogue.TaskSpawnerStepId);
@@ -278,7 +278,7 @@ public sealed class StepCostMeasurementTests : IDisposable
         Assert.Equal(1_200_000, spawner.TotalTokens);
         Assert.Equal(1_255_000, timeline.TotalTokens);
         Assert.Equal(
-            2.00m + TokenPricing.Estimate(PricedModel, 50_000, 5_000, 0, 0, TestAt).Total,
+            2.00m + TokenTestServices.Pricing().Estimate(PricedModel, 50_000, 5_000, 0, 0, TestAt).Total,
             timeline.DecisionCost!.Deciding.PricedCostUsd);
     }
 
@@ -310,17 +310,17 @@ public sealed class StepCostMeasurementTests : IDisposable
         var log = Record("J1", TestAt,
             Step("aspect-code-quality", StepKind.Aspect, PricedModel, 40_000, 4_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
             receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
 
         Assert.Equal(2, merged.Count); // measured execution plus the unmatched receipt
         var aspect = Assert.Single(timeline.Kinds, kind => kind.Kind == "aspect");
         Assert.Equal(77_000, aspect.TotalTokens);
         Assert.Equal(1, Assert.Single(timeline.Steps, step => step.StepId == "aspect-code-quality").Runs);
         Assert.Equal(
-            TokenPricing.Estimate(PricedModel, 40_000, 4_000, 0, 0, TestAt).Total
-            + TokenPricing.Estimate(PricedModel, 30_000, 3_000, 0, 0, TestAt).Total,
+            TokenTestServices.Pricing().Estimate(PricedModel, 40_000, 4_000, 0, 0, TestAt).Total
+            + TokenTestServices.Pricing().Estimate(PricedModel, 30_000, 3_000, 0, 0, TestAt).Total,
             timeline.TotalCostUsd);
     }
 
@@ -360,15 +360,15 @@ public sealed class StepCostMeasurementTests : IDisposable
         var log = Record("J1", TestAt,
             Step("aspect-code-quality", StepKind.Aspect, PricedModel, 82_000, 4_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
 
         Assert.Equal(2, merged.Count); // summed step row plus the unrelated receipt
         var aspect = Assert.Single(timeline.Kinds, kind => kind.Kind == "aspect");
         Assert.Equal(86_000 + 33_000, aspect.TotalTokens);
         Assert.Equal(
-            TokenPricing.Estimate(PricedModel, 82_000, 4_000, 0, 0, TestAt).Total
-            + TokenPricing.Estimate(PricedModel, 30_000, 3_000, 0, 0, TestAt).Total,
+            TokenTestServices.Pricing().Estimate(PricedModel, 82_000, 4_000, 0, 0, TestAt).Total
+            + TokenTestServices.Pricing().Estimate(PricedModel, 30_000, 3_000, 0, 0, TestAt).Total,
             timeline.TotalCostUsd);
     }
 
@@ -391,7 +391,7 @@ public sealed class StepCostMeasurementTests : IDisposable
         var log = Record("J1", TestAt,
             Step("aspect-code-quality", StepKind.Aspect, PricedModel, 20_000, 1_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", log)]);
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", log)]);
 
         Assert.Single(merged);
     }
@@ -410,8 +410,8 @@ public sealed class StepCostMeasurementTests : IDisposable
         var log = Record("J1", TestAt,
             Step(PipelineCatalogue.DriftAdrCodeStepId, StepKind.Drift, PricedModel, 25_000, 2_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
 
         Assert.Single(merged);
         Assert.Equal(27_000, timeline.TotalTokens);
@@ -432,9 +432,9 @@ public sealed class StepCostMeasurementTests : IDisposable
         var log = Record("J1", TestAt,
             Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core, PricedModel, 100_000, 10_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(
+        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
             receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
 
         Assert.Equal(110_000, Assert.Single(timeline.Kinds, kind => kind.Kind == "core").TotalTokens);
         Assert.Equal(55_000, Assert.Single(timeline.Kinds, kind => kind.Kind == "orchestrator").TotalTokens);
@@ -445,7 +445,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void Unpriced_model_surfaces_as_unpriced_and_not_as_zero()
     {
-        var stamped = StepCostMeasurement.Stamp(new PipelineStepExecution
+        var stamped = StepCostMeasurement.Stamp(TokenTestServices.Pricing(), new PipelineStepExecution
         {
             StepId = PipelineCatalogue.TaskSpawnerStepId,
             Kind = StepKind.Orchestrator,
@@ -462,7 +462,7 @@ public sealed class StepCostMeasurementTests : IDisposable
         var record = Record("J1", now,
             Step(PipelineCatalogue.TaskSpawnerStepId, StepKind.Orchestrator, UnpricedModel, 5_000, 1_000),
             Step(PipelineCatalogue.CodeReviewGradeStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000));
-        var timeline = ProjectPipelineCostService.BuildFromRecords("P", [record], days: 7, nowUtc: now);
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", [record], days: 7, nowUtc: now);
         var spawner = Assert.Single(timeline.Steps, step => step.StepId == PipelineCatalogue.TaskSpawnerStepId);
         Assert.True(spawner.AnyModelUnknown);
         Assert.Equal(1, spawner.UnpricedRuns);
@@ -473,7 +473,7 @@ public sealed class StepCostMeasurementTests : IDisposable
         Assert.Equal(6_000, deciding.UnpricedTokens);
         Assert.Equal(1, deciding.UnpricedRuns);
 
-        var card = PipelineCostCalculator.SummarizeDecisionCost(record);
+        var card = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeDecisionCost(record);
         Assert.Equal(6_000, card.Deciding.UnpricedTokens);
         Assert.Equal(2.00m, card.Deciding.PricedCostUsd);
     }
@@ -510,11 +510,11 @@ public sealed class StepCostMeasurementTests : IDisposable
             .Steps.Single(step => step.StepId == PipelineCatalogue.OrchestratorDecisionStepId);
         Assert.Equal(2, archived.Runs);
 
-        var card = PipelineCostCalculator.SummarizeDecisionCost(record);
+        var card = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeDecisionCost(record);
         Assert.Equal(3, card.Deciding.Runs);
         Assert.Equal(4.00m, card.Deciding.PricedCostUsd);
 
-        var project = ProjectPipelineCostService.BuildFromRecords(
+        var project = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(),
             "P", [record, .. record.PreviousAttempts], days: 7, nowUtc: t0.AddHours(1));
         var decision = Assert.Single(project.Steps, step => step.StepId == PipelineCatalogue.OrchestratorDecisionStepId);
         Assert.Equal(3, decision.Runs);
@@ -522,7 +522,7 @@ public sealed class StepCostMeasurementTests : IDisposable
         Assert.Equal(4.00m, decision.TotalCostUsd);
 
         // The live attempt's per-step cost covers both rounds of that attempt.
-        var liveCost = PipelineCostCalculator.Summarize(record.PreviousAttempts[0]);
+        var liveCost = new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(record.PreviousAttempts[0]);
         var liveDecision = liveCost.Steps.Single(step => step.StepId == PipelineCatalogue.OrchestratorDecisionStepId);
         Assert.Equal(2, liveDecision.Runs);
         Assert.Equal(3.00m, liveDecision.CostUsd);
@@ -567,10 +567,10 @@ public sealed class StepCostMeasurementTests : IDisposable
         var record = log.Read(_folder)!;
         var core = Row(log, PipelineCatalogue.CoreAgentRunStepId);
         Assert.Equal(2, core.Runs);
-        var rollup = PipelineCostCalculator.SummarizeDecisionCost(record);
+        var rollup = new PipelineCostCalculator(TokenTestServices.Pricing()).SummarizeDecisionCost(record);
         Assert.Equal(2, rollup.AgentRuns.Runs);
         Assert.Equal(200_000, rollup.AgentRuns.Tokens);
-        Assert.Equal(200_000, PipelineCostCalculator.Summarize(record).Steps
+        Assert.Equal(200_000, new PipelineCostCalculator(TokenTestServices.Pricing()).Summarize(record).Steps
             .Single(step => step.StepId == PipelineCatalogue.CoreAgentRunStepId).TotalTokens);
     }
 
@@ -611,7 +611,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void Rule_decision_outside_a_model_scope_is_an_explicit_zero()
     {
-        var stamped = StepCostMeasurement.Stamp(new PipelineStepExecution
+        var stamped = StepCostMeasurement.Stamp(TokenTestServices.Pricing(), new PipelineStepExecution
         {
             StepId = PipelineCatalogue.OrchestratorDecisionStepId,
             Kind = StepKind.Orchestrator,

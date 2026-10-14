@@ -9,29 +9,7 @@ import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/to
 import { CostBreakdownService } from '../../services/cost-breakdown.service';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
 import { RecordedModelUsageGroupingStore } from '../../services/recorded-model-usage-grouping.store';
-
-interface ModelUsageRow {
-  model: string;
-  modelId: string;
-  cli: string | null;
-  source: string;
-  /** OpenAI reports cached input as a subset of input, while Anthropic
-   *  reports cache-read tokens as a separate category. */
-  cacheIncludedInInput: boolean;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  estimatedApiCostUsd: number;
-  modelPriced: boolean;
-  /** True for the synthetic "Other (n models)" row that folds every
-   *  below-threshold model together. */
-  isOtherSummary?: boolean;
-  /** Number of models folded into the "Other" row. */
-  otherCount?: number;
-  /** True for a real model row shown because the "Other" group is expanded. */
-  isOtherChild?: boolean;
-}
+import { modelUsageRows, modelUsageTokens, type ModelUsageRow } from '../../services/model-usage-rows';
 
 type WindowTone = 'ok' | 'warn' | 'hot' | 'unknown';
 
@@ -211,19 +189,8 @@ export class CliUsageModalComponent {
   /** Every recorded model row for this CLI, busiest first. Not capped —
    *  callers that need a compact view use {@link modelRows} instead. */
   private readonly allModelRows = computed<ModelUsageRow[]>(() => {
-    const cli = this.cliType();
-    const rows: ModelUsageRow[] = [];
-    for (const m of this.tokens()?.byModel ?? []) {
-      if (m.cli !== cli) continue;
-      const row = { ...m, source: 'project runtime', cacheIncludedInInput: cli === 'codex' };
-      if (this.totalTokens(row) > 0) rows.push(row);
-    }
-    for (const m of this.adhoc()?.byModel ?? []) {
-      if (m.cli !== cli) continue;
-      const row = { ...m, source: 'ad-hoc', cacheIncludedInInput: cli === 'codex' };
-      if (this.totalTokens(row) > 0) rows.push(row);
-    }
-    return rows.sort((a, b) => this.totalTokens(b) - this.totalTokens(a));
+    return modelUsageRows(this.cliType(), this.tokens(), this.adhoc(), 'project runtime')
+      .filter(row => modelUsageTokens(row) > 0);
   });
 
   /** Whether the "Other (n models)" group is left expanded, remembered per viewer. */
@@ -259,6 +226,7 @@ export class CliUsageModalComponent {
     return {
       modelId: '',
       cli: this.cliType(),
+      calls: minor.reduce((s, r) => s + r.calls, 0),
       model: `Other (${minor.length} model${minor.length === 1 ? '' : 's'})`,
       source: '',
       cacheIncludedInInput: minor[0]?.cacheIncludedInInput ?? false,
@@ -296,10 +264,7 @@ export class CliUsageModalComponent {
   }
 
   totalTokens(row: ModelUsageRow): number {
-    return row.inputTokens
-      + row.outputTokens
-      + row.cacheCreationTokens
-      + (row.cacheIncludedInInput ? 0 : row.cacheReadTokens);
+    return modelUsageTokens(row);
   }
 
   /** Read + creation cache tokens folded into one "Cache" column value. */

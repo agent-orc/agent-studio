@@ -1,24 +1,11 @@
-
-
 namespace AgentStudio.Tokens;
 
 /// <summary>
-/// Canonical token-aggregation surface. The union of every roll-up the
-/// observability surfaces consume today (project-detail token-usage panel,
-/// workspace timeline, status-bar usage modal, ad-hoc usage chart, job-card
-/// footers). New consumers depend on this interface rather than the legacy
-/// per-surface services so the implementation can move under them without
-/// breaking call sites.
-///
-/// <para>
-/// <b>Consolidation status (2026-08-09).</b> Project, lifetime, workspace
-/// aggregate, and task-card reads combine historical bus events with durable
-/// task token receipts. The legacy services
-/// (<see cref="ProjectTokenUsageService"/>, <see cref="TokenSummaryService"/>,
-/// <see cref="WorkspaceTokensTimelineService"/>, <see cref="AdHocUsageService"/>)
-/// still hold pure fold helpers and parity fixtures, but new consumers use
-/// this interface. See <c>docs/system/domains/tokens.md</c> for the full plan.
-/// </para>
+/// Canonical token-aggregation surface for every observability consumer
+/// (project token-usage panel, workspace timeline, status-bar usage modal,
+/// ad-hoc usage chart, job-card footers). Reads combine historical bus
+/// events, durable task receipts, and chat fallback receipts. See
+/// <c>docs/system/domains/tokens.md</c>.
 /// </summary>
 public interface ITokenAggregator
 {

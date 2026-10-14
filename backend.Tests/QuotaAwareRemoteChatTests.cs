@@ -54,11 +54,11 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         var bootstrap = new GlobalOrchestratorBootstrap(
             NullLogger<GlobalOrchestratorBootstrap>.Instance,
             sessionStore, runner, scanner, configuration);
-        var broker = new RemoteChatWorkBroker(
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(),
             NullLogger<RemoteChatWorkBroker>.Instance,
             TimeSpan.FromMilliseconds(20));
         var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
-        var service = new OrchestratorChatService(
+        var service = new OrchestratorChatService(TokenTestServices.Pricing(),
             chat,
             runner, sessionStore, bootstrap, scanner, configuration,
             NullLogger<OrchestratorChatService>.Instance,
@@ -153,7 +153,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             new CliQuotaFallbackService(
                 configuration,
                 NullLogger<CliQuotaFallbackService>.Instance,
-                new ModelEquivalenceCatalog()),
+                new ModelEquivalenceCatalog(TokenTestServices.Pricing())),
             new CliQuotaWaitPolicyService(
                 NullLogger<CliQuotaWaitPolicyService>.Instance,
                 configuration),
@@ -187,9 +187,9 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             runner,
             scanner,
             configuration);
-        var broker = new RemoteChatWorkBroker(
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(),
             NullLogger<RemoteChatWorkBroker>.Instance);
-        var service = new OrchestratorChatService(
+        var service = new OrchestratorChatService(TokenTestServices.Pricing(),
             new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
             runner,
             sessionStore,

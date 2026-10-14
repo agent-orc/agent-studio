@@ -457,7 +457,7 @@ public sealed class GateFailureRouterTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration);
         settings.SetIntegrationBranch(Project, "develop");
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
         var registry = new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance);

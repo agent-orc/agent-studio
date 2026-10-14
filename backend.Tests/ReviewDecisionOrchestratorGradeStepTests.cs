@@ -790,7 +790,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
             scanner, mutations, stateMachine, transitions, indexCache,
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
 
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
 
         CodeReviewStepService? codeReviewStep = null;
         if (wireGradeService)
@@ -876,7 +876,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
 
     private static PipelineStepExecution ReadPipelineStep(string folder, string stepId)
     {
-        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var record = log.Read(folder);
         Assert.NotNull(record);
         return record!.Steps.Single(s => string.Equals(s.StepId, stepId, StringComparison.OrdinalIgnoreCase));

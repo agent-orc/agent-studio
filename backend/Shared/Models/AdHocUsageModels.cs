@@ -69,7 +69,7 @@ public static class AdHocUsageSources
 
 /// <summary>
 /// Aggregated rollup of <see cref="AdHocUsageRecord"/> entries. Same
-/// shape conventions as <see cref="AgentStudio.Runner.TokenSummary"/>:
+/// shape conventions as <see cref="AgentStudio.Tokens.TokenSummary"/>:
 /// real token counts plus a theoretical USD estimate that does not
 /// reflect the user's actual subscription bill.
 /// </summary>

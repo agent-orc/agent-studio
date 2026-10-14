@@ -429,12 +429,6 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<OrchestratorChatLegacyMigrationHostedService>();
 builder.Services.AddSingleton<OrchestratorTurnService>();
 builder.Services.AddSingleton<GlobalOrchestratorBootstrap>();
-builder.Services.AddSingleton<TokenSummaryCacheStore>();
-builder.Services.AddSingleton<WorkspaceTokensCacheStore>();
-builder.Services.AddSingleton<AgentStudio.Tokens.TokenPricingDriftMonitor>();
-builder.Services.AddSingleton<TokenSummaryService>();
-builder.Services.AddSingleton<ProjectTokenUsageService>();
-builder.Services.AddSingleton<WorkspaceTokensTimelineService>();
 builder.Services.AddSingleton<WorkspaceSummaryService>();
 builder.Services.AddSingleton<AutoReviewPostProcessingQueue>();
 builder.Services.AddSingleton<IAutoReviewPostProcessingQueue>(sp =>
@@ -455,8 +449,6 @@ builder.Services.AddSingleton<TaskIntegrationRecoveryService>();
 builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
-builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
-builder.Services.AddSingleton<AgentStudio.Tokens.TokenLedgerDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -566,7 +558,6 @@ builder.Services.AddSingleton<PromptAdminService>();
 builder.Services.AddSingleton<TitleGenerationService>();
 builder.Services.AddSingleton<PromptEnhancementService>();
 builder.Services.AddSingleton<AgentStudio.AdHoc.AdHocUsageRecorder>();
-builder.Services.AddSingleton<AgentStudio.AdHoc.AdHocUsageService>();
 builder.Services.AddSingleton<PickupLockFile>();
 builder.Services.AddSingleton<IntegrationLeaseService>();
 // RM-3 / ADR-0060: the fenced task-run lease + this backend's runner identity
@@ -655,13 +646,7 @@ builder.Services.AddSingleton<ICliUsageParser, ClaudeUsageParser>();
 builder.Services.AddSingleton<ICliUsageParser, CodexUsageParser>();
 builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedAdHocUsageReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedTokenSummaryReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedWorkspaceTimelineReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.ProjectTokenReceiptReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedProjectTokenUsageReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BetterCandidateUsageReportService>();
-builder.Services.AddSingleton<AgentStudio.Tokens.ITokenAggregator, AgentStudio.Tokens.TokenAggregationService>();
+builder.Services.AddTokenUsage();
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into
@@ -1491,30 +1476,6 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
-}
-
-// One-time normalization and re-pricing for historical Codex/OpenAI usage
-// written while cached_input_tokens was incorrectly added to input_tokens.
-try
-{
-    hostTimeline.Sweep("OpenAiUsageHistoryRepair",
-        () => app.Services.GetRequiredService<AgentStudio.Tokens.OpenAiUsageHistoryRepair>().RunOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
-}
-
-// One-time collapse of task receipts that recorded the same usage more than
-// once (AGT-3012). Bus duplicates are collapsed on read and only reported.
-try
-{
-    hostTimeline.Sweep("TokenLedgerDuplicateRepair",
-        () => app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("TokenLedgerDuplicateRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

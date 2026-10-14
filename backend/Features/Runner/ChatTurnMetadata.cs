@@ -19,12 +19,12 @@ public sealed record ChatTurnMetadata
     public string? PriceCatalogueVersion { get; init; }
     public ChatTurnMetadataCapabilities Capabilities { get; init; } = new();
 
-    public static ChatTurnMetadata Create(
+    public static ChatTurnMetadata Create(ITokenPricing pricing,
         string? model, string? effort, string? providerThreadId, string? host,
         DateTime? queuedAt, DateTime? startedAt, DateTime? finishedAt,
         OrchestratorTokenUsage? usage, string? cliType)
     {
-        var priced = usage is null ? null : TokenPricing.Estimate(
+        var priced = usage is null ? null : pricing.Estimate(
             usage.Model ?? model, usage.InputTokens, usage.OutputTokens,
             usage.CacheReadTokens, usage.CacheCreationTokens, finishedAt);
         return new ChatTurnMetadata
@@ -43,7 +43,7 @@ public sealed record ChatTurnMetadata
             Cost = priced?.ModelKnown == true ? priced.Total : null,
             Currency = priced?.ModelKnown == true ? priced.PriceBasis?.Currency : null,
             PriceCatalogueVersion = priced?.ModelKnown == true
-                ? $"TokenEconomy/{typeof(TokenEconomy.ModelPriceCatalog).Assembly.GetName().Version}"
+                ? TokenEconomyPriceProvider.Version
                 : null,
             Capabilities = new ChatTurnMetadataCapabilities(
                 Tokens: usage is not null,

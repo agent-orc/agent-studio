@@ -31,6 +31,7 @@ namespace AgentStudio.Host;
 /// </summary>
 public sealed class TaskHubBroadcaster
 {
+    private readonly ITokenPricing _pricing;
     private readonly IHubContext<TaskHub> _hub;
     private readonly TaskScannerService _scanner;
     private readonly AgentStudio.Registry.ProjectRegistry _projects;
@@ -38,7 +39,7 @@ public sealed class TaskHubBroadcaster
     private readonly CliRouter? _router;
     private readonly TaskRunnerService? _runners;
 
-    public TaskHubBroadcaster(
+    public TaskHubBroadcaster(ITokenPricing pricing,
         IHubContext<TaskHub> hub,
         TaskScannerService scanner,
         AgentStudio.Registry.ProjectRegistry projects,
@@ -47,6 +48,7 @@ public sealed class TaskHubBroadcaster
         CliRouter? router = null,
         TaskRunnerService? runners = null)
     {
+        _pricing = pricing;
         _hub = hub;
         _scanner = scanner;
         _projects = projects;
@@ -96,7 +98,7 @@ public sealed class TaskHubBroadcaster
         if (info != null)
         {
             var projected = _router is not null && _runners is not null
-                ? AgentStudio.Tasks.TaskEndpointHelpers.WithRuntime(info, _router, _runners)
+                ? AgentStudio.Tasks.TaskEndpointHelpers.WithRuntime(_pricing, info, _router, _runners)
                 : info;
             SendProject(projected.ProjectName, method, projected);
         }

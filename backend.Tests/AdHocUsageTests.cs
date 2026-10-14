@@ -64,7 +64,7 @@ public class AdHocUsageTests
             Rec("summary-generation", "claude-haiku-4-5", 50_000, 800, day2),
         };
 
-        var agg = AdHocUsageService.Aggregate(records, "/log", 0, null);
+        var agg = AdHocUsageFold.Aggregate(records.Select(record => (record, TokenTestServices.Pricing().Estimate(record.Model, record.InputTokens, record.OutputTokens, record.CacheReadTokens, record.CacheCreationTokens, record.Ts))).ToList(), "/log");
 
         Assert.Equal(3, agg.Calls);
         Assert.Equal(50_300, agg.InputTokens);
@@ -90,7 +90,7 @@ public class AdHocUsageTests
         {
             Rec("title-generation", "claude-haiku-4-5", 1_000_000, 200_000, DateTime.UtcNow)
         };
-        var agg = AdHocUsageService.Aggregate(records, "/log", 0, null);
+        var agg = AdHocUsageFold.Aggregate(records.Select(record => (record, TokenTestServices.Pricing().Estimate(record.Model, record.InputTokens, record.OutputTokens, record.CacheReadTokens, record.CacheCreationTokens, record.Ts))).ToList(), "/log");
         Assert.True(agg.AllModelsPriced);
         Assert.Equal(2.0m, agg.EstimatedApiCostUsd);
     }
@@ -98,7 +98,7 @@ public class AdHocUsageTests
     [Fact]
     public void Aggregate_EmptyLog_ReturnsZeroes()
     {
-        var agg = AdHocUsageService.Aggregate(Array.Empty<AdHocUsageRecord>(), "/log", 0, null);
+        var agg = AdHocUsageFold.Aggregate(Array.Empty<AdHocUsageRecord>().Select(record => (record, TokenTestServices.Pricing().Estimate(record.Model, record.InputTokens, record.OutputTokens, record.CacheReadTokens, record.CacheCreationTokens, record.Ts))).ToList(), "/log");
         Assert.Equal(0, agg.Calls);
         Assert.Empty(agg.BySource);
         Assert.Empty(agg.ByDay);

@@ -58,8 +58,8 @@ public static class WorkspaceEndpoints
                     ? visible.Where(p => projectId == null || string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))
                         .Select(p => (p.DisplayName, p.StorageLocation)).ToList()
                     : scanner.GetWatchPaths().Select(e => (e.Name, e.Path)).ToList();
-                var resolvedWindowHours = windowHours ?? WorkspaceTokensTimelineService.DefaultWindowHours;
-                var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTokensTimelineService.DefaultBucketMinutes;
+                var resolvedWindowHours = windowHours ?? WorkspaceTimelineFold.DefaultWindowHours;
+                var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTimelineFold.DefaultBucketMinutes;
                 var timeline = scoped
                     ? tokens.WorkspaceTimelineRange(projects, fromUtc!.Value, toUtc!.Value, resolvedBucketMinutes)
                     : tokens.WorkspaceTimeline(projects, resolvedWindowHours, resolvedBucketMinutes);
@@ -85,8 +85,8 @@ public static class WorkspaceEndpoints
         group.MapGet("/tokens/timeline/cached",
             (int? windowHours, int? bucketMinutes, WorkspaceTokensCacheStore cache) =>
             {
-                var resolvedWindowHours = windowHours ?? WorkspaceTokensTimelineService.DefaultWindowHours;
-                var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTokensTimelineService.DefaultBucketMinutes;
+                var resolvedWindowHours = windowHours ?? WorkspaceTimelineFold.DefaultWindowHours;
+                var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTimelineFold.DefaultBucketMinutes;
                 var snap = cache.ReadTimeline(resolvedWindowHours, resolvedBucketMinutes);
                 return snap == null ? Results.NoContent() : Results.Ok(snap);
             });
@@ -94,7 +94,7 @@ public static class WorkspaceEndpoints
         group.MapGet("/tokens/expensive-jobs",
             (int? limit, TaskScannerService scanner, ITokenAggregator tokens, WorkspaceTokensCacheStore cache) =>
             {
-                var perProjectLimit = Math.Clamp(limit ?? ProjectTokenUsageService.DefaultExpensiveLimit, 1, 50);
+                var perProjectLimit = Math.Clamp(limit ?? ProjectTokenJobFold.DefaultExpensiveLimit, 1, 50);
                 var jobs = scanner.GetWatchPaths()
                     .SelectMany(entry => tokens.ProjectExpensiveJobs(entry.Name, entry.Path, perProjectLimit)
                         .Select(job => new WorkspaceExpensiveJobDto(

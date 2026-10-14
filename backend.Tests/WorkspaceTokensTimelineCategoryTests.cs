@@ -51,9 +51,7 @@ public sealed class WorkspaceTokensTimelineCategoryTests : IDisposable
         await EmitAsync(bridge, store, "studio", Orchestrator("studio"),
             Usage("claude-haiku-4-5", 20_000, 2_000), now.AddHours(-1));
 
-        var bus = BusBackedWorkspaceTimelineReader.BuildFromStore(
-            store, _workspace, new[] { ("studio", Path.Combine(_workspace, "studio")) },
-            windowHours: 24, bucketMinutes: 60, nowUtc: now);
+        var bus = Timeline(store, now);
 
         var project = Assert.Single(bus.Projects);
 
@@ -80,9 +78,7 @@ public sealed class WorkspaceTokensTimelineCategoryTests : IDisposable
         await EmitAsync(bridge, store, "studio", Orchestrator("studio"),
             Usage("claude-haiku-4-5", 10_000, 1_000), now.AddMinutes(-30));
 
-        var bus = BusBackedWorkspaceTimelineReader.BuildFromStore(
-            store, _workspace, new[] { ("studio", Path.Combine(_workspace, "studio")) },
-            windowHours: 24, bucketMinutes: 60, nowUtc: now);
+        var bus = Timeline(store, now);
 
         var cell = Assert.Single(bus.Cells);
         Assert.Equal(510_000, cell.AgentTokens);
@@ -104,12 +100,22 @@ public sealed class WorkspaceTokensTimelineCategoryTests : IDisposable
         await EmitAsync(bridge, store, "studio", Agent("studio"),
             Usage("claude-opus-4-7", 800_000, 12_000), newest);
 
-        var bus = BusBackedWorkspaceTimelineReader.BuildFromStore(
-            store, _workspace, new[] { ("studio", Path.Combine(_workspace, "studio")) },
-            windowHours: 24, bucketMinutes: 60, nowUtc: now);
+        var bus = Timeline(store, now);
 
         var project = Assert.Single(bus.Projects);
         Assert.Equal(newest.ToString("o"), project.LastActivity);
+    }
+
+    private TokenTimeline Timeline(AgentMessageBusStore store, DateTime now)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _workspace })
+            .Build();
+        var generation = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, generation);
+        var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
+        var ledger = TokenTestServices.Aggregator(store, config, stats, new ProjectTokenReceiptReader());
+        return ledger.WorkspaceTimeline(new[] { ("studio", Path.Combine(_workspace, "studio")) }, windowHours: 24, bucketMinutes: 60, nowUtc: now);
     }
 
     private (AgentMessageBusBridge bridge, AgentMessageBusStore store) BuildStack()

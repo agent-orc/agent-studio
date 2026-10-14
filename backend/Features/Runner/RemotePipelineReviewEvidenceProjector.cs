@@ -14,19 +14,21 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed class RemotePipelineReviewEvidenceProjector
 {
+    private readonly ITokenPricing _pricing;
     private readonly PipelineExecutionLog _pipeline;
     private readonly TimelineLog _timeline;
     private readonly FileGenerationIndex _files;
     private readonly AgentStudio.Projects.ProjectSettingsService _settings;
     private readonly TaskMutationService? _mutations;
 
-    public RemotePipelineReviewEvidenceProjector(
+    public RemotePipelineReviewEvidenceProjector(ITokenPricing pricing,
         PipelineExecutionLog pipeline,
         TimelineLog timeline,
         FileGenerationIndex files,
         AgentStudio.Projects.ProjectSettingsService settings,
         TaskMutationService? mutations = null)
     {
+        _pricing = pricing;
         _pipeline = pipeline;
         _timeline = timeline;
         _files = files;
@@ -84,7 +86,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
     private void RecordReviewUsage(TaskInfo task, ReviewAttemptDto review, Contract.ReviewReportRequest report)
     {
         if (_mutations is null || string.IsNullOrWhiteSpace(review.AttemptId)) return;
-        var calls = BuildReviewUsageCalls(review, report);
+        var calls = BuildReviewUsageCalls(_pricing, review, report);
         if (calls.Count == 0) return;
         if (!_mutations.SetTokenReceiptEntriesOnFolder(
             task.FolderPath,
@@ -97,7 +99,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         }
     }
 
-    internal static IReadOnlyList<TaskTokenCall> BuildReviewUsageCalls(
+    internal static IReadOnlyList<TaskTokenCall> BuildReviewUsageCalls(ITokenPricing pricing,
         ReviewAttemptDto review,
         Contract.ReviewReportRequest report)
     {
@@ -109,15 +111,15 @@ public sealed class RemotePipelineReviewEvidenceProjector
             var total = command.InputTokens + command.OutputTokens
                         + command.CacheReadTokens + command.CacheCreationTokens;
             if (total <= 0) continue;
-            var model = TokenModelDisplay.StoredId(command.Model);
-            var cost = TokenPricing.Estimate(
+            var model = ModelIdentity.StoredId(command.Model);
+            var cost = pricing.Estimate(
                 command.Model, command.InputTokens, command.OutputTokens,
                 command.CacheReadTokens, command.CacheCreationTokens, command.FinishedAt);
             calls.Add(new TaskTokenCall
             {
                 Ts = command.FinishedAt,
                 Model = model,
-                DisplayModel = TokenModelDisplay.Label(model),
+                DisplayModel = ModelIdentity.Label(model),
                 ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
                 CliType = CliFromExecutable(command.FileName),
                 Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,

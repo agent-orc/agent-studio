@@ -16,20 +16,20 @@ public class CodeReviewDefaultsEndpointTests
     [Fact]
     public void ReviewUsage_UsesTheCatalogPriceAtTheRecordedRunDate()
     {
-        var listing = TokenPricing.Catalog.Values
+        var listing = TokenEconomyPriceProvider.Catalog.Values
             .Select(value => new { value.ModelId, History = value.History.OrderBy(price => price.ValidFrom).ToArray() })
             .First(value => value.History.Length > 1
                 && value.History[0].InputPerMTok != value.History[1].InputPerMTok);
         var transition = listing.History[1].ValidFrom;
         var fields = new Dictionary<string, string> { ["model"] = listing.ModelId };
-        var before = TaskCodeReviewEndpoints.ResolveReviewUsage(new FileGenerationMeta
+        var before = TaskCodeReviewEndpoints.ResolveReviewUsage(TokenTestServices.Pricing(), new FileGenerationMeta
         {
             Model = listing.ModelId,
             TokensIn = 1_000_000,
             TokensTotal = 1_000_000,
             StartedAt = transition.AddTicks(-1),
         }, fields);
-        var after = TaskCodeReviewEndpoints.ResolveReviewUsage(new FileGenerationMeta
+        var after = TaskCodeReviewEndpoints.ResolveReviewUsage(TokenTestServices.Pricing(), new FileGenerationMeta
         {
             Model = listing.ModelId,
             TokensIn = 1_000_000,
