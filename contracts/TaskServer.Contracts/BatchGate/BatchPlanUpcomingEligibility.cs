@@ -8,6 +8,20 @@ namespace AgentStudio.TaskServer.Contracts.BatchGate;
 /// </summary>
 public static class BatchPlanUpcomingEligibility
 {
-    public static bool IsCandidate(ReviewPlanDto? plan, bool sourceRunIsCurrent)
-        => plan?.BuildTestDeferredToBatch == true && sourceRunIsCurrent;
+    public static bool IsCandidate(ReviewPlanDto? plan, bool sourceRunIsCurrent,
+        bool continuationPending, string? reviewSubjectSha, string? currentDeliverySha)
+        => plan?.BuildTestDeferredToBatch == true && sourceRunIsCurrent
+            && DeliveryExclusion(continuationPending, reviewSubjectSha, currentDeliverySha) is null;
+
+    /// <summary>Shared by waiting deliveries and upcoming reviews, before Git reads.</summary>
+    public static string? DeliveryExclusion(bool continuationPending,
+        string? reviewSubjectSha, string? currentDeliverySha)
+    {
+        if (continuationPending) return "pending-continue-intent";
+        if (string.IsNullOrWhiteSpace(reviewSubjectSha)
+            || string.IsNullOrWhiteSpace(currentDeliverySha)
+            || !string.Equals(reviewSubjectSha, currentDeliverySha, StringComparison.OrdinalIgnoreCase))
+            return "review-subject-mismatch";
+        return null;
+    }
 }
