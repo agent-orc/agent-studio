@@ -19,4 +19,3 @@ public sealed record CouncilReviewReaction(
     bool StartsNewRound,
     string? TargetJobId,
     int? TargetRunAttempt);
-

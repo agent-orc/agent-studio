@@ -131,9 +131,12 @@ public sealed partial class TaskServerStore
             ct);
         if (existing is not null)
         {
+            var originalPayload = await ScalarAsync(connection, """
+                SELECT request_payload_json FROM orchestration_runs WHERE id = $run;
+                """, ct, transaction, ("$run", existing.RunId)) as string;
             if (!string.Equals(existing.ProjectId, projectId, StringComparison.Ordinal)
                 || !string.Equals(existing.TaskId, request.TaskId, StringComparison.Ordinal)
-                || !JsonEquivalent(existing.PayloadJson, request.PayloadJson))
+                || !JsonEquivalent(originalPayload ?? existing.PayloadJson, request.PayloadJson))
             {
                 throw new TaskServerConflictException(
                     "idempotency-conflict",
@@ -212,11 +215,11 @@ public sealed partial class TaskServerStore
         await ExecuteAsync(connection, """
             INSERT INTO orchestration_runs(
                 id, project_id, task_id, task_version, definition_version, stages_json,
-                max_reissue_attempts, status, current_stage, payload_json,
+                max_reissue_attempts, status, current_stage, payload_json, request_payload_json,
                 idempotency_key, reissue_attempts, created_at, updated_at)
             VALUES (
                 $id, $project, $task, $task_version, $definition_version, $stages,
-                $max_reissues, 'pending', $stage, $payload,
+                $max_reissues, 'pending', $stage, $payload, $request_payload,
                 $key, $reissues, $now, $now);
             """, ct, transaction,
             ("$id", runId),
@@ -228,6 +231,7 @@ public sealed partial class TaskServerStore
             ("$max_reissues", definition.MaxReissueAttempts),
             ("$stage", definition.Stages[0].ToString()),
             ("$payload", frozenPayload),
+            ("$request_payload", request.PayloadJson),
             ("$key", request.IdempotencyKey),
             ("$reissues", priorReissues),
             ("$now", Iso(now)));

@@ -4103,6 +4103,7 @@ public sealed partial class TaskServerStore
                 status TEXT NOT NULL,
                 current_stage TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
+                request_payload_json TEXT,
                 idempotency_key TEXT NOT NULL UNIQUE,
                 reissue_attempts INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
@@ -4342,6 +4343,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "orchestration_runs", "request_payload_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestrator_context_turns", "metadata_json", "TEXT", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(

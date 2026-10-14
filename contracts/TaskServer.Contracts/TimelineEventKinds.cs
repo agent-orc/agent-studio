@@ -513,4 +513,3 @@ public static class TimelineEventKinds
     /// </summary>
     public const string WatcherCaseLinked = "watcher_case_linked";
 }
-

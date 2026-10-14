@@ -119,4 +119,3 @@ public static class RemoteDeliveryIntegrationPolicy
            || (string.Equals(verdict.Status, "skipped", StringComparison.OrdinalIgnoreCase)
                && string.Equals(verdict.Classification, "NoCommands", StringComparison.OrdinalIgnoreCase));
 }
-

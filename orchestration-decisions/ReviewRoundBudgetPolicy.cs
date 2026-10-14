@@ -121,4 +121,3 @@ public static class ReviewRoundBudgetPolicy
             lifetimeSpent ? blocked : recurrent is null ? [] : [recurrent], spentBy);
     }
 }
-

@@ -9,6 +9,40 @@ namespace TaskServer.Tests;
 public sealed class RepeatedReviewBlockStoreTests
 {
     [Fact]
+    public async Task Review_run_retry_uses_original_payload_for_idempotency()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(
+            new DateTimeOffset(2026, 10, 14, 9, 0, 0, TimeSpan.Zero));
+        var store = new TaskServerStore(
+            Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(
+            new CreateWorkspaceRequest("Review retry"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Review retry", "RRT"),
+            "test", default);
+        var task = await store.CreateTaskAsync(project.ProjectId,
+            new CreateTaskRequest("Review retry", State: "4-auto-review"),
+            "test", default);
+        await store.UpsertFlowDefinitionAsync(project.ProjectId,
+            new UpsertFlowDefinitionRequest(0, [OrchestrationStage.ReviewDecision], 5),
+            "test", default);
+
+        var request = new CreateOrchestrationRunRequest(task.TaskId, BlockingPayload(), "review-retry");
+        var first = await store.CreateOrchestrationRunAsync(project.ProjectId, request, "test", default);
+        var stored = await store.GetOrchestrationRunAsync(first.RunId, default);
+        Assert.NotEqual(request.PayloadJson, stored!.PayloadJson);
+
+        var replay = await store.CreateOrchestrationRunAsync(project.ProjectId, request, "test", default);
+        Assert.Equal(first.RunId, replay.RunId);
+        var changed = request with { PayloadJson = request.PayloadJson.Replace("subject", "other-subject") };
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.CreateOrchestrationRunAsync(project.ProjectId, changed, "test", default));
+        Assert.Equal("idempotency-conflict", conflict.Code);
+    }
+
+    [Fact]
     public async Task Same_requirement_fit_block_degrades_with_linked_follow_up_when_budget_is_spent()
     {
         using var temp = new TempDirectory();

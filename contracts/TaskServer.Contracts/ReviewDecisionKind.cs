@@ -16,4 +16,3 @@ public enum ReviewDecisionKind
     /// </summary>
     OperatorRequeue
 }
-

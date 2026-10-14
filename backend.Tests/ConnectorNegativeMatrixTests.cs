@@ -23,7 +23,6 @@ namespace AgentStudio.Tests;
 /// regression scenario report directory, so the release evidence bundle
 /// carries it next to the scenario report.
 /// </summary>
-[Trait("ProcessReference", "TaskServer")]
 public sealed class ConnectorNegativeMatrixTests
 {
     private const string Origin = ConnectorOptions.DefaultStudioOrigin;
