@@ -131,6 +131,27 @@ public sealed class RemoteBuildTestGateRunnerTests
     }
 
     [Theory]
+    [InlineData(false, GateCancellationReasons.Operator)]
+    [InlineData(true, GateCancellationReasons.Shutdown)]
+    public async Task Thrown_transport_cancellation_uses_caller_token_state(
+        bool cancelHostToken, string expectedReason)
+    {
+        using var host = new CancellationTokenSource();
+        var transport = new RecordingTransport
+        {
+            Exception = new OperationCanceledException(),
+            OnRun = _ => { if (cancelHostToken) host.Cancel(); },
+        };
+
+        var result = await Runner(transport).RunAsync(Request(), [], null,
+            PostStepMode.Fail, TimeSpan.FromMinutes(1), host.Token);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(expectedReason, result.CancellationReason);
+    }
+
+    [Theory]
     [InlineData(true, GateCancellationReasons.Shutdown)]
     [InlineData(false, GateCancellationReasons.Operator)]
     public async Task Returned_worker_cancellation_preserves_its_actual_source(
@@ -341,11 +362,13 @@ public sealed class RemoteBuildTestGateRunnerTests
         public TimeSpan Timeout { get; private set; }
         public BuildTestGateResult Result { get; init; } = Passed();
         public Exception? Exception { get; init; }
+        public Action<CancellationToken>? OnRun { get; init; }
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
             TimeSpan timeout, CancellationToken ct)
         {
             Calls++;
+            OnRun?.Invoke(ct);
             Requests.Add(request);
             if (Calls == 1 && TransientResult is not null) return Task.FromResult(TransientResult);
             Request = request;

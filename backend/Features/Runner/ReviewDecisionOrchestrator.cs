@@ -4598,8 +4598,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             }
             catch (OperationCanceledException)
             {
+                var reason = ct.IsCancellationRequested
+                    ? GateCancellationReasons.Shutdown : GateCancellationReasons.Operator;
                 result = RemoteBuildTestGateRunner.Failure(request, BuildTestGateFailureKind.Cancellation,
-                    "Gate cancelled: shutdown.") with { CancellationReason = GateCancellationReasons.Shutdown };
+                    $"Gate cancelled: {reason}.") with { CancellationReason = reason };
             }
             catch (Exception ex)
             {
@@ -4670,8 +4672,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     },
                 });
                 WriteBuildTestGateLog(folder, result, changedFiles);
-                RecordBuildTestGateStep(folder, deferred ? PipelineStepStatus.Skipped : PipelineStepStatus.Failed, result.DurationMs,
-                    cancellationReason, result.Reason, result);
+                if (cancellationReason != GateCancellationReasons.Superseded)
+                    RecordBuildTestGateStep(folder, deferred ? PipelineStepStatus.Skipped : PipelineStepStatus.Failed,
+                        result.DurationMs, cancellationReason, result.Reason, result);
                 // A cancelled run is terminal evidence. Recovery belongs to the
                 // next sweep, never an inline retry with the stopped host token.
                 return deferred ? result with { Verdict = BuildTestGateVerdict.Skipped } : result;

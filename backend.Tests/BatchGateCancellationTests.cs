@@ -55,4 +55,43 @@ public sealed partial class BatchGatePilotServiceTests
             AssertLane(member.Key, TaskStates.Escalated);
         }
     }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false, GateCancellationReasons.Operator)]
+    [InlineData(true, GateCancellationReasons.Shutdown)]
+    public async Task Thrown_fallback_cancellation_uses_host_token_state(
+        bool cancelHostToken, string expectedReason)
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-THROWN-CANCEL", "docs/thrown-cancel.md");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        using var host = new CancellationTokenSource();
+        _gate.Fallback = _ =>
+        {
+            if (cancelHostToken) host.Cancel();
+            throw new OperationCanceledException();
+        };
+
+        if (cancelHostToken)
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pilot.TickAsync(host.Token));
+        else
+            await pilot.TickAsync(host.Token);
+
+        var lane = cancelHostToken ? TaskStates.AutoReview : TaskStates.Escalated;
+        var folder = Path.Combine(_watchPath, lane, member.Key);
+        if (cancelHostToken)
+            await WaitForAsync(() => timeline.ReadAll(folder).Any(e => e.Kind == "gate-cancelled"));
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(member.Key, lane);
+        Assert.Equal(expectedReason, Assert.Single(timeline.ReadAll(folder),
+            e => e.Kind == "gate-cancelled").Details!["reason"]);
+        if (cancelHostToken)
+            Assert.DoesNotContain(timeline.ReadAll(folder), e => e.Kind == "escalation-diagnostic");
+    }
 }
