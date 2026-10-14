@@ -307,6 +307,17 @@ internal sealed class RecordingTransport : IConnectorUpstreamTransport
     /// <summary>Optional status the fake Task Server answers forwarded Studio requests with.</summary>
     public Func<ObservedRequest, HttpStatusCode> ForwardStatus { get; set; } = _ => HttpStatusCode.OK;
 
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            _proxied.Clear();
+            AttachAuthorizations.Clear();
+            Attach = (request, _) => (HttpStatusCode.OK, MatchingServer(request));
+            ForwardStatus = _ => HttpStatusCode.OK;
+        }
+    }
+
     public static ProtocolRangeDto ServerRange(int minimumApi = 1, int maximumApi = 2, int minimumHub = 1, int maximumHub = 1)
         => new(
             maximumApi,

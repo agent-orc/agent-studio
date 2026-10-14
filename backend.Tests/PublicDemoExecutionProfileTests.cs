@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
+using AgentStudio.Host;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -18,7 +20,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed class PublicDemoExecutionProfileTests : IDisposable
+public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared) : IClassFixture<PublicDemoHostFixture>, IDisposable
 {
     private readonly string _workspace = Path.Combine(
         Path.GetTempPath(),
@@ -89,7 +91,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
     [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             HandleCookies = false,
@@ -212,11 +214,25 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
     [Fact]
     public async Task Public_demo_denies_unsafe_standalone_task_server_proxy_requests_before_forwarding()
     {
-        using var factory = BuildFactory(new Dictionary<string, string?>
-        {
-            ["TaskServer:BaseUrl"] = "http://127.0.0.1:1",
-        });
-        using var client = factory.CreateClient();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Configuration["TaskServer:BaseUrl"] = "http://127.0.0.1:1";
+        builder.Configuration["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile;
+        builder.Services.AddSingleton(new StartupExecutionAdmission(ExecutionAdmissionPolicy.PublicDemoProfile));
+        builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
+        await using var app = builder.Build();
+        app.UseRouting();
+        app.UsePublicDemoExecutionLock();
+        Assert.True(app.MapTaskServerPlaneProxy());
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        var proxyRoute = Assert.Single(((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>(), endpoint =>
+                endpoint.Metadata.GetMetadata<ExecutionRouteMetadata>() is not null);
+        Assert.Equal(ExecutionAdmissionPath.PostStep,
+            proxyRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.NotNull(proxyRoute.Metadata.GetMetadata<TaskServerPlaneProxyEndpoint>());
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             "/api/v1/runners/forged-runner/claims")
@@ -236,27 +252,9 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             body.RootElement.GetProperty("profile").GetString());
     }
 
-    // UseSetting reaches the startup admission Program.cs reads before
-    // Build(), and it belongs to this one host, so the class runs in parallel.
     private WebApplicationFactory<Program> BuildFactory(
         IReadOnlyDictionary<string, string?>? overrides = null)
-    {
-        var values = new Dictionary<string, string?>
-        {
-            ["TaskRepository"] = _workspace,
-            ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
-        };
-        if (overrides is not null)
-        {
-            foreach (var (key, value) in overrides)
-                values[key] = value;
-        }
-        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.UseTestSettings(values);
-        });
-    }
+        => PublicDemoHostFixture.CreateFactory(_workspace, overrides);
 
     private static IReadOnlyList<RouteEndpoint> ExecutionRoutes(IServiceProvider services) =>
         services.GetServices<EndpointDataSource>()
