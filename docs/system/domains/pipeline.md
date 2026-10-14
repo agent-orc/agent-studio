@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-09-29
+Version: 2026-10-14
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -26,6 +26,16 @@ pipeline view.
 - [Workflow arguments become unbounded fan-out](../../operations/common-problems/workflow-args-json-string-fanout/)
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
+
+## Gate economics and integration lane
+
+The Ops gate-economics view counts a per-card gated merge only when the
+delivery has both a final green pre-develop gate receipt and a matching
+`published` integration-lane event for its tested SHA. A green gate whose
+publication fence or push fails remains a gate run, but contributes no merge
+minutes or reuse rate. Published batch members use the batch publication
+record. Batch gate waiting and acquisition callbacks emit lane events for
+each gated member, including the holding project when one is known.
 
 ## Exact-SHA gate verdict cache
 

@@ -91,9 +91,11 @@ public static class GateEconomicsEndpoints
     {
         var receipts = new List<GateReceiptMetric>();
         var events = new List<IntegrationLaneEvent>();
+        var integratedReceipts = new List<GateReceiptMetric>();
         var laneSince = now.AddHours(-LaneWindowHours);
         foreach (var folder in folders.Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            var folderReceipts = new List<GateReceiptMetric>();
             var post = Path.Combine(folder, "post-steps");
             if (Directory.Exists(post))
                 foreach (var path in Directory.EnumerateFiles(post, "pre-develop-build-gate-*.log"))
@@ -106,12 +108,30 @@ public static class GateEconomicsEndpoints
                     try
                     {
                         var receipt = GateReceiptMetric.Read(path, written, since, now);
-                        if (receipt.AtUtc >= since && receipt.AtUtc <= now) receipts.Add(receipt);
+                        if (receipt.AtUtc >= since && receipt.AtUtc <= now)
+                        {
+                            receipts.Add(receipt);
+                            folderReceipts.Add(receipt);
+                        }
                     }
                     catch (IOException ex) { SilentCatch.Note(ex, "GateEconomics: receipt unavailable"); }
                 }
-            events.AddRange(IntegrationLaneEvents.Read(folder)
-                .Where(e => e.AtUtc >= laneSince && e.AtUtc <= now));
+            var folderEvents = IntegrationLaneEvents.Read(folder);
+            events.AddRange(folderEvents.Where(e => e.AtUtc >= laneSince && e.AtUtc <= now));
+            // The gate receipt proves verification; the published event proves
+            // that the publication fence and push completed for that SHA.
+            foreach (var publication in folderEvents.Where(e => e.Kind == "published"
+                         && e.AtUtc >= since && e.AtUtc <= now
+                         && !string.IsNullOrWhiteSpace(e.Receipt))
+                         .GroupBy(e => (e.Project, e.JobId, e.Sequence))
+                         .Select(group => group.OrderBy(e => e.AtUtc).Last()))
+            {
+                var final = folderReceipts.Where(r => string.Equals(r.TestedSha, publication.Receipt,
+                            StringComparison.OrdinalIgnoreCase)
+                        && r.AtUtc <= publication.AtUtc)
+                    .OrderBy(r => r.AtUtc).ThenBy(r => r.ReceiptIndex).LastOrDefault();
+                if (final?.Verdict is "Ok" or "Warn") integratedReceipts.Add(final);
+            }
         }
         // Every batch attempt stays in the gate outcome counts. Published
         // members receive only the final successful attempt's minutes.
@@ -122,7 +142,6 @@ public static class GateEconomicsEndpoints
             .GroupBy(sample => (sample.Fact.BatchId, sample.Fact.BatchRunId))
             .Select(run => run.OrderBy(sample => sample.Fact.CompletedAtUtc).Last())
             .Where(sample => sample.Fact.Outcome is "Ok" or "Warn").ToArray();
-        var integratedReceipts = receipts.Where(r => r.Verdict is "Ok" or "Warn").ToArray();
         var durations = integratedReceipts.Where(r => r.DurationMs is >= 0)
             .Select(r => r.DurationMs!.Value / 60000d)
             .Concat(publishedBatches.Where(sample => sample.Members > 0 && sample.Fact.DurationMs is >= 0)
@@ -143,7 +162,7 @@ public static class GateEconomicsEndpoints
         var outcomes = receipts.Where(r => r.Rung != "none").Concat(batchRuns).ToArray();
         // Infrastructure retries retain separate execution facts and gate
         // costs, but publication releases the members of a batch run once.
-        var gatedMerges = integratedReceipts.Length + publishedBatches.Sum(sample => sample.Members);
+        var gatedMerges = integratedReceipts.Count + publishedBatches.Sum(sample => sample.Members);
         double? ReuseRate(string rung) => gatedMerges == 0 ||
             knownIntegratedRungs.Length == 0 && publishedBatches.Length == 0
                 ? null : (double)knownIntegratedRungs.Count(receipt => receipt.Rung == rung) / gatedMerges;
@@ -250,7 +269,8 @@ internal sealed record BatchGateMetric(string Project, int Members, BatchGateExe
 
 internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs,
     long? MergeLockWaitMs, string? Rung, string? TestLevel,
-    string? Verdict, DateTimeOffset AtUtc = default)
+    string? Verdict, DateTimeOffset AtUtc = default, string? TestedSha = null,
+    int ReceiptIndex = 0)
 {
     /// <summary>
     /// Reads the economics tokens. The receipt time is its own recordedAtUtc
@@ -262,7 +282,7 @@ internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs
     {
         using var reader = new StreamReader(path);
         var first = reader.ReadLine() ?? "";
-        _ = reader.ReadLine();
+        var shaLine = reader.ReadLine() ?? "";
         _ = reader.ReadLine();
         long? duration = TokenLong(first, "durationMs=");
         long? wait = null;
@@ -284,8 +304,10 @@ internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs
         var at = recordedAt ?? completedAt ?? new DateTimeOffset(writtenAtUtc, TimeSpan.Zero);
         if ((since is null || at >= since) && (now is null || at <= now))
             testLevel ??= LegacyTestLevel(path);
+        var numbered = Path.GetFileNameWithoutExtension(path).Split('-').LastOrDefault();
+        _ = int.TryParse(numbered, out var index);
         return new GateReceiptMetric(duration, wait, mergeWait, rung, testLevel,
-            Token(first, "verdict="), at);
+            Token(first, "verdict="), at, Token(shaLine, "testedSha="), index);
     }
 
     private static DateTimeOffset? TokenTime(string line, string key)
