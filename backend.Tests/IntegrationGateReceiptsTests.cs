@@ -88,7 +88,7 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     }
 
     [Fact]
-    public void Economics_counts_legacy_fields_as_unknown_and_uses_known_denominators()
+    public void Economics_counts_legacy_fields_as_unknown_and_uses_gated_merges_for_reuse()
     {
         var postSteps = Path.Combine(_root, "post-steps");
         Directory.CreateDirectory(postSteps);
@@ -105,7 +105,7 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
 
         Assert.Equal(2, row.GatedMerges);
         Assert.Equal(2, row.GateMinutesMedian);
-        Assert.Equal(1, row.ExactReuseRate);
+        Assert.Equal(.5, row.ExactReuseRate);
         Assert.Equal(0, row.DisjointReuseRate);
         Assert.Equal(.5, row.FullSuiteShare);
         Assert.Equal(1200, row.QueueWaitP90Ms);
@@ -157,6 +157,7 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(1, row.GatedMerges);
         Assert.Equal(1, row.GateGreen);
         Assert.Equal(2, row.GateRed);
+        Assert.Equal(40, row.GateMinutesMedian);
         Assert.Equal(1, row.FullSuiteShare);
     }
 
@@ -180,7 +181,39 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Equal(1, row.GateRed);
         Assert.Equal(1, row.GateGreen);
         Assert.NotNull(row.GateMinutesMedian);
-        Assert.Equal(85d / 6, row.GateMinutesMedian.Value, precision: 6);
+        Assert.Equal(15, row.GateMinutesMedian.Value, precision: 6);
+    }
+
+    [Fact]
+    public void Economics_excludes_red_gates_from_minutes_and_reuse()
+    {
+        var postSteps = Path.Combine(_root, "post-steps");
+        Directory.CreateDirectory(postSteps);
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
+            "verdict=Fail durationMs=600000\nexpectedSha=n/a\nreason=red\n" +
+            "gateRung=exact\n");
+        StampReceipts(postSteps, Now.AddHours(-1));
+
+        var redOnly = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            since: Now.AddDays(-1), now: Now, retest: null);
+        Assert.Equal(0, redOnly.GatedMerges);
+        Assert.Null(redOnly.GateMinutesMedian);
+        Assert.Null(redOnly.GateMinutesP90);
+        Assert.Null(redOnly.ExactReuseRate);
+        Assert.Null(redOnly.DisjointReuseRate);
+        Assert.Equal(1, redOnly.GateRed);
+
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-2.log"),
+            "verdict=Ok durationMs=120000\nexpectedSha=n/a\nreason=integrated\n" +
+            "gateRung=disjoint\n");
+        StampReceipts(postSteps, Now.AddHours(-1));
+
+        var integrated = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            since: Now.AddDays(-1), now: Now, retest: null);
+        Assert.Equal(1, integrated.GatedMerges);
+        Assert.Equal(2, integrated.GateMinutesMedian);
+        Assert.Equal(0, integrated.ExactReuseRate);
+        Assert.Equal(1, integrated.DisjointReuseRate);
     }
 
     [Fact]
@@ -264,7 +297,7 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
             since: Now.AddDays(-7), now: Now, retest: null);
 
         Assert.Equal(a.GatedMerges + b.GatedMerges, all.GatedMerges);
-        Assert.Equal(1.5, all.GateMinutesMedian);
+        Assert.Equal(1, all.GateMinutesMedian);
         Assert.Null(all.QueueWaitP90Ms);
     }
 

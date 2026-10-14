@@ -113,13 +113,19 @@ public static class GateEconomicsEndpoints
             events.AddRange(IntegrationLaneEvents.Read(folder)
                 .Where(e => e.AtUtc >= laneSince && e.AtUtc <= now));
         }
-        // One batch run is one gate run: it costs its minutes once, and its
-        // members merge only when that run was published. Isolation reruns add
-        // gate runs and minutes, never extra merges.
+        // Every batch attempt stays in the gate outcome counts. Published
+        // members receive only the final successful attempt's minutes.
         var batches = (batchMetrics ?? []).ToArray();
-        var durations = receipts.Where(r => r.DurationMs is >= 0 && r.Rung != "none")
+        // Economics per merge uses the final gate that actually integrated the
+        // delivery. Red attempts remain gate runs in the outcome counts below.
+        var publishedBatches = batches.Where(sample => sample.Published)
+            .GroupBy(sample => (sample.Fact.BatchId, sample.Fact.BatchRunId))
+            .Select(run => run.OrderBy(sample => sample.Fact.CompletedAtUtc).Last())
+            .Where(sample => sample.Fact.Outcome is "Ok" or "Warn").ToArray();
+        var integratedReceipts = receipts.Where(r => r.Verdict is "Ok" or "Warn").ToArray();
+        var durations = integratedReceipts.Where(r => r.DurationMs is >= 0)
             .Select(r => r.DurationMs!.Value / 60000d)
-            .Concat(batches.Where(sample => sample.Members > 0 && sample.Fact.DurationMs is >= 0)
+            .Concat(publishedBatches.Where(sample => sample.Members > 0 && sample.Fact.DurationMs is >= 0)
                 .SelectMany(sample => Enumerable.Repeat(
                     sample.Fact.DurationMs!.Value / 60000d / sample.Members,
                     sample.Members))).ToArray();
@@ -130,18 +136,17 @@ public static class GateEconomicsEndpoints
             sample.Fact.DurationMs, sample.Fact.QueueWaitMs, null, "full", "full",
             sample.Fact.Outcome, sample.Fact.CompletedAtUtc)).ToArray();
         // A gate that never ran (missing source) has no rung: unknown, not full.
-        var knownRungs = receipts.Where(r => r.Rung is "exact" or "disjoint" or "impact" or "full")
-            .Concat(batchRuns).ToArray();
+        var knownIntegratedRungs = integratedReceipts.Where(r =>
+            r.Rung is "exact" or "disjoint" or "impact" or "full").ToArray();
         var knownLevels = receipts.Where(r => r.TestLevel is not null and not "unknown")
             .Concat(batchRuns).ToArray();
         var outcomes = receipts.Where(r => r.Rung != "none").Concat(batchRuns).ToArray();
         // Infrastructure retries retain separate execution facts and gate
         // costs, but publication releases the members of a batch run once.
-        var publishedMembers = batches.Where(sample => sample.Published)
-            .GroupBy(sample => (sample.Fact.BatchId, sample.Fact.BatchRunId))
-            .Sum(run => run.Max(sample => sample.Members));
-        var gatedMerges = receipts.Count(r => r.Verdict is "Ok" or "Warn")
-            + publishedMembers;
+        var gatedMerges = integratedReceipts.Length + publishedBatches.Sum(sample => sample.Members);
+        double? ReuseRate(string rung) => gatedMerges == 0 ||
+            knownIntegratedRungs.Length == 0 && publishedBatches.Length == 0
+                ? null : (double)knownIntegratedRungs.Count(receipt => receipt.Rung == rung) / gatedMerges;
 
         var enqueued = events.Where(e => e.Kind is "enqueued" or "agent-round-re-entry").ToArray();
         var published = events.Where(e => e.Kind == "published").ToArray();
@@ -193,8 +198,8 @@ public static class GateEconomicsEndpoints
             outcomes.Count(sample => sample.Verdict is "Cancelled" or "Canceled"),
             Percentile(durations, .5),
             Percentile(durations, .9), Percentile(waits, .9),
-            Rate(knownRungs, r => r.Rung == "exact"),
-            Rate(knownRungs, r => r.Rung == "disjoint"),
+            ReuseRate("exact"),
+            ReuseRate("disjoint"),
             Rate(knownLevels, r => r.TestLevel == "full"),
             retest is { Executed: > 0 } ? retest.SameShaRetestRate : null,
             null, Percentile(lags, .5), Percentile(lags, .95),

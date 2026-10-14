@@ -37,7 +37,9 @@ function findTaskFolder(root: string, title: string, depth = 6): string | null {
   if (fs.existsSync(taskJson)) {
     try {
       if (JSON.parse(fs.readFileSync(taskJson, 'utf8')).title === title) return root;
-    } catch { /* not a readable task header */ }
+    } catch (error) {
+      console.warn(`Skipping unreadable task header ${taskJson}: ${String(error)}`);
+    }
   }
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory() || SKIPPED_DIRS.has(entry.name)) continue;
@@ -85,10 +87,7 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
     fs.writeFileSync(target, shifted);
   }
 
-  // Hand count over the fixture durations (ms), sorted:
-  // 3001541 3012606 3016313 3055919 3090341 3143131 3186026 3348733.
-  // Median (3055919 + 3090341) / 2 = 3073130 ms = 51.2 min.
-  // p90 at rank 6.3 = 3186026 + 0.3 * 162707 = 3234838 ms = 53.9 min.
+  // All eight gates are red, so none contributes minutes per integrated merge.
   const recent = await (await page.request.get(`${devBackend.baseUrl}/api/gate-economics?window=7d`)).json();
   const recentRow = recent.rows.find((item: { project: string }) => item.project === project);
   expect(recentRow.gateRed).toBe(0);
@@ -96,8 +95,8 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
   const row = projection.rows.find((item: { project: string }) => item.project === project);
   expect(row.gatedMerges).toBe(0);
   expect(row.gateRed).toBe(8);
-  expect(row.gateMinutesMedian).toBeCloseTo(3073130 / 60000, 6);
-  expect(row.gateMinutesP90).toBeCloseTo(3234838.1 / 60000, 6);
+  expect(row.gateMinutesMedian).toBeNull();
+  expect(row.gateMinutesP90).toBeNull();
   expect(row.queueWaitP90Ms).toBeNull();
   expect(row.exactReuseRate).toBeNull();
   expect(row.fullSuiteShare).toBe(1);
@@ -106,8 +105,8 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
   await page.setViewportSize({ width: 2560, height: 1080 });
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.evaluate(() => {
-    try { localStorage.removeItem('atp.studio.tabs.v1'); } catch { /* ignore */ }
-    try { localStorage.removeItem('atp.studio.explorer.expanded'); } catch { /* ignore */ }
+    localStorage.removeItem('atp.studio.tabs.v1');
+    localStorage.removeItem('atp.studio.explorer.expanded');
   });
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await expect(page.getByTestId('studio-sidebar')).toBeVisible({ timeout: 30_000 });
@@ -125,14 +124,14 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
   const projectRow = economics.locator(`[data-testid="gate-economics-project"][data-project="${project}"]`);
   await expect(projectRow.locator('td').nth(9)).toHaveText('0 / 8 / 0', { timeout: 30_000 });
   await expect(projectRow.locator('td').nth(0)).toHaveText('0');
-  await expect(projectRow.locator('td').nth(1)).toHaveText('51.2 min / 53.9 min');
+  await expect(projectRow.locator('td').nth(1)).toHaveText('Unknown / Unknown');
   await expect(projectRow.locator('td').nth(2)).toHaveText('Unknown');
   const counts = await economics.getByTestId('gate-economics-project').locator('td:nth-child(2)').allTextContents();
   await expect(economics.getByTestId('gate-economics-all').locator('td:nth-child(2)'))
     .toHaveText(String(counts.reduce((sum, count) => sum + Number(count.trim()), 0)));
   const healthRow = page.getByTestId('pipeline-health-economics');
   await expect(healthRow).toContainText('Gate economics · 30 days');
-  await expect(healthRow).toContainText('0 gated merges · median 51.2 min · queue p90 Unknown');
+  await expect(healthRow).toContainText('0 gated merges · median Unknown · queue p90 Unknown');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
