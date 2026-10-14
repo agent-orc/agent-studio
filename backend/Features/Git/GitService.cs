@@ -5225,21 +5225,25 @@ public class GitService
                 continue;
             }
             var delivery = pair[1];
-            if (IsDeliveryPublished(repoRoot, delivery, publishedTip, pair[0])) continue;
+            if (IsDeliveryPublished(repoRoot, delivery, publishedTip)) continue;
             missing.Add($"{commit} (delivery {delivery})");
         }
         return missing;
     }
 
-    private bool IsDeliveryPublished(string repoRoot, string deliverySha, string publishedTip, string baseRef)
+    private bool IsDeliveryPublished(string repoRoot, string deliverySha, string publishedTip)
     {
         if (IsAncestor(repoRoot, deliverySha, publishedTip)) return true;
-        var (fork, _, forkCode) = RunGitArgs(repoRoot, "merge-base", baseRef, deliverySha);
-        if (forkCode != 0) return false;
-        var (cherry, _, cherryCode) = RunGitArgs(repoRoot, "cherry", publishedTip, deliverySha, fork.Trim());
-        var changes = cherry.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return cherryCode == 0 && changes.Length > 0 &&
-               changes.All(line => line.StartsWith("- ", StringComparison.Ordinal));
+        // git cherry omits merge commits, including changes made while resolving
+        // conflicts. A clean virtual merge contains the delivery's full tree.
+        // It is published only when that merge adds nothing to the published tree.
+        var (mergedTree, _, mergeCode) = RunGitArgs(
+            repoRoot, "merge-tree", "--write-tree", publishedTip, deliverySha);
+        if (mergeCode != 0) return false;
+        var (publishedTree, _, treeCode) = RunGitArgs(
+            repoRoot, "rev-parse", $"{publishedTip}^{{tree}}");
+        return treeCode == 0 &&
+               string.Equals(mergedTree.Trim(), publishedTree.Trim(), StringComparison.Ordinal);
     }
 
     private IntegrationBranchSyncResult FetchIntegrationBranch(
@@ -5286,7 +5290,7 @@ public class GitService
             return PublishedDeliveryContainment.Unavailable;
         var published = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
         if (published is null) return PublishedDeliveryContainment.Unavailable;
-        return IsDeliveryPublished(repoRoot, deliverySha, published, published)
+        return IsDeliveryPublished(repoRoot, deliverySha, published)
             ? PublishedDeliveryContainment.Contained
             : PublishedDeliveryContainment.Missing;
     }

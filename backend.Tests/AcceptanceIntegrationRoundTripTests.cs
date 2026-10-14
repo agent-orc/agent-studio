@@ -1083,6 +1083,75 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             string.Join("\n", workerLog.Snapshot().Select(entry => entry.Message)));
     }
 
+    [Fact]
+    public async Task DivergedLane_MergeResolutionMissingFromOrigin_KeepsLaneAndReturnsCompletedCardToReview()
+    {
+        var ordinarySha = PublishDelivery("ordinary.txt", "published patch\n");
+        var baseSha = Git(_repo, "rev-parse", "origin/develop").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "-b", "delivery-merge", ordinarySha);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "delivery side\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "delivery side change");
+        var deliverySideSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+
+        RunGit(_repo, "checkout", "-q", "-b", "other-side", baseSha);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "other side\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "other side change");
+        var otherSideSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+
+        RunGit(_repo, "checkout", "-q", "delivery-merge");
+        Assert.NotEqual(0, Git(_repo, "merge", "--no-ff", "other-side").Code);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "delivery resolution\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "delivery conflict resolution");
+        var deliverySha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "--force", "origin", $"{deliverySha}:refs/heads/{DeliveryRef}");
+
+        var deps = Build(deliverySha, backgroundIntegration: true);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+
+        RunGit(_repo, "checkout", "-q", "-b", "lane-build", baseSha);
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "lane delivery", deliverySha);
+        var laneSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), laneSha);
+
+        RunGit(_repo, "checkout", "-q", "-b", "published-main", baseSha);
+        RunGit(_repo, "cherry-pick", ordinarySha);
+        RunGit(_repo, "cherry-pick", deliverySideSha);
+        RunGit(_repo, "checkout", "-q", "-b", "published-side", baseSha);
+        RunGit(_repo, "cherry-pick", otherSideSha);
+        RunGit(_repo, "checkout", "-q", "published-main");
+        Assert.NotEqual(0, Git(_repo, "merge", "--no-ff", "published-side").Code);
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "published resolution\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "published conflict resolution");
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "checkout", "-q", "main");
+
+        var integrationWorktree = Path.Combine(_tempDir, "integration-worktree");
+        RunGit(_repo, "worktree", "add", "-q", "--detach", integrationWorktree, "main");
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        Assert.Equal(PublishedDeliveryContainment.Missing,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        var sync = git.SynchronizeIntegrationBranch(integrationWorktree, "develop");
+        Assert.Equal(IntegrationBranchSyncOutcome.Diverged, sync.Outcome);
+        Assert.Contains(deliverySha, sync.Error);
+        Assert.Equal(laneSha, Git(_repo, "rev-parse", GitService.IntegrationLaneRef("develop")).Out.Trim());
+
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!, deps.Merge, deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
     /// <summary>
     /// AGT-2793 requirement 2(a): the live pre-Human-Review merge, not the
     /// legacy <see cref="AcceptedIntegrationWorker"/>, is the path every Remote
