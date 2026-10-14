@@ -40,9 +40,12 @@ mkdir -p "$live_state_dir" "$inactive_state_dir"
 
 # shellcheck source=/dev/null
 source "$patched_helper"
+# shellcheck source=wait-for-process-environment.sh
+source "$(dirname "$0")/wait-for-process-environment.sh"
 
 RUNNER_STATE_DIR="$live_state_dir" /usr/bin/sleep 30 &
 daemon_pid="$!"
+wait_for_process_environment_value "$daemon_pid" RUNNER_STATE_DIR "$live_state_dir"
 
 systemctl() {
   local action="${1:-}"

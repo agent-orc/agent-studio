@@ -4,6 +4,8 @@ set -euo pipefail
 helper_path="${1:?expected the agent-runner-deploy path}"
 # shellcheck source=/dev/null
 source "$helper_path"
+# shellcheck source=wait-for-process-environment.sh
+source "$(dirname "$0")/wait-for-process-environment.sh"
 
 fixture_root="$(mktemp -d)"
 environment_file="$fixture_root/runner-review.env"
@@ -34,6 +36,7 @@ RUNNER_MAX_PARALLELISM=2 sleep 30 &
 old_main_pid="$!"
 RUNNER_MAX_PARALLELISM=2 sleep 30 &
 detached_worker_pid="$!"
+wait_for_process_environment_value "$old_main_pid" RUNNER_MAX_PARALLELISM 2
 printf '0\n' >"$show_count_file"
 : >"$actions_file"
 
@@ -42,6 +45,7 @@ start_replacement() {
   environment_file_value="$(awk -F= '$1 == "RUNNER_MAX_PARALLELISM" { print $2 }' "$environment_file")"
   RUNNER_MAX_PARALLELISM="$environment_file_value" /usr/bin/sleep 30 >/dev/null 2>&1 &
   printf '%s\n' "$!" >"$new_main_pid_file"
+  wait_for_process_environment_value "$!" RUNNER_MAX_PARALLELISM "$environment_file_value"
 }
 
 systemctl() {
