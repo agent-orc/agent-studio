@@ -4,7 +4,7 @@ namespace AgentStudio.Runner;
 public static class MonolithTransitionSwitch
 {
     public static OrchestrationExecutionMode For(IConfiguration configuration, string transition)
-        => OrchestrationExecutionModeParser.Parse(
+        => OrchestrationRolloutStore.ReadMode(configuration, transition) ?? OrchestrationExecutionModeParser.Parse(
             configuration[$"Orchestration:Transitions:{transition}"]
             ?? configuration["Orchestration:ExecutionMode"]);
 }

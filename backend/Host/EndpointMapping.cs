@@ -58,6 +58,7 @@ public static class EndpointMapping
         app.MapWatcherEndpoints();
         app.MapOrchestratorSessionEndpoints();
         app.MapOrchestratorContextEndpoints();
+        app.MapOrchestrationRolloutEndpoints();
         app.MapLeaseEndpoints();
         app.MapAttemptAuthorityEndpoints();
         if (mapsLocalV1)

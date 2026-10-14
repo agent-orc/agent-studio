@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.OrchestrationDecisions;
 
 namespace AgentStudio.Runner;
 
@@ -17,6 +18,10 @@ public sealed record MonolithOrchestrationOccurrence(
     string? CompletionKey = null,
     CompleteOrchestrationStageRequest? Completion = null,
     bool Claimable = true,
+    string? Profile = null,
+    bool Shadow = false,
+    OrchestrationDecisionReceipt? MonolithReceipt = null,
+    OrchestrationDecisionReceipt? EngineReceipt = null,
     string? CancellationReason = null);
 
 public interface IMonolithOrchestrationApplier
@@ -36,24 +41,27 @@ public sealed class MonolithOrchestrationStore
     private readonly string? _directory;
     private readonly TimeProvider _time;
     private readonly IMonolithOrchestrationApplier _applier;
+    private readonly OrchestrationRolloutStore? _rollout;
     private readonly Dictionary<string, MonolithOrchestrationOccurrence> _runs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _completionGates = new(StringComparer.Ordinal);
 
     public MonolithOrchestrationStore(IConfiguration configuration, TimeProvider time,
-        IMonolithOrchestrationApplier applier)
+        IMonolithOrchestrationApplier applier, OrchestrationRolloutStore rollout)
         : this(string.IsNullOrWhiteSpace(configuration["TaskRepository"])
             ? null
-            : Path.Combine(configuration["TaskRepository"]!, ".orchestration-occurrences"), time, applier) { }
+            : Path.Combine(configuration["TaskRepository"]!, ".orchestration-occurrences"), time, applier, rollout) { }
 
     /// <param name="directory">
     /// Without a TaskRepository the store keeps occurrences in memory only, like
     /// AttemptAuthorityService, so hosts without a workspace still start.
     /// </param>
-    public MonolithOrchestrationStore(string? directory, TimeProvider time, IMonolithOrchestrationApplier applier)
+    public MonolithOrchestrationStore(string? directory, TimeProvider time, IMonolithOrchestrationApplier applier,
+        OrchestrationRolloutStore? rollout = null)
     {
         _directory = directory;
         _time = time;
         _applier = applier;
+        _rollout = rollout;
         if (directory is null) return;
         Directory.CreateDirectory(directory);
         foreach (var file in Directory.EnumerateFiles(directory, "orch_*.json"))
@@ -67,7 +75,8 @@ public sealed class MonolithOrchestrationStore
     public OrchestrationRunDto Create(string projectId, string taskId,
         OrchestrationStage stage, string payloadJson, string idempotencyKey,
         string expectedSourceState, string authorityAttemptId, long authorityFence, long authorityEpoch,
-        bool claimable = true)
+        bool claimable = true, string? profile = null, bool shadow = false,
+        string? monolithAction = null, string? monolithReason = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(authorityAttemptId);
@@ -78,18 +87,31 @@ public sealed class MonolithOrchestrationStore
             if (existing is not null)
             {
                 if (existing.Run.ProjectId != projectId || existing.Run.TaskId != taskId
-                    || existing.Run.CurrentStage != stage || existing.Run.PayloadJson != payloadJson
+                    || existing.Run.CurrentStage != stage
                     || existing.ExpectedSourceState != expectedSourceState
                     || existing.AuthorityAttemptId != authorityAttemptId
-                    || existing.AuthorityFence != authorityFence
-                    || existing.AuthorityEpoch != authorityEpoch)
+                    || existing.Run.Status != "cancelled" &&
+                       (existing.Run.PayloadJson != payloadJson
+                        || existing.AuthorityFence != authorityFence
+                        || existing.AuthorityEpoch != authorityEpoch))
                     throw new InvalidOperationException("orchestration-idempotency-conflict");
                 if (existing.Run.Status == "cancelled")
                 {
                     var resumedAt = _time.GetUtcNow().UtcDateTime;
                     existing = existing with
                     {
-                        Run = existing.Run with { Status = "pending", UpdatedAt = resumedAt, CompletedAt = null },
+                        Run = existing.Run with { Status = "pending", PayloadJson = payloadJson,
+                            UpdatedAt = resumedAt, CompletedAt = null },
+                        AuthorityFence = authorityFence,
+                        AuthorityEpoch = authorityEpoch,
+                        Claimable = claimable,
+                        Profile = profile,
+                        Shadow = shadow,
+                        MonolithReceipt = monolithAction is null ? null : OrchestrationRolloutStore.Receipt(
+                            existing.Run.RunId, idempotencyKey, payloadJson, monolithAction,
+                            monolithReason ?? string.Empty,
+                            $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith"),
+                        EngineReceipt = null,
                         CancellationReason = null,
                     };
                     Save(existing);
@@ -102,7 +124,11 @@ public sealed class MonolithOrchestrationStore
                 "pending", stage, payloadJson, 0, now, now, null, []);
             var occurrence = new MonolithOrchestrationOccurrence(run, idempotencyKey,
                 expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch,
-                Claimable: claimable);
+                Claimable: claimable, Profile: profile, Shadow: shadow,
+                MonolithReceipt: monolithAction is null ? null : OrchestrationRolloutStore.Receipt(
+                    run.RunId, idempotencyKey, payloadJson, monolithAction,
+                    monolithReason ?? string.Empty,
+                    $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith"));
             Save(occurrence);
             _runs.Add(run.RunId, occurrence);
             return run;
@@ -133,9 +159,31 @@ public sealed class MonolithOrchestrationStore
         lock (_gate) return _runs.GetValueOrDefault(runId)?.Run;
     }
 
+    public MonolithOrchestrationOccurrence? GetOccurrence(string runId)
+    {
+        lock (_gate) return _runs.GetValueOrDefault(runId);
+    }
+
     public OrchestrationRunDto? GetByIdempotencyKey(string key)
     {
         lock (_gate) return _runs.Values.FirstOrDefault(item => item.IdempotencyKey == key)?.Run;
+    }
+
+    public void RecordMonolithDecision(string runId, string action, string reason)
+    {
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (!item.Shadow) throw new InvalidOperationException("orchestration-not-shadow");
+            if (item.MonolithReceipt is not null) return;
+            item = item with { MonolithReceipt = OrchestrationRolloutStore.Receipt(
+                runId, item.IdempotencyKey, item.Run.PayloadJson, action, reason,
+                $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith") };
+            Save(item);
+            _runs[runId] = item;
+            if (item.EngineReceipt is not null && item.Profile is not null)
+                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+        }
     }
 
     public IReadOnlyList<OrchestrationRunDto> List(string? projectId, string? status)
@@ -148,14 +196,14 @@ public sealed class MonolithOrchestrationStore
 
     public IReadOnlyList<MonolithOrchestrationOccurrence> WaitingOccurrences()
     {
-        lock (_gate) return _runs.Values.Where(item => item.Claimable
-            && (item.Run.Status is "pending" or "leased" or "applying")).ToArray();
+        lock (_gate) return _runs.Values.Where(item => item.Claimable && !item.Shadow
+            && item.Run.Status is ("pending" or "leased" or "applying")).ToArray();
     }
 
     public IReadOnlyList<MonolithOrchestrationOccurrence> AwaitingActivation()
     {
         lock (_gate) return _runs.Values.Where(item => !item.Claimable
-            && item.Run.Status == "pending").ToArray();
+            && item.Run.Status is ("pending" or "cancelled")).ToArray();
     }
 
     public void Activate(string runId)
@@ -205,6 +253,7 @@ public sealed class MonolithOrchestrationStore
         {
             ExpireLeases();
             var item = _runs.Values.Where(value => value.Run.Status == "pending" && value.Claimable
+                    && (value.Shadow || _rollout?.IsRolledBack(value.Profile) != true)
                     && request.SupportedStages.Contains(value.Run.CurrentStage))
                 .OrderBy(value => value.Run.UpdatedAt).ThenBy(value => value.Run.RunId).FirstOrDefault();
             if (item is null) return new OrchestrationClaimResponse("empty");
@@ -216,6 +265,28 @@ public sealed class MonolithOrchestrationStore
                 Run = item.Run with { Status = "leased", UpdatedAt = now } };
             Save(item);
             _runs[item.Run.RunId] = item;
+            return new OrchestrationClaimResponse("claimed", item.Run, lease);
+        }
+    }
+
+    public OrchestrationClaimResponse ClaimRolledBack(string runId)
+    {
+        lock (_gate)
+        {
+            ExpireLeases();
+            var item = Required(runId);
+            if (item.Run.Status != "pending" || !item.Claimable
+                || item.Shadow
+                || _rollout?.IsRolledBack(item.Profile) != true)
+                return new OrchestrationClaimResponse("empty");
+            var now = _time.GetUtcNow().UtcDateTime;
+            var lease = new OrchestrationLeaseDto($"olease_{Guid.NewGuid():N}", runId,
+                "engine_rollback", "monolith", checked(item.LastFence + 1), now,
+                now.AddMinutes(2), "active");
+            item = item with { Lease = lease, LastFence = lease.Fence,
+                Run = item.Run with { Status = "leased", UpdatedAt = now } };
+            Save(item);
+            _runs[runId] = item;
             return new OrchestrationClaimResponse("claimed", item.Run, lease);
         }
     }
@@ -272,9 +343,18 @@ public sealed class MonolithOrchestrationStore
                     || item.Completion.Action != request.Action || item.Completion.OutputJson != request.OutputJson)
                     throw new InvalidOperationException("orchestration-idempotency-conflict");
                 if (item.Run.Status == "completed") return item.Run;
+                if (item.EngineReceipt is null)
+                {
+                    item = item with { EngineReceipt = EngineReceipt(item, request) };
+                    Save(item);
+                    _runs[runId] = item;
+                }
             }
             else
             {
+                if (!item.Shadow && _rollout?.IsRolledBack(item.Profile) == true
+                    && request.EngineId != "engine_rollback")
+                    throw new InvalidOperationException("orchestration-profile-rolled-back");
                 if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
                     throw new ArgumentException("Idempotency key is required.");
                 if (_runs.Values.Any(other => other.Run.RunId != runId
@@ -285,12 +365,20 @@ public sealed class MonolithOrchestrationStore
                 if (item.Run.CurrentStage != request.Stage)
                     throw new InvalidOperationException("orchestration-stage-mismatch");
                 item = item with { CompletionKey = request.IdempotencyKey, Completion = request,
+                    EngineReceipt = EngineReceipt(item, request),
                     Run = item.Run with { Status = "applying", UpdatedAt = _time.GetUtcNow().UtcDateTime } };
                 Save(item);
                 _runs[runId] = item;
             }
         }
-        await _applier.ApplyAsync(item, request, ct);
+        if (item.Shadow)
+        {
+            if (item.Profile is null || item.EngineReceipt is null)
+                throw new InvalidDataException("Shadow occurrence has no engine decision receipt.");
+            if (item.MonolithReceipt is not null)
+                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+        }
+        else await _applier.ApplyAsync(item, request, ct);
         lock (_gate)
         {
             item = Required(runId);
@@ -305,6 +393,28 @@ public sealed class MonolithOrchestrationStore
             _runs[runId] = item;
             return item.Run;
         }
+    }
+
+    private static OrchestrationDecisionReceipt EngineReceipt(MonolithOrchestrationOccurrence item,
+        CompleteOrchestrationStageRequest request)
+    {
+        using var output = JsonDocument.Parse(request.OutputJson);
+        var root = output.RootElement;
+        var transition = root.TryGetProperty("transition", out var value)
+            && value.ValueKind == JsonValueKind.Object ? value : root;
+        var typed = transition.ValueKind == JsonValueKind.Object
+            && (transition.TryGetProperty("action", out _)
+                || transition.TryGetProperty("Action", out _))
+            ? transition.Deserialize<TransitionDecision>(Json) : null;
+        var action = typed is not null ? typed.Action.ToString()
+            : root.TryGetProperty("decision", out var stageDecision) ? stageDecision.ToString()
+            : request.Action.ToString();
+        var reason = typed?.Reason ?? string.Empty;
+        var decider = root.TryGetProperty("decider", out var version)
+            ? version.GetString() ?? $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:engine"
+            : $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:engine";
+        return OrchestrationRolloutStore.Receipt(item.Run.RunId, item.IdempotencyKey,
+            item.Run.PayloadJson, action, reason, decider);
     }
 
     public async Task RecoverApplyingAsync(CancellationToken ct)

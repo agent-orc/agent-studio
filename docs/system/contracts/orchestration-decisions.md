@@ -32,6 +32,20 @@ claimable occurrences. An unaccepted preparation has no wait marker and, after
 a bounded grace period, receives a durable cancellation receipt. A later valid
 report can prepare the same idempotency key again.
 
+AGT-3059 adds a per-profile rollout journal at
+`<TaskRepository>/.orchestration-rollout.json`. Coding completion, review report,
+and gate or batch result can be switched independently from Monolith to Shadow and then
+to Engine. Shadow records both receipts for each occurrence and compares chosen
+actions and input digests. A mismatch resets the matching streak and records
+both actions and reasons. The default threshold is 50 consecutive matches;
+`Orchestration:ShadowMatchThreshold` can change it. Ready is visible but does
+not switch automatically. A Studio operator switches or rolls back through one
+API call with an actor and reason receipt. Rollback keeps pending occurrences
+and resumes them through the monolith's shared library. Unactivated review
+occurrences do not carry a waiting marker. Engine mode never invokes the
+monolith decision on engine unavailability; after one minute a pending
+occurrence raises an operator feed alert and waits for a leased engine instance.
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled
@@ -90,6 +104,15 @@ as the lifetime automatic-round cap. Extraction does not replenish a counter or
 change the existing order of effects. Test blocks remain non-degradable, and an
 unactionable concern does not spend an automatic round. Batch planning and
 advisor policies remain in the AGT-3052 contracts package.
+
+For an engine-owned review, the accepted report records its delivered round
+before the prepared occurrence becomes claimable. Recovery repeats that keyed
+write before activation if settlement succeeded but the endpoint stopped. A
+cancelled preparation remains visible to activation recovery, and a rejected
+report may reopen it with a corrected payload and renewed authority fence.
+Gate decisions carry infrastructure and intervention facts to the shared
+policy, which escalates those failures. Shadow comparison uses the action the
+monolith actually applied after the gate handler completes.
 
 ## Verification and architecture guard
 

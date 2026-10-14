@@ -14,6 +14,7 @@ public sealed record StagePayload(
     int? AutomaticRoundsUsed = null, int MaximumCardRounds = 4,
     int ConcernRoundsUsed = 0, int MaximumConcernRounds = 0,
     bool InfrastructureRetryAvailable = false, int MaximumReissues = 2,
+    int? ReissuesUsed = null,
     ReviewRoundBudgetLedger? DeliveredRounds = null,
     int MaximumDeliveredRounds = 4);
 
@@ -24,6 +25,7 @@ public static class StageDecisionPolicy
 {
     public static TransitionFacts Facts(string taskId, int reissues, StagePayload payload)
     {
+        var reissuesUsed = payload.ReissuesUsed ?? reissues;
         var findings = (payload.Verdicts ?? []).Where(verdict =>
             !string.Equals(verdict.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
                 StringComparison.OrdinalIgnoreCase)).Select(verdict => new ReviewFollowUpFinding(
@@ -41,7 +43,7 @@ public static class StageDecisionPolicy
                 payload.FailureClassification),
             new(payload.MaximumCardRounds, payload.MaximumConcernRounds,
                 payload.MaximumDeliveredRounds, MaximumReissues: payload.MaximumReissues),
-            new(payload.AutomaticRoundsUsed ?? reissues, payload.ConcernRoundsUsed, reissues),
+            new(payload.AutomaticRoundsUsed ?? reissuesUsed, payload.ConcernRoundsUsed, reissuesUsed),
             new(payload.ReviewPlan?.BuildTestDeferredToBatch == true, payload.InfrastructureRetryAvailable), payload.DeliveredRounds);
     }
 
@@ -66,7 +68,33 @@ public static class StageDecisionPolicy
             var decision = TransitionDecisionPolicy.Decide(Facts(taskId, reissues, payload));
             return new(ToStageAction(decision.Action), decision);
         }
-        return new(ReviewOutcome(payload.ReviewOutcome, payload.AgentOutcome, payload.Terminal));
+        var stageAction = ReviewOutcome(payload.ReviewOutcome, payload.AgentOutcome, payload.Terminal);
+        if (payload.ReviewOutcome is null) return new(stageAction);
+        var transitionAction = stageAction switch
+        {
+            OrchestrationAction.Reissue => TransitionAction.FindingRound,
+            OrchestrationAction.Escalate => TransitionAction.Escalate,
+            _ => TransitionAction.Continue,
+        };
+        return new(stageAction, TransitionDecisionPolicy.Create(transitionAction,
+            "The remote review report selected the next stage.", taskId,
+            payload.ReviewAttemptId ?? payload.RunAttemptId ?? string.Empty,
+            payload.AutomaticRoundsUsed ?? reissues, payload.MaximumCardRounds));
+    }
+
+    public static TransitionDecision Coding(string taskId, string attemptId, string? targetState)
+    {
+        var action = targetState switch
+        {
+            TaskStates.AutoReview => TransitionAction.CreateReview,
+            TaskStates.Ready => TransitionAction.ReturnToReady,
+            TaskStates.Escalated => TransitionAction.Escalate,
+            TaskStates.HumanReview => TransitionAction.HumanReview,
+            _ => TransitionAction.Continue,
+        };
+        return TransitionDecisionPolicy.Create(action,
+            $"The settled coding attempt continues to {targetState ?? "its current lane"}.",
+            taskId, attemptId, 0, 0);
     }
 
     public static StagePolicyDecision Council(string taskId, int reissues, StagePayload payload)
@@ -103,12 +131,16 @@ public static class StageDecisionPolicy
         ? OrchestrationAction.Reissue : OrchestrationAction.Continue;
 
     public static StagePolicyDecision GateTransition(string taskId, string attemptId,
-        int failed, int roundsUsed, int roundsAllowed)
+        int failed, int roundsUsed, int roundsAllowed,
+        bool infrastructureFailure = false, bool interventionRequired = false)
     {
-        var action = failed == 0 ? TransitionAction.Continue
+        var action = infrastructureFailure || interventionRequired ? TransitionAction.Escalate
+            : failed == 0 ? TransitionAction.Continue
             : roundsUsed >= roundsAllowed ? TransitionAction.Escalate
             : TransitionAction.ReturnToReady;
-        var reason = failed == 0 ? "The build and test gate passed."
+        var reason = interventionRequired ? "The failed build and test gate requires operator intervention."
+            : infrastructureFailure ? "The build and test gate failed in infrastructure."
+            : failed == 0 ? "The build and test gate passed."
             : action == TransitionAction.Escalate
                 ? "The card round budget is spent with a build and test failure."
                 : "The build and test gate failed; reopen a bounded fix round.";
