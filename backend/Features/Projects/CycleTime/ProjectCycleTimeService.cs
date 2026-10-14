@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using AgentStudio.Tokens;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Projects;
 
@@ -31,7 +33,23 @@ public sealed record ProjectCycleTimeCoverage(
     /// rows enter the lead-time rollup only; their stage breakdown is null
     /// and they stay out of the stage, count, and outcome aggregates.
     /// </summary>
-    int TasksBackfilled);
+    int TasksBackfilled)
+{
+    public int ReAcceptanceArtefactsInWindow { get; init; }
+}
+
+public sealed record CycleTimeThroughputDay(DateTime Day, int Delivered, int MachineDone,
+    int Completed, int ReAcceptanceArtefacts);
+
+public sealed record FlowDimensionAggregate(string Id, string Label, string Class,
+    CycleTimeStageAggregate Duration, long Tokens, decimal CostUsd, int UnpricedCalls,
+    double? CostPerCardP50Usd, double? ShareOfMachineCycle, bool Excluded)
+{
+    public long InputTokens { get; init; }
+    public long OutputTokens { get; init; }
+    public long CacheReadTokens { get; init; }
+    public long CacheCreationTokens { get; init; }
+}
 
 public sealed record ProjectCycleTimeResponse(
     string Project,
@@ -47,7 +65,15 @@ public sealed record ProjectCycleTimeResponse(
     /// <summary>Lane transition matrix, per-lane dwell, bounce causes, and the tasks with the most backward moves.</summary>
     CycleTimeTransitionSummary Transitions,
     /// <summary>Per-task rows, newest completion first. <c>transitions</c> is null unless <c>detail=transitions</c> was requested.</summary>
-    IReadOnlyList<TaskCycleTime> Tasks);
+    IReadOnlyList<TaskCycleTime> Tasks)
+{
+    public IReadOnlyList<CycleTimeStageAggregate> Flow { get; init; } = [];
+    public IReadOnlyList<FlowDimensionAggregate> Steps { get; init; } = [];
+    public IReadOnlyList<FlowDimensionAggregate> Resources { get; init; } = [];
+    public IReadOnlyList<FlowDimensionAggregate> Holds { get; init; } = [];
+    public IReadOnlyList<FlowDimensionAggregate> Human { get; init; } = [];
+    public IReadOnlyList<CycleTimeThroughputDay> ThroughputPerDay { get; init; } = [];
+}
 
 /// <summary>Per-task response of <c>GET /api/projects/{project}/cycle-time/tasks/{taskKey}</c>.</summary>
 public sealed record ProjectCycleTimeTaskResponse(
@@ -59,8 +85,7 @@ public sealed record ProjectCycleTimeTaskResponse(
 /// Read model for <c>GET /api/projects/{project}/cycle-time</c>. Enumerates the
 /// project's tasks through the index-cache-backed scanner (never a cold disk
 /// walk), analyses each terminal task once, and memoises the per-task row
-/// against the ledger and pipeline file stamps so a request after warm-up
-/// costs two <c>FileInfo</c> probes per task. The per-project result is
+/// against the ledger, pipeline, gate-log, token and dependency stamps. The per-project result is
 /// additionally cached for a short TTL.
 /// </summary>
 public sealed class ProjectCycleTimeService
@@ -75,6 +100,12 @@ public sealed class ProjectCycleTimeService
     private readonly PipelineExecutionLog _pipeline;
     private readonly ProjectRegistry? _projects;
     private readonly ILogger<ProjectCycleTimeService> _logger;
+    private readonly ITokenAggregator? _tokens;
+    private readonly BatchGateStore? _batchGate;
+    private readonly AttemptAuthorityService? _attemptAuthority;
+    private readonly Func<string, (IReadOnlyList<FlowSegment> Segments, bool Malformed)> _gateLogReader;
+    private readonly Func<BatchGateStore, string, BatchGateCycleEvidence> _batchReader;
+    private readonly ConcurrentDictionary<string, ((long Count, long Ticks) Stamp, BatchGateCycleEvidence Evidence)> _gateMemo = new();
 
     private readonly ConcurrentDictionary<string, TaskMemo> _taskMemo =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -82,19 +113,30 @@ public sealed class ProjectCycleTimeService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, BackfillMemo> _backfillMemo =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ((long Length, long Ticks) Stamp, IReadOnlyList<TimelineEvent> Events)> _dependencyLedgerMemo = new();
 
     public ProjectCycleTimeService(
         TaskScannerService scanner,
         TimelineLog timeline,
         PipelineExecutionLog pipeline,
         ILogger<ProjectCycleTimeService> logger,
-        ProjectRegistry? projects = null)
+        ProjectRegistry? projects = null,
+        ITokenAggregator? tokens = null,
+        BatchGateStore? batchGate = null,
+        AttemptAuthorityService? attemptAuthority = null,
+        Func<string, (IReadOnlyList<FlowSegment> Segments, bool Malformed)>? gateLogReader = null,
+        Func<BatchGateStore, string, BatchGateCycleEvidence>? batchReader = null)
     {
         _scanner = scanner;
         _timeline = timeline;
         _pipeline = pipeline;
         _logger = logger;
         _projects = projects;
+        _tokens = tokens;
+        _batchGate = batchGate;
+        _attemptAuthority = attemptAuthority;
+        _gateLogReader = gateLogReader ?? FlowGateLogEvidence.Read;
+        _batchReader = batchReader ?? BatchGateCycleEvidence.Load;
     }
 
     /// <summary>Parses <c>7d</c>, <c>30d</c>, ..., or <c>all</c>. Returns null for an invalid value.</summary>
@@ -129,7 +171,7 @@ public sealed class ProjectCycleTimeService
     public ProjectCycleTimeResponse? Build(string projectHandle, string? window, DateTime? nowUtc = null, string? detail = null)
     {
         if (!TryParseWindow(window, out var normalizedWindow, out var span))
-            throw new ArgumentException($"Invalid window '{window}'. Use 7d, 30d, or all.", nameof(window));
+            throw new ArgumentException($"Invalid window '{window}'. Use 1d, 7d, 30d, or all.", nameof(window));
 
         var entry = ResolveWatchPath(projectHandle);
         if (entry is null) return null;
@@ -141,7 +183,7 @@ public sealed class ProjectCycleTimeService
         DateTime? since = span is null ? null : now - span.Value;
 
         var tasks = ProjectTasks(entry);
-        var analyses = AnalyzeProject(entry.Name, normalizedWindow, tasks, since);
+        var analyses = AnalyzeProject(entry.Name, entry.Path, normalizedWindow, tasks, since);
         var includeTransitions = string.Equals(detail?.Trim(), TransitionsDetail, StringComparison.OrdinalIgnoreCase);
         return BuildResponse(entry.Name, project?.Id, project?.ShortCode, normalizedWindow, now, since, analyses, includeTransitions);
     }
@@ -161,7 +203,12 @@ public sealed class ProjectCycleTimeService
             || string.Equals(t.Id, key, StringComparison.OrdinalIgnoreCase)
             || string.Equals(t.TaskKey, key, StringComparison.OrdinalIgnoreCase));
         if (task is null) return (null, "unknown-task");
-        var analysis = AnalyzeTask(task);
+        var tokens = _tokens?.WorkspacePerJob(entry.Name, entry.Path);
+        var byKey = _scanner.ScanAllAutomationJobsWithArchive()
+            .Where(t => !string.IsNullOrWhiteSpace(t.Key))
+            .GroupBy(t => t.Key!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var analysis = AnalyzeTask(task, tokens, GateEvidence(entry.Name), byKey);
         if (analysis.Row is null) return (null, analysis.ExclusionReason ?? TaskCycleAnalysis.ExcludedNotCompleted);
         var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
         return (new ProjectCycleTimeTaskResponse(entry.Name, now, analysis.Row), null);
@@ -207,7 +254,11 @@ public sealed class ProjectCycleTimeService
             analyses.Count(a => a.ExclusionReason == TaskCycleAnalysis.ExcludedEpic),
             evidenced.Count(r => r.DataGaps.Contains("no-ledger")),
             evidenced.Count(r => r.CompletionSource == TaskCycleTimeAnalyzer.LaneEntryCompletionSource),
-            rows.Count - evidenced.Count);
+            rows.Count - evidenced.Count)
+        {
+            ReAcceptanceArtefactsInWindow = analyses.Where(a => a.Row is not null)
+                .Sum(a => a.Row!.ReAcceptanceArtefactTimes.Count(t => t <= now && (since is null || t >= since))),
+        };
 
         var aggregates = new List<CycleTimeStageAggregate>();
         foreach (var stage in CycleTimeStages.Additive)
@@ -240,10 +291,19 @@ public sealed class ProjectCycleTimeService
         var transitions = CycleTimeTransitionAggregation.Build(rows);
         var taskRows = includeTransitions
             ? rows
-            : rows.Select(r => r.Transitions is null ? r : r with { Transitions = null }).ToList();
+            : rows.Select(r => r with { Transitions = null,
+                Flow = r.Flow?.WithoutSegments() }).ToList();
 
         return new ProjectCycleTimeResponse(
-            projectName, projectId, shortCode, window, now, since, coverage, aggregates, outcomes, transitions, taskRows);
+            projectName, projectId, shortCode, window, now, since, coverage, aggregates, outcomes, transitions, taskRows)
+        {
+            Flow = FlowAggregates.BuildTotals(rows),
+            Steps = FlowAggregates.BuildDimensions(rows, "active"),
+            Resources = FlowAggregates.BuildDimensions(rows, "resourceWait"),
+            Holds = FlowAggregates.BuildDimensions(rows, "systemHold"),
+            Human = FlowAggregates.BuildDimensions(rows, "humanWait"),
+            ThroughputPerDay = FlowAggregates.BuildThroughputDays(analyses, now, since),
+        };
     }
 
     private WatchPathEntry? ResolveWatchPath(string handle)
@@ -262,7 +322,7 @@ public sealed class ProjectCycleTimeService
         return entries.FirstOrDefault(e => WatchPathComparison.PathsEqual(e.Path, handle));
     }
 
-    private IReadOnlyList<TaskCycleAnalysis> AnalyzeProject(string projectName, string window, List<TaskInfo> tasks, DateTime? since)
+    private IReadOnlyList<TaskCycleAnalysis> AnalyzeProject(string projectName, string watchPath, string window, List<TaskInfo> tasks, DateTime? since)
     {
         // A bounded window only needs tasks that could have completed inside
         // it. A task enters its terminal lane after completion, so
@@ -297,7 +357,10 @@ public sealed class ProjectCycleTimeService
                            || string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal);
             if (!terminal)
             {
-                results.Add(new TaskCycleAnalysis(null, TaskCycleAnalysis.ExcludedNotCompleted));
+                if (since is null || task.EnteredLaneAt == default || Utc(task.EnteredLaneAt) >= since.Value)
+                    work.Add(task);
+                else
+                    results.Add(new TaskCycleAnalysis(null, TaskCycleAnalysis.ExcludedNotCompleted));
                 continue;
             }
             if (since is not null && task.EnteredLaneAt != default && Utc(task.EnteredLaneAt) < since.Value)
@@ -311,14 +374,21 @@ public sealed class ProjectCycleTimeService
         }
 
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 8) };
-        Parallel.ForEach(work, options, task => results.Add(AnalyzeTask(task)));
+        var tokens = _tokens?.WorkspacePerJob(projectName, watchPath);
+        var gates = GateEvidence(projectName);
+        var byKey = _scanner.ScanAllAutomationJobsWithArchive()
+            .Where(t => !string.IsNullOrWhiteSpace(t.Key))
+            .GroupBy(t => t.Key!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        Parallel.ForEach(work, options, task => results.Add(AnalyzeTask(task, tokens, gates, byKey)));
 
         var analyses = results.ToList();
         _projectMemo[memoKey] = new ProjectMemo(DateTime.UtcNow, since, tasks.Count, analyses);
         return analyses;
     }
 
-    private TaskCycleAnalysis AnalyzeTask(TaskInfo task)
+    private TaskCycleAnalysis AnalyzeTask(TaskInfo task, IReadOnlyDictionary<string, TaskTokenSummary>? tokens = null,
+        BatchGateCycleEvidence? gates = null, IReadOnlyDictionary<string, TaskInfo>? byKey = null)
     {
         var (backfillEntries, backfillStamp) = BackfillFor(task.WatchPath);
         var backfill = FindBackfill(backfillEntries, task);
@@ -329,9 +399,17 @@ public sealed class ProjectCycleTimeService
 
         var timelineStamp = Stamp(TaskPaths.TimelineLog(folder));
         var pipelineStamp = Stamp(Path.Combine(folder, PipelineExecutionLog.FileName));
+        var postStepsStamp = DirectoryStamp(Path.Combine(folder, "post-steps"));
+        var summary = tokens is not null && tokens.TryGetValue(task.Id, out var found) ? found : null;
+        var tokenStamp = (summary?.Calls ?? 0, summary?.LastUpdate?.Ticks ?? 0);
+        var dependencyStamp = DependencyStamp(task, byKey);
         if (_taskMemo.TryGetValue(folder, out var memo)
             && memo.TimelineStamp == timelineStamp
             && memo.PipelineStamp == pipelineStamp
+            && memo.PostStepsStamp == postStepsStamp
+            && memo.TokenStamp == tokenStamp
+            && memo.DependencyStamp == dependencyStamp
+            && ReferenceEquals(memo.GateEvidence, gates)
             && memo.BackfillStamp == backfillStamp
             && memo.State == task.State
             && memo.EnteredLaneAt == task.EnteredLaneAt)
@@ -350,6 +428,20 @@ public sealed class ProjectCycleTimeService
             events = [];
         }
 
+        var deliveries = events.Where(e => e.Kind == TimelineEventKinds.LaneChanged
+                && e.Details?.GetValueOrDefault("from") == TaskStates.Progress
+                && e.Details?.GetValueOrDefault("to") == TaskStates.AutoReview
+                && e.Details?.GetValueOrDefault("cause") == "delivered")
+            .Select(e => Utc(e.Ts)).ToList();
+        if (task.State is not (TaskStates.Completed or TaskStates.Archive))
+        {
+            var inFlight = new TaskCycleAnalysis(null, TaskCycleAnalysis.ExcludedNotCompleted)
+                { Deliveries = deliveries };
+            _taskMemo[folder] = new TaskMemo(timelineStamp, pipelineStamp, postStepsStamp, tokenStamp,
+                dependencyStamp, gates, backfillStamp, task.State, task.EnteredLaneAt, inFlight);
+            return inFlight;
+        }
+
         PipelineExecutionRecord? pipeline = null;
         try
         {
@@ -360,8 +452,43 @@ public sealed class ProjectCycleTimeService
             _logger.LogWarning(ex, "cycle-time-pipeline-read-failed task={TaskId} folder={Folder}", task.Id, folder);
         }
 
-        var analysis = TaskCycleTimeAnalyzer.Analyze(task, events, pipeline, backfill);
-        _taskMemo[folder] = new TaskMemo(timelineStamp, pipelineStamp, backfillStamp, task.State, task.EnteredLaneAt, analysis);
+        var taskKey = !string.IsNullOrWhiteSpace(task.Key) ? task.Key! : task.TaskKey;
+        var gateLogs = _gateLogReader(folder);
+        var dependencySpans = DependencyFlowEvidence.Build(task, events, key =>
+        {
+            if (byKey is null || !byKey.TryGetValue(key, out var target)) return null;
+            return (target, DependencyLedger(target));
+        });
+        var reviewIds = events.Where(e => e.Kind == TimelineEventKinds.ReviewAttemptClaimed)
+            .Select(e => e.Details?.GetValueOrDefault("attemptId") ?? e.RunId)
+            .OfType<string>().ToList();
+        var gateSpans = (gates?.ForTask(taskKey, reviewIds, task.EnteredLaneAt, events) ?? []).Concat(gateLogs.Segments)
+            .Concat(dependencySpans).ToList();
+        var firstBatchQueue = gateSpans.Where(s => s.Resource == "gateHost")
+            .OrderBy(s => s.Start).FirstOrDefault();
+        if (firstBatchQueue is not null)
+        {
+            var lastReviewStep = events.Where(e => e.Kind == TimelineEventKinds.PostStepFinished
+                    && e.Ts <= firstBatchQueue.Start)
+                .Select(e => e.Ts).LastOrDefault();
+            if (lastReviewStep != default && firstBatchQueue.Start - lastReviewStep <= TimeSpan.FromMinutes(1))
+                gateSpans.Add(new FlowSegment("resourceWait", null, "reviewSlot", null,
+                    lastReviewStep, firstBatchQueue.Start,
+                    (firstBatchQueue.Start - lastReviewStep).TotalSeconds));
+        }
+        IReadOnlyList<ReviewAttemptDto>? reviewAuthority = null;
+        if (_attemptAuthority is not null)
+            reviewAuthority = _attemptAuthority.GetTaskProjection(taskKey, includeArchived: false).ReviewAttempts;
+        var analysis = TaskCycleTimeAnalyzer.Analyze(task, events, pipeline, backfill,
+            gateSpans, reviewAuthority);
+        analysis = analysis with { Deliveries = deliveries };
+        if (gateLogs.Malformed && analysis.Row is not null)
+            analysis = analysis with { Row = analysis.Row with
+                { DataGaps = analysis.Row.DataGaps.Append("gate-log-malformed").ToList() } };
+        if (analysis.Row is not null)
+            analysis = analysis with { Row = FlowTokenAttribution.Apply(analysis.Row, summary, events) };
+        _taskMemo[folder] = new TaskMemo(timelineStamp, pipelineStamp, postStepsStamp, tokenStamp,
+            dependencyStamp, gates, backfillStamp, task.State, task.EnteredLaneAt, analysis);
         return analysis;
     }
 
@@ -418,9 +545,97 @@ public sealed class ProjectCycleTimeService
         }
     }
 
+    private static (long Length, long Ticks) DirectoryStamp(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path)) return (-1, 0);
+            var files = Directory.EnumerateFiles(path, "build-test-gate-*.log", SearchOption.TopDirectoryOnly);
+            long count = 0, newest = 0;
+            foreach (var file in files)
+            {
+                count++;
+                newest = Math.Max(newest, File.GetLastWriteTimeUtc(file).Ticks);
+            }
+            return (count, newest);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return (-2, 0); }
+    }
+
+    private BatchGateCycleEvidence? GateEvidence(string project)
+    {
+        if (_batchGate is null) return null;
+        var root = Path.GetDirectoryName(_batchGate.BatchDirectory("cycle-time-probe"));
+        if (root is null) return null;
+        (long Count, long Ticks) stamp = (0, 0);
+        try
+        {
+            if (Directory.Exists(root))
+                foreach (var path in Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories))
+                {
+                    stamp.Count++;
+                    stamp.Ticks = Math.Max(stamp.Ticks, File.GetLastWriteTimeUtc(path).Ticks);
+                }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "cycle-time-batch-stamp-failed project={Project}", project);
+            return null;
+        }
+        if (_gateMemo.TryGetValue(project, out var memo) && memo.Stamp == stamp) return memo.Evidence;
+        try
+        {
+            var evidence = _batchReader(_batchGate, project);
+            _gateMemo[project] = (stamp, evidence);
+            return evidence;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "cycle-time-batch-read-failed project={Project}", project);
+            return null;
+        }
+    }
+
+    private IReadOnlyList<TimelineEvent> DependencyLedger(TaskInfo target)
+    {
+        if (string.IsNullOrWhiteSpace(target.FolderPath)) return [];
+        var path = target.FolderPath;
+        var stamp = Stamp(TaskPaths.TimelineLog(path));
+        if (_dependencyLedgerMemo.TryGetValue(path, out var memo) && memo.Stamp == stamp) return memo.Events;
+        IReadOnlyList<TimelineEvent> events;
+        try { events = _timeline.ReadAll(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "cycle-time-dependency-read-failed task={TaskId}", target.Id);
+            events = [];
+        }
+        _dependencyLedgerMemo[path] = (stamp, events);
+        return events;
+    }
+
+    private static (long Count, long Ticks) DependencyStamp(TaskInfo task,
+        IReadOnlyDictionary<string, TaskInfo>? byKey)
+    {
+        long count = 0, ticks = 0;
+        foreach (var edge in task.References.DependsOn)
+        {
+            count++;
+            if (byKey is not null && byKey.TryGetValue(edge.Key, out var target))
+            {
+                var stamp = Stamp(TaskPaths.TimelineLog(target.FolderPath));
+                ticks = Math.Max(ticks, stamp.Ticks);
+            }
+        }
+        return (count, ticks);
+    }
+
     private sealed record TaskMemo(
         (long Length, long Ticks) TimelineStamp,
         (long Length, long Ticks) PipelineStamp,
+        (long Length, long Ticks) PostStepsStamp,
+        (int Calls, long Ticks) TokenStamp,
+        (long Count, long Ticks) DependencyStamp,
+        BatchGateCycleEvidence? GateEvidence,
         (long Length, long Ticks) BackfillStamp,
         string State,
         DateTime EnteredLaneAt,

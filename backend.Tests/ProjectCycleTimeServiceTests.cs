@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Pipeline;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -19,6 +20,69 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    [Fact]
+    public void GateLogAndBatchFacts_InvalidateOnlyTheAffectedTaskMemo()
+    {
+        var watchPath = Path.Combine(_root, "memo-tasks");
+        var completed = T0.AddMinutes(90);
+        SeedJob(watchPath, TaskStates.Completed, "memo-card", T0, completed,
+        [
+            Created(T0, TaskStates.Ready),
+            Lane(T0.AddMinutes(10), TaskStates.Ready, TaskStates.Progress),
+            Lane(T0.AddMinutes(20), TaskStates.Progress, TaskStates.AutoReview),
+            new TimelineEvent { Ts = T0.AddMinutes(25), Kind = TimelineEventKinds.ReviewAttemptClaimed,
+                RunId = "review_memo", Details = new() { ["attemptId"] = "review_memo" } },
+            PostStep(TimelineEventKinds.PostStepFinished, T0.AddMinutes(30),
+                "aspect-code-quality", "aspect-code-quality", "review_memo", 60_000),
+            Lane(completed, TaskStates.AutoReview, TaskStates.Completed),
+        ], null);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "Demo",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = watchPath,
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var batch = new BatchGateStore(Path.Combine(_root, "batch-gates"));
+        var gateReads = 0;
+        var batchReads = 0;
+        var service = new ProjectCycleTimeService(scanner,
+            new TimelineLog(NullLogger<TimelineLog>.Instance),
+            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            NullLogger<ProjectCycleTimeService>.Instance,
+            batchGate: batch,
+            gateLogReader: folder => { gateReads++; return FlowGateLogEvidence.Read(folder); },
+            batchReader: (store, project) => { batchReads++; return BatchGateCycleEvidence.Load(store, project); });
+        var now = T0.AddHours(2);
+        var initial = service.BuildTask("Demo", "memo-card", now)!.Value.Response!.Task;
+        Assert.Equal(0, initial.Segments!.Where(s => s.Resource == "gateHost").Sum(s => s.Seconds));
+        service.BuildTask("Demo", "memo-card", now);
+        Assert.Equal(1, gateReads);
+        Assert.Equal(1, batchReads);
+
+        var postSteps = Path.Combine(watchPath, TaskStates.Completed, "memo-card", "post-steps");
+        Directory.CreateDirectory(postSteps);
+        File.WriteAllText(Path.Combine(postSteps, "build-test-gate-1.log"),
+            $"startedAtUtc={T0.AddMinutes(31):O} queueWaitMs=60000 durationMs=0\n");
+        var afterLog = service.BuildTask("Demo", "memo-card", now)!.Value.Response!.Task;
+        Assert.Equal(60, afterLog.Segments!.Where(s => s.Resource == "gateHost").Sum(s => s.Seconds));
+        Assert.Equal(2, gateReads);
+        Assert.Equal(1, batchReads);
+
+        var execution = new BatchGateExecutionFact("Demo", null, "run-1", new string('a', 40),
+            "Ok", "TUFI2", new DateTimeOffset(T0.AddMinutes(35)),
+            new DateTimeOffset(T0.AddMinutes(45)), 300_000, 0, "review_memo/gate.log");
+        var executionFile = Path.Combine(_root, "batch-gates", "executions", "memo.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(executionFile)!);
+        File.WriteAllText(executionFile, JsonSerializer.Serialize(execution,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var afterBatch = service.BuildTask("Demo", "memo-card", now)!.Value.Response!.Task;
+        Assert.Equal(360, afterBatch.Segments!.Where(s => s.Resource == "gateHost").Sum(s => s.Seconds));
+        Assert.Equal(2, batchReads);
     }
 
     // ---- per-task analysis ------------------------------------------------
@@ -239,7 +303,7 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
     }
 
     [Fact]
-    public void CreationAfterCompletion_IsClampedAndFlagged_AndLaterReverts_CountAsHumanReview()
+    public void CreationAfterCompletion_IsClampedAndFlagged_AndReAcceptanceDoesNotMoveAnchor()
     {
         // task.json createdAt rewritten after completion (clock skew): lead time must not go negative.
         var skewed = Task("skew", TaskStates.Completed, createdAt: T0.AddHours(5), enteredLaneAt: T0.AddHours(4));
@@ -249,8 +313,7 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         Assert.Equal(0, skewedRow!.LeadTimeSeconds);
         Assert.Contains("clock-skew", skewedRow.DataGaps);
 
-        // 6-completed -> 5-human-review (integration GateFailed) -> 6-completed: the
-        // final completion wins, and the intermediate completed stay is human review.
+        // A fallback and re-acceptance without coding rework keep the first completion.
         var reverted = Task("revert", TaskStates.Archive, createdAt: T0, enteredLaneAt: T0.AddHours(10));
         var firstDone = T0.AddHours(2);
         var back = firstDone.AddHours(1);
@@ -266,13 +329,14 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         };
         var row = TaskCycleTimeAnalyzer.Analyze(reverted, events, null).Row;
         Assert.NotNull(row);
-        Assert.Equal(finalDone, row!.CompletedAt);
-        Assert.Equal(6 * 3600, row.LeadTimeSeconds);
-        Assert.Equal(6 * 3600, row.Stages.HumanReview);
+        Assert.Equal(firstDone, row!.CompletedAt);
+        Assert.Equal(2 * 3600, row.LeadTimeSeconds);
+        Assert.Equal(2 * 3600, row.Stages.HumanReview);
+        Assert.Equal(1, row.ReAcceptanceArtefacts);
+        Assert.Equal("first", row.CompletionKind);
         Assert.Equal(0, row.BounceRounds);
-        Assert.Equal("GateFailed", row.IntegrationOutcome);
-        Assert.Equal(1, row.IntegrationAttempts);
-        Assert.Contains("integration-duration-unknown", row.DataGaps);
+        Assert.Null(row.IntegrationOutcome);
+        Assert.Equal(0, row.IntegrationAttempts);
     }
 
     [Fact]

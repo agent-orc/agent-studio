@@ -1,9 +1,9 @@
 namespace AgentStudio.Projects;
 
 /// <summary>
-/// Stage identifiers of the per-project cycle-time view. The eight additive
+/// Stage identifiers of the per-project cycle-time view. The additive
 /// stages partition a task's lead time (created to completed): every instant
-/// between creation and the final entry into <c>6-completed</c> belongs to
+/// between creation and the last real entry into <c>6-completed</c> belongs to
 /// exactly one of them. The rollups overlap the additive stages and are
 /// reported separately so the operator can read both the composition and the
 /// familiar totals. See <c>docs/concepts/cycle-time-stage-model.md</c>.
@@ -26,8 +26,10 @@ public static class CycleTimeStages
     public const string ReviewOther = "reviewOther";
     /// <summary>Delivery integration spans (merge into the integration branch), wherever they occur.</summary>
     public const string Integration = "integration";
-    /// <summary>Time in <c>5-human-review</c>, <c>5e-escalated</c>, and a non-final <c>6-completed</c> stay, minus integration spans.</summary>
+    /// <summary>Time in <c>5-human-review</c> and <c>5e-escalated</c>, minus integration spans.</summary>
     public const string HumanReview = "humanReview";
+    /// <summary>A completed-lane stay before a genuine coding rework completion.</summary>
+    public const string CompletedBeforeReopen = "completedBeforeReopen";
     /// <summary>Lead-time remainder that no lane interval explains (unknown lanes, clock skew, missing ledger).</summary>
     public const string Unattributed = "unattributed";
 
@@ -35,9 +37,9 @@ public static class CycleTimeStages
 
     /// <summary>Review attempt span: first post step started to leaving <c>4-auto-review</c> (testGate + reviewOther + integration inside auto review).</summary>
     public const string ReviewRun = "reviewRun";
-    /// <summary>Created to final completion.</summary>
+    /// <summary>Created to the last real completion.</summary>
     public const string LeadTime = "leadTime";
-    /// <summary>First claim (<c>3-progress</c> entry) to final completion.</summary>
+    /// <summary>First claim (<c>3-progress</c> entry) to the last real completion.</summary>
     public const string CycleTime = "cycleTime";
 
     // ---- counts ----
@@ -50,7 +52,7 @@ public static class CycleTimeStages
     /// <summary>Additive stages in lane order. The sum of these equals <see cref="LeadTime"/> for every task.</summary>
     public static readonly IReadOnlyList<string> Additive =
     [
-        Preparation, QueueWait, Coding, ReviewWait, TestGate, ReviewOther, Integration, HumanReview, Unattributed,
+        Preparation, QueueWait, Coding, ReviewWait, TestGate, ReviewOther, Integration, HumanReview, CompletedBeforeReopen, Unattributed,
     ];
 
     /// <summary>Stages the operator named as the known bottlenecks; the view emphasises them.</summary>
@@ -69,10 +71,11 @@ public static class CycleTimeStages
         ReviewOther => "Review aspects and decision",
         Integration => "Integration",
         HumanReview => "Human review",
+        CompletedBeforeReopen => "Completed before reopen",
         Unattributed => "Unattributed",
         ReviewRun => "Review run",
         LeadTime => "Lead time",
-        CycleTime => "Cycle time",
+        CycleTime => "Claim to completion",
         CodingRuns => "Coding runs",
         ReviewRounds => "Review rounds",
         BounceRounds => "Bounce rounds",

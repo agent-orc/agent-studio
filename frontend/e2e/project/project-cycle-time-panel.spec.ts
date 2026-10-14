@@ -58,6 +58,8 @@ function row(key: string, completedAt: string, lead: number, gate: number, integ
     firstClaimedAt: '2026-08-18T08:10:00Z',
     completedAt,
     completionSource: 'ledger',
+    completionKind: 'first',
+    reAcceptanceArtefacts: 0,
     stages: {
       preparation: 0, queueWait: queue, coding, reviewWait: 300, testGate: gate, reviewOther: 0,
       integration, humanReview: human, unattributed: 0,
@@ -65,6 +67,17 @@ function row(key: string, completedAt: string, lead: number, gate: number, integ
     reviewRunSeconds: gate + integration,
     leadTimeSeconds: lead,
     cycleTimeSeconds: lead - queue,
+    machineCycleSeconds: coding + gate + integration + 900,
+    activeSeconds: coding + gate + integration,
+    resourceWaitSeconds: 900,
+    systemHoldSeconds: 300,
+    humanWaitSeconds: human,
+    dependencyWaitSeconds: 0,
+    largestResource: 'reviewSlot',
+    episodeTokens: 12_500_000,
+    episodeCostUsd: 5.17,
+    episodeCalls: 5,
+    episodeUnpricedCalls: 0,
     codingRuns: 1,
     reviewRounds: 1,
     bounceRounds: 0,
@@ -149,7 +162,26 @@ function payload(window: string) {
       tasksInProject: n + 3, tasksTerminal: n + 1, tasksInWindow: n,
       excludedNoCompletionTimestamp: 1, excludedInFlight: 2, excludedEpics: 0,
       tasksWithoutLedger: 0, tasksWithLaneEntryCompletion: 0,
+      reAcceptanceArtefactsInWindow: 1,
     },
+    flow: [
+      aggregate('machineCycle', 'Machine cycle', 'rollup', n, 4800),
+      aggregate('active', 'Active', 'rollup', n, 3600),
+      aggregate('resourceWait', 'Resource wait', 'rollup', n, 1200),
+      aggregate('humanWait', 'Human wait', 'rollup', n, 7200),
+      aggregate('dependencyWait', 'Dependency wait', 'rollup', 0, null),
+      aggregate('systemHold', 'System hold', 'rollup', n, 300),
+      aggregate('tokensPerCard', 'Tokens per card', 'rollup', n, 12_500_000),
+      aggregate('costPerCardUsd', 'Cost per card', 'rollup', n, 5.17),
+    ],
+    steps: [{ id: 'coding', label: 'Coding', class: 'active', duration: aggregate('coding', 'Coding', 'rollup', n, 3600),
+      tokens: 1_500_000_000, costUsd: 42.5, unpricedCalls: 1, costPerCardP50Usd: 5.17,
+      shareOfMachineCycle: null, excluded: false }],
+    resources: [{ id: 'reviewSlot', label: 'Review slot', class: 'resourceWait',
+      duration: aggregate('reviewSlot', 'Review slot', 'rollup', n, 1200), tokens: 0, costUsd: 0,
+      unpricedCalls: 0, costPerCardP50Usd: 0, shareOfMachineCycle: 0.25, excluded: false }],
+    throughputPerDay: [{ day: '2026-08-22T00:00:00Z', delivered: 3, machineDone: 2,
+      completed: n, reAcceptanceArtefacts: 1 }],
     aggregates: [
       aggregate('preparation', 'Preparation', 'stage', 0, null),
       aggregate('queueWait', 'Queue wait', 'stage', n, 600),
@@ -180,6 +212,9 @@ async function json(route: Route, body: unknown): Promise<void> {
 
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
+  // The shared usage header expects an object; keep it inert for this panel fixture.
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ status: 503,
+    contentType: 'application/json', body: '{}' }));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
@@ -215,7 +250,11 @@ async function installRoutes(page: Page): Promise<void> {
     const key = decodeURIComponent(route.request().url().split('/cycle-time/tasks/')[1].split('?')[0]);
     const task = payload('all').tasks.find(t => t.taskKey === key);
     if (!task) return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'unknown' }) });
-    return json(route, { project: PROJECT_NAME, capturedAt: '2026-08-23T12:00:00Z', task: { ...task, transitions: taskTransitions() } });
+    return json(route, { project: PROJECT_NAME, capturedAt: '2026-08-23T12:00:00Z', task: { ...task,
+      segments: [{ class: 'active', step: 'coding', resource: null, kind: null,
+        start: '2026-08-18T08:10:00Z', end: '2026-08-18T09:10:00Z', seconds: 3600,
+        executor: 'agent-runner-01', attemptId: 'run_1', tokens: 12_500_000,
+        costUsd: 5.17, calls: 1, unpricedCalls: 0 }], transitions: taskTransitions() } });
   });
 }
 
@@ -229,6 +268,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('cycle time rail renders aggregates, composition, drill-down, and both themes', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1400 });
   await page.goto(`/#/projects/${PROJECT_ID}/cycle-time`);
   const panel = page.getByTestId('project-cycle-time-panel');
   await expect(panel).toBeVisible({ timeout: 20_000 });
@@ -237,6 +277,11 @@ test('cycle time rail renders aggregates, composition, drill-down, and both them
 
   await expect(page.getByTestId('cycle-time-window-7d')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('cycle-time-summary')).toContainText('3 tasks completed');
+  await expect(page.getByTestId('flow-overview')).toBeVisible();
+  await expect(page.getByTestId('flow-overview')).toContainText('12.5M');
+  await expect(page.getByTestId('flow-steps')).toContainText('1.5B');
+  await expect(page.getByTestId('flow-resources')).toContainText('Review slot');
+  await page.getByTestId('cycle-time-lane-toggle').click();
 
   const segments = page.locator('[data-testid="cycle-time-bar"] .cyc__segment');
   await expect(segments).toHaveCount(6);
@@ -270,13 +315,16 @@ test('cycle time rail renders aggregates, composition, drill-down, and both them
   await page.getByTestId('cycle-time-expand-CYC-2').click();
   const history = page.getByTestId('cycle-time-task-transitions-CYC-2');
   await expect(history).toBeVisible();
-  await expect(history.locator('tbody tr')).toHaveCount(10);
-  await expect(history.locator('tbody tr[data-direction="backward"]')).toHaveCount(2);
-  await expect(history.locator('tbody tr').nth(2)).toContainText('build-test-gate-fail');
+  const laneRows = history.locator('table:not([data-testid="cycle-time-task-segments"]) tbody tr');
+  await expect(laneRows).toHaveCount(10);
+  await expect(history.getByTestId('cycle-time-task-segments')).toContainText('agent-runner-01');
+  await expect(history.locator('table:not([data-testid="cycle-time-task-segments"]) tbody tr[data-direction="backward"]')).toHaveCount(2);
+  await expect(laneRows.nth(2)).toContainText('build-test-gate-fail');
 
   await setTheme(page, 'light');
   const light = path.join(RESULTS_DIR, 'project-cycle-time--7d--light--mocked.png');
-  await panel.screenshot({ path: light });
+  await panel.getByRole('heading', { name: 'Throughput & cycle time', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: light });
   await testInfo.attach('project-cycle-time--7d--light', { path: light, contentType: 'image/png' });
   const transitionsLight = path.join(RESULTS_DIR, 'project-cycle-time--transitions--light--mocked.png');
   await page.getByTestId('cycle-time-transitions').screenshot({ path: transitionsLight });
@@ -290,9 +338,15 @@ test('cycle time rail renders aggregates, composition, drill-down, and both them
 
   await setTheme(page, 'dark');
   const dark = path.join(RESULTS_DIR, 'project-cycle-time--all--dark--mocked.png');
-  await panel.screenshot({ path: dark });
+  await panel.getByRole('heading', { name: 'Throughput & cycle time', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: dark });
   await testInfo.attach('project-cycle-time--all--dark', { path: dark, contentType: 'image/png' });
   const transitionsDark = path.join(RESULTS_DIR, 'project-cycle-time--transitions--dark--mocked.png');
   await page.getByTestId('cycle-time-transitions').screenshot({ path: transitionsDark });
   await testInfo.attach('project-cycle-time--transitions--dark', { path: transitionsDark, contentType: 'image/png' });
+
+  const dayRequest = page.waitForRequest(request => request.url().includes('/cycle-time?window=1d'));
+  await page.getByTestId('cycle-time-window-1d').click();
+  await dayRequest;
+  await expect(page.getByTestId('cycle-time-window-1d')).toHaveAttribute('aria-pressed', 'true');
 });

@@ -13,6 +13,7 @@ public sealed record CycleTimeStageSeconds
     public double ReviewOther { get; init; }
     public double Integration { get; init; }
     public double HumanReview { get; init; }
+    public double CompletedBeforeReopen { get; init; }
     public double Unattributed { get; init; }
 
     public double Get(string stage) => stage switch
@@ -25,12 +26,13 @@ public sealed record CycleTimeStageSeconds
         CycleTimeStages.ReviewOther => ReviewOther,
         CycleTimeStages.Integration => Integration,
         CycleTimeStages.HumanReview => HumanReview,
+        CycleTimeStages.CompletedBeforeReopen => CompletedBeforeReopen,
         CycleTimeStages.Unattributed => Unattributed,
         _ => 0,
     };
 
     public double Sum =>
-        Preparation + QueueWait + Coding + ReviewWait + TestGate + ReviewOther + Integration + HumanReview + Unattributed;
+        Preparation + QueueWait + Coding + ReviewWait + TestGate + ReviewOther + Integration + HumanReview + CompletedBeforeReopen + Unattributed;
 }
 
 /// <summary>One completed task's cycle-time row (drill-down behind the aggregates).</summary>
@@ -62,11 +64,36 @@ public sealed record TaskCycleTime(
     /// <summary>Number of backward lane moves (any level drop, including runner lease recovery).</summary>
     int BackwardTransitions,
     /// <summary>Every lane change with dwell, actor, and cause. Null on list responses unless transitions detail was requested.</summary>
-    IReadOnlyList<TaskLaneTransition>? Transitions);
+    IReadOnlyList<TaskLaneTransition>? Transitions)
+{
+    public string? CompletionKind { get; init; }
+    public int ReAcceptanceArtefacts { get; init; }
+    public IReadOnlyList<DateTime> ReAcceptanceArtefactTimes { get; init; } = [];
+    public FlowEpisode? Flow { get; init; }
+    public double? EpisodeSeconds => Flow?.EpisodeSeconds;
+    public double? MachineCycleSeconds => Flow?.MachineCycleSeconds;
+    public double? ActiveSeconds => Flow?.ActiveSeconds;
+    public double? ResourceWaitSeconds => Flow?.ResourceWaitSeconds;
+    public double? SystemHoldSeconds => Flow?.SystemHoldSeconds;
+    public double? HumanWaitSeconds => Flow?.HumanWaitSeconds;
+    public double? DependencyWaitSeconds => Flow?.DependencyWaitSeconds;
+    public DateTime? MachineDoneAt => Flow?.MachineDoneAt;
+    public string? LargestResource => Flow?.LargestResource;
+    public int ReviewAttempts => Flow?.ReviewAttempts ?? 0;
+    public int ReviewAttemptsWithoutVerdict => Flow?.ReviewAttemptsWithoutVerdict ?? 0;
+    public IReadOnlyList<FlowSegment>? Segments => Flow?.Segments;
+    public long EpisodeTokens => Flow?.Tokens ?? 0;
+    public decimal EpisodeCostUsd => Flow?.CostUsd ?? 0;
+    public int EpisodeCalls => Flow?.Calls ?? 0;
+    public int EpisodeUnpricedCalls => Flow?.UnpricedCalls ?? 0;
+    public long CardTokens { get; init; }
+    public decimal CardCostUsd { get; init; }
+}
 
 /// <summary>Outcome of analysing one task: either a row or the reason it was excluded.</summary>
 public sealed record TaskCycleAnalysis(TaskCycleTime? Row, string? ExclusionReason)
 {
+    public IReadOnlyList<DateTime> Deliveries { get; init; } = [];
     public const string ExcludedNoCompletion = "no-completion-timestamp";
     public const string ExcludedNotCompleted = "not-completed";
     public const string ExcludedEpic = "epic";
@@ -113,7 +140,7 @@ public static class TaskCycleTimeAnalyzer
     /// <summary>Data-gap prefix of a backfilled row; the suffix names the evidence (<c>backfilled:git-archive-move</c>).</summary>
     public const string BackfilledGapPrefix = "backfilled:";
 
-    private const string DeliveryGateFailedOutcome = "delivery-gate-failed";
+    internal const string DeliveryGateFailedOutcome = "delivery-gate-failed";
     private const string NoLedgerGap = "no-ledger";
     private const string CompletionFromLaneEntryGap = "completion-from-lane-entry";
     private const string ReviewStartUnknownGap = "review-start-unknown";
@@ -136,7 +163,9 @@ public static class TaskCycleTimeAnalyzer
         TaskInfo task,
         IReadOnlyList<TimelineEvent> events,
         PipelineExecutionRecord? pipeline,
-        CycleTimeBackfillEntry? backfill = null)
+        CycleTimeBackfillEntry? backfill = null,
+        IReadOnlyList<FlowSegment>? gateEvidence = null,
+        IReadOnlyList<ReviewAttemptDto>? reviewAuthority = null)
     {
         if (string.Equals(task.Kind, TaskKinds.Epic, StringComparison.OrdinalIgnoreCase))
             return new TaskCycleAnalysis(null, TaskCycleAnalysis.ExcludedEpic);
@@ -155,10 +184,8 @@ public static class TaskCycleTimeAnalyzer
         var gaps = new List<string>();
 
         // ---- completion anchor ----
-        DateTime? completedAt = laneChanges
-            .Where(e => Detail(e, "to") == TaskStates.Completed)
-            .Select(e => (DateTime?)e.Ts)
-            .LastOrDefault();
+        var anchors = CompletionAnchors.Find(laneChanges);
+        DateTime? completedAt = anchors.LastReal?.At;
         var completionSource = LedgerCompletionSource;
         if (completedAt is null)
         {
@@ -287,7 +314,7 @@ public static class TaskCycleTimeAnalyzer
 
         // ---- stage attribution ----
         double preparation = 0, queueWait = 0, coding = 0, reviewWait = 0, testGate = 0, reviewOther = 0,
-            integration = 0, humanReview = 0, unattributed = 0, reviewRun = 0;
+            integration = 0, humanReview = 0, completedBeforeReopen = 0, unattributed = 0, reviewRun = 0;
         int integrationAttempts = 0;
         string? integrationOutcome = null, integrationStage = null;
         var integrationOutcomeEvents = CollapseRepeatedOutcomes(ledger);
@@ -324,6 +351,10 @@ public static class TaskCycleTimeAnalyzer
                 integration += split.Integration;
                 integrationAttempts += split.IntegrationAttempts;
             }
+            else if (interval.Lane == TaskStates.Completed)
+            {
+                completedBeforeReopen += length;
+            }
             else if (HumanLanes.Contains(interval.Lane))
             {
                 var spans = IntegrationSpans(interval, integrationOutcomeEvents, integrationStarts, steps, usedMergeSteps, gaps);
@@ -341,7 +372,8 @@ public static class TaskCycleTimeAnalyzer
         // The last integration row is the outcome fact, also when it lands after
         // the final lane change (the acceptance transaction moves the card first
         // and records Merged / AlreadyMerged a second later).
-        var lastOutcomeEvent = integrationOutcomeEvents.LastOrDefault();
+        var lastOutcomeEvent = integrationOutcomeEvents
+            .LastOrDefault(e => e.Ts <= completedAt.Value.AddMinutes(3));
         if (lastOutcomeEvent is not null)
         {
             integrationOutcome = OutcomeOf(lastOutcomeEvent);
@@ -351,7 +383,7 @@ public static class TaskCycleTimeAnalyzer
         // Lead time is the authoritative total; anything the lane ladder did not
         // cover (events before creation, missing rows) lands in Unattributed
         // rather than silently vanishing or inflating a named stage.
-        var attributed = preparation + queueWait + coding + reviewWait + testGate + reviewOther + integration + humanReview + unattributed;
+        var attributed = preparation + queueWait + coding + reviewWait + testGate + reviewOther + integration + humanReview + completedBeforeReopen + unattributed;
         var drift = leadTime - attributed;
         if (drift > 1) unattributed += drift;
 
@@ -365,12 +397,16 @@ public static class TaskCycleTimeAnalyzer
             ReviewOther = Round(reviewOther),
             Integration = Round(integration),
             HumanReview = Round(humanReview),
+            CompletedBeforeReopen = Round(completedBeforeReopen),
             Unattributed = Round(unattributed),
         };
 
         double? cycleTime = firstClaimedAt is null
             ? null
             : Math.Max(0, (completedAt.Value - firstClaimedAt.Value).TotalSeconds);
+        var flow = FlowEpisodeClassifier.Build(task, ledger, pipeline, createdAt.Value,
+            completedAt.Value, gateEvidence, reviewAuthority);
+        if (flow is not null) gaps.AddRange(flow.DataGaps);
 
         return new TaskCycleAnalysis(new TaskCycleTime(
             task.Id,
@@ -394,7 +430,13 @@ public static class TaskCycleTimeAnalyzer
             integrationStage,
             gaps.Distinct(StringComparer.Ordinal).ToList(),
             transitions.Count(t => t.Direction == TransitionDirections.Backward),
-            transitions), null);
+            transitions)
+        {
+            CompletionKind = anchors.LastReal?.Kind,
+            ReAcceptanceArtefacts = anchors.Artefacts.Count,
+            ReAcceptanceArtefactTimes = anchors.Artefacts,
+            Flow = flow,
+        }, null);
     }
 
     // ---- auto review split ----
@@ -548,7 +590,7 @@ public static class TaskCycleTimeAnalyzer
     }
 
     /// <summary>The <c>integration_started</c> row inside the stay that opened this outcome: the latest start before it with no other outcome in between.</summary>
-    private static TimelineEvent? StartOf(TimelineEvent outcome, LaneInterval interval, List<TimelineEvent> starts, List<TimelineEvent> outcomes) =>
+    internal static TimelineEvent? StartOf(TimelineEvent outcome, LaneInterval interval, List<TimelineEvent> starts, List<TimelineEvent> outcomes) =>
         starts
             .Where(s => s.Ts <= outcome.Ts && interval.Contains(s.Ts))
             .Where(s => !outcomes.Any(o => o.Ts > s.Ts && o.Ts < outcome.Ts))
@@ -585,7 +627,7 @@ public static class TaskCycleTimeAnalyzer
         return result;
     }
 
-    private static string OutcomeOf(TimelineEvent e) =>
+    internal static string OutcomeOf(TimelineEvent e) =>
         Detail(e, "outcome") ?? (e.Kind switch
         {
             TimelineEventKinds.IntegrationSucceeded => "integrated",
@@ -681,7 +723,7 @@ public static class TaskCycleTimeAnalyzer
     /// lane change belongs to the lane it was emitted into, never to both. The
     /// final stay (ending at completion) also owns its end instant.
     /// </summary>
-    private sealed record LaneInterval(string Lane, DateTime Start, DateTime End, bool IncludeEnd = false)
+    internal sealed record LaneInterval(string Lane, DateTime Start, DateTime End, bool IncludeEnd = false)
     {
         public double Seconds => Math.Max(0, (End - Start).TotalSeconds);
         public bool Contains(DateTime ts) => ts >= Start && (ts < End || (IncludeEnd && ts == End));

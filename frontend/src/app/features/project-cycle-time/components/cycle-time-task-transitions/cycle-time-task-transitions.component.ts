@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
 import type { HttpErrorResponse } from '@angular/common/http';
 import { ProjectCycleTimeService } from '../../services/project-cycle-time.service';
-import type { TaskLaneTransition } from '../../models/project-cycle-time.model';
-import { formatDuration, formatTimestamp, laneLabel } from '../project-cycle-time-panel/cycle-time-format';
+import type { FlowSegment, TaskLaneTransition } from '../../models/project-cycle-time.model';
+import { formatDuration, formatTimestamp, formatTokens, formatUsd, laneLabel } from '../project-cycle-time-panel/cycle-time-format';
 
 /**
  * Inline transition history of one task (drill-down row of the Cycle Time
@@ -25,6 +25,7 @@ export class CycleTimeTaskTransitionsComponent {
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
   readonly transitions = signal<TaskLaneTransition[]>([]);
+  readonly segments = signal<FlowSegment[]>([]);
 
   constructor() {
     effect(() => {
@@ -50,6 +51,9 @@ export class CycleTimeTaskTransitionsComponent {
     return cause.replace(/-/g, ' ');
   }
 
+  tokens(value: number): string { return formatTokens(value); }
+  usd(value: number): string { return formatUsd(value); }
+
   /** Sequence of the latest request; a response from an older request (inputs changed meanwhile) is dropped. */
   private requestSeq = 0;
 
@@ -61,11 +65,13 @@ export class CycleTimeTaskTransitionsComponent {
       next: response => {
         if (seq !== this.requestSeq) return;
         this.transitions.set(response.task.transitions ?? []);
+        this.segments.set(response.task.segments ?? []);
         this.loading.set(false);
       },
       error: (err: HttpErrorResponse) => {
         if (seq !== this.requestSeq) return;
         this.transitions.set([]);
+        this.segments.set([]);
         this.error.set(err?.error?.error ?? err?.message ?? 'Could not load transitions.');
         this.loading.set(false);
       },

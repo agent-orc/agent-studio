@@ -13,11 +13,15 @@ public sealed record ProjectThroughputSummary(
     DateTime CapturedAt,
     int CompletedLast24h,
     int CompletedLast7d,
-    IReadOnlyList<ProjectCompletionItem> RecentCompletions);
+    IReadOnlyList<ProjectCompletionItem> RecentCompletions)
+{
+    public int ReAcceptanceArtefactsLast24h { get; init; }
+    public int ReAcceptanceArtefactsLast7d { get; init; }
+}
 
 /// <summary>
 /// Archive-inclusive read model for project delivery throughput. Completion time
-/// comes from the append-only lane-change ledger, not file mtimes. A legacy task
+/// comes from real completion entries in the append-only lane-change ledger. A legacy task
 /// without that event is counted only while it still resides in 6-completed,
 /// where EnteredLaneAt remains an honest completion anchor.
 /// </summary>
@@ -68,6 +72,8 @@ public sealed class ProjectThroughputService
         var since24h = now.AddHours(-24);
         var since7d = now.AddDays(-7);
         var completions = new List<ProjectCompletionItem>();
+        var artefacts24h = 0;
+        var artefacts7d = 0;
 
         foreach (var task in tasks)
         {
@@ -76,11 +82,10 @@ public sealed class ProjectThroughputService
                 && !string.Equals(task.State, TaskStates.Archive, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var completedAt = readTimeline(task)
-                .Where(IsCompletedLaneChange)
-                .Select(evt => evt.Ts.ToUniversalTime())
-                .DefaultIfEmpty()
-                .Max();
+            var anchors = CompletionAnchors.Find(readTimeline(task));
+            var completedAt = anchors.LastReal?.At ?? default;
+            artefacts24h += anchors.Artefacts.Count(at => at >= since24h && at <= now);
+            artefacts7d += anchors.Artefacts.Count(at => at >= since7d && at <= now);
 
             if (completedAt == default
                 && task.EnteredLaneAt != default
@@ -93,11 +98,7 @@ public sealed class ProjectThroughputService
             var taskKey = !string.IsNullOrWhiteSpace(task.Key)
                 ? task.Key!
                 : !string.IsNullOrWhiteSpace(task.TaskKey) ? task.TaskKey : task.Id;
-            completions.Add(new ProjectCompletionItem(
-                task.Id,
-                taskKey,
-                task.Title,
-                completedAt));
+            completions.Add(new ProjectCompletionItem(task.Id, taskKey, task.Title, completedAt));
         }
 
         var recent = completions
@@ -109,14 +110,12 @@ public sealed class ProjectThroughputService
             now,
             recent.Count(item => item.CompletedAt >= since24h),
             recent.Count,
-            recent);
+            recent)
+        {
+            ReAcceptanceArtefactsLast24h = artefacts24h,
+            ReAcceptanceArtefactsLast7d = artefacts7d,
+        };
     }
-
-    private static bool IsCompletedLaneChange(TimelineEvent evt)
-        => string.Equals(evt.Kind, TimelineEventKinds.LaneChanged, StringComparison.Ordinal)
-           && evt.Details is not null
-           && evt.Details.TryGetValue("to", out var target)
-           && string.Equals(target, TaskStates.Completed, StringComparison.OrdinalIgnoreCase);
 
     private IReadOnlyList<TimelineEvent> ReadTimeline(TaskInfo task)
     {

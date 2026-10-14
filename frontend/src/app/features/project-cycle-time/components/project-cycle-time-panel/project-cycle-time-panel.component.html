@@ -1,9 +1,9 @@
 <section class="cyc" data-testid="project-cycle-time-panel">
   <header class="cyc__head">
     <div class="cyc__intro">
-      <h2 class="cyc__title">Cycle time</h2>
+      <h2 class="cyc__title">Throughput &amp; cycle time</h2>
       <p class="cyc__subtitle">
-        Time per pipeline stage for completed tasks. Median and p90 are taken over the tasks in which a stage occurred.
+        Machine runtime and resource waits for completed cards, with human and dependency time shown separately.
       </p>
     </div>
     <div class="cyc__controls">
@@ -54,9 +54,13 @@
       }
     </p>
 
+    <app-flow-overview [data]="d" />
     @if (!hasRows()) {
       <p class="cyc__empty" data-testid="cycle-time-empty">No task completed in this window.</p>
     } @else {
+      <button type="button" class="cyc__reload" data-testid="cycle-time-lane-toggle"
+              [attr.aria-expanded]="laneStages()" (click)="laneStages.set(!laneStages())">Lane stages</button>
+      @if (laneStages()) {
       <section class="cyc__section" aria-labelledby="cyc-composition-title">
         <h3 id="cyc-composition-title" class="cyc__section-title">Median stage composition</h3>
         <div class="cyc__bar" data-testid="cycle-time-bar" role="img"
@@ -159,16 +163,17 @@
       @if (d.transitions; as transitions) {
         <app-cycle-time-transitions [summary]="transitions" (openTask)="openTask.emit($event)" />
       }
+      }
 
       <section class="cyc__section" aria-labelledby="cyc-tasks-title">
         <h3 id="cyc-tasks-title" class="cyc__section-title">Tasks</h3>
         <div class="cyc__table-wrap">
           <table class="cyc__table cyc__table--tasks" data-testid="cycle-time-tasks">
-            <caption>Completed tasks in the window with their stage durations; click a header to sort, expand a row for its lane changes</caption>
+            <caption>Completed tasks in the window; click a header to sort, expand a row for flow segments and lane changes</caption>
             <thead>
               <tr>
                 <th scope="col" class="cyc__disclosure-head"><span class="cyc__sr-only">Lane changes</span></th>
-                @for (c of columns; track c.key) {
+                @for (c of columns(); track c.key) {
                   <th scope="col"
                       [attr.aria-sort]="ariaSort(c.key)"
                       [class.cyc__num]="c.numeric"
@@ -193,7 +198,7 @@
                             [attr.data-testid]="'cycle-time-expand-' + row.taskKey"
                             (click)="toggleExpanded(row)">{{ isExpanded(row) ? '⌄' : '›' }}</button>
                   </td>
-                  @for (c of columns; track c.key) {
+                  @for (c of columns(); track c.key) {
                     <td [class.cyc__num]="c.numeric" [class.cyc__col--highlighted]="c.highlighted">
                       @if (c.key === 'key') {
                         <button type="button"
@@ -208,7 +213,7 @@
                 </tr>
                 @if (isExpanded(row)) {
                   <tr class="cyc__expansion" [attr.data-task-key]="row.taskKey + ':transitions'">
-                    <td [attr.colspan]="columnCount">
+                    <td [attr.colspan]="columnCount()">
                       <app-cycle-time-task-transitions [projectName]="projectName()" [taskKey]="row.taskKey" />
                     </td>
                   </tr>

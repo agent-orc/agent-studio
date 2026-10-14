@@ -3,9 +3,21 @@
     <p class="ctx__state">Loading transitions…</p>
   } @else if (error(); as err) {
     <p class="ctx__state ctx__state--error" role="alert">{{ err }}</p>
-  } @else if (transitions().length === 0) {
-    <p class="ctx__state">No lane change recorded for this task.</p>
   } @else {
+    @if (segments().length > 0) {
+      <table class="ctx__table" data-testid="cycle-time-task-segments">
+        <caption>Machine and excluded time segments of {{ taskKey() }}</caption>
+        <thead><tr><th scope="col">Start</th><th scope="col">Class</th><th scope="col">Step or wait</th><th scope="col">Executor</th><th scope="col" class="ctx__num">Duration</th><th scope="col" class="ctx__num">Tokens</th><th scope="col" class="ctx__num">Cost</th></tr></thead>
+        <tbody>
+          @for (segment of segments(); track segment.start + segment.class + segment.end) {
+            <tr><td class="ctx__time">{{ time(segment.start) }}</td><td>{{ segment.class }}</td><td>{{ segment.step ?? segment.resource ?? segment.kind }}</td><td>{{ segment.executor ?? '–' }}</td><td class="ctx__num">{{ duration(segment.seconds) }}</td><td class="ctx__num">{{ tokens(segment.tokens) }}</td><td class="ctx__num">{{ usd(segment.costUsd) }}</td></tr>
+          }
+        </tbody>
+      </table>
+    }
+    @if (transitions().length === 0) {
+    <p class="ctx__state">No lane change recorded for this task.</p>
+    } @else {
     <table class="ctx__table">
       <caption>Lane changes of {{ taskKey() }} in chronological order</caption>
       <thead>
@@ -41,5 +53,6 @@
         }
       </tbody>
     </table>
+    }
   }
 </div>

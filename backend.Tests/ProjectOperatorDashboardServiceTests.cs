@@ -22,7 +22,7 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
     }
 
     [Fact]
-    public void Throughput_UsesLatestCompletedLaneEvent_AndOnlyCurrentLegacyFallback()
+    public void Throughput_UsesRealCompletionLaneEvent_AndOnlyCurrentLegacyFallback()
     {
         var now = new DateTime(2026, 7, 11, 12, 0, 0, DateTimeKind.Utc);
         var archivedWithHistory = Task("archived-history", TaskStates.Archive, now.AddHours(-1));
@@ -57,14 +57,14 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
 
         Assert.Equal(now, result.CapturedAt);
         Assert.Equal(2, result.CompletedLast24h);
-        Assert.Equal(3, result.CompletedLast7d);
+        Assert.Equal(2, result.CompletedLast7d);
         Assert.Equal(
-            new[] { "archived-history", "current-legacy", "completed-twice" },
+            new[] { "archived-history", "current-legacy" },
             result.RecentCompletions.Select(item => item.TaskId));
         Assert.DoesNotContain(result.RecentCompletions, item => item.TaskId == archivedLegacy.Id);
         Assert.DoesNotContain(result.RecentCompletions, item => item.TaskId == completedEpic.Id);
         Assert.DoesNotContain(result.RecentCompletions, item => item.TaskId == reopened.Id);
-        Assert.Equal(now.AddDays(-6), result.RecentCompletions[^1].CompletedAt);
+        Assert.Equal(1, result.ReAcceptanceArtefactsLast7d);
     }
 
     [Fact]

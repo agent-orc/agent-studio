@@ -24,12 +24,15 @@ import {
   formatCount,
   formatDuration,
   formatTimestamp,
+  formatTokens,
+  formatUsd,
   windowLabel,
   type CompositionSegment,
 } from './cycle-time-format';
 import { CycleTimeTableState, type CycleTimeSortKey } from './cycle-time-table-state';
 import { CycleTimeTransitionsComponent } from '../cycle-time-transitions/cycle-time-transitions.component';
 import { CycleTimeTaskTransitionsComponent } from '../cycle-time-task-transitions/cycle-time-task-transitions.component';
+import { FlowOverviewComponent } from '../flow-overview/flow-overview.component';
 
 /** One sortable drill-down column. Stage columns carry the stage key so the cell reads `row.stages[key]`. */
 interface DrillDownColumn {
@@ -58,6 +61,21 @@ const DRILL_DOWN_COLUMNS: readonly DrillDownColumn[] = [
   { key: 'outcome', label: 'Integration outcome', numeric: false },
 ];
 
+const FLOW_COLUMNS: readonly DrillDownColumn[] = [
+  { key: 'key', label: 'Task', numeric: false },
+  { key: 'completedAt', label: 'Completed', numeric: false },
+  { key: 'machineCycle', label: 'Machine', numeric: true },
+  { key: 'active', label: 'Active', numeric: true },
+  { key: 'resourceWait', label: 'Resource wait', numeric: true },
+  { key: 'systemHold', label: 'Hold', numeric: true },
+  { key: 'humanWait', label: 'Human (excluded)', numeric: true },
+  { key: 'dependencyWait', label: 'Dependency (excluded)', numeric: true },
+  { key: 'tokens', label: 'Tokens', numeric: true },
+  { key: 'cost', label: 'Cost', numeric: true },
+  { key: 'codingRuns', label: 'Runs', numeric: true },
+  { key: 'outcome', label: 'Outcome', numeric: false },
+];
+
 /**
  * Project rail panel "Cycle time": per-stage duration aggregates for the
  * completed tasks of one project (count, median, p90, max), a stacked median
@@ -70,7 +88,7 @@ const DRILL_DOWN_COLUMNS: readonly DrillDownColumn[] = [
 @Component({
   selector: 'app-project-cycle-time-panel',
   standalone: true,
-  imports: [TooltipDirective, CycleTimeTransitionsComponent, CycleTimeTaskTransitionsComponent],
+  imports: [TooltipDirective, CycleTimeTransitionsComponent, CycleTimeTaskTransitionsComponent, FlowOverviewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-cycle-time-panel.component.html',
   styleUrl: './project-cycle-time-panel.component.scss',
@@ -83,7 +101,8 @@ export class ProjectCycleTimePanelComponent {
   readonly openTask = output<{ jobId: string; watchPath: string }>();
 
   readonly windows = CYCLE_TIME_WINDOWS;
-  readonly columns = DRILL_DOWN_COLUMNS;
+  readonly laneStages = signal(false);
+  readonly columns = computed(() => this.laneStages() ? DRILL_DOWN_COLUMNS : FLOW_COLUMNS);
   readonly window = signal<CycleTimeWindow>('7d');
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
@@ -113,7 +132,7 @@ export class ProjectCycleTimePanelComponent {
   /** Task keys whose transition history is expanded in the drill-down. */
   readonly expandedKeys = signal<readonly string[]>([]);
   /** Drill-down column count including the leading disclosure column. */
-  readonly columnCount = DRILL_DOWN_COLUMNS.length + 1;
+  readonly columnCount = computed(() => this.columns().length + 1);
 
   constructor() {
     effect(() => {
@@ -186,6 +205,14 @@ export class ProjectCycleTimePanelComponent {
       case 'bounceRounds': return String(row.bounceRounds);
       case 'backwardTransitions': return String(row.backwardTransitions ?? 0);
       case 'outcome': return row.integrationOutcome ?? '–';
+      case 'machineCycle': return this.duration(row.machineCycleSeconds);
+      case 'active': return this.duration(row.activeSeconds);
+      case 'resourceWait': return `${this.duration(row.resourceWaitSeconds)}${row.largestResource ? ` (${row.largestResource})` : ''}`;
+      case 'systemHold': return this.duration(row.systemHoldSeconds);
+      case 'humanWait': return this.duration(row.humanWaitSeconds);
+      case 'dependencyWait': return this.duration(row.dependencyWaitSeconds);
+      case 'tokens': return formatTokens(row.episodeTokens);
+      case 'cost': return formatUsd(row.episodeCostUsd);
       default: return column.stage ? this.duration(row.stages?.[column.stage]) : '';
     }
   }

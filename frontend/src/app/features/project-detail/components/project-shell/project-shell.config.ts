@@ -164,9 +164,9 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
   {
     key: 'cycle-time',
     group: 'insight',
-    label: 'Cycle Time',
-    panelTitle: 'Cycle Time',
-    description: 'Time per pipeline stage for completed tasks: queue, coding, gate, review, integration, human review',
+    label: 'Throughput & cycle time',
+    panelTitle: 'Throughput & cycle time',
+    description: 'Machine cycle, resource waits, daily throughput, tokens and cost for completed tasks',
     empty: 'No completed task in the selected window.',
     icon: '◷',
     railIcon: 'activity',

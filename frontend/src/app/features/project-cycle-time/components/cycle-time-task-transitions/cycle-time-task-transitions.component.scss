@@ -23,6 +23,7 @@
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.ctx__table + .ctx__table { margin-top: var(--studio-spacing-3); }
 
 .ctx__table caption {
   position: absolute;
