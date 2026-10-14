@@ -585,6 +585,14 @@ of the exact successor attempt released by
 `POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
 older review on the same waiting card does not close it. A card whose existing review is still
 pending resumes that attempt; a terminal review gets one freshly planned successor.
+The report acknowledgement, evidence projection, and delivery resume each
+observe the durable passed verdict, so any of those paths can close the exact
+probe. Closure is idempotent and logs `cause-breaker-probe-green` once. The
+breaker list projects an open probe's current attempt as `running`, `passed`,
+or `failed`. The hosted sweep also closes a passed probe left open by an
+earlier process. Disabling the breaker through the project settings endpoint
+closes its open records with reason `disabled`; enabling it again begins with
+no previously open cause.
 If successor creation fails, the card keeps its visible wait
 and the hosted sweep retries the release; the breaker closes only after every
 waiting card is released. The same holds when its `cause-wait.json` cannot be
@@ -601,6 +609,16 @@ aspect retry, returns the card to its visible wait and clears the probe
 reservation. A later explicit probe creates a new attempt from current settings.
 With the breaker disabled for a project, the opt-in
 `post-failure-intervention` step keeps its previous first-failure behaviour.
+
+Delivery resume stores its retry count, next attempt time, failure reason, and
+observed integration verdict in `logs/remote-delivery-resume-retry.json`.
+Repeated failures use exponential backoff and stop after five starts for the
+same verdict. An integration-owned wait does not consume that budget. A changed
+integration or settlement verdict resets the budget so the reconciler can
+advance the card after automated recovery. The card stays in the integrating
+phase. After exhaustion the post-processing queue stops re-enqueuing it and
+shows the specific stop reason; the integration reconciler still watches it.
+An unreadable retry file loses its backoff rather than exhausting a delivery.
 
 Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
 retries have all failed, no further retry is scheduled and the card is parked

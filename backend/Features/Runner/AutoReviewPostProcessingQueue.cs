@@ -443,7 +443,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
             // A deferred card re-enters the queue (ScheduleDeferralRetry below), so it has
             // not drained; every other terminal status has left the queue for good.
             _queue.Telemetry.RecordCompletion(
-                DateTime.UtcNow, sw.Elapsed, drained: outcome.Status != PostProcessingCardStatus.Deferred);
+                DateTime.UtcNow, sw.Elapsed, drained: outcome.Status != PostProcessingCardStatus.Deferred
+                    || outcome.Reason == "delivery-resume-exhausted");
 
             ApplyOutcome(request, outcome, ct);
         }
@@ -598,6 +599,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         try
         {
             var resumed = await _deliveryResume.ResumeAsync(info, "post-processing-deferral", ct);
+            if (resumed.Reason == "delivery-resume-exhausted")
+                return PostProcessingCardResult.Deferred(resumed.Reason);
             if (!resumed.Resumed) return outcome;
 
             // The pass did reach a terminal decision for this card, so its
@@ -675,6 +678,9 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         string reason,
         CancellationToken ct)
     {
+        // The durable resume budget is spent. Integration reconciliation still
+        // observes this card, but this worker must not keep re-enqueuing it.
+        if (reason == "delivery-resume-exhausted") return;
         var availability = ResolveReviewExecutorAvailability(reason);
         var registeredVerdictWait = availability?.AnyRegistered == true
             && string.Equals(reason, PostProcessingCardResult.AwaitingCanonicalReviewVerdict, StringComparison.Ordinal);
@@ -708,10 +714,15 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         _logger.LogInformation(
             "auto-review-postprocessing-deferred project={Project} job={JobId} reason={Reason} attempt={Attempt} retryInMs={RetryInMs}",
             request.ProjectName, request.JobId, reason, attempt, (long)delay.TotalMilliseconds);
-        _queue.SetWaitState(
-            request.ProjectName,
-            request.JobId,
-            new AutoReviewQueueWaitState(reason, availability?.Detail, attempt, DateTime.UtcNow + delay));
+        // Resume owns its more specific wait reason and clock. Keep it visible
+        // through the post-processing deferral schedule.
+        var resumeWait = _queue.WaitStateOf(request.ProjectName, request.JobId)?.Reason;
+        if (resumeWait is not ("delivery-resume-backoff" or "delivery-resume-exhausted"
+            or AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait))
+            _queue.SetWaitState(
+                request.ProjectName,
+                request.JobId,
+                new AutoReviewQueueWaitState(reason, availability?.Detail, attempt, DateTime.UtcNow + delay));
 
         _ = Task.Run(async () =>
         {
@@ -762,13 +773,19 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                     request.ProjectName, request.JobId, reason);
                 return;
             }
+            var integrating = info.Phase == LifecyclePhases.Integrating;
             var updated = PostProcessingLifecycleStore.Skip(
                 info.FolderPath,
                 DateTime.UtcNow,
                 "Post Processing skipped the decision: " + reason + ".",
                 _logger);
-            if (updated && string.Equals(info.State, TaskStates.AutoReview, StringComparison.Ordinal))
-                _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
+            if (string.Equals(info.State, TaskStates.AutoReview, StringComparison.Ordinal))
+            {
+                if (integrating)
+                    _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.Integrating);
+                else if (updated)
+                    _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
+            }
         }
         catch (Exception ex)
         {
@@ -786,6 +803,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         {
             var info = _scanner.FindJob(request.JobId, request.WatchPath);
             if (info == null || info.State != TaskStates.AutoReview) return;
+            // Integration and its reconciler already own this lifecycle.
+            if (info.Phase == LifecyclePhases.Integrating) return;
 
             var now = DateTime.UtcNow;
             if (PostProcessingLifecycleStore.BeginPostProcessing(

@@ -277,6 +277,24 @@ public sealed class TaskLiveStatusProjectionTests
         Assert.Equal("waiting for delivery integration", queue.Reason);
     }
 
+    [Theory]
+    [InlineData("delivery-resume-exhausted", "delivery resume stopped; operator action needed: lane write failed")]
+    [InlineData("delivery-resume-backoff", "delivery resume will retry: lane write failed")]
+    [InlineData(AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait,
+        "waiting for integration recovery: lane write failed")]
+    public void ReviewQueue_PassedReview_ShowsTheSpecificResumeReason(string reason, string expected)
+    {
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Completed, null, CreatedAt: Now.AddMinutes(-10), AttemptId: "review_1",
+            Outcome: ReviewTerminalOutcome.Pass);
+
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", null), null,
+            Wait(reason, "lane write failed"), Now)!;
+
+        Assert.Equal(expected, queue.Reason);
+    }
+
     [Fact]
     public void ReviewQueue_LegacyCard_FallsBackToTheLocalWaitState()
     {
