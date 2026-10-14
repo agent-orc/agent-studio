@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Projects;
 
@@ -17,6 +18,7 @@ public sealed record ProjectThroughputSummary(
 {
     public int ReAcceptanceArtefactsLast24h { get; init; }
     public int ReAcceptanceArtefactsLast7d { get; init; }
+    public GateSlotUsage? GateSlots { get; init; }
 }
 
 /// <summary>
@@ -31,17 +33,20 @@ public sealed class ProjectThroughputService
     private readonly TaskScannerService _scanner;
     private readonly TimelineLog _timeline;
     private readonly ILogger<ProjectThroughputService> _logger;
+    private readonly GateSlotUsageTracker? _gateSlots;
     private readonly ConcurrentDictionary<string, (DateTime At, ProjectThroughputSummary Value)> _cache =
         new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectThroughputService(
         TaskScannerService scanner,
         TimelineLog timeline,
-        ILogger<ProjectThroughputService> logger)
+        ILogger<ProjectThroughputService> logger,
+        GateSlotUsageTracker? gateSlots = null)
     {
         _scanner = scanner;
         _timeline = timeline;
         _logger = logger;
+        _gateSlots = gateSlots;
     }
 
     public ProjectThroughputSummary? Build(string projectName, DateTime? nowUtc = null)
@@ -52,12 +57,15 @@ public sealed class ProjectThroughputService
 
         if (_cache.TryGetValue(projectName, out var cached)
             && DateTime.UtcNow - cached.At < CacheTtl)
-            return cached.Value;
+            return cached.Value with { GateSlots = _gateSlots?.Snapshot() };
 
         var tasks = _scanner.ScanAllAutomationJobsWithArchive()
             .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, entry.Path))
             .ToList();
-        var value = BuildSummary(projectName, tasks, ReadTimeline, nowUtc);
+        var value = BuildSummary(projectName, tasks, ReadTimeline, nowUtc) with
+        {
+            GateSlots = _gateSlots?.Snapshot(),
+        };
         _cache[projectName] = (DateTime.UtcNow, value);
         return value;
     }

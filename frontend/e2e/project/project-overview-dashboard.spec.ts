@@ -248,6 +248,11 @@ async function mockDashboard(page: Page): Promise<{
   });
   await page.route('**/api/crash-recovery/pending', route => fulfillJson(route, { pending: [] }));
   await page.route('**/api/projects/*/token-usage/summary', route => fulfillJson(route, tokenSummary));
+  await page.route('**/api/projects/*/throughput', route => fulfillJson(route, {
+    project: PROJECT_NAME, capturedAt: '2026-07-11T12:00:00Z',
+    completedLast24h: 0, completedLast7d: 0, recentCompletions: [],
+    gateSlots: { busy: 2, total: 3 },
+  }));
   await page.route('**/api/projects/*/deployment/summary', route => fulfillJson(route, deployment));
   await page.route('**/api/projects/*/test-runs', route => fulfillJson(route, testRuns));
   await page.route('**/api/projects/*/deployment/compile', async route => {
@@ -363,7 +368,7 @@ test.describe('Project Overview · operator dashboard', () => {
     await mockDashboard(page);
     await openDashboard(page);
 
-    await expect(page.getByTestId('project-overview-throughput')).toHaveCount(0);
+    await expect(page.getByTestId('project-overview-gate-slots')).toHaveText('2/3');
     await expect(page.getByTestId('project-overview-dashboard')).not.toContainText('Delivered tasks');
     await expect(page.getByTestId('project-overview-tokens-24h')).toHaveText('1.2M');
     await expect(page.getByTestId('project-overview-tokens-7d')).toHaveText('8.3M');
@@ -432,7 +437,7 @@ test.describe('Project Overview · operator dashboard', () => {
     const mocked = await mockDashboard(page);
     await openDashboard(page);
 
-    await expect(page.getByTestId('project-overview-throughput')).toHaveCount(0);
+    await expect(page.getByTestId('project-overview-gate-slots')).toHaveText('2/3');
     await expect(page.getByTestId('project-overview-dashboard')).not.toContainText('Delivered tasks');
     await expect(page.getByTestId('project-overview-tokens-24h')).toHaveText('1.2M');
     await expect(page.getByTestId('project-overview-tokens-7d')).toHaveText('8.3M');

@@ -33,6 +33,7 @@ public sealed class BatchGatePilotService
     private readonly BatchGateAdvisorService? _advisor;
     private readonly BatchIntegrationReservationService? _reservations;
     private readonly PipelineExecutionLog _pipelineLog;
+    private readonly GateSlotUsageTracker? _gateSlots;
     private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
@@ -58,7 +59,8 @@ public sealed class BatchGatePilotService
         ILoadThrottleGate? load = null, TimeProvider? timeProvider = null,
         BatchGateAdvisorService? advisor = null,
         BatchIntegrationReservationService? reservations = null,
-        PipelineExecutionLog? pipelineLog = null)
+        PipelineExecutionLog? pipelineLog = null,
+        GateSlotUsageTracker? gateSlots = null)
     {
         _store = store;
         _leases = leases;
@@ -81,6 +83,7 @@ public sealed class BatchGatePilotService
         _reservations?.LoadPersistedProjects(_settings.GetAll().Keys);
         _pipelineLog = pipelineLog ?? new PipelineExecutionLog(pricing,
             NullLogger<PipelineExecutionLog>.Instance);
+        _gateSlots = gateSlots;
     }
 
     public BatchGatePendingRecord Enqueue(TaskInfo task, ReviewAttemptDto review,
@@ -271,7 +274,8 @@ public sealed class BatchGatePilotService
                 .ToDictionary(group => group.Key, group => group.Last().Risk,
                     StringComparer.Ordinal);
         return BatchGateStateSnapshotReader.Read(_store, project, options, history,
-            risks, CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null);
+            risks, CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
+            _gateSlots?.Snapshot());
     }
 
     private bool CodeBatchEnabled(string project)

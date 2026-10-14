@@ -34,7 +34,7 @@ describe('ProjectOverviewDashboardComponent', () => {
     fixture.detectChanges();
 
     const http = TestBed.inject(HttpTestingController);
-    http.expectNone('/api/projects/Demo%20Project/throughput');
+    http.expectOne('/api/projects/Demo%20Project/throughput').flush(throughput());
     http.expectOne('/api/projects/Demo%20Project/token-usage/summary').flush(tokenSummary());
     http.expectOne('/api/projects/Demo%20Project/deployment/summary').flush({
       project: 'Demo Project', available: true, reason: null,
@@ -62,7 +62,7 @@ describe('ProjectOverviewDashboardComponent', () => {
     fixture.detectChanges();
 
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelector('[data-testid="project-overview-throughput"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-overview-gate-slots"]')?.textContent).toContain('2/3');
     expect(host.textContent).not.toContain('Delivered tasks');
     expect(host.querySelector('[data-testid="project-overview-tokens-24h"]')?.textContent).toContain('124K');
     expect(host.querySelector('[data-testid="project-overview-tokens-7d"]')?.textContent).toContain('831K');
@@ -223,7 +223,7 @@ function snapshot() {
 }
 
 function flushEmpty(http: HttpTestingController): void {
-  http.expectNone('/api/projects/Demo%20Project/throughput');
+  http.expectOne('/api/projects/Demo%20Project/throughput').flush(throughput());
   http.expectOne('/api/projects/Demo%20Project/token-usage/summary').flush(tokenSummary());
   http.expectOne('/api/projects/Demo%20Project/deployment/summary').flush({
     project: 'Demo Project', available: false, reason: 'No history.', source: 'logs/stable-restarts.jsonl',
@@ -236,6 +236,12 @@ function flushEmpty(http: HttpTestingController): void {
     project: 'Demo Project', capturedAt: '2026-07-11T12:00:00Z', unseenCount: 0, items: [],
   });
   http.expectOne('/api/v1/workspaces').flush([]);
+}
+
+function throughput() {
+  return { project: 'Demo Project', capturedAt: '2026-07-11T12:00:00Z',
+    completedLast24h: 0, completedLast7d: 0, recentCompletions: [],
+    gateSlots: { busy: 2, total: 3 } };
 }
 
 function gitInventory() {

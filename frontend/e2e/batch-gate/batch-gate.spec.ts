@@ -14,6 +14,7 @@ const settings = {
   advisor: { mode: 'enforce', cliType: 'codex', model: 'test-model', timeoutSeconds: 45 },
 };
 const state = {
+  gateSlots: { busy: 2, total: 3 },
   plan: { decision: 'wait', reason: 'Advisor veto', targetSize: 2, closeAtUtc: '2026-10-11T14:05:00Z',
     proposedMembers: [key], upcoming: [], advisor: { mode: 'enforce', verdict: 'veto', reasons: ['Risk too high'], model: 'test-model', atUtc: '2026-10-11T13:00:00Z' } },
   pending: [{ taskKey: key, reviewAttemptId: 'review-1', resultSha: 'a'.repeat(40), waitMinutes: 12, risk: 'high' }],
@@ -90,6 +91,7 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.getByTestId('batch-lane-indicator').first().click();
   await expect.poll(async () => (await page.getByTestId('batch-panel').boundingBox())?.x ?? 0).toBeGreaterThan(700);
   await expect(page.getByTestId('batch-panel')).toContainText('Advisor veto');
+  await expect(page.getByTestId('batch-gate-slot-usage')).toHaveText('Gate slots: 2/3 busy');
   await expect(page.getByTestId('batch-panel')).toContainText('from batch-7');
   await expect(page.getByTestId('batch-panel')).toContainText('test-failure');
   await captureThemes(page, evidence, 'batch-panel');

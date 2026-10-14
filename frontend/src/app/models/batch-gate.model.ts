@@ -23,6 +23,7 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  gateSlots?: { busy: number; total: number } | null;
   plan: {
     decision: BatchDecision;
     reason: string;

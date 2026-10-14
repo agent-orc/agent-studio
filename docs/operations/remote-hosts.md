@@ -4,6 +4,31 @@ This runbook is the operator path for adding, connecting, draining, retiring,
 reviving, and permanently removing a remote agent host. The detailed Linux
 installation reference remains [linux-runner-host.md](setup/linux-runner-host.md).
 
+## Remote build/test gate capacity
+
+The SSH gate worker uses `RemoteGate:GateSlots` numbered file locks on the gate
+host. The default is one slot. Set both values on the dispatching API host, for
+example in its environment for kori-gate (24 cores, 48 GB Docker VM):
+
+```bash
+RemoteGate__GateSlots=3
+RemoteGate__ProcessorCount=6
+```
+
+Budget `GateSlots × ProcessorCount` below the host's online core count and
+leave cores and memory for Git transport, Docker, and the operating system.
+Three six-processor suites reserve up to 18 of KORI's 24 cores. Watch peak
+memory per suite before raising the slot count. The remote worker warns at
+startup if the product exceeds online cores. Local gates use
+`LocalGate:GateSlots` (environment variable `LocalGate__GateSlots`), also
+defaulting to one.
+
+Each gate has a private GUID source and worktree directory. Preparation uses
+private run folders and locks shared published cache entries; verification npm
+cache paths are separated by slot. Playwright uses its isolated workspace and
+dynamic ports, and the .NET test hosts use ephemeral loopback ports or in-memory
+servers. Avoid fixed listener ports in new gate tests.
+
 ## Prelaunch infrastructure failures
 
 The Task Server counts consecutive infrastructure failures per card and failure

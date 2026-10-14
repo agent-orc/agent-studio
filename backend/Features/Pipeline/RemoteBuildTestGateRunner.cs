@@ -16,6 +16,8 @@ public sealed record RemoteGateInvocation(
     int OverallTimeoutSeconds)
 {
     public string? CachePath { get; init; }
+    public int GateSlots { get; init; } = 1;
+    public int ProcessorCount { get; init; } = 2;
 }
 
 public sealed record RemoteGateResponse(
