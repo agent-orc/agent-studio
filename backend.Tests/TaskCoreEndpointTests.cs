@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using AgentStudio.Review;
 using AgentStudio.Security;
@@ -58,7 +59,6 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.NotNull(project);
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         await WarmIndexAsync(factory, "AGT-core");
-        var scansBefore = index.Misses;
         var url = $"/api/tasks/AGT-core/core?project={project!.Id}";
 
         using var response = await client.GetAsync(url);
@@ -110,10 +110,11 @@ public sealed class TaskCoreEndpointTests : IDisposable
         }
 
         index.Invalidate();
-        scansBefore = index.Misses;
-        using var dirty = await client.GetAsync(url);
+        using var dirtyRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        dirtyRequest.Headers.Add("X-Task-Switch-Trace", "1");
+        using var dirty = await client.SendAsync(dirtyRequest);
         Assert.Equal(HttpStatusCode.OK, dirty.StatusCode);
-        Assert.Equal(scansBefore, index.Misses);
+        Assert.Equal("0", dirty.Headers.GetValues("X-Task-Core-Workspace-Scans").Single());
 
         using var archive = await client.GetAsync($"/api/tasks/AGT-archive/core?project={project.Id}");
         Assert.Equal(HttpStatusCode.OK, archive.StatusCode);
@@ -178,7 +179,27 @@ public sealed class TaskCoreEndpointTests : IDisposable
     public async Task DetailResources_VersionHashesTheWireData_AndWarmingIsNotMissing()
     {
         Seed("AGT-core", TaskStates.Ready);
-        await using var factory = Factory();
+        var refreshEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumeRefresh = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdRefresh = 0;
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TaskIndexCache>();
+                services.AddSingleton(provider =>
+                {
+                    var scanner = provider.GetRequiredService<TaskScannerService>();
+                    return new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance,
+                        provider.GetRequiredService<IConfiguration>(), scanner.ScanAllJobsRaw,
+                        beforeRefreshGenerationCapture: () =>
+                        {
+                            if (Volatile.Read(ref holdRefresh) == 0) return;
+                            refreshEntered.TrySetResult(true);
+                            resumeRefresh.Task.GetAwaiter().GetResult();
+                        },
+                        timeProvider: provider.GetRequiredService<TimeProvider>());
+                });
+            }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
@@ -199,12 +220,24 @@ public sealed class TaskCoreEndpointTests : IDisposable
 
         // A task the re-hydrating index cannot place yet answers 202 like the
         // core route, so the client keeps the selection instead of revoking it.
-        index.Invalidate();
-        using var warming = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
-        Assert.Equal(HttpStatusCode.Accepted, warming.StatusCode);
-        using var warmingBody = JsonDocument.Parse(await warming.Content.ReadAsStringAsync());
-        Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
-        Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
+        Volatile.Write(ref holdRefresh, 1);
+        try
+        {
+            index.Invalidate();
+            Assert.True(index.GetCore("AGT-unknown", Jobs).Warming);
+            await refreshEntered.Task.WaitAsync(TimeSpan.FromSeconds(30),
+                factory.Services.GetRequiredService<TimeProvider>());
+            using var warming = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
+            Assert.Equal(HttpStatusCode.Accepted, warming.StatusCode);
+            using var warmingBody = JsonDocument.Parse(await warming.Content.ReadAsStringAsync());
+            Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
+            Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
+        }
+        finally
+        {
+            Volatile.Write(ref holdRefresh, 0);
+            resumeRefresh.TrySetResult(true);
+        }
 
         await WarmIndexAsync(factory, "AGT-unknown");
         using var missing = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
@@ -314,7 +347,6 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
-        var index = factory.Services.GetRequiredService<TaskIndexCache>();
         await WarmIndexAsync(factory, "AGT-dependent");
         var url = $"/api/tasks/AGT-dependent/core?project={project.Id}";
         using var before = await client.GetAsync(url);
@@ -325,8 +357,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using (var released = await client.PutAsJsonAsync(
             $"/api/tasks/AGT-target/release?project={project.Id}", new { released = true }))
             released.EnsureSuccessStatusCode();
-        var scansBefore = index.Misses;
-        using var after = await client.GetAsync(url);
+        using var afterRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        afterRequest.Headers.Add("X-Task-Switch-Trace", "1");
+        using var after = await client.SendAsync(afterRequest);
         after.EnsureSuccessStatusCode();
         using var current = JsonDocument.Parse(await after.Content.ReadAsByteArrayAsync());
         var blocking = current.RootElement.GetProperty("blocking");
@@ -334,7 +367,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.False(blocking.GetProperty("dependencyBlocked").GetBoolean());
         Assert.True(blocking.GetProperty("dependencies")[0].GetProperty("fulfilled").GetBoolean());
         Assert.NotEqual(before.Headers.ETag, after.Headers.ETag);
-        Assert.Equal(scansBefore, index.Misses);
+        Assert.Equal("0", after.Headers.GetValues("X-Task-Core-Workspace-Scans").Single());
     }
 
     private sealed class StubRuntime : ITaskCoreRuntime
@@ -470,7 +503,6 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         var clock = factory.Services.GetRequiredService<TimeProvider>();
         var deadline = clock.GetUtcNow().AddSeconds(30);
-        index.ForceRefresh();
         while (index.GetCore(identity, Jobs).Warming)
         {
             var remaining = deadline - clock.GetUtcNow();
@@ -478,7 +510,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
             if (index.RefreshInFlight is { } refresh)
                 await refresh.WaitAsync(remaining, clock);
             else
-                index.ForceRefresh();
+                await Task.Delay(TimeSpan.FromMilliseconds(10) < remaining
+                    ? TimeSpan.FromMilliseconds(10) : remaining, clock);
         }
     }
 
