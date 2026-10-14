@@ -51,6 +51,25 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public void Engine_enrollment_issues_an_exclusive_scoped_principal()
+    {
+        var (store, _, _) = NewStore();
+        var enrollment = store.CreateEnrollment(new RunnerEnrollmentRequest(
+            "engine-host", [RunnerScopes.Orchestration], null, null));
+        var issued = store.EnrollRunner(enrollment.Code);
+        var principal = store.AuthenticateRunner(issued.Secret);
+
+        Assert.StartsWith("engine_", issued.Runner.Id);
+        Assert.Equal(issued.Runner.Id, principal!.RunnerId);
+        Assert.Contains(RunnerScopes.Orchestration, principal.Scopes);
+        Assert.DoesNotContain(RunnerScopes.Claim, principal.Scopes);
+        Assert.Throws<SecurityOperationException>(() => store.CreateEnrollment(
+            new RunnerEnrollmentRequest("bad-engine", [RunnerScopes.Orchestration, RunnerScopes.Claim], null, null)));
+        Assert.Throws<SecurityOperationException>(() => store.RotateRunner(issued.Runner.Id,
+            new RunnerRotateRequest([RunnerScopes.Claim], null)));
+    }
+
+    [Fact]
     public void Runner_lifecycle_and_activity_share_the_credential_registry()
     {
         var (store, _, _) = NewStore();

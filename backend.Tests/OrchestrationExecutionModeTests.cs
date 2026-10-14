@@ -1,6 +1,7 @@
 using Xunit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
 
 namespace AgentStudio.Tests;
 
@@ -22,6 +23,20 @@ public sealed class OrchestrationExecutionModeTests
     public void Ambiguous_mode_fails_closed()
         => Assert.Throws<InvalidOperationException>(
             () => OrchestrationExecutionModeParser.Parse("both"));
+
+    [Fact]
+    public void One_transition_can_use_engine_while_the_others_keep_monolith_ownership()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            { ["Orchestration:Transitions:ReviewReport"] = "Engine" }).Build();
+        Assert.Equal(OrchestrationExecutionMode.Engine,
+            MonolithTransitionSwitch.For(configuration, "ReviewReport"));
+        Assert.Equal(OrchestrationExecutionMode.Monolith,
+            MonolithTransitionSwitch.For(configuration, "CodingCompletion"));
+        Assert.Equal(OrchestrationExecutionMode.Monolith,
+            MonolithTransitionSwitch.For(configuration, "GateResult"));
+    }
 
     [Fact]
     public void Engine_mode_registers_no_legacy_orchestration_hosted_loops()

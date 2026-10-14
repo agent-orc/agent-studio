@@ -51,7 +51,7 @@ public static class V1ReviewPlaneEndpoints
         api.MapPost("/protocol/compatibility", (Contract.ProtocolCompatibilityRequest request) =>
         {
             var supported = Contract.TaskServerProtocol.Supports(request.ProtocolVersion)
-                            && request.ClientKind is "runner" or "review-runner";
+                            && request.ClientKind is "runner" or "review-runner" or Contract.TaskServerProtocol.EngineClientKind;
             var response = new Contract.ProtocolCompatibilityResponse(
                 supported,
                 Protocol(),
@@ -733,6 +733,7 @@ public static class V1ReviewPlaneEndpoints
             IntegrationBranchGateReporter integrationGates,
             IRemoteReviewEvidenceProjectionQueue evidenceQueue,
             AgentStudio.Review.ReviewProjectionService projections,
+            MonolithOrchestrationStore orchestration,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -861,6 +862,119 @@ public static class V1ReviewPlaneEndpoints
                 {
                     request = request with { SkippedAspects = frozenPlan.SkippedAspects };
                 }
+            }
+
+            if (MonolithTransitionSwitch.For(configuration, "ReviewReport") == OrchestrationExecutionMode.Engine)
+            {
+                if (reviewTask is null)
+                    return Results.NotFound(new Contract.ApiError("task-not-found", "Review task was not found."));
+                var engineFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
+                    request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
+                        verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
+                        verdict.Missing, verdict.Classification)),
+                    concernRoundsUsed: 0, maxConcernRounds: 1);
+                if (engineFollowUp.Action == Contract.ReviewFollowUpAction.RetryAspect)
+                    request = ClassifyRetryAspectExhaustion(request, engineFollowUp);
+                if (TransitionDecisionPolicy.IsDeferredAcceptance(
+                        currentReview.Subject.Plan?.BuildTestDeferredToBatch == true, request.Outcome)
+                    && !request.Verdicts.Any(verdict =>
+                        string.Equals(verdict.Aspect, "build-tests", StringComparison.Ordinal)
+                        && string.Equals(verdict.Classification, "DeferredToBatch", StringComparison.Ordinal)))
+                    request = request with
+                    {
+                        Verdicts = request.Verdicts.Append(new Contract.ReviewVerdictDto(
+                            "build-tests", "deferred-to-batch", "DeferredToBatch",
+                            "The complete suite is owned by the batch gate; per-card verification ran separately.")).ToArray(),
+                    };
+                if (!TryOutcome(request.Outcome, out var engineOutcome))
+                    return Results.BadRequest(new Contract.ApiError("invalid-review-outcome", "Review outcome is invalid."));
+                var engineReportHash = RemoteReviewSettlementJournal.Hash(request);
+                var engineSettleRequest = new SettleReviewAttemptRequest(
+                    new AttemptWriteReference(attemptId, request.Fence, request.AuthorityEpoch,
+                        request.IdempotencyKey), request.Workspace.ActualHead, engineOutcome,
+                    request.FailureClassification, request.Summary);
+                var rounds = projections.Read(reviewTask).Attempts.Where(round => round.AttemptId != attemptId).ToArray();
+                var engineCardBudget = CardRoundBudget.Evaluate(
+                    ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, reviewTask.ProjectName),
+                    timeline.ReadAll(reviewTask.FolderPath), reviewTask.Id,
+                    CardRoundBudget.ResolveAllowed(configuration));
+                var payload = new StagePayload(
+                    ReviewOutcome: request.Outcome,
+                    RunAttemptId: currentReview.SourceRunAttemptId,
+                    ReviewSubjectId: currentReview.Subject.SubjectId,
+                    ReviewAttemptId: attemptId,
+                    ResultSha: currentReview.Subject.ExpectedResultSha,
+                    ResultRef: currentReview.Subject.ResultRef,
+                    Verdicts: request.Verdicts,
+                    ReviewPlan: currentReview.Subject.Plan,
+                    FailureClassification: request.FailureClassification,
+                    AutomaticRoundsUsed: engineCardBudget.Used,
+                    MaximumCardRounds: engineCardBudget.Allowed,
+                    ConcernRoundsUsed: ReviewConcernRoundStore.Read(reviewTask.FolderPath)?.Used ?? 0,
+                    MaximumConcernRounds: settings.Get(reviewTask.ProjectName).MaxReviewConcernRounds,
+                    InfrastructureRetryAvailable: authority.HasReviewInfrastructureRetryBudget(attemptId),
+                    MaximumReissues: settings.Get(reviewTask.ProjectName).MaxAutoReissueAttempts
+                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
+                    DeliveredRounds: ReviewRoundBudgetStore.Read(reviewTask.FolderPath, rounds),
+                    MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds);
+                var occurrenceKey = $"review-report:{attemptId}:{request.IdempotencyKey}";
+                var occurrence = orchestration.GetByIdempotencyKey(occurrenceKey)
+                    ?? orchestration.Create(reviewTask.ProjectName, reviewTask.Id,
+                    Contract.OrchestrationStage.ReviewDecision,
+                    JsonSerializer.Serialize(payload, Json),
+                    occurrenceKey,
+                    reviewTask.State, attemptId, request.Fence, request.AuthorityEpoch,
+                    claimable: false);
+                AttemptWriteResult engineSettled;
+                try
+                {
+                    engineSettled = acceptedReplay
+                        ? authority.SettleReview(engineSettleRequest)
+                        : RemoteReviewSettlementJournal.PrepareAndSettle(reviewTask.FolderPath,
+                            new RemoteReviewSettlementEntry
+                            {
+                                AttemptId = attemptId,
+                                TaskKey = currentReview.TaskKey,
+                                IdempotencyKey = request.IdempotencyKey,
+                                ReportSha256 = engineReportHash,
+                                SubmittedReportSha256 = submittedReportHash,
+                                Report = request,
+                                ReceivedAtUtc = DateTime.UtcNow,
+                            },
+                            () => authority.GetReview(attemptId)?.Reports
+                                .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)
+                                ?.IdempotencyKey,
+                            () => authority.SettleReview(engineSettleRequest));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    logger.LogError(exception, "engine-review-settlement-failed attempt={AttemptId}", attemptId);
+                    return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                        "The review report could not be journaled."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+                if (RemoteReviewSettlementJournal.IsIdempotencyConflict(engineSettled))
+                    return Results.Conflict(new Contract.ApiError("idempotency-conflict",
+                        "The review report key is bound to a different payload."));
+                if (!engineSettled.Accepted || engineSettled.ReviewAttempt is null)
+                    return AttemptError(engineSettled);
+                orchestration.Activate(occurrence.RunId);
+                if (occurrence.Status is "pending" or "leased" or "applying")
+                    EngineDecisionWaitMarker.Write(reviewTask.FolderPath, occurrence.RunId);
+                scanner.InvalidateCache();
+                var engineReceivedAt = engineSettled.ReviewAttempt.Reports.LastOrDefault(report =>
+                    report.IdempotencyKey == request.IdempotencyKey)?.ReceivedAt ?? DateTime.UtcNow;
+                evidenceQueue.Enqueue(new RemoteReviewEvidenceProjectionRequest(
+                    attemptId, engineSettled.ReviewAttempt.TaskKey, engineSettled.ReviewAttempt, request,
+                    RemoteReviewReportEvidence.EvidenceFileName(attemptId), engineReportHash,
+                    engineReceivedAt, DateTime.UtcNow));
+                return Results.Ok(new Contract.ReviewReportDto(
+                    "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                    attemptId, engineSettled.ReviewAttempt.Subject.SubjectId,
+                    request.Outcome, request.FailureClassification, request.Summary,
+                    engineReportHash, engineReceivedAt, RetryScheduled: false,
+                    reviewTask.State,
+                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 
             var reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
@@ -2005,8 +2119,8 @@ public static class V1ReviewPlaneEndpoints
             Contract.TaskServerProtocol.MaximumSupported,
             version,
             "orchestrator-monolith",
-            ["runner", "review-runner"],
-            ["review-plane", "capability-advertisement"]);
+            ["runner", "review-runner", Contract.TaskServerProtocol.EngineClientKind],
+            ["review-plane", "capability-advertisement", "orchestration-plane"]);
     }
 
     private static void AdvanceDeliverySettlement(

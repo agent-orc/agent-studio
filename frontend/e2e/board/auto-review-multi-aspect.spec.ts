@@ -40,6 +40,7 @@ interface JobInfoStub {
   ownerClientId: string;
   tokenSummary: null;
   tags: string[];
+  waitingForEngineDecision?: boolean;
 }
 
 function jobStub(over: Partial<JobInfoStub>): JobInfoStub {
@@ -149,6 +150,9 @@ async function installMocks(
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
     }
     if (p.startsWith('/api/clients')) {
+      if (/^\/api\/clients\/[^/]+\/telemetry$/.test(p)) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ points: [], findings: [] }) });
+      }
       const list = [{
         id: 'local-default', displayName: 'Local Default', emoji: '🤖', colour: '#64748b', kind: 'human',
         registeredAt: '2026-01-01T00:00:00Z', lastSeenAt: null, tokenBudgetMonthly: null, notes: null
@@ -187,6 +191,9 @@ async function installMocks(
         }])
       });
     }
+    if (p === '/api/v1/projects') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    }
     if (p === '/api/environment') {
       return route.fulfill({
         status: 200,
@@ -196,6 +203,9 @@ async function installMocks(
     }
     if (p === '/api/projects/settings') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) });
+    }
+    if (p === '/api/pipeline/accepted-integration-alert') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ active: false, items: [] }) });
     }
     if (p === '/api/v1/studio/orchestrator/sessions') {
       return route.fulfill({
@@ -223,10 +233,13 @@ async function installMocks(
     if (p === '/api/cli/usage') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: new Date().toISOString(), sections: [] }) });
     }
+    if (p === '/api/usage/cockpit') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
+    }
     if (p.startsWith('/api/runner') || p.startsWith('/api/v1/studio/runner')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) });
     }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: 'null' });
+    return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
   });
 }
 
@@ -249,6 +262,28 @@ async function restoreAllProjectsBoard(page: Page): Promise<void> {
 }
 
 test.describe('Auto-review multi-aspect surface', () => {
+  test('engine occurrence keeps the card in its lane with a visible wait', async ({ page }) => {
+    const waiting = jobStub({ id: 'engine-wait', title: 'Await engine',
+      state: '4-auto-review', waitingForEngineDecision: true });
+    const ordinary = jobStub({ id: 'ordinary-review', title: 'Ordinary review',
+      state: '4-auto-review' });
+    await installMocks(page, [waiting, ordinary], {
+      lastTickAt: null, accept: 0, reissue: 0, escalate: 0,
+      aspectsRun: 0, pending: 2, currentJob: null, currentProject: null,
+    });
+    await restoreAllProjectsBoard(page);
+    await page.goto('/');
+    await dismissErrorDialogIfPresent(page);
+    const card = page.locator('[data-testid="task-card"]', { hasText: 'Await engine' });
+    await expect(card.getByTestId('task-card-engine-wait')).toHaveText('Waiting for engine decision');
+    await expect(page.locator('[data-testid="task-card"]', { hasText: 'Ordinary review' })
+      .getByTestId('task-card-engine-wait')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(t => { document.documentElement.dataset['studioTheme'] = t; }, theme);
+      await card.screenshot({ path: `${process.env['JOB_RESULTS_DIR'] ?? 'test-results'}/engine-wait-${theme}.png` });
+    }
+  });
+
   test('lane header omits tick counters and info drawer opens', async ({ page }) => {
     const job = jobStub({ id: 'fixture-pass', title: 'All aspects pass', state: '4-auto-review', tags: [] });
     await installMocks(page, [job], {

@@ -332,7 +332,8 @@ public sealed class HumanReviewEscalation
     /// </summary>
     public void RecordRemoteReviewParkVerdict(
         string project, string jobId, string? folderPath, string outcome, string summary,
-        ReviewAttemptChainSummary? attemptChain = null)
+        ReviewAttemptChainSummary? attemptChain = null, string? reviewAttemptId = null,
+        bool requireJournal = false)
     {
         if (string.IsNullOrWhiteSpace(_workspaceRoot) || string.IsNullOrWhiteSpace(project))
         {
@@ -343,6 +344,10 @@ public sealed class HumanReviewEscalation
         }
         try
         {
+            var parkKey = reviewAttemptId is null ? null : $"remote-review-park:{reviewAttemptId}";
+            if (parkKey is not null && ReviewDecisionLog.ReadAll(_workspaceRoot!, project).Any(record =>
+                    record.JobId == jobId && record.FailureKind == parkKey))
+                return;
             // AGT-2819: an integration-branch defect says nothing against the
             // card, so the journal must not record it as an escalation of the
             // card's content.
@@ -363,10 +368,12 @@ public sealed class HumanReviewEscalation
                 FollowUp: string.Empty)
             {
                 AttemptEpoch = OperatorReviewRequeueService.ReadEpoch(folderPath),
+                FailureKind = parkKey,
             });
         }
         catch (Exception ex)
         {
+            if (requireJournal) throw;
             _logger.LogWarning(ex,
                 "HumanReviewEscalation: failed to append remote-review verdict for {Project}/{JobId} (outcome={Outcome})",
                 project, jobId, outcome);

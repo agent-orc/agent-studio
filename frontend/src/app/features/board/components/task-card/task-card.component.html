@@ -94,6 +94,9 @@
       }
     </section>
   }<div class="task-card__badges">
+    @if (job().waitingForEngineDecision) {
+      <span class="task-card__engine-wait" data-testid="task-card-engine-wait" role="status">Waiting for engine decision</span>
+    }
     <app-batch-member [project]="job().projectName" [taskKey]="job().taskKey" [referenceKey]="job().key" [displayKey]="job().displayKey" [taskId]="job().id" />
     <app-review-queue-pill [task]="job()" />
     @if (stalledState(); as stalled) {

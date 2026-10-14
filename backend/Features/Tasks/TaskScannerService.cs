@@ -827,6 +827,7 @@ public class TaskScannerService : ITaskScanner
                 CodeActivityDetected = DetectCodeActivity(raw, jobDir, scanSessionLog: !isArchive),
                 SessionChain = ReadSessionChain(raw),
                 PendingIntent = ReadPendingIntent(jobDir),
+                WaitingForEngineDecision = EngineDecisionWaitMarker.Read(jobDir) is not null,
                 OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
                 OutcomeIssue = isArchive ? null : ResolveOutcomeIssue(jobDir, resolvedState),
                 Fixture = raw.TryGetProperty("fixture", out var fix)
@@ -2336,6 +2337,7 @@ public class TaskScannerService : ITaskScanner
             CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
             QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
             PendingIntent = ReadPendingIntent(jobDir),
+            WaitingForEngineDecision = EngineDecisionWaitMarker.Read(jobDir) is not null,
             OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),
