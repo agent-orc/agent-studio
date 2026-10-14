@@ -1,3 +1,4 @@
+using AgentStudio.OrchestrationDecisions;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -1521,11 +1522,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // recoverable by another sharpened prompt. Escalate it to
         // 5-human-review so it is not picked again automatically.
         var noProgressEvidence = InspectNoOpProgressSinceLastRecovery(pending);
-        if (prior > 0
-            && noProgressEvidence.SawNoOpRecoveryReissue
-            && noProgressEvidence.ToolCalls == 0
-            && noProgressEvidence.FileChanges == 0
-            && noProgressEvidence.AgentSubstanceChars == 0)
+        if (LocalLoopDecisionPolicy.RepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
+            noProgressEvidence.ToolCalls, noProgressEvidence.FileChanges, noProgressEvidence.AgentSubstanceChars))
         {
             var count = prior + 1;
             var reason =
@@ -2577,7 +2575,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // reissue budget (an Escalate decision, which resets the attempt chain).
         if (report.HasInfraFailure)
         {
-            AgentStudio.Review.CouncilReviewReaction? infraReaction = null;
+            AgentStudio.OrchestrationDecisions.CouncilReviewReaction? infraReaction = null;
             if (gradeReport is not null)
             {
                 infraReaction = DeriveCouncilReviewReaction(workspace, entry, current, gradeReport);
@@ -2678,25 +2676,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             projectedRounds.Where(round => round.AttemptId != localAttemptId).ToArray());
         var blockedAspects = report.Verdicts.Where(verdict => verdict.Status == AspectStatus.Block)
             .Select(verdict => verdict.Aspect).ToArray();
-        var roundBudget = ReviewRoundBudgetPolicy.Decide(
-            roundSeed, localAttemptId, blockedAspects,
-            _projectSettings?.Get(entry.Name).MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
-            ConfiguredIdenticalBlockRounds(),
-            CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues(entry.Name));
         var cardBudget = CardRoundBudget.Evaluate(
             ReviewDecisionLog.ReadAll(workspace, entry.Name),
             _timeline?.ReadAll(current.FolderPath) ?? [], current.Id,
             CardRoundBudget.ResolveAllowed(_configuration));
-        var cardAction = CardRoundBudget.DecideForReview(cardBudget, blockedAspects,
-            initialFollowUpDecision.Action == ReviewFollowUpAction.ReviewConcernRound);
-        if (cardAction == CardRoundBudgetAction.DegradeToFollowUp)
-            roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
-                roundBudget.MaximumRounds,
-                blockedAspects.Length > 0 ? blockedAspects : report.Verdicts
-                    .Where(verdict => verdict.Status == AspectStatus.Concerns)
-                    .Select(verdict => verdict.Aspect).ToArray(),
-                "card-round-budget");
+        var budgetDecision = MonolithTransitionAdapter.ReviewBudget(new ReviewBudgetFacts(
+            blockedAspects.Length > 0 ? "ProductFailure" : "Pass",
+            report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
+                verdict.Aspect, AspectVerdictParsing.StatusToken(verdict.Status), verdict.Summary,
+                Finding: LocalAspectFinding(verdict), Classification: verdict.ConcernTagId,
+                InfrastructureFailure: verdict.IsInfraFailure, ReportBody: verdict.Body)).ToArray(),
+            ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
+            ConfiguredMaxConcernRounds(entry.Name), cardBudget, roundSeed, localAttemptId,
+            _projectSettings?.Get(entry.Name).MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
+            ConfiguredIdenticalBlockRounds(), CountPriorReissues(workspace, entry.Name, current.Id),
+            ConfiguredMaxReissues(entry.Name)));
+        var roundBudget = budgetDecision.RoundBudget;
+        var cardAction = budgetDecision.CardAction;
         ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
             new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
                 SpentBy: roundBudget.SpentBy));
@@ -2961,7 +2957,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var reaction = DeriveCouncilReviewReaction(workspace, entry, current, gradeReport);
         AgentStudio.Review.CouncilReviewReactionStore.Write(current.FolderPath, reaction);
 
-        if (reaction.Disposition == AgentStudio.Review.CouncilReactionDisposition.Accept)
+        if (reaction.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Accept)
         {
             return false;
         }
@@ -2970,7 +2966,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             current.FolderPath,
             pendingStepReason: "Not run because the council reaction concluded this review pass.");
 
-        if (reaction.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
+        if (reaction.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue)
         {
             var subject = ReviewSubjectStore.Read(current.FolderPath);
             var followUp = IntegrationContinuationPrompt.Build(
@@ -3058,7 +3054,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return true;
     }
 
-    private AgentStudio.Review.CouncilReviewReaction DeriveCouncilReviewReaction(
+    private AgentStudio.OrchestrationDecisions.CouncilReviewReaction DeriveCouncilReviewReaction(
         string workspace,
         WatchPathEntry entry,
         TaskInfo current,
@@ -3641,7 +3637,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         PendingDecision pending,
         TaskInfo current,
         AspectRunReport report,
-        AgentStudio.Review.CouncilReviewReaction? councilReaction,
+        AgentStudio.OrchestrationDecisions.CouncilReviewReaction? councilReaction,
         CancellationToken ct)
     {
         var crashedAspects = report.InfraFailures.Select(v => v.Aspect).ToList();
@@ -6416,7 +6412,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                   $"last gate cache decision: {lastGateCacheDecision}; escalating per post-step loop guard."
                 : $"build-test gate failed and the task-level anti-churn ceiling was reached ({failureIdentity}; {result.Reason}); " +
                   $"last gate cache decision: {lastGateCacheDecision}.";
-            if (councilReaction?.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
+            if (councilReaction?.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue)
             {
                 councilReaction = AgentStudio.Review.CouncilReviewPolicy.EscalateBecause(
                     councilReaction,
@@ -6498,7 +6494,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         followUp = await WriteFollowUpFileAsync(moved, followUp, ct);
 
         var title = string.IsNullOrWhiteSpace(moved.Title) ? moved.Id : moved.Title;
-        var councilSuffix = councilReaction?.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue
+        var councilSuffix = councilReaction?.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue
             ? $" The same round also carries {councilReaction.Assessments.Count} named council finding(s)."
             : string.Empty;
         _chatLog.Append(moved, OrchestratorMessageKind.Reissue,
@@ -6538,7 +6534,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     private static string BuildBuildTestGateFollowUp(
         BuildTestGateResult result,
-        AgentStudio.Review.CouncilReviewReaction? councilReaction = null)
+        AgentStudio.OrchestrationDecisions.CouncilReviewReaction? councilReaction = null)
     {
         var commands = result.RanFrontendBuild
             ? "`dotnet build backend/OrchestratorApi.csproj` and `npm run build` from `frontend/`"
@@ -6550,7 +6546,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "```\n" +
             result.Output + "\n" +
             "```";
-        if (councilReaction?.Disposition != AgentStudio.Review.CouncilReactionDisposition.Reissue)
+        if (councilReaction?.Disposition != AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue)
         {
             return buildFollowUp;
         }

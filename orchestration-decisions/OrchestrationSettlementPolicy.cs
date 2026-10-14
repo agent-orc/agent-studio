@@ -1,19 +1,20 @@
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.TaskServer;
+namespace AgentStudio.OrchestrationDecisions;
 
-internal sealed record OrchestrationSettlementDecision(
+public sealed record OrchestrationSettlementDecision(
     string RunStatus,
     OrchestrationStage NextStage,
     int ReissueAttempts,
     string? TaskState,
     bool IsTerminal,
     string? SupersededReason = null,
-    string? SettlementReason = null);
+    string? SettlementReason = null,
+    TransitionDecision? Transition = null);
 
-internal static class OrchestrationSettlementPolicy
+public static class OrchestrationSettlementPolicy
 {
-    internal static OrchestrationSettlementDecision Decide(
+    public static OrchestrationSettlementDecision Decide(
         OrchestrationAction action,
         IReadOnlyList<OrchestrationStage> stages,
         OrchestrationStage currentStage,
@@ -22,9 +23,10 @@ internal static class OrchestrationSettlementPolicy
         string currentTaskState,
         long expectedTaskVersion,
         long currentTaskVersion,
-        RepeatedReviewBlockDiagnosis? repeatedBlock = null)
+        RepeatedReviewBlockDiagnosis? repeatedBlock = null,
+        TransitionDecision? transition = null)
     {
-        if (!string.Equals(currentTaskState, "4-auto-review", StringComparison.Ordinal))
+        if (!string.Equals(currentTaskState, TaskStates.AutoReview, StringComparison.Ordinal))
         {
             return new OrchestrationSettlementDecision(
                 "superseded",
@@ -46,6 +48,25 @@ internal static class OrchestrationSettlementPolicy
                 $"Task version changed from {expectedTaskVersion} to {currentTaskVersion} before settlement.");
         }
 
+        if (transition is not null && (action == OrchestrationAction.Reissue
+            || transition.Action is TransitionAction.DegradeWithFollowUp or TransitionAction.Escalate))
+        {
+            return transition.Action switch
+            {
+                TransitionAction.FindingRound or TransitionAction.ConcernRound
+                    or TransitionAction.ReviewInfrastructureRetry => Terminal(
+                        "reissued", currentStage, currentReissueAttempts + 1, TaskStates.Ready, transition.Reason)
+                        with { Transition = transition },
+                TransitionAction.DegradeWithFollowUp => Terminal(
+                    "completed", currentStage, currentReissueAttempts, TaskStates.HumanReview, transition.Reason)
+                    with { Transition = transition },
+                TransitionAction.Escalate => Terminal(
+                    "escalated", currentStage, currentReissueAttempts, TaskStates.Escalated, transition.Reason)
+                    with { Transition = transition },
+                _ => Continue(stages, currentStage, currentReissueAttempts) with { Transition = transition },
+            };
+        }
+
         return action switch
         {
             OrchestrationAction.Continue => Continue(stages, currentStage, currentReissueAttempts),
@@ -55,11 +76,11 @@ internal static class OrchestrationSettlementPolicy
                 maxReissueAttempts,
                 repeatedBlock),
             OrchestrationAction.Escalate => Terminal(
-                "escalated", currentStage, currentReissueAttempts, "5e-escalated"),
+                "escalated", currentStage, currentReissueAttempts, TaskStates.Escalated),
             OrchestrationAction.Complete => Terminal(
-                "completed", currentStage, currentReissueAttempts, "5-human-review"),
+                "completed", currentStage, currentReissueAttempts, TaskStates.HumanReview),
             OrchestrationAction.Fail => Terminal(
-                "failed", currentStage, currentReissueAttempts, "5e-escalated"),
+                "failed", currentStage, currentReissueAttempts, TaskStates.Escalated),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
         };
     }
@@ -80,7 +101,7 @@ internal static class OrchestrationSettlementPolicy
                 false);
         }
 
-        return Terminal("completed", currentStage, reissueAttempts, "5-human-review");
+        return Terminal("completed", currentStage, reissueAttempts, TaskStates.HumanReview);
     }
 
     private static OrchestrationSettlementDecision Reissue(
@@ -96,18 +117,18 @@ internal static class OrchestrationSettlementPolicy
                 "escalated",
                 currentStage,
                 reissueAttempts,
-                "5e-escalated",
+                TaskStates.Escalated,
                 $"The same aspect block repeated for {repeatedBlock.ConsecutiveRounds} consecutive review rounds " +
                 $"(limit {repeatedBlock.MaximumRounds}): {repeatedBlock.Finding}. " +
                 "Escalated for a human scope decision instead of reissuing the same work again.");
         }
         return reissueAttempts <= maxReissueAttempts
-            ? Terminal("reissued", currentStage, reissueAttempts, "2-ready")
+            ? Terminal("reissued", currentStage, reissueAttempts, TaskStates.Ready)
             : Terminal(
                 "escalated",
                 currentStage,
                 reissueAttempts,
-                "5e-escalated",
+                TaskStates.Escalated,
                 $"The task-wide review reissue budget is exhausted ({reissueAttempts - 1}/{maxReissueAttempts} retries used).");
     }
 

@@ -624,7 +624,7 @@ Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
 retries have all failed, no further retry is scheduled and the card is parked
 in `5e-escalated` with a named reason exactly as before this change - the
 budget-exhaustion and repeat-diagnosis behavior in
-[`ReviewInfrastructureRepeatPolicy`](../../../backend/Features/Runner/ReviewInfrastructureRepeatPolicy.cs)
+[`ReviewInfrastructureRepeatPolicy`](../../../orchestration-decisions/ReviewInfrastructureRepeatPolicy.cs)
 is unaffected by the scheduling delay.
 
 ## Baseline verify result cache

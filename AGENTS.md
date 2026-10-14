@@ -30,6 +30,13 @@ apply only under `frontend/`.
 
 ## Non-Negotiable Rules
 
+- Orchestration transition rules live only in
+  [orchestration-decisions/](orchestration-decisions/README.md). Hosts collect
+  typed facts and apply returned decisions; do not duplicate rules in the
+  monolith, Task Server, or engine adapters. Follow the
+  [decision-library contract](docs/system/contracts/orchestration-decisions.md)
+  and keep `TransitionDecisionBoundaryTests` green. The monolith calls the
+  library only until I17 moves decision execution to the Orchestrator Engine.
 - UI work obeys the style-guide hard rules in
   [docs/quality/design/style-guide-hard-rules.md](./docs/quality/design/style-guide-hard-rules.md).
   Most-cited: no coloured left accent line or bar on cards, panels, rows,
@@ -77,6 +84,7 @@ apply only under `frontend/`.
 
 | Area | Read first | Owns |
 |---|---|---|
+| Orchestration decisions | [docs/system/contracts/orchestration-decisions.md](./docs/system/contracts/orchestration-decisions.md) | Pure transition rules in [orchestration-decisions/](./orchestration-decisions/README.md), typed facts and actions, authority floors, and the transition-rule architecture guard. |
 | Runner | [docs/system/domains/runner.md](./docs/system/domains/runner.md) | Pickup, CLI run loop, outcome policy, supervisor loops, and the standalone remote runner (`runner/`, [runbook](./docs/operations/setup/linux-runner-host.md)). |
 | Pipeline | [docs/system/domains/pipeline.md](./docs/system/domains/pipeline.md) | Pre/core/post steps, pipeline history, step contracts, and the review/aspect evidence contract (branch diff + `results/` inventory + card mode; when "deliverables missing" is legitimate). |
 | Review | [docs/system/domains/review.md](./docs/system/domains/review.md) | Remote Review material, merge-base diff budgets, semantic verdict citations, grading, and acceptance-rail behavior. |

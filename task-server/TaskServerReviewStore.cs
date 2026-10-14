@@ -1971,7 +1971,9 @@ public sealed partial class TaskServerStore
             attempt.FailureClassification,
             attempt.Summary,
             report.Verdicts,
-            gates);
+            gates,
+            subject.ResultRef,
+            subject.Plan);
         await CreateOrchestrationRunCoreAsync(
             connection,
             transaction,

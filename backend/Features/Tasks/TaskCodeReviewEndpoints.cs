@@ -410,7 +410,7 @@ public sealed record CodeReviewListEntry
     public bool PriceKnown { get; init; }
     public FileGenerationMeta? Generation { get; init; }
     /// <summary>Explicit orchestrator ruling attached to this review, if the pipeline has processed it.</summary>
-    public AgentStudio.Review.CouncilReviewReaction? CouncilReaction { get; init; }
+    public AgentStudio.OrchestrationDecisions.CouncilReviewReaction? CouncilReaction { get; init; }
 }
 
 /// <summary>Response for <c>GET /api/tasks/{jobId}/code-review/list</c>.</summary>

@@ -1,4 +1,4 @@
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// The three supervision sweeps that used to run from an operator shell loop
@@ -154,10 +154,10 @@ public static class OperatorSweepPolicy
 
         if (sweep == OperatorSweepKinds.GateTriage)
         {
-            if (string.Equals(trigger.FailureDomain, AgentStudio.Pipeline.FailureDomains.Infrastructure,
+            if (string.Equals(trigger.FailureDomain, FailureDomains.Infrastructure,
                     StringComparison.Ordinal))
                 return Hold(OperatorSweepReasons.EnvironmentFailure);
-            if (!string.Equals(trigger.FailureDomain, AgentStudio.Pipeline.FailureDomains.Product,
+            if (!string.Equals(trigger.FailureDomain, FailureDomains.Product,
                     StringComparison.Ordinal))
                 return new(OperatorSweepAction.WaitForPerson, OperatorSweepReasons.UnclassifiedFailure);
         }

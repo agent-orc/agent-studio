@@ -1,4 +1,4 @@
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// Deterministic loop-breaker for the auto-review reissue cycle (ASS-794,

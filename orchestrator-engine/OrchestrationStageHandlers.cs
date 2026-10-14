@@ -1,3 +1,4 @@
+using AgentStudio.OrchestrationDecisions;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,39 +18,6 @@ public interface IOrchestrationStageHandler
         CancellationToken ct);
 }
 
-internal static class ReviewDecisionPolicy
-{
-    internal static OrchestrationAction Decide(
-        string? reviewOutcome,
-        string? executionOutcome,
-        string? terminal)
-    {
-        if (!string.IsNullOrWhiteSpace(reviewOutcome))
-        {
-            return Normalize(reviewOutcome) switch
-            {
-                "pass" => OrchestrationAction.Continue,
-                "productfailure" => OrchestrationAction.Reissue,
-                "reviewinfra" => OrchestrationAction.Escalate,
-                _ => OrchestrationAction.Escalate,
-            };
-        }
-
-        return Normalize(executionOutcome ?? terminal) switch
-        {
-            "blocked" => OrchestrationAction.Escalate,
-            "needsinput" => OrchestrationAction.Reissue,
-            _ => OrchestrationAction.Continue,
-        };
-    }
-
-    private static string Normalize(string? value)
-        => new((value ?? string.Empty)
-            .Where(char.IsLetterOrDigit)
-            .Select(char.ToLowerInvariant)
-            .ToArray());
-}
-
 public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
 {
     public OrchestrationStage Stage => OrchestrationStage.ReviewDecision;
@@ -64,7 +32,9 @@ public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
         var executionOutcome = ReadString(payload.RootElement, "agentOutcome");
         var terminal = ReadString(payload.RootElement, "terminal");
         var observedOutcome = reviewOutcome ?? executionOutcome ?? terminal;
-        var action = ReviewDecisionPolicy.Decide(reviewOutcome, executionOutcome, terminal);
+        var decision = StageDecisionPolicy.Review(run.TaskId, run.ReissueAttempts,
+            JsonSerializer.Deserialize<StagePayload>(run.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!);
+        var action = decision.Action;
         return Task.FromResult(new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
@@ -75,6 +45,7 @@ public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
                 reviewSubjectId = ReadString(payload.RootElement, "reviewSubjectId"),
                 reviewAttemptId = ReadString(payload.RootElement, "reviewAttemptId"),
                 observedOutcome,
+                transition = decision.Transition,
                 decision = action.ToString(),
             })));
     }
@@ -96,46 +67,14 @@ public sealed class CouncilLoop : IOrchestrationStageHandler
     {
         ct.ThrowIfCancellationRequested();
         using var payload = JsonDocument.Parse(run.PayloadJson);
-        var blockerCount = 0;
-        var findingCount = 0;
-        if (payload.RootElement.TryGetProperty("reviewFindings", out var findings)
-            && findings.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var finding in findings.EnumerateArray())
-            {
-                findingCount++;
-                if (finding.TryGetProperty("severity", out var severity)
-                    && severity.ValueKind == JsonValueKind.String
-                    && severity.GetString() is { } value
-                    && value is "blocker" or "critical")
-                    blockerCount++;
-            }
-        }
-        if (payload.RootElement.TryGetProperty("verdicts", out var verdicts)
-            && verdicts.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var verdict in verdicts.EnumerateArray())
-            {
-                if (!verdict.TryGetProperty("status", out var status)
-                    || status.ValueKind != JsonValueKind.String
-                    || status.GetString() is not { } value
-                    || value == "pass")
-                    continue;
-                findingCount++;
-                var uncitedBlock = verdict.TryGetProperty("classification", out var classification)
-                    && classification.ValueKind == JsonValueKind.String
-                    && string.Equals(
-                        classification.GetString(),
-                        ReviewVerdictCitationPolicy.BlockWithoutCitation,
-                        StringComparison.OrdinalIgnoreCase);
-                if (uncitedBlock) continue;
-                if (value is "concerns" or "block" or "fail")
-                    blockerCount++;
-            }
-        }
-        var action = blockerCount > 0
-            ? OrchestrationAction.Reissue
-            : OrchestrationAction.Continue;
+        var stagePayload = JsonSerializer.Deserialize<StagePayload>(run.PayloadJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var transition = EngineTransitionAdapter.Decide(StageDecisionPolicy.Facts(run.TaskId, run.ReissueAttempts, stagePayload));
+        var decision = new StagePolicyDecision(StageDecisionPolicy.ToStageAction(transition.Action), transition);
+        var action = decision.Action;
+        var findingCount = (stagePayload.Verdicts ?? []).Count(verdict => verdict.Status != "pass")
+            + (stagePayload.ReviewFindings?.Count ?? 0);
+        var blockerCount = decision.Transition?.Findings.Count(finding => ReviewGradingPolicy.IsBlockingToken(finding.Status)) ?? 0;
         return Task.FromResult(new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
@@ -143,6 +82,7 @@ public sealed class CouncilLoop : IOrchestrationStageHandler
                 component = nameof(CouncilLoop),
                 findingCount,
                 blockerCount,
+                transition = decision.Transition,
                 decision = action.ToString(),
             })));
     }
@@ -197,9 +137,7 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                 && status.ValueKind == JsonValueKind.String
                 && status.GetString() is "failed" or "fail");
         }
-        var action = failed > 0
-            ? OrchestrationAction.Reissue
-            : OrchestrationAction.Continue;
+        var action = StageDecisionPolicy.Gate(failed);
         if (_options?.RemotePostBuildTestEnabled == true && _client is not null && failed == 0
             && payload.RootElement.TryGetProperty("reviewSubjectId", out var reviewId)
             && reviewId.ValueKind == JsonValueKind.String)
@@ -265,12 +203,7 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                     await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), ct);
                     gate = await _client.GetGateStatusAsync(gate.Subject.SubjectId, ct);
                 }
-                var remoteAction = gate.Phase switch
-                {
-                    GateStates.Passed => OrchestrationAction.Continue,
-                    GateStates.ProductFailed => OrchestrationAction.Reissue,
-                    _ => OrchestrationAction.Escalate,
-                };
+                var remoteAction = StageDecisionPolicy.RemoteGate(gate.Phase);
                 return new OrchestrationStageDecision(remoteAction, JsonSerializer.Serialize(new
                 {
                     component = nameof(GateDispatchLoop),
@@ -304,9 +237,7 @@ public sealed class CompletionJudgeLoop : IOrchestrationStageHandler
         ct.ThrowIfCancellationRequested();
         var priorFailure = run.StageResults?.Any(result =>
             result.Action is OrchestrationAction.Fail or OrchestrationAction.Escalate) == true;
-        var action = priorFailure
-            ? OrchestrationAction.Escalate
-            : OrchestrationAction.Complete;
+        var action = StageDecisionPolicy.Completion(priorFailure);
         return Task.FromResult(new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
