@@ -117,6 +117,19 @@ public sealed record OperatorSweepDecision(OperatorSweepAction Action, string Re
     public static OperatorSweepDecision Ignore { get; } = new(OperatorSweepAction.Ignore, OperatorSweepReasons.NotApplicable);
 }
 
+/// <summary>Frozen card and trigger facts for one remotely decided sweep tick.</summary>
+public sealed record OperatorSweepStagePayload(
+    string Sweep,
+    OperatorSweepTrigger? Trigger,
+    OperatorSweepGuardFacts Guard,
+    string? ReviewAttemptId = null,
+    string? FollowUp = null,
+    string? ResultRef = null,
+    string? ResultSha = null,
+    string? SalvageBranch = null,
+    string? SalvageSha = null,
+    string? SalvageReason = null);
+
 /// <summary>
 /// Pure decision for one card and one sweep. Guard order is load-bearing:
 /// <list type="number">

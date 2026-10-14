@@ -6,6 +6,24 @@ namespace OrchestratorEngine.Tests;
 
 public sealed class StageHandlerTests
 {
+    [Fact]
+    public async Task Operator_sweep_stage_uses_the_shared_policy()
+    {
+        var payload = new AgentStudio.OrchestrationDecisions.OperatorSweepStagePayload(
+            AgentStudio.OrchestrationDecisions.OperatorSweepKinds.FixRounds,
+            new AgentStudio.OrchestrationDecisions.OperatorSweepTrigger("review-one", false),
+            new AgentStudio.OrchestrationDecisions.OperatorSweepGuardFacts(false, true, false, false,
+                new AgentStudio.OrchestrationDecisions.CardRoundBudgetState(0, 4)));
+        var run = new OrchestrationRunDto("run", "project", "card", 1, "leased",
+            OrchestrationStage.OperatorSweep, System.Text.Json.JsonSerializer.Serialize(payload),
+            0, new FrozenTimeProvider(DateTimeOffset.UnixEpoch).GetUtcNow().UtcDateTime,
+            new FrozenTimeProvider(DateTimeOffset.UnixEpoch).GetUtcNow().UtcDateTime, null);
+
+        var result = await new OperatorSweepLoop().ExecuteAsync(run, default);
+
+        Assert.Equal(OrchestrationAction.Reissue, result.Action);
+        Assert.Contains("sweepDecision", result.OutputJson);
+    }
     [Theory]
     [InlineData("""{"agentOutcome":"done"}""", OrchestrationAction.Continue)]
     [InlineData("""{"agentOutcome":"needs-input"}""", OrchestrationAction.Escalate)]

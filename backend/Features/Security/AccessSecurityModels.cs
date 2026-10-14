@@ -40,6 +40,7 @@ public static class StudioRoles
 
 public static class RunnerScopes
 {
+    public const string Orchestration = "orchestration.write";
     public const string Claim = "runner.claim";
     public const string Lease = "runner.lease";
     public const string Logs = "runner.logs";
@@ -56,10 +57,10 @@ public static class RunnerScopes
     public const string DemoReplay = "demo.replay";
 
     public static readonly string[] Minimum = [Claim, Lease, Logs, Events, Artifacts, Completion];
-    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay], StringComparer.Ordinal);
+    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration], StringComparer.Ordinal);
 
     /// <summary>A replay credential is never also an execution credential.</summary>
-    public static bool IsExclusive(string scope) => scope == DemoReplay;
+    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration;
 }
 
 public sealed record StudioUser

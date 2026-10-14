@@ -1,0 +1,339 @@
+using System.Text.Json;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Tasks;
+using AgentStudio.Pipeline;
+using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Shared;
+
+namespace AgentStudio.Runner;
+
+/// <summary>Applies an engine decision through the existing keyed lane writer.</summary>
+public sealed class MonolithOrchestrationApplier(
+    TaskScannerService scanner,
+    TaskTransitionService transitions,
+    TaskMutationService mutations,
+    TimelineLog timeline,
+    AttemptAuthorityService authority,
+    ReviewAttemptTaskLifecycleService reviewAttemptLifecycle,
+    RemoteDeliveryIntegrationCoordinator integration,
+    BatchGatePilotService batches,
+    AgentStudio.Projects.ProjectSettingsService settings,
+    IOperatorSweepActions sweepActions,
+    IConfiguration configuration) : IMonolithOrchestrationApplier
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public async Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+        CompleteOrchestrationStageRequest completion, CancellationToken ct)
+    {
+        var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
+            candidate.ProjectName == occurrence.Run.ProjectId
+            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
+        if (task is null) throw new KeyNotFoundException("Orchestration task was not found.");
+        if (occurrence.Run.CurrentStage == OrchestrationStage.OperatorSweep)
+        {
+            await ApplySweepAsync(task, occurrence, completion, ct);
+            return;
+        }
+        using var output = JsonDocument.Parse(completion.OutputJson);
+        var root = output.RootElement;
+        TransitionDecision? decision = null;
+        if (root.TryGetProperty("transition", out var transition)
+            && transition.ValueKind == JsonValueKind.Object)
+            decision = transition.Deserialize<TransitionDecision>(Json);
+
+        var target = TransitionDecisionPolicy.TargetLane(decision?.Action,
+            TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
+        if (task.State != occurrence.ExpectedSourceState && task.State != target)
+            throw new InvalidOperationException("orchestration-source-state-mismatch");
+        if (decision is null && occurrence.Run.CurrentStage == OrchestrationStage.GateDispatch)
+            throw new InvalidDataException("The engine gate decision is missing its transition.");
+        if (decision is null && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
+            throw new InvalidDataException("The engine review decision is missing its transition.");
+        if (decision?.Action == TransitionAction.ReviewInfrastructureRetry)
+        {
+            if (!authority.HasScheduledReviewInfrastructureRetry(occurrence.AuthorityAttemptId))
+            {
+                var scheduled = authority.ScheduleReviewInfrastructureRetry(
+                    occurrence.AuthorityAttemptId, decision.Reason);
+                if (!scheduled.Accepted)
+                    throw new InvalidOperationException($"Review retry could not be scheduled: {scheduled.Status}");
+            }
+        }
+        if (target is null)
+        {
+            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+            scanner.InvalidateCache();
+            return;
+        }
+        var key = $"engine-decision:{occurrence.Run.RunId}:{completion.IdempotencyKey}";
+        if (decision?.Action == TransitionAction.DegradeWithFollowUp)
+            EnsureLinkedFollowUp(task, occurrence, decision);
+        if (decision?.Action is TransitionAction.AcceptAndIntegrate
+            or TransitionAction.DegradeWithFollowUp)
+        {
+            var review = authority.GetReview(occurrence.AuthorityAttemptId)
+                ?? throw new InvalidOperationException("The reviewed attempt was not found.");
+            var project = settings.Get(task.ProjectName);
+            var subject = ReviewSubjectStore.Read(task.FolderPath);
+            var request = new RemoteDeliveryIntegrationRequest(task.ProjectName, task.Id,
+                task.FolderPath, task.WatchPath,
+                TaskIntegrationBranch.Resolve(task, project.IntegrationBranch),
+                project.IntegrationStrategy, PipelineTypes.Resolve(task),
+                subject?.CompletedAtUtc ?? DateTimeOffset.UtcNow,
+                review.AttemptId, review.Subject.ExpectedResultSha);
+            var journal = RemoteDeliverySettlementStore.Read(task.FolderPath);
+            if (journal?.ReviewAttemptId != review.AttemptId)
+            {
+                RemoteDeliverySettlementStore.Write(task.FolderPath,
+                    new RemoteDeliverySettlementRecord
+                    {
+                        TaskKey = review.TaskKey,
+                        ReviewAttemptId = review.AttemptId,
+                        JournalRequired = true,
+                        Outcome = review.Outcome?.ToString() ?? "Pass",
+                        ShouldIntegrate = true,
+                        BuildTestGate = "Passed",
+                        GateReason = decision.Reason,
+                        IntegrationBranch = request.IntegrationBranch,
+                        IntegrationStrategy = request.IntegrationStrategy,
+                        PipelineType = request.PipelineType,
+                        DeliveredAtUtc = request.DeliveredAtUtc,
+                        Stage = RemoteDeliverySettlementStage.IntegrationPending,
+                        RecordedAtUtc = DateTimeOffset.UtcNow,
+                    });
+            }
+            if (RemoteDeliverySettlementStore.Read(task.FolderPath)?.Stage
+                < RemoteDeliverySettlementStage.IntegrationSettled)
+            {
+                var result = await integration.EnqueueAsync(request);
+                RemoteDeliverySettlementStore.Advance(task.FolderPath,
+                    RemoteDeliverySettlementStage.IntegrationSettled,
+                    result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
+            }
+        }
+        if (decision?.Action == TransitionAction.DeferToBatch)
+        {
+            var review = authority.GetReview(occurrence.AuthorityAttemptId)
+                ?? throw new InvalidOperationException("The reviewed attempt was not found.");
+            var source = authority.GetRun(review.SourceRunAttemptId)
+                ?? throw new InvalidOperationException("The batch source run was not found.");
+            batches.Enqueue(task, review, source, DateTimeOffset.UtcNow);
+        }
+        if (decision?.ContinuationBase is { } continuation
+            && decision.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound)
+        {
+            var baseRecord = ReviewFixRoundBase.Decide(
+                continuation.AttemptId, continuation.ResultRef, continuation.ResultSha,
+                DateTime.UtcNow);
+            if (baseRecord is not null && !ContinuationBaseStore.Save(task.FolderPath, baseRecord))
+                throw new IOException("The reviewed continuation base could not be saved.");
+        }
+        if (task.State == occurrence.ExpectedSourceState)
+        {
+            var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
+                cause: "engine-decision", reason: decision?.Reason ?? "Engine stage completed.",
+                authorityWrite: new AttemptWriteReference(occurrence.AuthorityAttemptId,
+                    occurrence.AuthorityFence, occurrence.AuthorityEpoch, key),
+                suppressProductExecution: true,
+                expectedSourceState: occurrence.ExpectedSourceState,
+                transitionCause: decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
+                    ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
+                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString());
+            if (move.Status != MoveJobStatus.Success)
+                throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
+            scanner.InvalidateCache();
+            task = scanner.FindJob(task.Id, task.WatchPath) ?? task with
+            { FolderPath = move.NewFolderPath ?? task.FolderPath, State = target };
+        }
+        else if (task.State != target)
+            throw new InvalidOperationException("orchestration-source-state-mismatch");
+
+        if (target == TaskStates.AutoReview)
+        {
+            using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+            if (payload.RootElement.TryGetProperty("reviewAttemptRequest", out var requestElement)
+                && requestElement.ValueKind == JsonValueKind.Object)
+            {
+                var request = requestElement.Deserialize<CreateReviewAttemptRequest>(Json)
+                    ?? throw new InvalidDataException("The coding review attempt is missing.");
+                var review = reviewAttemptLifecycle.CreateReviewAttemptInAutoReview(task, request);
+                if (!review.Accepted || review.ReviewAttempt is null)
+                    throw new InvalidOperationException($"Engine review attempt could not be created: {review.Status} {review.Message}");
+                if (!payload.RootElement.TryGetProperty("reviewSubject", out var subjectElement)
+                    || subjectElement.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("The coding review subject is missing.");
+                var subject = subjectElement.Deserialize<ReviewSubjectRecord>(Json)
+                    ?? throw new InvalidDataException("The coding review subject is invalid.");
+                ReviewSubjectStore.Write(task.FolderPath, subject);
+            }
+        }
+
+        if (decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
+            or TransitionAction.ReturnToReady)
+        {
+            var marker = $"<!-- engine-decision:{occurrence.Run.RunId} -->";
+            var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+            var current = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+            if (!current.Contains(marker, StringComparison.Ordinal))
+            {
+                var findings = decision.Action == TransitionAction.ReturnToReady
+                    ? GateReason(occurrence.Run.PayloadJson)
+                    : string.Join("\n", decision.Findings.Select(finding =>
+                        $"- {finding.Aspect}: {finding.Summary}"));
+                if (!mutations.AppendContinuationNote(task.Id,
+                    $"{marker}\n{(decision.Action == TransitionAction.ReturnToReady ? "Fix the build and test gate failure:" : "Fix the reviewed findings on the reviewed delivery:")}\n{findings}", task.WatchPath))
+                    throw new IOException("The engine follow-up prompt could not be appended.");
+            }
+        }
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+        if (!timeline.ReadAll(task.FolderPath).Any(entry => entry.Details is not null
+            && entry.Details.TryGetValue("authorityWriteKey", out var recorded)
+            && recorded == key))
+            timeline.Append(task.FolderPath, TimelineEventKinds.QualityLoopReopened,
+                TimelineActors.System, $"Engine decision {decision?.Action.ToString() ?? completion.Action.ToString()} applied.",
+                occurrence.AuthorityAttemptId,
+                details: new Dictionary<string, string> { ["orchestrationRunId"] = occurrence.Run.RunId,
+                    ["authorityWriteKey"] = key });
+        scanner.InvalidateCache();
+    }
+
+    private void EnsureLinkedFollowUp(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence, TransitionDecision decision)
+    {
+        var marker = $"engine-follow-up:{occurrence.Run.RunId}";
+        var existing = scanner.ScanAllJobs().FirstOrDefault(candidate =>
+            candidate.CreationSource == marker);
+        if (existing is null)
+        {
+            var prompt = $"Fix the remaining review findings from {task.Key ?? task.Id}.\n\n"
+                + string.Join("\n", decision.Findings.Select(item => $"- {item.Aspect}: {item.Summary}"))
+                + $"\n\nSource card: {task.Key ?? task.Id}.";
+            var createdId = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            {
+                Title = $"Follow-up: review findings in {task.Key ?? task.Id}",
+                Agent = task.Agent,
+                CliType = task.CliType,
+                Model = task.Model,
+                ThinkingLevel = task.ThinkingLevel,
+                WatchPath = task.WatchPath,
+                PromptMarkdown = prompt,
+                TargetState = TaskStates.Ready,
+                TaskType = TaskTypes.Bug,
+                OwnerClientId = task.OwnerClientId,
+                CreationSource = marker,
+                CreatedBy = "pipeline",
+            }) ?? throw new IOException("The engine follow-up could not be created.");
+            existing = scanner.FindJob(createdId, task.WatchPath)
+                ?? throw new IOException("The engine follow-up could not be read.");
+        }
+        var sourceKey = task.Key ?? task.Id;
+        var followUpKey = existing.Key ?? existing.Id;
+        mutations.SetTaskReferences(existing.Id, (existing.References ?? new AgentStudio.Shared.TaskReferences()) with
+        { FollowUpOf = [sourceKey] }, existing.WatchPath);
+        mutations.SetTaskReferences(task.Id, (task.References ?? new AgentStudio.Shared.TaskReferences()) with
+        {
+            RaisedFollowUps = (task.References?.RaisedFollowUps ?? [])
+                .Append(followUpKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+        }, task.WatchPath);
+    }
+
+    private async Task ApplySweepAsync(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence,
+        CompleteOrchestrationStageRequest completion, CancellationToken ct)
+    {
+        var payload = JsonSerializer.Deserialize<OperatorSweepStagePayload>(occurrence.Run.PayloadJson, Json)
+            ?? throw new InvalidDataException("Sweep occurrence payload is missing.");
+        using var output = JsonDocument.Parse(completion.OutputJson);
+        if (!output.RootElement.TryGetProperty("sweepDecision", out var element))
+            throw new InvalidDataException("Engine sweep decision is missing.");
+        var decision = element.Deserialize<OperatorSweepDecision>(Json)
+            ?? throw new InvalidDataException("Engine sweep decision is invalid.");
+        if (decision.Action == OperatorSweepAction.Act)
+        {
+            var trigger = payload.Trigger
+                ?? throw new InvalidDataException("Acting sweep has no trigger.");
+            var authorityWrite = new AttemptWriteReference(occurrence.AuthorityAttemptId,
+                occurrence.AuthorityFence, occurrence.AuthorityEpoch,
+                $"engine-sweep:{occurrence.Run.RunId}:{completion.IdempotencyKey}");
+            OperatorSweepActionResult result = task.State != occurrence.ExpectedSourceState
+                && task.State is (TaskStates.Ready or TaskStates.Progress)
+                ? new OperatorSweepActionResult(true, "The sweep round already moved the card.")
+                : payload.Sweep switch
+            {
+                OperatorSweepKinds.FixRounds => await sweepActions.OpenFixRoundAsync(task,
+                    new OperatorSweepFixRound(payload.ReviewAttemptId
+                        ?? throw new InvalidDataException("Review attempt is missing."),
+                        payload.FollowUp ?? throw new InvalidDataException("Fix-round prompt is missing."),
+                        ReviewFixRoundBase.Decide(payload.ReviewAttemptId!, payload.ResultRef,
+                            payload.ResultSha, DateTime.UtcNow), authorityWrite), ct),
+                OperatorSweepKinds.GateTriage => await sweepActions.ContinueGateFailureAsync(
+                    task, trigger.SubjectKey, ct),
+                OperatorSweepKinds.Salvage => await sweepActions.ContinueSalvageAsync(task,
+                    new OperatorSweepSalvageFacts(new RunSalvageReference(
+                        payload.SalvageBranch ?? throw new InvalidDataException("Salvage branch is missing."),
+                        payload.SalvageSha ?? throw new InvalidDataException("Salvage SHA is missing.")),
+                        occurrence.AuthorityAttemptId, payload.SalvageReason), ct),
+                _ => throw new InvalidDataException("Unknown operator sweep."),
+            };
+            if (!result.Started) throw new InvalidOperationException(result.Detail);
+            var moved = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+            var workspace = configuration["TaskRepository"]
+                ?? throw new InvalidOperationException("TaskRepository is unavailable.");
+            if (!ReviewDecisionLog.ReadAll(workspace, task.ProjectName).Any(record =>
+                record.JobId == task.Id && record.FailureKind == $"operator-sweep:{payload.Sweep}"
+                && record.Response == trigger.SubjectKey))
+                ReviewDecisionLog.Append(workspace, new ReviewDecisionRecord(
+                    CreatedAt: DateTime.UtcNow, JobId: task.Id, Project: task.ProjectName,
+                    Kind: ReviewDecisionKind.Reissue,
+                    Reason: $"Operator sweep {payload.Sweep}: {decision.Reason}",
+                    Prompt: $"(operator sweep {payload.Sweep})",
+                    Response: trigger.SubjectKey, FollowUp: result.Detail)
+                {
+                    AttemptEpoch = OperatorReviewRequeueService.ReadEpoch(moved.FolderPath),
+                    FailureKind = $"operator-sweep:{payload.Sweep}",
+                });
+            if (!timeline.ReadAll(moved.FolderPath).Any(entry => entry.Kind == TimelineEventKinds.OperatorSweepRoundStarted
+                && entry.Details?.GetValueOrDefault(OperatorSweepTriggers.ReceiptSubjectKey) == trigger.SubjectKey
+                && entry.Details?.GetValueOrDefault(OperatorSweepTriggers.ReceiptSweepKey) == payload.Sweep))
+            {
+                var receipt = CardRoundBudgetReceipt.Details(
+                    payload.Guard.Budget with { Used = payload.Guard.Budget.Used + 1 },
+                    [], $"operator-sweep:{payload.Sweep}");
+                receipt[OperatorSweepTriggers.ReceiptSweepKey] = payload.Sweep;
+                receipt[OperatorSweepTriggers.ReceiptSubjectKey] = trigger.SubjectKey;
+                receipt["orchestrationRunId"] = occurrence.Run.RunId;
+                timeline.Append(moved.FolderPath, TimelineEventKinds.OperatorSweepRoundStarted,
+                    TimelineActors.System, $"Engine sweep {payload.Sweep} opened a round.",
+                    details: receipt);
+            }
+            task = moved;
+        }
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+        scanner.InvalidateCache();
+    }
+
+    private static string? TargetFromPayload(string payloadJson)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        if (payload.RootElement.TryGetProperty("targetState", out var state)
+            && state.ValueKind == JsonValueKind.String)
+            return state.GetString();
+        return null;
+    }
+
+    private static bool HasPayloadProperty(string payloadJson, string property)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        return payload.RootElement.TryGetProperty(property, out _);
+    }
+
+    private static string GateReason(string payloadJson)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        return payload.RootElement.TryGetProperty("gateReason", out var reason)
+            && reason.ValueKind == JsonValueKind.String
+            ? reason.GetString() ?? "The build and test gate failed."
+            : "The build and test gate failed.";
+    }
+}

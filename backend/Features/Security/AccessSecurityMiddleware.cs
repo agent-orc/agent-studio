@@ -156,6 +156,11 @@ public sealed class AccessSecurityMiddleware
             await _next(context);
             return;
         }
+        if (runner is not null && path is "/api/v1/protocol" or "/api/v1/protocol/compatibility")
+        {
+            await _next(context);
+            return;
+        }
 
         if (human is null)
         {
@@ -209,6 +214,8 @@ public sealed class AccessSecurityMiddleware
 
     private static string? RequiredRunnerScope(string method, string path)
     {
+        if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Orchestration;
         // The replay ingest sits above the general runner routes because its
         // credential must never satisfy any of them.
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/replay/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.DemoReplay;

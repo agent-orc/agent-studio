@@ -148,6 +148,7 @@ public class ClientIdentityMiddleware
         // attribution. Legacy monolith management remains behind this
         // middleware until the standalone proxy replaces the whole v1 plane.
         return path.StartsWith("/api/v1/protocol", StringComparison.OrdinalIgnoreCase)
+               || path.StartsWith("/api/v1/orchestration", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/runners", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/runs", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/reviews", StringComparison.OrdinalIgnoreCase);

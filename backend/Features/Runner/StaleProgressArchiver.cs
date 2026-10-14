@@ -172,6 +172,8 @@ public sealed class StaleProgressArchiver
                 // marker falls through to normal recovery.
                 if (SteerPendingMarker.TryRead(laneFolder.FolderPath, _logger) != null)
                     continue;
+                if (EngineDecisionWaitMarker.Read(laneFolder.FolderPath) is not null)
+                    continue;
                 var (measured, _) = MeasureFolder(laneFolder.FolderPath);
                 candidates.Add((laneFolder.Slug, laneFolder.FolderPath, measured));
             }

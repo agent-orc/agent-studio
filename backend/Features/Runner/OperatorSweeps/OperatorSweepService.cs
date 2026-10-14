@@ -84,6 +84,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
     private readonly IConfiguration _configuration;
     private readonly ILogger<OperatorSweepService> _logger;
     private readonly TimeProvider _time;
+    private readonly MonolithOrchestrationStore? _orchestration;
     private readonly SemaphoreSlim _tickGate = new(1, 1);
 
     private readonly ConcurrentDictionary<string, OperatorSweepRunState> _runs =
@@ -101,7 +102,8 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         IOperatorSweepActions actions,
         IConfiguration configuration,
         ILogger<OperatorSweepService> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        MonolithOrchestrationStore? orchestration = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -112,6 +114,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _orchestration = orchestration;
         _startedAtUtc = _time.GetUtcNow().UtcDateTime;
     }
 
@@ -289,6 +292,11 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         OperatorSweepOptions options,
         CancellationToken ct)
     {
+        if (job.WaitingForEngineDecision)
+            return new OperatorSweepCardState(job.Key ?? job.Id, job.Id, job.Title,
+                job.State, 0, options.MaxRoundsPerCard,
+                [new OperatorSweepCardDecision(OperatorSweepKinds.FixRounds, "Hold",
+                    "waiting-for-engine-decision", "Waiting for engine decision.", null)]);
         var taskKey = job.Key ?? job.TaskKey;
         var timeline = _timeline.ReadAll(job.FolderPath);
         var projection = _authority.GetTaskProjection(taskKey);
@@ -328,6 +336,38 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 hasActiveReview,
                 hasActiveRun,
                 budget);
+            if (trigger is { AlreadyHandled: false }
+                && MonolithTransitionSwitch.For(_configuration, "OperatorSweep") == OrchestrationExecutionMode.Engine)
+            {
+                if (_orchestration is null)
+                    throw new InvalidOperationException("The orchestration authority is unavailable.");
+                var fixBase = sweep == OperatorSweepKinds.FixRounds && latestReview is not null
+                    ? ReviewFixRoundBase.ForReview(latestReview,
+                        ReviewSubjectStore.Read(job.FolderPath), Now()) : null;
+                var report = latestReview is null ? null
+                    : RemoteReviewSettlementJournal.Read(job.FolderPath, latestReview.AttemptId).Entry?.Report;
+                var followUp = sweep == OperatorSweepKinds.FixRounds && latestReview is not null
+                    ? OperatorSweepActions.BuildFixRoundFollowUp(latestReview.AttemptId,
+                        report, latestReview, budget.Used + 1, budget.Allowed, fixBase is not null)
+                    : null;
+                var payload = new OperatorSweepStagePayload(sweep, trigger, facts,
+                    latestReview?.AttemptId, followUp, fixBase?.Ref, fixBase?.CommitSha,
+                    salvage?.Salvage.Branch, salvage?.Salvage.CommitSha, salvage?.ReportedReason);
+                var occurrence = _orchestration.CreatePeriodic(job.ProjectName, job.Id,
+                    AgentStudio.TaskServer.Contracts.OrchestrationStage.OperatorSweep,
+                    System.Text.Json.JsonSerializer.Serialize(payload,
+                        new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)),
+                    $"{sweep}:{trigger.SubjectKey}", job.State,
+                    latestReview?.AttemptId ?? salvage?.RunAttemptId ?? job.Id,
+                    latestReview?.LastFence ?? 0,
+                    latestReview?.AuthorityEpoch ?? 0,
+                    options.TickInterval);
+                if (occurrence.Status is "pending" or "leased" or "applying")
+                    EngineDecisionWaitMarker.Write(job.FolderPath, occurrence.RunId);
+                decisions.Add(new OperatorSweepCardDecision(sweep, "Hold",
+                    "waiting-for-engine-decision", "Waiting for engine decision.", trigger.SubjectKey));
+                break;
+            }
             var decision = MonolithTransitionAdapter.Sweep(sweep, trigger, facts);
             if (decision.Action == OperatorSweepAction.Ignore) continue;
 

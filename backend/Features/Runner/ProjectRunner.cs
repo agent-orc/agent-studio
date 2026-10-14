@@ -8963,6 +8963,8 @@ public class ProjectRunner
 
         if (candidate.Info.Fixture)
             return null;
+        if (candidate.Info.WaitingForEngineDecision)
+            return null;
 
         if (!AgentTypes.IsAutoPickupEligible(candidate.Info.Agent))
             return null;
@@ -9643,6 +9645,8 @@ public class ProjectRunner
             }
 
             if (!AgentTypes.IsAutoPickupEligible(candidate.Info.Agent))
+                continue;
+            if (candidate.Info.WaitingForEngineDecision)
                 continue;
 
             // Rapid-crash backoff: a progress folder that just crashed fast is

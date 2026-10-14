@@ -60,7 +60,11 @@ public static class EndpointMapping
         app.MapOrchestratorContextEndpoints();
         app.MapLeaseEndpoints();
         app.MapAttemptAuthorityEndpoints();
-        if (mapsLocalV1) app.MapV1ReviewPlaneEndpoints();
+        if (mapsLocalV1)
+        {
+            app.MapV1ReviewPlaneEndpoints();
+            app.MapMonolithOrchestrationEndpoints();
+        }
         app.MapIntegrationLeaseEndpoints();
         app.MapLogIngestionEndpoints();
         app.MapRunnerEventIngestionEndpoints();
