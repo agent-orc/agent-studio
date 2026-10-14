@@ -121,7 +121,7 @@ public sealed class CycleTimePerformanceTests
                 { ["Synthetic"] = tokenSummaries });
             var service = new ProjectCycleTimeService(scanner,
                 new TimelineLog(NullLogger<TimelineLog>.Instance),
-                new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+                new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
                 NullLogger<ProjectCycleTimeService>.Instance, tokens: tokens, batchGate: batchStore, attemptAuthority: authority);
             var timer = Stopwatch.StartNew();
             var cold = service.Build("Synthetic", "7d", now)!;
@@ -130,7 +130,7 @@ public sealed class CycleTimePerformanceTests
             timer.Restart();
             var indexWarmService = new ProjectCycleTimeService(scanner,
                 new TimelineLog(NullLogger<TimelineLog>.Instance),
-                new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+                new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
                 NullLogger<ProjectCycleTimeService>.Instance, tokens: tokens, batchGate: batchStore, attemptAuthority: authority);
             var indexWarmCold = indexWarmService.Build("Synthetic", "7d", now)!;
             var indexWarmColdMs = timer.Elapsed.TotalMilliseconds;

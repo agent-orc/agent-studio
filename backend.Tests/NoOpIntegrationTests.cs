@@ -333,7 +333,7 @@ public sealed class NoOpIntegrationTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         // Declared build commands: a gate applies to every merge, so a gate
         // that does not run was skipped by the no-op rule, not by scope.
