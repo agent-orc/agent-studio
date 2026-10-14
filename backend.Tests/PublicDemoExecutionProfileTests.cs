@@ -18,7 +18,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed class PublicDemoExecutionProfileTests : IDisposable
+public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared) : IClassFixture<PublicDemoHostFixture>, IDisposable
 {
     private readonly string _workspace = Path.Combine(
         Path.GetTempPath(),
@@ -89,7 +89,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
     [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             HandleCookies = false,
@@ -236,27 +236,9 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             body.RootElement.GetProperty("profile").GetString());
     }
 
-    // UseSetting reaches the startup admission Program.cs reads before
-    // Build(), and it belongs to this one host, so the class runs in parallel.
     private WebApplicationFactory<Program> BuildFactory(
         IReadOnlyDictionary<string, string?>? overrides = null)
-    {
-        var values = new Dictionary<string, string?>
-        {
-            ["TaskRepository"] = _workspace,
-            ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
-        };
-        if (overrides is not null)
-        {
-            foreach (var (key, value) in overrides)
-                values[key] = value;
-        }
-        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.UseTestSettings(values);
-        });
-    }
+        => PublicDemoHostFixture.CreateFactory(_workspace, overrides);
 
     private static IReadOnlyList<RouteEndpoint> ExecutionRoutes(IServiceProvider services) =>
         services.GetServices<EndpointDataSource>()
