@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
@@ -13,11 +14,14 @@ public sealed class PublicDemoHostFixture : IAsyncLifetime
         Path.GetTempPath(), "studio-public-demo-shared-" + Guid.NewGuid().ToString("N"));
 
     public WebApplicationFactory<Program> Factory { get; private set; } = null!;
+    public TimeSpan InitializationDuration { get; private set; }
 
     public Task InitializeAsync()
     {
+        var timer = Stopwatch.StartNew();
         Factory = CreateFactory(_workspace);
         using var client = Factory.CreateClient();
+        InitializationDuration = timer.Elapsed;
         return Task.CompletedTask;
     }
 
