@@ -109,6 +109,36 @@ public sealed class MonolithOrchestrationStoreTests
         Assert.Empty(fixture.Restart().AwaitingActivation());
     }
 
+    [Theory]
+    [InlineData("review-settlement-failed")]
+    [InlineData("review-settlement-rejected")]
+    public void Unaccepted_review_has_a_durable_cancellation_receipt_and_can_be_prepared_again(string reason)
+    {
+        using var fixture = new Fixture(_time);
+        var prepared = fixture.Store.Create("project", "card", OrchestrationStage.ReviewDecision,
+            "{}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
+            "review_attempt", 3, 4, claimable: false);
+
+        fixture.Store.CancelUnactivated(prepared.RunId, reason);
+        var restarted = fixture.Restart();
+        Assert.Equal("cancelled", restarted.Get(prepared.RunId)!.Status);
+        var receipt = Assert.Single(restarted.List(null, "cancelled"));
+        var persisted = System.Text.Json.JsonSerializer.Deserialize<MonolithOrchestrationOccurrence>(
+            File.ReadAllText(Path.Combine(fixture.DirectoryPath, receipt.RunId + ".json")),
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Equal(reason, persisted!.CancellationReason);
+        Assert.Empty(restarted.WaitingOccurrences());
+        Assert.Empty(restarted.AwaitingActivation());
+        Assert.Equal("empty", restarted.Claim(Claim("engine_one")).Status);
+
+        var retried = restarted.Create("project", "card", OrchestrationStage.ReviewDecision,
+            "{}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
+            "review_attempt", 3, 4, claimable: false);
+        Assert.Equal(prepared.RunId, retried.RunId);
+        restarted.Activate(retried.RunId);
+        Assert.Equal(retried.RunId, restarted.Claim(Claim("engine_one")).Run!.RunId);
+    }
+
     [Fact]
     public async Task Periodic_sweep_coalesces_until_the_prior_occurrence_is_applied()
     {
@@ -145,6 +175,7 @@ public sealed class MonolithOrchestrationStoreTests
     {
         private readonly string _directory = Path.Combine(Path.GetTempPath(),
             "orchestration-test-" + Guid.NewGuid().ToString("N"));
+        public string DirectoryPath => _directory;
         private readonly FakeTimeProvider _time;
         public FakeApplier Applier { get; } = new();
         public MonolithOrchestrationStore Store { get; }

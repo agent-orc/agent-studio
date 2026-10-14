@@ -16,7 +16,8 @@ public sealed record MonolithOrchestrationOccurrence(
     long LastFence = 0,
     string? CompletionKey = null,
     CompleteOrchestrationStageRequest? Completion = null,
-    bool Claimable = true);
+    bool Claimable = true,
+    string? CancellationReason = null);
 
 public interface IMonolithOrchestrationApplier
 {
@@ -83,6 +84,17 @@ public sealed class MonolithOrchestrationStore
                     || existing.AuthorityFence != authorityFence
                     || existing.AuthorityEpoch != authorityEpoch)
                     throw new InvalidOperationException("orchestration-idempotency-conflict");
+                if (existing.Run.Status == "cancelled")
+                {
+                    var resumedAt = _time.GetUtcNow().UtcDateTime;
+                    existing = existing with
+                    {
+                        Run = existing.Run with { Status = "pending", UpdatedAt = resumedAt, CompletedAt = null },
+                        CancellationReason = null,
+                    };
+                    Save(existing);
+                    _runs[existing.Run.RunId] = existing;
+                }
                 return existing.Run;
             }
             var now = _time.GetUtcNow().UtcDateTime;
@@ -136,13 +148,14 @@ public sealed class MonolithOrchestrationStore
 
     public IReadOnlyList<MonolithOrchestrationOccurrence> WaitingOccurrences()
     {
-        lock (_gate) return _runs.Values.Where(item => item.Run.Status
-            is "pending" or "leased" or "applying").ToArray();
+        lock (_gate) return _runs.Values.Where(item => item.Claimable
+            && (item.Run.Status is "pending" or "leased" or "applying")).ToArray();
     }
 
     public IReadOnlyList<MonolithOrchestrationOccurrence> AwaitingActivation()
     {
-        lock (_gate) return _runs.Values.Where(item => !item.Claimable).ToArray();
+        lock (_gate) return _runs.Values.Where(item => !item.Claimable
+            && item.Run.Status == "pending").ToArray();
     }
 
     public void Activate(string runId)
@@ -151,7 +164,34 @@ public sealed class MonolithOrchestrationStore
         {
             var item = Required(runId);
             if (item.Claimable) return;
-            item = item with { Claimable = true };
+            if (item.Run.Status is not ("pending" or "cancelled"))
+                throw new InvalidOperationException("orchestration-activation-state-mismatch");
+            item = item with
+            {
+                Claimable = true,
+                CancellationReason = null,
+                Run = item.Run with { Status = "pending", UpdatedAt = _time.GetUtcNow().UtcDateTime,
+                    CompletedAt = null },
+            };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
+
+    public void CancelUnactivated(string runId, string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (item.Run.Status == "cancelled") return;
+            if (item.Claimable || item.Run.Status != "pending") return;
+            var now = _time.GetUtcNow().UtcDateTime;
+            item = item with
+            {
+                CancellationReason = reason,
+                Run = item.Run with { Status = "cancelled", UpdatedAt = now, CompletedAt = now },
+            };
             Save(item);
             _runs[runId] = item;
         }
