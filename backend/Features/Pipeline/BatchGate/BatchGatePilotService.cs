@@ -402,7 +402,8 @@ public sealed class BatchGatePilotService
                 var contained = baseSha is null
                     ? []
                     : group.Where(item => BatchGatePolicy.LeavesAsIntegrated(item.Subject,
-                            resultSha => _git.IsAncestor(item.RepositoryPath, resultSha, baseSha)))
+                            resultSha => _git.IsDeliveryPublished(item.RepositoryPath,
+                                resultSha, baseSha)))
                         .ToArray();
                 foreach (var item in contained)
                     ScheduleFallback(item, ct, containedInSha: baseSha);
@@ -1987,25 +1988,9 @@ public sealed class BatchGatePilotService
     private BatchGateOwnership RecordContainment(TaskInfo task,
         BatchGatePendingRecord pending, string containedInSha)
     {
-        var name = $"batch-contained-{pending.ReviewAttemptId}.json";
-        var path = Path.Combine(TaskPaths.LogsDir(task.FolderPath), name);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
-        {
-            JsonSerializer.Serialize(stream, new
-            {
-                pending.ReviewAttemptId,
-                pending.Subject.TaskKey,
-                pending.Subject.ResultSha,
-                pending.Subject.IntegrationBranch,
-                ContainedInSha = containedInSha,
-                RecordedAtUtc = _time.GetUtcNow(),
-            });
-            stream.Flush(flushToDisk: true);
-        }
-        var ownership = new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
-            FallbackEvidencePath: name, ContainedInSha: containedInSha);
-        BatchGateOwnershipStore.Write(task.FolderPath, ownership);
+        var ownership = BatchGateOwnershipStore.RecordContainment(task.FolderPath,
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject),
+            containedInSha, _time);
         _logger.LogInformation(
             "batch-member-already-integrated task={TaskKey} attempt={AttemptId} result={ResultSha} containedIn={ContainedIn}",
             pending.Subject.TaskKey, pending.ReviewAttemptId, pending.Subject.ResultSha, containedInSha);
