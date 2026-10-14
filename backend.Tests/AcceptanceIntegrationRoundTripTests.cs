@@ -1026,9 +1026,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task DivergedLane_CompletedCardFallsBackOnlyWhenDeliveryIsMissing(bool publishDelivery)
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task DivergedLane_CompletedCardFallsBackOnlyWhenDeliveryIsMissing(bool publishDelivery, bool patchEqual)
     {
         var deliverySha = PublishDelivery("guarded-delivery.txt", "reviewed work\n");
         var deps = Build(deliverySha, backgroundIntegration: true);
@@ -1049,7 +1050,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(_repo, "branch", "-D", "lane-build");
 
         RunGit(_repo, "checkout", "-q", "-b", "operator-candidate", "origin/develop");
-        if (publishDelivery)
+        if (patchEqual)
+            RunGit(_repo, "cherry-pick", deliverySha);
+        else if (publishDelivery)
             RunGit(_repo, "merge", "-q", "--no-ff", "-m", "published delivery", deliverySha);
         File.WriteAllText(Path.Combine(_repo, "operator.txt"), "operator change\n");
         RunGit(_repo, "add", "-A");
@@ -2466,7 +2469,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
             deps.Transitions,
             deps.Timeline,
-            deps.Pipeline);
+            deps.Pipeline,
+            git: new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration));
 
         Assert.Equal(0, backstop.RunOnce());
 
@@ -2528,6 +2532,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate);
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
         File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
         var worker = new AcceptedIntegrationWorker(
             deps.AcceptedQueue!,
             VerifyingRunner(deps, gate),
@@ -2536,12 +2543,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             deps.Provenance,
             NullLogger<AcceptedIntegrationWorker>.Instance,
             deps.Transitions,
-            deps.Timeline);
+            deps.Timeline,
+            git);
 
         var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
             Project,
             Slug,
-            reviewed.FolderPath,
+            completed.FolderPath,
             _watchPath,
             "develop",
             IntegrationStrategies.DirectMerge));

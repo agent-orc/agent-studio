@@ -5225,18 +5225,21 @@ public class GitService
                 continue;
             }
             var delivery = pair[1];
-            if (IsAncestor(repoRoot, delivery, publishedTip)) continue;
-            var (fork, _, forkCode) = RunGitArgs(repoRoot, "merge-base", pair[0], delivery);
-            if (forkCode == 0)
-            {
-                var (cherry, _, cherryCode) = RunGitArgs(repoRoot, "cherry", publishedTip, delivery, fork.Trim());
-                var changes = cherry.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                if (cherryCode == 0 && changes.Length > 0 && changes.All(line => line.StartsWith("- ", StringComparison.Ordinal)))
-                    continue;
-            }
+            if (IsDeliveryPublished(repoRoot, delivery, publishedTip, pair[0])) continue;
             missing.Add($"{commit} (delivery {delivery})");
         }
         return missing;
+    }
+
+    private bool IsDeliveryPublished(string repoRoot, string deliverySha, string publishedTip, string baseRef)
+    {
+        if (IsAncestor(repoRoot, deliverySha, publishedTip)) return true;
+        var (fork, _, forkCode) = RunGitArgs(repoRoot, "merge-base", baseRef, deliverySha);
+        if (forkCode != 0) return false;
+        var (cherry, _, cherryCode) = RunGitArgs(repoRoot, "cherry", publishedTip, deliverySha, fork.Trim());
+        var changes = cherry.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return cherryCode == 0 && changes.Length > 0 &&
+               changes.All(line => line.StartsWith("- ", StringComparison.Ordinal));
     }
 
     private IntegrationBranchSyncResult FetchIntegrationBranch(
@@ -5283,7 +5286,7 @@ public class GitService
             return PublishedDeliveryContainment.Unavailable;
         var published = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
         if (published is null) return PublishedDeliveryContainment.Unavailable;
-        return IsAncestor(repoRoot, deliverySha, published)
+        return IsDeliveryPublished(repoRoot, deliverySha, published, published)
             ? PublishedDeliveryContainment.Contained
             : PublishedDeliveryContainment.Missing;
     }

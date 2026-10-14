@@ -9,10 +9,12 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
 {
     private static readonly ConcurrentDictionary<string, byte> SignaledLanes = new(StringComparer.OrdinalIgnoreCase);
 
-    public static bool KeepCompleted(TaskInfo job, string branch, GitService? git,
+    public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,
         AgentMessageBusBridge? bus, ILogger logger)
     {
-        if (job.State != TaskStates.Completed || git is null) return false;
+        if (job.State != TaskStates.Completed || git is null ||
+            failureCode is not (AcceptedIntegrationFailureCodes.BranchSyncFailed or
+                AcceptedIntegrationFailureCodes.WorktreeUnavailable)) return false;
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         if (subject is null || !ReviewSubjectStore.IsValidResultSha(subject.ResultSha)) return false;
         var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);

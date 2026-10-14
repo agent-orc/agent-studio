@@ -112,7 +112,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                     ReturnTransactionalAcceptToReview(
                         job,
                         NormalizeOutcome(decision.LastMergeAttempt?.Verdict) ?? "IntegrationFailed",
-                        decision.LastMergeAttempt?.Reason ?? decision.LastMergeAttempt?.VerdictSummary);
+                        decision.LastMergeAttempt?.Reason ?? decision.LastMergeAttempt?.VerdictSummary,
+                        decision.LastMergeAttempt?.FailureCode);
                     continue;
                 }
 
@@ -141,7 +142,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                         result.VerificationPending
                             ? MergeIntoDevelopRunner.IntegrationUnverifiedFailureCode
                             : result.Outcome.ToString(),
-                        result.Error);
+                        result.Error,
+                        result.FailureCode);
                 }
             }
             catch (Exception ex)
@@ -152,7 +154,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                 ReturnTransactionalAcceptToReview(
                     job,
                     MergeIntoIntegrationOutcome.Error.ToString(),
-                    ex.Message);
+                    ex.Message,
+                    null);
                 _logger.LogError(
                     ex,
                     "accepted-integration-backstop item failed project={Project} job={JobId}",
@@ -434,12 +437,13 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
     private void ReturnTransactionalAcceptToReview(
         TaskInfo job,
         string outcome,
-        string? detail)
+        string? detail,
+        string? failureCode)
     {
         if (job.State == TaskStates.Completed && _transitions != null)
         {
             var branch = _settings.Get(job.ProjectName).IntegrationBranch;
-            if (AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(job, branch, _git, _bus, _logger)) return;
+            if (AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(job, branch, failureCode, _git, _bus, _logger)) return;
             var moveReason = $"Acceptance integration ended with {outcome}: "
                              + (detail ?? "The delivery was not integrated.");
             var moved = _transitions.MoveAsync(
