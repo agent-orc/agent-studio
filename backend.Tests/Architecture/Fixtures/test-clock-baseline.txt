@@ -269,7 +269,6 @@ wall-clock task-server.Tests/OperationPermitTests.cs 3
 wall-clock task-server.Tests/OrchestratorContextStoreTests.cs 11
 wall-clock task-server.Tests/PrincipalAuthenticationTests.cs 1
 wall-clock task-server.Tests/RemoteReviewAuthorityTests.cs 9
-wall-clock task-server.Tests/RepeatedReviewBlockStoreTests.cs 1
 wall-clock task-server.Tests/ResultFinalizationStoreTests.cs 1
 wall-clock task-server.Tests/RetentionStoreTests.cs 3
 wall-clock task-server.Tests/RunnerReleaseIdentityStoreTests.cs 1

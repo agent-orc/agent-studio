@@ -46,9 +46,10 @@ public sealed class RepeatedReviewBlockStoreTests
     public async Task Same_requirement_fit_block_degrades_with_linked_follow_up_when_budget_is_spent()
     {
         using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(
+            new DateTimeOffset(2026, 10, 14, 9, 0, 0, TimeSpan.Zero));
         var store = new TaskServerStore(
-            Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
-            TimeProvider.System);
+            Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
         await store.InitializeAsync();
         var workspace = await store.CreateWorkspaceAsync(
             new CreateWorkspaceRequest("Review loops"), "test", default);
@@ -96,6 +97,8 @@ public sealed class RepeatedReviewBlockStoreTests
         Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
         var followUp = Assert.Single(await store.ListTasksAsync(project.ProjectId, default),
             item => item.TaskId != task.TaskId);
+        Assert.Equal(StudioTaskLanes.Ready, followUp.State);
+        Assert.Contains(followUp.State, StudioTaskLanes.All);
         Assert.Contains("Required S1 slice left undelivered", followUp.Body);
         Assert.Contains(task.TaskId, followUp.Body);
         Assert.Contains(followUp.TaskKey, (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.Body);

@@ -1044,6 +1044,8 @@ public sealed partial class TaskServerStore
         SqliteConnection connection, SqliteTransaction transaction, OrchestrationRunDto run,
         TransitionDecision decision, string actorId, DateTime now, CancellationToken ct)
     {
+        var state = decision.LinkedFollowUpLane
+            ?? throw new InvalidOperationException("The linked follow-up decision has no lane.");
         var (prefix, next) = await ReadProjectCounterAsync(connection, transaction, run.ProjectId, ct);
         var followUpId = "follow-up:" + run.RunId;
         var followUpKey = $"{prefix}-{next}";
@@ -1051,10 +1053,11 @@ public sealed partial class TaskServerStore
             $"- {item.Aspect}: {item.Finding ?? item.Summary}"));
         await ExecuteAsync(connection, """
             INSERT INTO tasks(id, project_id, task_key, title, body, state, version, created_at, updated_at)
-            VALUES ($id, $project, $key, $title, $body, '1-inbox', 1, $now, $now);
+            VALUES ($id, $project, $key, $title, $body, $state, 1, $now, $now);
             """, ct, transaction, ("$id", followUpId), ("$project", run.ProjectId),
             ("$key", followUpKey), ("$title", $"Review follow-up for {run.TaskId}"),
             ("$body", $"Follow-up for /tasks/{run.TaskId} from review {decision.Receipt.AttemptId}.\n\n{findings}"),
+            ("$state", state),
             ("$now", Iso(now)));
         await ExecuteAsync(connection,
             "UPDATE projects SET next_task_number = MAX(next_task_number, $next), updated_at = $now WHERE id = $id;",

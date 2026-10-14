@@ -62,8 +62,9 @@ rendering, Git, and lane writes stay with their application owners.
 review endpoint and local review loop share `ReviewBudgetPolicy`. The Task
 Server projects the reviewed result ref and frozen review plan into its engine
 payload. Its transactional settlement applies linked follow-up creation and
-reviewed-base persistence before the terminal lane write. Stage receipts carry
-the full typed decision; the existing stage protocol still uses its five wire
+reviewed-base persistence before the terminal lane write. The shared D18
+decision sets the linked follow-up lane to Ready for every adapter. Stage
+receipts carry the full typed decision; the existing stage protocol still uses its five wire
 actions. Completing the standalone execution loop remains I11.
 
 The monolith retains the existing delivered-round and recurrence limits as well
