@@ -167,30 +167,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 + overallSeconds + "s env DOTNET_PROCESSOR_COUNT=" + options.ProcessorCount
                 + " dotnet " + Quote(options.WorkerPath)
                 + " --remote-build-test-gate-worker " + Quote(remote + "/request.json");
-            await Ssh(options, local, command, TimeSpan.FromSeconds(overallSeconds + 150), ct, line =>
-            {
-                if (line.StartsWith("REMOTE_GATE_CAPACITY_WARNING ", StringComparison.Ordinal))
-                    _logger.LogWarning("remote_gate_capacity_warning host={Host} {Detail}", options.Host, line);
-                if (line == "REMOTE_GATE_ACQUIRED " + runId)
-                    request.OnMachineGateAcquired?.Invoke();
-                if (line.StartsWith("REMOTE_GATE_SLOT " + runId + " ", StringComparison.Ordinal))
-                {
-                    var usage = line[("REMOTE_GATE_SLOT " + runId + " ").Length..].Split('/');
-                    if (usage.Length == 2 && int.TryParse(usage[0], out var slot)
-                        && int.TryParse(usage[1], out var total) && slot >= 0 && total > slot)
-                    {
-                        _slotUsage.Acquired(runId, total);
-                        request.OnMachineGateSlotAcquired?.Invoke(slot, total);
-                    }
-                }
-                if (line.StartsWith("REMOTE_GATE_WAITING " + runId + " ", StringComparison.Ordinal))
-                {
-                    var usage = line[("REMOTE_GATE_WAITING " + runId + " ").Length..].Split('/');
-                    if (usage.Length == 2 && int.TryParse(usage[0], out var busy)
-                        && int.TryParse(usage[1], out var total) && busy >= 0 && total > 0 && busy <= total)
-                        request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                }
-            });
+            await Ssh(options, local, command, TimeSpan.FromSeconds(overallSeconds + 150), ct,
+                line => ReportWorkerLine(line, runId, options.Host, request));
             await Scp(options, local, options.Host + ":" + remote + "/response.json", "response.json", infra, ct);
             var responsePath = Path.Combine(local, "response.json");
             if (new FileInfo(responsePath).Length > 16 * 1024 * 1024)
@@ -223,6 +201,34 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 }
             }
             DeleteLocalRunFolder(local, runId);
+        }
+    }
+
+    internal void ReportWorkerLine(string line, string runId, string host, BuildTestGateRequest request)
+    {
+        if (line.StartsWith("REMOTE_GATE_CAPACITY_WARNING ", StringComparison.Ordinal))
+            _logger.LogWarning("remote_gate_capacity_warning host={Host} {Detail}", host, line);
+        if (line == "REMOTE_GATE_ACQUIRED " + runId)
+            request.OnMachineGateAcquired?.Invoke();
+        if (line.StartsWith("REMOTE_GATE_SLOT " + runId + " ", StringComparison.Ordinal))
+        {
+            var usage = line[("REMOTE_GATE_SLOT " + runId + " ").Length..].Split('/');
+            if (usage.Length == 2 && int.TryParse(usage[0], out var slot)
+                && int.TryParse(usage[1], out var total) && slot >= 0 && total > slot)
+            {
+                _slotUsage.Acquired(runId, total);
+                request.OnMachineGateSlotAcquired?.Invoke(slot, total);
+            }
+        }
+        if (line.StartsWith("REMOTE_GATE_WAITING " + runId + " ", StringComparison.Ordinal))
+        {
+            var usage = line[("REMOTE_GATE_WAITING " + runId + " ").Length..].Split('/');
+            if (usage.Length == 2 && int.TryParse(usage[0], out var busy)
+                && int.TryParse(usage[1], out var total) && busy >= 0 && total > 0 && busy <= total)
+            {
+                request.OnMachineGateWaiting?.Invoke();
+                request.OnMachineGateSlotWaiting?.Invoke(busy, total);
+            }
         }
     }
 
