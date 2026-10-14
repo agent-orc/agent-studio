@@ -1423,12 +1423,13 @@ export function buildAutoReviewProcessBadge(job: TaskInfo, status: AutoReviewSta
   if (activity || matchesLegacyCurrent || lifecycleStep || phaseOnlyActive) {
     const step = activity?.step ?? lifecycleStep ?? (matchesLegacyCurrent ? 'aspects' : 'processing');
     const stepLabel = autoReviewStepLabel(step);
-    if (step === 'gate-queued') {
+    if (step === 'gate-queued' || step.startsWith('gate-queued:')) {
       const queueStartedAt = Date.parse(activity?.startedAt ?? job.enteredLaneAt ?? job.lastActivity);
+      const usage = /^gate-queued:(\d+)\/(\d+)$/.exec(step);
       return {
-        label: `Gate queued ${formatAutoReviewWait(Number.isFinite(queueStartedAt) ? nowMs - queueStartedAt : 0)}`,
+        label: `${usage ? `Waiting for a gate slot (${usage[1]}/${usage[2]} busy)` : 'Waiting for a gate slot'} · ${formatAutoReviewWait(Number.isFinite(queueStartedAt) ? nowMs - queueStartedAt : 0)}`,
         tone: 'gate-queued',
-        tooltip: 'This task has been admitted to post-processing and is waiting for the shared build/test machine lock.',
+        tooltip: 'This task is waiting for a build/test gate slot on the host.',
       };
     }
     return {
@@ -1460,6 +1461,8 @@ function runningLifecycleStep(job: TaskInfo): string | null {
 }
 
 function autoReviewStepLabel(step: string): string {
+  const slot = /^gate:(\d+)\/(\d+)$/.exec(step);
+  if (slot) return `Gate running (slot ${slot[1]}/${slot[2]})`;
   switch (step) {
     case 'gate': return 'Gate running';
     case 'aspects': return 'Aspects';

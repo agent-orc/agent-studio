@@ -61,8 +61,12 @@ describe('post-processing card activity', () => {
   it('separates machine-lock queueing from active gate work', () => {
     expect(buildAutoReviewProcessBadge(task(), status('gate-queued'), now)).toMatchObject({
       tone: 'gate-queued',
-      label: 'Gate queued 8m',
+      label: 'Waiting for a gate slot · 8m',
     });
+    expect(buildAutoReviewProcessBadge(task(), status('gate-queued:2/3'), now)?.label)
+      .toBe('Waiting for a gate slot (2/3 busy) · 8m');
+    expect(buildAutoReviewProcessBadge(task(), status('gate:3/3'), now)?.label)
+      .toBe('Gate running (slot 3/3)');
   });
 
   it('formats the wait from enteredLaneAt when no active snapshot matches', () => {

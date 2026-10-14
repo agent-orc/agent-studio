@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { TaskInfo, PublishTarget } from '../../../../models/task.model';
-import type { ProjectDeploymentSummary } from '../../../../models/project-overview.model';
+import type { ProjectDeploymentSummary, ProjectThroughputSummary } from '../../../../models/project-overview.model';
 import type { WikiPulse } from '../../../../models/project-docs.model';
 import type { ProjectTokenUsageSummary } from '../../../project-token-usage';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
@@ -53,6 +53,7 @@ export class ProjectOverviewDashboardComponent {
   private refreshGeneration = 0;
 
   readonly tokenUsage = signal<ProjectTokenUsageSummary | null>(null);
+  readonly throughput = signal<ProjectThroughputSummary | null>(null);
   readonly deployment = signal<ProjectDeploymentSummary | null>(null);
   readonly wiki = signal<WikiPulse | null>(null);
   readonly publishTargets = signal<readonly PublishTarget[]>([]);
@@ -125,11 +126,12 @@ export class ProjectOverviewDashboardComponent {
     this.loading.set(true);
     this.unavailable.set(new Set());
     this.tokenUsage.set(null);
+    this.throughput.set(null);
     this.deployment.set(null);
     this.wiki.set(null);
     this.publishTargets.set([]);
     this.remoteBranches.set([]);
-    let pending = 5;
+    let pending = 6;
     const done = () => {
       pending--;
       if (pending === 0) this.loading.set(false);
@@ -148,6 +150,10 @@ export class ProjectOverviewDashboardComponent {
     this.tasks.getProjectTokenUsageSummary(project).subscribe({
       next: value => accept(() => this.tokenUsage.set(value)),
       error: () => fail('tokens'),
+    });
+    this.tasks.getProjectThroughput(project).subscribe({
+      next: value => accept(() => this.throughput.set(value)),
+      error: () => fail('throughput'),
     });
     this.tasks.getProjectDeploymentSummary(project).subscribe({
       next: value => accept(() => this.deployment.set(value)),

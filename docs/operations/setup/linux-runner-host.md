@@ -937,6 +937,13 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_SALVAGE_MAX_PER_CARD` | none | `3` | Newest tarballs kept per card regardless of card state; for refs, applies only to eligible refs. |
 | `RUNNER_SALVAGE_SWEEP_HOURS` | none | `6` | Hours between retention sweeps. The first sweep runs five minutes after the daemon starts. |
 
+The SSH build/test worker on kori-gate is configured through the dispatching
+API's `RemoteGate__GateSlots=3` and `RemoteGate__ProcessorCount=6`. Its 24-core,
+48 GB Docker VM then admits three suites with six processors each. This is
+separate from `RUNNER_ROLE=gate` claim capacity. See the
+[remote gate capacity procedure](../remote-hosts.md#remote-buildtest-gate-capacity)
+before changing either value.
+
 ### Sanctioned role configuration changes
 
 Do not grant the Runner service account editor, shell, or general write access to

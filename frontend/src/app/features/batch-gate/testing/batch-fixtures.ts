@@ -11,6 +11,7 @@ export const batchSettings: BatchGateConfiguration = {
 };
 
 export const redHalvingState: BatchGateState = {
+  gateSlots: { busy: 2, total: 3 },
   plan: {
     decision: 'wait', reason: 'Waiting for a safe group', targetSize: 3,
     closeAtUtc: '2026-10-11T14:05:00Z', proposedMembers: ['AGT-1', 'AGT-2'],

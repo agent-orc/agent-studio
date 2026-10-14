@@ -4477,8 +4477,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             QueueWaitTimeout = TimeSpan.FromSeconds(Math.Max(1, queueWaitTimeoutSeconds)),
             OnMachineGateWaiting = () => _statusSnapshot.SetCurrentStep(
                 entry.Name, current.Id, AutoReviewActivitySteps.GateQueued),
+            OnMachineGateSlotWaiting = (busy, total) => _statusSnapshot.SetCurrentStep(
+                entry.Name, current.Id, $"{AutoReviewActivitySteps.GateQueued}:{busy}/{total}"),
             OnMachineGateAcquired = () => _statusSnapshot.SetCurrentStep(
                 entry.Name, current.Id, AutoReviewActivitySteps.Gate),
+            OnMachineGateSlotAcquired = (slot, total) => _statusSnapshot.SetCurrentStep(
+                entry.Name, current.Id, $"{AutoReviewActivitySteps.Gate}:{slot + 1}/{total}"),
         };
 
         BuildTestGateResult? result = null;
