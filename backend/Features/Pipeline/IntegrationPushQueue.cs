@@ -21,7 +21,8 @@ public sealed record IntegrationPushRequest(
     string JobFolderPath,
     string? WatchPath,
     string IntegrationBranch,
-    string? ApprovedSha = null);
+    string? ApprovedSha = null,
+    long? DeliverySequence = null);
 
 /// <summary>
 /// Hand-off point that lifts the integration-branch <c>git fetch</c> +

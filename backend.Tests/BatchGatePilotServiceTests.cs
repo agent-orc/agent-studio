@@ -533,6 +533,36 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_gate_emits_machine_slot_waiting_and_acquired_events()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-GATE-LANE", "docs/gate-lane.md");
+        var health = factory.Services.GetRequiredService<PipelineHealthDetector>();
+        health.GateAcquired(new PipelineGateContext("other-run", "other-project",
+            _repo, "other-card", _clock.UtcDateTime));
+        _gate.Batch = request =>
+        {
+            request.OnMachineGateWaiting?.Invoke();
+            request.OnMachineGateAcquired?.Invoke();
+            return Green(request.ExpectedSha);
+        };
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        var folder = Assert.Single(TaskStates.All.Select(state =>
+                Path.Combine(_watchPath, state, member.Key)).Where(Directory.Exists));
+        var events = IntegrationLaneEvents.Read(folder);
+        var waiting = Assert.Single(events, e => e.Kind == "gate-token-waiting");
+        Assert.Equal("other-project", waiting.HoldingProject);
+        var acquired = Assert.Single(events, e => e.Kind == "gate-token-acquired");
+        Assert.Equal(waiting.Sequence, acquired.Sequence);
+        Assert.Equal(member.Key, acquired.JobId);
+    }
+
+    [Fact]
     public async Task Pending_member_uses_current_platform_version_after_an_upgrade()
     {
         using var factory = BuildFactory();
@@ -800,6 +830,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             await pilot.TickAsync(CancellationToken.None);
             AssertLane(admitted.Key, TaskStates.HumanReview);
             AssertLane(ejected.Key, TaskStates.AutoReview);
+            var fact = Assert.Single(store.ListExecutions(ProjectName).Where(f => f.BatchRunId is not null));
+            Assert.Equal([admitted.Key], fact.MemberKeys);
+            Assert.Equal(2, store.ReadManifest(fact.BatchId!).Members.Count);
+            var row = GateEconomicsEndpoints.ProjectRow(ProjectName, [],
+                since: fact.StartedAtUtc.AddDays(-1), now: fact.CompletedAtUtc,
+                retest: null, batchMetrics:
+                [new BatchGateMetric(ProjectName, fact.MemberKeys!.Count, fact, Published: true)]);
+            Assert.Equal(1, row.GatedMerges);
         }
         finally { release.TrySetResult(); }
     }
