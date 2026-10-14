@@ -830,13 +830,15 @@ comparison before Quality Studio's verdict contract can decide a review.
   separate `POST /api/projects/{project}/checkout/sync` action. Local task
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
-  synchronization drops only lane
-  merges whose delivery is already on origin by ancestry or patch equality.
+  synchronization drops only lane merges whose delivery is already on origin
+  by ancestry or patch equality.
   It restarts the lane at origin when every lane merge is published; otherwise
   it refuses and names the unpublished merges. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
-  checks the card's delivery there. A contained delivery stays Completed and
-  a lane-scoped operator feed warning replaces the per-card fallback.
+  checks the card's delivery there. It resolves that delivery from the review
+  subject, card attribution, or local task branch, including local deliveries
+  with no review subject. A contained delivery stays Completed and a lane-scoped
+  operator feed warning replaces the per-card fallback.
   Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See
