@@ -959,16 +959,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             FallbackTestedSha = member.ResultSha,
             FallbackIntegrated = false,
         });
-        if (patchEquivalent)
-        {
-            Git(_repo, "checkout", "-q", "--detach", "origin/develop");
-            File.WriteAllText(Path.Combine(_repo, "unrelated.txt"), "other published work\n");
-            Git(_repo, "add", "unrelated.txt");
-            Git(_repo, "commit", "-qm", "unrelated publication");
-            Git(_repo, "cherry-pick", member.ResultSha);
-            Git(_repo, "push", "-q", "origin", "HEAD:develop");
-            Assert.NotEqual(member.ResultSha, RemoteTip());
-        }
+        if (patchEquivalent) PublishPatchEquivalent(member.ResultSha);
         else Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
         var containedIn = RemoteTip();
 
@@ -988,6 +979,112 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             ownership.FallbackEvidencePath!)));
         Assert.Equal(0, _gate.BatchRuns);
         Assert.Equal(0, _gate.FallbackRuns);
+
+        // AGT-3139: the reconciler reads the same containment as acceptance.
+        await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
+
+        AssertLane(member.Key, TaskStates.Completed);
+    }
+
+    [Fact]
+    public async Task Patch_equivalent_member_leaves_through_its_containment_record_without_a_gate()
+    {
+        // AGT-3139: an operator candidate merge or a rebase published the
+        // delivery's patches under another SHA. The per-task coordinator
+        // checks ancestry only, so it would merge and gate the tree again.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-EQUIVALENT", "docs/equivalent.md");
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListManifests());
+        Assert.Empty(store.ListPending());
+        Assert.Equal(containedIn, RemoteTip());
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var ownership = Ownership(member.Key)!;
+        Assert.Equal(containedIn, ownership.ContainedInSha);
+        Assert.True(ownership.FallbackIntegrated);
+        var mapping = Assert.Single(Card(factory, member.Key).IntegrationRecords,
+            record => record.Classification == IntegrationRecordClasses.CuratedMapping);
+        Assert.Equal(member.ResultSha, mapping.SourceSha);
+        Assert.Equal(containedIn, mapping.IntegrationSha);
+        Assert.Equal(member.RunAttemptId, mapping.DeliveryEpoch);
+    }
+
+    [Fact]
+    public async Task Accepted_patch_equivalent_member_stays_completed_through_a_reconciler_pass()
+    {
+        // AGT-3139: the delivery reconciler recomputes the integration status.
+        // Read by ancestry alone, it returned the released card to Auto Review
+        // and treated the accepted card's integrated-delivery claim as stale.
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-EQUIVALENT-ACCEPTED", "docs/equivalent-accepted.md");
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+        var reconciler = factory.Services.GetRequiredService<DeliveryChainReconciler>();
+
+        await reconciler.RunOnceAsync();
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        using var response = await http.PostAsJsonAsync(
+            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Published equivalent delivery verified by operator." });
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
+        var accepted = Card(factory, member.Key);
+        Assert.Equal(member.ResultSha, accepted.CompletionClaim?.ResultSha);
+        var status = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+            .BuildLookup([accepted])[accepted.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        // A passed content review records the claim on the integrated delivery
+        // instead of the override; the reconciler must keep that claim fresh.
+        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(accepted with
+        {
+            CompletionClaim = accepted.CompletionClaim! with
+            {
+                Basis = CompletionClaimBases.IntegratedDelivery,
+            },
+        }, status));
+
+        await reconciler.RunOnceAsync();
+
+        AssertLane(member.Key, TaskStates.Completed);
+        Assert.Equal(containedIn, RemoteTip());
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    /// <summary>Publishes the result's patch on top of unrelated work, under another SHA.</summary>
+    private string PublishPatchEquivalent(string resultSha)
+    {
+        Git(_repo, "checkout", "-q", "--detach", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "unrelated.txt"), "other published work\n");
+        Git(_repo, "add", "unrelated.txt");
+        Git(_repo, "commit", "-qm", "unrelated publication");
+        Git(_repo, "cherry-pick", resultSha);
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var tip = RemoteTip();
+        Assert.NotEqual(resultSha, tip);
+        return tip;
+    }
+
+    private TaskInfo Card(WebApplicationFactory<Program> factory, string key)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        return scanner.FindJob(key, _watchPath)!;
     }
 
     [Fact]

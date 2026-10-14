@@ -1892,11 +1892,17 @@ public sealed partial class BatchGatePilotService
             && string.Equals(ownership.FallbackTestedSha, pending.Subject.ResultSha,
                 StringComparison.OrdinalIgnoreCase)
             && File.Exists(evidence);
+        // AGT-3139: a patch equivalent publication carries the result's tree
+        // under another SHA. The per-task coordinator checks ancestry, so it
+        // would merge and gate it again; the containment record releases it.
+        var patchEquivalent = containedInSha is not null
+            && !_git.IsAncestor(pending.RepositoryPath, pending.Subject.ResultSha, containedInSha);
         if (containedInSha is not null)
         {
             // AGT-3103: the branch already carries this result. Record the SHA
             // that proved it and integrate as a no-op; no gate runs.
-            ownership = RecordContainment(task, pending, containedInSha);
+            ownership = RecordContainment(task, pending, containedInSha,
+                fallbackIntegrated: patchEquivalent);
         }
         else if (!alreadyPassed)
         {
@@ -2010,23 +2016,26 @@ public sealed partial class BatchGatePilotService
                 FallbackEvidencePath: Path.GetFileName(evidence));
             BatchGateOwnershipStore.Write(task.FolderPath, ownership);
         }
-        // The coordinator opens its own lane sequence for the same delivery.
-        Lane(pending, "handed-off", reason: "per-task-fallback");
-        var result = await _directIntegration.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
-            task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
-            pending.Subject.IntegrationBranch, pending.IntegrationStrategy,
-            pending.PipelineType, pending.Subject.ReviewCompletedAtUtc)).ConfigureAwait(false);
-        if (!result.Outcome.IsSuccessfulIntegration())
+        if (!patchEquivalent)
         {
-            // A contained member whose tree already failed its gate has a
-            // verdict; replaying the no-op on every tick would not change it.
-            if (containedInSha is not null && result.Outcome == MergeIntoIntegrationOutcome.GateFailed)
-                await EscalateFallbackAsync(task, pending,
-                    result.Error ?? "integration-unverified", recordInStore, ct).ConfigureAwait(false);
-            return;
+            // The coordinator opens its own lane sequence for the same delivery.
+            Lane(pending, "handed-off", reason: "per-task-fallback");
+            var result = await _directIntegration.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
+                task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
+                pending.Subject.IntegrationBranch, pending.IntegrationStrategy,
+                pending.PipelineType, pending.Subject.ReviewCompletedAtUtc)).ConfigureAwait(false);
+            if (!result.Outcome.IsSuccessfulIntegration())
+            {
+                // A contained member whose tree already failed its gate has a
+                // verdict; replaying the no-op on every tick would not change it.
+                if (containedInSha is not null && result.Outcome == MergeIntoIntegrationOutcome.GateFailed)
+                    await EscalateFallbackAsync(task, pending,
+                        result.Error ?? "integration-unverified", recordInStore, ct).ConfigureAwait(false);
+                return;
+            }
+            BatchGateOwnershipStore.Write(task.FolderPath,
+                ownership! with { FallbackIntegrated = true });
         }
-        BatchGateOwnershipStore.Write(task.FolderPath,
-            ownership! with { FallbackIntegrated = true });
         var fallbackOccurrenceKey =
             $"batch-fallback:{pending.ReviewAttemptId}:{containedInSha ?? pending.Subject.ResultSha}";
         if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, fallbackOccurrenceKey,
@@ -2145,11 +2154,16 @@ public sealed partial class BatchGatePilotService
     /// release guard reads it instead of a gate verdict.
     /// </summary>
     private BatchGateOwnership RecordContainment(TaskInfo task,
-        BatchGatePendingRecord pending, string containedInSha)
+        BatchGatePendingRecord pending, string containedInSha, bool fallbackIntegrated)
     {
         var ownership = BatchGateOwnershipStore.RecordContainment(task.FolderPath,
             new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject),
-            containedInSha, _time);
+            containedInSha, _time, fallbackIntegrated);
+        // The lane guard reads integration attribution before it permits the
+        // move, and a patch equivalent result is no ancestor of the branch.
+        if (!_mutations.AppendIntegrationRecordOnFolder(task.FolderPath,
+                BatchGateOwnershipStore.ContainmentMapping(ownership, _time.GetUtcNow())).Succeeded)
+            throw new IOException("Batch containment mapping could not be recorded.");
         _logger.LogInformation(
             "batch-member-already-integrated task={TaskKey} attempt={AttemptId} result={ResultSha} containedIn={ContainedIn}",
             pending.Subject.TaskKey, pending.ReviewAttemptId, pending.Subject.ResultSha, containedInSha);
