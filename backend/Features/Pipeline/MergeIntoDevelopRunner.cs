@@ -253,6 +253,7 @@ public sealed partial class MergeIntoDevelopRunner
         CancellationToken ct)
     {
         var cancellationSubject = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, reviewedResultSha);
+        var cancellationAttempt = _pipelineLog.Read(jobFolderPath)?.Attempt;
         var startedAt = DateTime.UtcNow;
         var strategy = IntegrationStrategies.Normalize(integrationStrategy);
         try
@@ -592,6 +593,7 @@ public sealed partial class MergeIntoDevelopRunner
                 ? preMainResult : preDevelopResult?.FailureKind == BuildTestGateFailureKind.Cancellation
                     ? preDevelopResult : null;
             var shutdownCancellation = false;
+            var supersededCancellation = false;
             if (cancelledGate is not null)
             {
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
@@ -599,6 +601,7 @@ public sealed partial class MergeIntoDevelopRunner
                     cancellationSubject.Lane, live.Lane, live.ContinuePending,
                     ct.IsCancellationRequested, cancelledGate.CancellationReason);
                 cancelledGate = GateCancellationPolicy.Apply(cancelledGate, reason);
+                supersededCancellation = reason == GateCancellationReasons.Superseded;
                 conclusionFolderPath = live.Folder;
                 IntegrationGateReceipts.Record(live.Folder,
                     preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
@@ -636,7 +639,9 @@ public sealed partial class MergeIntoDevelopRunner
                 project, jobId, conclusionFolderPath, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
                 raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
-                approvedPushSha: approvedPushSha).ConfigureAwait(false);
+                approvedPushSha: approvedPushSha,
+                recordStep: !supersededCancellation || cancellationAttempt.HasValue,
+                expectedAttempt: supersededCancellation ? cancellationAttempt : null).ConfigureAwait(false);
             if (!supersededCleanly && !shutdownCancellation && unverifiedBranch)
             {
                 await RaiseUnverifiedBranchCauseAsync(jobId, watchPath, verification!, startedAt, ct)
@@ -725,7 +730,9 @@ public sealed partial class MergeIntoDevelopRunner
         DateTime startedAt,
         CancellationToken ct,
         bool raiseIntervention = true,
-        string? approvedPushSha = null)
+        string? approvedPushSha = null,
+        bool recordStep = true,
+        int? expectedAttempt = null)
     {
         if (result.Outcome == MergeIntoIntegrationOutcome.Error && string.IsNullOrWhiteSpace(result.FailureCode))
             result = result with { FailureCode = AcceptedIntegrationFailureCodes.For(result) };
@@ -746,7 +753,9 @@ public sealed partial class MergeIntoDevelopRunner
                 failureCode ?? "none", result.Outcome.IsSuccessfulIntegration() ? "none" : OneLine(result.Error));
         }
 
-        Record(jobFolderPath, project, jobId, integrationBranch, result, preMainResult, preDevelopResult, approvedPushSha, startedAt);
+        if (recordStep)
+            Record(jobFolderPath, project, jobId, integrationBranch, result, preMainResult,
+                preDevelopResult, approvedPushSha, startedAt, expectedAttempt);
         if (raiseIntervention)
             await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
                 preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
@@ -2081,16 +2090,20 @@ public sealed partial class MergeIntoDevelopRunner
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult,
         string? approvedPushSha,
-        DateTime startedAt)
+        DateTime startedAt,
+        int? expectedAttempt = null)
     {
         // Record into the existing run when one is present (the deferred merge
         // step already sits in it as "pending"); only begin a fresh baseline when
         // none exists yet, so RecordStep is never a silent no-op. The merge step
         // only lives in the standard pipeline (the read-only variant drops every
         // git step), so the baseline uses the standard catalogue.
-        var pipelineRecord = _pipelineLog.Read(jobFolderPath)
-            ?? _pipelineLog.EnsureRun(jobFolderPath, PipelineCatalogue.Standard, project, jobId);
-        using var pipelineAttempt = _pipelineLog.EnterAttempt(jobFolderPath, pipelineRecord.Attempt);
+        var pipelineRecord = _pipelineLog.Read(jobFolderPath);
+        if (expectedAttempt.HasValue && pipelineRecord?.Attempt != expectedAttempt.Value)
+            return;
+        pipelineRecord ??= _pipelineLog.EnsureRun(jobFolderPath, PipelineCatalogue.Standard, project, jobId);
+        using var pipelineAttempt = _pipelineLog.EnterAttempt(jobFolderPath,
+            expectedAttempt ?? pipelineRecord.Attempt);
 
         var completedAt = DateTime.UtcNow;
         var (status, verdict, reason, summary) = Project(

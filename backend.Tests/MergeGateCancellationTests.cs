@@ -108,6 +108,18 @@ public sealed partial class MergeIntoDevelopRunnerTests
             {
                 Directory.Move(oldFolder, liveFolder);
                 WriteTask(liveFolder, TaskStates.AutoReview);
+                var newer = log.Begin(liveFolder, PipelineCatalogue.Standard, "Fixture", "lane-move",
+                    clock.GetUtcNow().UtcDateTime);
+                using var attempt = log.EnterAttempt(liveFolder, newer.Attempt);
+                log.RecordStep(liveFolder, new PipelineStepExecution
+                {
+                    StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+                    Kind = StepKind.Tool,
+                    Status = PipelineStepStatus.Passed,
+                    StartedAt = clock.GetUtcNow().UtcDateTime,
+                    CompletedAt = clock.GetUtcNow().UtcDateTime,
+                    Verdict = "newer-attempt",
+                });
             });
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
@@ -117,8 +129,13 @@ public sealed partial class MergeIntoDevelopRunnerTests
         await runner.RunAsync("Fixture", "lane-move", oldFolder, watchPath, "develop", CancellationToken.None);
 
         Assert.False(Directory.Exists(oldFolder));
-        Assert.Equal("superseded", ReadMergeStep(log, liveFolder)?.Verdict);
+        Assert.Equal("newer-attempt", ReadMergeStep(log, liveFolder)?.Verdict);
+        Assert.Equal(PipelineStepStatus.Passed, ReadMergeStep(log, liveFolder)?.Status);
+        Assert.Equal(2, log.Read(liveFolder)?.Attempt);
         Assert.Single(Directory.GetFiles(Path.Combine(liveFolder, "post-steps"), "pre-develop-build-gate-*.log"));
+        Assert.Contains("Gate cancelled: superseded.",
+            File.ReadAllText(Directory.GetFiles(Path.Combine(liveFolder, "post-steps"),
+                "pre-develop-build-gate-*.log").Single()));
         Assert.Equal("superseded", Assert.Single(timeline.ReadAll(liveFolder), e => e.Kind == "gate-cancelled").Details!["reason"]);
         Assert.Null(IntegrationGateJournal.Read(liveFolder));
     }
