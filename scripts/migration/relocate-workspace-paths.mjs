@@ -24,11 +24,13 @@ export function relocate(value, mappings) {
   return { target: null, unresolved: true };
 }
 
+const isJsonFile = file => file.endsWith('.json') || file.endsWith('.json.bak');
+
 async function walkJson(dir, found = []) {
   for (const item of await readdir(dir, { withFileTypes: true })) {
     const file = path.join(dir, item.name);
     if (item.isDirectory()) await walkJson(file, found);
-    else if (item.isFile() && item.name.endsWith('.json')) found.push(file);
+    else if (item.isFile() && isJsonFile(item.name)) found.push(file);
   }
   return found;
 }
@@ -60,7 +62,7 @@ export async function inventory({ workspace, config = [], checkout = [], link = 
   const changes = [];
   for (const file of unique) {
     const original = await readFile(file, 'utf8');
-    const json = file.endsWith('.json');
+    const json = isJsonFile(file);
     if (json) JSON.parse(original);
     const token = json ? /"(?:\\.|[^"\\])*"/g : /[^\r\n]+/g;
     const updated = original.replace(token, match => {

@@ -20,6 +20,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TaskRepository: /data/workspace
+      RemoteGate__SshHost: ${MONOLITH_REMOTE_GATE_SSH_HOST:?Set MONOLITH_REMOTE_GATE_SSH_HOST to the SSH host alias}
+      RemoteGate__WorkerPath: ${MONOLITH_REMOTE_GATE_WORKER_PATH:?Set MONOLITH_REMOTE_GATE_WORKER_PATH to the absolute remote OrchestratorApi.dll path}
       HOME: /data/home
       GIT_CONFIG_COUNT: "2"
       GIT_CONFIG_KEY_0: credential.helper
@@ -33,9 +35,18 @@ services:
       - ${MONOLITH_GIT_CREDENTIALS_FILE:?Set MONOLITH_GIT_CREDENTIALS_FILE}:/run/git-credentials:ro
       - ${MONOLITH_SSH_DIR:?Set MONOLITH_SSH_DIR}:/data/home/.ssh:ro
       - ${MONOLITH_HOME_DIR:?Set MONOLITH_HOME_DIR}:/data/home
-      - ${MONOLITH_CLAUDE_AUTH_DIR:?Set MONOLITH_CLAUDE_AUTH_DIR}:/data/home/.claude
-      - ${MONOLITH_CODEX_AUTH_DIR:?Set MONOLITH_CODEX_AUTH_DIR}:/data/home/.codex
-      - ${MONOLITH_GEMINI_AUTH_DIR:?Set MONOLITH_GEMINI_AUTH_DIR}:/data/home/.config/gemini
+      - ${MONOLITH_CLAUDE_AUTH_DIR:?Set MONOLITH_CLAUDE_AUTH_DIR}:/run/cli-auth/claude:ro
+      - ${MONOLITH_CODEX_AUTH_DIR:?Set MONOLITH_CODEX_AUTH_DIR}:/run/cli-auth/codex:ro
+      - ${MONOLITH_GEMINI_AUTH_DIR:?Set MONOLITH_GEMINI_AUTH_DIR}:/run/cli-auth/gemini:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /data/home/.claude /data/home/.codex /data/home/.gemini
+        cp -R /run/cli-auth/claude/. /data/home/.claude/
+        cp -R /run/cli-auth/codex/. /data/home/.codex/
+        cp -R /run/cli-auth/gemini/. /data/home/.gemini/
+        chmod -R u+rwX /data/home/.claude /data/home/.codex /data/home/.gemini
+        exec dotnet /app/OrchestratorApi.dll
     logging: *logs
 
   studio:

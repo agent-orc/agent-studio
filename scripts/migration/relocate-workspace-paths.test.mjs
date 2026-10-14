@@ -12,6 +12,32 @@ test('mapping uses a whole path prefix and preserves a root target', () => {
   assert.equal(relocate('D:\\', mapping).target, '/');
 });
 
+test('relocates registry backup when the primary registry is absent', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'relocate-registry-backup-'));
+  try {
+    const workspace = path.join(root, 'workspace');
+    await mkdir(path.join(workspace, '.metadata'), { recursive: true });
+    const backup = path.join(workspace, '.metadata', 'projects.json.bak');
+    const original = JSON.stringify({ Projects: [{ RepositoryPath: 'C:\\code\\demo' }] }) + '\n';
+    await writeFile(backup, original);
+    const mapping = path.join(root, 'map.json');
+    await writeFile(mapping, JSON.stringify({ 'D:\\code': '/data/projects' }));
+    let report = await inventory({ workspace, mapping });
+    assert.equal(report.entries.length, 1);
+    assert.equal(report.entries[0].source, 'C:\\code\\demo');
+    assert.equal(report.unresolved, 1);
+    await assert.rejects(inventory({ workspace, mapping, apply: true }), /unresolved/);
+    assert.equal(await readFile(backup, 'utf8'), original);
+    await writeFile(mapping, JSON.stringify({ 'C:\\code': '/data/projects' }));
+    report = await inventory({ workspace, mapping, apply: true });
+    assert.equal(report.unresolved, 0);
+    assert.deepEqual(report.changedFiles, [backup]);
+    assert.equal(JSON.parse(await readFile(backup, 'utf8')).Projects[0].RepositoryPath, '/data/projects/demo');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('inventories paths, refuses unresolved paths, backs up and relocates without formatting drift', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'relocate-workspace-'));
   try {

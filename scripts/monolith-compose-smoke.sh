@@ -16,6 +16,8 @@ export MONOLITH_HOME_DIR="$smoke_root/home"
 export MONOLITH_CLAUDE_AUTH_DIR="$smoke_root/claude"
 export MONOLITH_CODEX_AUTH_DIR="$smoke_root/codex"
 export MONOLITH_GEMINI_AUTH_DIR="$smoke_root/gemini"
+export MONOLITH_REMOTE_GATE_SSH_HOST=gate-worker
+export MONOLITH_REMOTE_GATE_WORKER_PATH=/opt/agent-studio/gate-worker/OrchestratorApi.dll
 export MONOLITH_STUDIO_DIST_DIR="$smoke_root/studio"
 readarray -t smoke_ports < <(python3 -c 'import socket; a=socket.socket(); b=socket.socket(); a.bind(("127.0.0.1", 0)); b.bind(("127.0.0.1", 0)); print(a.getsockname()[1]); print(b.getsockname()[1])')
 export MONOLITH_API_PORT="${smoke_ports[0]}"
@@ -38,6 +40,9 @@ finish() {
 trap finish EXIT
 
 mkdir -p "$MONOLITH_WORKSPACE_DIR/projects/demo" "$MONOLITH_PROJECT_CHECKOUT" "$MONOLITH_SSH_DIR" "$MONOLITH_HOME_DIR" "$MONOLITH_STUDIO_DIST_DIR" "$MONOLITH_CLAUDE_AUTH_DIR" "$MONOLITH_CODEX_AUTH_DIR" "$MONOLITH_GEMINI_AUTH_DIR"
+for auth_dir in "$MONOLITH_CLAUDE_AUTH_DIR" "$MONOLITH_CODEX_AUTH_DIR" "$MONOLITH_GEMINI_AUTH_DIR"; do
+  printf 'smoke seed\n' > "$auth_dir/smoke-marker"
+done
 chmod 755 "$smoke_root" "$MONOLITH_WORKSPACE_DIR" "$MONOLITH_WORKSPACE_DIR/projects" "$MONOLITH_WORKSPACE_DIR/projects/demo" "$MONOLITH_PROJECT_CHECKOUT" "$MONOLITH_HOME_DIR" "$MONOLITH_SSH_DIR" "$MONOLITH_STUDIO_DIST_DIR"
 git -C "$MONOLITH_WORKSPACE_DIR" init -q -b main
 git -C "$MONOLITH_WORKSPACE_DIR" config user.name 'Monolith Smoke'
@@ -73,6 +78,7 @@ if [ -z "${SMOKE_API_IMAGE:-}" ]; then
 fi
 docker compose -f "$compose_file" up -d --no-build
 docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'test "$(getent passwd 10001 | cut -d: -f6)" = /data/home && ssh -G github.com | grep -q "^userknownhostsfile /data/home/.ssh/known_hosts$" && command -v claude && command -v codex && command -v gemini' >/dev/null
+docker compose -f "$compose_file" exec -T orchestrator-api sh -c 'for provider in claude codex gemini; do test -f "/data/home/.$provider/smoke-marker" && test -w "/data/home/.$provider" && ! touch "/run/cli-auth/$provider/smoke-marker"; done' >/dev/null 2>&1
 for attempt in $(seq 1 90); do
   if curl -fsS "http://127.0.0.1:$MONOLITH_API_PORT/healthz" >/dev/null && curl -fsS "http://127.0.0.1:$MONOLITH_STUDIO_PORT/" >/dev/null; then break; fi
   if [ "$attempt" -eq 90 ]; then echo 'Monolith did not become healthy' >&2; exit 1; fi
