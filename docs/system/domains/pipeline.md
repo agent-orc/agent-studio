@@ -233,8 +233,15 @@ by ancestry or by an equivalent full tree, batch recovery or the Human Review
 acceptance check writes a
 `batch-contained-<review-attempt>.json` record and updates the marker with the
 published tip. This also repairs a per-task fallback marker whose fallback did
-not integrate because another route published the delivery. An uncontained
-delivery remains blocked. A failed acceptance move returns HTTP 409 with
+not integrate because another route published the delivery. The same step
+appends a `curated-mapping` integration record from the result SHA to that
+published tip, bound to the run attempt. The integration status, and therefore
+acceptance and the delivery chain reconciler, reads that mapping while the tip
+stays on the published branch, so a patch equivalent delivery published under
+another SHA counts as integrated and an accepted card keeps its claim. A patch
+equivalent member is released through its containment record and never reaches
+the per-task integration coordinator, which checks ancestry and would merge and
+gate the tree again. An uncontained delivery remains blocked. A failed acceptance move returns HTTP 409 with
 `batch-gate-evidence-missing` and a repair hint.
 Verified members also
 receive an idempotent integration bookkeeping
