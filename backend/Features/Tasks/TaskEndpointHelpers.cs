@@ -81,6 +81,13 @@ internal static class TaskEndpointHelpers
         MoveJobStatus.Success => Results.Ok(),
         MoveJobStatus.NotFound => Results.NotFound(),
         MoveJobStatus.TargetFolderExists => Results.Conflict(new { error = outcome.Message }),
+        MoveJobStatus.IntegrationFailed when outcome.Message == "batch-gate-evidence-missing" =>
+            Results.Conflict(new
+            {
+                error = "batch-gate-evidence-missing",
+                code = "batch-gate-evidence-missing",
+                hint = "The current delivery has no batch gate, integrated fallback, or published containment evidence. Verify its published branch and retry the move.",
+            }),
         MoveJobStatus.IntegrationFailed => Results.Conflict(new
         {
             error = outcome.Message,

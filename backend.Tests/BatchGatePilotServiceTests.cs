@@ -765,6 +765,183 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(containedIn, RemoteTip());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Acceptance_repairs_an_unintegrated_fallback_marker_when_delivery_is_published(
+        bool patchEquivalent)
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-FALLBACK-CONTAINED", "docs/fallback-contained.md",
+            initialState: TaskStates.HumanReview);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        var marker = BatchGateOwnershipStore.Read(folder)!;
+        BatchGateOwnershipStore.Write(folder, marker with
+        {
+            FallbackTestedSha = member.ResultSha,
+            FallbackIntegrated = false,
+        });
+        if (patchEquivalent) PublishPatchEquivalent(member.ResultSha);
+        else Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+        var containedIn = RemoteTip();
+
+        using var response = await http.PostAsJsonAsync(
+            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Published delivery verified by operator." });
+
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
+        AssertLane(member.Key, TaskStates.Completed);
+        var ownership = Ownership(member.Key)!;
+        Assert.Equal(containedIn, ownership.ContainedInSha);
+        Assert.True(ownership.FallbackIntegrated);
+        Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(
+            Path.Combine(_watchPath, TaskStates.Completed, member.Key)),
+            ownership.FallbackEvidencePath!)));
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+
+        // AGT-3139: the reconciler reads the same containment as acceptance.
+        await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
+
+        AssertLane(member.Key, TaskStates.Completed);
+    }
+
+    [Fact]
+    public async Task Patch_equivalent_member_leaves_through_its_containment_record_without_a_gate()
+    {
+        // AGT-3139: an operator candidate merge or a rebase published the
+        // delivery's patches under another SHA. The per-task coordinator
+        // checks ancestry only, so it would merge and gate the tree again.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-EQUIVALENT", "docs/equivalent.md");
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListManifests());
+        Assert.Empty(store.ListPending());
+        Assert.Equal(containedIn, RemoteTip());
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var ownership = Ownership(member.Key)!;
+        Assert.Equal(containedIn, ownership.ContainedInSha);
+        Assert.True(ownership.FallbackIntegrated);
+        var mapping = Assert.Single(Card(factory, member.Key).IntegrationRecords,
+            record => record.Classification == IntegrationRecordClasses.CuratedMapping);
+        Assert.Equal(member.ResultSha, mapping.SourceSha);
+        Assert.Equal(containedIn, mapping.IntegrationSha);
+        Assert.Equal(member.RunAttemptId, mapping.DeliveryEpoch);
+    }
+
+    [Fact]
+    public async Task Accepted_patch_equivalent_member_stays_completed_through_a_reconciler_pass()
+    {
+        // AGT-3139: the delivery reconciler recomputes the integration status.
+        // Read by ancestry alone, it returned the released card to Auto Review
+        // and treated the accepted card's integrated-delivery claim as stale.
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-EQUIVALENT-ACCEPTED", "docs/equivalent-accepted.md");
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+        var reconciler = factory.Services.GetRequiredService<DeliveryChainReconciler>();
+
+        await reconciler.RunOnceAsync();
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        using var response = await http.PostAsJsonAsync(
+            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Published equivalent delivery verified by operator." });
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
+        var accepted = Card(factory, member.Key);
+        Assert.Equal(member.ResultSha, accepted.CompletionClaim?.ResultSha);
+        var status = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+            .BuildLookup([accepted])[accepted.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        // A passed content review records the claim on the integrated delivery
+        // instead of the override; the reconciler must keep that claim fresh.
+        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(accepted with
+        {
+            CompletionClaim = accepted.CompletionClaim! with
+            {
+                Basis = CompletionClaimBases.IntegratedDelivery,
+            },
+        }, status));
+
+        await reconciler.RunOnceAsync();
+
+        AssertLane(member.Key, TaskStates.Completed);
+        Assert.Equal(containedIn, RemoteTip());
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    /// <summary>Publishes the result's patch on top of unrelated work, under another SHA.</summary>
+    private string PublishPatchEquivalent(string resultSha)
+    {
+        Git(_repo, "checkout", "-q", "--detach", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "unrelated.txt"), "other published work\n");
+        Git(_repo, "add", "unrelated.txt");
+        Git(_repo, "commit", "-qm", "unrelated publication");
+        Git(_repo, "cherry-pick", resultSha);
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var tip = RemoteTip();
+        Assert.NotEqual(resultSha, tip);
+        return tip;
+    }
+
+    private TaskInfo Card(WebApplicationFactory<Program> factory, string key)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        return scanner.FindJob(key, _watchPath)!;
+    }
+
+    [Fact]
+    public async Task Acceptance_with_uncontained_fallback_marker_returns_typed_conflict()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-FALLBACK-MISSING", "docs/fallback-missing.md",
+            initialState: TaskStates.HumanReview);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        BatchGateOwnershipStore.Write(folder, BatchGateOwnershipStore.Read(folder)! with
+        {
+            FallbackTestedSha = string.Empty,
+            FallbackIntegrated = false,
+        });
+
+        using var response = await http.PostAsJsonAsync(
+            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Operator reviewed the delivery." });
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("batch-gate-evidence-missing", body.RootElement.GetProperty("code").GetString());
+        Assert.Equal("batch-gate-evidence-missing", body.RootElement.GetProperty("error").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(body.RootElement.GetProperty("hint").GetString()));
+        Assert.Null(Ownership(member.Key)?.ContainedInSha);
+        AssertLane(member.Key, TaskStates.HumanReview);
+    }
+
     [Fact]
     public async Task Published_recovery_does_not_wait_for_an_ejected_members_running_fallback()
     {
@@ -2208,7 +2385,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         string changedFile, bool settleReview = true, string? parentSha = null,
         bool deferredPlan = true, string? taskId = null,
         Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
-        string? mergeFrom = null, string generation = "")
+        string? mergeFrom = null, string generation = "",
+        string initialState = TaskStates.AutoReview)
     {
         var baseSha = Git(_repo, "rev-parse", "origin/develop");
         var resultRef = "refs/heads/agent-studio/results/" + key;
@@ -2240,11 +2418,11 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.True(settledRun.Accepted, settledRun.Message);
         // The card carries what a remote completion records: the attributed
         // result commit and the card-local review subject.
-        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, key);
+        var folder = Path.Combine(_watchPath, initialState, key);
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = taskId ?? key, key, title = key, state = TaskStates.AutoReview, order = 1, agent = "claude",
+            id = taskId ?? key, key, title = key, state = initialState, order = 1, agent = "claude",
             kind = TaskKinds.Task, enteredLaneAt = _clock.UtcDateTime,
             commits = new[]
             {
