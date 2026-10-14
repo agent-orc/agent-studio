@@ -52,7 +52,7 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         var batchReads = 0;
         var service = new ProjectCycleTimeService(scanner,
             new TimelineLog(NullLogger<TimelineLog>.Instance),
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<ProjectCycleTimeService>.Instance,
             batchGate: batch,
             gateLogReader: folder => { gateReads++; return FlowGateLogEvidence.Read(folder); },
