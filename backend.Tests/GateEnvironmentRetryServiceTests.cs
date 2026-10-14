@@ -60,6 +60,14 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Assert.Equal(1, sweep.Retried);
         Assert.Equal(0, sweep.Parked);
         Assert.Equal(1, stack.Gate.Invocations);
+        var events = IntegrationLaneEvents.Read(stack.Scanner.FindJob("due", _watchPath)!.FolderPath);
+        Assert.Contains(events, e => e.Kind == "enqueued" && e.Reason == "gate-environment-retry");
+        Assert.Contains(events, e => e.Kind == "merge-lock-acquired");
+        Assert.Contains(events, e => e.Kind == "gate-requested");
+        Assert.Contains(events, e => e.Kind == "gate-finished");
+        Assert.Contains(events, e => e.Kind == "ready-to-publish");
+        Assert.Single(events.Select(e => e.Sequence).Distinct());
+        Assert.Null(IntegrationLaneEvents.CurrentSequence);
         Assert.True(IsAncestor(delivery, "develop"), "the replayed merge did not land the delivery in develop");
 
         // The whole point of the card: no second review slot is burned.
