@@ -9,10 +9,23 @@ failure-domain, and outcome constants are shared from TaskServer.Contracts,
 so the hosts and library read the same persisted tokens. Verdicts classified
 `BlockWithoutCitation` do not open a finding round or count as a repeated block.
 
-The monolith still invokes these policies and applies their decisions. I16 and
-I17 supply the remote orchestration boundary and switch the decision caller to
-the engine. I18 moves hosted background scheduling. This library does not start
-an engine process or change deployment roles.
+The monolith still invokes these policies by default. AGT-3058 (I16) adds a
+file-backed orchestration occurrence journal and the v1 claim, lease and stage
+completion routes on the monolith authority. The engine can decide configured
+coding completions, review reports, gate results and operator sweeps while the
+card remains in its current lane with a visible wait marker. The stage receipt
+is applied through the existing keyed lane writer, prompt and continuation
+stores, integration coordinator, batch queue and escalation path. I17 runs the
+dedicated engine remotely; I18 moves the remaining hosted scheduling. This
+library does not start an engine process or change deployment roles.
+
+`Orchestration:Transitions:CodingCompletion`, `ReviewReport`, `GateResult`, and
+`OperatorSweep` each accept `Monolith` (default) or `Engine`. The monolith
+answers protocol negotiation with the `engine` client kind and the
+`orchestration-plane` capability. A separately enrolled `engine_` principal
+uses the exclusive `orchestration.write` credential scope. The occurrence
+journal lives under `<TaskRepository>/.orchestration-occurrences`; it preserves
+pending work, lease fences and completed stage receipts across restarts.
 
 ## Inputs and outputs
 

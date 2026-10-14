@@ -269,7 +269,9 @@ public sealed class AccessSecurityStore
             if (enrollment is null || enrollment.UsedAt is not null || enrollment.ExpiresAt <= Now
                 || !PasswordSecretHasher.VerifySecret(code, enrollment.CodeHash))
                 throw new SecurityOperationException(401, "invalid-enrollment", "Enrollment code is invalid, expired, or already used.");
-            var runnerId = "runner_" + Guid.NewGuid().ToString("N");
+            var runnerId = enrollment.Scopes.Contains(RunnerScopes.Orchestration, StringComparer.Ordinal)
+                ? "engine_" + Guid.NewGuid().ToString("N")
+                : "runner_" + Guid.NewGuid().ToString("N");
             var made = NewRunnerCredential(runnerId, enrollment.Scopes, enrollment.CredentialExpiresAt);
             var runner = new RunnerServiceIdentity { Id = runnerId, Name = enrollment.Name, CreatedAt = Now, Credentials = [made.Credential] };
             state.Runners.Add(runner);
@@ -375,6 +377,10 @@ public sealed class AccessSecurityStore
             var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId && x.RevokedAt is null)
                 ?? throw new SecurityOperationException(404, "runner-not-found", "Runner not found.");
             var scopes = ValidateScopes(request.Scopes ?? runner.Credentials.LastOrDefault(x => x.RevokedAt is null)?.Scopes);
+            var engineIdentity = runnerId.StartsWith("engine_", StringComparison.Ordinal);
+            if (engineIdentity != scopes.Contains(RunnerScopes.Orchestration, StringComparer.Ordinal))
+                throw new SecurityOperationException(400, "invalid-scope",
+                    "Credential rotation cannot change a service principal's kind.");
             var made = NewRunnerCredential(runnerId, scopes, request.ExpiresAt);
             var updated = runner with { Credentials = [.. runner.Credentials, made.Credential] };
             state.Runners[state.Runners.IndexOf(runner)] = updated;
@@ -522,7 +528,7 @@ public sealed class AccessSecurityStore
         // The replay scope is structurally exclusive so a public-demo credential
         // cannot be widened into an execution credential by configuration.
         if (normalized.Count > 1 && normalized.Any(RunnerScopes.IsExclusive))
-            throw new SecurityOperationException(400, "invalid-scope", $"The '{RunnerScopes.DemoReplay}' scope is exclusive and cannot be combined with other Runner scopes.");
+            throw new SecurityOperationException(400, "invalid-scope", "Service-only scopes cannot be combined with other Runner scopes.");
         return normalized;
     }
 

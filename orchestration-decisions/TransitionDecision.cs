@@ -146,6 +146,21 @@ public static class TransitionDecisionPolicy
         _ => DecisionAuthority.Automatic,
     };
 
+    /// <summary>Lane effect selected by the engine's typed action for one occurrence.</summary>
+    public static string? TargetLane(TransitionAction? action, string? sourcePayloadTarget,
+        OrchestrationAction stageAction) => action switch
+    {
+        TransitionAction.FindingRound or TransitionAction.ConcernRound
+            or TransitionAction.ReturnToReady => TaskStates.Ready,
+        TransitionAction.Escalate => TaskStates.Escalated,
+        TransitionAction.HumanReview or TransitionAction.AcceptAndIntegrate
+            or TransitionAction.DegradeWithFollowUp => TaskStates.HumanReview,
+        TransitionAction.Halt or TransitionAction.SweepIgnore or TransitionAction.SweepHold
+            or TransitionAction.DeferToBatch or TransitionAction.ReviewInfrastructureRetry => null,
+        _ => sourcePayloadTarget ?? (stageAction is OrchestrationAction.Escalate or OrchestrationAction.Fail
+            ? TaskStates.Escalated : null),
+    };
+
     public static bool IsDeferredAcceptance(bool deferred, string outcome)
         => deferred && (string.Equals(outcome, ReviewOutcomeKinds.Pass, StringComparison.OrdinalIgnoreCase)
             || string.Equals(outcome, ReviewOutcomeKinds.IntegrationBranchDefect, StringComparison.OrdinalIgnoreCase));

@@ -14,7 +14,8 @@ public sealed record StagePayload(
     int? AutomaticRoundsUsed = null, int MaximumCardRounds = 4,
     int ConcernRoundsUsed = 0, int MaximumConcernRounds = 0,
     bool InfrastructureRetryAvailable = false, int MaximumReissues = 2,
-    ReviewRoundBudgetLedger? DeliveredRounds = null);
+    ReviewRoundBudgetLedger? DeliveredRounds = null,
+    int MaximumDeliveredRounds = 4);
 
 public sealed record StagePolicyDecision(OrchestrationAction Action, TransitionDecision? Transition = null);
 
@@ -38,7 +39,8 @@ public static class StageDecisionPolicy
                     ? new(resultRef, sha, payload.ReviewAttemptId ?? string.Empty) : null),
             new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, payload.Verdicts,
                 payload.FailureClassification),
-            new(payload.MaximumCardRounds, payload.MaximumConcernRounds, MaximumReissues: payload.MaximumReissues),
+            new(payload.MaximumCardRounds, payload.MaximumConcernRounds,
+                payload.MaximumDeliveredRounds, MaximumReissues: payload.MaximumReissues),
             new(payload.AutomaticRoundsUsed ?? reissues, payload.ConcernRoundsUsed, reissues),
             new(payload.ReviewPlan?.BuildTestDeferredToBatch == true, payload.InfrastructureRetryAvailable), payload.DeliveredRounds);
     }
@@ -99,6 +101,20 @@ public static class StageDecisionPolicy
 
     public static OrchestrationAction Gate(int failed) => failed > 0
         ? OrchestrationAction.Reissue : OrchestrationAction.Continue;
+
+    public static StagePolicyDecision GateTransition(string taskId, string attemptId,
+        int failed, int roundsUsed, int roundsAllowed)
+    {
+        var action = failed == 0 ? TransitionAction.Continue
+            : roundsUsed >= roundsAllowed ? TransitionAction.Escalate
+            : TransitionAction.ReturnToReady;
+        var reason = failed == 0 ? "The build and test gate passed."
+            : action == TransitionAction.Escalate
+                ? "The card round budget is spent with a build and test failure."
+                : "The build and test gate failed; reopen a bounded fix round.";
+        return new(ToStageAction(action), TransitionDecisionPolicy.Create(action, reason,
+            taskId, attemptId, roundsUsed, roundsAllowed));
+    }
 
     public static OrchestrationAction RemoteGate(string phase) => phase switch
     {

@@ -138,6 +138,24 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                 && status.GetString() is "failed" or "fail");
         }
         var action = StageDecisionPolicy.Gate(failed);
+        if (payload.RootElement.TryGetProperty("monolithGateResult", out var monolithGate)
+            && monolithGate.ValueKind == JsonValueKind.True)
+        {
+            var roundsUsed = payload.RootElement.TryGetProperty("automaticRoundsUsed", out var used)
+                && used.TryGetInt32(out var u) ? u : 0;
+            var roundsAllowed = payload.RootElement.TryGetProperty("maximumCardRounds", out var allowed)
+                && allowed.TryGetInt32(out var a) ? a : 4;
+            var attemptId = payload.RootElement.TryGetProperty("gateAttemptId", out var attempt)
+                ? attempt.GetString() ?? run.RunId : run.RunId;
+            var decision = StageDecisionPolicy.GateTransition(run.TaskId, attemptId,
+                failed, roundsUsed, roundsAllowed);
+            return new OrchestrationStageDecision(decision.Action, JsonSerializer.Serialize(new
+            {
+                component = nameof(GateDispatchLoop),
+                transition = decision.Transition,
+                decision = decision.Action.ToString(),
+            }));
+        }
         if (_options?.RemotePostBuildTestEnabled == true && _client is not null && failed == 0
             && payload.RootElement.TryGetProperty("reviewSubjectId", out var reviewId)
             && reviewId.ValueKind == JsonValueKind.String)
@@ -245,5 +263,24 @@ public sealed class CompletionJudgeLoop : IOrchestrationStageHandler
                 component = nameof(CompletionJudgeLoop),
                 decision = action.ToString(),
             })));
+    }
+}
+
+public sealed class OperatorSweepLoop : IOrchestrationStageHandler
+{
+    public OrchestrationStage Stage => OrchestrationStage.OperatorSweep;
+
+    public Task<OrchestrationStageDecision> ExecuteAsync(OrchestrationRunDto run, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var payload = JsonSerializer.Deserialize<OperatorSweepStagePayload>(run.PayloadJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidDataException("Sweep occurrence payload is missing.");
+        var decision = OperatorSweepPolicy.Decide(payload.Sweep, payload.Trigger, payload.Guard);
+        return Task.FromResult(new OrchestrationStageDecision(
+            decision.Action == OperatorSweepAction.Act ? OrchestrationAction.Reissue
+                : decision.Action == OperatorSweepAction.WaitForPerson ? OrchestrationAction.Escalate
+                : OrchestrationAction.Continue,
+            JsonSerializer.Serialize(new { sweepDecision = decision })));
     }
 }

@@ -1488,6 +1488,7 @@ public static class LeaseEndpoints
             RemoteRunStopRequestStore stops,
             ProviderRejectionContinuationService providerRejectionContinuations,
             ModelRoutingPolicyRegistry modelRouting,
+            MonolithOrchestrationStore orchestration,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -2586,6 +2587,29 @@ public static class LeaseEndpoints
                     RunAttemptId: attemptId));
             }
 
+            if (MonolithTransitionSwitch.For(configuration, "CodingCompletion") == OrchestrationExecutionMode.Engine
+                && !string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    agentOutcome = outcome,
+                    runAttemptId = attemptId,
+                    targetState,
+                    resultSha,
+                    resultRef = req.ImmutableResultRef,
+                });
+                var occurrence = orchestration.Create(task.ProjectName, task.Id,
+                    AgentStudio.TaskServer.Contracts.OrchestrationStage.ReviewDecision,
+                    payload, $"coding-completion:{attemptId}:{completionKey}", task.State,
+                    attemptId, req.FencingToken, epoch);
+                if (occurrence.Status is "pending" or "leased" or "applying")
+                    EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
+                scanner.InvalidateCache();
+                return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
+                    task.State, "Waiting for engine decision.", RunAttemptId: attemptId,
+                    ReviewAttemptId: reviewAttempt?.AttemptId,
+                    ReviewSubjectId: reviewAttempt?.Subject.SubjectId));
+            }
             if (!string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
             {
                 var move = await transitions.MoveAsync(
