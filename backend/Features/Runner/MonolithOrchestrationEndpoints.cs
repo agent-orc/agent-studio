@@ -175,8 +175,12 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 ? rounds.GetInt32() : 0;
             var allowed = root.TryGetProperty("maximumCardRounds", out var maximum)
                 ? maximum.GetInt32() : 4;
+            var infrastructureFailure = root.TryGetProperty("infrastructureFailure", out var infrastructure)
+                && infrastructure.ValueKind == JsonValueKind.True;
+            var interventionRequired = root.TryGetProperty("interventionRequired", out var intervention)
+                && intervention.ValueKind == JsonValueKind.True;
             transition = StageDecisionPolicy.GateTransition(run.TaskId, attempt,
-                failed, used, allowed).Transition!;
+                failed, used, allowed, infrastructureFailure, interventionRequired).Transition!;
         }
         else if (payload.RootElement.TryGetProperty("reviewOutcome", out _))
         {
@@ -207,9 +211,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         var now = time.GetUtcNow().UtcDateTime;
         foreach (var occurrence in store.WaitingOccurrences().Where(item =>
             !rollout.IsRolledBack(item.Profile)
-            && (item.Run.Status == "pending" && now - item.Run.CreatedAt > TimeSpan.FromMinutes(1)
-                || item.Run.Status == "leased" && item.Lease is { ExpiresAt: var expiry }
-                    && expiry <= now)))
+            && ShouldAlert(item, now)))
         {
             var card = scanner.ScanAllJobs().FirstOrDefault(item =>
                 item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
@@ -226,6 +228,12 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             });
         }
     }
+
+    internal static bool ShouldAlert(MonolithOrchestrationOccurrence occurrence, DateTime now)
+        => occurrence.Run.Status == "pending"
+            && now - occurrence.Run.CreatedAt > TimeSpan.FromMinutes(1)
+            || occurrence.Run.Status == "leased"
+                && occurrence.Lease is { ExpiresAt: var expiry } && expiry <= now;
 
     internal void RecoverOnce()
     {
@@ -244,6 +252,14 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                         $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
                 if (accepted)
                 {
+                    if (card is not null && occurrence.Run.CurrentStage == OrchestrationStage.ReviewDecision
+                        && !occurrence.Shadow)
+                    {
+                        var payload = JsonSerializer.Deserialize<StagePayload>(occurrence.Run.PayloadJson,
+                            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                            ?? throw new InvalidDataException("The prepared review decision is missing its payload.");
+                        ReviewRoundBudgetStore.RecordAcceptedEngineReview(card.FolderPath, payload);
+                    }
                     store.Activate(occurrence.Run.RunId);
                     if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
                         EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);

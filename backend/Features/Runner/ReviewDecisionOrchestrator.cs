@@ -2413,9 +2413,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             entry.Name, current.Id, AutoReviewActivitySteps.Gate);
         var buildGateResult = await RunBuildTestGatePostStepAsync(workspace, entry, current, ct);
         var gateMode = MonolithTransitionSwitch.For(_configuration, "GateResult");
+        var gateIntervention = buildGateResult?.Verdict == BuildTestGateVerdict.Fail
+            ? await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct) : null;
         var gateOccurrenceKey = buildGateResult is null ? null
             : $"gate-result:{current.Id}:{buildGateResult.GateRunId ?? _attemptAuthority?.GetTaskProjection(current.Key ?? current.TaskKey).CurrentRunAttempt?.AttemptId}:{buildGateResult.ExpectedSha}:{buildGateResult.Verdict}";
-        if (buildGateResult is not null
+        if (buildGateResult is { Verdict: BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
+            or BuildTestGateVerdict.Fail }
             && gateMode is OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
         {
             if (_orchestration is null)
@@ -2433,25 +2436,20 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 automaticRoundsUsed = gateRoundBudget.Used,
                 maximumCardRounds = gateRoundBudget.Allowed,
                 gateReason = buildGateResult.Reason,
+                infrastructureFailure = buildGateResult.IsInfrastructureFailure,
+                interventionRequired = gateIntervention is not null,
                 gates = new[] { new
                 {
                     status = buildGateResult.Verdict == BuildTestGateVerdict.Fail ? "failed" : "passed",
                 } },
             });
-            var gateDecision = gateMode == OrchestrationExecutionMode.Shadow
-                ? AgentStudio.OrchestrationDecisions.StageDecisionPolicy.GateTransition(
-                    current.Id, buildGateResult.GateRunId ?? source?.AttemptId ?? current.Id,
-                    buildGateResult.Verdict == BuildTestGateVerdict.Fail ? 1 : 0,
-                    gateRoundBudget.Used, gateRoundBudget.Allowed).Transition : null;
             var occurrence = _orchestration.Create(entry.Name, current.Id,
                 AgentStudio.TaskServer.Contracts.OrchestrationStage.GateDispatch,
                 payload,
                 gateOccurrenceKey!,
                 current.State, source?.AttemptId ?? current.Id,
                 source?.LastFence ?? 0, source?.AuthorityEpoch ?? 0,
-                profile: "GateResult", shadow: gateMode == OrchestrationExecutionMode.Shadow,
-                monolithAction: gateDecision?.Action.ToString(),
-                monolithReason: gateDecision?.Reason);
+                profile: "GateResult", shadow: gateMode == OrchestrationExecutionMode.Shadow);
             if (gateMode == OrchestrationExecutionMode.Engine
                 && occurrence.Status is ("pending" or "leased" or "applying"))
             {
@@ -2462,19 +2460,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (gateMode == OrchestrationExecutionMode.Engine
                 && occurrence.StageResults?.LastOrDefault()?.Action != AgentStudio.TaskServer.Contracts.OrchestrationAction.Continue)
                 return;
+            if (gateMode == OrchestrationExecutionMode.Engine
+                && buildGateResult.Verdict == BuildTestGateVerdict.Fail)
+                throw new InvalidDataException("A failed engine gate cannot continue through the monolith gate handler.");
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
-            var intervention = await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct);
-            if (intervention is not null)
+            if (gateIntervention is not null)
             {
-                await HandleFailureInterventionAsync(workspace, entry, current, buildGateResult, intervention, ct);
+                await HandleFailureInterventionAsync(workspace, entry, current, buildGateResult, gateIntervention, ct);
+                RecordGateShadowOutcome();
                 return;
             }
             if (buildGateResult.IsInfrastructureFailure)
             {
                 await HandleBuildTestGateInfrastructureFailureAsync(
                     workspace, entry, current, buildGateResult);
+                RecordGateShadowOutcome();
                 return;
             }
             // The quality grade is reporting evidence, not a success gate. A
@@ -2487,7 +2489,31 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 entry, current, taskBody, buildGateResult, ct);
             await HandleBuildTestGateFailureAsync(
                 workspace, entry, pending, current, buildGateResult, failedBuildGrade, ct);
+            RecordGateShadowOutcome();
             return;
+        }
+
+        if (buildGateResult?.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
+            && gateMode == OrchestrationExecutionMode.Shadow)
+            _orchestration?.RecordMonolithDecision(
+                _orchestration.GetByIdempotencyKey(gateOccurrenceKey!)!.RunId,
+                AgentStudio.OrchestrationDecisions.TransitionAction.Continue.ToString(),
+                "The build and test gate passed.");
+
+        void RecordGateShadowOutcome()
+        {
+            if (gateMode != OrchestrationExecutionMode.Shadow || _orchestration is null) return;
+            var run = _orchestration.GetByIdempotencyKey(gateOccurrenceKey!);
+            if (run is null) return;
+            var applied = _scanner.FindJob(current.Id, entry.Path);
+            if (applied?.State is not (TaskStates.Ready or TaskStates.Escalated)) return;
+            var action = applied?.State == TaskStates.Ready
+                ? AgentStudio.OrchestrationDecisions.TransitionAction.ReturnToReady
+                : AgentStudio.OrchestrationDecisions.TransitionAction.Escalate;
+            var reason = ReviewDecisionLog.ReadAll(workspace, entry.Name)
+                .LastOrDefault(record => record.JobId == current.Id)?.Reason
+                ?? buildGateResult?.Reason ?? string.Empty;
+            _orchestration.RecordMonolithDecision(run.RunId, action.ToString(), reason);
         }
 
         await RunQualityAngularRulesPostStepAsync(

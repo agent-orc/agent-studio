@@ -64,6 +64,23 @@ public sealed class MonolithOrchestrationStoreTests
     }
 
     [Fact]
+    public void Expired_claim_is_alertable_without_another_engine_claim()
+    {
+        using var fixture = new Fixture(_time);
+        fixture.Create();
+        var claimed = fixture.Store.Claim(Claim("engine_one"));
+        var occurrence = fixture.Store.GetOccurrence(claimed.Run!.RunId)!;
+        Assert.False(MonolithOrchestrationRecoveryService.ShouldAlert(occurrence,
+            _time.GetUtcNow().UtcDateTime));
+
+        _time.Advance(TimeSpan.FromMinutes(3));
+
+        Assert.Equal("leased", fixture.Store.Get(claimed.Run.RunId)!.Status);
+        Assert.True(MonolithOrchestrationRecoveryService.ShouldAlert(occurrence,
+            _time.GetUtcNow().UtcDateTime));
+    }
+
+    [Fact]
     public async Task Pending_and_applying_occurrences_recover_after_restart()
     {
         using var fixture = new Fixture(_time);
@@ -90,6 +107,9 @@ public sealed class MonolithOrchestrationStoreTests
         var second = fixture.Create();
         Assert.Equal(first.RunId, second.RunId);
         Assert.Single(fixture.Store.List(null, null));
+        Assert.Throws<InvalidOperationException>(() => fixture.Store.Create("project", "card",
+            OrchestrationStage.ReviewDecision, "{\"changed\":true}", "transition_key",
+            TaskStates.AutoReview, "attempt", 3, 3));
     }
 
     [Fact]
@@ -128,13 +148,16 @@ public sealed class MonolithOrchestrationStoreTests
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
         Assert.Equal(reason, persisted!.CancellationReason);
         Assert.Empty(restarted.WaitingOccurrences());
-        Assert.Empty(restarted.AwaitingActivation());
+        Assert.Equal(prepared.RunId, Assert.Single(restarted.AwaitingActivation()).Run.RunId);
         Assert.Equal("empty", restarted.Claim(Claim("engine_one")).Status);
 
         var retried = restarted.Create("project", "card", OrchestrationStage.ReviewDecision,
-            "{}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
-            "review_attempt", 3, 4, claimable: false);
+            "{\"reviewOutcome\":\"Pass\"}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
+            "review_attempt", 4, 5, claimable: false);
         Assert.Equal(prepared.RunId, retried.RunId);
+        Assert.Equal("{\"reviewOutcome\":\"Pass\"}", restarted.Get(retried.RunId)!.PayloadJson);
+        Assert.Equal(4, restarted.GetOccurrence(retried.RunId)!.AuthorityFence);
+        Assert.Equal(5, restarted.GetOccurrence(retried.RunId)!.AuthorityEpoch);
         restarted.Activate(retried.RunId);
         Assert.Equal(retried.RunId, restarted.Claim(Claim("engine_one")).Run!.RunId);
     }

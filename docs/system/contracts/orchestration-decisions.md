@@ -105,6 +105,15 @@ change the existing order of effects. Test blocks remain non-degradable, and an
 unactionable concern does not spend an automatic round. Batch planning and
 advisor policies remain in the AGT-3052 contracts package.
 
+For an engine-owned review, the accepted report records its delivered round
+before the prepared occurrence becomes claimable. Recovery repeats that keyed
+write before activation if settlement succeeded but the endpoint stopped. A
+cancelled preparation remains visible to activation recovery, and a rejected
+report may reopen it with a corrected payload and renewed authority fence.
+Gate decisions carry infrastructure and intervention facts to the shared
+policy, which escalates those failures. Shadow comparison uses the action the
+monolith actually applied after the gate handler completes.
+
 ## Verification and architecture guard
 
 `TransitionDecisionGoldenTests` runs the same review and sweep table through all

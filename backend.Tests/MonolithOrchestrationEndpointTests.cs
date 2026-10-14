@@ -244,6 +244,9 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         var reported = await review.ReportReviewAsync(reviewClaim.Attempt!.AttemptId,
             report, CancellationToken.None);
         Assert.Equal(TaskStates.AutoReview, reported.TaskState);
+        Assert.Contains(ReviewRoundBudgetStore.Read(
+                Path.Combine(projectPath, TaskStates.AutoReview, card)).Rounds,
+            round => round.AttemptId == reviewClaim.Attempt.AttemptId);
         var pending = Assert.Single(store.List(project, "pending"));
         Assert.NotEqual(codingRun.RunId, pending.RunId);
         EngineDecisionWaitMarker.Clear(Path.Combine(projectPath, TaskStates.AutoReview, card), pending.RunId);

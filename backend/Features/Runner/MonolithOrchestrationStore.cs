@@ -169,6 +169,23 @@ public sealed class MonolithOrchestrationStore
         lock (_gate) return _runs.Values.FirstOrDefault(item => item.IdempotencyKey == key)?.Run;
     }
 
+    public void RecordMonolithDecision(string runId, string action, string reason)
+    {
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (!item.Shadow) throw new InvalidOperationException("orchestration-not-shadow");
+            if (item.MonolithReceipt is not null) return;
+            item = item with { MonolithReceipt = OrchestrationRolloutStore.Receipt(
+                runId, item.IdempotencyKey, item.Run.PayloadJson, action, reason,
+                $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith") };
+            Save(item);
+            _runs[runId] = item;
+            if (item.EngineReceipt is not null && item.Profile is not null)
+                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+        }
+    }
+
     public IReadOnlyList<OrchestrationRunDto> List(string? projectId, string? status)
     {
         lock (_gate) return _runs.Values.Select(item => item.Run)
@@ -356,9 +373,10 @@ public sealed class MonolithOrchestrationStore
         }
         if (item.Shadow)
         {
-            if (item.Profile is null || item.MonolithReceipt is null || item.EngineReceipt is null)
-                throw new InvalidDataException("Shadow occurrence has incomplete decision receipts.");
-            _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+            if (item.Profile is null || item.EngineReceipt is null)
+                throw new InvalidDataException("Shadow occurrence has no engine decision receipt.");
+            if (item.MonolithReceipt is not null)
+                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
         }
         else await _applier.ApplyAsync(item, request, ct);
         lock (_gate)

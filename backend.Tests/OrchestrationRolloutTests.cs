@@ -81,6 +81,33 @@ public sealed class OrchestrationRolloutTests
     }
 
     [Fact]
+    public async Task Gate_shadow_compares_the_applied_monolith_action_after_engine_completion()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var shadow = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
+            "{\"monolithGateResult\":true}", "gate:applied", TaskStates.AutoReview,
+            "attempt", 1, 1, profile: "GateResult", shadow: true);
+        var claim = fixture.Store.Claim(new("engine", "first", [OrchestrationStage.GateDispatch]));
+        var output = JsonSerializer.Serialize(new { transition = TransitionDecisionPolicy.Create(
+            TransitionAction.ReturnToReady, "Fix the gate.", "card", "attempt", 0, 4) });
+        await fixture.Store.CompleteAsync(shadow.RunId,
+            new("engine", "first", claim.Lease!.LeaseId, claim.Lease.Fence,
+                OrchestrationStage.GateDispatch, OrchestrationAction.Reissue, output,
+                "complete:gate-applied"), default);
+        Assert.Equal("shadow", fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult").State);
+
+        fixture.Store.RecordMonolithDecision(shadow.RunId, TransitionAction.Escalate.ToString(),
+            "The monolith escalated the repeated gate failure.");
+
+        var profile = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(1, profile.MismatchCount);
+        Assert.Equal(0, profile.Streak);
+        Assert.Equal("Escalate", profile.LastMismatch!.Monolith.Action);
+        Assert.Equal("ReturnToReady", profile.LastMismatch.Engine.Action);
+    }
+
+    [Fact]
     public void Recovery_wait_list_excludes_unactivated_review_occurrences()
     {
         using var fixture = new Fixture();

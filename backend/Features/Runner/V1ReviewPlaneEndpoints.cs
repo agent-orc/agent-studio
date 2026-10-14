@@ -989,6 +989,17 @@ public static class V1ReviewPlaneEndpoints
                     scanner.InvalidateCache();
                     return AttemptError(engineSettled);
                 }
+                try
+                {
+                    ReviewRoundBudgetStore.RecordAcceptedEngineReview(reviewTask.FolderPath, payload);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    logger.LogError(exception, "engine-review-round-budget-write-failed attempt={AttemptId}", attemptId);
+                    return Results.Json(new Contract.ApiError("review-round-budget-write-failed",
+                        "The accepted review round could not be written."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
                 orchestration.Activate(occurrence.RunId);
                 if (occurrence.Status is "pending" or "leased" or "applying")
                     EngineDecisionWaitMarker.Write(reviewTask.FolderPath, occurrence.RunId);

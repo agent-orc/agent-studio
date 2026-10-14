@@ -135,6 +135,29 @@ public sealed class StageHandlerTests
         Assert.Equal(OrchestrationAction.Reissue, decision.Action);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Gate_dispatch_escalates_infrastructure_and_intervention_failures(
+        bool infrastructureFailure, bool interventionRequired)
+    {
+        var result = await new GateDispatchLoop().ExecuteAsync(Run(JsonSerializer.Serialize(new
+        {
+            monolithGateResult = true,
+            gateAttemptId = "gate-attempt",
+            automaticRoundsUsed = 0,
+            maximumCardRounds = 4,
+            infrastructureFailure,
+            interventionRequired,
+            gates = new[] { new { status = "failed" } },
+        })), default);
+        using var output = JsonDocument.Parse(result.OutputJson);
+        var transition = output.RootElement.GetProperty("transition")
+            .Deserialize<TransitionDecision>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(OrchestrationAction.Escalate, result.Action);
+        Assert.Equal(TransitionAction.Escalate, transition?.Action);
+    }
+
     [Fact]
     public async Task Batch_gate_release_chooses_a_typed_human_review_transition()
     {

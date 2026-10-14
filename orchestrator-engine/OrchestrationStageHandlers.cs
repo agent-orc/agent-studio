@@ -156,8 +156,12 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                 && allowed.TryGetInt32(out var a) ? a : 4;
             var attemptId = payload.RootElement.TryGetProperty("gateAttemptId", out var attempt)
                 ? attempt.GetString() ?? run.RunId : run.RunId;
+            var infrastructureFailure = payload.RootElement.TryGetProperty("infrastructureFailure", out var infrastructure)
+                && infrastructure.ValueKind == JsonValueKind.True;
+            var interventionRequired = payload.RootElement.TryGetProperty("interventionRequired", out var intervention)
+                && intervention.ValueKind == JsonValueKind.True;
             var decision = StageDecisionPolicy.GateTransition(run.TaskId, attemptId,
-                failed, roundsUsed, roundsAllowed);
+                failed, roundsUsed, roundsAllowed, infrastructureFailure, interventionRequired);
             return new OrchestrationStageDecision(decision.Action, JsonSerializer.Serialize(new
             {
                 component = nameof(GateDispatchLoop),

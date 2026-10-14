@@ -131,12 +131,16 @@ public static class StageDecisionPolicy
         ? OrchestrationAction.Reissue : OrchestrationAction.Continue;
 
     public static StagePolicyDecision GateTransition(string taskId, string attemptId,
-        int failed, int roundsUsed, int roundsAllowed)
+        int failed, int roundsUsed, int roundsAllowed,
+        bool infrastructureFailure = false, bool interventionRequired = false)
     {
-        var action = failed == 0 ? TransitionAction.Continue
+        var action = infrastructureFailure || interventionRequired ? TransitionAction.Escalate
+            : failed == 0 ? TransitionAction.Continue
             : roundsUsed >= roundsAllowed ? TransitionAction.Escalate
             : TransitionAction.ReturnToReady;
-        var reason = failed == 0 ? "The build and test gate passed."
+        var reason = interventionRequired ? "The failed build and test gate requires operator intervention."
+            : infrastructureFailure ? "The build and test gate failed in infrastructure."
+            : failed == 0 ? "The build and test gate passed."
             : action == TransitionAction.Escalate
                 ? "The card round budget is spent with a build and test failure."
                 : "The build and test gate failed; reopen a bounded fix round.";

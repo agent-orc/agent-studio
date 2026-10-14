@@ -1,10 +1,44 @@
 using AgentStudio.Review;
+using AgentStudio.Runner;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class ReviewRoundBudgetTests
 {
+    [Fact]
+    public void Accepted_engine_review_updates_existing_ledger_once()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "engine-review-budget-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var seed = new ReviewRoundBudgetLedger([
+                new DeliveredReviewRound("round-one", ["code-quality"], []),
+                new DeliveredReviewRound("round-two", ["code-quality"], []),
+            ]);
+            ReviewRoundBudgetStore.Record(folder, ReviewRoundBudgetLedger.Empty, seed.Rounds[0]);
+            ReviewRoundBudgetStore.Record(folder, seed, seed.Rounds[1]);
+            var payload = new StagePayload(ReviewOutcome: ReviewOutcomeKinds.ProductFailure,
+                ReviewAttemptId: "round-three",
+                Verdicts: [new AgentStudio.TaskServer.Contracts.ReviewVerdictDto(
+                    "code-quality", "block", "quality:concerns", "A repeat finding.")],
+                DeliveredRounds: seed, MaximumDeliveredRounds: 4);
+
+            ReviewRoundBudgetStore.RecordAcceptedEngineReview(folder, payload);
+            ReviewRoundBudgetStore.RecordAcceptedEngineReview(folder, payload);
+
+            var ledger = ReviewRoundBudgetStore.Read(folder);
+            Assert.Equal(3, ledger.Delivered);
+            Assert.Equal("round-three", ledger.Rounds.Last().AttemptId);
+            Assert.Equal("code-quality", ledger.SpentBy);
+            Assert.Equal(4, ReviewRoundBudgetPolicy.Decide(ledger, "round-four",
+                ["code-quality"], 4, 2).RoundNumber);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
     [Fact]
     public void EpochAndOperatorContinuation_DoNotResetDeliveredRoundBudget()
     {
