@@ -2587,7 +2587,14 @@ public static class LeaseEndpoints
                     RunAttemptId: attemptId));
             }
 
-            if (MonolithTransitionSwitch.For(configuration, "CodingCompletion") == OrchestrationExecutionMode.Engine
+            var codingMode = MonolithTransitionSwitch.For(configuration, "CodingCompletion");
+            var codingOccurrenceKey = $"coding-completion:{attemptId}:{completionKey}";
+            var priorCodingOccurrence = orchestration.GetByIdempotencyKey(codingOccurrenceKey);
+            var pendingCodingOccurrence = priorCodingOccurrence is not null
+                && priorCodingOccurrence.Status is ("pending" or "leased" or "applying")
+                && orchestration.GetOccurrence(priorCodingOccurrence.RunId)?.Shadow == false;
+            if ((codingMode is (OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
+                    || pendingCodingOccurrence)
                 && !string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
             {
                 var payload = System.Text.Json.JsonSerializer.Serialize(new
@@ -2619,17 +2626,28 @@ public static class LeaseEndpoints
                             DateTimeKind.Utc)),
                     },
                 });
+                var codingDecision = codingMode == OrchestrationExecutionMode.Shadow
+                    ? AgentStudio.OrchestrationDecisions.StageDecisionPolicy.Coding(
+                        task.Id, attemptId, targetState) : null;
                 var occurrence = orchestration.Create(task.ProjectName, task.Id,
                     AgentStudio.TaskServer.Contracts.OrchestrationStage.ReviewDecision,
-                    payload, $"coding-completion:{attemptId}:{completionKey}", task.State,
-                    attemptId, req.FencingToken, epoch);
-                if (occurrence.Status is "pending" or "leased" or "applying")
+                    payload, codingOccurrenceKey, task.State,
+                    attemptId, req.FencingToken, epoch,
+                    profile: "CodingCompletion", shadow: codingMode == OrchestrationExecutionMode.Shadow,
+                    monolithAction: codingDecision?.Action.ToString(),
+                    monolithReason: codingDecision?.Reason);
+                var occurrenceIsEngine = orchestration.GetOccurrence(occurrence.RunId)?.Shadow != true;
+                if (occurrenceIsEngine
+                    && occurrence.Status is ("pending" or "leased" or "applying"))
                     EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
-                scanner.InvalidateCache();
-                return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
-                    task.State, "Waiting for engine decision.", RunAttemptId: attemptId,
-                    ReviewAttemptId: reviewAttempt?.AttemptId,
-                    ReviewSubjectId: reviewAttempt?.Subject.SubjectId));
+                if (occurrenceIsEngine)
+                {
+                    scanner.InvalidateCache();
+                    return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
+                        task.State, "Waiting for engine decision.", RunAttemptId: attemptId,
+                        ReviewAttemptId: reviewAttempt?.AttemptId,
+                        ReviewSubjectId: reviewAttempt?.Subject.SubjectId));
+                }
             }
             if (!string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
             {

@@ -1,5 +1,8 @@
 using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Shared;
+using System.Text.Json;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
@@ -69,6 +72,24 @@ public sealed class StageHandlerTests
         Assert.Contains("review-42", decision.OutputJson, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(TaskStates.AutoReview, TransitionAction.CreateReview)]
+    [InlineData(TaskStates.Ready, TransitionAction.ReturnToReady)]
+    [InlineData(TaskStates.Escalated, TransitionAction.Escalate)]
+    public async Task Coding_completion_writes_a_typed_library_decision(
+        string target, TransitionAction expected)
+    {
+        var result = await new ReviewDecisionOrchestratorLoop().ExecuteAsync(
+            Run(JsonSerializer.Serialize(new { agentOutcome = "done", runAttemptId = "attempt-1",
+                targetState = target })), default);
+        using var output = JsonDocument.Parse(result.OutputJson);
+        var transition = output.RootElement.GetProperty("transition")
+            .Deserialize<TransitionDecision>()!;
+        Assert.Equal(expected, transition.Action);
+        Assert.Equal(StageDecisionPolicy.ToStageAction(expected), result.Action);
+        Assert.Equal("attempt-1", transition.Receipt.AttemptId);
+    }
+
     [Fact]
     public async Task Council_reissues_named_critical_findings()
     {
@@ -112,6 +133,25 @@ public sealed class StageHandlerTests
             Run("""{"gates":[{"status":"failed"}]}"""),
             default);
         Assert.Equal(OrchestrationAction.Reissue, decision.Action);
+    }
+
+    [Fact]
+    public async Task Batch_gate_release_chooses_a_typed_human_review_transition()
+    {
+        var result = await new GateDispatchLoop().ExecuteAsync(Run("""
+            {"monolithGateResult":true,"gateAttemptId":"review-1","targetState":"5-human-review",
+             "gates":[{"status":"passed"}]}
+            """), default);
+        using var output = JsonDocument.Parse(result.OutputJson);
+        var transition = output.RootElement.GetProperty("transition")
+            .Deserialize<TransitionDecision>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(OrchestrationAction.Continue, result.Action);
+        Assert.Equal(TransitionAction.Continue, transition?.Action);
+        Assert.Equal("review-1", transition?.Receipt.AttemptId);
+        Assert.Equal($"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}",
+            output.RootElement.GetProperty("decider").GetString());
+        Assert.Equal(TaskStates.HumanReview,
+            TransitionDecisionPolicy.TargetLane(transition?.Action, TaskStates.HumanReview, result.Action));
     }
 
     private static OrchestrationRunDto Run(string payload, TimeProvider? clock = null)

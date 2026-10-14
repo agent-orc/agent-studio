@@ -7,6 +7,8 @@ using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.OrchestrationDecisions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Pipeline;
@@ -34,6 +36,8 @@ public sealed class BatchGatePilotService
     private readonly BatchIntegrationReservationService? _reservations;
     private readonly PipelineExecutionLog _pipelineLog;
     private readonly GateSlotUsageTracker? _gateSlots;
+    private readonly IServiceProvider? _services;
+    private readonly IConfiguration? _configuration;
     private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
@@ -60,7 +64,8 @@ public sealed class BatchGatePilotService
         BatchGateAdvisorService? advisor = null,
         BatchIntegrationReservationService? reservations = null,
         PipelineExecutionLog? pipelineLog = null,
-        GateSlotUsageTracker? gateSlots = null)
+        GateSlotUsageTracker? gateSlots = null,
+        IServiceProvider? services = null, IConfiguration? configuration = null)
     {
         _store = store;
         _leases = leases;
@@ -84,6 +89,8 @@ public sealed class BatchGatePilotService
         _pipelineLog = pipelineLog ?? new PipelineExecutionLog(pricing,
             NullLogger<PipelineExecutionLog>.Instance);
         _gateSlots = gateSlots;
+        _services = services;
+        _configuration = configuration;
     }
 
     public BatchGatePendingRecord Enqueue(TaskInfo task, ReviewAttemptDto review,
@@ -1706,6 +1713,9 @@ public sealed class BatchGatePilotService
         // move. A rebased member is not an ancestor by its original SHA, so
         // record its verified replacement mapping first.
         RecordBatchIntegration(task.FolderPath, manifest, run, replay);
+        if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId,
+                $"batch-result:{manifest.BatchId}:{run.BatchRunId}:{subject.TaskKey}",
+                "Batch gate passed on a verified candidate SHA.")) return;
         var moved = await _transitions.MoveAsync(
             task.Id, TaskStates.HumanReview, task.WatchPath, ct,
             cause: $"batch-gate:{manifest.BatchId}",
@@ -1832,6 +1842,15 @@ public sealed class BatchGatePilotService
         var evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath),
             $"batch-fallback-{pending.ReviewAttemptId}.json");
         var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
+        if (containedInSha is null && ownership?.FallbackIntegrated == true)
+            containedInSha = ownership.ContainedInSha;
+        var pendingDecisionKey = $"batch-fallback:{pending.ReviewAttemptId}:{containedInSha ?? pending.Subject.ResultSha}";
+        var occurrenceStore = _services?.GetService<MonolithOrchestrationStore>();
+        var priorDecision = occurrenceStore?.GetByIdempotencyKey(pendingDecisionKey);
+        if (priorDecision is not null
+            && occurrenceStore?.GetOccurrence(priorDecision.RunId) is { Shadow: false }
+            && priorDecision.Status is ("pending" or "leased" or "applying"))
+            return;
         var alreadyPassed = ownership?.ReviewAttemptId == pending.ReviewAttemptId
             && string.Equals(ownership.FallbackTestedSha, pending.Subject.ResultSha,
                 StringComparison.OrdinalIgnoreCase)
@@ -1932,6 +1951,11 @@ public sealed class BatchGatePilotService
         }
         BatchGateOwnershipStore.Write(task.FolderPath,
             ownership! with { FallbackIntegrated = true });
+        if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId,
+                $"batch-fallback:{pending.ReviewAttemptId}:{containedInSha ?? pending.Subject.ResultSha}",
+                containedInSha is null
+                    ? "Per-task fallback gate passed on the immutable result SHA."
+                    : "The integration branch already contained the result SHA.")) return;
         var moved = await _transitions.MoveAsync(task.Id, TaskStates.HumanReview,
             task.WatchPath, ct, cause: $"batch-fallback:{pending.ReviewAttemptId}",
             suppressProductExecution: true,
@@ -1951,6 +1975,51 @@ public sealed class BatchGatePilotService
                     : $"The integration branch already contained the result SHA at {containedInSha}; "
                       + "no batch candidate and no gate ran.");
         }
+    }
+
+    private bool HoldForEngineBatchDecision(TaskInfo task, string reviewAttemptId,
+        string occurrenceKey, string reason)
+    {
+        if (_configuration is null) return false;
+        var mode = MonolithTransitionSwitch.For(_configuration, "GateResult");
+        var existingStore = _services?.GetService<MonolithOrchestrationStore>();
+        var existing = existingStore?.GetByIdempotencyKey(occurrenceKey);
+        if (existing is not null
+            && existingStore?.GetOccurrence(existing.RunId) is { Shadow: false }
+            && existing.Status is ("pending" or "leased" or "applying"))
+            return true;
+        if (mode == OrchestrationExecutionMode.Monolith) return false;
+        var orchestration = existingStore
+            ?? throw new InvalidOperationException("The orchestration authority is unavailable.");
+        var source = _authority.GetTaskProjection(task.Key ?? task.Id).CurrentRunAttempt
+            ?? throw new InvalidOperationException("The batch source attempt is unavailable.");
+        var decision = mode == OrchestrationExecutionMode.Shadow
+            ? StageDecisionPolicy.GateTransition(task.Id, reviewAttemptId, 0, 0, 1).Transition
+            : null;
+        var payload = JsonSerializer.Serialize(new
+        {
+            monolithGateResult = true,
+            gateAttemptId = reviewAttemptId,
+            reviewAttemptId,
+            automaticRoundsUsed = 0,
+            maximumCardRounds = 1,
+            targetState = TaskStates.HumanReview,
+            reviewOutcome = "Pass",
+            gateReason = reason,
+            gates = new[] { new { status = "passed" } },
+        });
+        var occurrence = orchestration.Create(task.ProjectName, task.Id,
+            AgentStudio.TaskServer.Contracts.OrchestrationStage.GateDispatch, payload, occurrenceKey,
+            TaskStates.AutoReview, source.AttemptId, source.LastFence,
+            source.AuthorityEpoch, profile: "GateResult",
+            shadow: mode == OrchestrationExecutionMode.Shadow,
+            monolithAction: decision?.Action.ToString(),
+            monolithReason: decision?.Reason);
+        if (mode == OrchestrationExecutionMode.Shadow) return false;
+        if (occurrence.Status is "pending" or "leased" or "applying")
+            EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
+        _scanner.InvalidateCache();
+        return true;
     }
 
     /// <summary>Pending-queue resolution of a member that left as integrated (AGT-3103).</summary>
@@ -2030,6 +2099,7 @@ public sealed class BatchGatePilotService
             {
                 CurrentGeneration = current,
                 ActivePerTaskGate = ownership?.FallbackGateActive == true
+                    || ownership?.FallbackIntegrated == true
                     || FallbackInFlight(pending.ReviewAttemptId),
                 OwningBatchId = ownership?.BatchId,
                 GateProfileDigest = GateProfile(settings.BuildProfile, pending.RepositoryPath),

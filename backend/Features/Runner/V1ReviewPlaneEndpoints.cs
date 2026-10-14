@@ -864,17 +864,27 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
-            if (MonolithTransitionSwitch.For(configuration, "ReviewReport") == OrchestrationExecutionMode.Engine)
+            var reviewOccurrenceKey = $"review-report:{attemptId}:{request.IdempotencyKey}";
+            var priorReviewOccurrence = orchestration.GetByIdempotencyKey(reviewOccurrenceKey);
+            var pendingReviewOccurrence = priorReviewOccurrence is not null
+                && priorReviewOccurrence.Status is ("pending" or "leased" or "applying")
+                && orchestration.GetOccurrence(priorReviewOccurrence.RunId)?.Shadow == false;
+            if (MonolithTransitionSwitch.For(configuration, "ReviewReport") == OrchestrationExecutionMode.Engine
+                || pendingReviewOccurrence)
             {
                 if (reviewTask is null)
                     return Results.NotFound(new Contract.ApiError("task-not-found", "Review task was not found."));
-                var engineFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
-                    request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
-                        verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
-                        verdict.Missing, verdict.Classification)),
-                    concernRoundsUsed: 0, maxConcernRounds: 1);
-                if (engineFollowUp.Action == Contract.ReviewFollowUpAction.RetryAspect)
-                    request = ClassifyRetryAspectExhaustion(request, engineFollowUp);
+                var exhaustedAspects = request.Verdicts.Where(verdict =>
+                    string.Equals(verdict.Classification, "review:unparseable", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(verdict.Classification, "ReviewInfra", StringComparison.OrdinalIgnoreCase))
+                    .Select(verdict => verdict.Aspect).ToArray();
+                if (exhaustedAspects.Length > 0)
+                    request = request with
+                    {
+                        Outcome = "ReviewInfra",
+                        FailureClassification = "AspectVerdictUnparseable",
+                        Summary = $"Aspect verdict infrastructure failed for {string.Join(", ", exhaustedAspects)}; the aspect retry was exhausted.",
+                    };
                 if (TransitionDecisionPolicy.IsDeferredAcceptance(
                         currentReview.Subject.Plan?.BuildTestDeferredToBatch == true, request.Outcome)
                     && !request.Verdicts.Any(verdict =>
@@ -915,16 +925,17 @@ public static class V1ReviewPlaneEndpoints
                     InfrastructureRetryAvailable: authority.HasReviewInfrastructureRetryBudget(attemptId),
                     MaximumReissues: settings.Get(reviewTask.ProjectName).MaxAutoReissueAttempts
                         ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
+                    ReissuesUsed: CountPriorAutomaticReissues(configuration["TaskRepository"],
+                        reviewTask.ProjectName, reviewTask.Id),
                     DeliveredRounds: ReviewRoundBudgetStore.Read(reviewTask.FolderPath, rounds),
                     MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds);
-                var occurrenceKey = $"review-report:{attemptId}:{request.IdempotencyKey}";
-                var occurrence = orchestration.GetByIdempotencyKey(occurrenceKey)
+                var occurrence = orchestration.GetByIdempotencyKey(reviewOccurrenceKey)
                     ?? orchestration.Create(reviewTask.ProjectName, reviewTask.Id,
                     Contract.OrchestrationStage.ReviewDecision,
                     JsonSerializer.Serialize(payload, Json),
-                    occurrenceKey,
+                    reviewOccurrenceKey,
                     reviewTask.State, attemptId, request.Fence, request.AuthorityEpoch,
-                    claimable: false);
+                    claimable: false, profile: "ReviewReport");
                 AttemptWriteResult engineSettled;
                 try
                 {
@@ -1203,6 +1214,43 @@ public static class V1ReviewPlaneEndpoints
                     "The review report key is bound to a different payload."));
             if (!settled.Accepted || settled.ReviewAttempt is null)
                 return AttemptError(settled);
+
+            if (!acceptedReplay
+                && preparedTask.State == TaskStates.AutoReview
+                && MonolithTransitionSwitch.For(configuration, "ReviewReport") == OrchestrationExecutionMode.Shadow)
+            {
+                var shadowPayload = new StagePayload(
+                    ReviewOutcome: request.Outcome,
+                    RunAttemptId: currentReview.SourceRunAttemptId,
+                    ReviewSubjectId: currentReview.Subject.SubjectId,
+                    ReviewAttemptId: attemptId,
+                    ResultSha: currentReview.Subject.ExpectedResultSha,
+                    ResultRef: currentReview.Subject.ResultRef,
+                    Verdicts: request.Verdicts,
+                    ReviewPlan: currentReview.Subject.Plan,
+                    FailureClassification: request.FailureClassification,
+                    AutomaticRoundsUsed: cardBudget.Used,
+                    MaximumCardRounds: cardBudget.Allowed,
+                    ConcernRoundsUsed: ReviewConcernRoundStore.Read(preparedTask.FolderPath)?.Used ?? 0,
+                    MaximumConcernRounds: settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
+                    InfrastructureRetryAvailable: authority.HasReviewInfrastructureRetryBudget(attemptId),
+                    MaximumReissues: settings.Get(preparedTask.ProjectName).MaxAutoReissueAttempts
+                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
+                    ReissuesUsed: CountPriorAutomaticReissues(configuration["TaskRepository"],
+                        preparedTask.ProjectName, preparedTask.Id),
+                    DeliveredRounds: roundSeed,
+                    MaximumDeliveredRounds: settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds);
+                var shadowJson = JsonSerializer.Serialize(shadowPayload, Json);
+                var shadowDecision = MonolithTransitionAdapter.Decide(
+                    StageDecisionPolicy.Facts(preparedTask.Id, 0, shadowPayload));
+                orchestration.Create(preparedTask.ProjectName, preparedTask.Id,
+                    Contract.OrchestrationStage.ReviewDecision, shadowJson,
+                    $"review-report:{attemptId}:{request.IdempotencyKey}",
+                    preparedTask.State, attemptId, request.Fence, request.AuthorityEpoch,
+                    profile: "ReviewReport", shadow: true,
+                    monolithAction: shadowDecision.Action.ToString(),
+                    monolithReason: shadowDecision.Reason);
+            }
 
             // The authority verdict is durable here. Closing the exact probe
             // cannot depend on the later delivery lane transition succeeding.

@@ -1,4 +1,5 @@
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Shared;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -34,7 +35,13 @@ public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
         var observedOutcome = reviewOutcome ?? executionOutcome ?? terminal;
         var decision = StageDecisionPolicy.Review(run.TaskId, run.ReissueAttempts,
             JsonSerializer.Deserialize<StagePayload>(run.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!);
-        var action = decision.Action;
+        var codingTarget = ReadString(payload.RootElement, "targetState")
+            ?? (StageDecisionPolicy.ReviewOutcome(null, executionOutcome, terminal)
+                == OrchestrationAction.Escalate ? TaskStates.Escalated : TaskStates.AutoReview);
+        var transition = decision.Transition ?? StageDecisionPolicy.Coding(run.TaskId,
+            ReadString(payload.RootElement, "runAttemptId") ?? run.RunId,
+            codingTarget);
+        var action = StageDecisionPolicy.ToStageAction(transition.Action);
         return Task.FromResult(new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
@@ -45,7 +52,8 @@ public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
                 reviewSubjectId = ReadString(payload.RootElement, "reviewSubjectId"),
                 reviewAttemptId = ReadString(payload.RootElement, "reviewAttemptId"),
                 observedOutcome,
-                transition = decision.Transition,
+                transition,
+                decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}",
                 decision = action.ToString(),
             })));
     }
@@ -83,6 +91,7 @@ public sealed class CouncilLoop : IOrchestrationStageHandler
                 findingCount,
                 blockerCount,
                 transition = decision.Transition,
+                decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}",
                 decision = action.ToString(),
             })));
     }
@@ -153,6 +162,7 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
             {
                 component = nameof(GateDispatchLoop),
                 transition = decision.Transition,
+                decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}",
                 decision = decision.Action.ToString(),
             }));
         }

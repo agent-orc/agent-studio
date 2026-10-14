@@ -4,6 +4,10 @@ namespace AgentStudio.OrchestratorEngine;
 
 public static class EngineVersion
 {
+    public static string DecisionLibraryVersion
+        => typeof(AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy)
+            .Assembly.GetName().Version?.ToString(3) ?? "unknown";
+
     public static string ProductVersion
         => typeof(EngineVersion).Assembly.GetName().Version?.ToString(3) ?? "unknown";
 

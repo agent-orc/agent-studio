@@ -27,6 +27,20 @@ uses the exclusive `orchestration.write` credential scope. The occurrence
 journal lives under `<TaskRepository>/.orchestration-occurrences`; it preserves
 pending work, lease fences and completed stage receipts across restarts.
 
+AGT-3059 adds a per-profile rollout journal at
+`<TaskRepository>/.orchestration-rollout.json`. Coding completion, review report,
+and gate or batch result can be switched independently from Monolith to Shadow and then
+to Engine. Shadow records both receipts for each occurrence and compares chosen
+actions and input digests. A mismatch resets the matching streak and records
+both actions and reasons. The default threshold is 50 consecutive matches;
+`Orchestration:ShadowMatchThreshold` can change it. Ready is visible but does
+not switch automatically. A Studio operator switches or rolls back through one
+API call with an actor and reason receipt. Rollback keeps pending occurrences
+and resumes them through the monolith's shared library. Unactivated review
+occurrences do not carry a waiting marker. Engine mode never invokes the
+monolith decision on engine unavailability; after one minute a pending
+occurrence raises an operator feed alert and waits for a leased engine instance.
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled
