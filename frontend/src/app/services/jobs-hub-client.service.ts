@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import {
   HubConnection,
   HubConnectionBuilder,
@@ -6,6 +6,7 @@ import {
 } from '@microsoft/signalr';
 import type { TaskInfo } from '../models/task.model';
 import type { WorkbenchHubEvent } from '../models/project-docs.model';
+import { BuildUpdateNoticeService } from './build-update-notice.service';
 
 /**
  * Callbacks the {@link TaskService} registers for the fine-grained task
@@ -62,6 +63,7 @@ export interface PlanUpdatedEvent {
  */
 @Injectable({ providedIn: 'root' })
 export class JobsHubClient {
+  private readonly buildUpdateNotice = inject(BuildUpdateNoticeService);
   /** True while the hub socket is up. The poll cadence does not depend on this — it is exposed for diagnostics / tests. */
   readonly connected = signal(false);
   /** ISO timestamp of the latest connected/disconnected transition. */
@@ -129,6 +131,7 @@ export class JobsHubClient {
     conn.onreconnecting(() => this.setConnected(false));
     conn.onreconnected(() => {
       this.setConnected(true);
+      this.buildUpdateNotice.checkAfterReconnect();
       this.publishWorkbenchReconnect();
       this.handlers?.reconnected?.();
     });
@@ -164,6 +167,7 @@ export class JobsHubClient {
       .start()
       .then(() => {
         this.setConnected(true);
+        this.buildUpdateNotice.checkAfterReconnect();
         this.publishWorkbenchReconnect();
         // Initial convergence pull: the board may have changed between the
         // last poll and the socket coming up.

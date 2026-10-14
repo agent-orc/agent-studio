@@ -7,6 +7,7 @@ import { clientIdInterceptor } from './services/client-id.interceptor';
 import { offlineGuardInterceptor } from './services/offline-guard.interceptor';
 import { publicDemoGuardInterceptor } from './services/public-demo-guard.interceptor';
 import { sessionSecurityInterceptor } from './services/session-security.interceptor';
+import { buildIdentityInterceptor } from './services/build-identity.interceptor';
 import { TaskReferenceNavigationService } from './services/task-reference-navigation.service';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { TaskReferenceMicrocardHydratorService } from './services/task-reference-microcard-hydrator.service';
@@ -21,6 +22,7 @@ export const appConfig: ApplicationConfig = {
       publicDemoGuardInterceptor,
       sessionSecurityInterceptor,
       clientIdInterceptor,
+      buildIdentityInterceptor,
     ])),
     { provide: ErrorHandler, useClass: ModalErrorHandler },
     // coding-agent-chat host seams: markdown task-reference auto-linking and
