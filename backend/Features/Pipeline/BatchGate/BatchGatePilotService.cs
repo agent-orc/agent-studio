@@ -1882,10 +1882,12 @@ public sealed class BatchGatePilotService
             }
             catch (OperationCanceledException)
             {
+                var reason = ct.IsCancellationRequested
+                    ? GateCancellationReasons.Shutdown : GateCancellationReasons.Operator;
                 gate = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0, "",
-                    "Gate cancelled: shutdown.", false, false)
+                    $"Gate cancelled: {reason}.", false, false)
                 { FailureKind = BuildTestGateFailureKind.Cancellation,
-                    CancellationReason = GateCancellationReasons.Shutdown };
+                    CancellationReason = reason };
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {

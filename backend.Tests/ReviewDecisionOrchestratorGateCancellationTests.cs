@@ -20,11 +20,23 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         const string slug = "cancel-superseded";
         SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
         WriteRemoteSubject(slug, new string('a', 40), "old");
+        var clock = new CancellationClock();
         var transport = new CancellationTransport(request =>
         {
             if (change == "delivery") WriteRemoteSubject(slug, new string('b', 40), "new");
-            else if (change == "lane") Assert.Equal(MoveJobStatus.Success,
-                _cancellationStateMachine!.MoveJob(slug, TaskStates.Ready, _watchPath).Status);
+            else if (change == "lane")
+            {
+                Assert.Equal(MoveJobStatus.Success,
+                    _cancellationStateMachine!.MoveJob(slug, TaskStates.Ready, _watchPath).Status);
+                var liveFolder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+                var liveLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+                var prior = Assert.IsType<PipelineExecutionRecord>(liveLog.Read(liveFolder));
+                var newAttemptAt = prior.StartedAt.AddTicks(1);
+                liveLog.Begin(liveFolder, PipelineCatalogue.Standard, Project, slug, newAttemptAt);
+                liveLog.RecordStep(liveFolder, BuildTestGateStepProjection.Create(
+                    PipelineStepStatus.Passed, 0, "ok", "newer attempt passed", null,
+                    newAttemptAt));
+            }
             else Assert.NotNull(_cancellationMutations!.SavePendingIntent(slug,
                 ContinueModes.Continue, "Continue the delivery", "operator", null, _watchPath));
             throw new OperationCanceledException();
@@ -32,7 +44,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         var diagnostics = new CancellationDiagnostics();
         var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 3,
             new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance),
-            new CancellationClock(), diagnostics);
+            clock, diagnostics);
         orchestrator.BuildTestGateRetryBackoff = _ => TimeSpan.Zero;
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
@@ -45,6 +57,16 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         var folder = Path.Combine(_watchPath, change == "lane" ? TaskStates.Ready : TaskStates.AutoReview, slug);
         Assert.Equal("superseded", Assert.Single(new TimelineLog(NullLogger<TimelineLog>.Instance)
             .ReadAll(folder), e => e.Kind == "gate-cancelled").Details!["reason"]);
+        Assert.Contains(Directory.EnumerateFiles(Path.Combine(folder, "post-steps"), "build-test-gate-*.log"),
+            file => File.ReadAllText(file).Contains("reason=Gate cancelled: superseded.", StringComparison.Ordinal));
+        if (change == "lane")
+        {
+            var liveLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+            var step = Assert.Single(liveLog.Read(folder)!.Steps,
+                item => item.StepId == PipelineCatalogue.BuildTestGateStepId);
+            Assert.Equal(PipelineStepStatus.Passed, step.Status);
+            Assert.Equal("newer attempt passed", step.Reason);
+        }
     }
 
     [Fact]
@@ -93,15 +115,21 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             item => item.JobId == slug && item.Kind == ReviewDecisionKind.Escalate);
     }
 
-    [Fact]
-    public async Task Cancelled_operator_gate_still_parks_without_retry()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancelled_operator_gate_still_parks_without_retry(bool throwFromTransport)
     {
         const string slug = "cancel-operator";
         SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
         WriteRemoteSubject(slug, new string('a', 40), "operator");
-        var transport = new CancellationTransport(request => RemoteBuildTestGateRunner.Failure(request,
-            BuildTestGateFailureKind.Cancellation, "Operator stopped verification.")
-            with { CancellationReason = GateCancellationReasons.Operator });
+        var transport = new CancellationTransport(request =>
+        {
+            if (throwFromTransport) throw new OperationCanceledException();
+            return RemoteBuildTestGateRunner.Failure(request,
+                BuildTestGateFailureKind.Cancellation, "Operator stopped verification.")
+                with { CancellationReason = GateCancellationReasons.Operator };
+        });
         var diagnostics = new CancellationDiagnostics();
         var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 3,
             new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance), new CancellationClock(), diagnostics);
