@@ -33,7 +33,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
-        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        await WarmIndexAsync(factory, id);
 
         foreach (var reference in new[] { id, key, id[..128] })
         {
@@ -57,7 +57,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var project = registry.FindByStorageLocation(Jobs);
         Assert.NotNull(project);
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
-        index.ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-core");
         var scansBefore = index.Misses;
         var url = $"/api/tasks/AGT-core/core?project={project!.Id}";
 
@@ -133,7 +133,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
-        index.ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-core");
         using var coreResponse = await client.GetAsync($"/api/tasks/AGT-core/core?project={project.Id}");
         coreResponse.EnsureSuccessStatusCode();
         using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
@@ -183,7 +183,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
-        index.ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-core");
 
         // `version` is the hash of exactly the `data` bytes on the wire, which
         // are serialized once with the host's HTTP JSON options (string enums).
@@ -206,7 +206,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
         Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
 
-        index.ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-unknown");
         using var missing = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
@@ -227,7 +227,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
-        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-core");
         var url = $"/api/tasks/AGT-core/details/documents?project={project.Id}&name=status";
 
         using (var bound = await client.GetAsync(url))
@@ -315,7 +315,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
-        index.ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-dependent");
         var url = $"/api/tasks/AGT-dependent/core?project={project.Id}";
         using var before = await client.GetAsync(url);
         before.EnsureSuccessStatusCode();
@@ -353,7 +353,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
-        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        await WarmIndexAsync(factory, "AGT-core");
         using var request = new HttpRequestMessage(HttpMethod.Get,
             $"/api/tasks/AGT-core/core?project={project.Id}");
         request.Headers.Add("X-Task-Switch-Trace", "1");
@@ -398,7 +398,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs);
         Assert.NotNull(project);
-        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        await WarmIndexAsync(factory, keys[0]);
         var urls = keys.Select(key =>
             $"/api/tasks/{Uri.EscapeDataString(key)}/core?project={project!.Id}").ToArray();
         foreach (var url in urls)
@@ -463,6 +463,23 @@ public sealed class TaskCoreEndpointTests : IDisposable
             $"Core handler p95 was {handlerP95:F1} ms; HTTP round-trip p95 was {Quantile(roundTrips, 0.95):F1} ms.");
         Assert.True(traceOverheadP95 <= 1,
             $"Opt-in trace added {traceOverheadP95:F3} ms to HTTP round-trip p95 on this host.");
+    }
+
+    private async Task WarmIndexAsync(WebApplicationFactory<Program> factory, string identity)
+    {
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        var clock = factory.Services.GetRequiredService<TimeProvider>();
+        var deadline = clock.GetUtcNow().AddSeconds(30);
+        index.ForceRefresh();
+        while (index.GetCore(identity, Jobs).Warming)
+        {
+            var remaining = deadline - clock.GetUtcNow();
+            Assert.True(remaining > TimeSpan.Zero, $"Task index did not warm for {identity}.");
+            if (index.RefreshInFlight is { } refresh)
+                await refresh.WaitAsync(remaining, clock);
+            else
+                index.ForceRefresh();
+        }
     }
 
     private WebApplicationFactory<Program> Factory() =>
