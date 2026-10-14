@@ -194,7 +194,15 @@ public sealed class EngineContractTests
             new CreateTaskRequest("Run engine flow", State: "4-auto-review", TaskId: "tsk-engine"),
             "test",
             default);
-        var stages = Enum.GetValues<OrchestrationStage>();
+        // The five card flow stages; OperatorSweep is a periodic occurrence, not a flow step.
+        OrchestrationStage[] stages =
+        [
+            OrchestrationStage.ReviewDecision,
+            OrchestrationStage.Council,
+            OrchestrationStage.PostProcessing,
+            OrchestrationStage.GateDispatch,
+            OrchestrationStage.CompletionJudge,
+        ];
         var definition = await store.UpsertFlowDefinitionAsync(
             project.ProjectId,
             new UpsertFlowDefinitionRequest(null, stages),

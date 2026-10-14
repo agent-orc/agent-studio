@@ -11,7 +11,8 @@ public sealed record OperatorSweepActionResult(bool Started, string Detail);
 public sealed record OperatorSweepFixRound(
     string ReviewAttemptId,
     string FollowUp,
-    ContinuationBaseRecord? Base = null);
+    ContinuationBaseRecord? Base = null,
+    AttemptWriteReference? AuthorityWrite = null);
 
 /// <summary>
 /// The bounded side effects the sweeps may apply. Each one is the internal path
@@ -82,6 +83,7 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
                 token,
                 cause: $"operator-sweep:{OperatorSweepKinds.FixRounds}:{round.ReviewAttemptId}",
                 reason: $"ProductFailure review {round.ReviewAttemptId} turned into a fix round by the operator sweep.",
+                authorityWrite: round.AuthorityWrite,
                 suppressProductExecution: true,
                 expectedSourceState: TaskStates.HumanReview,
                 transitionCause: LaneChangeCauses.QualityLoop,

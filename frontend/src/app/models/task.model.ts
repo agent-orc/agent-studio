@@ -655,6 +655,7 @@ export interface TaskInfo {
     model: string | null;
     reason: string | null;
   } | null;
+  waitingForEngineDecision?: boolean;
   /** Intentional, bounded wait for a confirmed nearby CLI quota reset. */
   quotaWait?: {
     cliType: string;

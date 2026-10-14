@@ -73,22 +73,34 @@ chown_results_from_stdin() {
 # script and the daemon cannot drift on what "busy" means.
 review_state_dir() {
   local main_pid
+  local confirmed_main_pid
   local environment_files
   local file
   local selected_file=""
   local value=""
+  local deadline
 
   if systemctl is-active --quiet "$review_unit"; then
     main_pid="$(unit_main_pid "$review_unit")" || {
       printf 'agent-runner-deploy: could not resolve the active review MainPID\n' >&2
       return 1
     }
-    [[ "$main_pid" =~ ^[1-9][0-9]*$ && -r "$proc_root/$main_pid/environ" ]] || {
-      printf 'agent-runner-deploy: active review MainPID has no readable environment: %s\n' \
-        "$main_pid" >&2
-      return 1
-    }
-    value="$(read_process_environment_value "$main_pid" RUNNER_STATE_DIR)" || return 1
+    [[ "$main_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    # Type=simple can report an active MainPID before ExecStart has replaced
+    # the forked child, so its /proc environment may still lack this value.
+    deadline=$((SECONDS + effective_environment_wait_seconds))
+    while true; do
+      if [[ -r "$proc_root/$main_pid/environ" ]]; then
+        value="$(read_process_environment_value "$main_pid" RUNNER_STATE_DIR)" || return 1
+      fi
+      confirmed_main_pid="$(unit_main_pid "$review_unit")" || return 1
+      [[ "$confirmed_main_pid" == "$main_pid" ]] || {
+        printf 'agent-runner-deploy: review MainPID changed while reading its environment\n' >&2
+        return 1
+      }
+      [[ -z "$value" && SECONDS -lt deadline ]] || break
+      sleep "$main_pid_poll_seconds"
+    done
     value="$(strip_environment_quotes "$value")"
     validate_review_state_dir "$value" || return 1
     printf '%s\n' "$value"

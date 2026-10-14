@@ -25,6 +25,8 @@ public record TaskInfo
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
     public string State { get; init; } = "draft";
+    /// <summary>Durable current-lane wait for a remote orchestration decision.</summary>
+    public bool WaitingForEngineDecision { get; init; }
     /// <summary>Operator review queue priority for a card in auto-review.</summary>
     public string ReviewPriority { get; init; } = "normal";
     /// <summary>One-based claimable review queue position, when an attempt is waiting.</summary>

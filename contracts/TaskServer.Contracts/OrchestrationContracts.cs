@@ -7,6 +7,7 @@ public enum OrchestrationStage
     PostProcessing,
     GateDispatch,
     CompletionJudge,
+    OperatorSweep,
 }
 
 public enum OrchestrationAction
@@ -76,7 +77,12 @@ public sealed record UpsertFlowDefinitionRequest(
 public sealed record CreateOrchestrationRunRequest(
     string TaskId,
     string PayloadJson,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    OrchestrationStage Stage = OrchestrationStage.ReviewDecision,
+    string? ExpectedSourceState = null,
+    string? AuthorityAttemptId = null,
+    long AuthorityFence = 0,
+    long AuthorityEpoch = 0);
 
 public sealed record OrchestrationStageResultDto(
     long Sequence,

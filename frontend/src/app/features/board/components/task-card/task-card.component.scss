@@ -551,6 +551,7 @@
       opacity: 0.85;
     }
     .task-card__execution-pill,
+    .task-card__engine-wait,
     .task-card__pending-pill,
     .task-card__waiting-pill,
     .task-card__provider-auth-wait,
@@ -574,6 +575,11 @@
       font-size: var(--studio-card-meta-size);
       font-weight: 600;
       letter-spacing: 0.02em;
+    }
+    .task-card__engine-wait {
+      color: var(--studio-fg-muted);
+      background: var(--studio-card-muted-bg);
+      border: 1px solid var(--studio-border);
     }
     /* Mode badge (planning / research / concept). Only non-coding modes render a pill so
        the board stays quiet for the default mode. AGT-2069: planning cards get

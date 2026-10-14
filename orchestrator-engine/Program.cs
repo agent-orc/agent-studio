@@ -53,6 +53,7 @@ try
     builder.Services.AddSingleton<IOrchestrationStageHandler, PostProcessingLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, GateDispatchLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, CompletionJudgeLoop>();
+    builder.Services.AddSingleton<IOrchestrationStageHandler, OperatorSweepLoop>();
     builder.Services.AddHostedService<OrchestratorEngineService>();
     builder.Services.AddHostedService<EngineHealthServer>();
     await builder.Build().RunAsync();

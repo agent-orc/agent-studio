@@ -2350,9 +2350,11 @@ identity. Do not use `--force` while the old identity can still claim work.
 The guard also covers `agent-runner-deploy config review RUNNER_MAX_PARALLELISM
 <n>` and release promotion, because those paths replace the Review daemon too.
 For an active unit, the helper reads the effective `RUNNER_STATE_DIR` from that
-MainPID's `/proc/<pid>/environ` and fails closed if it cannot. Release promotion
-runs the already validated staged `agent-host` for the guard, so upgrading from
-a current binary that predates the guard flag cannot bypass or deadlock the
+MainPID's `/proc/<pid>/environ`. Because `Type=simple` can expose the MainPID
+before `ExecStart` has replaced the forked child, it waits up to five seconds
+for the value, rechecking the MainPID, and fails closed if it remains absent.
+Release promotion runs the already validated staged `agent-host` for the guard,
+so upgrading from a current binary that predates the guard flag cannot bypass or deadlock the
 check. Onboarding and the native installer apply the same admission barrier
 before signaling an existing Review daemon; only a genuinely inactive first
 install skips it.

@@ -517,6 +517,21 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("inactive-loaded-state-dir=", result.StandardOutput);
     }
 
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public void Review_state_directory_waits_for_the_active_daemon_to_exec()
+    {
+        PlatformGate.LinuxOnly("the active review state directory reads /proc/<pid>/environ");
+
+        var result = RunShellScript(
+            "runner.Tests/Fixtures/agent-runner-deploy-review-state-exec-race.sh",
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        Assert.Contains("pre-exec-value-retried=true", result.StandardOutput);
+        Assert.Contains("missing-value-bounded=true", result.StandardOutput);
+    }
+
     /// <summary>
     /// AGT-2863: the promote step itself is unchanged; the new mode only puts a
     /// bounded review drain in front of it, so the replacement daemon starts
