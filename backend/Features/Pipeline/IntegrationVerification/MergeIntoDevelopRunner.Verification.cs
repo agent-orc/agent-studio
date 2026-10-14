@@ -116,13 +116,21 @@ public sealed partial class MergeIntoDevelopRunner
             // The card says integrated-unverified while the gate runs, so a
             // crash mid-gate never leaves a completed-looking card behind.
             RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate: null);
+            if (!releaseGate)
+                IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-requested", level: "full");
             gate = await RunVerificationGateAsync(
                 project, jobId, jobFolderPath, repoRoot, branch, sha!, releaseGate).ConfigureAwait(false);
+            Volatile.Write(ref _integrationGateHolder, null);
             IntegrationGateReceipts.Record(
                 jobFolderPath,
                 releaseGate ? PreMainTestGateStep : IntegrationGateJournal.PreDevelopBuildGateStep,
                 gate,
-                _timeline);
+                _timeline,
+                mergeLockWaitMs: releaseGate ? null : _mergeLockWaitMs.Value);
+            if (!releaseGate)
+                IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+                    level: "full", durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
+                    outcome: gate.Verdict.ToString(), collisionDetected: gate.GateCollisionDetected);
             decision = IntegrationVerificationPolicy.Decide(facts with { GateRun = gate });
         }
 
@@ -362,6 +370,8 @@ public sealed partial class MergeIntoDevelopRunner
                 SubjectRef = branch,
                 TimeoutBudgetSource = preDevelopTimeoutSource,
                 InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
+                OnMachineGateWaiting = IntegrationGateWaiting(jobFolderPath, project, jobId),
+                OnMachineGateAcquired = IntegrationGateAcquired(jobFolderPath, project, jobId),
             },
             changedPaths!,
             profile,
@@ -421,6 +431,30 @@ public sealed partial class MergeIntoDevelopRunner
         }
 
         return (changedPaths, null);
+    }
+
+    // Integration gates carry no WatchPath, so they stay out of the pipeline-health
+    // registry (no hang alarm, no orchestrator.jsonl in the integration worktree).
+    // The lane remembers its own machine-gate holder for gate-token-waiting events.
+    // The delivery sequence is captured here, on the runner's flow, because the
+    // gate may invoke these callbacks from another thread.
+    private Action IntegrationGateWaiting(string jobFolderPath, string project, string jobId)
+    {
+        var sequence = IntegrationLaneEvents.CurrentSequence;
+        return () => IntegrationLaneEvents.Append(
+            jobFolderPath, project, jobId, "gate-token-waiting", sequence: sequence,
+            holdingProject: _pipelineHealth?.HoldingProject() ?? Volatile.Read(ref _integrationGateHolder));
+    }
+
+    private Action IntegrationGateAcquired(string jobFolderPath, string project, string jobId)
+    {
+        var sequence = IntegrationLaneEvents.CurrentSequence;
+        return () =>
+        {
+            Volatile.Write(ref _integrationGateHolder, project);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-token-acquired",
+                sequence: sequence);
+        };
     }
 
     private IReadOnlyList<string>? VerificationChangedPaths(

@@ -84,6 +84,7 @@ public static class EndpointMapping
         app.MapProjectTokenUsageEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
+        app.MapGateEconomicsEndpoints();
         app.MapOperatorSweepEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapCauseBreakerEndpoints();

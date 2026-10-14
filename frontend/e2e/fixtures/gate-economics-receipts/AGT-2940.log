@@ -1,0 +1,95 @@
+verdict=Fail exit=1 durationMs=3016313 failureKind=Code
+expectedSha=0e2b0f8d6c3a651cd396f9aa706324a5dee1ed7a testedSha=0e2b0f8d6c3a651cd396f9aa706324a5dee1ed7a
+reason=`dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound` exit 1; failed: AgentStudio.Tests.PromptEnrichmentServiceTests.Prepare_AgentStudioRepository_PreservesCatalogueBlocks; Total tests: 7645 Passed: 7621 Failed: 1 Skipped: 23; test-level=full; selected=4; full-suite=not-run; omitted=3
+verdictSource=Executed originalRunId=2da9eaad2dfc40bcb88028e0b0ff2613 originalCompletedAtUtc=2026-09-28T19:16:36.1228471+00:00 originalEvidencePathB64= profileDigest=n/a pipelineDefinitionVersion=1 toolchainIdentity=n/a
+testSelectionAuditDigest=221744421fde5cf4349ba52aa15d90c850274b1fbe3155b272bc5294d74c58fa
+reviewReuse=full attempt=review_d92120a25f2b4b26b1ae85594e213f86 reason=develop moved since the review: tip is 9afa702f, the review verified 4e6de49c
+budget=none
+retryPerformed=true classification=none flakyQuarantined=none
+preparationCacheRetryPerformed=false
+--- test-selection.json ---
+{
+  "Digest": "221744421fde5cf4349ba52aa15d90c850274b1fbe3155b272bc5294d74c58fa",
+  "Level": "full",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "docs/concepts/orchestrator-drive-to-conclusion.html",
+    "docs/operations/operations-server-backchannel/index.html",
+    "docs/operations/setup/README.md",
+    "docs/operations/setup/workstation-runner-host.md",
+    "docs/start/README.md",
+    "docs/system/domains/runner.md",
+    "runner.Tests/DurableLeaseAuthorityTests.cs",
+    "runner.Tests/RemoteTaskRunnerClaimGuardTests.cs",
+    "runner.Tests/TaskServerClientHealthTests.cs",
+    "runner.Tests/WorkerBuildServerHygieneTests.cs",
+    "runner.Tests/WorkstationProfileTests.cs",
+    "runner/AgentRunner.csproj",
+    "runner/CarWorkerExecution.cs",
+    "runner/DurableAgentProcess.cs",
+    "runner/DurableLeaseAuthority.cs",
+    "runner/DurableReviewProcess.cs",
+    "runner/LeaseHeartbeat.cs",
+    "runner/Properties/PublishProfiles/win-x64.pubxml",
+    "runner/RemoteRunnerDaemon.cs",
+    "runner/RemoteTaskRunner.cs",
+    "runner/RunnerCapabilityProbe.cs",
+    "runner/RunnerOptions.cs",
+    "runner/TaskServerClient.cs",
+    "runner/WireModels.cs",
+    "runner/WorkerEdgeCredentialBoundary.cs",
+    "runner/WorkstationProfile.cs"
+  ],
+  "DiffStatuses": [],
+  "HistoryInput": [],
+  "Candidates": [],
+  "SelectedCandidateIds": [],
+  "SelectedCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "AttemptedTestCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound"
+  ],
+  "UnmappedSourceDirectories": [],
+  "SelectedTestClasses": [],
+  "OmittedTestCommands": [
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "Reasons": [
+    "folder-to-test-project map is missing",
+    "unmapped changed path: docs/concepts/orchestrator-drive-to-conclusion.html",
+    "unmapped changed path: docs/operations/operations-server-backchannel/index.html",
+    "unmapped changed path: docs/operations/setup/README.md",
+    "unmapped changed path: docs/operations/setup/workstation-runner-host.md",
+    "unmapped changed path: docs/start/README.md",
+    "unmapped changed path: docs/system/domains/runner.md",
+    "unmapped changed path: runner.Tests/DurableLeaseAuthorityTests.cs",
+    "unmapped changed path: runner.Tests/RemoteTaskRunnerClaimGuardTests.cs",
+    "unmapped changed path: runner.Tests/TaskServerClientHealthTests.cs",
+    "unmapped changed path: runner.Tests/WorkerBuildServerHygieneTests.cs",
+    "unmapped changed path: runner.Tests/WorkstationProfileTests.cs",
+    "unmapped changed path: runner/AgentRunner.csproj",
+    "unmapped changed path: runner/CarWorkerExecution.cs",
+    "unmapped changed path: runner/DurableAgentProcess.cs",
+    "unmapped changed path: runner/DurableLeaseAuthority.cs",
+    "unmapped changed path: runner/DurableReviewProcess.cs",
+    "unmapped changed path: runner/LeaseHeartbeat.cs",
+    "unmapped changed path: runner/Properties/PublishProfiles/win-x64.pubxml",
+    "unmapped changed path: runner/RemoteRunnerDaemon.cs",
+    "unmapped changed path: runner/RemoteTaskRunner.cs",
+    "unmapped changed path: runner/RunnerCapabilityProbe.cs",
+    "unmapped changed path: runner/RunnerOptions.cs",
+    "unmapped changed path: runner/TaskServerClient.cs",
+    "unmapped changed path: runner/WireModels.cs",
+    "unmapped changed path: runner/WorkerEdgeCredentialBoundary.cs",
+    "unmapped changed path: runner/WorkstationProfile.cs"
+  ],
+  "Selector": "deterministic-map-full-fallback",
+  "FullSuiteRequired": true,
+  "FullSuiteRan": false
+}
