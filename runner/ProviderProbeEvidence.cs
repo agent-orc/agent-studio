@@ -6,6 +6,7 @@ namespace AgentRunner;
 public enum ProviderProbeOutcome
 {
     Healthy,
+    Unverified,
     Indeterminate,
     CredentialInvalid,
     ProviderIncident,
