@@ -288,8 +288,8 @@ public sealed class TaskTransitionService
         }
         if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
              || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
-            && BatchGateReleaseFailure(info) is { } batchFailure)
-            return new MoveJobOutcome(MoveJobStatus.Failure, batchFailure, info.FolderPath);
+            && BatchGateReleaseFailure(info, ct) is { } batchFailure)
+            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, batchFailure, info.FolderPath);
         var projectName = info.ProjectName;
 
         // Human acceptance is a quality decision, never an integration trigger.
@@ -1627,7 +1627,7 @@ public sealed class TaskTransitionService
             reviewed.FolderPath);
     }
 
-    private string? BatchGateReleaseFailure(TaskInfo task)
+    private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct)
     {
         AgentStudio.Pipeline.BatchGateOwnership? ownership;
         try { ownership = AgentStudio.Pipeline.BatchGateOwnershipStore.Read(task.FolderPath); }
@@ -1642,8 +1642,28 @@ public sealed class TaskTransitionService
             .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask)
             ?? task.Key ?? task.Id;
         var projection = _attemptAuthority.GetTaskProjection(authorityKey);
-        return AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
+        var failure = AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
             ownership, projection, _batchGateStore, task.FolderPath);
+        if (failure is null || !AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(
+                ownership, projection)) return failure;
+        try
+        {
+            var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
+            if (repo is null) return failure;
+            var tip = _git.FetchBatchIntegrationTip(repo, ownership.Subject.IntegrationBranch, ct);
+            if (tip is null || !_git.IsDeliveryPublished(repo, ownership.Subject.ResultSha, tip))
+                return failure;
+            var contained = AgentStudio.Pipeline.BatchGateOwnershipStore.RecordContainment(
+                task.FolderPath, ownership, tip, _time, fallbackIntegrated: true);
+            return AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
+                contained, projection, _batchGateStore, task.FolderPath);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Batch gate containment repair failed for {TaskKey}", task.TaskKey);
+            return failure;
+        }
     }
 
     /// <summary>
