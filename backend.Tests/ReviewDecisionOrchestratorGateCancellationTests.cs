@@ -29,7 +29,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
                 Assert.Equal(MoveJobStatus.Success,
                     _cancellationStateMachine!.MoveJob(slug, TaskStates.Ready, _watchPath).Status);
                 var liveFolder = Path.Combine(_watchPath, TaskStates.Ready, slug);
-                var liveLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+                var liveLog = new PipelineExecutionLog(TokenTestServices.Pricing(),
+                    NullLogger<PipelineExecutionLog>.Instance);
                 var prior = Assert.IsType<PipelineExecutionRecord>(liveLog.Read(liveFolder));
                 var newAttemptAt = prior.StartedAt.AddTicks(1);
                 liveLog.Begin(liveFolder, PipelineCatalogue.Standard, Project, slug, newAttemptAt);
@@ -61,7 +62,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             file => File.ReadAllText(file).Contains("reason=Gate cancelled: superseded.", StringComparison.Ordinal));
         if (change == "lane")
         {
-            var liveLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+            var liveLog = new PipelineExecutionLog(TokenTestServices.Pricing(),
+                NullLogger<PipelineExecutionLog>.Instance);
             var step = Assert.Single(liveLog.Read(folder)!.Steps,
                 item => item.StepId == PipelineCatalogue.BuildTestGateStepId);
             Assert.Equal(PipelineStepStatus.Passed, step.Status);
