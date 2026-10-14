@@ -104,7 +104,10 @@ removed before retrying the same marker.
    sweep.
 8. Monitor the deploy handoff. The deploy cron described below detects the new
    `main`, waits for Stable to become safe to restart, runs `update-stable.sh`,
-   and verifies the deployed checkout.
+   and verifies the deployed checkout. Tabs that were already open show
+   **Agent Studio was updated – reload to continue** when they next receive an
+   API response or reconnect to SignalR. Use Reload in that notice to load the
+   new frontend; unsent composer drafts persist per tab.
 
 ### Detached launch
 

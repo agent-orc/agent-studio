@@ -4,7 +4,7 @@
     "ng": "ng",
     "prestart": "npm run lint",
     "start": "ng serve frontend --proxy-config proxy.conf.json",
-    "build": "ng build frontend",
+    "build": "node scripts/build-studio.mjs",
     "typecheck": "tsc --project tsconfig.app.json --noEmit",
     "mockup:chat": "ng serve next-gen-chat-mockup --port 4022 --host 127.0.0.1",
     "build:mockup:chat": "ng build next-gen-chat-mockup",
