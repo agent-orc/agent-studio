@@ -21,7 +21,7 @@ namespace AgentStudio.Tests;
 /// broader net behind it: every unsafe method is denied outright and every
 /// safe method must match an explicit read allowlist.
 /// </summary>
-public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
+public sealed class PublicDemoReadOnlyEdgeTests(PublicDemoHostFixture shared) : IClassFixture<PublicDemoHostFixture>, IDisposable
 {
     private readonly string _workspace = Path.Combine(
         Path.GetTempPath(),
@@ -106,7 +106,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Allowlisted_read_succeeds_and_issues_a_hardened_ephemeral_viewer_cookie()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -138,7 +138,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Non_allowlisted_read_is_denied_even_though_the_route_exists()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -155,7 +155,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Unsafe_method_on_a_non_execution_tagged_mutation_still_gets_the_typed_edge_denial()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -181,7 +181,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
         string path,
         string method)
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -244,7 +244,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Plain_http_is_rejected_before_any_allowlist_check()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("http://demo.test"),
@@ -260,7 +260,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Cross_origin_request_is_denied()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -279,7 +279,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [InlineData("https://demo.test/path")]
     public async Task Origin_must_match_the_complete_https_origin(string origin)
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -297,7 +297,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Https_allowed_and_denied_responses_carry_hsts()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -359,7 +359,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public void Public_demo_kestrel_body_limit_is_tightened()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
 
         Assert.Equal(16 * 1024, KestrelLimits(factory).MaxRequestBodySize);
     }
@@ -397,7 +397,7 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
     [Fact]
     public async Task Hub_negotiate_post_is_not_caught_by_the_blanket_unsafe_method_denial()
     {
-        using var factory = BuildFactory();
+        var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://demo.test"),
@@ -408,26 +408,9 @@ public sealed class PublicDemoReadOnlyEdgeTests : IDisposable
         Assert.NotEqual(HttpStatusCode.Forbidden, negotiate.StatusCode);
     }
 
-    // UseSetting reaches the reads Program.cs makes before Build() (the
-    // execution admission, the Kestrel body cap and the rate limit), and it
-    // belongs to this one host, so the tests of this class run in parallel.
     private WebApplicationFactory<Program> BuildFactory(
         IReadOnlyDictionary<string, string?>? overrides = null)
-    {
-        var values = new Dictionary<string, string?>
-        {
-            ["TaskRepository"] = _workspace,
-            ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
-        };
-        if (overrides is not null)
-            foreach (var (key, value) in overrides)
-                values[key] = value;
-        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.UseTestSettings(values);
-        });
-    }
+        => PublicDemoHostFixture.CreateFactory(_workspace, overrides);
 
     private static Dictionary<string, string?> PermitLimit(int permits) => new()
     {
