@@ -2400,11 +2400,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         RecordOrchestratorReviewStep(current.FolderPath, PipelineStepStatus.Passed,
             ReviewVerdictComplete, gate.Reason);
 
+        var waitingGate = _orchestration?.WaitingOccurrences().FirstOrDefault(item =>
+            item.Profile == "GateResult" && item.Run.ProjectId == entry.Name
+            && item.Run.TaskId == current.Id && item.ExpectedSourceState == current.State);
+        if (waitingGate is not null)
+        {
+            EngineDecisionWaitMarker.Write(current.FolderPath, waitingGate.Run.RunId);
+            _scanner.InvalidateCache();
+            return;
+        }
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Gate);
         var buildGateResult = await RunBuildTestGatePostStepAsync(workspace, entry, current, ct);
+        var gateMode = MonolithTransitionSwitch.For(_configuration, "GateResult");
+        var gateOccurrenceKey = buildGateResult is null ? null
+            : $"gate-result:{current.Id}:{buildGateResult.GateRunId ?? _attemptAuthority?.GetTaskProjection(current.Key ?? current.TaskKey).CurrentRunAttempt?.AttemptId}:{buildGateResult.ExpectedSha}:{buildGateResult.Verdict}";
         if (buildGateResult is not null
-            && MonolithTransitionSwitch.For(_configuration, "GateResult") == OrchestrationExecutionMode.Engine)
+            && gateMode is OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
         {
             if (_orchestration is null)
                 throw new InvalidOperationException("The orchestration authority is unavailable.");
@@ -2426,19 +2438,29 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     status = buildGateResult.Verdict == BuildTestGateVerdict.Fail ? "failed" : "passed",
                 } },
             });
+            var gateDecision = gateMode == OrchestrationExecutionMode.Shadow
+                ? AgentStudio.OrchestrationDecisions.StageDecisionPolicy.GateTransition(
+                    current.Id, buildGateResult.GateRunId ?? source?.AttemptId ?? current.Id,
+                    buildGateResult.Verdict == BuildTestGateVerdict.Fail ? 1 : 0,
+                    gateRoundBudget.Used, gateRoundBudget.Allowed).Transition : null;
             var occurrence = _orchestration.Create(entry.Name, current.Id,
                 AgentStudio.TaskServer.Contracts.OrchestrationStage.GateDispatch,
                 payload,
-                $"gate-result:{current.Id}:{buildGateResult.GateRunId ?? source?.AttemptId}:{buildGateResult.ExpectedSha}:{buildGateResult.Verdict}",
+                gateOccurrenceKey!,
                 current.State, source?.AttemptId ?? current.Id,
-                source?.LastFence ?? 0, source?.AuthorityEpoch ?? 0);
-            if (occurrence.Status is "pending" or "leased" or "applying")
+                source?.LastFence ?? 0, source?.AuthorityEpoch ?? 0,
+                profile: "GateResult", shadow: gateMode == OrchestrationExecutionMode.Shadow,
+                monolithAction: gateDecision?.Action.ToString(),
+                monolithReason: gateDecision?.Reason);
+            if (gateMode == OrchestrationExecutionMode.Engine
+                && occurrence.Status is ("pending" or "leased" or "applying"))
             {
                 EngineDecisionWaitMarker.Write(current.FolderPath, occurrence.RunId);
                 _scanner.InvalidateCache();
                 return;
             }
-            if (occurrence.StageResults?.LastOrDefault()?.Action != AgentStudio.TaskServer.Contracts.OrchestrationAction.Continue)
+            if (gateMode == OrchestrationExecutionMode.Engine
+                && occurrence.StageResults?.LastOrDefault()?.Action != AgentStudio.TaskServer.Contracts.OrchestrationAction.Continue)
                 return;
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)

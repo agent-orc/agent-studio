@@ -1,0 +1,50 @@
+<section class="rollout" data-testid="transition-rollout">
+  <header class="rollout__head">
+    <div>
+      <h3>Transition decisions</h3>
+      <p>Compare consecutive decisions per profile before switching the engine on.</p>
+    </div>
+    <button type="button" (click)="refresh()">Refresh</button>
+  </header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  <label class="rollout__reason">
+    Operator reason
+    <input data-testid="transition-rollout-reason" type="text" [value]="reason()"
+           (input)="reason.set($any($event.target).value)" />
+  </label>
+  <div class="rollout__profiles">
+    @for (item of profiles(); track item.profile) {
+      <section class="rollout__profile" [attr.data-testid]="'transition-profile-' + item.profile">
+        <div>
+          <h4>{{ item.profile === 'CodingCompletion' ? 'Coding completion' : item.profile === 'ReviewReport' ? 'Review report' : 'Gate or batch result' }}</h4>
+          <span class="rollout__state">{{ item.state }}</span>
+        </div>
+        <p><span class="rollout__number">{{ item.streak }} / {{ item.threshold }}</span> matching shadow decisions ·
+          <span class="rollout__number">{{ item.mismatchCount }}</span> mismatches</p>
+        @if (item.lastMismatch; as mismatch) {
+          <details>
+            <summary>Last mismatch · {{ mismatch.engine.occurrence }}</summary>
+            <p>Monolith inputs digest: <code>{{ mismatch.monolith.inputsDigest }}</code></p>
+            <p>Engine inputs digest: <code>{{ mismatch.engine.inputsDigest }}</code></p>
+            <p>Monolith: {{ mismatch.monolith.action }} · {{ mismatch.monolith.reason }}</p>
+            <p>Engine: {{ mismatch.engine.action }} · {{ mismatch.engine.reason }}</p>
+          </details>
+        }
+        <div class="rollout__actions">
+          @if (item.state === 'monolith' || item.state === 'rolled-back') {
+            <button type="button" [disabled]="!reason().trim() || !!busy()"
+                    (click)="switch(item, 'shadow')">Start shadow</button>
+          }
+          @if (item.state === 'ready') {
+            <button type="button" [disabled]="!reason().trim() || !!busy()"
+                    (click)="switch(item, 'engine')">Switch to engine</button>
+          }
+          @if (item.state === 'engine' || item.state === 'ready' || item.state === 'shadow') {
+            <button type="button" [disabled]="!reason().trim() || !!busy()"
+                    (click)="switch(item, 'rollback')">Roll back</button>
+          }
+        </div>
+      </section>
+    }
+  </div>
+</section>

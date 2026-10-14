@@ -1,6 +1,7 @@
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
+using AgentStudio.OrchestrationDecisions;
 
 namespace AgentStudio.Runner;
 
@@ -104,6 +105,8 @@ public static class MonolithOrchestrationEndpoints
 public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationStore store,
     TaskScannerService scanner,
     AttemptAuthorityService authority,
+    OrchestrationRolloutStore rollout,
+    OrchestratorLog operatorLog,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -128,11 +131,104 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
                 }
+                await RecoverRolledBackAsync(stoppingToken);
+                AlertLongWaits();
                 await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         catch (Exception exception) { logger.LogError(exception, "orchestration-recovery-incomplete"); }
+    }
+
+    private async Task RecoverRolledBackAsync(CancellationToken ct)
+    {
+        foreach (var pending in store.WaitingOccurrences().Where(item =>
+            item.Run.Status is ("pending" or "leased") && !item.Shadow
+            && rollout.IsRolledBack(item.Profile)))
+        {
+            try
+            {
+                var claimed = store.ClaimRolledBack(pending.Run.RunId);
+                if (claimed.Run is null || claimed.Lease is null) continue;
+                var decision = DecideRolledBack(claimed.Run);
+                await store.CompleteAsync(claimed.Run.RunId,
+                    new CompleteOrchestrationStageRequest("engine_rollback", "monolith",
+                        claimed.Lease.LeaseId, claimed.Lease.Fence, claimed.Run.CurrentStage,
+                        decision.Action, decision.OutputJson,
+                        $"rollback:{claimed.Run.RunId}:{claimed.Lease.Fence}"), ct);
+            }
+            catch (Exception exception) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "orchestration-rollback-pending run={RunId}", pending.Run.RunId);
+            }
+        }
+    }
+
+    private static (OrchestrationAction Action, string OutputJson) DecideRolledBack(OrchestrationRunDto run)
+    {
+        using var payload = JsonDocument.Parse(run.PayloadJson);
+        TransitionDecision transition;
+        if (run.CurrentStage == OrchestrationStage.GateDispatch)
+        {
+            var root = payload.RootElement;
+            var failed = root.TryGetProperty("gates", out var gates)
+                && gates.ValueKind == JsonValueKind.Array
+                && gates.EnumerateArray().Any(gate => gate.TryGetProperty("status", out var status)
+                    && status.ValueKind == JsonValueKind.String
+                    && status.GetString() is ("failed" or "fail")) ? 1 : 0;
+            var attempt = root.TryGetProperty("gateAttemptId", out var gateAttempt)
+                ? gateAttempt.GetString() ?? run.RunId : run.RunId;
+            var used = root.TryGetProperty("automaticRoundsUsed", out var rounds)
+                ? rounds.GetInt32() : 0;
+            var allowed = root.TryGetProperty("maximumCardRounds", out var maximum)
+                ? maximum.GetInt32() : 4;
+            transition = StageDecisionPolicy.GateTransition(run.TaskId, attempt,
+                failed, used, allowed).Transition!;
+        }
+        else if (payload.RootElement.TryGetProperty("reviewOutcome", out _))
+        {
+            var stage = JsonSerializer.Deserialize<StagePayload>(run.PayloadJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            transition = MonolithTransitionAdapter.Decide(StageDecisionPolicy.Facts(
+                run.TaskId, run.ReissueAttempts, stage));
+        }
+        else
+        {
+            var root = payload.RootElement;
+            transition = StageDecisionPolicy.Coding(run.TaskId,
+                root.TryGetProperty("runAttemptId", out var attempt)
+                    ? attempt.GetString() ?? run.RunId : run.RunId,
+                root.TryGetProperty("targetState", out var target) ? target.GetString() : null);
+        }
+        var action = StageDecisionPolicy.ToStageAction(transition.Action);
+        return (action, JsonSerializer.Serialize(new
+        {
+            transition,
+            decision = action.ToString(),
+            decider = $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith-rollback",
+        }));
+    }
+
+    private void AlertLongWaits()
+    {
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            item.Run.Status == "pending" && !rollout.IsRolledBack(item.Profile)
+            && DateTime.UtcNow - item.Run.CreatedAt > TimeSpan.FromMinutes(1)))
+        {
+            var card = scanner.ScanAllJobs().FirstOrDefault(item =>
+                item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is null || card.State != occurrence.ExpectedSourceState) continue;
+            var topic = "engine-decision-unavailable:" + occurrence.Run.RunId;
+            if (operatorLog.Read(card.WatchPath).Any(item => item.Topic == topic)) continue;
+            operatorLog.Append(card.WatchPath, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = topic,
+                JobId = card.Id,
+                Summary = $"{card.Key ?? card.Id} is waiting for the Orchestrator Engine.",
+                Reasoning = "The occurrence remains pending and will resume after an engine instance claims it.",
+            });
+        }
     }
 
     private void ActivateSettledReviews()

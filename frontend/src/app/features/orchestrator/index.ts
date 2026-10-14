@@ -13,6 +13,7 @@ export { OrchestratorFeedStore } from './state/orchestrator-feed.store';
 // content (the platform-global lifecycle flags) now renders as the "Orchestrator"
 // section of the consolidated Settings view, so the panel itself is the export.
 export { OrchestratorLogicPanelComponent } from './components/orchestrator-logic-panel/orchestrator-logic-panel.component';
+export { TransitionRolloutPanelComponent } from './components/transition-rollout-panel/transition-rollout-panel.component';
 export { PromptAdminPanelComponent } from './components/prompt-admin-panel/prompt-admin-panel.component';
 export type {
   OrchestratorLogEntry,
