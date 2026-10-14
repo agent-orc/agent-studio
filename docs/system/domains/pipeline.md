@@ -815,7 +815,13 @@ comparison before Quality Studio's verdict contract can decide a review.
   developer's lagging local branch as the next merge base. Checkout sync is a
   separate `POST /api/projects/{project}/checkout/sync` action. Local task
   worktrees cut and rebase from the published ref, without taking unapproved
-  merges from the Studio lane.
+  merges from the Studio lane. If an outside push makes the lane diverge,
+  synchronization drops lane merges only when their deliveries are already
+  published by ancestry or patch equality; otherwise it reports the unpublished
+  merges. A legacy acceptance worker or backstop keeps a Completed card in place
+  after a lane sync failure when origin contains its delivery. It resolves that
+  delivery from the review subject, card attribution, or local task branch,
+  including local deliveries with no review subject, and emits a lane warning.
   Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See
