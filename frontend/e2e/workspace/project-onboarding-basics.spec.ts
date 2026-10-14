@@ -472,4 +472,47 @@ test.describe('project onboarding and editable project basics', () => {
       });
     }
   });
+
+  test('Project Settings shows checkout lag and syncs a clean checkout', async ({ page }) => {
+    test.setTimeout(90_000);
+    let syncRequests = 0;
+    let synced = false;
+    await page.route('**/hubs/v1/studio/negotiate**', (route) => fulfillJson(route, {
+      negotiateVersion: 1,
+      connectionId: 'project-checkout-sync',
+      connectionToken: 'project-checkout-sync',
+      availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+    }));
+    await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
+      socket.onMessage((message) => {
+        if (typeof message === 'string' && message.includes('"protocol"')) socket.send('{}\u001e');
+      });
+    });
+    await page.route('**/api/projects/*/checkout/status', (route) => fulfillJson(route, {
+      status: synced ? 'up-to-date' : 'behind', branch: 'develop', behind: synced ? 0 : 7,
+      dirtyFiles: [], lockFile: null, reason: synced ? null : 'Checkout has not been synced.',
+    }));
+    await page.route('**/api/projects/*/checkout/sync', (route) => {
+      syncRequests++;
+      synced = true;
+      return fulfillJson(route, {
+        status: 'fast-forwarded', branch: 'develop', behind: 0, dirtyFiles: [], lockFile: null,
+        reason: null,
+      });
+    });
+
+    await page.goto('/#/projects/existing-project/settings');
+    await dismissDevErrorDialog(page);
+    const card = page.getByTestId('project-basics-card');
+    await expect(card.getByTestId('project-checkout-lag')).toContainText('7 commits behind origin', { timeout: 30_000 });
+    for (const theme of ['dark', 'light'] satisfies Theme[]) {
+      await setTheme(page, theme);
+      await card.getByTestId('project-checkout-lag').screenshot({
+        path: join(results, `project-checkout-lag-${theme}--mocked.png`),
+      });
+    }
+    await card.getByTestId('project-checkout-sync').click();
+    await expect.poll(() => syncRequests).toBe(1);
+    await expect(card.getByTestId('project-checkout-lag')).toHaveCount(0);
+  });
 });
