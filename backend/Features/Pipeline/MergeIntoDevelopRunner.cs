@@ -1747,7 +1747,7 @@ public sealed partial class MergeIntoDevelopRunner
                 integrationBranch,
                 approvedSha,
                 ct);
-            if (pushed.Success && pushed.Status is ("pushed" or "already-remote" or "no-remote"))
+            if (pushed.Success && pushed.Status is ("pushed" or "already-remote"))
             {
                 _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
                 IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "published",
