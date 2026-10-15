@@ -3,23 +3,40 @@ using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Orchestrator;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
 public interface IAiOperatorDecisionQueue
 {
     void Enqueue(TaskInfo task, string occurrenceId, DecisionChoiceV1 choice);
-    void RecoverPending() { }
+    void RecoverPending();
+}
+
+public interface IAiOperatorTurnDispatcher
+{
+    OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request);
+}
+
+public sealed class AiOperatorTurnDispatcher(OrchestratorTurnService turns) : IAiOperatorTurnDispatcher
+{
+    public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request)
+        => turns.Enqueue(contextKey, request);
 }
 
 /// <summary>Persists each held decision before requesting an AI Operator turn.</summary>
 public sealed class AiOperatorDecisionQueue(
-    OrchestratorTurnService turns,
+    IAiOperatorTurnDispatcher turns,
     OrchestratorSessionRegistry sessions,
     IConfiguration configuration,
-    ILogger<AiOperatorDecisionQueue> logger) : IAiOperatorDecisionQueue
+    ILogger<AiOperatorDecisionQueue> logger,
+    TimeProvider time,
+    TimelineLog timeline,
+    OrchestratorLog operatorLog,
+    TaskScannerService scanner) : IAiOperatorDecisionQueue
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan RetryBackoff = TimeSpan.FromSeconds(30);
     private readonly object _gate = new();
     private readonly string _bootId = Guid.NewGuid().ToString("N");
     private readonly string? _directory = string.IsNullOrWhiteSpace(configuration["TaskRepository"])
@@ -38,7 +55,8 @@ public sealed class AiOperatorDecisionQueue(
             if (!File.Exists(path))
                 Save(path, new PendingAsk(occurrenceId,
                     $"task:{task.ProjectName}/{task.Key ?? task.Id}", choice.Action, choice.Target,
-                    null, null, "pending"));
+                    null, null, "pending", task.Id, task.FolderPath, task.WatchPath,
+                    choice.Outcome));
             Dispatch(path);
         }
     }
@@ -63,57 +81,113 @@ public sealed class AiOperatorDecisionQueue(
     {
         var ask = JsonSerializer.Deserialize<PendingAsk>(File.ReadAllText(path), Json)
             ?? throw new InvalidDataException("The AI Operator ask record is empty.");
-        if (ask.Status == "completed") return;
+        if (ask.Attempts == 0 && ask.TurnId is not null)
+            ask = ask with { Attempts = 1 };
+        if (ask.Status is "completed" or "escalated") return;
         var latest = LatestHistory(ask);
-        if (latest?.Status == OrchestratorTurnService.StatusCompleted)
+        if (latest?.Status == OrchestratorTurnService.StatusCompleted
+            && latest.TurnId == ask.TurnId)
         {
             Save(path, ask with { TurnId = latest.TurnId, Status = "completed" });
             return;
         }
-        if (ask.BootId == _bootId && latest?.Status is not
-            (OrchestratorTurnService.StatusFailed or OrchestratorTurnService.StatusParked))
-            return;
         if (latest?.Status is OrchestratorTurnService.StatusFailed or OrchestratorTurnService.StatusParked)
         {
-            Save(path, ask with { TurnId = latest.TurnId, Status = latest.Status! });
-            return;
+            if (latest.TurnId != ask.TurnId) return;
+            var reason = $"AI Operator turn {latest.TurnId} {latest.Status}: "
+                + (string.IsNullOrWhiteSpace(latest.Error) ? "no error detail was recorded" : latest.Error);
+            if (ask.Attempts >= 2)
+            {
+                Escalate(path, ask, reason);
+                return;
+            }
+            if (ask.Status != "retry-pending")
+            {
+                ask = ask with { TurnId = latest.TurnId, Status = "retry-pending",
+                    FailureReason = reason, RetryAt = time.GetUtcNow().UtcDateTime + RetryBackoff };
+                Save(path, ask);
+            }
+            if (time.GetUtcNow().UtcDateTime < ask.RetryAt) return;
         }
+        else if (ask.BootId == _bootId) return;
         var response = turns.Enqueue(ask.ContextKey, new OrchestratorTurnRequest(
             $"Decision occurrence {ask.OccurrenceId} needs an AI Operator answer. "
             + $"The decision step chose {ask.Action} ({ask.Target}). "
+            + $"Reason: {ask.Reason ?? "model requested an ask"}. "
             + "Review the receipt and card, then decide the next permitted action. "
             + "Ask the human operator for any A2 or A3 mutation. "
             + "Do not mutate the card without the required authority."));
-        Save(path, ask with { BootId = _bootId, TurnId = response.TurnId, Status = response.Status });
+        Save(path, ask with { BootId = _bootId, TurnId = response.TurnId, Status = response.Status,
+            Attempts = ask.Attempts + 1, RetryAt = null });
+    }
+
+    private void Escalate(string path, PendingAsk ask, string reason)
+    {
+        var summary = $"AI Operator ask {ask.OccurrenceId} needs human attention after two turns. {reason}";
+        var folder = !string.IsNullOrWhiteSpace(ask.TaskId) && !string.IsNullOrWhiteSpace(ask.WatchPath)
+            ? scanner.FindJob(ask.TaskId, ask.WatchPath)?.FolderPath ?? ask.TaskFolder
+            : ask.TaskFolder;
+        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+        {
+            if (!timeline.Append(folder, new TimelineEvent
+                {
+                    Ts = time.GetUtcNow().UtcDateTime,
+                    Kind = TimelineEventKinds.OrchestratorEscalated,
+                    Actor = TimelineActors.System,
+                    Summary = summary,
+                    RunId = ask.OccurrenceId,
+                }))
+                throw new IOException("The AI Operator escalation could not be written to the card.");
+        }
+        if (!string.IsNullOrWhiteSpace(ask.WatchPath))
+            operatorLog.Append(ask.WatchPath, new OrchestratorLogEntry
+            {
+                Ts = time.GetUtcNow().UtcDateTime,
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = "ai-operator-ask:" + ask.OccurrenceId,
+                JobId = ask.TaskId,
+                Summary = summary,
+                Reasoning = ask.Reason,
+            });
+        Save(path, ask with { Status = "escalated", FailureReason = reason });
     }
 
     private OrchestratorSessionHistoryEntry? LatestHistory(PendingAsk ask)
     {
-        if (!OrchestratorContextKey.TryParse(ask.ContextKey, out var key)) return null;
+        if (ask.TurnId is null || !OrchestratorContextKey.TryParse(ask.ContextKey, out var key))
+            return null;
         var path = sessions.HistoryFilePath(key);
         if (!File.Exists(path)) return null;
         OrchestratorSessionHistoryEntry? latest = null;
-        string? latestTurn = null;
-        foreach (var line in File.ReadLines(path))
+        // Session history is written as indented JSON objects. Read complete
+        // values so both existing indented entries and compact entries work.
+        var bytes = File.ReadAllBytes(path);
+        var offset = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB
+            && bytes[2] == 0xBF ? 3 : 0;
+        var reader = new Utf8JsonReader(bytes.AsSpan(offset), new JsonReaderOptions
         {
-            OrchestratorSessionHistoryEntry? entry;
-            try { entry = JsonSerializer.Deserialize<OrchestratorSessionHistoryEntry>(line, Json); }
-            catch (JsonException) { continue; }
-            if (entry is null || entry.Kind != "turn" || entry.PromptPreview is null
-                || !entry.PromptPreview.StartsWith($"Decision occurrence {ask.OccurrenceId} ",
-                    StringComparison.Ordinal)) continue;
-            if (latestTurn != entry.TurnId)
+            AllowMultipleValues = true,
+        });
+        try
+        {
+            while (reader.Read())
             {
-                latestTurn = entry.TurnId;
-                latest = entry;
+                using var value = JsonDocument.ParseValue(ref reader);
+                var entry = value.Deserialize<OrchestratorSessionHistoryEntry>(Json);
+                if (entry is null || entry.Kind != "turn" || entry.TurnId != ask.TurnId)
+                    continue;
+                if (entry.Status is OrchestratorTurnService.StatusCompleted
+                             or OrchestratorTurnService.StatusFailed
+                             or OrchestratorTurnService.StatusParked
+                    || latest?.Status is not (OrchestratorTurnService.StatusCompleted
+                        or OrchestratorTurnService.StatusFailed
+                        or OrchestratorTurnService.StatusParked))
+                    latest = entry;
             }
-            else if (entry.Status is OrchestratorTurnService.StatusCompleted
-                     or OrchestratorTurnService.StatusFailed
-                     or OrchestratorTurnService.StatusParked
-                     || latest?.Status is not (OrchestratorTurnService.StatusCompleted
-                         or OrchestratorTurnService.StatusFailed
-                         or OrchestratorTurnService.StatusParked))
-                latest = entry;
+        }
+        catch (JsonException exception)
+        {
+            logger.LogWarning(exception, "AI Operator history has an incomplete trailing entry at {Path}", path);
         }
         return latest;
     }
@@ -135,5 +209,8 @@ public sealed class AiOperatorDecisionQueue(
     }
 
     private sealed record PendingAsk(string OccurrenceId, string ContextKey, string Action,
-        string Target, string? BootId, string? TurnId, string Status);
+        string Target, string? BootId, string? TurnId, string Status,
+        string? TaskId = null, string? TaskFolder = null, string? WatchPath = null,
+        string? Reason = null, int Attempts = 0, DateTime? RetryAt = null,
+        string? FailureReason = null);
 }

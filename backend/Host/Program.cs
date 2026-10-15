@@ -43,6 +43,7 @@ builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
 builder.Services.AddSingleton<IAiOperatorDecisionQueue, AiOperatorDecisionQueue>();
+builder.Services.AddSingleton<IAiOperatorTurnDispatcher, AiOperatorTurnDispatcher>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 // AGT-3060: reports whether the engine that a transition switched to Engine
 // waits for is live; see /healthz/orchestration-engine.

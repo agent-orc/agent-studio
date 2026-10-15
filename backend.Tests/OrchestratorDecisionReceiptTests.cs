@@ -6,8 +6,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Bus;
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Orchestrator;
 using AgentStudio.Runner;
 using AgentStudio.Security;
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tokens;
 using Microsoft.AspNetCore.Hosting;
@@ -42,6 +45,97 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         "orchestrator-decision-receipts-" + Guid.NewGuid().ToString("N"));
 
     [Theory]
+    [InlineData(OrchestratorTurnService.StatusFailed)]
+    [InlineData(OrchestratorTurnService.StatusParked)]
+    public void Active_ai_operator_ask_retries_once_after_backoff_then_escalates_on_the_card(
+        string terminalStatus)
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-AI-ASK";
+        const string occurrence = "orch_ai_ask";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        var folder = Path.Combine(projectPath, TaskStates.Progress, card);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Held active decision", state = TaskStates.Progress,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Review the held decision.");
+        File.WriteAllText(Path.Combine(folder, "status.md"), "Result: pending.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(At));
+        var dispatcher = new RecordingTurnDispatcher();
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                    ["Orchestration:Transitions:CodingCompletion"] = "Engine",
+                    ["Orchestration:DecisionModel:ActiveCodingCompletion"] = "true",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAiOperatorTurnDispatcher>();
+                services.AddSingleton<IAiOperatorTurnDispatcher>(dispatcher);
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        using var http = factory.CreateClient();
+        var queue = factory.Services.GetRequiredService<IAiOperatorDecisionQueue>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!;
+        var registry = factory.Services.GetRequiredService<OrchestratorSessionRegistry>();
+        dispatcher.Registry = registry;
+        dispatcher.Time = clock;
+        queue.Enqueue(task, occurrence, new DecisionChoiceV1(DecisionActionKinds.Ask,
+            "operator:ai", "rejected:decision-choice-mismatch"));
+        Assert.Single(dispatcher.TurnIds);
+        Assert.Contains("decision-choice-mismatch", dispatcher.Prompts[0]);
+        var pendingPath = Path.Combine(_workspace, ".orchestration-ai-asks", occurrence + ".json");
+        using var initial = JsonDocument.Parse(File.ReadAllText(pendingPath));
+        var context = initial.RootElement.GetProperty("contextKey").GetString()!;
+
+        void FailLatest(string error)
+        {
+            registry.AppendHistory(context, new OrchestratorSessionHistoryEntry(
+                clock.GetUtcNow().UtcDateTime, "turn", dispatcher.TurnIds[^1],
+                terminalStatus, $"Decision occurrence {occurrence} needs",
+                null, null, null, error, null));
+        }
+
+        FailLatest("provider unavailable");
+        Assert.True(OrchestratorContextKey.TryParse(context, out var contextKey));
+        Assert.Contains("provider unavailable", File.ReadAllText(registry.HistoryFilePath(contextKey)));
+        queue.RecoverPending();
+        using (var pendingAfterFailure = JsonDocument.Parse(File.ReadAllText(pendingPath)))
+            Assert.Equal("retry-pending", pendingAfterFailure.RootElement.GetProperty("status").GetString());
+        clock.Advance(TimeSpan.FromSeconds(29));
+        queue.RecoverPending();
+        Assert.Single(dispatcher.TurnIds);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        queue.RecoverPending();
+        Assert.Equal(2, dispatcher.TurnIds.Count);
+        FailLatest("provider still unavailable");
+        queue.RecoverPending();
+        queue.RecoverPending();
+        Assert.Equal(2, dispatcher.TurnIds.Count);
+        var eventRow = Assert.Single(factory.Services.GetRequiredService<TimelineLog>()
+            .ReadAll(folder), item => item.RunId == occurrence);
+        Assert.Contains("provider still unavailable", eventRow.Summary);
+        Assert.Contains(factory.Services.GetRequiredService<OrchestratorLog>().Read(projectPath),
+            item => item.JobId == card && item.Summary.Contains("provider still unavailable"));
+        using var pending = JsonDocument.Parse(File.ReadAllText(pendingPath));
+        Assert.Equal("escalated", pending.RootElement.GetProperty("status").GetString());
+    }
+
+    [Theory]
     [InlineData("prepare", false)]
     [InlineData("retry", false)]
     [InlineData("retry-no-envelope", false)]
@@ -49,6 +143,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [InlineData("salvage-move-failure", false)]
     [InlineData("invalid", false)]
     [InlineData("forbidden", false)]
+    [InlineData("over-cap", false)]
+    [InlineData("adapter-reject", false)]
     [InlineData("prepare", true)]
     [InlineData("salvage", true)]
     public async Task Active_coding_choice_dispatches_once_or_holds_on_invalid_output_and_stale_authority(
@@ -152,7 +248,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         };
         Assert.True(await coding.CompleteOrchestratorDecisionJobAsync(new OrchestratorDecisionJobCompletion(
             modelJob.JobId, modelJob.ClaimToken, runnerId, true, response, "gpt-6-sol",
-            [new("active-call", "gpt-6-sol", 500, 0, 0, 100, false)], At, At.AddSeconds(2),
+            [new("active-call", "gpt-6-sol", 500, 0, 0,
+                scenario == "over-cap" ? 1_200 : 100, false)], At, At.AddSeconds(2),
             null, false), CancellationToken.None));
         for (var tick = 0; tick < 200 && !deciding.IsCompleted; tick++)
         {
@@ -166,21 +263,36 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Equal(DecisionReceiptPolicy.ActiveMode, receipt.Mode);
         Assert.Equal(1, receipt.Call.Attempts);
         Assert.True(receipt.Call.Tokens.Total > 0);
-        if (scenario is "invalid" or "forbidden")
+        if (scenario is "invalid" or "forbidden" or "over-cap")
         {
-            Assert.Equal(DecisionCallStatuses.InvalidResponse, receipt.Call.Status);
+            Assert.Equal(scenario == "over-cap" ? DecisionCallStatuses.Unavailable
+                : DecisionCallStatuses.InvalidResponse, receipt.Call.Status);
             Assert.Equal("operator:ai", receipt.Chosen.Last().Target);
             Assert.Equal(DecisionReceiptPolicy.ActiveHold, receipt.DispatchOutcome);
+        }
+        if (scenario == "over-cap")
+        {
+            Assert.True(receipt.Call.CallTokenCapExceeded);
+            Assert.Single(receipt.Chosen);
+            Assert.Equal(DecisionActionKinds.Ask, receipt.Chosen[0].Action);
         }
         if (staleAuthority)
             factory.Services.GetRequiredService<AttemptAuthorityService>()
                 .RotateAuthorityEpoch("test stale model decision");
         if (scenario == "salvage-move-failure")
             File.WriteAllText(Path.Combine(projectPath, TaskStates.Ready, card), "blocked");
+        var outputJson = scenario == "adapter-reject"
+            ? JsonSerializer.Serialize(new
+            {
+                activeChoice = new DecisionChoiceV1(DecisionActionKinds.Retry,
+                    "card:park", "submitted:authority-adapter"),
+                receiptId = receipt.ReceiptId,
+                groundsDigest = receipt.GroundsDigest,
+            }) : decision.OutputJson;
         var request = new CompleteOrchestrationStageRequest("engine_test", "instance",
             claim.Lease!.LeaseId, claim.Lease.Fence, OrchestrationStage.ReviewDecision,
-            decision.Action, decision.OutputJson, "active-decision-once");
-        if (staleAuthority || scenario == "salvage-move-failure")
+            decision.Action, outputJson, "active-decision-once");
+        if (scenario == "salvage-move-failure")
             await Assert.ThrowsAsync<InvalidOperationException>(() => orchestration.CompleteAsync(
                 occurrence.RunId, request, CancellationToken.None));
         else
@@ -209,12 +321,18 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
         if (scenario == "salvage-move-failure")
             Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
-        if (scenario is "invalid" or "forbidden")
+        if (scenario is "invalid" or "forbidden" or "over-cap" or "adapter-reject" || staleAuthority)
         {
             Assert.Equal(1, operatorQueue.Count);
+            if (scenario == "adapter-reject")
+                Assert.Equal("rejected:decision-choice-mismatch", operatorQueue.LastChoice?.Outcome);
+            if (staleAuthority)
+                Assert.Equal("rejected:decision-stale-authority", operatorQueue.LastChoice?.Outcome);
             Assert.Equal(occurrence.RunId,
                 EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
         }
+        if (scenario == "adapter-reject" || staleAuthority)
+            Assert.Equal("completed", orchestration.Get(occurrence.RunId)?.Status);
     }
 
     [Fact]
@@ -811,9 +929,35 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     private sealed class RecordingAiOperatorQueue : IAiOperatorDecisionQueue
     {
         public int Count { get; private set; }
+        public DecisionChoiceV1? LastChoice { get; private set; }
+
+        public void RecoverPending() { }
 
         public void Enqueue(AgentStudio.Shared.TaskInfo task, string occurrenceId, DecisionChoiceV1 choice)
-            => Count++;
+        {
+            Count++;
+            LastChoice = choice;
+        }
+    }
+
+    private sealed class RecordingTurnDispatcher : IAiOperatorTurnDispatcher
+    {
+        public List<string> TurnIds { get; } = [];
+        public List<string> Prompts { get; } = [];
+        public OrchestratorSessionRegistry? Registry { get; set; }
+        public TimeProvider? Time { get; set; }
+
+        public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request)
+        {
+            var turnId = Guid.NewGuid().ToString("N");
+            TurnIds.Add(turnId);
+            Prompts.Add(request.Prompt);
+            Registry!.AppendHistory(contextKey, new OrchestratorSessionHistoryEntry(
+                Time!.GetUtcNow().UtcDateTime, "turn", turnId, OrchestratorTurnService.StatusQueued,
+                request.Prompt, null, null, null, null, 1));
+            return new OrchestratorTurnResponse(contextKey, turnId,
+                OrchestratorTurnService.StatusQueued, 1, 0, 1);
+        }
     }
 
     private sealed class HttpDecisionPlane(HttpClient client) : IDecisionReceiptPlane

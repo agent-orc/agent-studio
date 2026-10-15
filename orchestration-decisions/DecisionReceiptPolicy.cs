@@ -151,7 +151,14 @@ public static class DecisionReceiptPolicy
             : result is null || !result.Success ? DecisionCallStatuses.Unavailable
             : null;
         var response = unavailable is null ? Parse(result!.ResponseText, grounds) : null;
-        var callStatus = unavailable ?? (response!.Valid ? DecisionCallStatuses.Completed
+        var tokens = result?.Tokens ?? DecisionTokenUsageV1.Zero;
+        var tokenCapExceeded = tokens.UncachedInput + tokens.CachedInput + tokens.CacheWrite
+                > DecisionGroundsPolicy.MaxCallInputTokens
+            || tokens.Output > DecisionGroundsPolicy.MaxCallOutputTokens;
+        if (tokenCapExceeded)
+            response = null;
+        var callStatus = tokenCapExceeded ? DecisionCallStatuses.Unavailable
+            : unavailable ?? (response!.Valid ? DecisionCallStatuses.Completed
             : DecisionCallStatuses.InvalidResponse);
         var dispatch = facts.Mode == ActiveMode
             ? response is { Valid: true } && response.Chosen.Count == 1
@@ -165,7 +172,6 @@ public static class DecisionReceiptPolicy
         var matches = response is { Valid: true } && response.Chosen.Count == 1
             && response.Chosen[0].Action == facts.Deterministic.Action
             && string.Equals(response.Chosen[0].Target, facts.Deterministic.Target, StringComparison.OrdinalIgnoreCase);
-        var tokens = result?.Tokens ?? DecisionTokenUsageV1.Zero;
         var receiptId = ReceiptId(grounds.OccurrenceId, grounds.ContentDigest);
         var call = new DecisionModelCallV1(
             callStatus,
@@ -181,12 +187,11 @@ public static class DecisionReceiptPolicy
             result?.Price ?? new DecisionPriceV1(DecisionPriceStatuses.NoUsage, null),
             result?.ProviderCallIds ?? [],
             result?.ExcludedDuplicateFrames ?? 0,
-            tokens.UncachedInput + tokens.CachedInput + tokens.CacheWrite > DecisionGroundsPolicy.MaxCallInputTokens
-                || tokens.Output > DecisionGroundsPolicy.MaxCallOutputTokens,
-            Bound(facts.UnavailableReason ?? result?.Error ?? job?.Error ?? response?.Failure
+            tokenCapExceeded,
+            Bound(tokenCapExceeded ? "call-token-cap-exceeded" : facts.UnavailableReason ?? result?.Error ?? job?.Error ?? response?.Failure
                 ?? (grounds.Pack.Incomplete ? "incomplete-pack" : null), 400));
         var reasoning = response is { Valid: true } ? response.Reasoning
-            : $"Degraded mode: {response?.Failure ?? facts.UnavailableReason ?? job?.Error ?? unavailable}. "
+            : $"Degraded mode: {(tokenCapExceeded ? "call-token-cap-exceeded" : response?.Failure ?? facts.UnavailableReason ?? job?.Error ?? unavailable)}. "
               + "The transition rests in ask(reason=decision-unavailable).";
         return new OrchestratorDecisionReceiptV1(
             SchemaVersion,
