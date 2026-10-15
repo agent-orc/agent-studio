@@ -41,6 +41,7 @@ builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
+builder.Services.AddSingleton<ActiveDecisionAuthorityAdapter>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);

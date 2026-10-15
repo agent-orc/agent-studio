@@ -21,13 +21,46 @@ public interface IOrchestrationStageHandler
 
 public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
 {
+    private readonly ShadowDecisionStep? _decisionStep;
+    private readonly IDecisionReceiptPlane? _decisionPlane;
+
+    public ReviewDecisionOrchestratorLoop() { }
+
+    public ReviewDecisionOrchestratorLoop(ShadowDecisionStep decisionStep, IDecisionReceiptPlane decisionPlane)
+    {
+        _decisionStep = decisionStep;
+        _decisionPlane = decisionPlane;
+    }
+
     public OrchestrationStage Stage => OrchestrationStage.ReviewDecision;
 
-    public Task<OrchestrationStageDecision> ExecuteAsync(
+    public async Task<OrchestrationStageDecision> ExecuteAsync(
         OrchestrationRunDto run,
         CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (_decisionStep is not null && _decisionPlane is not null
+            && await _decisionPlane.GetGroundsInputAsync(run.RunId, ct) is { Mode: DecisionReceiptPolicy.ActiveMode })
+        {
+            var receipt = await _decisionStep.RecordAsync(run.RunId, ct, DecisionReceiptPolicy.ActiveMode)
+                ?? throw new InvalidDataException("Active decision grounds were not found.");
+            var choice = receipt.Chosen.Last(item => !item.Outcome.StartsWith("rejected:",
+                StringComparison.Ordinal));
+            var modelTransition = receipt.Call.Status == DecisionCallStatuses.Completed
+                ? ActiveDecisionPolicy.CodingTransition(choice, run.TaskId,
+                    receipt.Scope.AttemptId ?? run.RunId) : null;
+            var modelAction = modelTransition is null ? OrchestrationAction.Continue
+                : StageDecisionPolicy.ToStageAction(modelTransition.Action);
+            return new OrchestrationStageDecision(modelAction, JsonSerializer.Serialize(new
+            {
+                component = nameof(ReviewDecisionOrchestratorLoop),
+                activeChoice = choice,
+                receiptId = receipt.ReceiptId,
+                groundsDigest = receipt.GroundsDigest,
+                transition = modelTransition,
+                decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}:model",
+            }));
+        }
         using var payload = JsonDocument.Parse(run.PayloadJson);
         var reviewOutcome = ReadString(payload.RootElement, "reviewOutcome");
         var executionOutcome = ReadString(payload.RootElement, "agentOutcome");
@@ -42,7 +75,7 @@ public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
             ReadString(payload.RootElement, "runAttemptId") ?? run.RunId,
             codingTarget);
         var action = StageDecisionPolicy.ToStageAction(transition.Action);
-        return Task.FromResult(new OrchestrationStageDecision(
+        return new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
             {
@@ -55,7 +88,7 @@ public sealed class ReviewDecisionOrchestratorLoop : IOrchestrationStageHandler
                 transition,
                 decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}",
                 decision = action.ToString(),
-            })));
+            }));
     }
 
     private static string? ReadString(JsonElement element, string property)

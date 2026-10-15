@@ -156,7 +156,8 @@ public static class DecisionGroundsPolicy
     /// need a later slice or human approval stay visible as floor-rejected.
     /// </summary>
     public static IReadOnlyList<GroundsAlternativeV1> CodingCompletionAlternatives(
-        TransitionDecision deterministic, bool hasSettledEnvelope)
+        TransitionDecision deterministic, bool hasSettledEnvelope,
+        string? lastVerifiedTreeSha = null, string? resultSha = null, string? resultRef = null)
     {
         var chosen = CodingCompletionChoice(deterministic);
         GroundsAlternativeV1 Candidate(string action, string target, string reversibility,
@@ -170,12 +171,18 @@ public static class DecisionGroundsPolicy
             Candidate(DecisionActionKinds.Prepare, "review-subject", "reversible", "A0",
                 hasSettledEnvelope, "No settled immutable result envelope exists for this attempt."),
             Candidate(DecisionActionKinds.Retry, "card:ready", "reversible", "A0", true, null),
-            Candidate(DecisionActionKinds.Ask, "operator:human-review", "reversible", "A0", true, null),
-            Candidate(DecisionActionKinds.Defer, "card:bounded-pause", "reversible", "A0", true, null),
+            Candidate(DecisionActionKinds.Ask, "operator:ai", "reversible", "A0", true, null),
+            Candidate(DecisionActionKinds.Defer, "card:bounded-pause", "reversible", "A0", false,
+                "No bounded resume time is present in this transition profile."),
             Candidate(DecisionActionKinds.Continue, "current-lane", "reversible", "A0", false,
                 "The settled coding attempt must leave the coding step."),
-            Candidate(DecisionActionKinds.Checkpoint, "verified-tree", "reversible", "A1", false,
-                "Checkpoint dispatch is not yet an authorized action of this profile (OD-S2)."),
+            Candidate(DecisionActionKinds.Checkpoint, "verified-tree", "reversible", "A1",
+                !string.IsNullOrWhiteSpace(lastVerifiedTreeSha),
+                "No previously verified result tree exists for this card."),
+            Candidate(DecisionActionKinds.Adapt, "salvage-handoff", "reversible", "A1",
+                hasSettledEnvelope && !string.IsNullOrWhiteSpace(resultSha)
+                    && !string.IsNullOrWhiteSpace(resultRef),
+                "A settled immutable result ref and SHA are required for salvage."),
             Candidate(DecisionActionKinds.Adapt, "route-upgrade", "reversible", "A1", false,
                 "No route change is authorized for the coding-completion profile."),
             Candidate(DecisionActionKinds.Halt, "card:park", "manual-restore", "A2", false,
@@ -191,7 +198,7 @@ public static class DecisionGroundsPolicy
         {
             DecisionActionKinds.Prepare => "review-subject",
             DecisionActionKinds.Retry => "card:ready",
-            DecisionActionKinds.Ask => "operator:human-review",
+            DecisionActionKinds.Ask => "operator:ai",
             DecisionActionKinds.Halt => "card:park",
             _ => "current-lane",
         };
