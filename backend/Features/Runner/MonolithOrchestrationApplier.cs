@@ -20,6 +20,9 @@ public sealed class MonolithOrchestrationApplier(
     BatchGatePilotService batches,
     AgentStudio.Projects.ProjectSettingsService settings,
     IOperatorSweepActions sweepActions,
+    ActiveChoiceAdmissionAdapter activeDecisionAuthority,
+    IAiOperatorDecisionQueue aiOperator,
+    TimeProvider time,
     IConfiguration configuration,
     IServiceProvider services,
     OrchestratorLog operatorLog) : IMonolithOrchestrationApplier
@@ -72,6 +75,13 @@ public sealed class MonolithOrchestrationApplier(
         }
         using var output = JsonDocument.Parse(completion.OutputJson);
         var root = output.RootElement;
+        DecisionChoiceV1? activeChoice = null;
+        if (root.TryGetProperty("activeChoice", out _))
+            activeChoice = activeDecisionAuthority.Validate(occurrence, task, completion.Action, root);
+        else if (occurrence.Profile == "CodingCompletion"
+            && completion.EngineId != "engine_rollback"
+            && activeDecisionAuthority.HasActiveGrounds(occurrence.Run.RunId))
+            throw new InvalidOperationException("active-decision-receipt-required");
         TransitionDecision? decision = null;
         if (root.TryGetProperty("transition", out var transition)
             && transition.ValueKind == JsonValueKind.Object)
@@ -85,6 +95,24 @@ public sealed class MonolithOrchestrationApplier(
             throw new InvalidDataException("The engine gate decision is missing its transition.");
         if (decision is null && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
             throw new InvalidDataException("The engine review decision is missing its transition.");
+        if (activeChoice is { Action: DecisionActionKinds.Ask or DecisionActionKinds.Defer })
+        {
+            aiOperator.Enqueue(task, occurrence.Run.RunId, activeChoice);
+            scanner.InvalidateCache();
+            return;
+        }
+        if (activeChoice is { Action: DecisionActionKinds.Checkpoint })
+        {
+            var verified = activeDecisionAuthority.VerifiedTree(occurrence.Run.RunId);
+            var directory = Path.Combine(task.FolderPath, "results");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "checkpoint.md");
+            if (!File.Exists(path))
+                File.WriteAllText(path, $"# Verified-tree checkpoint\n\nLast verified tree: `{verified}`\n"
+                    + $"Decision occurrence: `{occurrence.Run.RunId}`\n");
+            scanner.InvalidateCache();
+            return;
+        }
         if (decision?.Action == TransitionAction.ReviewInfrastructureRetry)
         {
             if (!authority.HasScheduledReviewInfrastructureRetry(occurrence.AuthorityAttemptId))
@@ -166,6 +194,18 @@ public sealed class MonolithOrchestrationApplier(
         }
         if (task.State == occurrence.ExpectedSourceState)
         {
+            var isSalvage = activeChoice is { Action: DecisionActionKinds.Adapt,
+                Target: "salvage-handoff" };
+            AgentStudio.Runner.ContinuationBaseRecord? salvageBase = null;
+            if (isSalvage)
+            {
+                using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+                salvageBase = new ContinuationBaseRecord(
+                    payload.RootElement.GetProperty("resultRef").GetString()!,
+                    payload.RootElement.GetProperty("resultSha").GetString()!,
+                    "model-selected-salvage-handoff", occurrence.AuthorityAttemptId,
+                    time.GetUtcNow().UtcDateTime);
+            }
             var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
                 cause: "engine-decision", reason: decision?.Reason ?? "Engine stage completed.",
                 authorityWrite: new AttemptWriteReference(occurrence.AuthorityAttemptId,
@@ -174,7 +214,11 @@ public sealed class MonolithOrchestrationApplier(
                 expectedSourceState: occurrence.ExpectedSourceState,
                 transitionCause: decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
                     ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
-                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString());
+                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString(),
+                engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
+                    Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
+                    Target: "salvage-handoff" },
+                engineContinuationBase: salvageBase);
             if (move.Status != MoveJobStatus.Success)
                 throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
             scanner.InvalidateCache();

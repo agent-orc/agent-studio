@@ -184,6 +184,10 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         var fakeEngine = new FakeEngineClient(engineHttp, engine.Runner.Id);
         var codingClaim = await fakeEngine.Claim();
         Assert.Equal(codingRun.RunId, codingClaim.Run!.RunId);
+        Assert.Null(factory.Services.GetRequiredService<OrchestratorDecisionStore>()
+            .GetInputs(codingRun.RunId));
+        var liveConfiguration = factory.Services.GetRequiredService<IConfiguration>();
+        liveConfiguration["Orchestration:DecisionModel:ActiveCodingCompletion"] = "true";
         Assert.Equal("completed", (await fakeEngine.Complete(codingClaim)).Status);
         Assert.True(Directory.Exists(Path.Combine(projectPath, TaskStates.AutoReview, card)));
 

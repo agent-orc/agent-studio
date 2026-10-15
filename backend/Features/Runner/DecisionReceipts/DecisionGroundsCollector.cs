@@ -38,11 +38,12 @@ public sealed class DecisionGroundsCollector(
 {
     public const string Profile = "CodingCompletion";
 
-    public DecisionShadowInputV1 FreezeCodingCompletion(CodingCompletionObservation observed)
+    public DecisionShadowInputV1 FreezeCodingCompletion(CodingCompletionObservation observed,
+        string mode = DecisionReceiptPolicy.ShadowMode)
     {
         var choice = DecisionGroundsPolicy.CodingCompletionChoice(observed.Deterministic);
         return decisions.FreezeInputs(new DecisionShadowInputV1(CodingCompletion(observed),
-            choice.Action, choice.Target, observed.Deterministic.Reason));
+            choice.Action, choice.Target, observed.Deterministic.Reason, mode));
     }
 
     public DecisionGroundsInputV1 CodingCompletion(CodingCompletionObservation observed)
@@ -157,7 +158,8 @@ public sealed class DecisionGroundsCollector(
             $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}/{DecisionReceiptPolicy.PromptVersion}",
             Route(configuration),
             facts,
-            DecisionGroundsPolicy.CodingCompletionAlternatives(observed.Deterministic, observed.HasSettledEnvelope),
+            DecisionGroundsPolicy.CodingCompletionAlternatives(observed.Deterministic, observed.HasSettledEnvelope,
+                ledger.Progress.LastVerifiedTreeSha, observed.ResultSha, observed.ResultRef),
             prior,
             ledger.Ledger,
             ledger.Progress,

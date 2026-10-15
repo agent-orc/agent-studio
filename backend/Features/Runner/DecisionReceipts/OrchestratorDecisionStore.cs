@@ -66,7 +66,8 @@ public sealed class OrchestratorDecisionStore
     /// <summary>Occurrences whose frozen grounds still wait for a receipt, oldest first.</summary>
     public IReadOnlyList<string> PendingReceipts(int limit)
     {
-        lock (_gate) return _inputs.Values.Where(input => !_receipts.ContainsKey(input.Grounds.OccurrenceId))
+        lock (_gate) return _inputs.Values.Where(input => input.Mode == DecisionReceiptPolicy.ShadowMode
+                && !_receipts.ContainsKey(input.Grounds.OccurrenceId))
             .OrderBy(input => input.Grounds.Trigger.ObservedAt)
             .ThenBy(input => input.Grounds.OccurrenceId, StringComparer.Ordinal)
             .Take(Math.Clamp(limit, 1, 100)).Select(input => input.Grounds.OccurrenceId).ToArray();

@@ -78,6 +78,90 @@ inventory of every hosted service and its owner is
 `OrchestrationEngineReadiness` reports, but never holds: while a profile selects
 the engine, `GET /healthz/orchestration-engine` answers `ready` or
 `engine-not-live`.
+## Decision grounds, shadow receipts and active coding choice
+
+AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
+is in Shadow. When the monolith records the shadow occurrence,
+`DecisionGroundsCollector` freezes a `DecisionShadowInputV1` under
+`<TaskRepository>/.orchestrator-decisions/inputs`. It holds typed facts with
+source refs, freshness, coverage and reliability, explicit omissions, the
+candidate actions with floor-rejected ones visible, the last decisions with
+their applied outcome, the model route, and the AGT-W68 RB-S1 card ledger and
+progress definition. The deterministic choice sits beside the grounds and stays
+out of the model prompt. The first frozen input of an occurrence wins.
+
+The library owns the pure rules. `CardRunLedgerPolicy` deduplicates usage by
+provider call id (falling back to a run, time, model and counter fingerprint),
+subtracts cached input from a raw OpenAI total before pricing, keeps unknown
+prices unpriced, and reports excluded duplicate rows, tokens and value.
+`DecisionGroundsPolicy.Freeze` builds `DecisionGroundsV1` with fixed row caps,
+truncation markers, at most 32 KiB, a 6,500-token pack budget that leaves room
+for the prompt inside the 8,000-token call cap, an incomplete-pack flag, and a
+SHA-256 content digest. `DecisionReceiptPolicy` renders the prompt, accepts only
+an available candidate from the closed union with valid confidence and cited
+fact ids, and builds `OrchestratorDecisionReceiptV1`. Any other answer, an
+unavailable model, an expired wait, a cap or an incomplete pack records
+`ask(reason=decision-unavailable)`.
+
+The engine's `ShadowDecisionService` drains occurrences without a receipt. By
+default the model call is a claimable decision job on a runner host
+(`runner-host-job` custody), so provider credentials stay on runner hosts. A
+runner claims it at `/api/runner/orchestrator-decisions/claim` with the
+`runner.claim` scope and runs one read-only CLI turn in an empty directory. A
+transport failure gets one attempt on `Orchestration:DecisionModel:Alternate*`.
+The monolith prices the deduplicated usage with `ITokenPricing` at the call
+time. `DecisionCostCapPolicy` holds the cost protection. A card occurrence is
+refused beyond 24 calls or 5 USD priced spend per card. An occurrence without a
+card (the Fluid capacity periodic host check) is charged to its host-day
+instead: 48 scheduled plus 12 event calls, 180,000 input and 90,000 output
+tokens and 10 USD priced spend per host and UTC day, where open jobs reserve
+their token envelope and estimated priced cost. Reclaimed claims keep billed
+completions from the replaced runner as separate calls attributed to the same
+job; duplicate reports do not add spend. A refused job stays `cap-exhausted`. Each call carries an
+envelope of at most 8,000 input and 1,000 output tokens. The runner refuses a
+prompt whose conservative estimate with framing margin exceeds it before
+spawning. It passes the output cap to the CLI (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
+Codex `model_max_output_tokens`) and the total context window to Codex as
+`model_context_window`. The
+store rejects a completion whose measured usage broke the envelope. It keeps
+the usage and price but does not accept the answer, so the receipt records
+`ask(reason=decision-unavailable)`. Receipts are immutable: the store checks the grounds
+digest against the frozen input and returns the first receipt on every replay.
+Storing a receipt also closes any job that is still open. A billed completion
+that arrives after that (for example after a timeout receipt) still records
+its usage and price on the job. The card spend counts it, and the receipt row
+and its outcome link add it as a late call (`lateCalls`). Studio reads
+`/api/orchestration/decision-receipts`; each row's `evidenceRef` opens the full
+receipt with grounds and response, and `outcomeLink` shows the applied action.
+In Shadow, the model choice is never dispatched. In Engine mode, the coding
+completion profile freezes the same grounds before activating its occurrence.
+The engine waits for the runner-hosted model job, records an active receipt,
+then submits the chosen action through stage completion. The Task Server
+validates the receipt against the frozen grounds, the current authority epoch
+and fence, the settled run and exact result SHA/ref, and the offered action's
+A0 or A1 floor before applying an effect. A valid `prepare(review-subject)`
+creates review; `retry(card:ready)` requeues even when the settled run has no
+result envelope; `adapt(salvage-handoff)` requires an envelope and pins the
+immutable result ref as the next round's base; `checkpoint(verified-tree)`
+writes `results/checkpoint.md` with the last verified SHA and retains the engine
+wait marker while the card is held in Progress.
+Unusable output and unavailable or capped calls record `ask(operator:ai)`
+with the call status and no-call reason, and leave the card in its source lane.
+An A2/A3 proposal cannot mutate the card. The active profile can be disabled
+for a compatibility rollback with
+`Orchestration:DecisionModel:ActiveCodingCompletion=false`. It is **off by default**
+even when `Orchestration:Transitions:CodingCompletion=Engine`; activation requires
+the explicit per-transition setting
+`Orchestration:DecisionModel:ActiveCodingCompletion=true` after shadow and
+engine mode have run on Stable. Existing Engine occurrences keep their frozen
+decision mode through completion. Held decisions persist an AI Operator ask for
+restart recovery, and a selected salvage base is staged before the Ready move
+and removed if the fenced move fails. The receipt's outcome link shows the
+later applied stage action. `Orchestration:DecisionModel:Cli`, `Model`
+and `ThinkingLevel` default to `codex`, `gpt-6-sol` and `medium`; the engine
+reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
+(900). An engine-held provider credential remains a separate follow-up decision
+if claim latency proves too high.
 
 ## Inputs and outputs
 

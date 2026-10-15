@@ -25,10 +25,12 @@ public interface IDecisionReceiptPlane
 /// </summary>
 public sealed class ShadowDecisionStep(IDecisionReceiptPlane plane, EngineOptions options, TimeProvider time)
 {
-    public async Task<OrchestratorDecisionReceiptV1?> RecordAsync(string occurrenceId, CancellationToken ct)
+    public async Task<OrchestratorDecisionReceiptV1?> RecordAsync(string occurrenceId, CancellationToken ct,
+        string mode = DecisionReceiptPolicy.ShadowMode)
     {
         var input = await plane.GetGroundsInputAsync(occurrenceId, ct);
         if (input is null) return null;
+        if (input.Mode != mode) throw new InvalidOperationException("decision-mode-mismatch");
         var grounds = DecisionGroundsPolicy.Freeze(input.Grounds);
         OrchestratorDecisionJobDto? job = null;
         var attempts = 0;
@@ -53,7 +55,7 @@ public sealed class ShadowDecisionStep(IDecisionReceiptPlane plane, EngineOption
         }
         var receipt = DecisionReceiptPolicy.Build(new DecisionReceiptFacts(grounds,
             new DecisionChoiceV1(input.DeterministicAction, input.DeterministicTarget, "applied:deterministic"),
-            input.DeterministicReason, job, attempts, alternateUsed, unavailable));
+            input.DeterministicReason, job, attempts, alternateUsed, unavailable, mode));
         return await plane.PutDecisionReceiptAsync(receipt, ct);
     }
 

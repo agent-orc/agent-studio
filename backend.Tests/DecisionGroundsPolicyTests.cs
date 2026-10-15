@@ -11,6 +11,32 @@ public sealed class DecisionGroundsPolicyTests
     // clock-independent: pure policy inputs; no rule here reads "now", every time is passed in as data.
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
 
+    [Fact]
+    public void Verified_tree_checkpoint_is_selectable_but_A2_parking_is_floor_rejected()
+    {
+        var deterministic = TransitionDecisionPolicy.Create(TransitionAction.CreateReview,
+            "settled", "AGT-1", "attempt-1", 0, 0);
+        var alternatives = DecisionGroundsPolicy.CodingCompletionAlternatives(deterministic, true,
+            new string('a', 40), new string('b', 40), "refs/immutable/result");
+        Assert.Contains(alternatives, candidate => candidate.Action == DecisionActionKinds.Checkpoint
+            && candidate.Target == "verified-tree" && candidate.Available
+            && candidate.RequiredApproval == "A1");
+        Assert.Contains(alternatives, candidate => candidate.Action == DecisionActionKinds.Adapt
+            && candidate.Target == "salvage-handoff" && candidate.Available);
+        Assert.Contains(alternatives, candidate => candidate.Action == DecisionActionKinds.Halt
+            && candidate.RequiredApproval == "A2" && !candidate.Available);
+        var grounds = DecisionGroundsPolicy.Freeze(Input() with { Alternatives = alternatives });
+        var checkpoint = DecisionReceiptPolicy.Parse(
+            """{"chosenActions":[{"action":"checkpoint","target":"verified-tree"}],"confidence":0.8,"reasoning":"Keep the verified tree.","citedFacts":["result.sha"]}""",
+            grounds);
+        Assert.True(checkpoint.Valid);
+        Assert.Null(ActiveDecisionPolicy.CodingTransition(checkpoint.Chosen[0], "AGT-1", "attempt-1"));
+        var forbidden = DecisionReceiptPolicy.Parse(
+            """{"chosenActions":[{"action":"halt","target":"card:park"}],"confidence":0.8,"reasoning":"Park it.","citedFacts":["result.sha"]}""",
+            grounds);
+        Assert.Equal("forbidden-action", forbidden.Failure);
+    }
+
     // $10 per million uncached input, $1 cached, $2 cache write, $50 output.
     private static DecisionPriceV1 Price(RunLedgerRowV1 row, DecisionTokenUsageV1 usage)
         => row.Model == "mystery-model"
@@ -159,7 +185,7 @@ public sealed class DecisionGroundsPolicyTests
 
         Assert.True(grounds.Pack.Incomplete);
         Assert.Equal(DecisionCallStatuses.IncompletePack, receipt.Call.Status);
-        Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Ask, DecisionReceiptPolicy.DegradedTarget,
+        Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai",
             DecisionReceiptPolicy.ShadowDispatch), Assert.Single(receipt.Chosen));
     }
 
@@ -228,7 +254,7 @@ public sealed class DecisionGroundsPolicyTests
 
         Assert.Equal(DecisionCallStatuses.InvalidResponse, receipt.Call.Status);
         Assert.Equal("confidence-out-of-range", receipt.Call.Error);
-        Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Ask, DecisionReceiptPolicy.DegradedTarget,
+        Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai",
             DecisionReceiptPolicy.ShadowDispatch), receipt.Chosen[^1]);
         Assert.Null(receipt.Confidence);
         Assert.Equal(0.075m, receipt.Call.Price.EstimatedUsd);

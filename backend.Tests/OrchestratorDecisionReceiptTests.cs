@@ -12,8 +12,10 @@ using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tokens;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -25,6 +27,7 @@ using RRemoteComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
 using EngineOptions = EngineAssembly::AgentStudio.OrchestratorEngine.EngineOptions;
 using IDecisionReceiptPlane = EngineAssembly::AgentStudio.OrchestratorEngine.IDecisionReceiptPlane;
 using ShadowDecisionStep = EngineAssembly::AgentStudio.OrchestratorEngine.ShadowDecisionStep;
+using ReviewDecisionOrchestratorLoop = EngineAssembly::AgentStudio.OrchestratorEngine.ReviewDecisionOrchestratorLoop;
 
 /// <summary>
 /// AGT-3063 acceptance: a shadow coding completion freezes typed grounds, a
@@ -37,6 +40,182 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
     private readonly string _workspace = Path.Combine(Path.GetTempPath(),
         "orchestrator-decision-receipts-" + Guid.NewGuid().ToString("N"));
+
+    [Theory]
+    [InlineData("prepare", false)]
+    [InlineData("retry", false)]
+    [InlineData("retry-no-envelope", false)]
+    [InlineData("salvage", false)]
+    [InlineData("salvage-move-failure", false)]
+    [InlineData("invalid", false)]
+    [InlineData("forbidden", false)]
+    [InlineData("prepare", true)]
+    [InlineData("salvage", true)]
+    public async Task Active_coding_choice_dispatches_once_or_holds_on_invalid_output_and_stale_authority(
+        string scenario, bool staleAuthority)
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-ACTIVE-DECISION";
+        const string runnerId = "coding-runner";
+        const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var folder = Path.Combine(projectPath, TaskStates.Progress, card);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Active decision", state = TaskStates.Progress,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Build and verify.");
+        File.WriteAllText(Path.Combine(folder, "status.md"), "Result: pending.");
+        var operatorQueue = new RecordingAiOperatorQueue();
+        var serverClock = new FakeTimeProvider(new DateTimeOffset(At));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                    ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
+                    ["Supervisor:StuckResumeWindowMinutes"] = "0",
+                    ["DeliveryChain:Guarded"] = "false",
+                    ["Orchestration:Transitions:CodingCompletion"] = "Engine",
+                    ["Orchestration:DecisionModel:ActiveCodingCompletion"] = "true",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAiOperatorDecisionQueue>();
+                services.AddSingleton<IAiOperatorDecisionQueue>(operatorQueue);
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(serverClock);
+            });
+        });
+        using var http = factory.CreateClient();
+        using var coding = new RClient(http, runnerId);
+        await coding.RegisterAsync(project, "service", CancellationToken.None);
+        var lease = await coding.AcquireLeaseAsync(
+            new RAcquire(card, runnerId, project, "coding-host", 4242, "codex"), CancellationToken.None);
+        Assert.True(lease.Granted);
+        var withoutEnvelope = scenario == "retry-no-envelope";
+        var completion = await coding.CompleteRunAsync(new RRemoteComplete(
+            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId,
+            "Done",
+            ResultSha: resultSha, AttemptChainId: lease.Lease.LeaseId,
+            Repository: "https://example.invalid/agent-studio.git",
+            AttemptId: lease.Lease.AttemptId, AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "active-coding-completion", BaseSha: new string('b', 40),
+            ImmutableResultRef: FencedGitRefs.ImmutableResult(
+                lease.Lease.AttemptId!, lease.Lease.FencingToken, resultSha),
+            ArtifactManifestDigest: withoutEnvelope ? null : new string('a', 64)), CancellationToken.None);
+        Assert.Equal(TaskStates.Progress, completion!.TargetState);
+
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var occurrence = Assert.Single(orchestration.List(project, null));
+        var frozen = factory.Services.GetRequiredService<OrchestratorDecisionStore>()
+            .GetInputs(occurrence.RunId)!;
+        Assert.Equal(DecisionReceiptPolicy.ActiveMode, frozen.Mode);
+        Assert.Empty(factory.Services.GetRequiredService<OrchestratorDecisionStore>().PendingReceipts(10));
+        var claim = orchestration.Claim(new("engine_test", "instance", [OrchestrationStage.ReviewDecision]));
+        Assert.Equal("claimed", claim.Status);
+
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var engine = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "engine-one", [RunnerScopes.Orchestration], null, null)).Code);
+        using var engineHttp = factory.CreateClient();
+        engineHttp.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
+        engineHttp.DefaultRequestHeaders.Add("X-Client-Id", engine.Runner.Id);
+        var plane = new HttpDecisionPlane(engineHttp);
+        var engineClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var step = new ShadowDecisionStep(plane,
+            new EngineOptions { ServerUrl = "http://127.0.0.1", ClientId = engine.Runner.Id, PollSeconds = 1 },
+            engineClock);
+        var deciding = new ReviewDecisionOrchestratorLoop(step, plane)
+            .ExecuteAsync(claim.Run!, CancellationToken.None);
+        var modelJob = await ClaimAsync(coding, runnerId);
+        var response = scenario switch
+        {
+            "invalid" => "{}",
+            "forbidden" => """{"chosenActions":[{"action":"halt","target":"card:park"}],"confidence":0.8,"reasoning":"Park it.","citedFacts":["run.outcome"]}""",
+            "salvage" => """{"chosenActions":[{"action":"adapt","target":"salvage-handoff"}],"confidence":0.8,"reasoning":"Continue on the immutable result.","citedFacts":["result.sha"]}""",
+            "salvage-move-failure" => """{"chosenActions":[{"action":"adapt","target":"salvage-handoff"}],"confidence":0.8,"reasoning":"Continue on the immutable result.","citedFacts":["result.sha"]}""",
+            "retry" or "retry-no-envelope" => """{"chosenActions":[{"action":"retry","target":"card:ready"}],"confidence":0.8,"reasoning":"Try another round.","citedFacts":["run.outcome"]}""",
+            _ => """{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":0.8,"reasoning":"The result is settled.","citedFacts":["result.envelope"]}""",
+        };
+        Assert.True(await coding.CompleteOrchestratorDecisionJobAsync(new OrchestratorDecisionJobCompletion(
+            modelJob.JobId, modelJob.ClaimToken, runnerId, true, response, "gpt-6-sol",
+            [new("active-call", "gpt-6-sol", 500, 0, 0, 100, false)], At, At.AddSeconds(2),
+            null, false), CancellationToken.None));
+        for (var tick = 0; tick < 200 && !deciding.IsCompleted; tick++)
+        {
+            engineClock.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(25);
+        }
+        var decision = await deciding;
+        var receipt = factory.Services.GetRequiredService<OrchestratorDecisionStore>()
+            .GetReceipt(DecisionReceiptPolicy.ReceiptId(occurrence.RunId,
+                DecisionGroundsPolicy.Freeze(frozen.Grounds).ContentDigest))!;
+        Assert.Equal(DecisionReceiptPolicy.ActiveMode, receipt.Mode);
+        Assert.Equal(1, receipt.Call.Attempts);
+        Assert.True(receipt.Call.Tokens.Total > 0);
+        if (scenario is "invalid" or "forbidden")
+        {
+            Assert.Equal(DecisionCallStatuses.InvalidResponse, receipt.Call.Status);
+            Assert.Equal("operator:ai", receipt.Chosen.Last().Target);
+            Assert.Equal(DecisionReceiptPolicy.ActiveHold, receipt.DispatchOutcome);
+        }
+        if (staleAuthority)
+            factory.Services.GetRequiredService<AttemptAuthorityService>()
+                .RotateAuthorityEpoch("test stale model decision");
+        if (scenario == "salvage-move-failure")
+            File.WriteAllText(Path.Combine(projectPath, TaskStates.Ready, card), "blocked");
+        var request = new CompleteOrchestrationStageRequest("engine_test", "instance",
+            claim.Lease!.LeaseId, claim.Lease.Fence, OrchestrationStage.ReviewDecision,
+            decision.Action, decision.OutputJson, "active-decision-once");
+        if (staleAuthority || scenario == "salvage-move-failure")
+            await Assert.ThrowsAsync<InvalidOperationException>(() => orchestration.CompleteAsync(
+                occurrence.RunId, request, CancellationToken.None));
+        else
+        {
+            Assert.Equal("completed", (await orchestration.CompleteAsync(
+                occurrence.RunId, request, CancellationToken.None)).Status);
+            Assert.Equal("completed", (await orchestration.CompleteAsync(
+                occurrence.RunId, request, CancellationToken.None)).Status);
+        }
+        var finalState = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(card, projectPath)?.State;
+        Assert.Equal(!staleAuthority && scenario == "prepare" ? TaskStates.AutoReview
+            : !staleAuthority && scenario is "salvage" or "retry" or "retry-no-envelope" ? TaskStates.Ready : TaskStates.Progress,
+            finalState);
+        if (withoutEnvelope)
+            Assert.Null(factory.Services.GetRequiredService<AttemptAuthorityService>()
+                .GetRun(lease.Lease.AttemptId!)?.ResultEnvelope);
+        if (scenario == "salvage" && !staleAuthority)
+        {
+            var continuation = ContinuationBaseStore.Read(Path.Combine(projectPath,
+                TaskStates.Ready, card));
+            Assert.Equal(resultSha, continuation?.CommitSha);
+            Assert.Equal(At, continuation?.SavedAtUtc);
+        }
+        if (scenario == "salvage" && staleAuthority)
+            Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        if (scenario == "salvage-move-failure")
+            Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        if (scenario is "invalid" or "forbidden")
+        {
+            Assert.Equal(1, operatorQueue.Count);
+            Assert.Equal(occurrence.RunId,
+                EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        }
+    }
 
     [Fact]
     public async Task Scoped_operator_reads_and_answers_only_receipts_in_its_project()
@@ -627,6 +806,14 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
+    }
+
+    private sealed class RecordingAiOperatorQueue : IAiOperatorDecisionQueue
+    {
+        public int Count { get; private set; }
+
+        public void Enqueue(AgentStudio.Shared.TaskInfo task, string occurrenceId, DecisionChoiceV1 choice)
+            => Count++;
     }
 
     private sealed class HttpDecisionPlane(HttpClient client) : IDecisionReceiptPlane

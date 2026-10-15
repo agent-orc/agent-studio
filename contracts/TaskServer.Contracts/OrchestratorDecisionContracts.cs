@@ -240,7 +240,8 @@ public sealed record DecisionShadowInputV1(
     DecisionGroundsInputV1 Grounds,
     string DeterministicAction,
     string DeterministicTarget,
-    string DeterministicReason);
+    string DeterministicReason,
+    string Mode = "shadow");
 
 public sealed record GroundsPackV1(
     int Bytes,
