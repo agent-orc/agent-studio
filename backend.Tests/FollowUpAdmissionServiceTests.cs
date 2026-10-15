@@ -737,6 +737,9 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
                 NullLogger<TaskMutationService>.Instance,
                 timeline);
         var claude = GenericCliExecutionService.ForClaude(NullLogger<GenericCliExecutionService>.Instance, config);
+        // These cases stop at the occupied runner slot, without executing a CLI.
+        // Give the availability probe a version-capable, credential-free binary.
+        claude.SetCliPath("dotnet");
         var codex = GenericCliExecutionService.ForCodex(
             NullLogger<GenericCliExecutionService>.Instance, config,
             new CodexModelDiscovery(NullLogger<CodexModelDiscovery>.Instance, config),

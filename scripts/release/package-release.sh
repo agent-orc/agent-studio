@@ -139,10 +139,13 @@ archive "$studio" "$output_dir/$studio.tar.gz"
 archive "$compose" "$output_dir/$compose.tar.gz"
 install -m 0755 "$publish_root/setup/agent-studio-setup" \
     "$output_dir/agent-studio-setup"
+install -m 0755 "$repo_root/scripts/release/install.sh" \
+    "$output_dir/install.sh"
 (
     cd "$output_dir"
     sha256sum \
         agent-studio-setup \
+        install.sh \
         "$orchestrator.tar.gz" \
         "$host.tar.gz" \
         "$studio.tar.gz" \

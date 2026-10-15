@@ -28,10 +28,15 @@ printf '<!doctype html><title>Agent Studio</title>\n' >"$frontend_root/index.htm
 
 SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     1.2.3 0123456789abcdef "$publish_root" "$frontend_root" "$output_root"
+"$repo_root/scripts/release/extract-release-notes.sh" "$(cat "$repo_root/VERSION")" \
+    >"$test_root/release-notes.md"
+[ -s "$test_root/release-notes.md" ]
 (
     cd "$output_root"
     [ "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4 ]
     [ -x agent-studio-setup ]
+    [ -x install.sh ]
+    grep -Fq 'sha256sum -c' install.sh
     sha256sum -c SHA256SUMS
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/update.sh'
@@ -43,6 +48,33 @@ SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/docker-compose.yml'
     tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/deploy/host_secret_transport.py'
 )
+install_fixture="$test_root/install-fixture"
+install_bin="$test_root/install-bin"
+install -d -m 0755 "$install_fixture" "$install_bin"
+cat >"$install_fixture/agent-studio-setup" <<'FAKE_SETUP'
+#!/bin/sh
+printf '%s\n' "$*" > "$FAKE_SETUP_ARGS"
+FAKE_SETUP
+chmod 0755 "$install_fixture/agent-studio-setup"
+(cd "$install_fixture" && sha256sum agent-studio-setup >SHA256SUMS)
+cat >"$install_bin/curl" <<'FAKE_CURL'
+#!/bin/sh
+set -eu
+[ "$1" = -fsSL ] && [ "$3" = -o ]
+cp "${FAKE_RELEASE_ASSETS:?}/$(basename "$2")" "$4"
+FAKE_CURL
+chmod 0755 "$install_bin/curl"
+FAKE_RELEASE_ASSETS="$install_fixture" FAKE_SETUP_ARGS="$test_root/setup-args" \
+    PATH="$install_bin:$PATH" AGENT_STUDIO_INSTALL_BASE_URL=https://example.invalid \
+    sh "$output_root/install.sh" --help
+[ "$(cat "$test_root/setup-args")" = --help ]
+printf 'tampered\n' >>"$install_fixture/agent-studio-setup"
+if FAKE_RELEASE_ASSETS="$install_fixture" FAKE_SETUP_ARGS="$test_root/setup-args" \
+    PATH="$install_bin:$PATH" AGENT_STUDIO_INSTALL_BASE_URL=https://example.invalid \
+    sh "$output_root/install.sh" --help; then
+    printf 'install.sh accepted a tampered setup executable.\n' >&2
+    exit 1
+fi
 compose_root="$test_root/compose-extract"
 install -d -m 0755 "$compose_root"
 tar -xzf "$output_root/agent-studio-compose-1.2.3.tar.gz" -C "$compose_root"
@@ -276,6 +308,7 @@ bash "$repo_root/scripts/release/release-gate-window.test.sh"
 bash "$repo_root/scripts/release/generate-build-manifest.test.sh"
 bash "$repo_root/scripts/release/locked-restore.test.sh"
 bash "$repo_root/scripts/release/stable-release-chain.test.sh"
+python3 "$repo_root/scripts/release/release-workflow.test.py"
 bash "$repo_root/scripts/supervisor/test-restart-stable-main-advance.sh"
 bash "$repo_root/scripts/scenario.test.sh"
 
