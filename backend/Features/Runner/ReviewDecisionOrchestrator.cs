@@ -1375,7 +1375,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Everything recorded while carrying out this verdict (the decision
         // step row and the chat line on the bus) names the deciding model.
         using var decisionScope = decisionUsage is null ? null : DecisionModelContext.Use(decisionUsage);
-        var verdict = ReviewDecisionParsing.ParseDecision(response);
+        var verdict = MonolithTransitionAdapter.ReviewText(response);
         if (verdict == null)
         {
             var fallback = new OrchestratorDecisionVerdict(
