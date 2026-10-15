@@ -77,6 +77,11 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         try
         {
             var current = _scanner.FindJob(request.JobId, request.WatchPath);
+            if (current is not null && AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(
+                    current, request.IntegrationBranch, _git))
+            {
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.AlreadyMerged);
+            }
             var lost = current is null ? null : AcceptedIntegrationPublishedDeliveryGuard.LostOperatorAcceptance(
                 current, request.IntegrationBranch, _git);
             if (lost is not null)
