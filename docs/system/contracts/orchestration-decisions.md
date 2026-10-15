@@ -46,7 +46,7 @@ occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
 occurrence raises an operator feed alert and waits for a leased engine instance.
 
-## Decision grounds and shadow receipts
+## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
 is in Shadow. When the monolith records the shadow occurrence,
@@ -97,7 +97,23 @@ its usage and price on the job. The card spend counts it, and the receipt row
 and its outcome link add it as a late call (`lateCalls`). Studio reads
 `/api/orchestration/decision-receipts`; each row's `evidenceRef` opens the full
 receipt with grounds and response, and `outcomeLink` shows the applied action.
-The model choice is never dispatched. `Orchestration:DecisionModel:Cli`, `Model`
+In Shadow, the model choice is never dispatched. In Engine mode, the coding
+completion profile freezes the same grounds before activating its occurrence.
+The engine waits for the runner-hosted model job, records an active receipt,
+then submits the chosen action through stage completion. The Task Server
+validates the receipt against the frozen grounds, the current authority epoch
+and fence, the settled run and exact result SHA/ref, and the offered action's
+A0 or A1 floor before applying an effect. A valid `prepare(review-subject)`
+creates review; `retry(card:ready)` requeues; `adapt(salvage-handoff)` pins the
+immutable result ref as the next round's base; `checkpoint(verified-tree)`
+writes `results/checkpoint.md` with the last verified SHA and holds the card.
+Unusable output and unavailable or capped calls record `ask(operator:ai)`
+with the call status and no-call reason, and leave the card in its source lane.
+An A2/A3 proposal cannot mutate the card. The active profile can be disabled
+for a compatibility rollback with
+`Orchestration:DecisionModel:ActiveCodingCompletion=false`; the default in
+Engine mode is active. The receipt's outcome link shows the later applied
+stage action. `Orchestration:DecisionModel:Cli`, `Model`
 and `ThinkingLevel` default to `codex`, `gpt-6-sol` and `medium`; the engine
 reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
 (900). An engine-held provider credential remains a separate follow-up decision

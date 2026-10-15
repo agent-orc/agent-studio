@@ -142,6 +142,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                     ["Supervisor:StuckResumeWindowMinutes"] = "0",
                     ["DeliveryChain:Guarded"] = "false",
                     ["Orchestration:Transitions:CodingCompletion"] = "Engine",
+                    ["Orchestration:DecisionModel:ActiveCodingCompletion"] = "false",
                     ["Orchestration:Transitions:ReviewReport"] = "Engine",
                 }));
         });

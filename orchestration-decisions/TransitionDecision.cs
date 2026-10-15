@@ -153,7 +153,7 @@ public static class TransitionDecisionPolicy
         OrchestrationAction stageAction) => action switch
     {
         TransitionAction.FindingRound or TransitionAction.ConcernRound
-            or TransitionAction.ReturnToReady => TaskStates.Ready,
+            or TransitionAction.ReturnToReady or TransitionAction.SalvageContinuation => TaskStates.Ready,
         TransitionAction.Escalate => TaskStates.Escalated,
         TransitionAction.HumanReview or TransitionAction.AcceptAndIntegrate
             or TransitionAction.DegradeWithFollowUp => TaskStates.HumanReview,

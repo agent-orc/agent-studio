@@ -660,6 +660,10 @@
   <strong>AGT-3063 · RB-S1 ledger as decision grounds</strong>
   <span>Delivered: the per-card run ledger and progress definition are fields of DecisionGroundsV1. Usage is deduplicated by provider call id (fingerprint fallback) with excluded rows, tokens and value shown; a raw OpenAI input total loses its cached subset before pricing; unknown prices stay unpriced. Rounds carry start and result trees, exhaustions since the last accepted delivery and the progress reason (changed tree or newly verified tree). Fix round (15 Oct 2026): a decision call billed after its receipt still counts in the card spend.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3064" data-delivered-at="2026-10-15" data-slice="Verified checkpoint and salvage choice">
+  <strong>AGT-3064 · Verified checkpoint and salvage choice</strong>
+  <span>Delivered: RB-S3 exposes a checkpoint candidate only when the card has a verified tree and records its SHA in checkpoint.md when selected. RB-S4 exposes salvage handoff only for a settled immutable result ref and SHA; the selected action pins that base and returns the card to Ready. Both choices pass the active A1 authority adapter and one keyed stage completion; focused policy and integration tests cover candidate floors and salvage dispatch.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
