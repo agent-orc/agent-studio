@@ -48,8 +48,8 @@
     }
   </div>
   <section class="rollout__decisions" data-testid="shadow-decisions">
-    <h4>Shadow model decisions</h4>
-    <p>Recorded beside the deterministic decision; nothing is dispatched from them.</p>
+    <h4>Decision occurrences</h4>
+    <p>Card transitions and periodic host decisions share one receipt and cost history.</p>
     @if (workspaceSpend(); as spend) {
       <p data-testid="decision-workspace-spend">Workspace · {{ spend.occurrences }} occurrences ·
         {{ spend.inputTokens }} input / {{ spend.outputTokens }} output tokens ·
@@ -63,9 +63,9 @@
         @for (decision of decisions(); track decision.receiptId) {
           <li class="rollout__decision" [attr.data-testid]="'shadow-decision-' + decision.receiptId">
             <span class="rollout__card">{{ decision.taskId ?? 'Periodic host occurrence' }}</span>
-            <span>Model {{ decision.chosenAction || 'none' }} · applied {{ decision.deterministicAction }}</span>
+            <span>Model {{ decision.chosenAction || 'none' }}@if (decision.taskId) { · baseline {{ decision.deterministicAction }} }</span>
             <span class="rollout__state">{{ decision.matchesDeterministic ? 'match' : decision.callStatus === 'completed' ? 'differs' : decision.callStatus }}</span>
-            <span>Decision step · {{ decision.model ?? 'model unavailable' }}{{ decision.thinkingLevel ? ' / ' + decision.thinkingLevel : '' }}</span>
+            <span>{{ decision.actor === 'ai-operator' ? 'AI Operator' : 'Decision step' }} · {{ decision.model ?? 'model unavailable' }}{{ decision.thinkingLevel ? ' / ' + decision.thinkingLevel : '' }}</span>
             <span class="rollout__number">{{ decision.inputTokens ?? decision.totalTokens }} input / {{ decision.outputTokens ?? 0 }} output tokens · {{ price(decision) }}</span>
             <a [href]="decision.evidenceRef" target="_blank" rel="noopener">Evidence</a>
           </li>

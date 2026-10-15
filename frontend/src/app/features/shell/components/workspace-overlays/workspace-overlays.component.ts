@@ -12,7 +12,7 @@ import {
 } from '../../../cli';
 import { RemoteHostsPanelComponent } from '../../../remote-hosts';
 import { TaskServerPanelComponent } from '../../../task-server';
-import { OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
+import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
 // and re-form the shell <-> studio-shell import cycle (AGT-2035).
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
@@ -81,6 +81,7 @@ interface SettingsRailItem {
     PromptAdminPanelComponent,
     OrchestratorLogicPanelComponent,
     TransitionRolloutPanelComponent,
+    DecisionRulesPanelComponent,
     AppearanceSettingsComponent,
     UpdatesSettingsComponent,
     WorkspaceManagementComponent,

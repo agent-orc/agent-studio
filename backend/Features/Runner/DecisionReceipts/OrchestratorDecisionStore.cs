@@ -66,7 +66,9 @@ public sealed class OrchestratorDecisionStore
     /// <summary>Occurrences whose frozen grounds still wait for a receipt, oldest first.</summary>
     public IReadOnlyList<string> PendingReceipts(int limit)
     {
-        lock (_gate) return _inputs.Values.Where(input => input.Mode == DecisionReceiptPolicy.ShadowMode
+        lock (_gate) return _inputs.Values.Where(input =>
+                (input.Mode == DecisionReceiptPolicy.ShadowMode
+                    || input.Mode == DecisionReceiptPolicy.ActiveMode && input.Grounds.Scope.Kind == "host")
                 && !_receipts.ContainsKey(input.Grounds.OccurrenceId))
             .OrderBy(input => input.Grounds.Trigger.ObservedAt)
             .ThenBy(input => input.Grounds.OccurrenceId, StringComparer.Ordinal)
@@ -366,11 +368,14 @@ public sealed class OrchestratorDecisionStore
     }
 
     public IReadOnlyList<OrchestratorDecisionReceiptSummary> ListReceipts(string? taskId, int limit,
-        string? projectId = null, Func<string?, bool>? allowsProject = null)
+        string? projectId = null, Func<string?, bool>? allowsProject = null, string? hostId = null,
+        string? workspaceId = null)
     {
         lock (_gate) return _receipts.Values
             .Where(item => (taskId is null || item.Scope.TaskId == taskId)
                 && (projectId is null || item.Scope.ProjectId == projectId)
+                && (hostId is null || item.Scope.HostId == hostId)
+                && (workspaceId is null || item.Scope.WorkspaceId == workspaceId)
                 && (allowsProject is null || allowsProject(item.Scope.ProjectId)))
             .OrderByDescending(item => item.EndedAt).ThenBy(item => item.ReceiptId, StringComparer.Ordinal)
             .Take(Math.Clamp(limit, 1, 100))
@@ -402,29 +407,42 @@ public sealed class OrchestratorDecisionStore
             receipt.Call.ThinkingLevel, receipt.Call.Custody,
             receipt.Call.Tokens.Total + lateCalls.Sum(call => call.Tokens.Total), priceStatus, usd,
             receipt.EvidenceRef, receipt.EndedAt, lateCount ?? lateCalls.Count, receipt.Scope.ProjectId,
-            receipt.Trigger.Kind == "operator-response" ? "human-operator" : "decision-step",
+            receipt.Trigger.Kind == "operator-response" ? "human-operator"
+                : receipt.Scope.Kind == "card" ? "decision-step" : "ai-operator",
             receipt.Call.Tokens.UncachedInput + receipt.Call.Tokens.CachedInput + receipt.Call.Tokens.CacheWrite
                 + lateCalls.Sum(call => call.Tokens.UncachedInput + call.Tokens.CachedInput + call.Tokens.CacheWrite),
             receipt.Call.Tokens.Output + lateCalls.Sum(call => call.Tokens.Output),
             prices.Count(price => price.Status != DecisionPriceStatuses.Priced)
                 + (receipt.Call.Price.Status == DecisionPriceStatuses.NoUsage && receipt.Call.Tokens.Total > 0 ? 1 : 0)
-                + lateCalls.Count(call => call.Price.Status == DecisionPriceStatuses.NoUsage && call.Tokens.Total > 0));
+                + lateCalls.Count(call => call.Price.Status == DecisionPriceStatuses.NoUsage && call.Tokens.Total > 0),
+            receipt.Scope.HostId, receipt.Scope.WorkspaceId);
     }
 
     public OrchestratorDecisionSpendSummary SpendSummary(string? taskId, string? projectId,
-        Func<string?, bool>? allowsProject = null)
+        Func<string?, bool>? allowsProject = null, string? hostId = null, string? workspaceId = null)
     {
         lock (_gate)
         {
             var rows = _receipts.Values.Where(item => (taskId is null || item.Scope.TaskId == taskId)
                     && (projectId is null || item.Scope.ProjectId == projectId)
+                    && (hostId is null || item.Scope.HostId == hostId)
+                    && (workspaceId is null || item.Scope.WorkspaceId == workspaceId)
                     && (allowsProject is null || allowsProject(item.Scope.ProjectId)))
                 .Select(SummaryLocked).ToArray();
-            return new(taskId is not null ? "card" : projectId is not null ? "project" : "workspace",
-                taskId ?? projectId, rows.Length, rows.Sum(row => row.InputTokens),
+            return new(taskId is not null ? "card" : projectId is not null ? "project" : hostId is not null ? "host" : "workspace",
+                taskId ?? projectId ?? hostId ?? workspaceId, rows.Length, rows.Sum(row => row.InputTokens),
                 rows.Sum(row => row.OutputTokens), rows.Sum(row => row.EstimatedUsd ?? 0),
                 rows.Sum(row => row.UnknownPriceCalls));
         }
+    }
+
+    public IReadOnlyList<OrchestratorDecisionReceiptV1> RecentReceipts(string? workspaceId,
+        string? projectId, int limit = 100)
+    {
+        lock (_gate) return _receipts.Values.Where(item =>
+                (workspaceId is null || item.Scope.WorkspaceId == workspaceId)
+                && (projectId is null || item.Scope.ProjectId == projectId))
+            .OrderByDescending(item => item.EndedAt).Take(Math.Clamp(limit, 1, 100)).ToArray();
     }
 
     /// <summary>

@@ -135,6 +135,26 @@ and its outcome link add it as a late call (`lateCalls`). Studio reads
 receipt with grounds and response, and `outcomeLink` shows the applied action.
 In Shadow, the model choice is never dispatched. In Engine mode, the coding
 completion profile freezes the same grounds before activating its occurrence.
+OD-S6 adds API-owned immutable rule drafts under
+`<TaskRepository>/.metadata/orchestrator-rules`. An activation is an append-only
+actor, reason, version and time record; rollback creates and activates a new
+version. The workspace version governs host-wide decisions. A project overlay
+can add or replace soft signals but cannot govern a host-wide trigger or edit
+the hard authority floors. The Rules editor drafts, replays up to 100 receipts
+from 30 days, labels the model result counterfactual, and requires explicit
+activation. An occurrence freezes the active rule version in its grounds, so
+later activation does not rewrite its receipt.
+
+The engine can submit a card-free `capacity-check` host occurrence through
+`/api/v1/orchestration/host-decisions`. Its scope has a host and workspace id
+with null card, attempt and fence. The Task Server pins the workspace rules,
+resolves the configured strong model, bounds source references and freezes the
+grounds. The engine's receipt loop records zero to three offered actions with
+assessment and report content. The receipt remains immutable; host history is
+`/api/orchestration/decision-receipts?hostId=...` and the same receipt enters
+workspace spend. A host decision action in this seam is proposed for the
+Fluid capacity authority adapter; Fluid capacity owns scheduling, allocation,
+utilization and action application.
 The engine waits for the runner-hosted model job, records an active receipt,
 then submits the chosen action through stage completion. The Task Server
 validates the receipt against the frozen grounds, the current authority epoch
