@@ -111,30 +111,16 @@ public sealed class TransitionDecisionBoundaryTests
                 Assert.Matches(flow, source);
         }
 
-        // Discover every policy entry point that returns one of the four
-        // transition receipts. A new receipt policy is guarded automatically;
-        // a host cannot bypass the adapter by calling that policy directly.
-        var receiptTypes = new HashSet<Type>
-        {
-            typeof(TransitionDecision), typeof(ReviewBudgetDecision),
-            typeof(OperatorSweepDecision), typeof(AiOperatorDecision),
-        };
-        var entryPoints = typeof(TransitionDecisionPolicy).Assembly.GetExportedTypes()
-            .Where(type => type.IsAbstract && type.IsSealed)
-            .SelectMany(type => type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                .Where(method => receiptTypes.Contains(method.ReturnType))
-                .Select(method => Regex.Escape(type.Name) + @"\." + Regex.Escape(method.Name)))
-            .ToArray();
-        var directCallPattern = @"\b(?:" + string.Join("|", entryPoints) + @")\s*\(";
+        // Every exported Decide method is a transition decision entry point,
+        // regardless of its result type. This also covers policies added later.
         var directCalls = Sources(Path.Combine(root, "backend"))
             .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal))
-            .SelectMany(path => Regex.Matches(File.ReadAllText(path), directCallPattern)
-                .Select(match => (Path: Path.GetRelativePath(root, path).Replace('\\', '/'), Call: match.Value)))
-            .Where(site => !IsLibraryStageCall(site.Path, site.Call))
-            .Select(site => $"{site.Path}: {site.Call}").ToArray();
+            .SelectMany(path => DirectDecisionCalls(File.ReadAllText(path))
+                .Select(call => $"{Path.GetRelativePath(root, path)}: {call}"))
+            .ToArray();
         Assert.True(directCalls.Length == 0, string.Join(", ", directCalls));
         var batch = File.ReadAllText(Path.Combine(root, "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs"));
-        Assert.Matches(@"TransitionDecision BatchShadowDecision\([^)]*\)\s*=>\s*StageDecisionPolicy\.GateTransition\(", batch);
+        Assert.Matches(@"TransitionDecision BatchShadowDecision\([^)]*\)\s*=>\s*AgentStudio\.Runner\.MonolithTransitionAdapter\.StageGateTransition\(", batch);
     }
 
     [Theory]
@@ -161,12 +147,31 @@ public sealed class TransitionDecisionBoundaryTests
             || Regex.IsMatch(source, @"\boutcome\s+switch\s*\{[^}]*=>\s*TaskStates\.", RegexOptions.Singleline);
     }
 
-    private static bool IsLibraryStageCall(string path, string call)
-        => (path == "backend/Features/Tasks/LeaseEndpoints.cs"
-                && call.Contains("StageDecisionPolicy.Coding", StringComparison.Ordinal))
-            || (path == "backend/Features/Runner/MonolithOrchestrationEndpoints.cs"
-                && (call.Contains("StageDecisionPolicy.Coding", StringComparison.Ordinal)
-                    || call.Contains("StageDecisionPolicy.GateTransition", StringComparison.Ordinal)));
+    [Theory]
+    [InlineData("ReviewFollowUpPolicy.Decide(findings, 0, 1)", "ReviewFollowUpPolicy.Decide(")]
+    [InlineData("AgentStudio.OrchestrationDecisions.GateCancellationPolicy.Decide(a, b, c, d, false, false)", "GateCancellationPolicy.Decide(")]
+    [InlineData("StageDecisionPolicy.Coding(task, attempt, state)", "StageDecisionPolicy.Coding(")]
+    [InlineData("CardRoundBudgetPolicy.DecideForReview(budget, aspects, true)", "CardRoundBudgetPolicy.DecideForReview(")]
+    public void Direct_call_guard_covers_non_receipt_decisions(string source, string expected)
+        => Assert.Contains(expected, DirectDecisionCalls(source));
+
+    private static string[] DirectDecisionCalls(string source)
+    {
+        var entryPoints = typeof(TransitionDecisionPolicy).Assembly.GetExportedTypes()
+            .Where(type => type.Name.EndsWith("Policy", StringComparison.Ordinal))
+            .SelectMany(type => type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .Where(method => method.Name.StartsWith("Decide", StringComparison.Ordinal)
+                    || method.ReturnType == typeof(TransitionDecision)
+                    || method.ReturnType == typeof(ReviewBudgetDecision)
+                    || method.ReturnType == typeof(OperatorSweepDecision)
+                    || method.ReturnType == typeof(AiOperatorDecision)
+                    || method.ReturnType == typeof(StagePolicyDecision))
+                .Select(method => Regex.Escape(type.Name) + @"\." + Regex.Escape(method.Name)))
+            .Distinct()
+            .ToArray();
+        var pattern = @"\b(?:" + string.Join("|", entryPoints) + @")\s*\(";
+        return Regex.Matches(source, pattern).Select(match => match.Value).ToArray();
+    }
 
     private static IEnumerable<string> Sources(string path) => Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
         .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"));

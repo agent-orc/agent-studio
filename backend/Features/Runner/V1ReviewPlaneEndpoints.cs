@@ -1019,7 +1019,7 @@ public static class V1ReviewPlaneEndpoints
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 
-            var reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
+            var reviewFollowUp = MonolithTransitionAdapter.ReviewFollowUp(
                 request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                     verdict.Aspect,
                     verdict.Status,
@@ -1159,7 +1159,7 @@ public static class V1ReviewPlaneEndpoints
                     ?? ToSubject(currentReview, scanner, projects, settings, remoteReviewPlans, out _, out _).Plan;
                 // The authority settles the parsed outcome; the journaled decision
                 // carries that spelling, never the raw report string.
-                var decision = RemoteDeliveryIntegrationPolicy.Decide(
+                var decision = MonolithTransitionAdapter.RemoteDeliveryIntegration(
                     HasSettledResultEnvelope(sourceRun), outcome.ToString(), plan, request.Verdicts);
                 var projectSettings = settings.Get(preparedTask.ProjectName);
                 var subject = ReviewSubjectStore.Read(preparedTask.FolderPath);
@@ -1621,7 +1621,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 var projectSettingsForFollowUp = settings.Get(task.ProjectName);
                 var concernLedger = ReviewConcernRoundStore.Read(task.FolderPath);
-                reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
+                reviewFollowUp = MonolithTransitionAdapter.ReviewFollowUp(
                     request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                         verdict.Aspect,
                         verdict.Status,
@@ -1877,7 +1877,7 @@ public static class V1ReviewPlaneEndpoints
                         prepared.ShouldIntegrate,
                         Enum.Parse<RemoteBuildTestGateClass>(prepared.BuildTestGate),
                         prepared.GateReason)
-                    : RemoteDeliveryIntegrationPolicy.Decide(
+                    : MonolithTransitionAdapter.RemoteDeliveryIntegration(
                         HasSettledResultEnvelope(sourceRun),
                         settled.ReviewAttempt.Outcome?.ToString(),
                         settledReviewPlan,

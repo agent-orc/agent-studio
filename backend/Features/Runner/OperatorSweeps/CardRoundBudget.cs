@@ -84,11 +84,11 @@ public static class CardRoundBudget
         => new(CountRoundsUsed(journal, timeline, jobId), Math.Max(0, allowed));
 
     public static CardRoundBudgetAction Decide(CardRoundBudgetState budget, IEnumerable<string> blockingAspects)
-        => CardRoundBudgetPolicy.Decide(budget, blockingAspects);
+        => MonolithTransitionAdapter.CardRoundBudget(budget, blockingAspects);
 
     public static CardRoundBudgetAction DecideForReview(
         CardRoundBudgetState budget, IReadOnlyCollection<string> blockingAspects, bool opensConcernRound)
-        => CardRoundBudgetPolicy.DecideForReview(budget, blockingAspects, opensConcernRound);
+        => MonolithTransitionAdapter.CardRoundBudgetForReview(budget, blockingAspects, opensConcernRound);
 
     public static int CountRoundsUsed(
         IEnumerable<ReviewDecisionRecord> journal,

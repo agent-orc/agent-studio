@@ -597,7 +597,7 @@ public sealed partial class MergeIntoDevelopRunner
             if (cancelledGate is not null)
             {
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
-                var reason = GateCancellationPolicy.Decide(cancellationSubject.Sha, live.Sha,
+                var reason = AgentStudio.Runner.MonolithTransitionAdapter.GateCancellation(cancellationSubject.Sha, live.Sha,
                     cancellationSubject.Lane, live.Lane, live.ContinuePending,
                     ct.IsCancellationRequested, cancelledGate.CancellationReason);
                 cancelledGate = GateCancellationResultProjector.Apply(cancelledGate, reason);

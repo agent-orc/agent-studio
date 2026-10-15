@@ -78,6 +78,10 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
         try
         {
             using var scope = _services.CreateScope();
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            // Stay registered through Engine mode so a live rollback can run the lost-queue scan.
+            while (!MonolithTransitionSwitch.OwnsAutoReview(configuration))
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false);
             var scanner = scope.ServiceProvider.GetRequiredService<TaskScannerService>();
             var transitions = scope.ServiceProvider.GetRequiredService<TaskTransitionService>();
             var reviewAttempts = scope.ServiceProvider.GetRequiredService<ReviewAttemptTaskLifecycleService>();
@@ -91,7 +95,7 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
             if (resume is not null)
                 await resume.RunOnceAsync("startup-recovery", stoppingToken).ConfigureAwait(false);
 
-            RunRecoveryScan(scanner, transitions, reviewAttempts, _logger);
+            RunRecoveryScan(scanner, transitions, reviewAttempts, _logger, configuration: configuration);
         }
         catch (OperationCanceledException __ex)
         {
@@ -121,8 +125,11 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
         TaskTransitionService transitions,
         ReviewAttemptTaskLifecycleService? reviewAttempts,
         ILogger logger,
-        DateTime? restartedAtUtc = null)
+        DateTime? restartedAtUtc = null,
+        IConfiguration? configuration = null)
     {
+        if (configuration is not null && !MonolithTransitionSwitch.OwnsAutoReview(configuration))
+            return new RecoverySummary(0, 0, 0, 0);
         var recoveryStartedAt = (restartedAtUtc ?? DateTime.UtcNow).ToUniversalTime();
         var reviewAttemptsReissued = reviewAttempts?.SweepSupersededAutoReviewAttempts() ?? 0;
         var candidates = scanner.ScanAllAutomationJobs()
@@ -135,6 +142,7 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
 
         foreach (var job in candidates)
         {
+            if (configuration is not null && !MonolithTransitionSwitch.OwnsAutoReview(configuration)) break;
             var outcomes = ReadOutcomes(job.FolderPath, logger);
             var completedDecision = outcomes
                 .Where(record => IsPostProcessingDecision(record) && record.At >= job.EnteredLaneAt)

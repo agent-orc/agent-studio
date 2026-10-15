@@ -166,6 +166,7 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
     private readonly RemotePipelineReviewEvidenceProjector _projector;
     private readonly ILogger<RemoteReviewEvidenceProjectionWorker> _logger;
     private readonly CauseBreakerService? _causeBreakers;
+    private readonly IConfiguration? _configuration;
 
     /// <summary>Test seam: replaces the retry backoff so tests do not wait out the real schedule. Null in production.</summary>
     internal Func<int, TimeSpan>? RetryDelayOverride { get; set; }
@@ -179,7 +180,8 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
         AttemptAuthorityService authority,
         RemotePipelineReviewEvidenceProjector projector,
         ILogger<RemoteReviewEvidenceProjectionWorker> logger,
-        CauseBreakerService? causeBreakers = null)
+        CauseBreakerService? causeBreakers = null,
+        IConfiguration? configuration = null)
     {
         _queue = queue;
         _scanner = scanner;
@@ -187,6 +189,7 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
         _projector = projector;
         _logger = logger;
         _causeBreakers = causeBreakers;
+        _configuration = configuration;
     }
 
     internal static TimeSpan RetryDelay(int attempt)
@@ -229,6 +232,8 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
     /// <summary>Processes one queued projection. Exposed for deterministic tests.</summary>
     internal async Task ProcessAsync(RemoteReviewEvidenceProjectionRequest request, CancellationToken ct)
     {
+        if (_configuration is not null && MonolithTransitionSwitch.For(_configuration, "ReviewReport")
+            == OrchestrationExecutionMode.Engine) return;
         var settledProbe = _authority.GetReview(request.AttemptId);
         if (settledProbe is { Outcome: ReviewTerminalOutcome.Pass, TerminalAt: not null }
             && settledProbe.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted))
@@ -277,6 +282,8 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
             // successor created during this work is never overwritten.
             ct.ThrowIfCancellationRequested();
             BeforeFencedProjection?.Invoke();
+            if (_configuration is not null && MonolithTransitionSwitch.For(_configuration, "ReviewReport")
+                == OrchestrationExecutionMode.Engine) return;
             if (!_authority.TryApplyForCurrentReview(current.AttemptId, () => _projector.Project(
                     task,
                     current,

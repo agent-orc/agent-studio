@@ -2651,7 +2651,7 @@ public static class LeaseEndpoints
                             DateTimeKind.Utc)),
                     },
                 });
-                var codingDecision = AgentStudio.OrchestrationDecisions.StageDecisionPolicy.Coding(
+                var codingDecision = AgentStudio.Runner.MonolithTransitionAdapter.StageCoding(
                     task.Id, attemptId, targetState);
                 var occurrence = orchestration.Create(task.ProjectName, task.Id,
                     AgentStudio.TaskServer.Contracts.OrchestrationStage.ReviewDecision,

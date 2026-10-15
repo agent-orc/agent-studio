@@ -448,8 +448,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
-        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
-            == OrchestrationExecutionMode.Engine)
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
             return;
         await _tickGate.WaitAsync(ct);
         try
@@ -712,8 +711,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task<PostProcessingCardResult> ProcessCardAsync(string workspace, string projectName, string jobId, string watchPath, CancellationToken ct)
     {
-        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
-            == OrchestrationExecutionMode.Engine)
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
             return PostProcessingCardResult.Deferred("engine-owned-coding-completion");
         if (!_configuration.GetValue("ReviewDecisionOrchestrator:Enabled", false))
             return PostProcessingCardResult.Blocked("review-decision-orchestrator-disabled");
@@ -2651,7 +2649,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Decision);
 
-        var initialFollowUpDecision = ReviewFollowUpPolicy.Decide(
+        var initialFollowUpDecision = MonolithTransitionAdapter.ReviewFollowUp(
             report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
                 verdict.Aspect,
                 AspectVerdictParsing.StatusToken(verdict.Status),
@@ -4656,7 +4654,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 var live = _scanner.FindJob(current.Id, entry.Path);
                 var liveSha = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path).Sha;
-                var cancellationReason = GateCancellationPolicy.Decide(subject.Sha, liveSha,
+                var cancellationReason = MonolithTransitionAdapter.GateCancellation(subject.Sha, liveSha,
                     current.State, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, result.CancellationReason);
                 result = GateCancellationResultProjector.Apply(result, cancellationReason);

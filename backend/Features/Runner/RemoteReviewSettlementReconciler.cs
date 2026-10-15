@@ -20,6 +20,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     private readonly TaskMutationService? _mutations;
     private readonly TaskTransitionService? _transitions;
     private readonly TimelineLog? _timeline;
+    private readonly IConfiguration? _configuration;
 
     // Keyed by task key; the value is the review generation it was observed for.
     // An archived card has no lane continuation: once its current review settled
@@ -41,7 +42,8 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         ILogger<RemoteReviewSettlementReconciler> logger,
         TaskMutationService? mutations = null,
         TaskTransitionService? transitions = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -51,6 +53,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         _mutations = mutations;
         _transitions = transitions;
         _timeline = timeline;
+        _configuration = configuration;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -74,9 +77,11 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
     public async Task RunOnceAsync(CancellationToken ct = default)
     {
+        if (!OwnsReviewReport()) return;
         foreach (var task in _scanner.ScanAllJobsWithArchive().Where(task => !task.Fixture))
         {
             ct.ThrowIfCancellationRequested();
+            if (!OwnsReviewReport()) return;
             if (TaskKeyOf(task) is not { } taskKey) continue;
             var generation = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt?.AttemptId ?? string.Empty;
             var archived = string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal);
@@ -102,8 +107,12 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         // AGT-3091: on 12.10.2026 the inline pass held every tick for 20.3
         // minutes behind two gates. A tick now starts a pass only when none is
         // running and never waits for it.
-        StartResumePass(ct);
+        if (OwnsReviewReport()) StartResumePass(ct);
     }
+
+    private bool OwnsReviewReport()
+        => _configuration is null || MonolithTransitionSwitch.For(_configuration, "ReviewReport")
+            != OrchestrationExecutionMode.Engine;
 
     private void StartResumePass(CancellationToken ct)
     {
@@ -129,6 +138,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
     public RemoteReviewSettlementReconcileStatus Reconcile(TaskInfo task)
     {
+        if (!OwnsReviewReport()) return RemoteReviewSettlementReconcileStatus.NoWork;
         var taskKey = TaskKeyOf(task);
         if (taskKey is null) return RemoteReviewSettlementReconcileStatus.NoWork;
         var review = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;

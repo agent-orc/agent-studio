@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using System.Text.Json;
 
 using Xunit;
@@ -33,6 +34,29 @@ public sealed class AutoReviewPostProcessingRecoveryServiceTests : IDisposable
     }
 
     // ---- End-to-end scan against a real workspace + scanner + queue -------------
+
+    [Fact]
+    public void RunRecoveryScan_WaitsForEngineAndReEnqueuesAfterRuntimeRollback()
+    {
+        var clock = new FakeTimeProvider();
+        SeedAutoReviewJob("rollback-task", clock.GetUtcNow().UtcDateTime.AddMinutes(-30),
+            writeEntryMarker: false, writeDecision: false);
+        var deps = BuildDeps();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            { ["Orchestration:Transitions:CodingCompletion"] = "Engine" }).Build();
+
+        var engine = AgentStudio.Runner.AutoReviewPostProcessingRecoveryService.RunRecoveryScan(
+            deps.Scanner, deps.Transitions, null, NullLogger.Instance, configuration: configuration);
+        Assert.Equal(0, engine.ReEnqueued);
+        Assert.Empty(Drain(deps.Queue));
+
+        configuration["Orchestration:Transitions:CodingCompletion"] = "Monolith";
+        var rollback = AgentStudio.Runner.AutoReviewPostProcessingRecoveryService.RunRecoveryScan(
+            deps.Scanner, deps.Transitions, null, NullLogger.Instance, configuration: configuration);
+        Assert.Equal(1, rollback.ReEnqueued);
+        Assert.Single(Drain(deps.Queue));
+    }
 
     [Fact]
     public void RunRecoveryScan_ReEnqueuesAutoReviewCardWithNoFreshOutcome()
