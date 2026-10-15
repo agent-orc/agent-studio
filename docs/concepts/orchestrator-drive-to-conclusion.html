@@ -283,6 +283,7 @@
         </tr>
       </tbody>
     </table>
+    <p><b>2026-10-15 operator receipt stop path:</b> A Human Operator Stop answer is a fenced remote stop request. Its receipt remains <code>recorded, not applied</code> while the run is active. A stopped completion carrying that request moves the card to Human Review and marks the operator receipt applied; ordinary Pause still returns the card to Ready.</p>
 
     <p class="small"><strong>Invariant:</strong> a run can only leave <em>Running</em> into one of
       {Succeeded, NeedsReview, GaveUpToHuman, CooldownRetry, SteerPending}. CooldownRetry and SteerPending must each terminate

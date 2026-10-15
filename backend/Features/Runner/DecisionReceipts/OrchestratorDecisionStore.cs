@@ -26,6 +26,7 @@ public sealed class OrchestratorDecisionStore
     private readonly Dictionary<string, DecisionShadowInputV1> _inputs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRecord> _jobs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OrchestratorDecisionReceiptV1> _receipts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DecisionOperatorIntentV1> _operatorIntents = new(StringComparer.Ordinal);
 
     public OrchestratorDecisionStore(IConfiguration configuration, TimeProvider time, ITokenPricing pricing)
         : this(string.IsNullOrWhiteSpace(configuration["TaskRepository"]) ? null
@@ -41,6 +42,7 @@ public sealed class OrchestratorDecisionStore
         foreach (var input in Load<DecisionShadowInputV1>("inputs")) _inputs[input.Grounds.OccurrenceId] = input;
         foreach (var job in Load<JobRecord>("jobs")) _jobs[job.Dto.JobId] = job;
         foreach (var receipt in Load<OrchestratorDecisionReceiptV1>("receipts")) _receipts[receipt.OccurrenceId] = receipt;
+        foreach (var intent in Load<DecisionOperatorIntentV1>("operator-intents")) _operatorIntents[intent.ReceiptId] = intent;
     }
 
     public DecisionShadowInputV1 FreezeInputs(DecisionShadowInputV1 input)
@@ -211,6 +213,25 @@ public sealed class OrchestratorDecisionStore
         }
     }
 
+    /// <summary>Atomically identifies newly billed calls for the bus projection.</summary>
+    public (bool Accepted, IReadOnlyList<DecisionLateCallV1> NewLateCalls) CompleteWithProjection(
+        OrchestratorDecisionJobCompletion completion)
+    {
+        lock (_gate)
+        {
+            var occurrenceId = _jobs.GetValueOrDefault(completion.JobId)?.Dto.OccurrenceId;
+            var hasReceipt = occurrenceId is not null && _receipts.ContainsKey(occurrenceId);
+            var before = hasReceipt ? LateCallsLocked(occurrenceId!) : [];
+            var accepted = Complete(completion);
+            if (!accepted || !hasReceipt) return (accepted, []);
+            var added = LateCallsLocked(occurrenceId!).Where(call => !before.Any(prior =>
+                prior.JobId == call.JobId && prior.HostId == call.HostId
+                && prior.EndedAt == call.EndedAt
+                && prior.ProviderCallIds.SequenceEqual(call.ProviderCallIds))).ToArray();
+            return (true, added);
+        }
+    }
+
     /// <summary>Billed calls of an occurrence that completed after its receipt was stored.</summary>
     public IReadOnlyList<DecisionLateCallV1> LateCalls(string occurrenceId)
     {
@@ -228,6 +249,29 @@ public sealed class OrchestratorDecisionStore
                 item.Result.Tokens, item.Result.Price, item.Result.ProviderCallIds,
                 item.Result.EndedAt, item.Result.Error))
             .ToArray();
+
+    private IReadOnlyList<DecisionLateCallV1> OtherBilledCallsLocked(OrchestratorDecisionReceiptV1 receipt)
+        => _jobs.Values.Where(job => job.Dto.OccurrenceId == receipt.OccurrenceId)
+            .SelectMany(job => job.ReplacedClaims.Where(claim => claim.Result is not null)
+                .Select(claim => (job.Dto.JobId, Result: claim.Result!))
+                .Concat((job.Dto.JobId != receipt.Call.JobId || job.LateAfterReceipt)
+                    && job.Dto.Result is not null ? [(job.Dto.JobId, job.Dto.Result)] : []))
+            .OrderBy(item => item.Result.EndedAt).ThenBy(item => item.JobId, StringComparer.Ordinal)
+            .Select(item => new DecisionLateCallV1(item.JobId, item.Result.HostId, item.Result.Model,
+                item.Result.Tokens, item.Result.Price, item.Result.ProviderCallIds,
+                item.Result.EndedAt, item.Result.Error))
+            .ToArray();
+
+    public IReadOnlyList<DecisionLateCallV1> OtherBilledCalls(OrchestratorDecisionReceiptV1 receipt)
+    {
+        lock (_gate) return OtherBilledCallsLocked(receipt);
+    }
+
+    private OrchestratorDecisionReceiptSummary SummaryLocked(OrchestratorDecisionReceiptV1 receipt)
+    {
+        var other = OtherBilledCallsLocked(receipt);
+        return Summary(receipt, other, LateCallsLocked(receipt.OccurrenceId).Count);
+    }
 
     /// <summary>
     /// Stores the receipt once per occurrence after checking that it was built
@@ -261,9 +305,154 @@ public sealed class OrchestratorDecisionStore
         }
     }
 
+    /// <summary>Freezes the initial billed-call projection at the receipt write.</summary>
+    public (OrchestratorDecisionReceiptV1 Receipt, bool Created,
+        IReadOnlyList<DecisionLateCallV1> OtherBilledCalls) PutReceiptWithProjection(
+            OrchestratorDecisionReceiptV1 receipt)
+    {
+        lock (_gate)
+        {
+            var created = !_receipts.ContainsKey(receipt.OccurrenceId);
+            var stored = PutReceipt(receipt);
+            return (stored, created, OtherBilledCallsLocked(stored));
+        }
+    }
+
     public OrchestratorDecisionReceiptV1? GetReceipt(string receiptId)
     {
         lock (_gate) return _receipts.Values.FirstOrDefault(item => item.ReceiptId == receiptId);
+    }
+
+    public OrchestratorDecisionReceiptV1? ReceiptForOccurrence(string occurrenceId)
+    {
+        lock (_gate) return _receipts.GetValueOrDefault(occurrenceId);
+    }
+
+    public DecisionOperatorIntentV1? GetOperatorIntent(string receiptId)
+    {
+        lock (_gate) return _operatorIntents.GetValueOrDefault(receiptId);
+    }
+
+    public DecisionOperatorIntentV1 PutOperatorIntent(string receiptId, DecisionOperatorIntentRequest request,
+        string actor = "Human Operator")
+    {
+        lock (_gate)
+        {
+            var receipt = _receipts.Values.FirstOrDefault(item => item.ReceiptId == receiptId)
+                ?? throw new KeyNotFoundException("Decision receipt was not found.");
+            if (receipt.Scope.TaskId is not { } taskId
+                || !receipt.Chosen.Any(choice => choice.Action == DecisionActionKinds.Ask
+                    && !choice.Outcome.StartsWith("rejected:", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Only a card ask accepts an operator response.");
+            if (_receipts.Values.Where(item => item.Scope.TaskId == taskId
+                    && item.Scope.ProjectId == receipt.Scope.ProjectId)
+                .OrderByDescending(item => item.EndedAt).ThenByDescending(item => item.ReceiptId, StringComparer.Ordinal)
+                .First().ReceiptId != receiptId)
+                throw new InvalidOperationException("A newer decision supersedes this ask.");
+            if (request.Action is not ("raise" or "cut" or "stop"))
+                throw new ArgumentException("Operator action must be raise, cut or stop.");
+            if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
+                throw new ArgumentException("An operator reason of at most 500 characters is required.");
+            var minutes = request.RequestedEmergencyMinutes
+                ?? (request.RequestedEmergencyHours is { } hours ? hours * 60 : null);
+            if (request.Action == "stop" ? minutes is not null : minutes is not (>= 1 and <= 1440))
+                throw new ArgumentException("Raise and cut need a chosen limit of 1 to 1440 minutes; stop has no limit.");
+            if (request.RequestedEmergencyHours is not null && request.RequestedEmergencyMinutes is not null)
+                throw new ArgumentException("Provide the limit in hours or minutes, not both.");
+            if (_operatorIntents.TryGetValue(receiptId, out var existing)) return existing;
+            var choice = request.Action switch
+            {
+                "raise" => new DecisionChoiceV1(DecisionActionKinds.Adapt,
+                    $"raise-emergency-limit:{minutes}m", "recorded, not applied"),
+                "cut" => new DecisionChoiceV1(DecisionActionKinds.Adapt,
+                    $"cut-emergency-limit:{minutes}m", "recorded, not applied"),
+                _ => new DecisionChoiceV1(DecisionActionKinds.Halt, "stop", "recorded, not applied"),
+            };
+            var intent = new DecisionOperatorIntentV1(receiptId, taskId, request.Action,
+                request.Reason.Trim(), request.RequestedEmergencyHours, _time.GetUtcNow().UtcDateTime, choice)
+            {
+                Actor = actor,
+                RequestedEmergencyMinutes = minutes,
+            };
+            var source = _inputs.GetValueOrDefault(receipt.OccurrenceId)
+                ?? throw new InvalidOperationException("The ask has no frozen decision grounds.");
+            var occurrenceId = $"operator-response:{receiptId}";
+            var reference = new GroundsSourceRefV1("operator-intent",
+                $"/api/orchestration/decision-receipts/{receiptId}/operator-intent");
+            var grounds = source.Grounds with
+            {
+                OccurrenceId = occurrenceId,
+                Trigger = new GroundsTriggerV1("operator-response", "OperatorResponse", intent.RecordedAt),
+                Facts = [.. source.Grounds.Facts,
+                    new GroundsFactV1("operator.intent", "authority", "Human Operator choice",
+                        $"{choice.Action}({choice.Target})", null, reference, intent.RecordedAt,
+                        "complete", "authoritative", true),
+                    new GroundsFactV1("operator.reason", "authority", "Human Operator reason",
+                        intent.Reason, null, reference, intent.RecordedAt, "complete", "authoritative")],
+                Alternatives = [new GroundsAlternativeV1(choice.Action, choice.Target,
+                    "reversible", "human-approved", true)],
+                PriorDecisions = [.. source.Grounds.PriorDecisions,
+                    new GroundsPriorDecisionV1(receipt.ReceiptId, receipt.OccurrenceId,
+                        DecisionActionKinds.Ask, receipt.Prediction, "answered", receipt.EndedAt)],
+            };
+            FreezeInputs(new DecisionShadowInputV1(grounds, choice.Action, choice.Target,
+                $"Human Operator chose {request.Action}: {intent.Reason}"));
+            Save("operator-intents", receiptId, intent);
+            _operatorIntents.Add(receiptId, intent);
+            return intent;
+        }
+    }
+
+    public int? AppliedRunLimitSeconds(string taskId, string? projectId = null)
+    {
+        lock (_gate) return _operatorIntents.Values
+            .Where(item => item.TaskId == taskId && item.AppliedAt is not null
+                && (item.Action is "raise" or "cut")
+                && (projectId is null || _receipts.Values.Any(receipt => receipt.ReceiptId == item.ReceiptId
+                    && receipt.Scope.ProjectId == projectId)))
+            .OrderByDescending(item => item.AppliedAt).ThenByDescending(item => item.ReceiptId, StringComparer.Ordinal)
+            .FirstOrDefault()?.RequestedEmergencyMinutes * 60;
+    }
+
+    public DecisionOperatorIntentV1 ApplyRunLimit(string receiptId, int defaultSeconds)
+    {
+        lock (_gate)
+        {
+            var intent = _operatorIntents.GetValueOrDefault(receiptId)
+                ?? throw new KeyNotFoundException("Operator intent was not found.");
+            if (intent.AppliedAt is not null) return intent;
+            if (intent.Action is not ("raise" or "cut") || intent.RequestedEmergencyMinutes is not { } minutes)
+                throw new InvalidOperationException("This intent has no run limit.");
+            var projectId = _receipts.Values.First(item => item.ReceiptId == receiptId).Scope.ProjectId;
+            var current = AppliedRunLimitSeconds(intent.TaskId, projectId) ?? defaultSeconds;
+            var chosen = minutes * 60;
+            if (intent.Action == "raise" ? chosen <= current : chosen >= current)
+                throw new InvalidOperationException("Chosen run limit must move in the selected direction.");
+            return SetOperatorOutcome(receiptId, $"applied:run-limit:{chosen}s");
+        }
+    }
+
+    public DecisionOperatorIntentV1 SetOperatorOutcome(string receiptId, string outcome)
+    {
+        lock (_gate)
+        {
+            var intent = _operatorIntents.GetValueOrDefault(receiptId)
+                ?? throw new KeyNotFoundException("Operator intent was not found.");
+            if (intent.AppliedAt is not null) return intent;
+            var applied = intent with { Outcome = outcome,
+                TypedChoice = intent.TypedChoice is { } choice ? choice with { Outcome = outcome } : null,
+                AppliedAt = outcome.StartsWith("applied:", StringComparison.Ordinal)
+                    ? _time.GetUtcNow().UtcDateTime : null };
+            Save("operator-intents", receiptId, applied);
+            _operatorIntents[receiptId] = applied;
+            return applied;
+        }
+    }
+
+    public DecisionOperatorIntentV1? LatestOperatorIntentForTask(string taskId)
+    {
+        lock (_gate) return _operatorIntents.Values.Where(item => item.TaskId == taskId)
+            .OrderByDescending(item => item.RecordedAt).FirstOrDefault();
     }
 
     public IReadOnlyList<OrchestratorDecisionReceiptV1> ReceiptsForTask(string taskId)
@@ -272,23 +461,26 @@ public sealed class OrchestratorDecisionStore
             .OrderBy(item => item.EndedAt).ThenBy(item => item.ReceiptId, StringComparer.Ordinal).ToArray();
     }
 
-    public IReadOnlyList<OrchestratorDecisionReceiptSummary> ListReceipts(string? taskId, int limit)
+    public IReadOnlyList<OrchestratorDecisionReceiptSummary> ListReceipts(string? taskId, int limit,
+        string? projectId = null, Func<string?, bool>? allowsProject = null)
     {
         lock (_gate) return _receipts.Values
-            .Where(item => taskId is null || item.Scope.TaskId == taskId)
+            .Where(item => (taskId is null || item.Scope.TaskId == taskId)
+                && (projectId is null || item.Scope.ProjectId == projectId)
+                && (allowsProject is null || allowsProject(item.Scope.ProjectId)))
             .OrderByDescending(item => item.EndedAt).ThenBy(item => item.ReceiptId, StringComparer.Ordinal)
             .Take(Math.Clamp(limit, 1, 100))
-            .Select(item => Summary(item, LateCallsLocked(item.OccurrenceId))).ToArray();
+            .Select(SummaryLocked).ToArray();
     }
 
     public OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt)
     {
-        lock (_gate) return Summary(receipt, LateCallsLocked(receipt.OccurrenceId));
+        lock (_gate) return SummaryLocked(receipt);
     }
 
     /// <summary>Spend columns add late calls to the immutable receipt call; unknown prices stay explicit.</summary>
     public static OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt,
-        IReadOnlyList<DecisionLateCallV1> lateCalls)
+        IReadOnlyList<DecisionLateCallV1> lateCalls, int? lateCount = null)
     {
         var prices = lateCalls.Select(call => call.Price).Prepend(receipt.Call.Price)
             .Where(price => price.Status != DecisionPriceStatuses.NoUsage).ToArray();
@@ -305,7 +497,30 @@ public sealed class OrchestratorDecisionStore
             receipt.DeterministicAction, receipt.MatchesDeterministic, receipt.Call.Status, receipt.Call.Model,
             receipt.Call.ThinkingLevel, receipt.Call.Custody,
             receipt.Call.Tokens.Total + lateCalls.Sum(call => call.Tokens.Total), priceStatus, usd,
-            receipt.EvidenceRef, receipt.EndedAt, lateCalls.Count);
+            receipt.EvidenceRef, receipt.EndedAt, lateCount ?? lateCalls.Count, receipt.Scope.ProjectId,
+            receipt.Trigger.Kind == "operator-response" ? "human-operator" : "decision-step",
+            receipt.Call.Tokens.UncachedInput + receipt.Call.Tokens.CachedInput + receipt.Call.Tokens.CacheWrite
+                + lateCalls.Sum(call => call.Tokens.UncachedInput + call.Tokens.CachedInput + call.Tokens.CacheWrite),
+            receipt.Call.Tokens.Output + lateCalls.Sum(call => call.Tokens.Output),
+            prices.Count(price => price.Status != DecisionPriceStatuses.Priced)
+                + (receipt.Call.Price.Status == DecisionPriceStatuses.NoUsage && receipt.Call.Tokens.Total > 0 ? 1 : 0)
+                + lateCalls.Count(call => call.Price.Status == DecisionPriceStatuses.NoUsage && call.Tokens.Total > 0));
+    }
+
+    public OrchestratorDecisionSpendSummary SpendSummary(string? taskId, string? projectId,
+        Func<string?, bool>? allowsProject = null)
+    {
+        lock (_gate)
+        {
+            var rows = _receipts.Values.Where(item => (taskId is null || item.Scope.TaskId == taskId)
+                    && (projectId is null || item.Scope.ProjectId == projectId)
+                    && (allowsProject is null || allowsProject(item.Scope.ProjectId)))
+                .Select(SummaryLocked).ToArray();
+            return new(taskId is not null ? "card" : projectId is not null ? "project" : "workspace",
+                taskId ?? projectId, rows.Length, rows.Sum(row => row.InputTokens),
+                rows.Sum(row => row.OutputTokens), rows.Sum(row => row.EstimatedUsd ?? 0),
+                rows.Sum(row => row.UnknownPriceCalls));
+        }
     }
 
     /// <summary>

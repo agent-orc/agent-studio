@@ -109,6 +109,15 @@ reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
 (900). An engine-held provider credential remains a separate follow-up decision
 if claim latency proves too high.
 
+An explicit Human Operator answer to a card ask is separate from shadow
+dispatch. The receipt keeps the actor and an outcome that starts as
+`recorded, not applied`. Raise and Cut choose a card run limit in minutes;
+the monolith applies it to later remote run specs when it owns the transition.
+Stop uses the fenced run-stop request and holds the card in Human Review after
+the active run settles. A shadow profile still requires this explicit answer;
+the shadow receipt never dispatches itself. The bus receipt projection includes
+the billed alternate calls, and late billed calls emit additional usage evidence.
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled

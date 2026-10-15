@@ -441,7 +441,43 @@ public sealed record OrchestratorDecisionReceiptSummary(
     decimal? EstimatedUsd,
     string EvidenceRef,
     DateTime EndedAt,
-    int LateCalls = 0);
+    int LateCalls = 0,
+    string? ProjectId = null,
+    string Actor = "decision-step",
+    long InputTokens = 0,
+    long OutputTokens = 0,
+    int UnknownPriceCalls = 0);
+
+public sealed record OrchestratorDecisionSpendSummary(
+    string Scope,
+    string? ScopeId,
+    int Occurrences,
+    long InputTokens,
+    long OutputTokens,
+    decimal PricedUsd,
+    int UnknownPriceCalls);
+
+/// <summary>Human Operator response to an ask receipt; used as grounds for the next decision.</summary>
+public sealed record DecisionOperatorIntentV1(
+    string ReceiptId,
+    string TaskId,
+    string Action,
+    string Reason,
+    int? RequestedEmergencyHours,
+    DateTime RecordedAt,
+    DecisionChoiceV1? TypedChoice = null)
+{
+    public string Actor { get; init; } = "Human Operator";
+    public string Outcome { get; init; } = "recorded, not applied";
+    public DateTime? AppliedAt { get; init; }
+    public int? RequestedEmergencyMinutes { get; init; }
+}
+
+public sealed record DecisionOperatorIntentRequest(
+    string Action,
+    string Reason,
+    int? RequestedEmergencyHours = null,
+    int? RequestedEmergencyMinutes = null);
 
 /// <summary>
 /// Usage of a decision call that a runner reported after the receipt of its

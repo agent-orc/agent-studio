@@ -67,6 +67,9 @@ public static class RemoteRunStopReasons
     /// <summary>A supervisor watchdog asked for the run to end.</summary>
     public const string Watchdog = "watchdog";
 
+    /// <summary>An explicit receipt action stops the run and holds the card.</summary>
+    public const string DecisionStop = "decision-stop";
+
     public static string From(RunStopReason reason) => reason switch
     {
         RunStopReason.FollowupPause => Followup,

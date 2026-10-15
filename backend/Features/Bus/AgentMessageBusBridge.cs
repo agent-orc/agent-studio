@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Bus;
 
@@ -176,6 +177,71 @@ public sealed class AgentMessageBusBridge
                 "model", decidedBy.Model,
                 string.IsNullOrWhiteSpace(decidedBy.ThinkingLevel) ? null : decidedBy.ThinkingLevel,
                 string.IsNullOrWhiteSpace(decidedBy.ModelSource) ? null : decidedBy.ModelSource);
+
+    /// <summary>Projects an engine decision receipt with its deciding model and measured usage.</summary>
+    public Task EmitDecisionReceiptAsync(OrchestratorDecisionReceiptV1 receipt, CancellationToken ct = default,
+        IReadOnlyList<DecisionLateCallV1>? otherBilledCalls = null)
+    {
+        if (string.IsNullOrWhiteSpace(receipt.Scope.ProjectId)) return Task.CompletedTask;
+        var call = receipt.Call;
+        var billed = otherBilledCalls ?? [];
+        var tokens = billed.Aggregate(call.Tokens, (total, item) => total.Add(item.Tokens));
+        var allPrices = new[] { call.Price }.Concat(billed.Select(item => item.Price)).ToArray();
+        var hasPriced = allPrices.Any(item => item.Status == DecisionPriceStatuses.Priced);
+        var pricedUsd = (call.Price.Status == DecisionPriceStatuses.Priced
+                ? call.Price.EstimatedUsd ?? 0 : 0)
+            + billed.Sum(item => item.Price.Status == DecisionPriceStatuses.Priced
+                ? item.Price.EstimatedUsd ?? 0 : 0);
+        var priceStatus = allPrices.All(item => item.Status == DecisionPriceStatuses.NoUsage)
+            ? DecisionPriceStatuses.NoUsage
+            : allPrices.All(item => item.Status is DecisionPriceStatuses.NoUsage or DecisionPriceStatuses.Priced)
+                ? DecisionPriceStatuses.Priced
+                : hasPriced ? DecisionPriceStatuses.Partial : allPrices.First(item =>
+                    item.Status != DecisionPriceStatuses.NoUsage).Status;
+        var message = NewMessage(
+            participantId: ParticipantOrchestratorFor(receipt.Scope.ProjectId),
+            role: "actor", kind: "decision",
+            severity: receipt.Chosen.Any(choice => choice.Action == DecisionActionKinds.Ask) ? "Warn" : "Info",
+            project: receipt.Scope.ProjectId, jobId: receipt.Scope.TaskId,
+            topic: "engine-decision", summary: TruncateSummary(receipt.Reasoning ?? receipt.DispatchOutcome),
+            body: receipt.Reasoning, createdAt: receipt.EndedAt,
+            correlationId: receipt.OccurrenceId,
+            payload: new {
+                actor = "decision-step", receiptId = receipt.ReceiptId,
+                evidenceRef = receipt.EvidenceRef, callStatus = call.Status,
+                decidedBy = call.Model is null ? "model-unavailable" : "model",
+                decidedByModel = call.Model, decidedByThinkingLevel = call.ThinkingLevel,
+                priceStatus, pricedSubtotalUsd = pricedUsd, billedCalls = 1 + billed.Count,
+            },
+            tokens: new AgentMessageTokens(tokens.UncachedInput, tokens.Output,
+                tokens.CachedInput, tokens.CacheWrite, call.Model,
+                hasPriced ? (double)pricedUsd : null,
+                ThinkingLevel: call.ThinkingLevel),
+            tags: ["orchestrator-decision", "engine-receipt"]);
+        return EmitAsync(message, ct);
+    }
+
+    public Task EmitDecisionLateCallAsync(OrchestratorDecisionReceiptV1 receipt,
+        DecisionLateCallV1 call, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(receipt.Scope.ProjectId)) return Task.CompletedTask;
+        var tokens = call.Tokens;
+        var message = NewMessage(
+            participantId: ParticipantOrchestratorFor(receipt.Scope.ProjectId),
+            role: "evidence", kind: "token-usage", severity: "Info",
+            project: receipt.Scope.ProjectId, jobId: receipt.Scope.TaskId,
+            topic: "engine-decision-late-call",
+            summary: "Late billed decision call", createdAt: call.EndedAt,
+            correlationId: receipt.OccurrenceId,
+            payload: new { receiptId = receipt.ReceiptId, call.JobId, call.ProviderCallIds,
+                priceStatus = call.Price.Status, pricedSubtotalUsd = call.Price.EstimatedUsd },
+            tokens: new AgentMessageTokens(tokens.UncachedInput, tokens.Output,
+                tokens.CachedInput, tokens.CacheWrite, call.Model,
+                call.Price.Status == DecisionPriceStatuses.Priced
+                    ? (double)(call.Price.EstimatedUsd ?? 0) : null),
+            tags: ["orchestrator-decision", "late-call"]);
+        return EmitAsync(message, ct);
+    }
 
     /// <summary>
     /// Mirror a supervisor chat-log line (the <c>[supervisor]</c>-stream lines

@@ -660,6 +660,11 @@
   <strong>AGT-3063 · RB-S1 ledger as decision grounds</strong>
   <span>Delivered: the per-card run ledger and progress definition are fields of DecisionGroundsV1. Usage is deduplicated by provider call id (fingerprint fallback) with excluded rows, tokens and value shown; a raw OpenAI input total loses its cached subset before pricing; unknown prices stay unpriced. Rounds carry start and result trees, exhaustions since the last accepted delivery and the progress reason (changed tree or newly verified tree). Fix round (15 Oct 2026): a decision call billed after its receipt still counts in the card spend.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3067" data-delivered-at="2026-10-15" data-slice="RB-S5 ask destination">
+  <strong>AGT-3067 · RB-S5 ask destination</strong>
+  <span>Delivered: the recommended AGT-W73 card view exposes raise, cut and stop as a Human Operator answer to an ask receipt, with a bounded emergency-limit value and reason. The durable answer becomes a typed source fact for the next engine decision. The Monolith action path applies a chosen Raise or Cut limit to later remote runs and delivers Stop through the fenced run-stop path before holding the card; the receipt shows the actor and the recorded or applied outcome. Receipt grounds, response and source evidence remain one click away.</span>
+</li>
+<!-- AGT-3067 fix round, 2026-10-15: an operator answer freezes a distinct pending OperatorResponse occurrence so the engine schedules the next decision. The original ask remains a historical receipt. -->
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
