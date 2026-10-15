@@ -9,6 +9,24 @@ if (args is ["--version"] or ["-V"])
 }
 
 var builder = WebApplication.CreateBuilder(args);
+var browserRoot = builder.Configuration["Studio:BrowserRoot"];
+if (!string.IsNullOrWhiteSpace(browserRoot))
+{
+    var fullRoot = Path.GetFullPath(browserRoot);
+    if (!File.Exists(Path.Combine(fullRoot, "index.html")))
+        throw new InvalidOperationException($"Studio browser bundle is missing index.html: {fullRoot}");
+    var backendBaseUrl = builder.Configuration["Studio:BackendBaseUrl"]
+        ?? throw new InvalidOperationException("Studio:BackendBaseUrl is required when Studio:BrowserRoot is set.");
+    if (!Uri.TryCreate(backendBaseUrl, UriKind.Absolute, out var backendUri)
+        || backendUri.Scheme != Uri.UriSchemeHttp || !backendUri.IsLoopback)
+        throw new InvalidOperationException("Studio:BackendBaseUrl must be a loopback HTTP URL.");
+    builder.WebHost.UseWebRoot(fullRoot);
+    builder.Services.AddHttpClient("studio-api", client =>
+    {
+        client.BaseAddress = backendUri;
+        client.Timeout = TimeSpan.FromSeconds(100);
+    });
+}
 var taskServerUrl = builder.Configuration["TaskServer:BaseUrl"]
     ?? throw new InvalidOperationException("TaskServer:BaseUrl is required.");
 var allowedOrigins = (builder.Configuration["Studio:AllowedOrigins"] ?? "http://127.0.0.1:4011,http://localhost:4011")
@@ -121,6 +139,35 @@ RequestDelegate proxyToTaskServer = async context =>
 };
 app.Map("/api/v1/{**path}", proxyToTaskServer);
 app.Map("/hubs/{**path}", proxyToTaskServer);
+if (!string.IsNullOrWhiteSpace(browserRoot))
+{
+    app.Map("/api/{**path}", async context =>
+    {
+        var client = context.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient("studio-api");
+        using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
+            context.Request.Path + context.Request.QueryString);
+        if (context.Request.ContentLength > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
+        {
+            request.Content = new StreamContent(context.Request.Body);
+            if (MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var mediaType))
+                request.Content.Headers.ContentType = mediaType;
+        }
+        foreach (var header in new[] { "Cookie", "Origin", "Authorization", "X-Actor-Id", "X-Client-Id", "Idempotency-Key", "If-Match" })
+            if (context.Request.Headers.TryGetValue(header, out var value))
+                request.Headers.TryAddWithoutValidation(header, value.ToArray());
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
+        context.Response.StatusCode = (int)response.StatusCode;
+        if (response.Content.Headers.ContentType is not null)
+            context.Response.ContentType = response.Content.Headers.ContentType.ToString();
+        if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
+            foreach (var cookie in cookies)
+                context.Response.Headers.Append("Set-Cookie", cookie);
+        await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted);
+    });
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+    app.MapFallbackToFile("index.html");
+}
 
 await app.RunAsync();
 

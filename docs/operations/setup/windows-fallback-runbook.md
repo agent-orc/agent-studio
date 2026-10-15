@@ -14,13 +14,14 @@ One release package, `agent-orchestrator-<version>-win-x64`, published by the
 `publish-windows` job in `.github/workflows/release.yml` next to the
 `linux-x64` archives with the same `VERSION`/`RELEASE-SHA` identity contract.
 It contains `task-server.exe`, `orchestrator-engine.exe`,
-`agent-studio-bff.exe`, and a copy of `deploy/windows/` (`deploy-windows/`
+`agent-studio-bff.exe`, `OrchestratorApi.exe`, `agent-host.exe`, the browser
+bundle, and a copy of `deploy/windows/` (`deploy-windows/`
 inside the package) so the target machine needs neither a repository
 checkout nor a .NET install.
 
 ```powershell
 Expand-Archive agent-orchestrator-<version>-win-x64.zip -DestinationPath C:\Downloads
-.\C:\Downloads\agent-orchestrator-<version>-win-x64\deploy-windows\fallback\install-fallback-profile.ps1 `
+& C:\Downloads\agent-orchestrator-<version>-win-x64\deploy-windows\fallback\install-fallback-profile.ps1 `
     -ReleasePackageRoot C:\Downloads\agent-orchestrator-<version>-win-x64 `
     -DataDirectory D:\AgentOrchestratorData
 ```
@@ -35,11 +36,43 @@ remote Task Server is authoritative. Re-running the install script with the
 same `-DataDirectory` keeps the existing `server.env`/`engine.env`/
 `studio-connector.env` and their bootstrap credentials untouched; only a
 fresh `C:\ProgramData\AgentOrchestrator` gets new ones. A re-run with a newer
-package stops the three tasks and their executables before it moves the
+package stops the registered tasks and their executables before it moves the
 `current` junction. Credential files are restricted to the installing account,
 SYSTEM, and Administrators. `agent-studio-setup --target native` runs this
-script with `-RestMode Normal`: the local Task Server is then the primary one,
-not a dormant fallback ([install guide](./install.md)).
+script with `-RestMode Normal -FullStudio`: the local Task Server is then the
+primary one and five boot-time tasks start: Task Server, Engine, Studio
+connector, Studio backend, and Runner. The browser UI is served by the
+connector on port 4011 ([install guide](./install.md)).
+
+The script's default remains the three-task warm fallback. For a complete
+local Studio, pass `-RestMode Normal -FullStudio`. The native setup executable
+supplies these switches and handles the guided decisions. Direct script users
+can pass the same choices:
+
+| Switch | Effect with `-FullStudio` |
+| --- | --- |
+| `-ProviderCli <choice>` | Select `codex`, `claude`, or `skip`. `skip` leaves provider login for later. |
+| `-GitAccess <choice>` | Select `gcm`, `token`, `deploy-key`, or `skip` for the Runner's GitHub credential source. |
+| `-GitTokenFile <path>` | Required for `token`; the script copies the token into a protected credential file. |
+| `-GitRemote <url>` | Verify access to this repository. Required as a GitHub SSH URL for `deploy-key`; use a GitHub HTTPS URL for `gcm` or `token`. |
+| `-RunnerPasswordFromStdin` | Read the Runner account password from one stdin line for a boot-time task with that account's credential profile. |
+| `-Unattended` | Suppress the one-time owner-code console display. The code remains in its restricted file. |
+
+The script also accepts the older `-NonInteractive` switch. The owner-code
+display is controlled by `-Unattended`.
+
+The script writes `server.env`, `engine.env`, and `studio-connector.env` under
+`ConfigRoot`. Full Studio also writes `studio-backend.env` and `runner.env`.
+In full mode, `server.env` gains `OWNER_BOOTSTRAP_CODE_FILE` (the protected
+one-time code), `BOOTSTRAP_RUNNER_ID`, and `BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE`;
+`studio-connector.env` gains `Studio__BrowserRoot` pointing at the packaged
+browser bundle and `Studio__BackendBaseUrl` pointing at the local backend;
+the connector serves port 4011. `studio-backend.env` sets
+`ASPNETCORE_URLS` to port 5031 and `TaskServer__BaseUrl` to port 5071.
+`runner.env` records the selected provider, protected Runner token path,
+work and state directories, and Git configuration for the selected access
+method. The setup executable records these choices without secrets in
+`installation.json` as described in the [install guide](./install.md).
 
 Point the Studio connector back at the remote origin once the install is
 proved:
@@ -134,6 +167,7 @@ slice B6 operator drill, run against the actual Hetzner VM,
 - both drill scripts run end to end in `-WhatIf` mode and produce a report.
 
 Release CI's `.github/workflows/release.yml` `publish-windows` job separately
-proves the three win-x64 binaries publish, each reports the release
-`VERSION`/`RELEASE-SHA` through `--version`, and the packaged archive lands
-next to the Linux ones with one combined `SHA256SUMS`.
+proves the win-x64 binaries publish and the packaged archive lands next to the
+Linux ones with one combined `SHA256SUMS`. Its native-install smoke test checks
+Task Server readiness, Studio health and UI, owner bootstrap, and Runner
+registration before uninstalling.
