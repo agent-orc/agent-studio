@@ -142,9 +142,15 @@ Unusable output and unavailable or capped calls record `ask(operator:ai)`
 with the call status and no-call reason, and leave the card in its source lane.
 An A2/A3 proposal cannot mutate the card. The active profile can be disabled
 for a compatibility rollback with
-`Orchestration:DecisionModel:ActiveCodingCompletion=false`; the default in
-Engine mode is active. The receipt's outcome link shows the later applied
-stage action. `Orchestration:DecisionModel:Cli`, `Model`
+`Orchestration:DecisionModel:ActiveCodingCompletion=false`. It is **off by default**
+even when `Orchestration:Transitions:CodingCompletion=Engine`; activation requires
+the explicit per-transition setting
+`Orchestration:DecisionModel:ActiveCodingCompletion=true` after shadow and
+engine mode have run on Stable. Existing Engine occurrences keep their frozen
+decision mode through completion. Held decisions persist an AI Operator ask for
+restart recovery, and a selected salvage base is staged before the Ready move
+and removed if the fenced move fails. The receipt's outcome link shows the
+later applied stage action. `Orchestration:DecisionModel:Cli`, `Model`
 and `ThinkingLevel` default to `codex`, `gpt-6-sol` and `medium`; the engine
 reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
 (900). An engine-held provider credential remains a separate follow-up decision

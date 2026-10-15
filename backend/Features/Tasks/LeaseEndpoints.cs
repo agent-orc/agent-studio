@@ -834,7 +834,8 @@ public static class LeaseEndpoints
                 }
 
                 var eligible = liveSnapshot
-                    .Where(t => !t.Fixture && t.State == TaskStates.Ready)
+                    .Where(t => !t.Fixture && t.State == TaskStates.Ready
+                        && !t.WaitingForEngineDecision)
                     .Where(t =>
                     {
                         var project = settings.Get(t.ProjectName);
@@ -2611,7 +2612,7 @@ public static class LeaseEndpoints
 
             var codingMode = MonolithTransitionSwitch.For(configuration, "CodingCompletion");
             var codingModelActive = codingMode == OrchestrationExecutionMode.Engine
-                && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", true);
+                && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", false);
             var codingOccurrenceKey = $"coding-completion:{attemptId}:{completionKey}";
             var priorCodingOccurrence = orchestration.GetByIdempotencyKey(codingOccurrenceKey);
             var pendingCodingOccurrence = priorCodingOccurrence is not null

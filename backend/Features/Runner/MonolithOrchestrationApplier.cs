@@ -98,7 +98,6 @@ public sealed class MonolithOrchestrationApplier(
         if (activeChoice is { Action: DecisionActionKinds.Ask or DecisionActionKinds.Defer })
         {
             aiOperator.Enqueue(task, occurrence.Run.RunId, activeChoice);
-            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
             scanner.InvalidateCache();
             return;
         }
@@ -196,6 +195,18 @@ public sealed class MonolithOrchestrationApplier(
         }
         if (task.State == occurrence.ExpectedSourceState)
         {
+            var isSalvage = activeChoice is { Action: DecisionActionKinds.Adapt,
+                Target: "salvage-handoff" };
+            AgentStudio.Runner.ContinuationBaseRecord? salvageBase = null;
+            if (isSalvage)
+            {
+                using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+                salvageBase = new ContinuationBaseRecord(
+                    payload.RootElement.GetProperty("resultRef").GetString()!,
+                    payload.RootElement.GetProperty("resultSha").GetString()!,
+                    "model-selected-salvage-handoff", occurrence.AuthorityAttemptId,
+                    time.GetUtcNow().UtcDateTime);
+            }
             var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
                 cause: "engine-decision", reason: decision?.Reason ?? "Engine stage completed.",
                 authorityWrite: new AttemptWriteReference(occurrence.AuthorityAttemptId,
@@ -204,7 +215,11 @@ public sealed class MonolithOrchestrationApplier(
                 expectedSourceState: occurrence.ExpectedSourceState,
                 transitionCause: decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
                     ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
-                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString());
+                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString(),
+                engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
+                    Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
+                    Target: "salvage-handoff" },
+                engineContinuationBase: salvageBase);
             if (move.Status != MoveJobStatus.Success)
                 throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
             scanner.InvalidateCache();
@@ -213,17 +228,6 @@ public sealed class MonolithOrchestrationApplier(
         }
         else if (task.State != target)
             throw new InvalidOperationException("orchestration-source-state-mismatch");
-
-        if (activeChoice is { Action: DecisionActionKinds.Adapt, Target: "salvage-handoff" })
-        {
-            using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
-            var resultRef = payload.RootElement.GetProperty("resultRef").GetString()!;
-            var resultSha = payload.RootElement.GetProperty("resultSha").GetString()!;
-            if (!ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
-                resultRef, resultSha, "model-selected-salvage-handoff",
-                occurrence.AuthorityAttemptId, time.GetUtcNow().UtcDateTime)))
-                throw new IOException("The salvage handoff could not be saved.");
-        }
 
         if (target == TaskStates.HumanReview
             && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))

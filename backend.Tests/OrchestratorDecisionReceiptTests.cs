@@ -42,7 +42,9 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
 
     [Theory]
     [InlineData("prepare", false)]
+    [InlineData("retry", false)]
     [InlineData("salvage", false)]
+    [InlineData("salvage-move-failure", false)]
     [InlineData("invalid", false)]
     [InlineData("forbidden", false)]
     [InlineData("prepare", true)]
@@ -85,6 +87,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
                     ["Supervisor:StuckResumeWindowMinutes"] = "0",
                     ["DeliveryChain:Guarded"] = "false",
                     ["Orchestration:Transitions:CodingCompletion"] = "Engine",
+                    ["Orchestration:DecisionModel:ActiveCodingCompletion"] = "true",
                 }));
             builder.ConfigureTestServices(services =>
             {
@@ -139,6 +142,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             "invalid" => "{}",
             "forbidden" => """{"chosenActions":[{"action":"halt","target":"card:park"}],"confidence":0.8,"reasoning":"Park it.","citedFacts":["run.outcome"]}""",
             "salvage" => """{"chosenActions":[{"action":"adapt","target":"salvage-handoff"}],"confidence":0.8,"reasoning":"Continue on the immutable result.","citedFacts":["result.sha"]}""",
+            "salvage-move-failure" => """{"chosenActions":[{"action":"adapt","target":"salvage-handoff"}],"confidence":0.8,"reasoning":"Continue on the immutable result.","citedFacts":["result.sha"]}""",
+            "retry" => """{"chosenActions":[{"action":"retry","target":"card:ready"}],"confidence":0.8,"reasoning":"Try another round.","citedFacts":["run.outcome"]}""",
             _ => """{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":0.8,"reasoning":"The result is settled.","citedFacts":["result.envelope"]}""",
         };
         Assert.True(await coding.CompleteOrchestratorDecisionJobAsync(new OrchestratorDecisionJobCompletion(
@@ -166,10 +171,12 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         if (staleAuthority)
             factory.Services.GetRequiredService<AttemptAuthorityService>()
                 .RotateAuthorityEpoch("test stale model decision");
+        if (scenario == "salvage-move-failure")
+            File.WriteAllText(Path.Combine(projectPath, TaskStates.Ready, card), "blocked");
         var request = new CompleteOrchestrationStageRequest("engine_test", "instance",
             claim.Lease!.LeaseId, claim.Lease.Fence, OrchestrationStage.ReviewDecision,
             decision.Action, decision.OutputJson, "active-decision-once");
-        if (staleAuthority)
+        if (staleAuthority || scenario == "salvage-move-failure")
             await Assert.ThrowsAsync<InvalidOperationException>(() => orchestration.CompleteAsync(
                 occurrence.RunId, request, CancellationToken.None));
         else
@@ -182,7 +189,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         var finalState = factory.Services.GetRequiredService<TaskScannerService>()
             .FindJob(card, projectPath)?.State;
         Assert.Equal(!staleAuthority && scenario == "prepare" ? TaskStates.AutoReview
-            : !staleAuthority && scenario == "salvage" ? TaskStates.Ready : TaskStates.Progress,
+            : !staleAuthority && scenario is "salvage" or "retry" ? TaskStates.Ready : TaskStates.Progress,
             finalState);
         if (scenario == "salvage" && !staleAuthority)
         {
@@ -193,10 +200,13 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         }
         if (scenario == "salvage" && staleAuthority)
             Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        if (scenario == "salvage-move-failure")
+            Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
         if (scenario is "invalid" or "forbidden")
         {
             Assert.Equal(1, operatorQueue.Count);
-            Assert.Null(EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+            Assert.Equal(occurrence.RunId,
+                EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
         }
     }
 
