@@ -53,4 +53,20 @@ public sealed class LoopExhaustionSignalBreakerTest
         Assert.Equal(2, signal.MeasuredCount);
         Assert.Equal(2, signal.Limit);
     }
+
+    [Fact]
+    public void Diagnosis_and_requeue_entries_remain_unimplemented()
+    {
+        var path = Path.Combine(Architecture.CSharpSourceScanner.RepoRoot(), "docs", "system",
+            "contracts", "loop-inventory.md");
+        var inventory = File.ReadAllText(path);
+        foreach (var id in new[] { "pickup.diagnose-once-per-dead-letter",
+            "pickup.requeue-after-diagnosis" })
+        {
+            var section = inventory.Split("### " + id + "\n", 2, StringSplitOptions.None)[1]
+                .Split("\n### ", 2, StringSplitOptions.None)[0];
+            Assert.Contains("**Last fired:** Not yet implemented.", section);
+            Assert.Contains("feature implementation is still pending", section);
+        }
+    }
 }

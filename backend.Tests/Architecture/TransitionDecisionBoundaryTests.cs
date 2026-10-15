@@ -85,6 +85,10 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Matches(@"Decide\(TransitionFacts facts\)\s*=>\s*TransitionDecisionPolicy\.Decide\(facts\)", adapter);
         Assert.Matches(@"ReviewBudget\(ReviewBudgetFacts facts\)\s*=>\s*ReviewBudgetPolicy\.Decide\(facts\)", adapter);
         Assert.Matches(@"Sweep\([^)]*\)\s*=>\s*OperatorSweepPolicy\.Decide\(", adapter);
+        Assert.Matches(@"LoopSignal\([^)]*\)\s*=>\s*LoopExhaustionPolicy\.Signal\(", adapter);
+        Assert.DoesNotContain(Sources(Path.Combine(root, "backend"))
+            .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal)),
+            path => File.ReadAllText(path).Contains("LoopExhaustionPolicy.Signal(", StringComparison.Ordinal));
         foreach (var path in new[] { "task-server/TaskServerTransitionAdapter.cs", "orchestrator-engine/EngineTransitionAdapter.cs" })
         {
             var source = File.ReadAllText(Path.Combine(root, path));
