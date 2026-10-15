@@ -181,6 +181,29 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync("/api/tasks/grouped")).StatusCode);
     }
 
+    [Fact]
+    public async Task Proxy_profile_handles_card_free_decisions_on_the_local_receipt_plane()
+    {
+        var upstream = new RecordingUpstream();
+        using var factory = BuildFactory(taskServerBaseUrl: "http://task-server.invalid", upstream);
+        using var browser = CreateClient(factory);
+        var response = await browser.PostAsJsonAsync("/api/v1/orchestration/host-decisions", new
+        {
+            occurrenceId = "capacity:host-1:sample",
+            workspaceId = "missing-workspace",
+            hostId = "host-1",
+            triggerKind = "capacity-check",
+            profile = "capacity-check",
+            observedAt = factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime,
+            facts = Array.Empty<object>(),
+            alternatives = Array.Empty<object>(),
+            omissions = Array.Empty<object>(),
+            cadence = "scheduled",
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain("/api/v1/orchestration/host-decisions", upstream.Paths);
+    }
+
     private static async Task AssertSameBodyAsync(HttpClient client, string versioned, string legacy)
     {
         var fromVersioned = await client.GetStringAsync(versioned);
