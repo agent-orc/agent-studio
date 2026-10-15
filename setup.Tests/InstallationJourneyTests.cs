@@ -322,7 +322,8 @@ public sealed class InstallationJourneyTests
             false, true, null, null, null, null, 40L << 30, false, false, false, null, false, false,
             AuthorityReachable: false));
         var failed = findings.Where(f => f.Status == PreflightStatus.Fail).ToDictionary(f => f.Check);
-        Assert.Contains("wg-quick", failed["WireGuard"].Recovery);
+        Assert.Equal(PreflightStatus.NotApplicable,
+            findings.Single(finding => finding.Check == "WireGuard").Status);
         Assert.Contains("never disable certificate validation", failed["TLS"].Recovery);
         Assert.Contains("chmod 600", failed["Secret file"].Recovery);
         Assert.Contains("Codex or Claude", failed["Provider"].Recovery);
@@ -867,7 +868,8 @@ public sealed class InstallationJourneyTests
             using var listener = StartHealthListener(out var url);
             var token = Path.Combine(root, "join.token");
             await File.WriteAllTextAsync(token, JoinTokenCodec.Encode(
-                new JoinPayload(1, url, new string('c', 40), "1.2.0", Now)));
+                new JoinPayload(2, url, "enr_" + new string('c', 64), "1.2.0", Now,
+                    "installation-one", "host-a", Now.AddMinutes(10))));
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(token, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             var reached = new StringWriter();
