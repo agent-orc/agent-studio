@@ -17,9 +17,14 @@ public sealed class RunLeaseService
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public RunLeaseService(ILogger<RunLeaseService> logger, AttemptAuthorityService authority)
+        : this(logger, authority, null)
+    {
+    }
+
+    internal RunLeaseService(ILogger<RunLeaseService> logger, AttemptAuthorityService authority, Func<DateTime>? utcNow)
     {
         _authority = authority;
-        _utcNow = () => DateTime.UtcNow;
+        _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
 
     public RunLeaseService(ILogger<RunLeaseService> logger, Func<DateTime>? utcNow = null)
@@ -134,6 +139,28 @@ public sealed class RunLeaseService
             ? "active"
             : run.Lease.ExpiresAt <= _utcNow() ? "expired" : "released";
         return new RunLeaseInspection(state, ToLease(run));
+    }
+
+    /// <summary>Display-only lease read from the last committed authority publication.</summary>
+    public RunLeaseInspection InspectBoard(string taskKey)
+    {
+        if (Blank(taskKey)) return new RunLeaseInspection("none", null);
+        var snapshot = _authority.ReadBoardAuthoritySnapshot();
+        if (snapshot.Runs is null || !snapshot.Runs.TryGetValue(Normalize(taskKey), out var run))
+            return new RunLeaseInspection("none", null);
+        var lease = run.Lease;
+        var now = _utcNow();
+        var state = run.State == AttemptLifecycleState.Leased && lease.ExpiresAt > now
+            ? "active" : lease.ExpiresAt <= now ? "expired" : "released";
+        return new RunLeaseInspection(state, new RunLeaseInfoDto(
+            run.TaskKey, lease.ExecutorId,
+            string.IsNullOrWhiteSpace(lease.ExecutorDisplayName) ? lease.ExecutorId : lease.ExecutorDisplayName,
+            lease.HostId, lease.ProcessId, lease.BackendName ?? "remote", lease.LeaseId,
+            lease.Fence, lease.AcquiredAt, lease.ExpiresAt, run.AttemptId, run.AuthorityEpoch)
+        {
+            LastHeartbeatAt = lease.LastHeartbeat,
+            ClientId = string.IsNullOrWhiteSpace(lease.ClientId) ? null : lease.ClientId,
+        });
     }
 
     /// <summary>
