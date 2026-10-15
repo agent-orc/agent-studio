@@ -131,6 +131,59 @@ public sealed class RemoteBuildTestGateRunnerTests
     }
 
     [Theory]
+    [InlineData(false, GateCancellationReasons.Operator)]
+    [InlineData(true, GateCancellationReasons.Shutdown)]
+    public async Task Thrown_transport_cancellation_uses_caller_token_state(
+        bool cancelHostToken, string expectedReason)
+    {
+        using var host = new CancellationTokenSource();
+        var transport = new RecordingTransport
+        {
+            Exception = new OperationCanceledException(),
+            OnRun = _ => { if (cancelHostToken) host.Cancel(); },
+        };
+
+        var result = await Runner(transport).RunAsync(Request(), [], null,
+            PostStepMode.Fail, TimeSpan.FromMinutes(1), host.Token);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(expectedReason, result.CancellationReason);
+    }
+
+    [Theory]
+    [InlineData(true, GateCancellationReasons.Shutdown)]
+    [InlineData(false, GateCancellationReasons.Operator)]
+    public async Task Returned_worker_cancellation_preserves_its_actual_source(
+        bool shutdownRequested, string expectedReason)
+    {
+        var returned = RemoteGateWorker.AttachCancellationSource(
+            RemoteBuildTestGateRunner.Failure(Request(), BuildTestGateFailureKind.Cancellation,
+                "Remote gate worker stopped."), shutdownRequested);
+        var transport = new RecordingTransport { Result = returned };
+
+        var result = await Runner(transport).RunAsync(Request(), [], null,
+            PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(shutdownRequested ? GateCancellationReasons.Shutdown : null, result.CancellationReason);
+        Assert.Equal(expectedReason, GateCancellationPolicy.Decide(Sha, Sha,
+            TaskStates.AutoReview, TaskStates.AutoReview, false, false, result.CancellationReason));
+    }
+
+    [Fact]
+    public void Worker_shutdown_does_not_replace_an_explicit_operator_stop()
+    {
+        var stopped = RemoteBuildTestGateRunner.Failure(Request(),
+            BuildTestGateFailureKind.Cancellation, "Operator stopped verification.")
+            with { CancellationReason = GateCancellationReasons.Operator };
+
+        Assert.Equal(GateCancellationReasons.Operator,
+            RemoteGateWorker.AttachCancellationSource(stopped, shutdownRequested: true).CancellationReason);
+    }
+
+    [Theory]
     [InlineData("ECONNRESET")]
     [InlineData("ETIMEDOUT")]
     [InlineData("unable to access")]
@@ -309,11 +362,13 @@ public sealed class RemoteBuildTestGateRunnerTests
         public TimeSpan Timeout { get; private set; }
         public BuildTestGateResult Result { get; init; } = Passed();
         public Exception? Exception { get; init; }
+        public Action<CancellationToken>? OnRun { get; init; }
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
             TimeSpan timeout, CancellationToken ct)
         {
             Calls++;
+            OnRun?.Invoke(ct);
             Requests.Add(request);
             if (Calls == 1 && TransientResult is not null) return Task.FromResult(TransientResult);
             Request = request;

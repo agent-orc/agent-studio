@@ -453,6 +453,72 @@ public sealed class HostOrchestratorStoreTests
         Assert.Equal("work-permit-project-not-allowed", blocked.Code);
     }
 
+    [Fact]
+    public async Task Permit_path_refuses_pinned_runner_and_full_project_like_the_claim_path()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Placed", "PLC"), "test", default);
+        await store.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("First", "work", "2-ready"), "test", default);
+        await store.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Second", "work", "2-ready"), "test", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b", "host-b"), "runner-b", default);
+        var listedBeforePin = await store.AcceptHostReportAsync(
+            "runner-a", Report(1, new HostCapacityDto(2, 2, 0, 0, 2)), "runner-a", default);
+        Assert.Equal(2, listedBeforePin.AvailableWork.Count);
+
+        // F8: a project pinned to runner-b lists and accepts nothing for runner-a.
+        var placement = await store.UpdateProjectPlacementAsync(project.ProjectId,
+            new UpdateProjectPlacementRequest([], "runner-b", 1, 0), "operator", default);
+        var pinnedReport = await store.AcceptHostReportAsync(
+            "runner-a", Report(2, new HostCapacityDto(2, 2, 0, 0, 2)), "runner-a", default);
+        Assert.Empty(pinnedReport.AvailableWork);
+        var pinned = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.AcceptWorkPermitAsync(
+            listedBeforePin.AvailableWork[0].PermitId,
+            new WorkPermitAcceptRequest(HostOrchestratorContract.Current, "host-a", "instance-a", "runner-a",
+                pinnedReport.AcceptedSequence, pinnedReport.PolicyVersion, "pinned-elsewhere"),
+            "runner-a", default));
+        Assert.Equal("work-permit-pinned-runner-mismatch", pinned.Code);
+        var pinnedClaim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "runner-a", default);
+        Assert.Equal("empty", pinnedClaim.Status);
+        Assert.Equal("pinned-runner-mismatch", pinnedClaim.PlacementReason);
+
+        // The pinned runner accepts one task; the project's single slot is then
+        // full on both paths.
+        var pinnedRunnerReport = await store.AcceptHostReportAsync(
+            "runner-b", Report(1, new HostCapacityDto(2, 2, 0, 0, 2), hostId: "host-b", instanceId: "instance-b"),
+            "runner-b", default);
+        Assert.Equal(2, pinnedRunnerReport.AvailableWork.Count);
+        await store.AcceptWorkPermitAsync(
+            pinnedRunnerReport.AvailableWork[0].PermitId,
+            new WorkPermitAcceptRequest(HostOrchestratorContract.Current, "host-b", "instance-b", "runner-b",
+                pinnedRunnerReport.AcceptedSequence, pinnedRunnerReport.PolicyVersion, "first-slot"),
+            "runner-b", default);
+        var fullReport = await store.AcceptHostReportAsync(
+            "runner-b", Report(2, new HostCapacityDto(2, 2, 1, 0, 1), hostId: "host-b", instanceId: "instance-b"),
+            "runner-b", default);
+        Assert.Empty(fullReport.AvailableWork);
+        var full = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.AcceptWorkPermitAsync(
+            pinnedRunnerReport.AvailableWork[1].PermitId,
+            new WorkPermitAcceptRequest(HostOrchestratorContract.Current, "host-b", "instance-b", "runner-b",
+                fullReport.AcceptedSequence, fullReport.PolicyVersion, "second-slot"),
+            "runner-b", default));
+        Assert.Equal("work-permit-project-concurrency-full", full.Code);
+
+        // Unpinning keeps the concurrency refusal for every runner.
+        await store.UpdateProjectPlacementAsync(project.ProjectId,
+            new UpdateProjectPlacementRequest([], null, 1, placement.Version), "operator", default);
+        var unpinnedReport = await store.AcceptHostReportAsync(
+            "runner-a", Report(3, new HostCapacityDto(2, 2, 0, 0, 2)), "runner-a", default);
+        Assert.Empty(unpinnedReport.AvailableWork);
+        var fullClaim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "runner-a", default);
+        Assert.Equal("empty", fullClaim.Status);
+        Assert.Equal("project-concurrency-full", fullClaim.PlacementReason);
+    }
+
     private static TaskServerStore Store(string dataDirectory)
         => new(
             Options.Create(new TaskServerOptions
@@ -483,10 +549,11 @@ public sealed class HostOrchestratorStoreTests
         long sequence,
         HostCapacityDto capacity,
         IReadOnlyList<HostWorkStatusDto>? work = null,
-        string instanceId = "instance-a")
+        string instanceId = "instance-a",
+        string hostId = "host-a")
         => new(
             HostOrchestratorContract.Current,
-            "host-a",
+            hostId,
             instanceId,
             sequence,
             DateTime.UtcNow,

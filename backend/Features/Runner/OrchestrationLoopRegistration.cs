@@ -8,6 +8,12 @@ public static class OrchestrationLoopRegistration
         this IServiceCollection services,
         OrchestrationExecutionMode mode)
     {
+        // AGT-3055: the batch tick runs in every mode. It owns the batch decision
+        // only where BatchGatePilotService.OwnerOfBatchPlan selects Monolith; in
+        // Shadow mode it also records the engine occurrence, and in Engine mode it
+        // only publishes batch-plan occurrences and applies the engine intent after
+        // the authority floors. Without it nothing would advance queued batches.
+        services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
         if (mode != OrchestrationExecutionMode.Monolith)
             return services;
 
@@ -22,7 +28,6 @@ public static class OrchestrationLoopRegistration
         services.AddHostedService<AutoReviewPostProcessingRecoveryService>();
         services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
         services.AddHostedService<RemoteReviewSettlementReconciler>();
-        services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
         return services;
     }
 }

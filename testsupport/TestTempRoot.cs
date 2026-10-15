@@ -213,6 +213,8 @@ public static class TestTempRoot
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
+                Serilog.Log.Warning(exception,
+                    "TestTempRoot cleanup attempt {Attempt} failed for {Path}", attempt + 1, path);
                 // A Windows handle is released asynchronously after the owning
                 // process exits; a short backoff is what makes the retry useful.
                 Thread.Sleep(25 * (attempt + 1));

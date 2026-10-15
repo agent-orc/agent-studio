@@ -192,7 +192,9 @@ public sealed class TaskServerClient : IDisposable
         {
             var options = _options ?? throw new InvalidOperationException("Runner options are unavailable for v1 registration.");
             var runnerId = options.RunnerId;
-            string[] capabilities = options.Role is "review" or "gate"
+            string[] capabilities = options.Role == "integration"
+                ? [Contract.IntegrationCapabilities.Executor]
+                : options.Role is "review" or "gate"
                 ? [.. options.Role == "gate"
                     ? RunnerCapabilityProbe.GateRegistrationCapabilities(options)
                     : RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
@@ -492,14 +494,17 @@ public sealed class TaskServerClient : IDisposable
             LeaseInstanceId: acceptance.Lease.InstanceId,
             PreviousSession: acceptance.PreviousSession,
             MechanicalDelta: acceptance.MechanicalDelta,
+            // AGT-3061: a permit carries the review fix round like a claim.
             RunSpec: acceptance.MechanicalFreshRoute is { } hostRoute
                 ? new RunSpecDto(hostRoute.CliType, hostRoute.Model, hostRoute.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
-                : null,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
+                    FollowUp: acceptance.FollowUp)
+                : acceptance.FollowUp is null ? null : new RunSpecDto(FollowUp: acceptance.FollowUp),
             FreshRunReason: acceptance.MechanicalDelta is null
                 ? acceptance.MechanicalFreshRoute?.Reason : null,
             ContinuationBaseRef: acceptance.ContinuationBaseRef,
-            ContinuationBaseSha: acceptance.ContinuationBaseSha);
+            ContinuationBaseSha: acceptance.ContinuationBaseSha,
+            ContinuationBaseReason: acceptance.ContinuationBaseReason);
     }
 
     public async Task ReconcileHostRunAsync(
@@ -838,6 +843,7 @@ public sealed class TaskServerClient : IDisposable
                         BriefVersion: claim.Run.BriefVersion),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
+            ContinuationBaseReason: claim.ContinuationBaseReason,
             PreviousSession: claim.PreviousSession,
             MechanicalDelta: claim.MechanicalDelta,
             FreshRunReason: claim.MechanicalDelta is null
@@ -935,6 +941,24 @@ public sealed class TaskServerClient : IDisposable
                    ct)
                 ?? new Contract.ReviewClaimResponse("empty", Message: "Empty review claim response.");
     }
+
+    public async Task<Contract.IntegrationClaimResponse> ClaimIntegrationAsync(
+        Contract.IntegrationClaimRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.IntegrationClaimRequest, Contract.IntegrationClaimResponse>(
+               "/api/v1/integrations/claims", request, ct)
+           ?? throw new TaskServerException(500, "Empty integration claim response.");
+
+    public async Task<Contract.PublicationLeaseDto> RenewPublicationLeaseAsync(
+        string integrationId, Contract.IntegrationLeaseRenewRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.IntegrationLeaseRenewRequest, Contract.PublicationLeaseDto>(
+               $"/api/v1/integrations/{Uri.EscapeDataString(integrationId)}/lease/renew", request, ct)
+           ?? throw new TaskServerException(500, "Empty publication lease renewal response.");
+
+    public async Task<Contract.IntegrationReportResponse> ReportIntegrationAsync(
+        string integrationId, Contract.IntegrationReportRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.IntegrationReportRequest, Contract.IntegrationReportResponse>(
+               $"/api/v1/integrations/{Uri.EscapeDataString(integrationId)}/report", request, ct)
+           ?? throw new TaskServerException(500, "Empty integration report response.");
 
     public async Task<Contract.GateClaimResponse> ClaimGateAsync(Contract.GateClaimRequest request, CancellationToken ct)
         => await PostJsonAsync<Contract.GateClaimRequest, Contract.GateClaimResponse>(
@@ -1108,6 +1132,46 @@ public sealed class TaskServerClient : IDisposable
         if (!response.IsSuccessStatusCode)
             throw new TaskServerException((int)response.StatusCode, $"Artifact fetch failed: {Trim(detail)}");
         return JsonSerializer.Deserialize<Contract.ArtifactContentDto>(detail, Json);
+    }
+
+    /// <summary>
+    /// AGT-3063: a shadow orchestrator decision call queued on the monolith
+    /// authority. The runner runs it with its own provider credential.
+    /// </summary>
+    public async Task<OrchestratorDecisionJobClaimResponse> ClaimOrchestratorDecisionJobAsync(
+        OrchestratorDecisionJobClaimRequest request,
+        CancellationToken ct)
+    {
+        if (_useV1)
+            return new OrchestratorDecisionJobClaimResponse(DecisionJobClaimStatuses.Empty);
+        try
+        {
+            return await PostJsonAsync<OrchestratorDecisionJobClaimRequest, OrchestratorDecisionJobClaimResponse>(
+                       "/api/runner/orchestrator-decisions/claim",
+                       request with { CapabilityInstanceId = request.CapabilityInstanceId ?? RunnerInstanceId }, ct)
+                   ?? new OrchestratorDecisionJobClaimResponse(DecisionJobClaimStatuses.Empty);
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.NotFound)
+        {
+            // A Studio release without the decision plane has no jobs to hand out.
+            return new OrchestratorDecisionJobClaimResponse(DecisionJobClaimStatuses.Empty);
+        }
+    }
+
+    public async Task<bool> CompleteOrchestratorDecisionJobAsync(
+        OrchestratorDecisionJobCompletion completion,
+        CancellationToken ct)
+    {
+        try
+        {
+            _ = await PostJsonAsync<OrchestratorDecisionJobCompletion, object>(
+                "/api/runner/orchestrator-decisions/complete", completion, ct);
+            return true;
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.Conflict)
+        {
+            return false;
+        }
     }
 
     public async Task<RemoteChatWorkClaimResponse> ClaimProjectChatWorkAsync(

@@ -15,8 +15,7 @@ public static class ReviewBudgetPolicy
     public static ReviewBudgetDecision Decide(ReviewBudgetFacts facts)
     {
         var followUp = ReviewFollowUpPolicy.Decide(facts.Findings, facts.ConcernRoundsUsed, facts.MaximumConcernRounds);
-        var blocked = facts.Findings.Where(item => ReviewGradingPolicy.IsBlockingToken(item.Status))
-            .Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var blocked = ReviewRoundBudgetPolicy.CountedBlockingAspects(facts.Findings);
         var round = ReviewRoundBudgetPolicy.Decide(facts.DeliveredRounds, facts.AttemptId, blocked,
             facts.MaximumDeliveredRounds, facts.ConsecutiveBlockRounds, facts.PriorReissues, facts.MaximumReissues);
         var concern = facts.Outcome == ReviewOutcomeKinds.Pass && followUp.Action == ReviewFollowUpAction.ReviewConcernRound;

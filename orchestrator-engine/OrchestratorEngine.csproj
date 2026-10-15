@@ -24,4 +24,8 @@
   <ItemGroup>
     <ProjectReference Include="../orchestration-decisions/Orchestration.Decisions.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="12.57.0" />
+  </ItemGroup>
 </Project>

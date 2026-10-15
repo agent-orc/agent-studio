@@ -23,16 +23,14 @@ public static class ReviewRoundBudgetStore
         // artifacts so deploying this policy does not grant a fresh budget.
         return new ReviewRoundBudgetLedger((legacyAttempts ?? [])
             .Where(attempt => attempt.Plane == ReviewPlane.Local
-                              || string.Equals(attempt.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
-                              || string.Equals(attempt.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
-                              || string.Equals(attempt.Outcome, "IntegrationBranchDefect", StringComparison.OrdinalIgnoreCase)
+                              || ReviewRoundBudgetPolicy.IsDeliveredOutcome(attempt.Outcome)
                               || (string.IsNullOrWhiteSpace(attempt.Outcome) && attempt.Aspects.Count > 0))
             .Reverse()
             .Select(attempt => new DeliveredReviewRound(
                 attempt.AttemptId,
-                attempt.Aspects.Where(aspect =>
-                        AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(aspect.Status))
-                    .Select(aspect => aspect.Aspect).ToArray(),
+                ReviewRoundBudgetPolicy.CountedBlockingAspects(attempt.Aspects.Select(aspect =>
+                    new ReviewFollowUpFinding(aspect.Aspect, aspect.Status, aspect.Summary,
+                        Classification: aspect.Classification))),
                 []))
             .ToArray());
     }
@@ -55,12 +53,9 @@ public static class ReviewRoundBudgetStore
     public static void RecordAcceptedEngineReview(string folder, StagePayload payload)
     {
         if (payload.ReviewAttemptId is null
-            || payload.ReviewOutcome is not (ReviewOutcomeKinds.Pass
-                or ReviewOutcomeKinds.ProductFailure or ReviewOutcomeKinds.IntegrationBranchDefect))
+            || !ReviewRoundBudgetPolicy.IsDeliveredOutcome(payload.ReviewOutcome))
             return;
-        var blocked = (payload.Verdicts ?? [])
-            .Where(verdict => AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
-            .Select(verdict => verdict.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var blocked = ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []);
         var seed = payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty;
         var decision = ReviewRoundBudgetPolicy.Decide(seed, payload.ReviewAttemptId, blocked,
             payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,

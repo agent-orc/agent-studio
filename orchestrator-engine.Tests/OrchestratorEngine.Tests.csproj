@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\orchestrator-engine\OrchestratorEngine.csproj" />
     <ProjectReference Include="..\testsupport\AgentStudio.TestSupport.csproj" />
+    <ProjectReference Include="..\runner\AgentRunner.csproj" />
     <ProjectReference Include="..\task-server\TaskServer.csproj" Aliases="global,TaskServerAssembly" />
   </ItemGroup>
 

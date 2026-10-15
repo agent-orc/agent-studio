@@ -23,7 +23,7 @@ public sealed class OrchestrationRolloutStore
 {
     public static string LibraryVersion => typeof(TransitionDecisionPolicy).Assembly.GetName()
         .Version?.ToString(3) ?? "unknown";
-    public static readonly string[] Profiles = ["CodingCompletion", "ReviewReport", "GateResult"];
+    public static readonly string[] Profiles = ["CodingCompletion", "ReviewReport", "GateResult", "BatchPlan"];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly object Gate = new();
     private readonly IConfiguration _configuration;
@@ -91,6 +91,14 @@ public sealed class OrchestrationRolloutStore
         ValidateProfile(profile);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        // AGT-3055: behind the Task Server proxy the engine cannot claim batch-plan occurrences.
+        if (profile == AgentStudio.Pipeline.BatchGatePilotService.BatchPlanProfile
+            && target.ToLowerInvariant() is "shadow" or "engine"
+            && AgentStudio.Host.TaskServerPlaneProxy.IsConfigured(_configuration))
+            throw new InvalidOperationException("orchestration-profile-batch-plan-task-server-proxy: "
+                + AgentStudio.Pipeline.BatchGatePilotService.BatchPlanProxyRefusal(
+                    target.ToLowerInvariant() == "shadow" ? OrchestrationExecutionMode.Shadow
+                        : OrchestrationExecutionMode.Engine));
         lock (Gate)
         {
             var state = Read(_path);
@@ -133,6 +141,25 @@ public sealed class OrchestrationRolloutStore
                 if (item.State == "ready") item.State = "shadow";
                 item.Mismatches.Add(new(monolith, engine));
             }
+            state.Profiles[profile] = item;
+            Save(state);
+        }
+    }
+
+    /// <summary>
+    /// Counts an occurrence that cannot be compared as a break in the streak.
+    /// Like Compare, it counts each occurrence once.
+    /// </summary>
+    public void Discount(string profile, string occurrence)
+    {
+        ValidateProfile(profile);
+        lock (Gate)
+        {
+            var state = Read(_path);
+            var item = state.Profiles.GetValueOrDefault(profile) ?? Initial(profile);
+            if (!item.ComparedOccurrences.Add(occurrence)) return;
+            item.Streak = 0;
+            if (item.State == "ready") item.State = "shadow";
             state.Profiles[profile] = item;
             Save(state);
         }

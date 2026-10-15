@@ -26,7 +26,7 @@ namespace AgentStudio.Tests;
 /// endpoint. Only the gate runner is scripted, and the pilot's background
 /// tick is removed so each test owns the tick order.
 /// </summary>
-public sealed class BatchGatePilotServiceTests : IDisposable
+public sealed partial class BatchGatePilotServiceTests : IDisposable
 {
     private const string ProjectName = "batch-pilot";
     private const string RepositoryId = "batch-pilot-repo";
@@ -174,6 +174,105 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         AssertPhase(store, manifest.BatchId, BatchPhase.Published);
         AssertLane(member.Key, TaskStates.HumanReview);
         Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Batch_shadow_records_the_monolith_receipt_only_after_the_lane_move_applied()
+    {
+        // AGT-3138: a failed MoveAsync must not leave a monolith Continue
+        // receipt that an engine receipt can match for the switch streak.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        rollout.Switch("GateResult", "shadow", "operator", "compare batch gate outcomes");
+        var member = SeedMember(factory, "DOC-SHADOW", "docs/shadow.md");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path makes the lane move fail.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var shadow = Assert.Single(orchestration.List(ProjectName, null),
+            run => orchestration.GetOccurrence(run.RunId)!.IdempotencyKey.StartsWith("batch-result:", StringComparison.Ordinal));
+        Assert.True(orchestration.GetOccurrence(shadow.RunId)!.Shadow);
+        Assert.Null(orchestration.GetOccurrence(shadow.RunId)!.MonolithReceipt);
+        var claim = ClaimShadow(orchestration, shadow.RunId);
+        var output = JsonSerializer.Serialize(new
+        {
+            transition = AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.Create(
+                AgentStudio.OrchestrationDecisions.TransitionAction.Continue,
+                "The build and test gate passed.", member.Key, member.ReviewAttemptId, 0, 1),
+        });
+        await orchestration.CompleteAsync(shadow.RunId, new("engine", "shadow",
+            claim.Lease!.LeaseId, claim.Lease.Fence, Contract.OrchestrationStage.GateDispatch,
+            Contract.OrchestrationAction.Continue, output, "complete:batch-shadow"), default);
+        Assert.NotNull(orchestration.GetOccurrence(shadow.RunId)!.EngineReceipt);
+        var unapplied = rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(0, unapplied.Streak);
+        Assert.Equal(0, unapplied.MismatchCount);
+
+        File.Delete(blocker);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Equal("Continue", orchestration.GetOccurrence(shadow.RunId)!.MonolithReceipt!.Action);
+        Assert.Equal(1, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+    }
+
+    [Fact]
+    public async Task Batch_shadow_recovers_an_applied_move_whose_receipt_was_lost()
+    {
+        // AGT-3138: the process stops after MoveAsync applied the lane move but
+        // before the receipt write. The replay exits because the card left
+        // AutoReview; recovery compares the saved intent against the lane.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        rollout.Switch("GateResult", "shadow", "operator", "compare batch gate outcomes");
+        var member = SeedMember(factory, "DOC-SHADOW-STOP", "docs/shadow-stop.md");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path makes the lane move fail.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        await pilot.TickAsync(CancellationToken.None);
+        var shadow = Assert.Single(orchestration.List(ProjectName, null),
+            run => orchestration.GetOccurrence(run.RunId)!.IdempotencyKey.StartsWith("batch-result:", StringComparison.Ordinal));
+        Assert.Null(orchestration.GetOccurrence(shadow.RunId)!.MonolithIntent);
+        var claim = ClaimShadow(orchestration, shadow.RunId);
+        var output = JsonSerializer.Serialize(new
+        {
+            transition = AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.Create(
+                AgentStudio.OrchestrationDecisions.TransitionAction.ReturnToReady,
+                "The engine returns the card.", member.Key, member.ReviewAttemptId, 0, 1),
+        });
+        await orchestration.CompleteAsync(shadow.RunId, new("engine", "shadow",
+            claim.Lease!.LeaseId, claim.Lease.Fence, Contract.OrchestrationStage.GateDispatch,
+            Contract.OrchestrationAction.Reissue, output, "complete:batch-shadow-stop"), default);
+
+        // The stop: the intent is saved and the lane move applied, the receipt is not.
+        File.Delete(blocker);
+        orchestration.RecordMonolithIntent(shadow.RunId, "Continue", "Batch gate passed.",
+            TaskStates.HumanReview);
+        var moved = await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync(
+            member.Key, TaskStates.HumanReview, _watchPath, CancellationToken.None,
+            cause: "batch-gate:stop", suppressProductExecution: true,
+            expectedSourceState: TaskStates.AutoReview,
+            transitionCause: LaneChangeCauses.ReviewVerdict, transitionDetail: "batch-gate-passed");
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+
+        factory.Services.GetServices<IHostedService>()
+            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverShadowOutcomes();
+
+        Assert.Equal("Continue", orchestration.GetOccurrence(shadow.RunId)!.MonolithReceipt!.Action);
+        var profile = rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(0, profile.Streak);
+        Assert.Equal("ReturnToReady", profile.LastMismatch!.Engine.Action);
     }
 
     [Fact]
@@ -530,6 +629,52 @@ public sealed class BatchGatePilotServiceTests : IDisposable
 
         AssertPhase(store, Assert.Single(store.ListManifests()).BatchId, BatchPhase.Published);
         Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    // AGT-3055 fix round: behind the Task Server proxy the engine claims
+    // occurrences at the Task Server, never in the monolith store. Engine
+    // ownership of BatchPlan is refused there and the monolith keeps deciding,
+    // so queued batches still close instead of waiting on an unclaimable occurrence.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Engine_owned_batch_plan_is_refused_behind_the_task_server_proxy(bool proxied)
+    {
+        var configuration = new Dictionary<string, string?>
+        {
+            ["Orchestration:Transitions:BatchPlan"] = "Engine",
+        };
+        if (proxied) configuration["TaskServer:BaseUrl"] = "http://127.0.0.1:5071";
+        using var factory = BuildFactory(configuration: configuration);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(
+                Enabled: true, Planner: "look-ahead", MinimumSize: 2,
+                MaximumSize: 2, DeadlineMinutes: 20));
+        SeedMember(factory, "DOC-PROXY-A", "docs/proxy-a.md");
+        SeedMember(factory, "DOC-PROXY-B", "docs/proxy-b.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        var occurrences = factory.Services.GetRequiredService<MonolithOrchestrationStore>()
+            .List(ProjectName, null).Where(run => run.CurrentStage == Contract.OrchestrationStage.BatchPlan).ToArray();
+        if (proxied)
+        {
+            Assert.Empty(occurrences);
+            AssertPhase(store, Assert.Single(store.ListManifests()).BatchId, BatchPhase.Published);
+            Assert.Equal(1, _gate.BatchRuns);
+            Assert.Contains("batch-plan-engine-ownership-refused", _errors.ToString(), StringComparison.Ordinal);
+        }
+        else
+        {
+            // Without the proxy the engine claims here; the tick only publishes the occurrence.
+            Assert.Equal("pending", Assert.Single(occurrences).Status);
+            Assert.Empty(store.ListManifests());
+            Assert.Equal(0, _gate.BatchRuns);
+        }
     }
 
     [Fact]
@@ -1420,7 +1565,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
-        using var factory = BuildFactory();
+        var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 1);
         var member = SeedMember(factory, "DOC-PUBLISH-RECOVER", "docs/publish-recover.md");
@@ -1447,6 +1592,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         AssertLane(member.Key, TaskStates.AutoReview);
 
         Directory.Delete(blockedPath!);
+        // A restart stops the first host: two live hosts would race their lane
+        // moves on one workspace, each behind its own in-process lane mutex.
+        factory.Dispose();
         using var restarted = BuildFactory();
         _ = restarted.CreateClient();
         EnableBatchGate(restarted, closeSize: 1);
@@ -2536,6 +2684,22 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             .Select(BatchGateOwnershipStore.Read)
             .SingleOrDefault();
 
+    /// <summary>
+    /// The per-task gate can open its own shadow occurrence for the seeded card;
+    /// claims keep other occurrences leased until the batch occurrence is claimed.
+    /// </summary>
+    private static Contract.OrchestrationClaimResponse ClaimShadow(
+        MonolithOrchestrationStore orchestration, string runId)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var claim = orchestration.Claim(new("engine", "shadow",
+                [Contract.OrchestrationStage.GateDispatch]));
+            if (claim.Run?.RunId == runId) return claim;
+        }
+        throw new Xunit.Sdk.XunitException($"Shadow occurrence {runId} was not claimable.");
+    }
+
     private void AssertLane(string key, string expected)
     {
         var lane = Assert.Single(TaskStates.All, state => Directory.Exists(Path.Combine(_watchPath, state, key)));
@@ -2619,7 +2783,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     // The host registers the attempt authority on the wall clock. A test that
     // follows review CreatedAt into upcoming ETAs needs it on the test clock,
     // or every ETA lies outside the look-ahead window of the fixed clock.
-    private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false)
+    private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false,
+        IReadOnlyDictionary<string, string?>? configuration = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -2633,7 +2798,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                     ["WatchPaths:0:RootPath"] = _repo,
                     ["WatchPaths:0:RepositoryPath"] = _repo,
                     ["ReviewDecisionOrchestrator:Enabled"] = "false",
-                }));
+                    // These tests drive the suite through the fake build/test gate runner.
+                    [ClaimedBatchGateRunner.ExecutionKey] = ClaimedBatchGateRunner.BridgeMode,
+                }).AddInMemoryCollection(configuration ?? new Dictionary<string, string?>()));
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<BatchGateStore>();
@@ -2661,6 +2828,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                     descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationType == typeof(BatchGatePilotHostedService));
                 services.Remove(tick);
+                // AGT-3141: the delivery-chain reconciler runs on a 30-second
+                // wall-clock timer and moves seeded Human Review cards whose
+                // delivery is not on develop yet back to Auto Review. Under a
+                // loaded full suite it fired mid-test, so tests own that order too.
+                var reconciler = services.Single(descriptor =>
+                    descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationFactory?.Method.ReturnType == typeof(DeliveryChainReconciler));
+                services.Remove(reconciler);
             });
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;

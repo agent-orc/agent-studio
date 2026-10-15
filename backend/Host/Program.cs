@@ -39,6 +39,8 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
+builder.Services.AddSingleton<OrchestratorDecisionStore>();
+builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
@@ -770,6 +772,23 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseServi
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Runner.IGateExecutorDirectory>(sp =>
+    sp.GetRequiredService<V1ReviewExecutorRegistry>());
+builder.Services.AddSingleton(sp => new AgentStudio.Runner.MonolithGateStore(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>()));
+// AGT-3055: BatchGate:Execution=claimed opts the batch suite into claimable
+// gate work; unset keeps the SSH bridge. The claimed subject lives where runner
+// gate claims land. Task Server proxy plus claimed execution is refused until
+// batch member identities can be mapped to Task Server records.
+AgentStudio.Pipeline.ClaimedBatchGateRunner.ValidateConfiguration(builder.Configuration);
+builder.Services.AddSingleton<AgentStudio.Pipeline.IBatchGateSubjectAuthority>(sp =>
+    TaskServerPlaneProxy.IsConfigured(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Pipeline.TaskServerBatchGateSubjectAuthority(() => sp
+            .GetRequiredService<IHttpClientFactory>().CreateClient(TaskServerPlaneProxy.ClientName))
+        : new AgentStudio.Pipeline.MonolithBatchGateSubjectAuthority(
+            sp.GetRequiredService<AgentStudio.Runner.MonolithGateStore>()));
+builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();

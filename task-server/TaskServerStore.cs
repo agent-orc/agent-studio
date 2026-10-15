@@ -51,7 +51,9 @@ public sealed partial class TaskServerStore
     // 33 adds the typed credential runbook operation journal and step receipts.
     // 34 combines the runbook journal with generation-keyed credential expiry
     // and rotation reminders (I8), preserving the downgrade guard.
-    public const int CurrentSchemaVersion = 34;
+    // 35 adds project review plans, integration commands, publication leases
+    // and the continuation base reason of the standalone review loop (I11).
+    public const int CurrentSchemaVersion = 35;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -1475,16 +1477,11 @@ public sealed partial class TaskServerStore
                     return new ClaimPlacementVerdict(
                         projectId, ProjectPlacementReasons.LegacyRouting, null, hostAdmission);
                 var occupied = await CountProjectLeasesAsync(connection, transaction, projectId, ct);
-                var configuredParallelism = Convert.ToInt32(await ScalarAsync(connection, """
-                    SELECT COALESCE(max_parallelism, 1)
-                      FROM studio_project_settings WHERE project_id = $project;
-                    """, ct, transaction, ("$project", projectId)) ?? 1,
-                    CultureInfo.InvariantCulture);
                 var refusal = ProjectPlacementAdmissionPolicy.Refusal(
                     placement,
                     request.RunnerId,
                     occupied,
-                    Math.Min(placement.MaxParallelism, Math.Clamp(configuredParallelism, 1, 256)),
+                    await ReadEffectiveProjectParallelismAsync(connection, transaction, placement, ct),
                     adoption.ConfirmsDesired,
                     cpuPercent,
                     runtimeCapacity.TargetLoadPercent);
@@ -1579,19 +1576,8 @@ public sealed partial class TaskServerStore
                 : await ReadPendingFollowUpAsync(connection, transaction, task.TaskId, ct);
             if (followUp is not null)
                 followUp = followUp with { ClaimId = runId };
-            string? startingRef = null;
-            string? startingSha = null;
-            await using (var startingCommand = Command(connection,
-                "SELECT result_ref, result_sha FROM task_starting_points WHERE task_id = $task;",
-                transaction, ("$task", task.TaskId)))
-            await using (var startingReader = await startingCommand.ExecuteReaderAsync(ct))
-            {
-                if (await startingReader.ReadAsync(ct))
-                {
-                    startingRef = startingReader.GetString(0);
-                    startingSha = startingReader.GetString(1);
-                }
-            }
+            var (startingRef, startingSha, startingReason) =
+                await ReadTaskStartingPointAsync(connection, transaction, task.TaskId, ct);
             await ExecuteAsync(connection, """
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
@@ -1661,6 +1647,7 @@ public sealed partial class TaskServerStore
                 ModelFallback: providerContinuation?.Fallback,
                 ContinuationBaseRef: startingRef ?? mechanicalBase.Ref ?? providerContinuation?.BaseRef,
                 ContinuationBaseSha: startingSha ?? mechanicalBase.Sha ?? providerContinuation?.BaseSha,
+                ContinuationBaseReason: startingRef is null ? null : startingReason,
                 PreviousSession: previousSession,
                 MechanicalDelta: mechanicalDelta,
                 MechanicalFreshRoute: mechanicalFreshRoute,
@@ -2263,7 +2250,7 @@ public sealed partial class TaskServerStore
                        repository_id = $repositoryId,
                        repository_url = $repositoryUrl,
                        result_ref = $resultRef,
-                       source_bundle_artifact_id = NULL,
+                       source_bundle_artifact_id = $bundleArtifact,
                        source_bundle_sha256 = $bundleSha
                  WHERE id = $run;
                 UPDATE tasks SET state = $nextState, version = version + 1, updated_at = $now WHERE id = $task;
@@ -2295,6 +2282,13 @@ public sealed partial class TaskServerStore
                 ("$repositoryId", resultHandoff?.Envelope.RepositoryId),
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
+                ("$bundleArtifact", resultHandoff?.Envelope.SourceBundleDigest is { } bundleDigest
+                    ? await ScalarAsync(connection, """
+                        SELECT id FROM artifacts
+                         WHERE run_id = $run AND sha256 = $digest AND content IS NOT NULL
+                         ORDER BY created_at DESC LIMIT 1;
+                        """, ct, transaction, ("$run", runId), ("$digest", bundleDigest))
+                    : null),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
             if (olderBrief)
                 await ExecuteAsync(connection, """
@@ -2320,6 +2314,9 @@ public sealed partial class TaskServerStore
                     ("$ref", resultHandoff?.Envelope.ImmutableRemoteRef),
                     ("$salvage", request.SalvageBranch),
                     ("$salvageSha", request.SalvageCommitSha), ("$now", Iso(now)));
+            if (nextState == "4-auto-review" && resultHandoff is not null)
+                await CreateCompletionReviewSubjectAsync(connection, transaction, runId, lease.TaskId,
+                    request.Outcome, resultHandoff.Envelope, actorId, ct);
             if (request.SessionContinuation is { } completedSession)
                 await AppendLifecycleEventAsync(
                     connection, transaction, runId, lease.TaskId, request.Fence,
@@ -4459,6 +4456,7 @@ public sealed partial class TaskServerStore
             """, ct);
         await ApplyIdentityBootstrapMigrationAsync(connection, ct);
         await ApplyCredentialReminderMigrationAsync(connection, ct);
+        await ApplyStandaloneReviewLoopMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

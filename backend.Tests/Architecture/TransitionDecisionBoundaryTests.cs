@@ -18,6 +18,7 @@ public sealed class TransitionDecisionBoundaryTests
         "OrchestrationSettlementPolicy", "RepeatedReviewBlockPolicy", "StageDecisionPolicy",
         "CouncilDecisionPolicy", "LocalLoopDecisionPolicy", "ReviewBudgetPolicy", "TransitionDecisionPolicy",
         "RoundCounterPolicy", "ContinuationReplayPolicy", "RepeatedAspectDecisionPolicy",
+        "IntegrationResultPolicy",
     ];
 
     [Fact]

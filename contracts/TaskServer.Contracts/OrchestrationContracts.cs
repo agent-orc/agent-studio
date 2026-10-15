@@ -8,6 +8,7 @@ public enum OrchestrationStage
     GateDispatch,
     CompletionJudge,
     OperatorSweep,
+    BatchPlan,
 }
 
 public enum OrchestrationAction

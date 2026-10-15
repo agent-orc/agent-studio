@@ -81,6 +81,11 @@ The shared adapter feeds:
 - ad-hoc/supporting usage summaries.
 - prompt-registry call history, where the rendered prompt's estimated input
   tokens are priced at the event timestamp and grouped by content hash.
+- orchestrator decision receipts (AGT-3063), where the deduplicated usage of a
+  shadow decision call is priced at its completion time and the card run
+  ledger in the decision grounds is priced row by row. Both keep
+  `unknown-model` and `no-price-for-date` with a null amount, never zero; see
+  [orchestration decisions](../contracts/orchestration-decisions.md).
 
 These surfaces may aggregate resolved costs, but an aggregate containing an
 unpriced call remains explicitly marked unavailable or incomplete according to

@@ -155,10 +155,11 @@ public sealed class RemoteReviewWorkspace
         Directory.CreateDirectory(BaselineCacheRoot);
         Directory.CreateDirectory(DependencyCacheRoot);
 
-        if (!string.IsNullOrWhiteSpace(_subject.RepositoryUrl))
-            await MaterializeGitAsync(_subject.RepositoryUrl!, ct);
-        else if (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
+        if (string.IsNullOrWhiteSpace(_subject.ResultRef)
+            && !string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
             await MaterializeBundleAsync(client, ct);
+        else if (!string.IsNullOrWhiteSpace(_subject.RepositoryUrl))
+            await MaterializeGitAsync(_subject.RepositoryUrl!, ct);
         else
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",

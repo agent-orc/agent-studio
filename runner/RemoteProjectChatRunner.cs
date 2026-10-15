@@ -1,13 +1,5 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
-using CodingAgentRunner;
-using CodingAgentRunner.Abstractions;
-using CodingAgentRunner.Delegation;
-using CodingAgentRunner.Execution;
-using CodingAgentRunner.Model;
-// The runner's own wire model also declares a CliOutputLine; the CAR event
-// payload type must resolve to the library's.
-using CarOutputLine = CodingAgentRunner.Model.CliOutputLine;
 
 namespace AgentRunner;
 
@@ -131,96 +123,17 @@ public sealed class RemoteProjectChatRunner
     /// transport stay identical across CLI families. Returns one raw
     /// <see cref="ProcessResult"/> for the provider-specific response parser.
     /// </summary>
-    private async Task<ProcessResult> RunAgentThroughCarAsync(
+    private Task<ProcessResult> RunAgentThroughCarAsync(
         RemoteChatWorkItem work,
         string cliType,
         ProjectChatCheckout checkout,
         string contextPrompt,
         CancellationToken timeoutToken,
         CancellationToken shutdown)
-    {
-        var logDirectory = Path.Combine(Path.GetTempPath(), "agent-chat-car", work.WorkId);
-        var runner = new CliRunner(
-            new CliOptions
-            {
-                CodexPath = _options.CodexCliBin,
-                ClaudePath = _options.ClaudeCliBin,
-                AllowAgentGitMutation = true,
-                Delegation = new DelegationOptions { Enabled = false },
-            },
-            logPaths: new ChatRunLogPathProvider(logDirectory));
-        var driver = runner.Get(cliType);
-        var stdout = new System.Text.StringBuilder();
-        var stderr = new System.Text.StringBuilder();
-        var finished = new TaskCompletionSource<CliRunInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        void OnOutput(string id, CarOutputLine line)
-        {
-            if (!string.Equals(id, work.WorkId, StringComparison.Ordinal)) return;
-            if (line.Stream == "stdout") stdout.AppendLine(line.Text);
-            else if (line.Stream == "stderr")
-            {
-                stderr.AppendLine(line.Text);
-                _log($"project-chat-{cliType} stderr: {line.Text}");
-            }
-        }
-
-        void OnFinished(string id, CliRunInfo info)
-        {
-            if (string.Equals(id, work.WorkId, StringComparison.Ordinal)) finished.TrySetResult(info);
-        }
-
-        driver.OnOutput += OnOutput;
-        driver.OnFinished += OnFinished;
-        try
-        {
-            var (run, error) = await driver.StartAsync(
-                new CliRunRequest
-                {
-                    RunId = work.WorkId,
-                    Prompt = contextPrompt,
-                    WorkingDirectory = checkout.RepoPath,
-                    Model = work.Model,
-                    ThinkingLevel = work.ThinkingLevel,
-                    PermissionMode = CliPermissionModes.ReadOnly,
-                    ContextMode = CliContextModes.Shared,
-                },
-                shutdown);
-            if (run is null)
-                throw new InvalidOperationException($"{cliType} chat run failed to start: {error}");
-            _processId = run.ProcessId;
-
-            var deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeoutToken)
-                .ContinueWith(_ => { }, TaskScheduler.Default);
-            var completed = await Task.WhenAny(finished.Task, deadline);
-            if (!ReferenceEquals(completed, finished.Task))
-            {
-                driver.Stop(work.WorkId, RunStopReason.Watchdog);
-                await Task.WhenAny(finished.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-                // Preserve the raw-spawn contract: a timed-out turn surfaces as the
-                // cancellation the linked token produced, handled by the caller.
-                timeoutToken.ThrowIfCancellationRequested();
-            }
-
-            var info = await finished.Task;
-            return new ProcessResult(info.ExitCode ?? 1, stdout.ToString(), stderr.ToString());
-        }
-        finally
-        {
-            driver.OnOutput -= OnOutput;
-            driver.OnFinished -= OnFinished;
-            driver.Forget(work.WorkId);
-            try { if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true); }
-            catch { /* per-turn log hygiene is best effort */ }
-        }
-    }
-
-    /// <summary>Keeps CAR's per-run output log inside a per-turn temp folder that is deleted with the turn.</summary>
-    private sealed class ChatRunLogPathProvider(string directory) : IRunLogPathProvider
-    {
-        public string GetRunLogDirectory(string runId) => directory;
-        public string GetActiveJobsFile() => Path.Combine(directory, "active-runs.json");
-    }
+        => ReadOnlyCarTurn.RunAsync(
+            _options, work.WorkId, cliType, contextPrompt, checkout.RepoPath, work.Model,
+            work.ThinkingLevel, "agent-chat-car", "project-chat", processId => _processId = processId,
+            _log, timeoutToken, shutdown);
 
     private async Task<int> CompleteAsync(
         RemoteChatWorkItem work,

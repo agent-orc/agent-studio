@@ -118,9 +118,7 @@ public static class ReviewFixRoundBase
     /// anything out.
     /// </summary>
     public static string PromptSentence(bool continuesReviewedDelivery)
-        => continuesReviewedDelivery
-            ? "This round starts from the delivery the review graded, so that work is already in your checkout; change only what the findings require."
-            : "This round starts from the integration branch because the reviewed delivery could not be named, so rebuild the delivery with the findings as constraints.";
+        => AgentStudio.TaskServer.Contracts.ReviewFindingRoundPrompt.BaseSentence(continuesReviewedDelivery);
 
     /// <summary>
     /// The timeline row naming the chosen base of the round. Written once per
