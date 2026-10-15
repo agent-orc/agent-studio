@@ -32,7 +32,8 @@ internal static class ReadOnlyCarTurn
         Action<string> log,
         CancellationToken timeoutToken,
         CancellationToken shutdown,
-        int? maxOutputTokens = null)
+        int? maxOutputTokens = null,
+        int? maxInputTokens = null)
     {
         var logDirectory = Path.Combine(Path.GetTempPath(), logFolder, runId);
         var runner = new CliRunner(
@@ -80,7 +81,7 @@ internal static class ReadOnlyCarTurn
                     PermissionMode = CliPermissionModes.ReadOnly,
                     ContextMode = CliContextModes.Shared,
                     ExtraEnvironment = OutputCapEnvironment(cliType, maxOutputTokens),
-                    Tuning = OutputCapTuning(cliType, maxOutputTokens),
+                    Tuning = DecisionCapTuning(cliType, maxOutputTokens, maxInputTokens),
                 },
                 shutdown);
             if (run is null)
@@ -127,6 +128,20 @@ internal static class ReadOnlyCarTurn
         => maxOutputTokens is > 0 && string.Equals(cliType, "codex", StringComparison.OrdinalIgnoreCase)
             ? new() { ["model_max_output_tokens"] = maxOutputTokens.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) }
             : null;
+
+    /// <summary>Codex accepts the total context window, including output and framing.</summary>
+    internal static Dictionary<string, string>? DecisionCapTuning(string cliType,
+        int? maxOutputTokens, int? maxInputTokens)
+    {
+        var tuning = OutputCapTuning(cliType, maxOutputTokens);
+        if (maxInputTokens is > 0 && string.Equals(cliType, "codex", StringComparison.OrdinalIgnoreCase))
+        {
+            tuning ??= new();
+            tuning["model_context_window"] = (maxInputTokens.Value + Math.Max(0, maxOutputTokens ?? 0))
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return tuning;
+    }
 
     /// <summary>Keeps CAR's per-run output log inside a per-turn temp folder that is deleted with the turn.</summary>
     private sealed class TurnLogPathProvider(string directory) : IRunLogPathProvider

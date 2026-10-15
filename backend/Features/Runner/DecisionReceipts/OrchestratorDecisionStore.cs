@@ -95,9 +95,11 @@ public sealed class OrchestratorDecisionStore
             }
             var now = _time.GetUtcNow().UtcDateTime;
             var (maxInput, maxOutput) = DecisionCostCapPolicy.Envelope(request.MaxInputTokens, request.MaxOutputTokens);
+            var estimatedUsd = EstimatedEnvelopePrice(request.Model, maxInput, maxOutput, now);
             var capReason = DecisionCostCapPolicy.CallEnvelopeReason(maxInput, maxOutput);
             if (capReason is null && DecisionCostCapPolicy.ChargesCard(input.Scope))
-                capReason = DecisionCostCapPolicy.CardReason(Spend(_jobs.Values.Where(job => job.Dto.TaskId == request.TaskId)));
+                capReason = DecisionCostCapPolicy.CardReason(
+                    Spend(_jobs.Values.Where(job => job.Dto.TaskId == request.TaskId)), estimatedUsd);
             else if (capReason is null)
             {
                 var day = DecisionCostCapPolicy.HostDayKey(input.Scope, now);
@@ -107,7 +109,7 @@ public sealed class OrchestratorDecisionStore
                 bool Scheduled(JobRecord job) => DecisionCostCapPolicy.IsScheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger);
                 capReason = DecisionCostCapPolicy.HostDayReason(Spend(hostDay.Where(Scheduled)),
                     Spend(hostDay.Where(job => !Scheduled(job))), DecisionCostCapPolicy.IsScheduled(input.Trigger),
-                    maxInput, maxOutput);
+                    maxInput, maxOutput, estimatedUsd);
             }
             var record = new JobRecord
             {
@@ -143,6 +145,8 @@ public sealed class OrchestratorDecisionStore
                 .OrderBy(job => job.Dto.CreatedAt).ThenBy(job => job.Dto.JobId, StringComparer.Ordinal)
                 .FirstOrDefault();
             if (next is null) return new(DecisionJobClaimStatuses.Empty);
+            if (next.ClaimToken is not null && next.Dto.RunnerId is not null)
+                next.ReplacedClaims.Add(new() { ClaimToken = next.ClaimToken, RunnerId = next.Dto.RunnerId });
             next.ClaimToken = Guid.NewGuid().ToString("N");
             next.ClaimExpiresAt = now + ClaimTtl;
             next.Dto = next.Dto with { Status = DecisionJobStatuses.Claimed, ClaimedAt = now,
@@ -164,8 +168,24 @@ public sealed class OrchestratorDecisionStore
         lock (_gate)
         {
             var job = _jobs.GetValueOrDefault(completion.JobId);
-            if (job is null || job.ClaimToken != completion.ClaimToken || job.Dto.RunnerId != completion.RunnerId)
+            if (job is null)
                 return false;
+            if (job.ClaimToken != completion.ClaimToken || job.Dto.RunnerId != completion.RunnerId)
+            {
+                var replaced = job.ReplacedClaims.FirstOrDefault(claim => claim.ClaimToken == completion.ClaimToken
+                    && claim.RunnerId == completion.RunnerId);
+                if (replaced is null) return false;
+                if (replaced.Result is not null) return true;
+                var oldUsage = CardRunLedgerPolicy.Deduplicate(completion.Usage);
+                if (oldUsage.Tokens.Total == 0) return false;
+                var oldModel = string.IsNullOrWhiteSpace(completion.Model) ? job.Dto.Model : completion.Model.Trim();
+                replaced.Result = new(false, completion.ResponseText, job.Dto.Cli, oldModel,
+                    job.Dto.ThinkingLevel, oldUsage.Tokens, Price(oldModel, oldUsage.Tokens, completion.EndedAt),
+                    oldUsage.ProviderCallIds, oldUsage.ExcludedDuplicateFrames, completion.StartedAt,
+                    completion.EndedAt, completion.RunnerId, "replaced-claim", completion.TransportFailure);
+                Save("jobs", job.Dto.JobId, job);
+                return true;
+            }
             var late = job.Dto.Status == DecisionJobStatuses.Failed && job.Dto.Error == SupersededByReceipt
                 && job.Dto.Result is null;
             if (DecisionJobStatuses.IsTerminal(job.Dto.Status) && !late) return true;
@@ -198,12 +218,15 @@ public sealed class OrchestratorDecisionStore
     }
 
     private IReadOnlyList<DecisionLateCallV1> LateCallsLocked(string occurrenceId)
-        => _jobs.Values.Where(job => job.LateAfterReceipt && job.Dto.OccurrenceId == occurrenceId
-                && job.Dto.Result is not null)
-            .OrderBy(job => job.Dto.Result!.EndedAt).ThenBy(job => job.Dto.JobId, StringComparer.Ordinal)
-            .Select(job => new DecisionLateCallV1(job.Dto.JobId, job.Dto.Result!.HostId, job.Dto.Result.Model,
-                job.Dto.Result.Tokens, job.Dto.Result.Price, job.Dto.Result.ProviderCallIds,
-                job.Dto.Result.EndedAt, job.Dto.Result.Error))
+        => _jobs.Values.Where(job => job.Dto.OccurrenceId == occurrenceId)
+            .SelectMany(job => job.ReplacedClaims.Where(claim => claim.Result is not null)
+                .Select(claim => (job.Dto.JobId, Result: claim.Result!))
+                .Concat(job.LateAfterReceipt && job.Dto.Result is not null
+                    ? [(job.Dto.JobId, job.Dto.Result)] : []))
+            .OrderBy(item => item.Result.EndedAt).ThenBy(item => item.JobId, StringComparer.Ordinal)
+            .Select(item => new DecisionLateCallV1(item.JobId, item.Result.HostId, item.Result.Model,
+                item.Result.Tokens, item.Result.Price, item.Result.ProviderCallIds,
+                item.Result.EndedAt, item.Result.Error))
             .ToArray();
 
     /// <summary>
@@ -289,16 +312,35 @@ public sealed class OrchestratorDecisionStore
     /// A call counts once a runner claimed it or while it may still be claimed.
     /// Settled calls add measured usage; open calls reserve their envelope.
     /// </summary>
-    private static DecisionSpendSnapshot Spend(IEnumerable<JobRecord> jobs)
+    private DecisionSpendSnapshot Spend(IEnumerable<JobRecord> jobs)
     {
         var counted = jobs.Where(job => job.Dto.ClaimedAt is not null
             || job.Dto.Status is DecisionJobStatuses.Pending or DecisionJobStatuses.Claimed).ToArray();
         var tokens = counted.Aggregate(DecisionTokenUsageV1.Zero, (total, job) => total.Add(
             job.Dto.Result?.Tokens ?? (DecisionJobStatuses.IsTerminal(job.Dto.Status) ? DecisionTokenUsageV1.Zero
-                : new DecisionTokenUsageV1(Envelope(job).Input, 0, 0, Envelope(job).Output))));
-        var usd = counted.Sum(job => job.Dto.Result?.Price is { Status: DecisionPriceStatuses.Priced } price
-            ? price.EstimatedUsd ?? 0 : 0);
-        return new(counted.Length, tokens, usd);
+                : new DecisionTokenUsageV1(Envelope(job).Input, 0, 0, Envelope(job).Output)))
+            .Add(job.ReplacedClaims.Aggregate(DecisionTokenUsageV1.Zero, (attempts, claim) => attempts.Add(
+                claim.Result?.Tokens ?? (DecisionJobStatuses.IsTerminal(job.Dto.Status)
+                    ? DecisionTokenUsageV1.Zero
+                    : new DecisionTokenUsageV1(Envelope(job).Input, 0, 0, Envelope(job).Output))))));
+        var usd = counted.Sum(job => job.Dto.Result is { } result
+                ? result.Price.Status == DecisionPriceStatuses.Priced ? result.Price.EstimatedUsd ?? 0 : 0
+                : DecisionJobStatuses.IsTerminal(job.Dto.Status) ? 0
+                : EstimatedEnvelopePrice(job.Dto.Model, Envelope(job).Input, Envelope(job).Output,
+                    job.Dto.CreatedAt))
+            + counted.Sum(job => job.ReplacedClaims.Sum(claim =>
+                claim.Result is { } result
+                    ? result.Price.Status == DecisionPriceStatuses.Priced ? result.Price.EstimatedUsd ?? 0 : 0
+                    : DecisionJobStatuses.IsTerminal(job.Dto.Status) ? 0
+                    : EstimatedEnvelopePrice(job.Dto.Model, Envelope(job).Input, Envelope(job).Output,
+                        job.Dto.CreatedAt)));
+        return new(counted.Length + counted.Sum(job => job.ReplacedClaims.Count), tokens, usd);
+    }
+
+    private decimal EstimatedEnvelopePrice(string model, int input, int output, DateTime at)
+    {
+        var estimate = _pricing.Estimate(model, input, output, 0, 0, at);
+        return estimate.ModelKnown ? estimate.Total : 0;
     }
 
     /// <summary>Records written before the envelope was stored use the per-call cap.</summary>
@@ -356,5 +398,13 @@ public sealed class OrchestratorDecisionStore
         public int MaxInputTokens { get; set; }
         public int MaxOutputTokens { get; set; }
         public bool LateAfterReceipt { get; set; }
+        public List<ReplacedClaim> ReplacedClaims { get; set; } = [];
+    }
+
+    public sealed class ReplacedClaim
+    {
+        public string ClaimToken { get; set; } = string.Empty;
+        public string RunnerId { get; set; } = string.Empty;
+        public OrchestratorDecisionJobResult? Result { get; set; }
     }
 }

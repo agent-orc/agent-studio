@@ -37,7 +37,9 @@ AGT-3059 adds a per-profile rollout journal at
 and gate or batch result can be switched independently from Monolith to Shadow and then
 to Engine. Shadow records both receipts for each occurrence and compares chosen
 actions and input digests. A mismatch resets the matching streak and records
-both actions and reasons. The default threshold is 50 consecutive matches;
+both actions and reasons. The streak follows occurrence creation sequence,
+including comparisons recovered after newer outcomes. The default threshold
+is 50 consecutive matches;
 `Orchestration:ShadowMatchThreshold` can change it. Ready is visible but does
 not switch automatically. A Studio operator switches or rolls back through one
 API call with an actor and reason receipt. Rollback keeps pending occurrences
@@ -83,10 +85,14 @@ refused beyond 24 calls or 5 USD priced spend per card. An occurrence without a
 card (the Fluid capacity periodic host check) is charged to its host-day
 instead: 48 scheduled plus 12 event calls, 180,000 input and 90,000 output
 tokens and 10 USD priced spend per host and UTC day, where open jobs reserve
-their envelope. A refused job stays `cap-exhausted`. Each call carries an
+their token envelope and estimated priced cost. Reclaimed claims keep billed
+completions from the replaced runner as separate calls attributed to the same
+job; duplicate reports do not add spend. A refused job stays `cap-exhausted`. Each call carries an
 envelope of at most 8,000 input and 1,000 output tokens. The runner refuses a
-prompt whose estimate exceeds it before spawning, and passes the output cap to
-the CLI (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`, Codex `model_max_output_tokens`). The
+prompt whose conservative estimate with framing margin exceeds it before
+spawning. It passes the output cap to the CLI (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
+Codex `model_max_output_tokens`) and the total context window to Codex as
+`model_context_window`. The
 store rejects a completion whose measured usage broke the envelope. It keeps
 the usage and price but does not accept the answer, so the receipt records
 `ask(reason=decision-unavailable)`. Receipts are immutable: the store checks the grounds

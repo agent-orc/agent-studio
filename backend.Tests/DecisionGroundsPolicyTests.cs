@@ -242,6 +242,19 @@ public sealed class DecisionGroundsPolicyTests
         => Assert.Equal(reason, DecisionCostCapPolicy.CardReason(
             new(calls, DecisionTokenUsageV1.Zero, (decimal)usd)));
 
+    [Fact]
+    public void Priced_envelope_must_fit_card_and_host_day_spend_caps()
+    {
+        var card = new DecisionSpendSnapshot(1, DecisionTokenUsageV1.Zero, 4.99m);
+        Assert.Contains("priced decision spend cap", DecisionCostCapPolicy.CardReason(card, 0.02m));
+        Assert.Null(DecisionCostCapPolicy.CardReason(card, 0.01m));
+        var scheduled = new DecisionSpendSnapshot(1, DecisionTokenUsageV1.Zero, 9.99m);
+        Assert.Contains("priced decision spend cap", DecisionCostCapPolicy.HostDayReason(scheduled,
+            DecisionSpendSnapshot.Empty, true, 8_000, 1_000, 0.02m));
+        Assert.Null(DecisionCostCapPolicy.HostDayReason(scheduled, DecisionSpendSnapshot.Empty,
+            true, 8_000, 1_000, 0.01m));
+    }
+
     [Theory]
     [InlineData(true, 47, 0, 0, 0, 0, null)]
     [InlineData(true, 48, 0, 0, 0, 0, "host-day cap of 48 scheduled decision calls reached")]

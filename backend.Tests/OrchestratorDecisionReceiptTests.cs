@@ -294,6 +294,66 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     }
 
     [Fact]
+    public void Replaced_claim_billed_completion_is_attributed_once_and_reserved_against_card_spend()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(At));
+        var directory = Path.Combine(_workspace, "reclaimed");
+        var store = new OrchestratorDecisionStore(directory, clock, new RatePricing(15m));
+        store.FreezeInputs(Shadow("orch_reclaimed"));
+        var job = store.CreateJob(Request("orch_reclaimed", 1, "gpt-6-sol"));
+        var first = store.Claim(new("runner-one", "runner")).Work!;
+        clock.Advance(OrchestratorDecisionStore.ClaimTtl.Add(TimeSpan.FromSeconds(1)));
+        var second = store.Claim(new("runner-two", "runner")).Work!;
+        Assert.Equal(job.JobId, second.JobId);
+        Assert.NotEqual(first.ClaimToken, second.ClaimToken);
+
+        var frame = new DecisionUsageFrameV1("codex:replaced-call", "gpt-6-sol", 8_000, 0, 0, 1_000, false);
+        var billed = new OrchestratorDecisionJobCompletion(first.JobId, first.ClaimToken, "runner-one",
+            true, "{}", "gpt-6-sol", [frame, frame], At, At.AddMinutes(11), null, false);
+        Assert.True(store.Complete(billed));
+        Assert.True(store.Complete(billed));
+        Assert.Null(store.GetJob(job.JobId)!.Result);
+        var late = Assert.Single(store.LateCalls("orch_reclaimed"));
+        Assert.Equal((job.JobId, "runner-one", (decimal?)1.95m),
+            (late.JobId, late.HostId, late.Price.EstimatedUsd));
+
+        store.FreezeInputs(Shadow("orch_followup"));
+        var denied = store.CreateJob(Request("orch_followup", 1, "gpt-6-sol"));
+        Assert.Equal(DecisionJobStatuses.CapExhausted, denied.Status);
+        Assert.Contains("priced decision spend", denied.Error);
+        var receipt = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(
+            Shadow("orch_reclaimed").Grounds), DecisionGroundsPolicyTests.Deterministic,
+            "settled", store.GetJob(job.JobId), 1, false, "replacement claim still running"));
+        store.PutReceipt(receipt);
+        var row = Assert.Single(store.ListReceipts("AGT-1", 10));
+        Assert.Equal((1, (decimal?)1.95m), (row.LateCalls, row.EstimatedUsd));
+        var reloaded = new OrchestratorDecisionStore(directory, clock, new RatePricing(15m));
+        Assert.Single(reloaded.LateCalls("orch_reclaimed"));
+        Assert.True(reloaded.Complete(billed));
+        Assert.Single(reloaded.LateCalls("orch_reclaimed"));
+    }
+
+    [Fact]
+    public void New_job_reserves_its_priced_envelope_for_card_and_host_day()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(At));
+        var card = new OrchestratorDecisionStore((string?)null, clock, new RatePricing(20m));
+        card.FreezeInputs(Shadow("orch_first"));
+        Assert.Equal(DecisionJobStatuses.Pending, card.CreateJob(Request("orch_first", 1, "gpt-6-sol")).Status);
+        card.FreezeInputs(Shadow("orch_second"));
+        Assert.Equal(DecisionJobStatuses.CapExhausted,
+            card.CreateJob(Request("orch_second", 1, "gpt-6-sol")).Status);
+
+        var host = new OrchestratorDecisionStore((string?)null, clock, new RatePricing(50m));
+        host.FreezeInputs(HostShadow("host_first", "periodic"));
+        Assert.Equal(DecisionJobStatuses.Pending, host.CreateJob(HostRequest("host_first")).Status);
+        host.FreezeInputs(HostShadow("host_second", "periodic"));
+        var denied = host.CreateJob(HostRequest("host_second"));
+        Assert.Equal(DecisionJobStatuses.CapExhausted, denied.Status);
+        Assert.Contains("priced decision spend", denied.Error);
+    }
+
+    [Fact]
     public void Measured_usage_beyond_the_call_envelope_is_recorded_but_not_accepted_as_a_decision()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(At));
@@ -443,7 +503,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         }
     }
 
-    private sealed class RatePricing : ITokenPricing
+    private sealed class RatePricing(decimal multiplier = 1m) : ITokenPricing
     {
         public TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
             long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
@@ -454,7 +514,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             var output = outputTokens * 50m / 1_000_000m;
             var read = cacheReadTokens * 1m / 1_000_000m;
             var write = cacheCreationTokens * 2m / 1_000_000m;
-            return new(input, output, read, write, input + output + read + write, modelId ?? "unknown", true,
+            return new(input * multiplier, output * multiplier, read * multiplier, write * multiplier,
+                (input + output + read + write) * multiplier, modelId ?? "unknown", true,
                 TokenEconomy.PriceStatus.Resolved, null);
         }
 
