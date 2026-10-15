@@ -68,12 +68,14 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
     private readonly IJsonlAppender _appender;
     private readonly RunLeaseService? _leases;
     private readonly AiOperatorDecisionGateway _decisions;
+    private readonly TimeProvider _time;
 
     /// <summary>Default uptime grace: silence tolerated before a missing heartbeat counts as process-lost.</summary>
     public const int DefaultGraceSeconds = 30;
 
     /// <summary>Test seam mirroring <see cref="StaleProgressArchiver"/>: replaces the runner-status lookup.</summary>
     internal Func<RunnerStatus?>? StatusProviderOverride { get; set; }
+    internal Action<string>? BeforeDemotionRecheck { get; set; }
 
     public RunLivenessMonitor(
         TaskScannerService scanner,
@@ -87,7 +89,8 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
         ILogger<RunLivenessMonitor> logger,
         IJsonlAppender? appender = null,
         RunLeaseService? leases = null,
-        AiOperatorDecisionGateway? decisions = null)
+        AiOperatorDecisionGateway? decisions = null,
+        TimeProvider? time = null)
     {
         _scanner = scanner;
         _transitions = transitions;
@@ -101,6 +104,7 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
         _appender = appender ?? new JsonlAppender();
         _leases = leases;
         _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
+        _time = time ?? TimeProvider.System;
     }
 
     public string Decider => AiOperatorDeciders.RunLiveness;
@@ -137,7 +141,7 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
         var graceSeconds = isBoot
             ? 0
             : Math.Clamp(_configuration.GetValue("Runner:RunLiveness:GraceSeconds", DefaultGraceSeconds), 0, 55);
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         var activeByProject = SafeGetActiveJobIds();
 
         foreach (var entry in _scanner.GetWatchPaths())
@@ -219,7 +223,7 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
                     TaskStates.Progress, payload, ResolveDecisionPeriod()));
                 if (submission.MonolithDecision is { } decision)
                 {
-                    var outcome = await ApplyDecisionAsync(entry, c, decision, now, ct);
+                    var outcome = await ApplyDecisionAsync(entry, c, decision, graceSeconds, now, ct);
                     if (outcome is not null) outcomes.Add(outcome);
                 }
             }
@@ -269,13 +273,14 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
         var candidate = new Candidate(Path.GetFileName(folder), folder, HasJobJson: true, IsActiveHere: false,
             HasRemoteLeaseHistory: false, HasLiveHeartbeat: false, HasVisibleWaitingState: false,
             CoreRunFinished: facts.CoreRunFinished, SecondsSinceActivity: facts.SecondsSinceActivity);
-        var outcome = await ApplyDecisionAsync(entry, candidate, application.Decision, DateTime.UtcNow, ct);
+        var outcome = await ApplyDecisionAsync(entry, candidate, application.Decision,
+            facts.GraceSeconds, _time.GetUtcNow().UtcDateTime, ct);
         if (outcome?.Kind is RunLivenessOutcomeKinds.DemoteFailed or RunLivenessOutcomeKinds.RetriggerFailed)
             throw new InvalidOperationException(outcome.Reason);
     }
 
     private async Task<RunLivenessOutcome?> ApplyDecisionAsync(WatchPathEntry entry, Candidate c,
-        AiOperatorDecision decision, DateTime now, CancellationToken ct)
+        AiOperatorDecision decision, int graceSeconds, DateTime now, CancellationToken ct)
     {
         var verdict = new RunLivenessDecision(
             decision.Effect == AiOperatorEffects.RetriggerPostProcessing
@@ -285,6 +290,17 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
         switch (decision.Effect)
         {
             case AiOperatorEffects.DemoteToReady:
+                BeforeDemotionRecheck?.Invoke(c.JobFolder);
+                // The receipt and the local sweep both carry a frozen activity
+                // age. A new log line restores grace even when the earlier
+                // decision was valid when submitted.
+                var currentActivityAge = (_time.GetUtcNow().UtcDateTime - MeasureLastActivity(c.JobFolder)).TotalSeconds;
+                if (currentActivityAge <= graceSeconds
+                    || c.IsActiveHere || _pickupLock.HasLiveOwner(c.JobFolder)
+                    || HasVisibleWaitingState(c.JobFolder)
+                    || RunFinishedSignal.CoreRunFinished(c.JobFolder))
+                    return null;
+                c = c with { SecondsSinceActivity = currentActivityAge };
                 outcome = await DemoteToReadyAsync(entry, c, verdict, now, ct);
                 break;
             case AiOperatorEffects.RetriggerPostProcessing:

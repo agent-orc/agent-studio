@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -247,6 +248,31 @@ public sealed class RunLivenessMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task Uptime_NewLogActivityBeforeDemotion_KeepsCardInProgress()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        const string slug = "activity-after-snapshot";
+        WriteJobWithSession(TaskStates.Progress, slug, sessionName: null, chain: Array.Empty<string>());
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        WriteCliLog(folder, "old run output");
+        var log = Path.Combine(folder, "logs", "cli-output.log");
+        File.SetLastWriteTimeUtc(log, clock.GetUtcNow().UtcDateTime.AddMinutes(-10));
+
+        var (monitor, _) = Build(time: clock);
+        monitor.BeforeDemotionRecheck = _ =>
+        {
+            File.AppendAllText(log, "new run output");
+            File.SetLastWriteTimeUtc(log, clock.GetUtcNow().UtcDateTime);
+        };
+
+        var outcomes = await monitor.SweepAsync();
+
+        Assert.Empty(outcomes);
+        Assert.True(Directory.Exists(folder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
+    }
+
+    [Fact]
     public async Task Uptime_FlatLayoutOrphans_AcrossAllProjects_RequeuedWithJournalFacts()
     {
         // Regression 2026-07-31: after the flat tasks/<bucket>/<key> cutover,
@@ -489,7 +515,8 @@ public sealed class RunLivenessMonitorTests : IDisposable
     private (RunLivenessMonitor Monitor, TaskScannerService Scanner) Build(
         bool enabled = true,
         RunLeaseService? leases = null,
-        Action<AttemptAuthorityService, TaskScannerService>? configureAuthority = null)
+        Action<AttemptAuthorityService, TaskScannerService>? configureAuthority = null,
+        TimeProvider? time = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -540,7 +567,8 @@ public sealed class RunLivenessMonitorTests : IDisposable
         var monitor = new RunLivenessMonitor(
             scanner, transitions, sessions, pickupLock, chatLog, sp, config, taskAccess,
             NullLogger<RunLivenessMonitor>.Instance,
-            leases: leases);
+            leases: leases,
+            time: time);
         return (monitor, scanner);
     }
 

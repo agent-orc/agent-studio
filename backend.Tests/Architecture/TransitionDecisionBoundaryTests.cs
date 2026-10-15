@@ -76,6 +76,44 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.True(violations.Count == 0, "Transition rules belong in orchestration-decisions: " + string.Join(", ", violations));
     }
 
+    [Fact]
+    public void Transition_entry_points_call_the_shared_decision_library()
+    {
+        var root = RepositoryRoot.Find();
+        var adapter = File.ReadAllText(Path.Combine(root, "backend/Features/Runner/MonolithTransitionAdapter.cs"));
+        Assert.Matches(@"Decide\(TransitionFacts facts\)\s*=>\s*TransitionDecisionPolicy\.Decide\(facts\)", adapter);
+        Assert.Matches(@"ReviewBudget\(ReviewBudgetFacts facts\)\s*=>\s*ReviewBudgetPolicy\.Decide\(facts\)", adapter);
+        Assert.Matches(@"Sweep\([^)]*\)\s*=>\s*OperatorSweepPolicy\.Decide\(", adapter);
+        foreach (var path in new[] { "task-server/TaskServerTransitionAdapter.cs", "orchestrator-engine/EngineTransitionAdapter.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(root, path));
+            Assert.Matches(@"Decide\(TransitionFacts facts\)\s*=>\s*TransitionDecisionPolicy\.Decide\(facts\)", source);
+        }
+
+        var callSites = new Dictionary<string, string[]>
+        {
+            ["backend/Features/Runner/MonolithOrchestrationEndpoints.cs"] = ["Decide"],
+            ["backend/Features/Runner/V1ReviewPlaneEndpoints.cs"] = ["Decide", "ReviewBudget"],
+            ["backend/Features/Runner/ReviewDecisionOrchestrator.cs"] = ["ReviewBudget"],
+            ["backend/Features/Runner/OperatorSweeps/OperatorSweepService.cs"] = ["Sweep"],
+        };
+        foreach (var (path, methods) in callSites)
+        {
+            var source = File.ReadAllText(Path.Combine(root, path));
+            foreach (var method in methods)
+                Assert.Matches(@"MonolithTransitionAdapter\." + method + @"\s*\(", source);
+        }
+
+        var directCalls = Sources(Path.Combine(root, "backend"))
+            .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal))
+            .Where(path => Regex.IsMatch(File.ReadAllText(path),
+                @"\b(?:TransitionDecisionPolicy|ReviewBudgetPolicy|OperatorSweepPolicy)\.Decide\s*\("))
+            .Select(path => Path.GetRelativePath(root, path)).ToArray();
+        Assert.Empty(directCalls);
+        var batch = File.ReadAllText(Path.Combine(root, "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs"));
+        Assert.Matches(@"TransitionDecision BatchShadowDecision\([^)]*\)\s*=>\s*StageDecisionPolicy\.GateTransition\(", batch);
+    }
+
     [Theory]
     [InlineData("class ReviewRoundBudgetPolicy { }")]
     [InlineData("return new TransitionDecision(TransitionAction.Escalate, reason);")]

@@ -48,8 +48,6 @@ builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
-_ = OrchestrationExecutionModeParser.Parse(
-    builder.Configuration["Orchestration:ExecutionMode"]);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -883,10 +881,9 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<AgentStudio.Runner.PostAbortReviewStepService>();
 builder.Services.AddSingleton<AutoReviewStatusSnapshot>();
 builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
-// Transitional single-owner boundary. Engine mode deliberately registers none
-// of the legacy review/council/post-processing hosted loops.
+// Keep the review and delivery workers available for runtime profile rollback.
 if (!publicDemoExecutionProfile)
-    builder.Services.AddOrchestrationExecutionLoops(builder.Configuration);
+    builder.Services.AddOrchestrationExecutionLoops();
 // Orchestrator-intake (ready-orchestrator-intake-lane). Off by default per
 // project; see ProjectSettings.IntakeEnabled. The hosted service is cheap
 // (heuristic only, no LLM) and skips projects that have not opted in.

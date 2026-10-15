@@ -14,6 +14,15 @@ namespace AgentStudio.Tests;
 public sealed class OrchestrationRolloutTests
 {
     [Fact]
+    public void Global_engine_setting_does_not_seed_transition_profiles()
+    {
+        using var fixture = new Fixture();
+        fixture.Configuration["Orchestration:ExecutionMode"] = "Engine";
+        Assert.All(fixture.Rollout.GetProfiles(), profile =>
+            Assert.Equal("monolith", profile.State));
+    }
+
+    [Fact]
     public void Fifty_matches_mark_ready_without_switching_and_mismatch_resets_the_streak()
     {
         using var fixture = new Fixture();
