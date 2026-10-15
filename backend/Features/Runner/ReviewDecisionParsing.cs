@@ -155,6 +155,89 @@ public static class ReviewDecisionParsing
         return sawContent;
     }
 
+    /// <summary>
+    /// Scans a large CLI log one line at a time. Only the current signal and a
+    /// bounded BLOCKED explanation are retained; no log content is passed to
+    /// the decision prompt. Line numbers remain relative to the whole log.
+    /// </summary>
+    public static (string? Kind, int LineNumber, string? Reason) ScanUnresolvedLines(
+        IEnumerable<string> lines, int? activeEpochLineBoundary = null)
+    {
+        var all = new SignalScan();
+        var active = new SignalScan();
+        var lineNumber = 0;
+        foreach (var line in lines)
+        {
+            lineNumber++;
+            all.Accept(line, lineNumber);
+            if (activeEpochLineBoundary is >= 0 && lineNumber > activeEpochLineBoundary.Value)
+                active.Accept(line, lineNumber);
+        }
+
+        return activeEpochLineBoundary is >= 0 && activeEpochLineBoundary <= lineNumber
+            ? active.Result : all.Result;
+    }
+
+    private sealed class SignalScan
+    {
+        private string? _kind;
+        private int _lineNumber = -1;
+        private string? _reason;
+        private string _agentParagraph = string.Empty;
+        private bool _sawContent;
+        private bool _sawSentinel;
+
+        public (string? Kind, int LineNumber, string? Reason) Result => _kind is not null
+            ? (_kind, _lineNumber, _reason)
+            : _sawContent && !_sawSentinel
+                ? ("no-completion-signal", -1, null)
+                : (null, -1, null);
+
+        public void Accept(string line, int lineNumber)
+        {
+            if (LineHasFollowUpStream(line))
+            {
+                _kind = null;
+                _lineNumber = -1;
+                _reason = null;
+                _agentParagraph = string.Empty;
+                _sawContent = false;
+                _sawSentinel = false;
+                return;
+            }
+
+            var (isAgent, agentText) = ReadAgentLogLine(line);
+            var blockedParagraph = _agentParagraph;
+            var withoutBlocked = BlockedRegex.Replace(agentText, string.Empty).Trim();
+            if (isAgent && withoutBlocked.Length > 0)
+                blockedParagraph = (blockedParagraph + " " + withoutBlocked).Trim();
+
+            var hits = new (string Kind, Match Match)[]
+            {
+                ("done", DoneRegex.Match(line)),
+                ("blocked", BlockedRegex.Match(line)),
+                ("noop", NoOpRegex.Match(line)),
+                ("needs-input", NeedsInputRegex.Match(line)),
+            };
+            foreach (var (kind, match) in hits)
+            {
+                if (!match.Success) continue;
+                _kind = kind;
+                _lineNumber = lineNumber;
+                var raw = match.Groups["reason"].Success ? match.Groups["reason"].Value.Trim() : null;
+                _reason = kind == "blocked" && IsMissingBlockedReason(raw)
+                    ? blockedParagraph : string.IsNullOrWhiteSpace(raw) ? null : raw;
+                _sawSentinel = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(line) && !LineIsTechnicalOrchestratorMarker(line))
+                _sawContent = true;
+            _agentParagraph = isAgent && agentText.Length > 0
+                ? blockedParagraph.Length <= 512 ? blockedParagraph : blockedParagraph[^512..]
+                : string.Empty;
+        }
+    }
+
     private static (int LineNumber, string? Reason)? FindLatestUnresolvedSentinel(string log, Regex regex)
     {
         if (string.IsNullOrEmpty(log)) return null;

@@ -8088,8 +8088,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ReviewDecisionLogEvidence evidence;
             try
             {
-                evidence = ReviewDecisionEvidenceReader.Read(logPath,
-                    OperatorReviewRequeueService.ReadCliLogLineBoundary(info.FolderPath));
+                var boundary = OperatorReviewRequeueService.ReadCliLogLineBoundary(info.FolderPath);
+                evidence = MonolithTransitionSwitch.For(_configuration, "ReviewDecision")
+                    == OrchestrationExecutionMode.Monolith
+                    ? ReviewDecisionEvidenceReader.ReadForMonolith(logPath, boundary)
+                    : ReviewDecisionEvidenceReader.Read(logPath, boundary);
             }
             catch (Exception ex)
             {
@@ -8097,7 +8100,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 onSkipped?.Invoke(info.Id, "cli-log-unreadable");
                 continue;
             }
-            if (evidence.Omissions.Contains("source-window-truncated"))
+            if (evidence.Omissions.Contains("source-window-truncated") && evidence.Signal is null
+                && MonolithTransitionSwitch.For(_configuration, "ReviewDecision")
+                    != OrchestrationExecutionMode.Monolith)
             {
                 onSkipped?.Invoke(info.Id, "cli-log-source-window-truncated");
                 continue;
