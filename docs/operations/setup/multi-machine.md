@@ -41,7 +41,7 @@ chmod +x agent-studio-setup
 
 The executable downloads the matching release archives and verifies each one
 against `SHA256SUMS`. Use `--release-dir <path>` on an offline machine after
-placing the three archives and `SHA256SUMS` in that directory.
+placing the required release archives and `SHA256SUMS` in that directory.
 
 Prepare the public DNS name and TLS termination for the Control Plane. The
 host-visible Task Server URL must use HTTPS. Caddy remains host infrastructure;
@@ -73,7 +73,9 @@ installs the matching static Studio files, waits for readiness, and prints:
 sudo ./agent-studio-setup --join
 ```
 
-followed by a join token. Configure the supplied Caddy template so the public
+followed by a join token. That printed command uses the legacy interactive
+path. The guided product path below requires a protected token file. Configure
+the supplied Caddy template so the public
 origin serves the Studio files and proxies `/api/*`, `/healthz`, and `/readyz`
 to the private listener. Confirm from an Agent Host network:
 
@@ -136,13 +138,14 @@ The full repository credential and rotation contract is in
 
 ## 3. Join each Agent Host
 
-Run on the Agent Host:
+Write the token to the protected file described above, then run on the Agent Host:
 
 ```sh
-sudo ./agent-studio-setup --join
+sudo ./agent-studio-setup --mode agent-host --join-token-file /root/agent-studio.join
 ```
 
-Paste the join token at the hidden prompt. The installer then asks for the
+The guided installer requires the file and does not accept a token paste on
+this path. It then asks for the
 execution user, host name, CLI, service role, Git probe origin, and maximum
 parallelism. It:
 
@@ -155,11 +158,11 @@ parallelism. It:
 5. installs and starts the role-specific systemd service;
 6. waits until the Task Server reports that exact Agent Host registration.
 
-To avoid a token in a paste prompt:
+For a non-interactive host:
 
 ```sh
 sudo ./agent-studio-setup \
-  --join \
+  --mode agent-host \
   --join-token-file /root/agent-studio.join
 sudo rm /root/agent-studio.join
 ```
