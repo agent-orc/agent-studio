@@ -23,34 +23,29 @@ namespace AgentStudio.Tests;
 /// regression scenario report directory, so the release evidence bundle
 /// carries it next to the scenario report.
 /// </summary>
+/// <remarks>
+/// The class runs in <see cref="RealTaskServerSerialCollection"/>: inside the
+/// parallel backend run the task-server child process starved for CPU and the
+/// matrix timed out after 240 s three times, while it passed in 10 s alone
+/// (AGT-3140).
+/// </remarks>
+[Collection(RealTaskServerSerialCollection.Name)]
 public sealed class ConnectorNegativeMatrixTests
 {
     private const string Origin = ConnectorOptions.DefaultStudioOrigin;
 
     /// <summary>
-    /// The whole matrix, server start included, must finish inside this
-    /// budget. xUnit v2 honours <c>[Fact(Timeout)]</c> only in a collection
-    /// with parallelization disabled, so the deadline lives in the test and
-    /// the class runs in parallel (AGT-3106).
+    /// The matrix must finish inside this budget once the Task Server reports
+    /// ready on <c>/readyz</c>. The server start has its own bounded readiness
+    /// wait (<see cref="ProcessWaiters.DefaultReadinessTimeout"/>), so a slow
+    /// start never eats into the matrix budget. xUnit v2 honours
+    /// <c>[Fact(Timeout)]</c> only in a collection with parallelization
+    /// disabled; the deadline stays in the test so it does not depend on that.
     /// </summary>
-    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(240);
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(120);
 
     [Fact]
     public async Task Connector_negative_matrix_against_a_real_task_server()
-    {
-        using var deadline = new CancellationTokenSource(Budget);
-        try
-        {
-            await RunMatrixAsync(deadline.Token).WaitAsync(deadline.Token);
-        }
-        catch (OperationCanceledException exception) when (deadline.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                $"The connector negative matrix did not finish within {Budget.TotalSeconds:0} s.", exception);
-        }
-    }
-
-    private static async Task RunMatrixAsync(CancellationToken cancellationToken)
     {
         var root = RepositoryRoot();
         using var work = new TempDir("connector-matrix-");
@@ -71,7 +66,27 @@ public sealed class ConnectorNegativeMatrixTests
             "--TaskServer:DataDirectory", Path.Combine(work.Path, "data"));
         await ProcessWaiters.WaitForHttpAsync(serverUrl + "/readyz", server);
 
-        using var credential = new CredentialStore(Path.Combine(work.Path, "studio-connector.credential"));
+        using var deadline = new CancellationTokenSource(Budget);
+        try
+        {
+            await RunMatrixAsync(root, work.Path, serverUrl, studioToken, deadline.Token).WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException exception) when (deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"The connector negative matrix did not finish within {Budget.TotalSeconds:0} s after the Task Server reported ready."
+                + $"{Environment.NewLine}{server}", exception);
+        }
+    }
+
+    private static async Task RunMatrixAsync(
+        string root,
+        string workPath,
+        string serverUrl,
+        string studioToken,
+        CancellationToken cancellationToken)
+    {
+        using var credential = new CredentialStore(Path.Combine(workPath, "studio-connector.credential"));
         credential.Write(studioToken);
         var matrix = new MatrixReport(serverUrl, credential.Description);
 

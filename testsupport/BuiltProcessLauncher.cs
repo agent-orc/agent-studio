@@ -26,6 +26,7 @@ public static class BuiltProcessLauncher
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         // A null value removes an inherited variable instead of passing it on.
@@ -127,6 +128,7 @@ public static class BuiltProcessLauncher
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)
