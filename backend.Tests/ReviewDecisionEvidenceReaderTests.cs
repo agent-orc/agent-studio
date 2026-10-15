@@ -82,4 +82,24 @@ public sealed class ReviewDecisionEvidenceReaderTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public void Omission_reason_survives_when_a_secret_signal_is_outside_the_prompt_window()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            var secret = "api_key=" + new string('x', 24);
+            File.WriteAllText(path, "[agent] [[TASK_NEEDS_INPUT: " + secret + "]]\n"
+                + string.Concat(Enumerable.Repeat("ordinary line\n", ReviewDecisionEvidenceReader.PromptLines + 1)));
+
+            var read = ReviewDecisionEvidenceReader.Read(path);
+
+            Assert.Equal("needs-input", read.Signal?.Kind);
+            Assert.Contains("[omitted: secret]", read.Signal?.Reason);
+            Assert.DoesNotContain(secret, read.Signal?.Reason);
+            Assert.Contains("secret", read.Omissions);
+        }
+        finally { File.Delete(path); }
+    }
 }
