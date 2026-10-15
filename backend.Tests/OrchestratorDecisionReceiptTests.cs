@@ -39,6 +39,71 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         "orchestrator-decision-receipts-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Scoped_operator_reads_and_answers_only_receipts_in_its_project()
+    {
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["Security:Profile"] = "networked",
+                    ["AllowedHosts"] = "studio.test",
+                }));
+        });
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://studio.test"), HandleCookies = false,
+        });
+        var decisions = factory.Services.GetRequiredService<OrchestratorDecisionStore>();
+        OrchestratorDecisionReceiptV1 Add(string occurrence, string project)
+        {
+            var input = Shadow(occurrence);
+            input = input with { Grounds = input.Grounds with
+            {
+                Scope = input.Grounds.Scope with { ProjectId = project },
+            } };
+            decisions.FreezeInputs(input);
+            return decisions.PutReceipt(DecisionReceiptPolicy.Build(new(
+                DecisionGroundsPolicy.Freeze(input.Grounds),
+                DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false,
+                "decision unavailable")));
+        }
+        var own = Add("orch_scoped_own", "project-a");
+        var other = Add("orch_scoped_other", "project-b");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        security.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        var created = security.CreateUser(new CreateUserRequest("scoped.operator", "Scoped Operator",
+            StudioRoles.Operator, ["project-a"], "temporary pass phrase long enough"));
+        var login = security.Login(created.User.Username, created.TemporaryPassword, "scoped|127.0.0.1");
+        security.ChangePassword(new HumanPrincipal(login.User,
+            security.AuthenticateSession(login.SessionToken)!.Session),
+            new ChangePasswordRequest(created.TemporaryPassword, "permanent pass phrase long enough"));
+        http.DefaultRequestHeaders.Add("Cookie",
+            $"{AccessSecurityStore.SessionCookieName}={login.SessionToken}");
+        http.DefaultRequestHeaders.Add("X-CSRF-Token", login.CsrfToken);
+
+        var visible = await http.GetFromJsonAsync<OrchestratorDecisionReceiptSummary[]>(
+            "/api/orchestration/decision-receipts?limit=20");
+        Assert.Equal(own.ReceiptId, Assert.Single(visible!).ReceiptId);
+        var spend = await http.GetFromJsonAsync<OrchestratorDecisionSpendSummary>(
+            "/api/orchestration/decision-receipts/spend");
+        Assert.Equal(1, spend!.Occurrences);
+        foreach (var path in new[] { other.EvidenceRef, $"{other.EvidenceRef}/outcome",
+                     $"{other.EvidenceRef}/operator-intent" })
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, (await http.GetAsync(path)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound,
+            (await http.PostAsJsonAsync($"{other.EvidenceRef}/operator-intent",
+                new DecisionOperatorIntentRequest("stop", "Wrong project"))).StatusCode);
+        Assert.Null(decisions.GetOperatorIntent(other.ReceiptId));
+        var answer = await http.PostAsJsonAsync($"{own.EvidenceRef}/operator-intent",
+            new DecisionOperatorIntentRequest("stop", "Stop this card"));
+        Assert.True(answer.IsSuccessStatusCode, await answer.Content.ReadAsStringAsync());
+        Assert.Contains($"operator-response:{own.ReceiptId}", decisions.PendingReceipts(10));
+    }
+
+    [Fact]
     public async Task Shadow_coding_completion_records_one_immutable_receipt_with_a_one_click_evidence_ref()
     {
         const string project = "agent-runner-01";
@@ -316,6 +381,13 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Adapt,
             "raise-emergency-limit:24h", "operator-intent"), intent.TypedChoice);
         Assert.Equal(intent, store.LatestOperatorIntentForTask("AGT-1"));
+        var responseOccurrence = $"operator-response:{timeout.ReceiptId}";
+        Assert.Contains(responseOccurrence, store.PendingReceipts(10));
+        var responseInput = store.GetInputs(responseOccurrence)!;
+        Assert.Equal("operator-response", responseInput.Grounds.Trigger.Kind);
+        Assert.Equal(intent.TypedChoice!.Action, responseInput.DeterministicAction);
+        Assert.Contains(responseInput.Grounds.Facts, fact => fact.Id == "operator.intent"
+            && fact.Source.Ref.EndsWith($"/{timeout.ReceiptId}/operator-intent", StringComparison.Ordinal));
         Assert.Equal(intent, store.PutOperatorIntent(timeout.ReceiptId,
             new DecisionOperatorIntentRequest("stop", "Later duplicate")));
         var row = Assert.Single(store.ListReceipts("AGT-1", 10));

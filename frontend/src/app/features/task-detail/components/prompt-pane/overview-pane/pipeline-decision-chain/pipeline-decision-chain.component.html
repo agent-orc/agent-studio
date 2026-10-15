@@ -1,4 +1,4 @@
-@if (transitions().length > 0 || summary() || receipts().length > 0) {
+@if (transitions().length > 0 || summary() || receipts().length > 0 || loadError()) {
   <div class="decision-chain" data-testid="overview-decision-chain">
     <div class="decision-chain__header">
       <span class="decision-chain__title">Decisions between steps</span>
@@ -17,6 +17,7 @@
         </span>
       }
     </div>
+    @if (loadError(); as error) { <p role="alert">{{ error }}</p> }
     @if (current() && receipts().length > 0) {
       <div class="decision-chain__receipt-summary" data-testid="decision-receipt-rollups">
         @if (cardSpend(); as card) { <span><strong>Card engine receipts</strong> {{ spendText(card) }}</span> }
@@ -28,7 +29,7 @@
             <div class="decision-chain__receipt-line">
               <span class="decision-chain__num">{{ formatClock(item.endedAt) }}</span>
               <strong>{{ item.profile }} · {{ item.chosenAction }}</strong>
-              <span>Decision step · {{ item.model ?? 'model unavailable' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
+              <span>{{ item.actor === 'human-operator' ? 'Human Operator' : 'Decision step' }} · {{ item.model ?? 'model unavailable' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
               <span class="decision-chain__num">{{ item.inputTokens.toLocaleString('en-US') }} in / {{ item.outputTokens.toLocaleString('en-US') }} out</span>
               <span class="decision-chain__num" data-testid="decision-receipt-cost">{{ receiptCost(item) }}</span>
               <button type="button" class="decision-chain__link" data-testid="decision-receipt-evidence"

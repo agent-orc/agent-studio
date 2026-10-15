@@ -1,14 +1,15 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, output, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { DisclosureMarkerComponent } from '../../../../../../components/disclosure-marker/disclosure-marker.component';
-import { DecisionAskStateService } from '../../../../services/decision-ask-state.service';
 import type {
   PipelineExecutionRecord,
   TaskPipelineResponse,
 } from '../../../../../task-pipeline/models/task-pipeline.model';
 import { formatClock, formatStepDuration } from '../overview-pane-formatters';
+import { clearVisibleInterval, setVisibleInterval } from '../../../../../../utils/visible-interval';
 import { summarizeDecisionCost } from '../../../../../task-pipeline';
 import { buildDecisionTransitions, type DecisionTransitionVm } from './decision-chain.util';
 
@@ -46,9 +47,8 @@ interface OperatorIntent {
   templateUrl: './pipeline-decision-chain.component.html',
   styleUrl: './pipeline-decision-chain.component.scss',
 })
-export class PipelineDecisionChainComponent {
+export class PipelineDecisionChainComponent implements OnDestroy {
   private readonly http = inject(HttpClient);
-  private readonly askState = inject(DecisionAskStateService);
   readonly taskId = input<string | null>(null);
   readonly projectId = input<string | null>(null);
   readonly askActive = input(false);
@@ -58,12 +58,18 @@ export class PipelineDecisionChainComponent {
   readonly openReceipt = signal<string | null>(null);
   readonly receiptDetail = signal<ReceiptDetail | null>(null);
   readonly receiptError = signal<string | null>(null);
+  readonly loadError = signal<string | null>(null);
   readonly operatorIntent = signal<OperatorIntent | null>(null);
   readonly intentReason = signal('');
   readonly emergencyHours = signal(24);
   readonly intentBusy = signal(false);
   readonly intentError = signal<string | null>(null);
   private loadSequence = 0;
+  private readonly refreshTimer = setVisibleInterval(() => {
+    const taskId = this.taskId();
+    if (taskId && this.current())
+      void this.loadReceipts(taskId, this.projectId(), ++this.loadSequence);
+  }, 10_000);
   /** The run selected in the Run-Switcher. */
   readonly execution = input<PipelineExecutionRecord | null>(null);
   /** The pipeline read response: step labels and the card-level rollup. */
@@ -76,13 +82,19 @@ export class PipelineDecisionChainComponent {
     effect(() => {
       const taskId = this.taskId();
       const projectId = this.projectId();
+      this.response(); // The pipeline poll refreshes this input while the card stays open.
       const sequence = ++this.loadSequence;
       this.receipts.set([]);
       this.cardSpend.set(null);
       this.projectSpend.set(null);
+      this.loadError.set(null);
       if (!taskId) return;
       void this.loadReceipts(taskId, projectId, sequence);
     });
+  }
+
+  ngOnDestroy(): void {
+    clearVisibleInterval(this.refreshTimer);
   }
 
   private async loadReceipts(taskId: string, projectId: string | null, sequence: number): Promise<void> {
@@ -100,7 +112,8 @@ export class PipelineDecisionChainComponent {
       this.cardSpend.set(card);
       this.projectSpend.set(project);
     } catch {
-      // The pipeline history remains available when an older server has no receipt endpoint.
+      if (sequence === this.loadSequence)
+        this.loadError.set('Could not refresh engine decision receipts.');
     }
   }
 
@@ -115,11 +128,13 @@ export class PipelineDecisionChainComponent {
       const [detail, intent] = await Promise.all([
         firstValueFrom(this.http.get<ReceiptDetail>(item.evidenceRef)),
         firstValueFrom(this.http.get<OperatorIntent>(`${item.evidenceRef}/operator-intent`))
-          .catch(() => null),
+          .catch((error: unknown) => {
+            if (error instanceof HttpErrorResponse && error.status === 404) return null;
+            throw error;
+          }),
       ]);
       if (this.openReceipt() === item.receiptId) this.receiptDetail.set(detail);
       if (this.openReceipt() === item.receiptId) this.operatorIntent.set(intent);
-      if (intent && item.taskId) this.askState.record(item.taskId, intent.action);
     } catch {
       if (this.openReceipt() === item.receiptId) this.receiptError.set('Could not load the decision receipt.');
     }
@@ -136,7 +151,6 @@ export class PipelineDecisionChainComponent {
           action, reason, requestedEmergencyHours: action === 'raise' ? this.emergencyHours() : null,
         }));
       if (this.openReceipt() === item.receiptId) this.operatorIntent.set(intent);
-      if (item.taskId) this.askState.record(item.taskId, intent.action);
     } catch {
       this.intentError.set('Could not record the operator choice. Check the reason and limit.');
     } finally {
