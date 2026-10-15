@@ -1,5 +1,6 @@
 using AgentStudio.Git;
 using AgentStudio.Registry;
+using AgentStudio.Security;
 using AgentStudio.Tasks;
 
 namespace AgentStudio.Pipeline;
@@ -13,12 +14,15 @@ public static class ExternalPublishedVerificationEndpoints
     public static void MapExternalPublishedVerificationEndpoints(this WebApplication app)
     {
         app.MapPost("/api/projects/{project}/external-verifications", (
-            string project, AttachExternalPublishedVerificationRequest request,
+            HttpContext context, string project, AttachExternalPublishedVerificationRequest request,
             ProjectRegistry projects, ProjectSettingsService settings, GitService git) =>
         {
             var registered = projects.FindByIdOrDisplayName(project)
                 ?? projects.FindByShortCode(project);
             if (registered is null) return Results.NotFound(new { error = "Project not found." });
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && !ProjectAccessAuthorization.Allows(human.User, registered.Id, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var sha = request.CandidateSha?.Trim().ToLowerInvariant() ?? "";
             var host = request.VerificationHost?.Trim() ?? "";
             var summary = request.SuiteSummary?.Trim() ?? "";
@@ -42,6 +46,6 @@ public static class ExternalPublishedVerificationEndpoints
             var record = new ExternalPublishedVerification(sha, branch, host, summary, logHash, DateTime.UtcNow);
             var appended = ExternalPublishedVerificationStore.Append(registered.StorageLocation, record);
             return Results.Ok(new { appended, record });
-        });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
     }
 }
