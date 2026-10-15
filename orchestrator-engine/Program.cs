@@ -23,9 +23,14 @@ if (args is ["--help"] or ["-h"])
           POST_PROCESSING_CONCURRENCY
           GATE_DISPATCH_CONCURRENCY
           COMPLETION_JUDGE_CONCURRENCY
+          BATCH_PLAN_CONCURRENCY
+          ADVISOR_ANTHROPIC_CREDENTIAL / ADVISOR_ANTHROPIC_CREDENTIAL_FILE
+          ADVISOR_OPENAI_CREDENTIAL / ADVISOR_OPENAI_CREDENTIAL_FILE
           POLL_SECONDS
           LEASE_SECONDS
           HEALTH_PORT
+          SHADOW_DECISION_CONCURRENCY
+          SHADOW_DECISION_TIMEOUT_SECONDS
 
         --health-check   Connect to the loopback health port and exit
                           (0 live, 4 unreachable). No Task Server call.
@@ -48,14 +53,22 @@ try
     var builder = Host.CreateApplicationBuilder(args);
     builder.Services.AddSingleton(options);
     builder.Services.AddSingleton<EngineTaskServerClient>();
+    builder.Services.AddSingleton<IDecisionReceiptPlane>(services =>
+        services.GetRequiredService<EngineTaskServerClient>());
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton<ShadowDecisionStep>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, ReviewDecisionOrchestratorLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, CouncilLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, PostProcessingLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, GateDispatchLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, CompletionJudgeLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, OperatorSweepLoop>();
+    builder.Services.AddSingleton<IBatchAdvisorModel, AnthropicBatchAdvisorModel>();
+    builder.Services.AddSingleton<IBatchAdvisorModel, OpenAiBatchAdvisorModel>();
+    builder.Services.AddSingleton<IOrchestrationStageHandler, BatchPlanLoop>();
     builder.Services.AddHostedService<OrchestratorEngineService>();
     builder.Services.AddHostedService<EngineHealthServer>();
+    builder.Services.AddHostedService<ShadowDecisionService>();
     await builder.Build().RunAsync();
     return 0;
 }

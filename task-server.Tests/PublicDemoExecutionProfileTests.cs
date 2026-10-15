@@ -84,7 +84,10 @@ public sealed class PublicDemoExecutionProfileTests
         var routes = ExecutionRoutes(factory.Services);
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
-        Assert.Equal(43, routes.Count);
+        // AGT-3061 added the integration command plane: claims (Claim),
+        // {integrationId}/lease/renew and {integrationId}/report (PostStep).
+        // Integration executors publish through them, so all three are denied.
+        Assert.Equal(46, routes.Count);
         var revokedReference = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/runs/{runId}/revoked-reference");
         Assert.Equal(ExecutionAdmissionPath.PostStep,
@@ -114,13 +117,13 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 5,
+                [ExecutionAdmissionPath.Claim] = 6,
                 [ExecutionAdmissionPath.Start] = 7,
                 [ExecutionAdmissionPath.Continue] = 12,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 12,
+                [ExecutionAdmissionPath.PostStep] = 14,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

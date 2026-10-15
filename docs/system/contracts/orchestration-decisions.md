@@ -37,7 +37,9 @@ AGT-3059 adds a per-profile rollout journal at
 and gate or batch result can be switched independently from Monolith to Shadow and then
 to Engine. Shadow records both receipts for each occurrence and compares chosen
 actions and input digests. A mismatch resets the matching streak and records
-both actions and reasons. The default threshold is 50 consecutive matches;
+both actions and reasons. The streak follows occurrence creation sequence,
+including comparisons recovered after newer outcomes. The default threshold
+is 50 consecutive matches;
 `Orchestration:ShadowMatchThreshold` can change it. Ready is visible but does
 not switch automatically. A Studio operator switches or rolls back through one
 API call with an actor and reason receipt. Rollback keeps pending occurrences
@@ -45,6 +47,67 @@ and resumes them through the monolith's shared library. Unactivated review
 occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
 occurrence raises an operator feed alert and waits for a leased engine instance.
+
+## Decision grounds and shadow receipts
+
+AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
+is in Shadow. When the monolith records the shadow occurrence,
+`DecisionGroundsCollector` freezes a `DecisionShadowInputV1` under
+`<TaskRepository>/.orchestrator-decisions/inputs`. It holds typed facts with
+source refs, freshness, coverage and reliability, explicit omissions, the
+candidate actions with floor-rejected ones visible, the last decisions with
+their applied outcome, the model route, and the AGT-W68 RB-S1 card ledger and
+progress definition. The deterministic choice sits beside the grounds and stays
+out of the model prompt. The first frozen input of an occurrence wins.
+
+The library owns the pure rules. `CardRunLedgerPolicy` deduplicates usage by
+provider call id (falling back to a run, time, model and counter fingerprint),
+subtracts cached input from a raw OpenAI total before pricing, keeps unknown
+prices unpriced, and reports excluded duplicate rows, tokens and value.
+`DecisionGroundsPolicy.Freeze` builds `DecisionGroundsV1` with fixed row caps,
+truncation markers, at most 32 KiB, a 6,500-token pack budget that leaves room
+for the prompt inside the 8,000-token call cap, an incomplete-pack flag, and a
+SHA-256 content digest. `DecisionReceiptPolicy` renders the prompt, accepts only
+an available candidate from the closed union with valid confidence and cited
+fact ids, and builds `OrchestratorDecisionReceiptV1`. Any other answer, an
+unavailable model, an expired wait, a cap or an incomplete pack records
+`ask(reason=decision-unavailable)`.
+
+The engine's `ShadowDecisionService` drains occurrences without a receipt. By
+default the model call is a claimable decision job on a runner host
+(`runner-host-job` custody), so provider credentials stay on runner hosts. A
+runner claims it at `/api/runner/orchestrator-decisions/claim` with the
+`runner.claim` scope and runs one read-only CLI turn in an empty directory. A
+transport failure gets one attempt on `Orchestration:DecisionModel:Alternate*`.
+The monolith prices the deduplicated usage with `ITokenPricing` at the call
+time. `DecisionCostCapPolicy` holds the cost protection. A card occurrence is
+refused beyond 24 calls or 5 USD priced spend per card. An occurrence without a
+card (the Fluid capacity periodic host check) is charged to its host-day
+instead: 48 scheduled plus 12 event calls, 180,000 input and 90,000 output
+tokens and 10 USD priced spend per host and UTC day, where open jobs reserve
+their token envelope and estimated priced cost. Reclaimed claims keep billed
+completions from the replaced runner as separate calls attributed to the same
+job; duplicate reports do not add spend. A refused job stays `cap-exhausted`. Each call carries an
+envelope of at most 8,000 input and 1,000 output tokens. The runner refuses a
+prompt whose conservative estimate with framing margin exceeds it before
+spawning. It passes the output cap to the CLI (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
+Codex `model_max_output_tokens`) and the total context window to Codex as
+`model_context_window`. The
+store rejects a completion whose measured usage broke the envelope. It keeps
+the usage and price but does not accept the answer, so the receipt records
+`ask(reason=decision-unavailable)`. Receipts are immutable: the store checks the grounds
+digest against the frozen input and returns the first receipt on every replay.
+Storing a receipt also closes any job that is still open. A billed completion
+that arrives after that (for example after a timeout receipt) still records
+its usage and price on the job. The card spend counts it, and the receipt row
+and its outcome link add it as a late call (`lateCalls`). Studio reads
+`/api/orchestration/decision-receipts`; each row's `evidenceRef` opens the full
+receipt with grounds and response, and `outcomeLink` shows the applied action.
+The model choice is never dispatched. `Orchestration:DecisionModel:Cli`, `Model`
+and `ThinkingLevel` default to `codex`, `gpt-6-sol` and `medium`; the engine
+reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
+(900). An engine-held provider credential remains a separate follow-up decision
+if claim latency proves too high.
 
 ## Inputs and outputs
 
@@ -97,7 +160,19 @@ payload. Its transactional settlement applies linked follow-up creation and
 reviewed-base persistence before the terminal lane write. The shared D18
 decision sets the linked follow-up lane to Ready for every adapter. Stage
 receipts carry the full typed decision; the existing stage protocol still uses its five wire
-actions. Completing the standalone execution loop remains I11.
+actions.
+
+I11 (AGT-3061) completes the standalone loop. The Task Server applies the
+engine's typed decision from the stage output after checking that it names the
+card, matches the stage action, and continues on the reviewed result of the
+run. Only an engine without a typed decision falls back to the same library
+decision derived from the frozen payload; the settlement audit names the
+decider. A fix round writes the D17 base with its `review-fix-round` reason and
+one ordered rework prompt (`ReviewFindingRoundPrompt`, shared with the
+monolith). Under the `reviewed-publication` delivery policy,
+`OrchestrationSettlementPolicy` holds an accepted delivery in Auto Review as an
+`integrating` run. `IntegrationResultPolicy` maps the integration report to
+Human Review, a bounded stale-base retry, or escalation.
 
 The monolith retains the existing delivered-round and recurrence limits as well
 as the lifetime automatic-round cap. Extraction does not replenish a counter or
@@ -112,7 +187,19 @@ cancelled preparation remains visible to activation recovery, and a rejected
 report may reopen it with a corrected payload and renewed authority fence.
 Gate decisions carry infrastructure and intervention facts to the shared
 policy, which escalates those failures. Shadow comparison uses the action the
-monolith actually applied after the gate handler completes.
+monolith actually applied after the gate handler completes. A batch
+shadow decision is saved as an intent before the lane move and becomes the
+receipt only after the move succeeded; a failed move withdraws it. Each
+comparison counts an occurrence once; a receipt replay and the recovery service
+compare every shadow occurrence that holds both receipts, so a comparison lost
+between saving a receipt and comparing it still resets the matching streak.
+The recovery service also resolves a shadow occurrence without a monolith
+receipt from the card's current lane: a card in its source lane is still
+deciding, a saved intent whose target lane the card reached is compared, and
+any other occurrence cannot be compared and resets the streak. The switch to
+Engine is refused with `orchestration-profile-shadow-unresolved` while an
+earlier shadow occurrence of the profile lacks a receipt, so Ready never
+hides an open comparison.
 
 ## Verification and architecture guard
 

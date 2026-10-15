@@ -5,7 +5,7 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestratorEngine;
 
-public sealed class EngineTaskServerClient : IDisposable
+public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IDisposable
 {
     // Match the Task Server HTTP JSON contract: orchestration enums are numbers.
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -97,6 +97,53 @@ public sealed class EngineTaskServerClient : IDisposable
 
     public async Task<ReviewSubjectDto> GetReviewSubjectAsync(string subjectId, CancellationToken ct)
         => await GetAsync<ReviewSubjectDto>($"/api/v1/gates/review-sources/{Uri.EscapeDataString(subjectId)}", ct);
+
+    /// <summary>
+    /// Empty when the authority host has no decision plane, for example the
+    /// standalone Task Server, so the shadow step stays idle instead of failing.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetPendingDecisionGroundsAsync(int limit, CancellationToken ct)
+    {
+        try
+        {
+            return await GetAsync<IReadOnlyList<string>>(
+                $"/api/v1/orchestration/decision-grounds/pending?limit={limit}", ct);
+        }
+        catch (EngineTaskServerException exception) when (exception.StatusCode == 404) { return []; }
+    }
+
+    /// <summary>Null when the occurrence has no frozen grounds, so no shadow model step applies.</summary>
+    public async Task<DecisionShadowInputV1?> GetGroundsInputAsync(string runId, CancellationToken ct)
+    {
+        try
+        {
+            return await GetAsync<DecisionShadowInputV1>(
+                $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/grounds-input", ct);
+        }
+        catch (EngineTaskServerException exception) when (exception.StatusCode == 404) { return null; }
+    }
+
+    public Task<OrchestratorDecisionJobDto> CreateDecisionJobAsync(
+        OrchestratorDecisionJobRequest request, CancellationToken ct)
+        => PostAsync<OrchestratorDecisionJobRequest, OrchestratorDecisionJobDto>(
+            "/api/v1/orchestration/decision-jobs", request, ct);
+
+    public Task<OrchestratorDecisionJobDto> GetDecisionJobAsync(string jobId, CancellationToken ct)
+        => GetAsync<OrchestratorDecisionJobDto>(
+            $"/api/v1/orchestration/decision-jobs/{Uri.EscapeDataString(jobId)}", ct);
+
+    public async Task<OrchestratorDecisionReceiptV1> PutDecisionReceiptAsync(
+        OrchestratorDecisionReceiptV1 receipt, CancellationToken ct)
+    {
+        using var response = await _http.PutAsJsonAsync(
+            $"/api/v1/orchestration/runs/{Uri.EscapeDataString(receipt.OccurrenceId)}/decision-receipt",
+            receipt, Json, ct);
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new EngineTaskServerException((int)response.StatusCode, content);
+        return JsonSerializer.Deserialize<OrchestratorDecisionReceiptV1>(content, Json)
+            ?? throw new EngineTaskServerException(500, "Task Server returned an empty response.");
+    }
 
     private async Task<T> GetAsync<T>(string path, CancellationToken ct)
     {

@@ -18,6 +18,16 @@ public sealed class EngineOptions
     public int LeaseSeconds { get; init; } = 120;
     public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
     public bool RemotePostBuildTestEnabled { get; init; }
+    public int ShadowDecisionConcurrency { get; init; } = 2;
+    public int ShadowDecisionTimeoutSeconds { get; init; } = 900;
+    public int BatchPlanConcurrency { get; init; } = 1;
+    /// <summary>
+    /// Provider credentials of the batch advisor, one per advisor CLI type: Anthropic serves
+    /// <c>claude</c>, OpenAI serves <c>codex</c>. The occurrence names the model; without the
+    /// credential of its provider the decision keeps the deterministic plan.
+    /// </summary>
+    public string? AdvisorAnthropicCredential { get; init; }
+    public string? AdvisorOpenAiCredential { get; init; }
 
     public static EngineOptions FromEnvironment()
         => Parse(Environment.GetEnvironmentVariable);
@@ -51,6 +61,8 @@ public sealed class EngineOptions
         {
             credential = ReadCredentialFile(credentialFile);
         }
+        var anthropicCredential = OptionalCredential(value, "ADVISOR_ANTHROPIC_CREDENTIAL");
+        var openAiCredential = OptionalCredential(value, "ADVISOR_OPENAI_CREDENTIAL");
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
 
@@ -70,22 +82,38 @@ public sealed class EngineOptions
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),
             HealthPort = EngineHealthProbe.ResolvePort(value),
             RemotePostBuildTestEnabled = OptIn(value("REMOTE_POST_BUILD_TEST_GATE_ENABLED")),
+            ShadowDecisionConcurrency = Cap(value, "SHADOW_DECISION_CONCURRENCY", 2),
+            ShadowDecisionTimeoutSeconds = Number(value, "SHADOW_DECISION_TIMEOUT_SECONDS", 900, 60, 3600),
+            BatchPlanConcurrency = Cap(value, "BATCH_PLAN_CONCURRENCY", 1),
+            AdvisorAnthropicCredential = anthropicCredential,
+            AdvisorOpenAiCredential = openAiCredential,
         };
     }
 
-    internal static string ReadCredentialFile(string path)
+    private static string? OptionalCredential(Func<string, string?> value, string key)
+    {
+        var credential = value(key)?.Trim();
+        var file = value(key + "_FILE")?.Trim();
+        if (!string.IsNullOrWhiteSpace(credential) && !string.IsNullOrWhiteSpace(file))
+            throw new ArgumentException($"Configure only one of {key} or {key}_FILE.");
+        if (!string.IsNullOrWhiteSpace(file))
+            credential = ReadCredentialFile(file, key + "_FILE");
+        return string.IsNullOrWhiteSpace(credential) ? null : credential;
+    }
+
+    internal static string ReadCredentialFile(string path, string key = "CLIENT_CREDENTIAL_FILE")
     {
         if (!File.Exists(path))
-            throw new ArgumentException($"CLIENT_CREDENTIAL_FILE does not exist: {path}");
+            throw new ArgumentException($"{key} does not exist: {path}");
         if (!OperatingSystem.IsWindows())
         {
             var mode = File.GetUnixFileMode(path);
             if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0)
-                throw new ArgumentException("CLIENT_CREDENTIAL_FILE must be owner-readable only.");
+                throw new ArgumentException($"{key} must be owner-readable only.");
         }
         var credential = File.ReadAllText(path).Trim();
         if (credential.Length == 0)
-            throw new ArgumentException("CLIENT_CREDENTIAL_FILE is empty.");
+            throw new ArgumentException($"{key} is empty.");
         return credential;
     }
 

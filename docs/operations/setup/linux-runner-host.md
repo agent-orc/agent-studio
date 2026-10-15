@@ -255,6 +255,15 @@ streak marks it ready, and an operator switches it to Engine with a reason.
 The same control rolls it back. A pending Engine occurrence stays durable while
 the engine is unavailable; rollback returns pending work to the monolith policy.
 
+While coding completion is in shadow, the engine also asks a strong model for
+the same transition (AGT-3063). The call is a decision job that a runner
+connected to the monolith claims and runs with its own CLI login; no provider
+credential is added to the engine. The runner needs a working login for the
+`Orchestration:DecisionModel:Cli` family (`codex` by default). The engine waits
+up to `SHADOW_DECISION_TIMEOUT_SECONDS` (900) and otherwise records
+`decision-unavailable`. The Orchestrator settings panel lists the receipts with
+an Evidence link; nothing is dispatched from them.
+
 ## Product onboarding from Execution Hosts
 
 The primary setup path is **Workspace Settings -> Execution Hosts -> Set up agent
@@ -930,7 +939,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BRANCH` | `--branch` | (base branch) | Branch to check out for the run. |
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
-| `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, or the separately registered `gate` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). |
+| `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, the separately registered `gate` service, or the separately registered `integration` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). The integration role (AGT-3061) claims accepted deliveries from a standalone Task Server under the project's publication lease, merges them into the registered integration ref in a disposable repository below `RUNNER_STATE_DIR`, and pushes without force; the host's Git credentials must allow that push. |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` and `.verify-cache` are preserved; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |

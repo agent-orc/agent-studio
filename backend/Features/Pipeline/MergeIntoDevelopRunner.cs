@@ -47,6 +47,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly BatchIntegrationReservationService? _batchReservations;
     private readonly BatchGateStore? _batchGates;
     private readonly PipelineHealthService? _pipelineHealth;
+    private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -95,8 +96,10 @@ public sealed partial class MergeIntoDevelopRunner
         RefMutationLeaseService? refMutationLeases = null,
         BatchIntegrationReservationService? batchReservations = null,
         BatchGateStore? batchGates = null,
-        PipelineHealthService? pipelineHealth = null)
+        PipelineHealthService? pipelineHealth = null,
+        TimeProvider? timeProvider = null)
     {
+        _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
         _pipelineLog = pipelineLog;
         _logger = logger;
@@ -249,6 +252,8 @@ public sealed partial class MergeIntoDevelopRunner
         string? reviewedResultSha,
         CancellationToken ct)
     {
+        var cancellationSubject = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, reviewedResultSha);
+        var cancellationAttempt = _pipelineLog.Read(jobFolderPath)?.Attempt;
         var startedAt = DateTime.UtcNow;
         var strategy = IntegrationStrategies.Normalize(integrationStrategy);
         try
@@ -382,7 +387,7 @@ public sealed partial class MergeIntoDevelopRunner
             // The synchronized local tips a refused publication restores. Every
             // local mutation below stays unpublished until the fence admits it.
             var fenceAnchors = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (publicationFence is not null && synchronized.Success)
+            if (synchronized.Success)
             {
                 foreach (var anchored in lineage?.Mode == ImmediateIntegrationLineageMode.DevelopThenMain
                              ? new[] { branch, "develop" }
@@ -416,6 +421,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    watchPath,
                     developerRoot,
                     repoRoot,
                     delivery,
@@ -445,6 +451,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    watchPath,
                     developerRoot,
                     repoRoot,
                     branch,
@@ -461,6 +468,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    watchPath,
                     developerRoot,
                     repoRoot,
                     branch,
@@ -580,15 +588,61 @@ public sealed partial class MergeIntoDevelopRunner
                 }
                 pushDecidedByFence = true;
             }
+            var conclusionFolderPath = jobFolderPath;
+            var cancelledGate = preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
+                ? preMainResult : preDevelopResult?.FailureKind == BuildTestGateFailureKind.Cancellation
+                    ? preDevelopResult : null;
+            var shutdownCancellation = false;
+            var supersededCancellation = false;
+            if (cancelledGate is not null)
+            {
+                var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
+                var reason = GateCancellationPolicy.Decide(cancellationSubject.Sha, live.Sha,
+                    cancellationSubject.Lane, live.Lane, live.ContinuePending,
+                    ct.IsCancellationRequested, cancelledGate.CancellationReason);
+                cancelledGate = GateCancellationPolicy.Apply(cancelledGate, reason);
+                supersededCancellation = reason == GateCancellationReasons.Superseded;
+                conclusionFolderPath = live.Folder;
+                IntegrationGateReceipts.Record(live.Folder,
+                    preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
+                        ? "pre-main-test-gate" : IntegrationGateJournal.PreDevelopBuildGateStep,
+                    cancelledGate, _timeline);
+                if (preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation) preMainResult = cancelledGate;
+                else preDevelopResult = cancelledGate;
+                _timeline?.Append(live.Folder, new TimelineEvent
+                {
+                    Ts = _gateTime.GetUtcNow().UtcDateTime, Kind = "gate-cancelled",
+                    Actor = TimelineActors.System, Summary = cancelledGate.Reason,
+                    Details = new Dictionary<string, string> { ["reason"] = reason },
+                });
+                // The gate already refused publication. Restore all captured
+                // anchors before treating a cancelled merge as routine recovery.
+                var rolledBack = RollBackSupersededPublication(repoRoot, fenceAnchors, out var clean);
+                pushBranch = null;
+                if (!clean) result = rolledBack;
+                else if (reason == GateCancellationReasons.Superseded)
+                {
+                    supersededCleanly = true;
+                    result = rolledBack with { FailureCode = AcceptedIntegrationFailureCodes.StaleAttempt };
+                }
+                else if (reason == GateCancellationReasons.Shutdown)
+                {
+                    shutdownCancellation = true;
+                    result = MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.GateInterrupted, cancelledGate.Reason);
+                }
+            }
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
             result = await ConcludeAsync(
-                project, jobId, jobFolderPath, watchPath, taskBranch, branch, strategy,
+                project, jobId, conclusionFolderPath, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
-                raiseIntervention: !supersededCleanly && !unverifiedBranch,
-                approvedPushSha: approvedPushSha).ConfigureAwait(false);
-            if (!supersededCleanly && unverifiedBranch)
+                raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
+                approvedPushSha: approvedPushSha,
+                recordStep: !supersededCancellation || cancellationAttempt.HasValue,
+                expectedAttempt: supersededCancellation ? cancellationAttempt : null).ConfigureAwait(false);
+            if (!supersededCleanly && !shutdownCancellation && unverifiedBranch)
             {
                 await RaiseUnverifiedBranchCauseAsync(jobId, watchPath, verification!, startedAt, ct)
                     .ConfigureAwait(false);
@@ -676,7 +730,9 @@ public sealed partial class MergeIntoDevelopRunner
         DateTime startedAt,
         CancellationToken ct,
         bool raiseIntervention = true,
-        string? approvedPushSha = null)
+        string? approvedPushSha = null,
+        bool recordStep = true,
+        int? expectedAttempt = null)
     {
         if (result.Outcome == MergeIntoIntegrationOutcome.Error && string.IsNullOrWhiteSpace(result.FailureCode))
             result = result with { FailureCode = AcceptedIntegrationFailureCodes.For(result) };
@@ -697,7 +753,9 @@ public sealed partial class MergeIntoDevelopRunner
                 failureCode ?? "none", result.Outcome.IsSuccessfulIntegration() ? "none" : OneLine(result.Error));
         }
 
-        Record(jobFolderPath, project, jobId, integrationBranch, result, preMainResult, preDevelopResult, approvedPushSha, startedAt);
+        if (recordStep)
+            Record(jobFolderPath, project, jobId, integrationBranch, result, preMainResult,
+                preDevelopResult, approvedPushSha, startedAt, expectedAttempt);
         if (raiseIntervention)
             await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
                 preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
@@ -764,6 +822,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string? watchPath,
         string developerRoot,
         string repoRoot,
         DeliveryRefResolution delivery,
@@ -776,6 +835,7 @@ public sealed partial class MergeIntoDevelopRunner
                 project,
                 jobId,
                 jobFolderPath,
+                watchPath,
                 developerRoot,
                 repoRoot,
                 workBranch,
@@ -789,6 +849,7 @@ public sealed partial class MergeIntoDevelopRunner
                 project,
                 jobId,
                 jobFolderPath,
+                watchPath,
                 developerRoot,
                 repoRoot,
                 workBranch,
@@ -915,6 +976,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string? watchPath,
         string developerRoot,
         string repoRoot,
         string integrationBranch,
@@ -925,8 +987,10 @@ public sealed partial class MergeIntoDevelopRunner
         // integration branch that may carry a merge nobody has judged. The
         // journal is the only durable trace of that ownership, so it is opened
         // BEFORE the merge, with the anchor the branch can be returned to.
+        var journalOwner = Guid.NewGuid().ToString("N");
         IntegrationGateJournal.Open(jobFolderPath, new IntegrationGateJournalEntry
         {
+            Owner = journalOwner,
             Project = project,
             JobId = jobId,
             RepoRoot = developerRoot,
@@ -1086,9 +1150,10 @@ public sealed partial class MergeIntoDevelopRunner
                 reuse.Reused).ConfigureAwait(false);
         }
         Volatile.Write(ref _integrationGateHolder, null);
-        IntegrationGateReceipts.Record(
-            jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse,
-            _mergeLockWaitMs.Value);
+        if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
+            IntegrationGateReceipts.Record(
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse,
+                _mergeLockWaitMs.Value);
         IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
             level: reuse.Reused ? "exact" : "full", durationMs: gate.DurationMs,
             queueWaitMs: gate.GateQueueWaitMs, outcome: gate.Verdict.ToString(),
@@ -1097,7 +1162,13 @@ public sealed partial class MergeIntoDevelopRunner
 
         // A verdict exists, in either direction: this process is no longer the
         // only thing standing between the branch and an un-gated merge.
-        IntegrationGateJournal.Clear(jobFolderPath);
+        // A cancelled gate may return after a lane move; the live folder can then
+        // hold a newer attempt's journal, which must survive.
+        if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
+            IntegrationGateJournal.ClearOwned(
+                CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder, journalOwner);
+        else
+            IntegrationGateJournal.Clear(jobFolderPath);
 
         if (PreDevelopBuildGate.IsGreen(gate))
         {
@@ -1351,7 +1422,8 @@ public sealed partial class MergeIntoDevelopRunner
                 settings.BuildProfile,
                 preMainTimeout,
                 ct).ConfigureAwait(false);
-            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+            if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
+                IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
             if (gate.Verdict != BuildTestGateVerdict.Ok)
             {
                 return (
@@ -1515,7 +1587,8 @@ public sealed partial class MergeIntoDevelopRunner
             settings.BuildProfile,
             preMainTimeout,
             ct).ConfigureAwait(false);
-        IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
+        if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
+            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
 
         if (gate.Verdict != BuildTestGateVerdict.Ok)
         {
@@ -2024,16 +2097,20 @@ public sealed partial class MergeIntoDevelopRunner
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult,
         string? approvedPushSha,
-        DateTime startedAt)
+        DateTime startedAt,
+        int? expectedAttempt = null)
     {
         // Record into the existing run when one is present (the deferred merge
         // step already sits in it as "pending"); only begin a fresh baseline when
         // none exists yet, so RecordStep is never a silent no-op. The merge step
         // only lives in the standard pipeline (the read-only variant drops every
         // git step), so the baseline uses the standard catalogue.
-        var pipelineRecord = _pipelineLog.Read(jobFolderPath)
-            ?? _pipelineLog.EnsureRun(jobFolderPath, PipelineCatalogue.Standard, project, jobId);
-        using var pipelineAttempt = _pipelineLog.EnterAttempt(jobFolderPath, pipelineRecord.Attempt);
+        var pipelineRecord = _pipelineLog.Read(jobFolderPath);
+        if (expectedAttempt.HasValue && pipelineRecord?.Attempt != expectedAttempt.Value)
+            return;
+        pipelineRecord ??= _pipelineLog.EnsureRun(jobFolderPath, PipelineCatalogue.Standard, project, jobId);
+        using var pipelineAttempt = _pipelineLog.EnterAttempt(jobFolderPath,
+            expectedAttempt ?? pipelineRecord.Attempt);
 
         var completedAt = DateTime.UtcNow;
         var (status, verdict, reason, summary) = Project(
@@ -2071,6 +2148,10 @@ public sealed partial class MergeIntoDevelopRunner
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult)
     {
+        if ((preMainResult ?? preDevelopResult)?.CancellationReason == GateCancellationReasons.Superseded
+            && result.FailureCode == AcceptedIntegrationFailureCodes.StaleAttempt)
+            return (PipelineStepStatus.Skipped, GateCancellationReasons.Superseded,
+                "Gate cancelled: superseded.", null);
         switch (result.Outcome)
         {
             case MergeIntoIntegrationOutcome.Merged:

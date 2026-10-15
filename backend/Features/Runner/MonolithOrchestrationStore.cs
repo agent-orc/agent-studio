@@ -22,7 +22,11 @@ public sealed record MonolithOrchestrationOccurrence(
     bool Shadow = false,
     OrchestrationDecisionReceipt? MonolithReceipt = null,
     OrchestrationDecisionReceipt? EngineReceipt = null,
-    string? CancellationReason = null);
+    string? CancellationReason = null,
+    OrchestrationDecisionReceipt? MonolithIntent = null,
+    string? MonolithIntentTarget = null,
+    string? ShadowResolution = null,
+    long CreationSequence = 0);
 
 public interface IMonolithOrchestrationApplier
 {
@@ -43,6 +47,7 @@ public sealed class MonolithOrchestrationStore
     private readonly IMonolithOrchestrationApplier _applier;
     private readonly OrchestrationRolloutStore? _rollout;
     private readonly Dictionary<string, MonolithOrchestrationOccurrence> _runs = new(StringComparer.Ordinal);
+    private long _nextCreationSequence;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _completionGates = new(StringComparer.Ordinal);
 
     public MonolithOrchestrationStore(IConfiguration configuration, TimeProvider time,
@@ -69,6 +74,7 @@ public sealed class MonolithOrchestrationStore
             var occurrence = JsonSerializer.Deserialize<MonolithOrchestrationOccurrence>(File.ReadAllText(file), Json)
                 ?? throw new InvalidDataException($"Orchestration occurrence is empty: {file}");
             _runs.Add(occurrence.Run.RunId, occurrence);
+            _nextCreationSequence = Math.Max(_nextCreationSequence, occurrence.CreationSequence);
         }
     }
 
@@ -125,6 +131,7 @@ public sealed class MonolithOrchestrationStore
             var occurrence = new MonolithOrchestrationOccurrence(run, idempotencyKey,
                 expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch,
                 Claimable: claimable, Profile: profile, Shadow: shadow,
+                CreationSequence: ++_nextCreationSequence,
                 MonolithReceipt: monolithAction is null ? null : OrchestrationRolloutStore.Receipt(
                     run.RunId, idempotencyKey, payloadJson, monolithAction,
                     monolithReason ?? string.Empty,
@@ -169,22 +176,152 @@ public sealed class MonolithOrchestrationStore
         lock (_gate) return _runs.Values.FirstOrDefault(item => item.IdempotencyKey == key)?.Run;
     }
 
+    /// <summary>
+    /// Saves the monolith decision before the monolith applies it. The intent
+    /// counts only once the card reached <paramref name="targetState"/>, so a
+    /// process that stops after the lane move still leaves a comparable outcome.
+    /// </summary>
+    public void RecordMonolithIntent(string runId, string action, string reason, string targetState)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetState);
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (!item.Shadow) throw new InvalidOperationException("orchestration-not-shadow");
+            if (item.MonolithReceipt is not null || item.ShadowResolution is not null) return;
+            item = item with { MonolithIntent = MonolithDecisionReceipt(item, action, reason),
+                MonolithIntentTarget = targetState };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
+
+    /// <summary>A monolith transition that was not applied leaves no comparable outcome.</summary>
+    public void WithdrawMonolithIntent(string runId)
+    {
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (item.MonolithIntent is null) return;
+            item = item with { MonolithIntent = null, MonolithIntentTarget = null };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
+
     public void RecordMonolithDecision(string runId, string action, string reason)
     {
         lock (_gate)
         {
             var item = Required(runId);
             if (!item.Shadow) throw new InvalidOperationException("orchestration-not-shadow");
-            if (item.MonolithReceipt is not null) return;
-            item = item with { MonolithReceipt = OrchestrationRolloutStore.Receipt(
-                runId, item.IdempotencyKey, item.Run.PayloadJson, action, reason,
-                $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith") };
-            Save(item);
-            _runs[runId] = item;
-            if (item.EngineReceipt is not null && item.Profile is not null)
-                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+            if (item.ShadowResolution is not null) return;
+            if (item.MonolithReceipt is null)
+            {
+                item = item with { MonolithReceipt = item.MonolithIntent ?? MonolithDecisionReceipt(item, action, reason),
+                    MonolithIntent = null, MonolithIntentTarget = null };
+                Save(item);
+                _runs[runId] = item;
+            }
+            // A replay compares too: the receipt may have been saved by a call
+            // that stopped before its comparison. Compare counts an occurrence once.
+            CompareShadow(item);
         }
     }
+
+    /// <summary>
+    /// Compares every shadow occurrence that holds both receipts. A comparison
+    /// lost between saving a receipt and comparing it is recovered here, so a
+    /// mismatch always resets the switch streak.
+    /// </summary>
+    public void RecoverShadowComparisons()
+    {
+        lock (_gate)
+            foreach (var item in _runs.Values.Where(value => value.Shadow)
+                         .OrderBy(value => value.CreationSequence).ThenBy(value => value.Run.CreatedAt)
+                         .ThenBy(value => value.Run.RunId).ToArray())
+                CompareShadow(item);
+    }
+
+    /// <summary>Shadow occurrences whose monolith outcome is not recorded yet.</summary>
+    public IReadOnlyList<MonolithOrchestrationOccurrence> UnrecordedShadowOutcomes()
+    {
+        lock (_gate) return _runs.Values.Where(item => item.Shadow && item.MonolithReceipt is null
+            && item.ShadowResolution is null && item.Run.Status != "cancelled").ToArray();
+    }
+
+    /// <summary>
+    /// Resolves a shadow occurrence without a monolith receipt from the card's
+    /// current lane. A card in its source lane is still deciding. A saved intent
+    /// whose target lane the card reached was applied and is compared. Any other
+    /// occurrence, including one whose card is gone, cannot be compared and
+    /// resets the switch streak, so the threshold always means consecutive
+    /// verified matches.
+    /// </summary>
+    public void ResolveShadowOutcome(string runId, string? currentState)
+    {
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (!item.Shadow || item.MonolithReceipt is not null || item.ShadowResolution is not null
+                || item.Run.Status == "cancelled" || currentState == item.ExpectedSourceState)
+                return;
+            if (item.MonolithIntent is not null && currentState == item.MonolithIntentTarget)
+            {
+                item = item with { MonolithReceipt = item.MonolithIntent,
+                    MonolithIntent = null, MonolithIntentTarget = null };
+                Save(item);
+                _runs[runId] = item;
+                CompareShadow(item);
+                return;
+            }
+            // The streak reset comes first: it is idempotent, so a stop before
+            // the save repeats it instead of losing it.
+            if (item.Profile is not null) _rollout?.Discount(item.Profile, runId, item.Run.CreatedAt,
+                item.CreationSequence);
+            item = item with { ShadowResolution = "monolith-outcome-unverified",
+                MonolithIntent = null, MonolithIntentTarget = null };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
+
+    /// <summary>
+    /// Switches a rollout profile. The engine takes over only when every earlier
+    /// shadow occurrence of the profile is compared or resolved; a ready streak
+    /// does not account for an occurrence whose comparison is still open.
+    /// </summary>
+    public OrchestrationProfileStatus SwitchProfile(string profile, string target, string actor, string reason)
+    {
+        var rollout = _rollout ?? throw new InvalidOperationException("orchestration-rollout-unavailable");
+        lock (_gate)
+        {
+            if (string.Equals(target, "engine", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var item in _runs.Values.Where(value => value.Shadow)
+                             .OrderBy(value => value.CreationSequence).ThenBy(value => value.Run.CreatedAt)
+                             .ThenBy(value => value.Run.RunId).ToArray())
+                    CompareShadow(item);
+                if (_runs.Values.Any(item => item.Shadow && item.Profile == profile
+                        && item.Run.Status != "cancelled" && item.ShadowResolution is null
+                        && (item.MonolithReceipt is null || item.EngineReceipt is null)))
+                    throw new InvalidOperationException("orchestration-profile-shadow-unresolved");
+            }
+            return rollout.Switch(profile, target, actor, reason);
+        }
+    }
+
+    private void CompareShadow(MonolithOrchestrationOccurrence item)
+    {
+        if (item.MonolithReceipt is not null && item.EngineReceipt is not null && item.Profile is not null)
+            _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt, item.Run.CreatedAt,
+                item.CreationSequence);
+    }
+
+    private static OrchestrationDecisionReceipt MonolithDecisionReceipt(MonolithOrchestrationOccurrence item,
+        string action, string reason)
+        => OrchestrationRolloutStore.Receipt(item.Run.RunId, item.IdempotencyKey, item.Run.PayloadJson,
+            action, reason, $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith");
 
     public IReadOnlyList<OrchestrationRunDto> List(string? projectId, string? status)
     {
@@ -376,7 +513,8 @@ public sealed class MonolithOrchestrationStore
             if (item.Profile is null || item.EngineReceipt is null)
                 throw new InvalidDataException("Shadow occurrence has no engine decision receipt.");
             if (item.MonolithReceipt is not null)
-                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt, item.Run.CreatedAt,
+                    item.CreationSequence);
         }
         else await _applier.ApplyAsync(item, request, ct);
         lock (_gate)

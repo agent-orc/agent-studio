@@ -65,7 +65,9 @@ public static class EndpointMapping
         {
             app.MapV1ReviewPlaneEndpoints();
             app.MapMonolithOrchestrationEndpoints();
+            app.MapMonolithGateEndpoints();
         }
+        app.MapOrchestratorDecisionEndpoints(mapsEngineRoutes: mapsLocalV1);
         app.MapIntegrationLeaseEndpoints();
         app.MapLogIngestionEndpoints();
         app.MapRunnerEventIngestionEndpoints();

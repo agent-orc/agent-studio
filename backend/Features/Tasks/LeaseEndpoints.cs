@@ -1489,6 +1489,7 @@ public static class LeaseEndpoints
             ProviderRejectionContinuationService providerRejectionContinuations,
             ModelRoutingPolicyRegistry modelRouting,
             MonolithOrchestrationStore orchestration,
+            DecisionGroundsCollector decisionGrounds,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -2636,6 +2637,28 @@ public static class LeaseEndpoints
                     profile: "CodingCompletion", shadow: codingMode == OrchestrationExecutionMode.Shadow,
                     monolithAction: codingDecision?.Action.ToString(),
                     monolithReason: codingDecision?.Reason);
+                if (codingDecision is not null
+                    && orchestration.GetOccurrence(occurrence.RunId) is { Shadow: true })
+                {
+                    // AGT-3063: the shadow model step decides from typed grounds
+                    // frozen with the occurrence. Collection never changes the
+                    // deterministic transition below.
+                    try
+                    {
+                        decisionGrounds.FreezeCodingCompletion(new CodingCompletionObservation(
+                            occurrence.RunId, task, attemptId, req.FencingToken, epoch, outcome, targetState,
+                            settledRun?.ResultSha ?? resultSha,
+                            settledRun?.ResultEnvelope?.BaseSha ?? req.BaseSha,
+                            settledRun?.ResultEnvelope?.ImmutableRemoteRef ?? req.ImmutableResultRef,
+                            settledRun?.ResultEnvelope is not null, codingDecision, occurrence.CreatedAt));
+                    }
+                    catch (Exception exception)
+                    {
+                        loggerFactory.CreateLogger("AgentStudio.Runner.DecisionGrounds").LogWarning(exception,
+                            "decision-grounds-freeze-failed task={TaskKey} occurrence={Occurrence}",
+                            req.TaskKey, occurrence.RunId);
+                    }
+                }
                 var occurrenceIsEngine = orchestration.GetOccurrence(occurrence.RunId)?.Shadow != true;
                 if (occurrenceIsEngine
                     && occurrence.Status is ("pending" or "leased" or "applying"))

@@ -452,6 +452,7 @@ public sealed class RemoteRunnerDaemon
         var cliUpdateAttempted = false;
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
         var interactivePoll = interactiveChat.PollAsync(shutdown);
+        var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(shutdown);
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -941,6 +942,7 @@ public sealed class RemoteRunnerDaemon
         if (codingHandoffs.Length > 0)
             await Task.WhenAll(codingHandoffs);
         await interactivePoll;
+        await decisionPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }

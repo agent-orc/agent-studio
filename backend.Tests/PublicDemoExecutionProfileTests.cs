@@ -135,7 +135,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // Project model migration is an operator-triggered Preview mutation.
         // AGT-3072 added POST /api/attempts/checkpoint: an operator-forced authority
         // checkpoint writes the store, so it is an execution mutation and denied.
-        Assert.Equal(93, routes.Count);
+        // AGT-3063 added POST /api/runner/orchestrator-decisions/claim (Claim) and
+        // POST /api/runner/orchestrator-decisions/complete (Continue): runner hosts
+        // claim and complete shadow model decision jobs, so both are denied.
+        // AGT-3055 added the claimed batch gate under /api/v1/gates: claims (Claim),
+        // attempts/{attemptId}/renew and /phase (Continue), /report and /containment
+        // (PostStep). Gate hosts drive suites through them, so all five are denied.
+        Assert.Equal(100, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -167,13 +173,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 6,
+                [ExecutionAdmissionPath.Claim] = 8,
                 [ExecutionAdmissionPath.Start] = 15,
-                [ExecutionAdmissionPath.Continue] = 15,
+                [ExecutionAdmissionPath.Continue] = 18,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 26,
-                [ExecutionAdmissionPath.PostStep] = 13,
+                [ExecutionAdmissionPath.PostStep] = 15,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

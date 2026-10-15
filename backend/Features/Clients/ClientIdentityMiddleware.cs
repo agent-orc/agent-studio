@@ -151,7 +151,8 @@ public class ClientIdentityMiddleware
                || path.StartsWith("/api/v1/orchestration", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/runners", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/v1/runs", StringComparison.OrdinalIgnoreCase)
-               || path.StartsWith("/api/v1/reviews", StringComparison.OrdinalIgnoreCase);
+               || path.StartsWith("/api/v1/reviews", StringComparison.OrdinalIgnoreCase)
+               || path.StartsWith("/api/v1/gates", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task Reject(HttpContext context, string code, string message, string? hint = null)

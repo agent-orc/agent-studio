@@ -192,6 +192,37 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Equal(StatusCodes.Status403Forbidden, claimDenied.Context.Response.StatusCode);
     }
 
+    // AGT-3055: a gate host claims and reports batch suites on the monolith
+    // authority through /api/v1/gates; the networked profile must admit its
+    // runner credential there with the matching runner scope.
+    [Fact]
+    public async Task Gate_routes_admit_a_scoped_runner_and_reject_everyone_else()
+    {
+        var (store, config, _) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var gateRunner = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("gate-runner", null, null, null)).Code);
+        var logsOnly = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("logs-runner", [RunnerScopes.Logs], null, null)).Code);
+
+        foreach (var (method, path) in new[]
+                 {
+                     ("POST", "/api/v1/gates/claims"),
+                     ("POST", "/api/v1/gates/attempts/gat_1/renew"),
+                     ("POST", "/api/v1/gates/attempts/gat_1/phase"),
+                     ("POST", "/api/v1/gates/attempts/gat_1/report"),
+                     ("POST", "/api/v1/gates/attempts/gat_1/containment"),
+                     ("GET", "/api/v1/gates/subjects/gsub_1"),
+                 })
+        {
+            Assert.True((await Invoke(config, store, method, path, bearer: gateRunner.Secret)).Called.Value, path);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                (await Invoke(config, store, method, path, bearer: logsOnly.Secret)).Context.Response.StatusCode);
+            Assert.Equal(StatusCodes.Status401Unauthorized,
+                (await Invoke(config, store, method, path, owner.SessionToken, owner.CsrfToken)).Context.Response.StatusCode);
+        }
+    }
+
     [Fact]
     public void Session_expiry_and_login_throttling_fail_closed()
     {
