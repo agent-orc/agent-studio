@@ -1018,6 +1018,44 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(member.RunAttemptId, mapping.DeliveryEpoch);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Patch_equivalent_fallback_leaves_through_its_containment_record_without_a_gate(
+        bool interruptedGate)
+    {
+        // AGT-3139: batch gating disabled after the member queued, or a per-task
+        // gate the previous process lost, hands the member to a fallback. Its
+        // patches are already published, so neither path may gate it again.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-EQUIVALENT-FALLBACK", "docs/equivalent-fallback.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        if (interruptedGate)
+            BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+                new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                    FallbackGateActive: true, FallbackGateStarts: 1));
+        else
+            factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+                .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
+        Assert.Equal(containedIn, RemoteTip());
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var ownership = Ownership(member.Key)!;
+        Assert.Equal(containedIn, ownership.ContainedInSha);
+        Assert.True(ownership.FallbackIntegrated);
+        Assert.False(ownership.FallbackGateActive);
+    }
+
     [Fact]
     public async Task Accepted_patch_equivalent_member_stays_completed_through_a_reconciler_pass()
     {
