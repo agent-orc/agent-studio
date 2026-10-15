@@ -240,5 +240,12 @@ public static class SystemEndpoints
             Results.Text(
                 merge.IsMergeGateBusy ? "gate-busy" : "idle",
                 "text/plain"));
+
+        // AGT-3060: the engine is the only decider, so an upgrade waits on this
+        // probe instead of a monolith fallback. 503 while no engine instance
+        // has contacted the orchestration endpoints within the contact window.
+        app.MapGet("/healthz/orchestration-engine", (AgentStudio.Runner.OrchestrationEngineReadiness readiness) =>
+            Results.Text(readiness.State, "text/plain",
+                statusCode: readiness.IsLive ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable));
     }
 }

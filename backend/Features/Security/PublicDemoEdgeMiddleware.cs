@@ -173,7 +173,8 @@ public sealed class PublicDemoEdgeMiddleware(
 
     private static bool IsHealthCheck(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
 
     private static async Task Deny(HttpContext context, int status, string code, string message)
     {

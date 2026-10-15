@@ -2,7 +2,7 @@
 #
 # The Orchestrator Engine is the only decider (AGT-W65 D14 A). These entries
 # predate the guard and name the residual monolith decision code with its owner
-# in docs/system/architecture/monolith-hosted-service-inventory.md. The list
+# in docs/system/architecture/monolith-hosted-services.md. The list
 # only shrinks:
 #   call <file> <n>          the file calls a decision-library policy or the
 #                            test-host MonolithTransitionAdapter exactly n times;

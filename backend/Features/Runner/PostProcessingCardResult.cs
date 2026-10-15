@@ -58,6 +58,9 @@ public sealed record PostProcessingCardResult(PostProcessingCardStatus Status, s
     public static PostProcessingCardResult Blocked(string reason) =>
         new(PostProcessingCardStatus.Blocked, reason);
 
+    /// <summary>AGT-3060: the Orchestrator Engine is not live; the card waits in its lane.</summary>
+    public const string AwaitingOrchestrationEngine = "orchestration-engine-not-live";
+
     /// <summary>
     /// Reason tokens for the waits in which the card is held by the canonical
     /// remote review data plane. Shared with the tests so the contract cannot

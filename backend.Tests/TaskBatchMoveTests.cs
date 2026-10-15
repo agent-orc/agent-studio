@@ -371,6 +371,46 @@ public class TaskBatchMoveTests : IDisposable
     [Fact]
     public async Task DeliveryReconciler_ReopensCompletedAndEscalatesMissingIntegratingDelivery()
     {
+        var reconciler = DeliveryReconcilerScenario(engineOnly: false, engine: null, out var scanner);
+
+        Assert.Equal(2, await reconciler.RunOnceAsync());
+        var lanes = ReadLaneByJob();
+        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
+        Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
+        Assert.Equal(LifecyclePhases.Integrating,
+            scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+    }
+
+    /// <summary>
+    /// AGT-3060: the reconciler is a residual monolith decider. With the engine
+    /// stopped it moves no card; after engine contact the same pass completes.
+    /// </summary>
+    [Fact]
+    public async Task DeliveryReconciler_HoldsWhileTheEngineIsNotLiveAndReconcilesAfterEngineContact()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        OrchestrationEngineReadiness? engine = null;
+        var reconciler = DeliveryReconcilerScenario(engineOnly: true, config => engine =
+            new OrchestrationEngineReadiness(config, time, NullLogger<OrchestrationEngineReadiness>.Instance), out _);
+
+        Assert.Equal(0, await reconciler.RunOnceAsync());
+        Assert.Equal(TaskStates.Completed, ReadLaneByJob()["stale-accepted"]);
+        Assert.Equal(TaskStates.AutoReview, ReadLaneByJob()["missing-delivery"]);
+
+        engine!.Observe("engine_test");
+        Assert.Equal(2, await reconciler.RunOnceAsync());
+        Assert.Equal(TaskStates.Escalated, ReadLaneByJob()["missing-delivery"]);
+
+        // Engine silent beyond the contact window: the decider holds again.
+        WriteJob(TaskStates.Completed, "stale-later");
+        time.Advance(engine.ContactWindow + TimeSpan.FromSeconds(1));
+        Assert.Equal(0, await reconciler.RunOnceAsync());
+        Assert.Equal(TaskStates.Completed, ReadLaneByJob()["stale-later"]);
+    }
+
+    private DeliveryChainReconciler DeliveryReconcilerScenario(bool engineOnly,
+        Func<IConfiguration, OrchestrationEngineReadiness>? engine, out TaskScannerService scanner)
+    {
         WriteJob(TaskStates.Completed, "stale-accepted");
         WriteJob(TaskStates.AutoReview, "missing-delivery");
         var integratingFolder = Path.Combine(_watchPath, TaskStates.AutoReview, "missing-delivery");
@@ -382,9 +422,10 @@ public class TaskBatchMoveTests : IDisposable
             ["WatchPaths:0:Path"] = _watchPath,
             ["TaskRepository"] = _watchPath,
             ["DeliveryChain:Guarded"] = "true",
+            [OrchestrationDecisionAuthority.ConfigurationKey] = engineOnly ? OrchestrationDecisionAuthority.Engine : null,
         }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
-        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var status = new TaskIntegrationStatusService(git, settings,
@@ -401,15 +442,8 @@ public class TaskBatchMoveTests : IDisposable
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings,
             NullLogger<TaskTransitionService>.Instance, integrationStatus: status,
             configuration: config);
-        var reconciler = new DeliveryChainReconciler(scanner, status, transitions, config,
-            NullLogger<DeliveryChainReconciler>.Instance);
-
-        Assert.Equal(2, await reconciler.RunOnceAsync());
-        var lanes = ReadLaneByJob();
-        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
-        Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
-        Assert.Equal(LifecyclePhases.Integrating,
-            scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+        return new DeliveryChainReconciler(scanner, status, transitions, config,
+            NullLogger<DeliveryChainReconciler>.Instance, engine: engine?.Invoke(config));
     }
 
     [Fact]

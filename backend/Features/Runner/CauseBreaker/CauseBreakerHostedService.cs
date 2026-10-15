@@ -12,12 +12,15 @@ public sealed class CauseBreakerHostedService : BackgroundService
     private readonly CauseBreakerService _breakers;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CauseBreakerHostedService> _logger;
+    private readonly OrchestrationEngineReadiness? _engine;
 
     public CauseBreakerHostedService(
         CauseBreakerService breakers,
         IConfiguration configuration,
-        ILogger<CauseBreakerHostedService> logger)
+        ILogger<CauseBreakerHostedService> logger,
+        OrchestrationEngineReadiness? engine = null)
     {
+        _engine = engine;
         _breakers = breakers;
         _configuration = configuration;
         _logger = logger;
@@ -42,7 +45,9 @@ public sealed class CauseBreakerHostedService : BackgroundService
 
             try
             {
-                _breakers.Sweep();
+                // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+                if (OrchestrationEngineReadiness.Allows(_engine, nameof(CauseBreakerHostedService)))
+                    _breakers.Sweep();
             }
             catch (Exception ex)
             {

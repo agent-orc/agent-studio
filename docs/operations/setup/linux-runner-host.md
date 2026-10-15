@@ -254,9 +254,26 @@ progress, steer timeout, timeout salvage, gate-environment retry) to the engine.
 Startup fails when `Orchestration:Transitions` names `Monolith` or `Shadow`. The
 Workspace Settings > Orchestrator rollout panel shows every profile as Engine
 and refuses shadow and rollback with `orchestration-monolith-decisions-retired`.
-Start the engine before or together with the upgraded monolith. While no engine
-instance holds a lease, the occurrences stay pending and durable, no card moves,
-and after one minute the operator feed shows an engine-unavailable alert. Set
+There is no monolith fallback. Upgrade in this order:
+
+1. Enroll the engine principal (`engine_` identity) if the host has none, and
+   start or keep the engine running.
+2. Upgrade the monolith.
+3. Wait until `curl -fsS http://127.0.0.1:<port>/healthz/orchestration-engine`
+   answers `ready`. It answers `engine-not-live` (HTTP 503) until an engine
+   instance contacts `/api/v1/orchestration` within
+   `Orchestration:EngineReadiness:ContactWindowSeconds` (default 30).
+
+While the engine is not live, no automatic decision runs: the engine
+occurrences stay pending and durable, and every residual monolith decider
+(acceptance rail, delivery chain reconciler, cause breaker, intake, supervisor
+cycles, legacy review loop, batch pilot, local auto-pickup) skips its pass, so no
+card moves. At startup the log states whether an engine identity is enrolled
+(`orchestration-engine-not-provisioned` when none is). After
+`Orchestration:EngineReadiness:StartupGraceSeconds` (default 60) without engine
+contact, or when the engine goes silent, the operator feed of every project
+shows one `engine-not-live` alert per outage; a pending occurrence still raises
+its own engine-unavailable alert after one minute. Set
 `OPERATOR_DECISION_CONCURRENCY` in the engine environment to size the AI
 Operator stage (default 2).
 

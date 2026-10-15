@@ -202,37 +202,7 @@ public sealed class AiOperatorDecisionTests : IDisposable
     [Fact]
     public async Task Engine_stopped_holds_the_liveness_demotion_and_engine_running_applies_it()
     {
-        const string project = "ai-operator";
-        const string card = "AGT-LIVENESS";
-        var projectPath = Path.Combine(_workspace, "projects", project);
-        foreach (var state in TaskStates.All)
-            Directory.CreateDirectory(Path.Combine(projectPath, state));
-        var cardFolder = Path.Combine(projectPath, TaskStates.Progress, card);
-        Directory.CreateDirectory(cardFolder);
-        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
-        {
-            id = card, title = "Zombie run", state = TaskStates.Progress,
-            order = 1, agent = "claude", kind = TaskKinds.Task,
-        }));
-        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Build it.");
-
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["TaskRepository"] = _workspace,
-                    ["WatchPaths:0:Name"] = project,
-                    ["WatchPaths:0:Path"] = projectPath,
-                    ["WatchPaths:0:RootPath"] = projectPath,
-                    ["WatchPaths:0:RepositoryPath"] = projectPath,
-                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
-                    ["Supervisor:StuckResumeWindowMinutes"] = "0",
-                    ["Runner:RunLiveness:IntervalSeconds"] = "3600",
-                    ["Orchestration:Transitions:OperatorDecision"] = "Engine",
-                }));
-        });
+        using var factory = LivenessHost(out var projectPath);
         var monitor = factory.Services.GetRequiredService<RunLivenessMonitor>();
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
@@ -240,25 +210,96 @@ public sealed class AiOperatorDecisionTests : IDisposable
         // Engine stopped: the sweep submits facts, decides nothing and moves nothing.
         Assert.Empty(await monitor.SweepAsync());
         Assert.Empty(await monitor.SweepAsync());
-        var occurrence = Assert.Single(store.List(project, null));
+        var occurrence = Assert.Single(store.List(LivenessProject, null));
         Assert.Equal("pending", occurrence.Status);
         Assert.Equal(OrchestrationStage.OperatorDecision, occurrence.CurrentStage);
-        Assert.Equal(TaskStates.Progress, scanner.FindJob(card, projectPath)?.State);
+        Assert.Equal(TaskStates.Progress, scanner.FindJob(LivenessCard, projectPath)?.State);
 
         // Engine running: the AI Operator decides and the authority applies the receipt.
+        var runId = await CompleteWithEngineAsync(store);
+
+        Assert.Equal(occurrence.RunId, runId);
+        Assert.Equal("Act:demote-to-ready", store.GetOccurrence(runId)!.EngineReceipt!.Action);
+        scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(LivenessCard, projectPath)?.State);
+    }
+
+    [Theory]
+    [InlineData("waiting-phase")]
+    [InlineData("remote-lease")]
+    public async Task Liveness_receipt_keeps_a_card_that_became_waiting_or_remotely_leased_after_the_facts(
+        string change)
+    {
+        using var factory = LivenessHost(out var projectPath);
+        var monitor = factory.Services.GetRequiredService<RunLivenessMonitor>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        Assert.Empty(await monitor.SweepAsync());
+
+        // The change becomes visible after the facts were submitted and before the receipt.
+        if (change == "waiting-phase")
+            TaskJsonFile.UpdateField(Path.Combine(projectPath, TaskStates.Progress, LivenessCard), "phase",
+                LifecyclePhases.LoopWaiting, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        else
+            Assert.True(factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+                new RunLeaseAcquireRequest(LivenessCard, "runner_remote", "remote", "remote-host", 1, "stable"))
+                .Granted);
+        var runId = await CompleteWithEngineAsync(store);
+
+        Assert.Equal("completed", store.Get(runId)!.Status);
+        Assert.Equal("Act:demote-to-ready", store.GetOccurrence(runId)!.EngineReceipt!.Action);
+        scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Progress, scanner.FindJob(LivenessCard, projectPath)?.State);
+    }
+
+    private const string LivenessProject = "ai-operator";
+    private const string LivenessCard = "AGT-LIVENESS";
+
+    private WebApplicationFactory<Program> LivenessHost(out string projectPath)
+    {
+        projectPath = Path.Combine(_workspace, "projects", LivenessProject);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var cardFolder = Path.Combine(projectPath, TaskStates.Progress, LivenessCard);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = LivenessCard, title = "Zombie run", state = TaskStates.Progress,
+            order = 1, agent = "claude", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Build it.");
+
+        var path = projectPath;
+        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = LivenessProject,
+                    ["WatchPaths:0:Path"] = path,
+                    ["WatchPaths:0:RootPath"] = path,
+                    ["WatchPaths:0:RepositoryPath"] = path,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Supervisor:StuckResumeWindowMinutes"] = "0",
+                    ["Runner:RunLiveness:IntervalSeconds"] = "3600",
+                    ["Orchestration:Transitions:OperatorDecision"] = "Engine",
+                }));
+        });
+    }
+
+    private static async Task<string> CompleteWithEngineAsync(MonolithOrchestrationStore store)
+    {
         var claim = store.Claim(new OrchestrationClaimRequest("engine_test", "instance",
             [OrchestrationStage.OperatorDecision]));
-        Assert.Equal(occurrence.RunId, claim.Run!.RunId);
-        var decision = await new EngineLoop().ExecuteAsync(claim.Run, default);
-        var completed = await store.CompleteAsync(claim.Run.RunId, new CompleteOrchestrationStageRequest(
+        var decision = await new EngineLoop().ExecuteAsync(claim.Run!, default);
+        var completed = await store.CompleteAsync(claim.Run!.RunId, new CompleteOrchestrationStageRequest(
             "engine_test", "instance", claim.Lease!.LeaseId, claim.Lease.Fence,
             OrchestrationStage.OperatorDecision, decision.Action, decision.OutputJson,
             $"engine:{claim.Run.RunId}:liveness"), default);
-
         Assert.Equal("completed", completed.Status);
-        Assert.Equal("Act:demote-to-ready", store.GetOccurrence(claim.Run.RunId)!.EngineReceipt!.Action);
-        scanner.InvalidateCache();
-        Assert.Equal(TaskStates.Ready, scanner.FindJob(card, projectPath)?.State);
+        return claim.Run.RunId;
     }
 
     private static AiOperatorDecisionPayload Steer(SteerTimeoutFacts facts)

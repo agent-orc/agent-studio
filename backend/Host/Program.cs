@@ -42,6 +42,10 @@ builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
+// AGT-3060: no automatic decision runs before the engine is live; see
+// OrchestrationEngineReadiness and /healthz/orchestration-engine.
+builder.Services.AddSingleton<OrchestrationEngineReadiness>();
+builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
