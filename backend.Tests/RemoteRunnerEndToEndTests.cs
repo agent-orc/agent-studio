@@ -248,6 +248,93 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, TaskKey)));
     }
 
+    [Fact]
+    public async Task Red_gate_then_second_continuation_then_late_completion_keeps_second_prompt()
+    {
+        var clock = new FakeTimeProvider();
+        var gate = new DelayedRedGate();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Two fix rounds", "Original prompt.",
+            enteredLaneAt: clock.GetUtcNow().UtcDateTime);
+        using var factory = BuildFactory(clock: clock, gateRunner: gate);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http,
+            advertisedAt: clock.GetUtcNow().UtcDateTime);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://example.invalid/agent-studio.git");
+        var oldSha = new string('a', 40);
+        var reviewFolder = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
+        ReviewSubjectStore.Write(reviewFolder, new ReviewSubjectRecord
+        {
+            TaskKey = TaskKey,
+            RunAttemptId = "run-old-delivery",
+            Project = ProjectName,
+            Repository = "https://example.invalid/agent-studio.git",
+            ResultSha = oldSha,
+            AttemptChainId = "old-delivery",
+            Executor = RunnerId,
+            LeaseId = "old-delivery",
+            FencingToken = 1,
+            CompletedAtUtc = clock.GetUtcNow(),
+        });
+        File.WriteAllText(Path.Combine(reviewFolder, "status.md"),
+            "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        Directory.CreateDirectory(Path.Combine(reviewFolder, "logs"));
+        File.WriteAllText(Path.Combine(reviewFolder, "logs", "cli-output.log"),
+            "[12:00:00.000] [stdout] [[TASK_DONE]]\n");
+
+        var orchestrator = factory.Services.GetRequiredService<ReviewDecisionOrchestrator>();
+        var gateTask = orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        var gateRequest = await gate.Started.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(oldSha, gateRequest.ExpectedSha);
+        var states = factory.Services.GetRequiredService<TaskStateMachine>();
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        Assert.Equal(MoveJobStatus.Success,
+            states.MoveJob(TaskKey, TaskStates.Ready, _watchPath,
+                TimelineActors.Human("operator")).Status);
+        Assert.NotNull(mutations.SavePendingIntent(TaskKey, ContinueModes.Continue,
+            "First fix round", "operator", null, _watchPath));
+        var active = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex",
+            IdempotencyKey: "first-fix-claim"));
+        Assert.Equal(RClaimStatus.Claimed, active.Status);
+        Assert.Equal("First fix round", active.RunSpec!.FollowUp!.Prompt);
+        gate.Release();
+        await gateTask;
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, TaskKey)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+        Assert.Contains(ReadTimelineAt(Path.Combine(_watchPath, TaskStates.Progress, TaskKey)),
+            item => item.GetProperty("kind").GetString() == "gate-result-superseded");
+
+        Assert.Equal(MoveJobStatus.Success,
+            states.MoveJob(TaskKey, TaskStates.Ready, _watchPath,
+                TimelineActors.Human("operator")).Status);
+        Assert.NotNull(mutations.SavePendingIntent(TaskKey, ContinueModes.Continue,
+            "Second fix round", "operator", null, _watchPath));
+        var newSha = new string('b', 40);
+        var lateCompletion = await client.CompleteRunAsync(new RRemoteComplete(
+            active.TaskKey!, active.Lease!.LeaseId, active.Lease.FencingToken,
+            RunnerId, "Done", ResultSha: newSha, AttemptChainId: active.Lease.LeaseId,
+            Repository: "https://example.invalid/agent-studio.git",
+            AttemptId: active.Lease.AttemptId, AuthorityEpoch: active.Lease.AuthorityEpoch,
+            IdempotencyKey: "late-first-fix-completion", BaseSha: oldSha,
+            ImmutableResultRef: Contract.FencedGitRefs.ImmutableResult(
+                active.Lease.AttemptId!, active.Lease.FencingToken, newSha),
+            ArtifactManifestDigest: new string('d', 64)), CancellationToken.None);
+        Assert.Equal(TaskStates.Ready, lateCompletion!.TargetState);
+        Assert.Contains("Second fix round", File.ReadAllText(Path.Combine(
+            _watchPath, TaskStates.Ready, TaskKey, "pending-intent.json")));
+        await client.ReleaseLeaseAsync(new RRelease(
+            active.TaskKey!, active.Lease.LeaseId, active.Lease.FencingToken, RunnerId,
+            active.Lease.AttemptId, active.Lease.AuthorityEpoch,
+            "first-fix-release"), CancellationToken.None);
+        var next = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex",
+            IdempotencyKey: "second-fix-claim"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, next.Status);
+        Assert.Equal("Second fix round", next.RunSpec!.FollowUp!.Prompt);
+    }
+
     [Theory]
     [InlineData("Stopped")]
     [InlineData("MechanicalFallback")]
@@ -3732,6 +3819,33 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, TaskKey)));
     }
 
+    private sealed class DelayedRedGate : IBuildTestGateRunner
+    {
+        private readonly TaskCompletionSource<BuildTestGateRequest> _started =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<BuildTestGateRequest> Started => _started.Task;
+        public void Release() => _release.TrySetResult();
+
+        public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, AgentStudio.Shared.BuildProfile? profile,
+            PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+        {
+            _started.TrySetResult(request);
+            await _release.Task.WaitAsync(ct);
+            return new BuildTestGateResult(BuildTestGateVerdict.Fail, 1, 10,
+                "dotnet test failed", "test gate red", true, false)
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+                GateId = request.GateId,
+                FailureKind = BuildTestGateFailureKind.Code,
+            };
+        }
+    }
+
     private WebApplicationFactory<Program> BuildFactory(
         IAtomicJsonFileWriter? writer = null,
         int? remoteRequeueGraceSeconds = null,
@@ -3745,7 +3859,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         int? remoteClaimFailureBudget = null,
         Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null,
         ICauseWaitMarkerStore? causeWaitMarkers = null,
-        TimeProvider? clock = null) =>
+        TimeProvider? clock = null,
+        IBuildTestGateRunner? gateRunner = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3779,10 +3894,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 });
                 if (writer is not null || summaryOneShot is not null || authorityNow is not null
                     || causeWaitReleaseFactory is not null || causeWaitMarkers is not null
-                    || clock is not null)
+                    || clock is not null || gateRunner is not null)
                 {
                     b.ConfigureTestServices(services =>
                     {
+                        if (gateRunner is not null)
+                        {
+                            services.RemoveAll<IBuildTestGateRunner>();
+                            services.AddSingleton(gateRunner);
+                        }
                         if (writer is not null)
                             services.AddSingleton<IAtomicJsonFileWriter>(writer);
                         if (causeWaitReleaseFactory is not null)
