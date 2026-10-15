@@ -53,6 +53,13 @@ public sealed class BatchGatePolicyTests
         Assert.False(BatchGatePolicy.LeavesAsIntegrated(
             Subject("f") with { ResultSha = "" }, Contained));
         Assert.Equal(1, asked);
+        // AGT-3139: a per-task gate the process lost no longer settles its member.
+        Assert.True(BatchGatePolicy.LeavesAsIntegrated(
+            Subject("g") with { ActivePerTaskGate = true }, Contained, gateInterrupted: true));
+        Assert.False(BatchGatePolicy.LeavesAsIntegrated(
+            Subject("h") with { ActivePerTaskGate = true, OwningBatchId = "batch-1" },
+            Contained, gateInterrupted: true));
+        Assert.Equal(2, asked);
     }
 
     [Fact]
