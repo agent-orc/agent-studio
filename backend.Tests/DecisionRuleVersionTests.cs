@@ -54,6 +54,51 @@ public sealed class DecisionRuleVersionTests : IDisposable
     }
 
     [Fact]
+    public void Active_rules_limit_candidates_and_preserve_platform_approval()
+    {
+        var at = _time.GetUtcNow().UtcDateTime;
+        var facts = new[] { new GroundsFactV1("host.queue", "capacity", "Queue", "6", null,
+            new("capacity-snapshot", "snapshot:host-1"), at, "complete", GroundsReliability.Reliable) };
+        var offered = new[]
+        {
+            new GroundsAlternativeV1(DecisionActionKinds.Observe, "host", "reversible", "A0", true),
+            new GroundsAlternativeV1(DecisionActionKinds.Adapt, "role-share:review", "reversible", "A2", true),
+        };
+        var rule = Rule("queue") with { CandidateActions = [DecisionActionKinds.Adapt],
+            AutonomyClass = "A1" };
+        var applied = DecisionRulePolicy.Apply([rule], "capacity-check", "capacity-check", facts,
+            offered, at);
+        Assert.Equal("rule-candidate-excluded", applied[0].RejectionReason);
+        Assert.False(applied[0].Available);
+        Assert.True(applied[1].Available);
+        Assert.Equal("A2", applied[1].RequiredApproval);
+
+        var humanOnly = DecisionRulePolicy.Apply([rule with { AutonomyClass = "A3" }],
+            "capacity-check", "capacity-check", facts, offered, at);
+        Assert.Equal("human-operator-required", humanOnly[1].RejectionReason);
+    }
+
+    [Fact]
+    public void Missing_and_stale_evidence_apply_ask_or_hold()
+    {
+        var at = _time.GetUtcNow().UtcDateTime;
+        var stale = new[] { new GroundsFactV1("host.queue", "capacity", "Queue", "6", null,
+            new("capacity-snapshot", "snapshot:host-1"), at.AddMinutes(-31), "complete",
+            GroundsReliability.Reliable) };
+        var offered = new[] { new GroundsAlternativeV1(DecisionActionKinds.Adapt,
+            "role-share:review", "reversible", "A1", true) };
+        var ask = DecisionRulePolicy.Apply([Rule("queue")], "capacity-check", "capacity-check",
+            stale, offered, at);
+        Assert.Equal("rule-missing-evidence-ask", ask[0].RejectionReason);
+        Assert.Equal(DecisionActionKinds.Ask, ask[1].Action);
+        Assert.True(ask[1].Available);
+        var hold = DecisionRulePolicy.Apply([Rule("queue") with { MissingDataBehavior = "hold" }],
+            "capacity-check", "capacity-check", stale, offered, at);
+        Assert.Single(hold);
+        Assert.Equal("rule-missing-evidence-hold", hold[0].RejectionReason);
+    }
+
+    [Fact]
     public void Card_free_capacity_receipt_appears_in_host_history_and_workspace_spend()
     {
         var at = _time.GetUtcNow().UtcDateTime;

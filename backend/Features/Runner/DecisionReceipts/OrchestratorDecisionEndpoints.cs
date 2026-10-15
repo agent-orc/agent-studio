@@ -19,9 +19,10 @@ public static class OrchestratorDecisionEndpoints
 {
     private static readonly JsonSerializerOptions WireJson = DecisionGroundsPolicy.Json;
 
-    public static void MapOrchestratorDecisionEndpoints(this WebApplication app, bool mapsEngineRoutes)
+    public static void MapOrchestratorDecisionEndpoints(this WebApplication app)
     {
-        if (mapsEngineRoutes)
+        // Decision receipts share the Studio-owned store in both local and proxy profiles.
+        // The Task Server proxy has no handler for these engine endpoints.
         {
             var engine = app.MapGroup("/api/v1/orchestration");
             engine.MapGet("/runs/{runId}/grounds-input", (HttpContext context, string runId,
@@ -64,7 +65,8 @@ public static class OrchestratorDecisionEndpoints
                 var activeRules = rules.EffectiveRules(request.WorkspaceId);
                 var policyVersion = rules.ActiveVersionId(request.WorkspaceId) ?? "platform.v1";
                 var model = activeRules
-                    .Where(rule => rule.Trigger == request.Profile).Select(rule => rule.Model)
+                    .Where(rule => rule.Trigger == request.Profile || rule.Trigger == request.TriggerKind)
+                    .Select(rule => rule.Model)
                     .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
                     ?? workspace.OrchestratorModel ?? "gpt-5.6-sol";
                 if (!DecisionRulePolicy.Validate([new DecisionRuleV1("model-route", request.Profile,
@@ -80,11 +82,16 @@ public static class OrchestratorDecisionEndpoints
                     new("codex", model, workspace.OrchestratorThinkingLevel ?? "high",
                         DecisionModelCustody.RunnerHostJob),
                     request.Facts.Concat(DecisionRulePolicy.Signals(activeRules, request.Profile,
-                        request.Facts, policyVersion, at)).ToArray(), request.Alternatives, [], ledger,
+                        request.Facts, policyVersion, at))
+                        .Concat(request.TriggerKind == request.Profile ? []
+                            : DecisionRulePolicy.Signals(activeRules, request.TriggerKind,
+                                request.Facts, policyVersion, at)).ToArray(),
+                    DecisionRulePolicy.Apply(activeRules, request.TriggerKind, request.Profile,
+                        request.Facts, request.Alternatives, at), [], ledger,
                     new("host.v1", "Host occurrence has no card rounds.", null, 0, 0, 0), request.Omissions);
                 return Wire(store.FreezeInputs(new(grounds, DecisionActionKinds.Observe,
                     request.HostId, "Host occurrence", DecisionReceiptPolicy.ActiveMode)));
-            }));
+            })).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
             engine.MapPost("/decision-jobs", (HttpContext context, OrchestratorDecisionJobRequest request,
                 AccessSecurityStore security, OrchestratorDecisionStore store) =>
                 MonolithOrchestrationEndpoints.Execute(() =>
