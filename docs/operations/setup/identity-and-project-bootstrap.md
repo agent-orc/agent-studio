@@ -30,9 +30,12 @@ bearer in-process and relays only the human session cookie.
 
 1. The installer creates `owner_bootstrap_code` beside the service
    credentials (`scripts/compose-secret-bootstrap.sh`, mode 600) and the Task
-   Server reads it through `OWNER_BOOTSTRAP_CODE_FILE`.
+   Server reads it through `OWNER_BOOTSTRAP_CODE_FILE`. Native Linux stores
+   `owner-bootstrap.code` in `/etc/agent-orchestrator`; native Windows stores
+   it in `%ProgramData%\AgentOrchestrator`. Both native files have restricted
+   host permissions.
 2. While no owner exists the server arms that code. Read it over the
-   administration channel only:
+   administration channel only. For Compose, use
    `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
 3. Sign in through the Studio edge and call
    `POST /api/v1/studio/auth/bootstrap` with `username`, `password` and

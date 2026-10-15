@@ -187,7 +187,7 @@ jobs:
           test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
-      - name: Create guided setup executable, three archives, and SHA-256 checksums
+      - name: Create guided setup executable, four archives, and SHA-256 checksums
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           scripts/release/package-release.sh \
@@ -256,7 +256,7 @@ jobs:
 
   publish-windows:
     name: Publish Windows fallback package (win-x64)
-    needs: version
+    needs: [version, test-build-release]
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -271,6 +271,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - name: Download verified Linux release assets for the Studio browser
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: artifacts/linux-release
 
       - name: Publish win-x64 self-contained binaries
         env:
@@ -355,6 +361,15 @@ jobs:
           Copy-Item artifacts/publish/task-server/task-server.exe $root
           Copy-Item artifacts/publish/orchestrator-engine/orchestrator-engine.exe $root
           Copy-Item artifacts/publish/studio-bff/agent-studio-bff.exe $root
+          $studioArchive = "artifacts/linux-release/agent-studio-$env:VERSION.tar.gz"
+          $studioExtract = Join-Path $env:RUNNER_TEMP 'studio-browser-release'
+          New-Item -ItemType Directory -Path $studioExtract -Force | Out-Null
+          tar -xzf $studioArchive -C $studioExtract
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract the Studio browser release.' }
+          $browserSource = Join-Path $studioExtract "agent-studio-$env:VERSION/browser"
+          New-Item -ItemType Directory -Path "$root/wwwroot" -Force | Out-Null
+          Get-ChildItem -LiteralPath $browserSource -Force | Copy-Item -Destination "$root/wwwroot" -Recurse
+          if (-not (Test-Path -LiteralPath "$root/wwwroot/index.html")) { throw 'Studio browser entry point is missing.' }
           Copy-Item deploy/windows $root/deploy-windows -Recurse
           New-Item -ItemType Directory -Path "$root/config" -Force | Out-Null
           Copy-Item deploy/release/agent-orchestrator/config/*.template "$root/config/"
@@ -515,6 +530,7 @@ jobs:
       - name: Recompute the combined SHA256SUMS
         run: |
           chmod +x artifacts/release/agent-studio-setup
+          install -m 0755 install.sh artifacts/release/install.sh
           (cd artifacts/release && rm -f SHA256SUMS && sha256sum * > SHA256SUMS)
           (cd artifacts/release && sha256sum -c SHA256SUMS)
 
@@ -526,6 +542,7 @@ jobs:
             artifacts/release/*.zip
             artifacts/release/agent-studio-setup
             artifacts/release/agent-studio-setup.exe
+            artifacts/release/install.sh
 
       - name: Create GitHub Release
         env:
@@ -536,6 +553,7 @@ jobs:
           artifacts/release/*.zip
           artifacts/release/agent-studio-setup
           artifacts/release/agent-studio-setup.exe
+          artifacts/release/install.sh
           artifacts/release/SHA256SUMS
           --verify-tag
           --generate-notes

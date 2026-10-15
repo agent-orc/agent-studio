@@ -30,6 +30,8 @@ internal static class ProductSetup
     {
         try
         {
+            if (args.FirstOrDefault() == "join-token")
+                return await JoinTokenIssuer.RunAsync(args.Skip(1).ToArray());
             return await ExecuteAsync(args);
         }
         catch (OperationCanceledException)
@@ -124,10 +126,14 @@ internal static class ProductSetup
         var probeRoot = installDirectory ?? DefaultInstallRoot(ProductProfile.StudioDocker);
         if (command == "preflight" || command == "install")
         {
+            var preflightUser = parsed.Passthrough.SkipWhile(value => value != "--execution-user")
+                .Skip(1).FirstOrDefault() ?? Environment.GetEnvironmentVariable("SUDO_USER");
+            if (preflightUser == "root") preflightUser = null;
             PrintJourney(journey);
             var findings = PreflightPolicy.Evaluate(journey, target, await PreflightProbe.ObserveAsync(
                 journey, target, authorityUrl, ContactsAuthority(mode, relocation), backupPath,
-                secretFile is null ? null : Path.GetFullPath(secretFile), probeRoot, default));
+                secretFile is null ? null : Path.GetFullPath(secretFile), probeRoot, default,
+                preflightUser));
             var failed = PrintPreflight(journey, target, findings);
             if (command == "preflight") return failed ? 1 : 0;
             if (failed && !dryRun)
@@ -751,9 +757,13 @@ internal static class ProductSetup
 
     /// <summary>A readable join token is decoded before preflight; a malformed one fails here.</summary>
     internal static JoinPayload? ReadJoinToken(string? joinTokenFile)
-        => joinTokenFile is not null && File.Exists(joinTokenFile)
-            ? JoinTokenCodec.Decode(File.ReadAllText(joinTokenFile))
-            : null;
+    {
+        if (joinTokenFile is null || !File.Exists(joinTokenFile)) return null;
+        var payload = JoinTokenCodec.Decode(File.ReadAllText(joinTokenFile));
+        if (payload.SchemaVersion != 2)
+            throw new ArgumentException("Legacy join tokens carry a reusable management credential. Issue a single-use token.");
+        return payload;
+    }
 
     /// <summary>True when the run connects to an authority that already exists.</summary>
     internal static bool ContactsAuthority(string mode, bool relocation)
@@ -891,6 +901,7 @@ internal static class ProductSetup
               agent-studio-setup --mode connector --server-url URL --token-file PATH
               agent-studio-setup --mode control-plane [--target docker|native] --server-url URL
               agent-studio-setup --mode agent-host --join-token-file PATH
+              agent-studio-setup join-token --runner-name NAME --join-token-file PATH
               agent-studio-setup --unattended --answer-file answers.json
               agent-studio-setup update [--release-version X.Y.Z]
               agent-studio-setup rollback

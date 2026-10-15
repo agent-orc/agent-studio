@@ -88,12 +88,14 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
                 || die "Authentication mode 'none' is permitted only for loopback LISTEN_URL values."
             studio_token_file=
             engine_token_file=
+            owner_bootstrap_file=
             studio_token=
             engine_token=
             ;;
         bearer)
             studio_token_file="$CONFIG_ROOT/studio.token"
             engine_token_file="$CONFIG_ROOT/engine.token"
+            owner_bootstrap_file="$CONFIG_ROOT/owner-bootstrap.code"
             studio_token=${STUDIO_AUTH_TOKEN:-${AUTH_TOKEN:-}}
             engine_token=${ENGINE_AUTH_TOKEN:-}
             if [ -z "$studio_token" ] || [ -z "$engine_token" ]; then
@@ -102,13 +104,16 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
             fi
             [ -n "$studio_token" ] || studio_token=$(openssl rand -hex 32)
             [ -n "$engine_token" ] || engine_token=$(openssl rand -hex 32)
+            [ -f "$owner_bootstrap_file" ] || openssl rand -hex 32 >"$owner_bootstrap_file"
             [ "$studio_token" != "$engine_token" ] \
                 || die "Studio and Engine principal credentials must be distinct."
             umask 077
             printf '%s\n' "$studio_token" >"$studio_token_file"
             printf '%s\n' "$engine_token" >"$engine_token_file"
             chown "$SERVICE_USER:$SERVICE_USER" "$studio_token_file" "$engine_token_file" 2>/dev/null || true
-            chmod 0640 "$studio_token_file" "$engine_token_file"
+            chmod 0600 "$studio_token_file" "$engine_token_file"
+            chown "$SERVICE_USER:$SERVICE_USER" "$owner_bootstrap_file" 2>/dev/null || true
+            chmod 0600 "$owner_bootstrap_file"
             ;;
         *) die "Authentication mode must be 'none' or 'bearer'." ;;
     esac
@@ -120,6 +125,7 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         -e "s/@AUTH_MODE@/$(escape_sed "$auth_mode")/" \
         -e "s/@STUDIO_AUTH_TOKEN_FILE@/$(escape_sed "$studio_token_file")/" \
         -e "s/@ENGINE_AUTH_TOKEN_FILE@/$(escape_sed "$engine_token_file")/" \
+        -e "s/@OWNER_BOOTSTRAP_CODE_FILE@/$(escape_sed "$owner_bootstrap_file")/" \
         "$source_dir/config/server.env.template" >"$CONFIG_ROOT/server.env"
     chmod 0640 "$CONFIG_ROOT/server.env"
 
