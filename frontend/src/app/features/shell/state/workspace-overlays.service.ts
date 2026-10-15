@@ -26,6 +26,7 @@ import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit'
  */
 export type WorkspaceSettingsSection =
   | 'overview'
+  | 'first-run'
   | 'appearance'
   | 'updates'
   | 'workspaces'
@@ -224,6 +225,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/updates': return 'updates';
       case '/workspace/settings/workspaces': return 'workspaces';
       case '/workspace/settings/task-server': return 'task-server';
+      case '/workspace/settings/first-run': return 'first-run';
       case '/workspace/settings/execution-hosts':
       case '/workspace/settings/remote-hosts': return 'remote-hosts';
       // Retired project-source catalogue: old bookmarks land safely on Overview.
@@ -261,6 +263,7 @@ export class WorkspaceOverlaysService {
       case 'updates': return '/workspace/settings/updates';
       case 'workspaces': return '/workspace/settings/workspaces';
       case 'task-server': return '/workspace/settings/task-server';
+      case 'first-run': return '/workspace/settings/first-run';
       case 'remote-hosts': return '/workspace/settings/execution-hosts';
       case 'orchestrator': return '/workspace/settings/orchestrator';
       case 'working-memory': return '/workspace/settings/working-memory';
@@ -279,6 +282,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/updates',
     '/workspace/settings/workspaces',
     '/workspace/settings/task-server',
+    '/workspace/settings/first-run',
     '/workspace/settings/execution-hosts',
     '/workspace/settings/remote-hosts',
     '/workspace/settings/project-sources',

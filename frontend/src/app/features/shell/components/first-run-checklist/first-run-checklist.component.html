@@ -1,0 +1,104 @@
+<section class="first-run" data-testid="first-run-checklist" aria-labelledby="first-run-title">
+  <header class="first-run__head">
+    <div>
+      <h2 id="first-run-title">First-run checklist</h2>
+      <p>Follow each step to the first integrated card. Status comes from the Task Server and fresh host probes.</p>
+    </div>
+    <button type="button" data-testid="first-run-refresh" [disabled]="loading()" (click)="reload()">
+      {{ loading() ? 'Checking…' : 'Refresh' }}
+    </button>
+  </header>
+
+  <ol class="first-run__steps">
+    <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
+      <span class="first-run__number">1</span>
+      <div><h3>Owner account</h3>
+        <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
+      <strong>{{ ownerReady() ? 'Verified' : 'Pending' }}</strong>
+    </li>
+    <li data-testid="first-run-providers" [attr.data-state]="providersReady() ? 'ready' : 'pending'">
+      <span class="first-run__number">2</span>
+      <div><h3>Provider login on an execution host</h3>
+        <p>Each CLI needs its own live authentication probe on the host that runs it. Device sign-in completes on that host.</p>
+        @for (badge of providerBadges(); track badge.id) {
+          <div class="first-run__subrow" [attr.data-testid]="'first-run-provider-' + badge.id">
+            <span>{{ badge.hostName }} · {{ badge.providerLabel }}: {{ badge.state }}</span>
+            @if (badge.provider === 'codex' || badge.provider === 'claude') {
+              <button type="button" (click)="signIn(badge)">Sign in</button>
+            }
+          </div>
+        }
+        @if (!providerBadges().length) { <p>No fresh provider probe has arrived yet.</p> }
+      </div>
+      <strong>{{ providersReady() ? 'Verified' : 'Pending' }}</strong>
+    </li>
+    <li data-testid="first-run-git" [attr.data-state]="gitReady() ? 'ready' : 'pending'">
+      <span class="first-run__number">3</span>
+      <div><h3>GitHub read and write access</h3>
+        <p>{{ gitReady() ? 'The registered repository has an admitted read and write proof from an online host.' : 'Configure a host deploy key or protected token, then run its repository probe. The status changes only after the server admits the proof.' }}</p>
+        <button type="button" (click)="openHosts()">Open host access setup</button>
+        <button type="button" data-testid="first-run-refresh-git" [disabled]="loading()" (click)="reload()">Refresh proof status</button>
+      </div>
+      <strong>{{ gitReady() ? 'Verified' : 'Pending' }}</strong>
+    </li>
+    <li data-testid="first-run-project" [attr.data-state]="repositoryReady() ? 'ready' : 'pending'">
+      <span class="first-run__number">4</span>
+      <div><h3>First project</h3>
+        <p>{{ repositoryReady() ? firstProject()?.displayName + ' has a canonical repository registration.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project and register its credential-free repository origin. The chosen host checks it out.' }}</p>
+        <button type="button" (click)="openProject()">{{ firstProject() ? 'Review project setup' : 'Create project' }}</button>
+        @if (firstProject() && !repository().value) {
+          <div class="first-run__form">
+            <label>Repository clone URL
+              <input data-testid="first-run-repository-url" type="text" inputmode="url" autocomplete="off" [value]="repositoryUrl()"
+                (input)="repositoryUrl.set($any($event.target).value)" />
+            </label>
+            <label>Integration branch
+              <input data-testid="first-run-integration-ref" autocomplete="off" [value]="integrationRef()"
+                (input)="integrationRef.set($any($event.target).value)" />
+            </label>
+            <button type="button" data-testid="first-run-register-repository"
+              [disabled]="!registrationValid() || registering()" (click)="registerRepository()">
+              {{ registering() ? 'Registering…' : 'Register repository' }}
+            </button>
+            @if (registrationError()) { <p role="alert">{{ registrationError() }}</p> }
+          </div>
+        }
+      </div>
+      <strong>{{ repositoryReady() ? 'Verified' : 'Pending' }}</strong>
+    </li>
+    <li data-testid="first-run-host" [attr.data-state]="activeHosts().length ? 'ready' : 'pending'">
+      <span class="first-run__number">5</span>
+      <div><h3>Execution host</h3>
+        <p>{{ activeHosts().length ? activeHosts().length + ' host(s) have a fresh heartbeat.' : 'Start the local runner or join a remote Linux host. A host is ready after its heartbeat reaches the Task Server.' }}</p>
+        <button type="button" (click)="openHosts()">Manage execution hosts</button>
+        <p>On a remote Linux host with a protected join-token file:</p>
+        <code>sudo ./agent-studio-setup --mode agent-host --join-token-file /secure/path/join.token</code>
+      </div>
+      <strong>{{ activeHosts().length ? 'Verified' : 'Pending' }}</strong>
+    </li>
+    <li data-testid="first-run-proof" [attr.data-state]="proofIntegrated() && proofReviewed() && proofRan() ? 'ready' : 'pending'">
+      <span class="first-run__number">6</span>
+      <div><h3>Proof run</h3>
+        <p>Create a small overview document in the first repository. Follow the card through coding, review, and integration.</p>
+        @if (proof(); as card) {
+          <p data-testid="first-run-proof-id">Card {{ card.id }} · coding {{ proofRan() ? 'run' : 'waiting' }} · review {{ proofReviewed() ? 'passed' : 'waiting' }} · integration {{ proofIntegrated() ? 'verified' : 'waiting' }}</p>
+        } @else {
+          <label class="first-run__demo-confirm">
+            <input type="checkbox" data-testid="first-run-demo-confirm"
+              [checked]="demoRepositoryConfirmed()"
+              (change)="demoRepositoryConfirmed.set($any($event.target).checked)" />
+            This project is a disposable demo repository.
+          </label>
+          <button type="button" data-testid="first-run-create-proof" [disabled]="!canStartProof()" (click)="startProof()">
+            {{ creatingProof() ? 'Creating…' : 'Create sample card' }}
+          </button>
+        }
+        @if (proofError()) {
+          <p role="alert">{{ proofError() }}</p>
+          @if (proof()) { <button type="button" (click)="refreshProof()">Retry reading proof card</button> }
+        }
+      </div>
+      <strong>{{ proofIntegrated() && proofReviewed() && proofRan() ? 'Verified' : 'Pending' }}</strong>
+    </li>
+  </ol>
+</section>
