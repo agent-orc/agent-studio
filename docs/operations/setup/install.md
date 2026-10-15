@@ -1,17 +1,19 @@
 # Install Agent Studio
 
 The `agent-studio-setup` release executable installs the pinned one-box Docker
-stack by default, or native services with `--target native` on hosts without
-Docker. The Linux binary and Windows `.exe` are single-file, self-contained
-applications. Download the newest published release from the
+stack by default on Linux. On Windows, double-clicking the `.exe` chooses the
+native service profile and requests administrator rights through UAC. Both
+executables are single-file, self-contained applications. When a release is
+published, download it from the
 [Agent Studio releases page](https://github.com/agent-orc/agent-studio/releases/latest).
 The executable's release version is the default image tag. It verifies the
 versioned Compose archive against the release `SHA256SUMS` before use.
 
 ## Docker installation
 
-Install and start Docker Engine with Compose v2 on Linux, or Docker Desktop with
-the WSL2 backend on Windows. Check `docker compose version` and `docker info`.
+Install and start Docker Engine with Compose v2 on Linux. For the optional
+Windows Docker profile (`--target docker`), use Docker Desktop with the WSL2
+backend. Check `docker compose version` and `docker info`.
 Docker Desktop on Windows and macOS requires a paid subscription for larger
 companies; Docker Engine on Linux does not. The Docker installation runs as
 your user and does not request elevation. The Windows executable reports
@@ -28,15 +30,78 @@ chmod +x agent-studio-setup
 ```
 
 On Windows PowerShell, download `agent-studio-setup.exe` and `SHA256SUMS` from
-the same release. Compare the SHA-256 value for the executable:
+the same release. Compare the SHA-256 value for the executable. An unsigned
+build may show a SmartScreen warning; inspect the publisher and checksum before
+choosing **More info > Run anyway**. Release signing remains optional when the
+maintainer configures the existing Windows certificate secret.
 
 ```powershell
 (Get-FileHash .\agent-studio-setup.exe -Algorithm SHA256).Hash
 .\agent-studio-setup.exe
 ```
 
-The default UI is [http://127.0.0.1:4011](http://127.0.0.1:4011). The stack
-includes one runner container. A one-shot bootstrap creates principal tokens
+### Windows native installation
+
+The Windows default uses no Docker. Setup checks the Windows version, Git for
+Windows, 20 GiB of free space, and loopback ports 4011, 5031 and 5071. It
+offers repair on a re-run and preserves the task database unless `uninstall
+--purge` is used. The verified win-x64 archive contains Task Server, Engine,
+the Studio backend, the Studio browser bundle and a local Runner. Boot-time
+Scheduled Tasks run without a login and launch their child processes hidden.
+
+Open [http://127.0.0.1:4011](http://127.0.0.1:4011) after setup. On a new
+guided installation, setup prints the owner bootstrap code once. An unattended
+run leaves it only in the protected file. Its copy under
+`%ProgramData%\AgentOrchestrator\owner-bootstrap.code` has an owner, SYSTEM and
+Administrators ACL; enter it on the first owner sign-up. The one-time code is
+armed by Task Server and cannot be replaced by re-running setup.
+
+The wizard detects Codex and Claude and offers an npm installation and login
+for the account that owns the Runner task. When a provider is selected, it
+asks for that Windows account's password through a hidden prompt so Task
+Scheduler can start the Runner at boot with the user's credential profile.
+The password is sent to Task Scheduler through setup stdin and is not written
+to the manifest. `providerCli: "skip"` leaves a visible login step before
+coding. GitHub access choices are Git Credential
+Manager, a protected fine-grained token file, or an SSH deploy key for a
+specified project. Setup reads the current user's existing Git Credential
+Manager entry without an interactive prompt and copies its secret into an
+ACL-restricted credential file for the boot-time Runner task. A supplied token
+is handled the same way. The manifest records only the choice. Deploy-key
+setup prints the public key and checks the project remote; add that key to the
+GitHub repository before retrying. Each SSH project remote receives its own
+key and a matching Git URL rewrite, so re-running setup for another project
+keeps the earlier project's key.
+
+For CI, supply the same decisions through an answer file:
+
+```json
+{
+  "target": "native",
+  "releaseDirectory": "C:\\release-assets",
+  "installDirectory": "C:\\ProgramData\\AgentStudio",
+  "providerCli": "skip",
+  "gitAccess": "skip"
+}
+```
+
+`gitAccess: "token"` also needs `gitTokenFile`, an existing ACL-restricted
+file; `gitAccess: "deploy-key"` needs `gitRemote` in GitHub SSH form. No
+token value belongs in the answer file. For unattended provider setup, add
+`runnerPasswordFile`, an existing ACL-restricted one-line file. Native setup writes the decisions to
+`installation.json`. `update`, `rollback` and `uninstall` reuse the recorded
+installation; `uninstall --purge` also removes data and credentials.
+
+For a native Windows install, `installation.json` has a `Decisions` object.
+Its `providerCli` and `gitAccess` values record the selected options;
+`gitRemote` records the repository URL or an empty string. After a deploy-key
+install, `gitProjects` is a JSON array of repository URLs whose keys are in
+the protected configuration directory. The object contains no passwords,
+tokens, private keys, or token-file paths. A repair or update preserves these
+choices unless the operator supplies new ones.
+
+For Docker, the default UI is [http://127.0.0.1:4011](http://127.0.0.1:4011).
+That stack includes one runner container. A one-shot bootstrap creates principal tokens
 in a persistent Docker volume with mode `0600`. The installer writes its
 versioned Compose bundles, `.env`, and state to
 `~/.local/share/agent-studio` on Linux or `%LOCALAPPDATA%\AgentStudio` on
@@ -267,8 +332,8 @@ coding, review and publication canary required by `accept`.
 `--target native` installs services instead of containers. It is the path for
 hosts without Docker, or where the Docker Desktop subscription does not fit.
 
-On Windows, run the executable from an elevated terminal (or choose
-**Run as administrator**). Only this path needs elevation:
+On Windows, double-click the executable or run it in a terminal. Setup requests
+elevation through UAC for the native service path:
 
 ```powershell
 .\agent-studio-setup.exe --target native
@@ -282,7 +347,9 @@ services as start-up scheduled tasks, using the primary-profile settings:
 | --- | --- | --- |
 | Task Server (mode Normal) | `AgentOrchestrator-TaskServer` | `http://127.0.0.1:5071/readyz` |
 | Orchestrator Engine | `AgentOrchestrator-Engine` | none |
-| Studio connector | `AgentOrchestrator-StudioConnector` | `http://127.0.0.1:5031/healthz` |
+| Studio browser edge | `AgentOrchestrator-StudioConnector` | `http://127.0.0.1:4011/healthz` |
+| Studio backend | `AgentOrchestrator-StudioBackend` | `http://127.0.0.1:5031/healthz` |
+| Local Runner | `AgentOrchestrator-Runner` | Task Server registration |
 
 Where the installer writes:
 - Binaries go to `C:\AgentOrchestrator\release-<version>`, with a `current`
@@ -292,17 +359,14 @@ Where the installer writes:
   as that account), SYSTEM, and Administrators.
 - Installer state and task data go to `C:\ProgramData\AgentStudio`.
 
-The installer waits for both endpoints before it reports success.
+The installer waits for Task Server and the browser edge before it reports success.
 
 `update`, `rollback`, and `uninstall` work the same way as for Docker. An update
 stops the tasks, activates the new release, and keeps configuration and data.
 Rollback re-activates the previous staged release. `uninstall` removes the tasks
 and binaries but keeps configuration and task data; `--purge` removes those too.
 
-The win-x64 release does not yet contain the Studio web UI host or a runner.
-The native Windows profile therefore provides the Task Server, Engine, and
-connector APIs. The browser UI with a runner on a single Windows machine
-requires the Docker path.
+The win-x64 release includes the Studio browser bundle and a local Runner.
 
 On Linux, `sudo ./agent-studio-setup --target native` runs the systemd
 single-machine profile. It installs the Task Server, Engine, an agent host, and

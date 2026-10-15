@@ -187,7 +187,7 @@ jobs:
           test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
-      - name: Create guided setup executable, three archives, and SHA-256 checksums
+      - name: Create guided setup executable, four archives, and SHA-256 checksums
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           scripts/release/package-release.sh \
@@ -270,7 +270,25 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.301'
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build Studio browser bundle
+        shell: pwsh
+        run: |
+          $npmVersion = (Get-Content frontend/package.json -Raw | ConvertFrom-Json).packageManager.Replace('npm@', '')
+          npm install --global "npm@$npmVersion"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned npm install failed.' }
+          npm --prefix frontend ci
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency install failed.' }
+          npm --prefix frontend run build
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
 
       - name: Publish win-x64 self-contained binaries
         env:
@@ -295,6 +313,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine win-x64 publish failed.' }
           dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
           if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
+          dotnet publish backend/OrchestratorApi.csproj @common --output artifacts/publish/studio-backend
+          if ($LASTEXITCODE -ne 0) { throw 'studio backend win-x64 publish failed.' }
+          dotnet publish runner/AgentRunner.csproj @common --output artifacts/publish/agent-host
+          if ($LASTEXITCODE -ne 0) { throw 'agent host win-x64 publish failed.' }
           dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
           if ($LASTEXITCODE -ne 0) { throw 'agent-studio-setup win-x64 publish failed.' }
 
@@ -355,6 +377,18 @@ jobs:
           Copy-Item artifacts/publish/task-server/task-server.exe $root
           Copy-Item artifacts/publish/orchestrator-engine/orchestrator-engine.exe $root
           Copy-Item artifacts/publish/studio-bff/agent-studio-bff.exe $root
+          Copy-Item artifacts/publish/studio-backend/OrchestratorApi.exe $root
+          Copy-Item artifacts/publish/agent-host/agent-host.exe $root
+          Copy-Item artifacts/publish/agent-host/agent-host.exe $root/provider-codex.exe
+          Copy-Item artifacts/publish/agent-host/agent-host.exe $root/provider-claude.exe
+          Copy-Item artifacts/publish/studio-backend/appsettings.json $root
+          if (Test-Path artifacts/publish/studio-backend/prompts) {
+            Copy-Item artifacts/publish/studio-backend/prompts $root/prompts -Recurse
+          }
+          Copy-Item agent-rules $root/agent-rules -Recurse
+          $browser = if (Test-Path frontend/dist/frontend/browser/index.html) { 'frontend/dist/frontend/browser' } else { 'frontend/dist/frontend' }
+          if (-not (Test-Path (Join-Path $browser 'index.html'))) { throw 'Studio browser bundle is missing.' }
+          Copy-Item $browser $root/browser -Recurse
           Copy-Item deploy/windows $root/deploy-windows -Recurse
           New-Item -ItemType Directory -Path "$root/config" -Force | Out-Null
           Copy-Item deploy/release/agent-orchestrator/config/*.template "$root/config/"
@@ -427,6 +461,20 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $version -notmatch '^agent-studio-setup ') { throw 'Windows setup version check failed.' }
           $helpText = & $setup --help
           if ($LASTEXITCODE -ne 0 -or ($helpText -join "`n") -notmatch 'rollback') { throw 'Windows setup help check failed.' }
+      - name: Test packaged provider bridge with a fake CLI
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem artifacts/release -Filter '*-win-x64.zip' | Select-Object -First 1
+          $expanded = Join-Path $env:RUNNER_TEMP 'studio-provider-bridge'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $expanded
+          $bridge = Get-ChildItem $expanded -Filter provider-codex.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $bridge) { throw 'Packaged Codex provider bridge is missing.' }
+          $fake = Join-Path $env:RUNNER_TEMP 'fake-codex.js'
+          Set-Content -LiteralPath $fake -Value 'process.stdout.write("fake-codex " + process.argv.slice(2).join(" "))' -Encoding ascii
+          $env:AGENT_STUDIO_NODE_EXE = (Get-Command node.exe).Source
+          $env:AGENT_STUDIO_CODEX_JS = $fake
+          $output = & $bridge '--version'
+          if ($LASTEXITCODE -ne 0 -or $output -ne 'fake-codex --version') { throw 'Provider bridge did not forward arguments to node.exe.' }
       # The hosted Windows runner has no Linux container engine, so it proves
       # the native path: the checksum-verified win-x64 package installed as
       # the D6 scheduled tasks, health, uninstall keeping data, and purge.
@@ -441,13 +489,29 @@ jobs:
           } | Set-Content -LiteralPath (Join-Path $release 'SHA256SUMS') -Encoding ascii
           $installDir = Join-Path $env:RUNNER_TEMP 'agent-studio-native'
           $data = Join-Path $installDir 'data'
-          $tasks = 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector'
+          $tasks = 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector', 'AgentOrchestrator-StudioBackend', 'AgentOrchestrator-Runner'
           function Invoke-Setup { & $setup @args; if ($LASTEXITCODE -ne 0) { throw "agent-studio-setup $args failed." } }
           function Assert-Healthy {
             $ready = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5071/readyz
             if ($ready.Content -notmatch '"status":"ready"' -or $ready.Content -notmatch '"mode":"Normal"') { throw "Task Server not ready: $($ready.Content)" }
             $live = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5031/healthz
-            if ($live.Content -notmatch '"status":"live"') { throw "Studio connector not live: $($live.Content)" }
+            if ($live.StatusCode -ne 200) { throw "Studio backend not live: $($live.Content)" }
+            $edge = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4011/healthz
+            if ($edge.Content -notmatch '"status":"live"') { throw "Studio edge not live: $($edge.Content)" }
+            $ui = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4011/
+            if ($ui.Content -notmatch '<html') { throw 'Studio browser bundle was not served.' }
+            $auth = Invoke-RestMethod http://127.0.0.1:4011/api/v1/studio/auth/status
+            if (-not $auth.bootstrapRequired -or -not $auth.bootstrapCodeRequired) { throw 'Owner bootstrap code is not armed.' }
+            $code = Join-Path $env:ProgramData 'AgentOrchestrator\owner-bootstrap.code'
+            if (-not (Test-Path $code) -or (Get-Content $code -Raw).Trim().Length -lt 32) { throw 'Owner bootstrap code file is missing.' }
+            $runnerToken = (Get-Content (Join-Path $env:ProgramData 'AgentOrchestrator\runner.token') -Raw).Trim()
+            $registered = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              $runners = Invoke-RestMethod -Headers @{ Authorization = "Bearer $runnerToken" } http://127.0.0.1:5071/api/v1/runners
+              if (($runners | ConvertTo-Json -Depth 8) -match 'local-coding') { $registered = $true; break }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $registered) { throw 'Local runner did not register within 60 seconds.' }
           }
           function Assert-Tasks([bool] $present) {
             foreach ($task in $tasks) {
@@ -456,7 +520,13 @@ jobs:
             }
           }
 
-          Invoke-Setup --unattended --target native --release-dir $release --install-dir $installDir
+          $answers = Join-Path $env:RUNNER_TEMP 'studio-answers.json'
+          @{ Target = 'native'; ReleaseDirectory = $release; InstallDirectory = $installDir; ProviderCli = 'skip'; GitAccess = 'skip' } |
+            ConvertTo-Json | Set-Content -LiteralPath $answers -Encoding utf8
+          Invoke-Setup --unattended --answer-file $answers
+          Assert-Tasks $true
+          Assert-Healthy
+          Invoke-Setup --unattended --answer-file $answers
           Assert-Tasks $true
           Assert-Healthy
 
@@ -465,8 +535,14 @@ jobs:
           if (-not (Test-Path -LiteralPath $data)) { throw 'Uninstall without --purge removed the task data.' }
           if (-not (Test-Path -LiteralPath "$env:ProgramData\AgentOrchestrator\server.env")) { throw 'Uninstall without --purge removed the configuration.' }
 
-          Invoke-Setup --unattended --target native --release-dir $release --install-dir $installDir
+          Invoke-Setup --unattended --answer-file $answers
           Assert-Healthy
+          $ownerCode = (Get-Content (Join-Path $env:ProgramData 'AgentOrchestrator\owner-bootstrap.code') -Raw).Trim()
+          $ownerPassword = 'ci-' + [guid]::NewGuid().ToString('N')
+          $ownerRequest = @{ username = 'ci-owner'; password = $ownerPassword; displayName = 'CI Owner'; bootstrapCode = $ownerCode } | ConvertTo-Json
+          $ownerSession = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:4011/api/v1/studio/auth/bootstrap `
+            -Headers @{ Origin = 'http://127.0.0.1:4011' } -ContentType 'application/json' -Body $ownerRequest
+          if (-not $ownerSession.status.authenticated) { throw 'Owner bootstrap did not create an authenticated session.' }
           Invoke-Setup uninstall --install-dir $installDir --purge
           Assert-Tasks $false
           if (Test-Path -LiteralPath $data) { throw 'Purge left the task data.' }

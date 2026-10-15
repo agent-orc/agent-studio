@@ -288,9 +288,11 @@ static async Task BootstrapPrincipalAsync(
         configuredCredential,
         runnerId,
         cancellationToken);
-    if (issued is not null)
+    if (issued is not null && configuredCredential is null)
         Console.WriteLine(
             $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");
+    else if (issued is not null)
+        Console.WriteLine($"Initial {kind} principal created with the configured credential file.");
 }
 
 await app.RunAsync();
