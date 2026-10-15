@@ -335,9 +335,7 @@ public sealed class BatchGatePilotService
                          _store.HasEject(item.Subject.Project, item.Subject.TaskKey)
                          && string.IsNullOrWhiteSpace(
                              BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId)).ToArray())
-            {
-                ScheduleFallback(item, ct, clearEject: true);
-            }
+                await HandOffEjectedAsync(item, fetchedBases, ct).ConfigureAwait(false);
             var waiting = _store.ListPending();
             foreach (var item in waiting)
             {
@@ -751,9 +749,37 @@ public sealed class BatchGatePilotService
             }
             finally { _leases.Release(lease); }
             foreach (var item in released)
-                if (!ejectedOnly || _store.HasEject(item.Subject.Project, item.Subject.TaskKey))
-                    ScheduleFallback(item, ct, clearEject: ejectedOnly);
+                if (!ejectedOnly) ScheduleFallback(item, ct);
+                else if (_store.HasEject(item.Subject.Project, item.Subject.TaskKey))
+                    await HandOffEjectedAsync(item, fetchedBases, ct).ConfigureAwait(false);
         }
+    }
+
+    // AGT-3143: an ejected member skips formation, so it also skips the
+    // AGT-3103 containment check there. Without this, a delivery already
+    // published under another SHA would run a per-task gate. A contained
+    // member settles without a gate; it is awaited so the rest of the tick
+    // never reads its card in the middle of the lane move.
+    private async Task HandOffEjectedAsync(BatchGatePendingRecord pending,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct)
+    {
+        var containedInSha = PublishedContainment(pending, fetchedBases, ct);
+        var handoff = ScheduleFallback(pending, ct, clearEject: true,
+            containedInSha: containedInSha);
+        if (containedInSha is not null) await handoff.ConfigureAwait(false);
+    }
+
+    private string? PublishedContainment(BatchGatePendingRecord pending,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct)
+    {
+        var subject = Refresh(pending).Subject;
+        var baseSha = FetchBaseOnce(fetchedBases, pending.RepositoryPath,
+            subject.IntegrationBranch, ct);
+        return baseSha is not null && BatchGatePolicy.LeavesAsIntegrated(subject,
+                resultSha => _git.IsDeliveryPublished(pending.RepositoryPath, resultSha, baseSha))
+            ? baseSha : null;
     }
 
     private bool HeldOnRedBase(BatchGatePendingRecord pending)
@@ -1800,11 +1826,11 @@ public sealed class BatchGatePilotService
     // One per-task gate per review generation in this process. A retried
     // settlement request, or a tick that meets a running fallback, joins it
     // instead of starting a second gate on the same immutable subject.
-    private void ScheduleFallback(BatchGatePendingRecord pending,
+    private Task ScheduleFallback(BatchGatePendingRecord pending,
         CancellationToken ct, bool clearEject = false, string? containedInSha = null)
     {
         var flight = RunPerTaskFallbackAsync(pending, ct, containedInSha: containedInSha);
-        _ = flight.ContinueWith(done =>
+        return flight.ContinueWith(done =>
         {
             if (done.IsCompletedSuccessfully && clearEject)
                 _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);

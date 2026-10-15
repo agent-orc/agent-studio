@@ -795,6 +795,63 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(containedIn, RemoteTip());
     }
 
+    [Fact]
+    public async Task Ejected_member_published_under_another_sha_leaves_as_integrated_without_a_gate()
+    {
+        // AGT-3143: the eject handoff skips formation, so it must apply the
+        // containment check itself. A patch-equal copy on the branch counts.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-EJECT-CONTAINED", "docs/eject-contained.md");
+        var containedIn = PublishPatchEqualCopy(member.ResultSha);
+        _gate.Batch = _ => throw new InvalidOperationException("Ejected member reached the batch suite.");
+        _gate.Fallback = _ => throw new InvalidOperationException("Contained member ran a per-task gate.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        Assert.True(pilot.RequestEject(ProjectName, member.Key));
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
+        Assert.False(store.HasEject(ProjectName, member.Key));
+        var ownership = HumanReviewOwnership(member.Key);
+        Assert.Equal(containedIn, ownership?.ContainedInSha);
+        Assert.True(ownership!.FallbackIntegrated);
+        Assert.Equal(Git(_origin, "rev-parse", containedIn + "^{tree}"),
+            Git(_origin, "rev-parse", "refs/heads/develop^{tree}"));
+    }
+
+    [Fact]
+    public async Task Member_ejected_from_a_red_base_hold_and_already_published_runs_no_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var ejected = SeedMember(factory, "DOC-HELD-CONTAINED", "docs/held-contained.md");
+        SeedMember(factory, "DOC-HELD-RETAINED", "docs/held-retained.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => request.ExpectedSha == ejected.ResultSha
+            ? throw new InvalidOperationException("Contained member ran a per-task gate.")
+            : Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+        var containedIn = PublishPatchEqualCopy(ejected.ResultSha);
+
+        Assert.True(pilot.RequestEject(ProjectName, ejected.Key));
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(containedIn, HumanReviewOwnership(ejected.Key)?.ContainedInSha);
+        Assert.DoesNotContain(store.ListPending(), item => item.Subject.TaskKey == ejected.Key);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -2536,6 +2593,16 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             .Select(BatchGateOwnershipStore.Read)
             .SingleOrDefault();
 
+    // A patch-equal member is not an ancestor of the branch, so the Auto
+    // Review delivery resume can still write into its old lane folder while
+    // the release moves it. That race predates AGT-3143; read the released lane.
+    private BatchGateOwnership? HumanReviewOwnership(string key)
+    {
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, key);
+        Assert.True(Directory.Exists(folder), $"{key} did not reach {TaskStates.HumanReview}. Errors: {_errors}");
+        return BatchGateOwnershipStore.Read(folder);
+    }
+
     private void AssertLane(string key, string expected)
     {
         var lane = Assert.Single(TaskStates.All, state => Directory.Exists(Path.Combine(_watchPath, state, key)));
@@ -2543,6 +2610,20 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     private string RemoteTip() => Git(_origin, "rev-parse", "refs/heads/develop");
+
+    // Publishes the delivery's patch on top of an unrelated commit, so the
+    // branch carries the change under a SHA that is not the result SHA.
+    private string PublishPatchEqualCopy(string resultSha)
+    {
+        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
+        Git(_repo, "commit", "-q", "--allow-empty", "-m", "unrelated integration commit");
+        Git(_repo, "cherry-pick", "--allow-empty", resultSha);
+        Git(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        var published = RemoteTip();
+        Assert.NotEqual(resultSha, published);
+        Assert.NotEqual(resultSha, Git(_repo, "merge-base", resultSha, published));
+        return published;
+    }
 
     private static BatchGateState AssertPhase(BatchGateStore store, string batchId, BatchPhase expected)
     {
