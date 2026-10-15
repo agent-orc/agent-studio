@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -121,11 +122,11 @@ public sealed class BoardReadSignatureSource(
             Part("gitStateAt", freshness.GitStateAt?.UtcDateTime.Ticks ?? -1),
             Part("gitStale", freshness.Stale ? 1 : 0),
             Part("settings", projectSettings.Version),
-            "reviewQueue=" + BoardReadValidator.FormatETag(string.Join(';', attemptAuthority.ReadReviewQueue()
+            "reviewQueue=" + BoardReadValidator.FormatETag(string.Join(';', TaskSwitchTrace.Run("compose.review-queue", () => attemptAuthority.ReadReviewQueue())
                 .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(entry => $"{Uri.EscapeDataString(entry.Key)}:{entry.Value.Priority}:{entry.Value.Position}"))),
             Part("decisions", DecisionJournalFold(jobs)),
-            Part("runtime", RuntimeFold(jobs, router, runners)),
+            Part("runtime", TaskSwitchTrace.Run("compose.runtime", () => RuntimeFold(jobs, router, runners))),
             "visible=" + VisibleSetDigest(jobs),
             Part("day", DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime).DayNumber),
             Part("tick", anyProgress ? ProgressTick() : -1),
@@ -200,10 +201,12 @@ public sealed class BoardReadSignatureSource(
     {
         var hash = new HashCode();
         BoardAuthoritySnapshot? authority = null;
+        long leaseTicks = 0;
 
         // Runner queues decide the "position n in queue" chip on Ready cards and
         // the runner mode pill, and they move without any file changing.
-        foreach (var (name, status) in runners.GetStatus().Projects.OrderBy(p => p.Key, StringComparer.Ordinal))
+        var runnerStatus = TaskSwitchTrace.Run("compose.runner-status", runners.GetStatus);
+        foreach (var (name, status) in runnerStatus.Projects.OrderBy(p => p.Key, StringComparer.Ordinal))
         {
             hash.Add(name);
             hash.Add(status.Mode);
@@ -212,6 +215,7 @@ public sealed class BoardReadSignatureSource(
             foreach (var queued in status.QueuedJobIds) hash.Add(queued);
         }
 
+        using var cardTrace = TaskSwitchTrace.Span("compose.cards");
         foreach (var job in jobs)
         {
             hash.Add(job.TaskKey);
@@ -262,9 +266,13 @@ public sealed class BoardReadSignatureSource(
             // own, and the freshness verdict is derived rather than stored.
             // Only the card's share of it is folded; the client last-seen stamp
             // and trust sentence are detail facts that move on every poll.
-            hash.Add(BoardCardSummary.ExecutionLocationOnCard(
-                job.State, runners.ResolveExecutionLocation(job, execution, activity)));
+            var leaseStarted = Stopwatch.GetTimestamp();
+            var location = runners.ResolveExecutionLocation(job, execution, activity);
+            leaseTicks += Stopwatch.GetTimestamp() - leaseStarted;
+            hash.Add(BoardCardSummary.ExecutionLocationOnCard(job.State, location));
         }
+
+        TaskSwitchTrace.RecordMeasured("compose.lease", leaseTicks);
 
         return hash.ToHashCode();
     }

@@ -27,6 +27,13 @@ internal readonly record struct BoardReviewActivity(
     ReviewTerminalOutcome? Outcome = null,
     DateTime? PendingInfrastructureRetryAt = null);
 
+internal readonly record struct BoardRunActivity(
+    string TaskKey,
+    string AttemptId,
+    long AuthorityEpoch,
+    AttemptLifecycleState State,
+    AttemptLeaseDto Lease);
+
 /// <summary>
 /// The immutable board-side view of the attempt authority, published after
 /// every committed write. <see cref="KnownTaskKeys"/> holds every task key with
@@ -36,11 +43,13 @@ internal readonly record struct BoardReviewActivity(
 /// </summary>
 internal sealed record BoardAuthoritySnapshot(
     ImmutableDictionary<string, BoardReviewActivity> Reviews,
-    ImmutableHashSet<string> KnownTaskKeys)
+    ImmutableHashSet<string> KnownTaskKeys,
+    ImmutableDictionary<string, BoardRunActivity>? Runs = null)
 {
     public static readonly BoardAuthoritySnapshot Empty = new(
         ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase),
-        ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase));
+        ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase),
+        ImmutableDictionary.Create<string, BoardRunActivity>(StringComparer.OrdinalIgnoreCase));
 }
 
 internal sealed record ReviewLeaseIsolation(
@@ -2205,9 +2214,14 @@ public sealed class AttemptAuthorityService
     private BoardAuthoritySnapshot BuildBoardSnapshotLocked()
     {
         var known = ImmutableHashSet.CreateBuilder<string>(StringComparer.OrdinalIgnoreCase);
+        var runs = ImmutableDictionary.CreateBuilder<string, BoardRunActivity>(StringComparer.OrdinalIgnoreCase);
         foreach (var run in _state.RunAttempts) known.Add(run.TaskKey);
+        foreach (var run in _state.RunAttempts.Where(IsCurrentRun))
+            if (run.Lease is { } lease)
+                runs[run.TaskKey] = new BoardRunActivity(
+                    run.TaskKey, run.AttemptId, run.AuthorityEpoch, run.State, ToDto(lease)!);
         foreach (var review in _state.ReviewAttempts) known.Add(review.TaskKey);
-        return new BoardAuthoritySnapshot(BuildBoardReviewActivityLocked(), known.ToImmutable());
+        return new BoardAuthoritySnapshot(BuildBoardReviewActivityLocked(), known.ToImmutable(), runs.ToImmutable());
     }
 
     private ImmutableDictionary<string, BoardReviewActivity> BuildBoardReviewActivityLocked()

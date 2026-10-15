@@ -349,7 +349,7 @@ public class TaskRunnerService : BackgroundService
     private static RunLeaseInspection InspectRunLease(RunLeaseService? leases, string authorityKey)
         => leases is null || string.IsNullOrWhiteSpace(authorityKey)
             ? new RunLeaseInspection("none", null)
-            : leases.Inspect(authorityKey);
+            : leases.InspectBoard(authorityKey);
 
     /// <summary>
     /// Pure projection of a peeked run-lease record + this backend's own runner id

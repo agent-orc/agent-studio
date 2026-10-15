@@ -48,7 +48,11 @@ public sealed class TaskOperationTimingFilterTests
             {
                 using (TaskSwitchTrace.Span("snapshot"))
                 using (TaskSwitchTrace.Span("index.lookup")) { }
-                using (TaskSwitchTrace.Span("compose")) { }
+                using (TaskSwitchTrace.Span("compose"))
+                {
+                    using (TaskSwitchTrace.Span("compose.cards"))
+                        TaskSwitchTrace.RecordMeasured("compose.lease", System.Diagnostics.Stopwatch.Frequency / 1000);
+                }
                 return ValueTask.FromResult<object?>(Results.StatusCode(StatusCodes.Status304NotModified));
             });
         await Assert.IsAssignableFrom<IResult>(result).ExecuteAsync(http);
@@ -57,6 +61,8 @@ public sealed class TaskOperationTimingFilterTests
         Assert.Contains("\"snapshot\"", trace, StringComparison.Ordinal);
         Assert.Contains("\"index.lookup\"", trace, StringComparison.Ordinal);
         Assert.Contains("\"compose\"", trace, StringComparison.Ordinal);
+        Assert.Contains("\"compose.cards\"", trace, StringComparison.Ordinal);
+        Assert.Contains("\"compose.lease\"", trace, StringComparison.Ordinal);
         Assert.Contains("\"status\":304", trace, StringComparison.Ordinal);
     }
 

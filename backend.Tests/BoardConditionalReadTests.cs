@@ -580,10 +580,13 @@ public sealed class BoardConditionalReadTests : IDisposable
     public async Task DirtyIndex_BoardReadsServeThePublishedSnapshot_WithoutRunningOrAwaitingTheRefresh()
     {
         Seed("t-1", "First task", TaskStates.Ready);
+        Seed("t-continue", "Completed task", TaskStates.Completed);
         using var release = new ManualResetEventSlim(true);
         var requestFlowScans = 0;
+        var totalScans = 0;
         using var factory = BuildFactory(scan => () =>
         {
+            Interlocked.Increment(ref totalScans);
             if (RequestFlow.Value is not null) Interlocked.Increment(ref requestFlowScans);
             release.Wait(TimeSpan.FromSeconds(60));
             return scan();
@@ -594,23 +597,48 @@ public sealed class BoardConditionalReadTests : IDisposable
         using var client = CreateClient(factory);
         await WaitForBoardQuiescenceAsync(factory);
         await WaitForSettledValidatorAsync(client, Grouped);
+        var continued = await client.PostAsJsonAsync(
+            $"/api/tasks/t-continue/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { prompt = "Continue this task after review." });
+        Assert.Equal(HttpStatusCode.Accepted, continued.StatusCode);
+        await WaitForBoardQuiescenceAsync(factory);
+        await WaitForSettledValidatorAsync(client, Grouped);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var bodies = factory.Services.GetRequiredService<BoardReadConcurrencyGate>();
+        var scansBeforeBurst = Volatile.Read(ref totalScans);
 
         release.Reset();
         try
         {
-            Seed("t-2", "Second task", TaskStates.Ready);
-            scanner.InvalidateCache();
+            // Eight creations, seven continuation-style sidecar changes, and
+            // seven real run claims land while the index walk is held open.
+            for (var i = 2; i <= 9; i++)
+            {
+                Seed($"t-{i}", $"Created task {i}", TaskStates.Ready);
+                scanner.InvalidateCache();
+            }
+            for (var i = 0; i < 7; i++)
+            {
+                File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready, "t-1", "status.md"), $"Follow-up {i}");
+                scanner.InvalidateCache();
+            }
+            var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+            for (var i = 0; i < 7; i++)
+                Assert.Equal(AttemptWriteStatus.Accepted, authority.AcquireRun(
+                    $"t-{i + 2}", ProjectName, null, $"runner-{i}", "host", 120, $"claim-{i}").Status);
             await WaitForBoardQuiescenceAsync(factory);
 
             RequestFlow.Value = "board-request";
             using var markerReads = AgentStudio.Runner.QuotaWaitMarker.Reads.Observe();
             using var indexBuilds = TaskReferenceIndex.Builds.Observe();
 
+            var readTimer = System.Diagnostics.Stopwatch.StartNew();
             var reads = Task.WhenAll(Enumerable.Range(0, 10).Select(_ => GetAsync(client, Grouped)));
             Assert.Same(reads, await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(30))));
             var responses = await reads;
+            readTimer.Stop();
+            _output.WriteLine($"10 grouped board reads during burst: {readTimer.Elapsed.TotalMilliseconds:0.###} ms total");
+            Assert.True(readTimer.Elapsed < TimeSpan.FromSeconds(10), "Grouped reads waited for a write or index scan.");
             Assert.All(responses, response =>
             {
                 Assert.Equal(HttpStatusCode.OK, response.Status);
@@ -640,6 +668,8 @@ public sealed class BoardConditionalReadTests : IDisposable
             Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(60), "the background refresh never published");
             await Task.Delay(25);
         }
+        _output.WriteLine($"Full scans for burst: {Volatile.Read(ref totalScans) - scansBeforeBurst}");
+        Assert.InRange(Volatile.Read(ref totalScans) - scansBeforeBurst, 1, 3);
     }
 
     /// <summary>
@@ -682,12 +712,11 @@ public sealed class BoardConditionalReadTests : IDisposable
     }
 
     /// <summary>
-    /// Read-your-writes per client: the reorder request is attributed to its
-    /// client, so that client's very next board read waits for the reordered
-    /// snapshot instead of answering with the old order.
+    /// A reorder is published in the background. The board stays responsive
+    /// while the index refresh runs and eventually returns the new order.
     /// </summary>
     [Fact]
-    public async Task WritersOwnReorder_IsVisibleOnItsVeryNextGroupedRead()
+    public async Task WritersOwnReorder_EventuallyAppearsWithoutBlockingGroupedReads()
     {
         Seed("t-a", "Task A", TaskStates.Ready);
         Seed("t-b", "Task B", TaskStates.Ready);
@@ -703,12 +732,20 @@ public sealed class BoardConditionalReadTests : IDisposable
             });
             Assert.Equal(HttpStatusCode.OK, reorder.StatusCode);
 
-            var board = await GetAsync(client, Grouped);
-            using var document = JsonDocument.Parse(board.Body);
-            var ready = document.RootElement.GetProperty("ready").EnumerateArray()
-                .Select(card => card.GetProperty("id").GetString())
-                .ToArray();
-            Assert.Equal(order, ready);
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                var read = System.Diagnostics.Stopwatch.StartNew();
+                var board = await GetAsync(client, Grouped);
+                Assert.True(read.Elapsed < TimeSpan.FromSeconds(2), "Board read waited for the reorder refresh.");
+                using var document = JsonDocument.Parse(board.Body);
+                var ready = document.RootElement.GetProperty("ready").EnumerateArray()
+                    .Select(card => card.GetProperty("id").GetString())
+                    .ToArray();
+                if (order.SequenceEqual(ready)) break;
+                Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(10), "The reordered board was not published.");
+                await Task.Delay(25);
+            }
         }
     }
 
