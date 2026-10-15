@@ -223,6 +223,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly TaskMutationService? _taskMutations;
     private readonly DecisionCardRequests? _decisionRequests;
     private readonly MonolithOrchestrationStore? _orchestration;
+    private readonly OrchestrationEngineReadiness? _engine;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -279,8 +280,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TaskIntegrationStatusService? integrationStatus = null,
         TaskMutationService? taskMutations = null,
         DecisionCardRequests? decisionRequests = null,
-        MonolithOrchestrationStore? orchestration = null)
+        MonolithOrchestrationStore? orchestration = null,
+        OrchestrationEngineReadiness? engine = null)
     {
+        _engine = engine;
         _scanner = scanner;
         _taskAccess = taskAccess;
         _chatLog = chatLog;
@@ -445,6 +448,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
+        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(ReviewDecisionOrchestrator))) return;
         await _tickGate.WaitAsync(ct);
         try
         {
@@ -708,6 +713,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         if (!_configuration.GetValue("ReviewDecisionOrchestrator:Enabled", false))
             return PostProcessingCardResult.Blocked("review-decision-orchestrator-disabled");
+        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(ReviewDecisionOrchestrator)))
+            return PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingOrchestrationEngine);
 
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
         var model = _configuration.GetValue(

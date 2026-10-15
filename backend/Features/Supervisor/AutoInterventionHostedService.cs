@@ -23,6 +23,7 @@ public sealed class AutoInterventionHostedService : BackgroundService
     private readonly SupervisorAdvisoryStore _advisoryStore;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoInterventionHostedService> _logger;
+    private readonly OrchestrationEngineReadiness? _engine;
 
     private readonly Dictionary<string, Queue<DateTime>> _ratePerProject = new();
     private readonly Dictionary<string, long> _projectCursor = new(StringComparer.OrdinalIgnoreCase);
@@ -33,8 +34,10 @@ public sealed class AutoInterventionHostedService : BackgroundService
         ProjectObservationService observe,
         SupervisorAdvisoryStore advisoryStore,
         IConfiguration configuration,
-        ILogger<AutoInterventionHostedService> logger)
+        ILogger<AutoInterventionHostedService> logger,
+        OrchestrationEngineReadiness? engine = null)
     {
+        _engine = engine;
         _taskRunner = taskRunner;
         _interventions = interventions;
         _observe = observe;
@@ -71,6 +74,8 @@ public sealed class AutoInterventionHostedService : BackgroundService
 
     internal async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
+        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(AutoInterventionHostedService))) return;
         var status = _taskRunner.GetStatus();
         if (status?.Projects == null) return;
 

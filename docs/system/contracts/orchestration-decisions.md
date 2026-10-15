@@ -66,6 +66,12 @@ again. One active occurrence exists per card and decider; a periodic decider
 keys each period bucket, an event-triggered one keys its subject. The inventory
 of every hosted service and its owner is
 [monolith-hosted-services.md](../architecture/monolith-hosted-services.md).
+D14 A leaves no monolith fallback, so every automatic decision waits for engine
+readiness: `OrchestrationEngineReadiness` treats the engine as live while an
+authenticated engine request reached `/api/v1/orchestration` within the
+contact window, each residual monolith decider (`decide, held` in the
+inventory) skips its pass otherwise, and `GET /healthz/orchestration-engine`
+reports `ready` or `engine-not-live`.
 
 ## Inputs and outputs
 
@@ -153,12 +159,14 @@ policies to the owned-policy inventory and put their facts and rules in this
 library. Broader background-service movement remains I18.
 
 `MonolithDecisionBoundaryTests` (AGT-3060, `Category=Guard`) pins the
-production decision authority in `Program.cs`, forbids decision-library calls in
-the moved deciders, and freezes every remaining monolith call into a library
-policy or the test-host `MonolithTransitionAdapter`, plus every host-defined
-policy, rules or breaker class in a workflow feature folder, in
-`backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`. That
-baseline only shrinks; a reintroduced decision in `backend/` fails it.
+production decision authority and the engine readiness in `Program.cs`, forbids
+decision-library calls in the moved deciders, requires every registered hosted
+service in the inventory and every residual `decide` row to be moved or held
+behind `OrchestrationEngineReadiness.Allows`, and freezes every remaining
+monolith call into a library policy or the test-host `MonolithTransitionAdapter`,
+plus every host-defined policy, rules or breaker class in a workflow feature
+folder, in `backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`.
+That baseline only shrinks; a reintroduced decision in `backend/` fails it.
 
 Run the guard with:
 

@@ -2190,10 +2190,12 @@ public sealed class BatchGatePilotHostedService : BackgroundService
 {
     private readonly BatchGatePilotService _pilot;
     private readonly ILogger<BatchGatePilotHostedService> _logger;
+    private readonly OrchestrationEngineReadiness? _engine;
 
     public BatchGatePilotHostedService(BatchGatePilotService pilot,
-        ILogger<BatchGatePilotHostedService> logger)
+        ILogger<BatchGatePilotHostedService> logger, OrchestrationEngineReadiness? engine = null)
     {
+        _engine = engine;
         _pilot = pilot;
         _logger = logger;
     }
@@ -2203,7 +2205,12 @@ public sealed class BatchGatePilotHostedService : BackgroundService
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await _pilot.TickAsync(stoppingToken).ConfigureAwait(false); }
+            // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+            try
+            {
+                if (OrchestrationEngineReadiness.Allows(_engine, nameof(BatchGatePilotHostedService)))
+                    await _pilot.TickAsync(stoppingToken).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex) { _logger.LogError(ex, "Batch gate pilot tick failed."); }
             if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) break;
