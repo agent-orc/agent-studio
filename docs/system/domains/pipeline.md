@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-09-29
+Version: 2026-10-14
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -45,6 +45,16 @@ this shutdown reason. Exhaustion follows the existing infrastructure parking
 path. Explicit operator cancellation keeps the failed-gate parking behavior.
 Each cancelled run adds one `gate-cancelled` timeline receipt naming
 `superseded`, `shutdown`, or `operator`.
+
+## Gate economics and integration lane
+
+The Ops gate-economics view counts a per-card gated merge only when the
+delivery has both a final green pre-develop gate receipt and a matching
+`published` integration-lane event for its tested SHA. A green gate whose
+publication fence or push fails remains a gate run, but contributes no merge
+minutes or reuse rate. Published batch members use the batch publication
+record. Batch gate waiting and acquisition callbacks emit lane events for
+each gated member, including the holding project when one is known.
 
 ## Exact-SHA gate verdict cache
 
@@ -839,13 +849,15 @@ comparison before Quality Studio's verdict contract can decide a review.
   separate `POST /api/projects/{project}/checkout/sync` action. Local task
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
-  synchronization drops only lane
-  merges whose delivery is already on origin by ancestry or patch equality.
+  synchronization drops only lane merges whose delivery is already on origin
+  by ancestry or patch equality.
   It restarts the lane at origin when every lane merge is published; otherwise
   it refuses and names the unpublished merges. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
-  checks the card's delivery there. A contained delivery stays Completed and
-  a lane-scoped operator feed warning replaces the per-card fallback.
+  checks the card's delivery there. It resolves that delivery from the review
+  subject, card attribution, or local task branch, including local deliveries
+  with no review subject. A contained delivery stays Completed and a lane-scoped
+  operator feed warning replaces the per-card fallback.
   Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See

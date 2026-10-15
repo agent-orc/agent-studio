@@ -1714,6 +1714,50 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task DivergedLane_SubjectlessLocalDeliveryPublishedToOrigin_StaysCompleted()
+    {
+        var deliverySha = PublishLocalDelivery("local-published.txt", "local delivery\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, writeReviewSubject: false);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Null(ReviewSubjectStore.Read(reviewed.FolderPath));
+        var delivery = DeliveryRefResolver.Resolve(Slug, reviewed.FolderPath);
+        Assert.Equal(DeliveryRefSource.LocalTaskFallback, delivery.Source);
+        Assert.Null(delivery.ExpectedResultSha);
+        File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+
+        RunGit(_repo, "checkout", "-q", "-b", "unpublished", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "unpublished.txt"), "another delivery\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "pending delivery");
+        RunGit(_repo, "checkout", "-q", "-b", "lane-build", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "pending merge", "unpublished");
+        var laneSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), laneSha);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "lane-build");
+
+        RunGit(_repo, "checkout", "-q", "-b", "operator-candidate", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "published local delivery", deliverySha);
+        RunGit(_repo, "push", "-q", "origin", "operator-candidate:develop");
+        RunGit(_repo, "checkout", "-q", "main");
+
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        Assert.Equal(PublishedDeliveryContainment.Contained,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!, deps.Merge, deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(AcceptedIntegrationFailureCodes.BranchSyncFailed, result.FailureCode);
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Null(ReviewSubjectStore.Read(completed.FolderPath));
+    }
+
+    [Fact]
     public async Task Accept_WithDivergedLocalIntegrationBranch_DoesNotSynchronizeOrIntegrate()
     {
         var deliverySha = PublishDelivery("diverged-delivery.txt", "delivery\n");

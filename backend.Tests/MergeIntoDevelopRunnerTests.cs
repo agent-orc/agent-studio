@@ -1156,7 +1156,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
             batchReservations: reservations);
 
         var result = await runner.PushIntegrationBranchAsync("Fixture", "32", jobFolder, repo,
-            "develop", approvedSha: approvedSha);
+            "develop", approvedSha: approvedSha, deliverySequence: 32);
 
         Assert.True(result.Success);
         Assert.Equal("no-remote", result.Status);
@@ -1164,7 +1164,8 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Skipped, step!.Status);
         Assert.Equal("no-remote", step.Verdict);
-        Assert.Null(reservations.GetWait("Fixture"));
+        Assert.NotNull(reservations.GetWait("Fixture"));
+        Assert.DoesNotContain(IntegrationLaneEvents.Read(jobFolder), e => e.Kind == "published");
     }
 
     [Fact]

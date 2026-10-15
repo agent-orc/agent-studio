@@ -14,6 +14,8 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -21,6 +23,7 @@ namespace AgentStudio.Tests;
 using RClient = Runner::AgentRunner.TaskServerClient;
 using RAcquire = Runner::AgentRunner.RunLeaseAcquireRequest;
 using RRemoteComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
+using RTaskServerException = Runner::AgentRunner.TaskServerException;
 
 public sealed class MonolithOrchestrationEndpointTests : IDisposable
 {
@@ -96,10 +99,11 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
     public async Task Engine_switch_holds_coding_and_review_reports_until_each_decision_is_applied(
-        bool acceptReview)
+        bool acceptReview, bool rejectSettlement)
     {
         const string project = "agent-runner-01";
         const string card = "AGT-ENGINE-HANDOFF";
@@ -222,11 +226,31 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                 "Dead assertion in backend.Tests/FooTests.cs.",
                 "backend.Tests/FooTests.cs", "Remove the dead assertion.")],
             reviewLease.AuthorityEpoch);
+        if (rejectSettlement)
+        {
+            var rejected = report with
+            {
+                IdempotencyKey = "engine-review-rejected",
+                Workspace = report.Workspace with { ActualHead = new string('f', 40) },
+            };
+            await Assert.ThrowsAsync<RTaskServerException>(() => review.ReportReviewAsync(
+                reviewClaim.Attempt!.AttemptId, rejected, CancellationToken.None));
+            var cancelled = Assert.Single(store.List(project, "cancelled"));
+            Assert.NotEqual(codingRun.RunId, cancelled.RunId);
+            Assert.Null(EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.AutoReview, card)));
+            Assert.Equal("empty", (await fakeEngine.Claim()).Status);
+            return;
+        }
         var reported = await review.ReportReviewAsync(reviewClaim.Attempt!.AttemptId,
             report, CancellationToken.None);
         Assert.Equal(TaskStates.AutoReview, reported.TaskState);
         var pending = Assert.Single(store.List(project, "pending"));
         Assert.NotEqual(codingRun.RunId, pending.RunId);
+        EngineDecisionWaitMarker.Clear(Path.Combine(projectPath, TaskStates.AutoReview, card), pending.RunId);
+        factory.Services.GetServices<IHostedService>()
+            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverOnce();
+        Assert.Equal(pending.RunId, EngineDecisionWaitMarker.Read(
+            Path.Combine(projectPath, TaskStates.AutoReview, card)));
         var duplicate = await review.ReportReviewAsync(reviewClaim.Attempt.AttemptId,
             report, CancellationToken.None);
         Assert.Equal(reported.ReportId, duplicate.ReportId);
@@ -260,6 +284,63 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                 factory.Services.GetRequiredService<TimelineLog>().ReadAll(destination), card, 4);
             Assert.Equal(1, budget.Used);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Recovery_releases_unaccepted_review_preparation_without_waiting_marker(bool rejected)
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-UNACCEPTED-REPORT";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        var cardFolder = Path.Combine(projectPath, TaskStates.AutoReview, card);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Unaccepted report", state = TaskStates.AutoReview,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Review this card.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Orchestration:Transitions:ReviewReport"] = "Engine",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var prepared = store.Create(project, card, OrchestrationStage.ReviewDecision,
+            "{}", "review-report:missing_attempt:report_key", TaskStates.AutoReview,
+            "missing_attempt", 3, 4, claimable: false);
+        EngineDecisionWaitMarker.Write(cardFolder, prepared.RunId);
+        if (rejected)
+            store.CancelUnactivated(prepared.RunId, "review-settlement-rejected");
+        clock.Advance(TimeSpan.FromSeconds(31));
+
+        factory.Services.GetServices<IHostedService>()
+            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverOnce();
+
+        Assert.Equal("cancelled", store.Get(prepared.RunId)!.Status);
+        Assert.Null(EngineDecisionWaitMarker.Read(cardFolder));
+        Assert.Empty(store.WaitingOccurrences());
+        Assert.False(factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(card, projectPath)!.WaitingForEngineDecision);
     }
 
     public void Dispose()
