@@ -60,6 +60,7 @@ public sealed class ReviewAttemptTaskLifecycleService
                 "lane-transition",
                 targetState,
                 outcome.NewFolderPath);
+            _authority.CompactTerminalTasks(taskIndex.Keys);
             return outcome;
         }
     }
@@ -74,7 +75,11 @@ public sealed class ReviewAttemptTaskLifecycleService
         lock (_gate)
         {
             var tasks = BuildTaskIndex(_scanner.ScanAllJobsWithArchive());
-            return SupersedeUnclaimableLocked(tasks, source).Count;
+            var count = SupersedeUnclaimableLocked(tasks, source).Count;
+            _authority.CompactTerminalTasks(tasks
+                .Where(item => IsTerminalTaskState(item.Value.State))
+                .Select(item => item.Key));
+            return count;
         }
     }
 

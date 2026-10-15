@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Diagnostics;
 
 using Xunit;
 
@@ -10,6 +11,177 @@ namespace AgentStudio.Tests;
 public sealed class AttemptAuthorityServiceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "attempt-authority-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Subject_migration_and_sixty_renewals_stay_within_disk_and_board_budgets()
+    {
+        var now = new DateTime(2026, 10, 15, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var evidence = Enumerable.Range(0, 80).Select(index => $"evidence-{index:D2}-" + new string('x', 960)).ToArray();
+        var subjects = Enumerable.Range(0, 200).ToDictionary(
+            index => $"AGT-{index:D4}",
+            index => new
+            {
+                subjectId = $"subject-{index:D4}", repositoryId = "PROJ-002",
+                expectedResultSha = $"result-{index:D4}", sourceRunAttemptId = $"run-{index:D4}",
+                taskRequirementsHash = "requirements", reviewPolicyHash = "policy",
+                evidenceDigestInputs = evidence, createdAt = now,
+            });
+        var runs = Enumerable.Range(0, 200).Select(index => new
+        {
+            attemptId = $"run-{index:D4}", taskKey = $"AGT-{index:D4}", repositoryId = "PROJ-002",
+            state = AttemptLifecycleState.Completed, lastFence = 1, authorityEpoch = 1,
+            createdAt = now, terminalAt = now,
+            idempotencyKeys = Enumerable.Range(0, 80).Select(key => $"write:{index}-{key}").ToArray(),
+        }).ToArray();
+        var reviews = Enumerable.Range(0, 200).Select(index => new
+        {
+            attemptId = $"review-{index:D4}", taskKey = $"AGT-{index:D4}", repositoryId = "PROJ-002",
+            sourceRunAttemptId = $"run-{index:D4}", subject = subjects[$"AGT-{index:D4}"],
+            state = AttemptLifecycleState.Completed, lastFence = 2, authorityEpoch = 1,
+            createdAt = now, terminalAt = now,
+            idempotencyKeys = Enumerable.Range(0, 80).Select(key => $"renew:{index}-{key}").ToArray(),
+        }).ToArray();
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 6, authorityEpoch = 1, runAttempts = runs, reviewAttempts = reviews,
+            currentSubjectByTask = subjects,
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        var before = new FileInfo(path).Length;
+
+        var service = NewService(() => now, terminalRetentionCount: 500);
+        var after = new FileInfo(path).Length;
+        Assert.True(after < 5_000_000, $"400 attempt snapshot is {after} bytes.");
+        using (var snapshot = JsonDocument.Parse(File.ReadAllText(path)))
+        {
+            Assert.All(snapshot.RootElement.GetProperty("runAttempts").EnumerateArray(),
+                run => Assert.True(run.GetProperty("idempotencyKeys").GetArrayLength() <= 40));
+            Assert.All(snapshot.RootElement.GetProperty("reviewAttempts").EnumerateArray(),
+                review => Assert.True(review.GetProperty("idempotencyKeys").GetArrayLength() <= 40));
+            Assert.Equal(64, snapshot.RootElement.GetProperty("currentSubjectByTask")
+                .GetProperty("AGT-0000").GetProperty("digest").GetString()!.Length);
+        }
+        Assert.Equal("subject-0000", service.GetTaskProjection("AGT-0000").CurrentReviewSubject!.SubjectId);
+        var active = service.AcquireRun("AGT-ACTIVE", "PROJ-002", null, "runner", "host", 60, "active").RunAttempt!;
+        var journal = path + ".journal";
+        var start = new FileInfo(journal).Length;
+        now = now.AddSeconds(1);
+        var first = service.RenewRun(new AttemptWriteReference(active.AttemptId, active.LastFence,
+            active.AuthorityEpoch, "renew-0"), "runner", 60);
+        Assert.Equal(AttemptWriteStatus.Accepted, first.Status);
+        var firstBytes = new FileInfo(journal).Length - start;
+        Assert.True(firstBytes < 4_000, $"One lease renewal wrote {firstBytes} bytes.");
+        using (var stream = File.OpenRead(journal))
+        {
+            stream.Position = start;
+            var header = new byte[36];
+            stream.ReadExactly(header);
+            var payload = new byte[BitConverter.ToInt32(header, 0)];
+            stream.ReadExactly(payload);
+            using var delta = JsonDocument.Parse(payload);
+            var patch = Assert.Single(delta.RootElement.GetProperty("runPatches").EnumerateArray());
+            Assert.Equal(active.AttemptId, patch.GetProperty("attemptId").GetString());
+            Assert.True(patch.GetProperty("fields").TryGetProperty("lease", out _));
+            Assert.Empty(delta.RootElement.GetProperty("changedRuns").EnumerateArray());
+        }
+
+        using var stopReads = new CancellationTokenSource();
+        using var readerStarted = new ManualResetEventSlim();
+        var maxReadMilliseconds = 0.0;
+        var readCount = 0;
+        var readTask = Task.Run(() =>
+        {
+            readerStarted.Set();
+            while (!stopReads.IsCancellationRequested)
+            {
+                var timer = Stopwatch.StartNew();
+                _ = service.ReadBoardReviewActivity();
+                timer.Stop();
+                maxReadMilliseconds = Math.Max(maxReadMilliseconds, timer.Elapsed.TotalMilliseconds);
+                readCount++;
+                Thread.Yield();
+            }
+        });
+        readerStarted.Wait();
+        var mutationStart = new FileInfo(journal).Length;
+        for (var index = 1; index <= 60; index++)
+        {
+            now = now.AddSeconds(1);
+            Assert.Equal(AttemptWriteStatus.Accepted, service.RenewRun(
+                new AttemptWriteReference(active.AttemptId, active.LastFence, active.AuthorityEpoch,
+                    $"renew-{index}"), "runner", 60).Status);
+        }
+        stopReads.Cancel();
+        await readTask;
+        var mutationBytes = new FileInfo(journal).Length - mutationStart;
+        Assert.True(readCount > 0);
+        Assert.True(maxReadMilliseconds < 1_000, $"Concurrent board read took {maxReadMilliseconds:F1} ms.");
+        var restarted = NewService(() => now, terminalRetentionCount: 500);
+        Assert.Equal(now.AddSeconds(60), restarted.GetRun(active.AttemptId)!.Lease!.ExpiresAt);
+        Assert.Equal("subject-0199", restarted.GetTaskProjection("AGT-0199").CurrentReviewSubject!.SubjectId);
+        Console.WriteLine($"Authority budget: snapshot {before} -> {after} bytes; "
+            + $"renewal {firstBytes} bytes; 60 renewals {mutationBytes} bytes; "
+            + $"maximum concurrent board read {maxReadMilliseconds:F1} ms across {readCount} reads.");
+    }
+
+    [Fact]
+    public void Completed_card_orphan_is_terminalized_and_archived_with_current_projection()
+    {
+        var now = new DateTime(2026, 10, 15, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-1", "PROJ-002", null, "runner", "host", 60, "create").RunAttempt!;
+
+        service.CompactTerminalTasks(["AGT-1"]);
+
+        var archivePath = Assert.Single(Directory.GetFiles(
+            Path.Combine(_root, ".metadata"), "attempt-authority.archive-*.json"));
+        Assert.Contains(run.AttemptId, File.ReadAllText(archivePath));
+        var restarted = NewService(() => now);
+        var projection = restarted.GetTaskProjection("AGT-1");
+        Assert.Equal(AttemptLifecycleState.Superseded, projection.CurrentRunAttempt!.State);
+        Assert.Contains("completed or archived lane", projection.CurrentRunAttempt.TerminalReason);
+        Assert.False(projection.LegacyTask);
+        Assert.Single(restarted.GetTaskProjection("AGT-1", includeArchived: true).RunAttempts);
+    }
+
+    [Fact]
+    public void Hourly_archive_merge_externalizes_legacy_inline_review_subject()
+    {
+        var now = new DateTime(2026, 10, 15, 13, 0, 0, DateTimeKind.Utc);
+        var archivePath = Path.Combine(_root, ".metadata", $"attempt-authority.archive-{now:yyyy-MM-dd-HH}.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+        File.WriteAllText(archivePath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1, archivedAt = now, runAttempts = Array.Empty<object>(),
+            reviewAttempts = new[]
+            {
+                new
+                {
+                    attemptId = "review-old", taskKey = "AGT-OLD", repositoryId = "PROJ-002",
+                    sourceRunAttemptId = "run-old", state = AttemptLifecycleState.Completed,
+                    createdAt = now, terminalAt = now,
+                    subject = new
+                    {
+                        subjectId = "subject-old", repositoryId = "PROJ-002",
+                        expectedResultSha = "result-old", sourceRunAttemptId = "run-old",
+                        evidenceDigestInputs = new[] { new string('e', 16_000) }, createdAt = now,
+                    },
+                },
+            },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var service = NewService(() => now);
+        _ = service.AcquireRun("AGT-NEW", "PROJ-002", null, "runner", "host", 60, "create");
+        service.CompactTerminalTasks(["AGT-NEW"]);
+
+        using var merged = JsonDocument.Parse(File.ReadAllText(archivePath));
+        var subject = merged.RootElement.GetProperty("reviewAttempts")[0].GetProperty("subject");
+        Assert.Equal(64, subject.GetProperty("digest").GetString()!.Length);
+        Assert.False(subject.TryGetProperty("evidenceDigestInputs", out _));
+        Assert.Equal("subject-old", Assert.Single(service.GetTaskProjection("AGT-OLD", true).ReviewAttempts)
+            .Subject.SubjectId);
+    }
 
     [Fact]
     public void Corrupt_primary_recovers_backup_with_higher_fence_and_epoch()
