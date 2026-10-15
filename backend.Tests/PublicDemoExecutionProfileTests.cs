@@ -173,13 +173,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 6,
+                [ExecutionAdmissionPath.Claim] = 8,
                 [ExecutionAdmissionPath.Start] = 15,
-                [ExecutionAdmissionPath.Continue] = 15,
+                [ExecutionAdmissionPath.Continue] = 18,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 26,
-                [ExecutionAdmissionPath.PostStep] = 13,
+                [ExecutionAdmissionPath.PostStep] = 15,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

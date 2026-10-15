@@ -117,13 +117,13 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 5,
+                [ExecutionAdmissionPath.Claim] = 6,
                 [ExecutionAdmissionPath.Start] = 7,
                 [ExecutionAdmissionPath.Continue] = 12,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 12,
+                [ExecutionAdmissionPath.PostStep] = 14,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
