@@ -2881,6 +2881,59 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task SubjectlessLocalOperatorAcceptance_SurvivesDeletedBranchWorkerAndBackstop()
+    {
+        var deliverySha = PublishLocalDelivery("accepted-local.txt", "accepted candidate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "must not run");
+        var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate,
+            writeReviewSubject: false);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Null(ReviewSubjectStore.Read(reviewed.FolderPath));
+        Assert.Equal(DeliveryRefSource.LocalTaskFallback,
+            DeliveryRefResolver.Resolve(Slug, reviewed.FolderPath).Source);
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"),
+            reason: "Operator verified the published local delivery.", operatorOverride: true);
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(deliverySha, completed.CompletionClaim?.ResultSha);
+        Assert.Contains(completed.IntegrationRecords, item =>
+            item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal)
+            && item.Classification == IntegrationRecordClasses.IntegratedVerified
+            && item.SourceSha == deliverySha);
+
+        RunGit(_repo, "branch", "-D", WorktreeTaskLifecycle.BranchFor(Slug));
+        Assert.NotEqual(0, Git(_repo, "show-ref", "--verify", "--quiet",
+            $"refs/heads/{WorktreeTaskLifecycle.BranchFor(Slug)}").Code);
+        TaskJsonFile.UpdateFieldOrThrow(completed.FolderPath, "commits", Array.Empty<TaskCommitInfo>());
+        TaskJsonFile.UpdateFieldOrThrow(completed.FolderPath, "commit", (TaskCommitInfo?)null);
+        deps.Scanner.InvalidateCache();
+        Assert.Empty(DeliveryRefResolver.AttributedCommitShas(completed.FolderPath));
+
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var worker = new AcceptedIntegrationWorker(deps.AcceptedQueue!, VerifyingRunner(deps, gate),
+            deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+        Assert.Equal(MergeIntoIntegrationOutcome.NoTaskBranch, result.Outcome);
+        Assert.Equal(AcceptedIntegrationFailureCodes.NoTaskBranch,
+            AcceptedIntegrationFailureCodes.For(result));
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, VerifyingRunner(deps, gate), deps.Integration,
+            deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions, deps.Timeline, deps.Pipeline, git: git);
+        backstop.RunOnce();
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Equal(0, gate.Invocations);
+    }
+
+    [Fact]
     public async Task OperatorAcceptance_EquivalentPublishedTree_WritesDurableRecord()
     {
         var deliverySha = PublishDelivery("equivalent-candidate.txt", "accepted candidate\n");
