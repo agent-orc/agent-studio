@@ -90,6 +90,7 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Matches(@"ReviewBudget\(ReviewBudgetFacts facts\)\s*=>\s*ReviewBudgetPolicy\.Decide\(facts\)", adapter);
         Assert.Matches(@"Sweep\([^)]*\)\s*=>\s*OperatorSweepPolicy\.Decide\(", adapter);
         Assert.Matches(@"LoopSignal\([^)]*\)\s*=>\s*LoopExhaustionPolicy\.Signal\(", adapter);
+        Assert.Matches(@"ReviewText\(string output\)\s*=>\s*LegacyReviewDecisionPolicy\.Parse\(", adapter);
         Assert.DoesNotContain(Sources(Path.Combine(root, "backend"))
             .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal)),
             path => File.ReadAllText(path).Contains("LoopExhaustionPolicy.Signal(", StringComparison.Ordinal));

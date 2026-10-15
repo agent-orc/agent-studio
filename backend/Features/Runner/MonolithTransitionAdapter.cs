@@ -73,6 +73,16 @@ public static class MonolithTransitionAdapter
         string window, string attempt, IReadOnlyList<string> candidates)
         => LoopExhaustionPolicy.Signal(id, count, limit, window, attempt, candidates);
 
+    public static OrchestratorDecisionVerdict? ReviewText(string output)
+        => LegacyReviewDecisionPolicy.Parse(output) is { } choice
+            ? new OrchestratorDecisionVerdict(choice.Action switch
+            {
+                "reissue" => OrchestratorDecisionAction.Reissue,
+                "escalate" => OrchestratorDecisionAction.Escalate,
+                _ => OrchestratorDecisionAction.AcceptAsDone,
+            }, choice.Reason)
+            : null;
+
     /// <summary>The transition an admitted active coding-completion choice maps to (AGT-3064).</summary>
     public static TransitionDecision? ActiveCodingTransition(DecisionChoiceV1 choice, string cardKey, string attemptId)
         => ActiveDecisionPolicy.CodingTransition(choice, cardKey, attemptId);
