@@ -47,6 +47,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
     private readonly ILogger<AcceptanceRailHostedService> _logger;
     private readonly object _snapshotGate = new();
     private readonly SemaphoreSlim _runGate = new(1, 1);
+    private readonly OrchestrationEngineReadiness? _engine;
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
 
     /// <summary>
@@ -72,8 +73,10 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         IConfiguration configuration,
         ILogger<AcceptanceRailHostedService> logger,
         IntegrationGenerationReconcileSweep? generationReconcile = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        OrchestrationEngineReadiness? engine = null)
     {
+        _engine = engine;
         _scanner = scanner;
         _generationReconcile = generationReconcile;
         _attemptAuthority = attemptAuthority;
@@ -102,6 +105,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
     public async Task<AcceptanceRailSnapshot> RunOnceAsync(CancellationToken ct = default)
     {
+        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(AcceptanceRailHostedService))) return Current;
         await _runGate.WaitAsync(ct);
         try { return await RunCoreAsync(ct); }
         finally { _runGate.Release(); }

@@ -10,12 +10,14 @@ public sealed class DeliveryChainReconciler : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<DeliveryChainReconciler> _logger;
     private readonly GateFailureRouter? _gateFailures;
+    private readonly OrchestrationEngineReadiness? _engine;
 
     public DeliveryChainReconciler(TaskScannerService scanner,
         TaskIntegrationStatusService statuses, TaskTransitionService transitions,
         IConfiguration configuration, ILogger<DeliveryChainReconciler> logger,
-        GateFailureRouter? gateFailures = null)
+        GateFailureRouter? gateFailures = null, OrchestrationEngineReadiness? engine = null)
     {
+        _engine = engine;
         _scanner = scanner;
         _statuses = statuses;
         _transitions = transitions;
@@ -27,6 +29,8 @@ public sealed class DeliveryChainReconciler : BackgroundService
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
         if (!_configuration.GetValue("DeliveryChain:Guarded", true)) return 0;
+        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(DeliveryChainReconciler))) return 0;
         var cards = _scanner.ScanAllAutomationJobs()
             .Where(card => card.State is TaskStates.AutoReview or TaskStates.HumanReview or TaskStates.Completed)
             .ToArray();

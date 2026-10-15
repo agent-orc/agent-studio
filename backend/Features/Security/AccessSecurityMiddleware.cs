@@ -237,7 +237,8 @@ public sealed class AccessSecurityMiddleware
 
     private static bool IsHealth(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
     private static bool IsOpenAuth(string path)
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)

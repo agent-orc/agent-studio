@@ -67,8 +67,13 @@ public static class MonolithOrchestrationEndpoints
         => Results.Json(value, WireJson, statusCode: statusCode);
 
     private static bool Matches(HttpContext context, AccessSecurityStore security, string engineId)
-        => Authorize(context, security) is { } principal
-            && string.Equals(principal.RunnerId, engineId, StringComparison.Ordinal);
+    {
+        if (Authorize(context, security) is not { } principal
+            || !string.Equals(principal.RunnerId, engineId, StringComparison.Ordinal)) return false;
+        // AGT-3060: every authenticated engine request is the engine's readiness signal.
+        context.RequestServices.GetService<OrchestrationEngineReadiness>()?.Observe(engineId);
+        return true;
+    }
 
     private static RunnerPrincipal? Authorize(HttpContext context, AccessSecurityStore security)
     {

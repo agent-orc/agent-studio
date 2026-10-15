@@ -67,6 +67,14 @@ public sealed class IntakeHostedService : BackgroundService
 
                 var escalation = scope.ServiceProvider.GetRequiredService<HumanReviewEscalation>();
 
+                // AGT-3060: a residual monolith decider; it holds while the engine is not live.
+                if (!OrchestrationEngineReadiness.Allows(
+                        scope.ServiceProvider.GetService<OrchestrationEngineReadiness>(), nameof(IntakeHostedService)))
+                {
+                    await Task.Delay(TickInterval, stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 var allSettings = settings.GetAll();
                 // AGT-1812: autonomy resolves project override -> workspace
                 // default -> platform default (2) so a workspace-level manual

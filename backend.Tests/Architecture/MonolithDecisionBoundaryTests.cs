@@ -15,6 +15,18 @@ namespace AgentStudio.Tests.Architecture;
 public sealed class MonolithDecisionBoundaryTests
 {
     private const string BaselinePath = "backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt";
+    private const string InventoryPath = "docs/system/architecture/monolith-hosted-services.md";
+
+    /// <summary><c>AddHostedService&lt;T&gt;()</c> and <c>AddHostedService(sp =&gt; sp.GetRequiredService&lt;T&gt;())</c>.</summary>
+    private static readonly Regex HostedRegistration = new(
+        @"AddHostedService\s*(?:<(?:[\w.]+\.)?(?<type>\w+)>|\(\s*\w+\s*=>\s*\w+\s*\.\s*GetRequiredService<(?:[\w.]+\.)?(?<type>\w+)>)",
+        RegexOptions.Compiled);
+
+    /// <summary>A held decider that decides through another held decider's guarded entry point.</summary>
+    private static readonly IReadOnlyDictionary<string, string> HeldThrough = new Dictionary<string, string>
+    {
+        ["AutoReviewPostProcessingWorker"] = "ReviewDecisionOrchestrator",
+    };
     private static readonly Regex WorkflowFolder = new(
         @"^backend/(Features/(Runner|Pipeline|Tasks|Supervisor)|Shared/Runner)/", RegexOptions.Compiled);
     private static readonly Regex HostPolicy = new(@"\bclass\s+(\w+(?:Policy|Rules|Breaker))\b", RegexOptions.Compiled);
@@ -39,6 +51,67 @@ public sealed class MonolithDecisionBoundaryTests
         Assert.Matches(new Regex(
             @"if \(!builder\.Environment\.IsEnvironment\(""Test""\) && !underTestHost\)\s*"
             + @"OrchestrationDecisionAuthority\.RequireEngine\(builder\.Configuration\);"), program);
+    }
+
+    [Fact]
+    public void Production_host_requires_engine_readiness_before_any_decision()
+    {
+        var root = RepositoryRoot.Find();
+        var program = File.ReadAllText(Path.Combine(root, "backend", "Host", "Program.cs"));
+        var endpoints = File.ReadAllText(Path.Combine(root,
+            "backend", "Features", "Runner", "MonolithOrchestrationEndpoints.cs"));
+        Assert.Contains("AddSingleton<OrchestrationEngineReadiness>()", program);
+        Assert.Contains("AddHostedService<OrchestrationEngineReadinessService>()", program);
+        Assert.Contains("GetService<OrchestrationEngineReadiness>()?.Observe(engineId)", endpoints);
+    }
+
+    [Fact]
+    public void Inventory_lists_every_registered_hosted_service()
+    {
+        var root = RepositoryRoot.Find();
+        var inventory = Inventory.Load(Path.Combine(root, InventoryPath));
+        var registered = Directory.EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"))
+            .SelectMany(file => HostedRegistration.Matches(StripComments(File.ReadAllText(file))))
+            .Select(match => match.Groups["type"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.NotEmpty(registered);
+        Assert.Empty(registered.Where(type => !inventory.ContainsKey(type)).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Every_residual_decider_holds_while_the_engine_is_not_live()
+    {
+        var root = RepositoryRoot.Find();
+        var inventory = Inventory.Load(Path.Combine(root, InventoryPath));
+        var sources = Directory.EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"))
+            .Select(file => StripComments(File.ReadAllText(file)));
+
+        Assert.Empty(ResidualDecisionViolations(inventory, string.Join("\n", sources)));
+    }
+
+    [Theory]
+    [InlineData("decide", "")]
+    [InlineData("decide, held", "")]
+    [InlineData("decide, held", "OrchestrationEngineReadiness.Allows(_engine, nameof(OtherService))")]
+    public void Guard_rejects_a_residual_decider_that_is_not_held(string decisionClass, string source)
+    {
+        var inventory = new Dictionary<string, string> { ["NewSweepHostedService"] = decisionClass };
+        Assert.NotEmpty(ResidualDecisionViolations(inventory, source));
+    }
+
+    [Fact]
+    public void Guard_accepts_a_held_and_a_moved_decider()
+    {
+        var inventory = new Dictionary<string, string>
+        {
+            ["NewSweepHostedService"] = "decide, held",
+            ["MovedSweepHostedService"] = "decide, moved",
+        };
+        Assert.Empty(ResidualDecisionViolations(inventory,
+            "if (!OrchestrationEngineReadiness.Allows(_engine, nameof(NewSweepHostedService))) return;"));
     }
 
     [Fact]
@@ -100,6 +173,31 @@ public sealed class MonolithDecisionBoundaryTests
         { ["backend/Features/Tasks/Old.cs"] = one + "\n" + one }, baseline));
     }
 
+    /// <summary>
+    /// A row classed <c>decide</c> must be moved to the engine or held; a held
+    /// one must check readiness under its own name (or the name of the decider
+    /// it delegates to) somewhere in <c>backend/</c>.
+    /// </summary>
+    private static List<string> ResidualDecisionViolations(IReadOnlyDictionary<string, string> inventory, string sources)
+    {
+        var violations = new List<string>();
+        foreach (var (service, decisionClass) in inventory)
+        {
+            if (!decisionClass.StartsWith("decide", StringComparison.Ordinal)) continue;
+            if (decisionClass is "decide, moved") continue;
+            if (decisionClass != "decide, held")
+            {
+                violations.Add($"{service} is classed '{decisionClass}'; move it to the engine or hold it");
+                continue;
+            }
+            var holder = HeldThrough.GetValueOrDefault(service, service);
+            if (!Regex.IsMatch(sources, @"OrchestrationEngineReadiness\.Allows\([^;]*nameof\("
+                    + Regex.Escape(holder) + @"\)"))
+                violations.Add($"{service} no longer holds while the engine is not live");
+        }
+        return violations;
+    }
+
     private static List<string> Violations(IReadOnlyDictionary<string, string> sources, Baseline baseline)
     {
         var violations = new List<string>();
@@ -133,6 +231,17 @@ public sealed class MonolithDecisionBoundaryTests
     }
 
     private static string StripComments(string source) => Regex.Replace(source, "//.*", string.Empty);
+
+    /// <summary>Hosted-service rows of the inventory: service name to its class column.</summary>
+    private static class Inventory
+    {
+        private static readonly Regex Row = new(@"^\|\s*(\w+)\s*\|[^|\n]*\|\s*([^|\n]+?)\s*\|", RegexOptions.Multiline);
+
+        public static IReadOnlyDictionary<string, string> Load(string path)
+            => Row.Matches(File.ReadAllText(path))
+                .Where(match => match.Groups[1].Value is not ("Class" or "Hosted"))
+                .ToDictionary(match => match.Groups[1].Value, match => match.Groups[2].Value, StringComparer.Ordinal);
+    }
 
     private sealed record Baseline(IReadOnlyDictionary<string, int> Calls, IReadOnlySet<string> Policies)
     {

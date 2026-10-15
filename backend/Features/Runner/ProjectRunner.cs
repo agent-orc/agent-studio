@@ -1288,6 +1288,11 @@ public class ProjectRunner
         // routes through RunCliAsync directly and is allowed.
         if (_role == RunnerRole.TestSubject) return;
 
+        // AGT-3060: local execution is a residual monolith decider (D16 moves
+        // claimable work to runner hosts). No new local auto-pickup starts while
+        // the engine that decides its completion is not live.
+        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(TaskRunnerService))) return;
+
         TryAutoResumeGlobalBreaker();
 
         if (_mode is "manual" or "paused") return;
@@ -4220,6 +4225,10 @@ public class ProjectRunner
 
     /// <summary>Set by <see cref="TaskRunnerService"/> on construction.</summary>
     public void ConfigureStuckLoopBudget(StuckLoopBudget budget) => _stuckLoopBudget = budget;
+
+    /// <summary>Set by <see cref="TaskRunnerService"/> on construction (AGT-3060).</summary>
+    public void ConfigureEngineReadiness(OrchestrationEngineReadiness? engine) => _engine = engine;
+    private OrchestrationEngineReadiness? _engine;
 
     /// <summary>
     /// Snapshot of the current auto-loop state for a job. Used by the

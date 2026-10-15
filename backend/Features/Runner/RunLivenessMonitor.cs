@@ -240,9 +240,10 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
     }
 
     /// <summary>
-    /// AGT-3060: applies the engine's run-liveness receipt. The lane and the
-    /// heartbeat are re-checked first, so a run that resumed after the facts were
-    /// frozen is never demoted.
+    /// AGT-3060: applies the engine's run-liveness receipt. Every exclusion of
+    /// the sweep is re-checked first: a run that resumed, entered a visible
+    /// waiting phase or a steer wait, or gained remote lease history after the
+    /// facts were frozen keeps its lane.
     /// </summary>
     public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
     {
@@ -251,8 +252,13 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
         var job = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
         if (entry is null || job is null || job.State != TaskStates.Progress) return;
         var folder = job.FolderPath;
-        if (_pickupLock.HasLiveOwner(folder) || SafeGetActiveJobIds().TryGetValue(entry.Name, out var active)
-            && string.Equals(active, Path.GetFileName(folder), StringComparison.OrdinalIgnoreCase))
+        var slug = Path.GetFileName(folder);
+        if (_pickupLock.HasLiveOwner(folder)
+            || SafeGetActiveJobIds().TryGetValue(entry.Name, out var active)
+                && string.Equals(active, slug, StringComparison.OrdinalIgnoreCase)
+            || HasVisibleWaitingState(folder)
+            || SteerPendingMarker.TryRead(folder, _logger) != null
+            || HasRemoteLeaseHistory(job, folder, slug, hasJobJson: true))
             return;
         var facts = application.Payload.RunLiveness
             ?? throw new InvalidDataException("The run-liveness occurrence has no facts.");
