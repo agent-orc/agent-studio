@@ -138,7 +138,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3063 added POST /api/runner/orchestrator-decisions/claim (Claim) and
         // POST /api/runner/orchestrator-decisions/complete (Continue): runner hosts
         // claim and complete shadow model decision jobs, so both are denied.
-        Assert.Equal(95, routes.Count);
+        // AGT-3055 added the claimed batch gate under /api/v1/gates: claims (Claim),
+        // attempts/{attemptId}/renew and /phase (Continue), /report and /containment
+        // (PostStep). Gate hosts drive suites through them, so all five are denied.
+        Assert.Equal(100, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
