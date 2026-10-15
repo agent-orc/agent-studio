@@ -169,6 +169,34 @@ public sealed class OrchestrationRolloutTests
     }
 
     [Fact]
+    public async Task Recovering_an_older_match_cannot_extend_streak_across_a_newer_mismatch()
+    {
+        using var fixture = new Fixture();
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var older = await CompletedGateShadow(fixture, "gate:older-match", TransitionAction.Continue);
+        new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time, fixture.Applier)
+            .RecordMonolithDecision(older.RunId, TransitionAction.Continue.ToString(), "passed");
+
+        var mismatch = await CompletedGateShadow(fixture, "gate:newer-mismatch", TransitionAction.ReturnToReady);
+        fixture.Store.RecordMonolithDecision(mismatch.RunId, TransitionAction.Continue.ToString(), "passed");
+        for (var index = 0; index < 49; index++)
+        {
+            var matched = await CompletedGateShadow(fixture, $"gate:newer-match-{index}",
+                TransitionAction.Continue);
+            fixture.Store.RecordMonolithDecision(matched.RunId, TransitionAction.Continue.ToString(), "passed");
+        }
+        Assert.Equal(49, fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        var recovered = new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time,
+            fixture.Applier, fixture.Rollout);
+        recovered.RecoverShadowComparisons();
+        var profile = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(("shadow", 49), (profile.State, profile.Streak));
+        Assert.Throws<InvalidOperationException>(() => recovered.SwitchProfile("GateResult", "engine",
+            "operator", "matched comparison"));
+    }
+
+    [Fact]
     public async Task Gate_shadow_intent_counts_only_once_the_card_reached_its_target_lane()
     {
         using var fixture = new Fixture(threshold: 1);
@@ -237,15 +265,9 @@ public sealed class OrchestrationRolloutTests
         Assert.Equal("orchestration-profile-shadow-unresolved", blocked.Message);
 
         fixture.Store.ResolveShadowOutcome(earlier.RunId, TaskStates.HumanReview);
-        var reset = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
-        Assert.Equal("shadow", reset.State);
-        Assert.Equal(0, reset.Streak);
-        var refused = Assert.Throws<InvalidOperationException>(() =>
-            fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched comparison"));
-        Assert.Equal("orchestration-profile-switch-not-allowed", refused.Message);
-
-        var next = await CompletedGateShadow(fixture, "gate:next", TransitionAction.Continue);
-        fixture.Store.RecordMonolithDecision(next.RunId, TransitionAction.Continue.ToString(), "passed");
+        var recovered = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal("ready", recovered.State);
+        Assert.Equal(1, recovered.Streak);
         Assert.Equal("engine", fixture.Store.SwitchProfile("GateResult", "engine", "operator",
             "matched comparison").State);
     }

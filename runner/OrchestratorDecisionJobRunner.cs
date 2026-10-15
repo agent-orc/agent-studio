@@ -87,7 +87,8 @@ internal sealed class OrchestratorDecisionJobRunner(RunnerOptions options, TaskS
             var process = await ReadOnlyCarTurn.RunAsync(options, work.JobId, cli, work.Prompt,
                 workingDirectory, work.Model, work.ThinkingLevel, "agent-decision-car",
                 "orchestrator-decision", null, log, timeout.Token, shutdown,
-                work.MaxOutputTokens > 0 ? work.MaxOutputTokens : null);
+                work.MaxOutputTokens > 0 ? work.MaxOutputTokens : null,
+                work.MaxInputTokens > 0 ? work.MaxInputTokens : null);
             var parsed = cli == "claude"
                 ? RemoteProjectChatRunner.ParseClaude(process, work.Model)
                 : RemoteProjectChatRunner.ParseCodex(process, work.Model);
@@ -117,12 +118,16 @@ internal sealed class OrchestratorDecisionJobRunner(RunnerOptions options, TaskS
 
     /// <summary>
     /// The prompt alone must fit the input envelope the job was admitted with,
-    /// using the four-bytes-per-token estimate of the grounds pack.
+    /// using a conservative estimate with space for CLI framing. Dense
+    /// punctuation can tokenize nearly one character per token.
     /// </summary>
     internal static string? PromptOverrunReason(OrchestratorDecisionJobWork work)
     {
         if (work.MaxInputTokens <= 0) return null;
-        var estimated = (System.Text.Encoding.UTF8.GetByteCount(work.Prompt) + 3) / 4;
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(work.Prompt);
+        var denseCharacters = work.Prompt.Count(character => !char.IsLetterOrDigit(character));
+        var estimated = Math.Max((bytes + 1) / 2, denseCharacters);
+        estimated += Math.Max(256, estimated / 5);
         return estimated > work.MaxInputTokens
             ? $"call-token-cap-exceeded: prompt estimate {estimated} input tokens against {work.MaxInputTokens}"
             : null;

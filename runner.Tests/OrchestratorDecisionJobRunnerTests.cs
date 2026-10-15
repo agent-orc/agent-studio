@@ -49,10 +49,13 @@ public sealed class OrchestratorDecisionJobRunnerTests
     {
         var bounded = Work with { MaxInputTokens = 8_000, MaxOutputTokens = 1_000 };
 
-        Assert.Null(OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 32_000) }));
-        Assert.Equal("call-token-cap-exceeded: prompt estimate 8001 input tokens against 8000",
-            OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 32_001) }));
-        Assert.Null(OrchestratorDecisionJobRunner.PromptOverrunReason(Work with { Prompt = new string('x', 64_000) }));
+        Assert.Null(OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 12_000) }));
+        Assert.StartsWith("call-token-cap-exceeded",
+            OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 14_000) }));
+        Assert.StartsWith("call-token-cap-exceeded",
+            OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('!', 7_000) }));
+        Assert.StartsWith("call-token-cap-exceeded",
+            OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 64_000) }));
     }
 
     [Fact]
@@ -65,6 +68,11 @@ public sealed class OrchestratorDecisionJobRunnerTests
             ReadOnlyCarTurn.OutputCapTuning("codex", 1_000));
         Assert.Null(ReadOnlyCarTurn.OutputCapEnvironment("codex", 1_000));
         Assert.Null(ReadOnlyCarTurn.OutputCapTuning("codex", null));
+        Assert.Equal(new Dictionary<string, string>
+        {
+            ["model_max_output_tokens"] = "1000", ["model_context_window"] = "9000",
+        }, ReadOnlyCarTurn.DecisionCapTuning("codex", 1_000, 8_000));
+        Assert.Null(ReadOnlyCarTurn.DecisionCapTuning("claude", 1_000, 8_000));
     }
 
     [Fact]

@@ -54,9 +54,10 @@ public static class DecisionCostCapPolicy
             ? "requested per-call token envelope exceeds the decision cap"
             : null;
 
-    public static string? CardReason(DecisionSpendSnapshot card)
+    public static string? CardReason(DecisionSpendSnapshot card, decimal estimatedUsd = 0)
         => card.Calls >= MaxCallsPerCard ? $"card call cap of {MaxCallsPerCard} decision calls reached"
             : card.PricedUsd >= MaxPricedUsdPerCard
+              || card.PricedUsd + estimatedUsd > MaxPricedUsdPerCard
                 ? $"card priced decision spend cap of {MaxPricedUsdPerCard} USD reached"
                 : null;
 
@@ -65,7 +66,7 @@ public static class DecisionCostCapPolicy
     /// The new call's envelope must still fit, so the day never overshoots.
     /// </summary>
     public static string? HostDayReason(DecisionSpendSnapshot scheduled, DecisionSpendSnapshot events,
-        bool scheduledTrigger, int input, int output)
+        bool scheduledTrigger, int input, int output, decimal estimatedUsd = 0)
     {
         if (scheduledTrigger && scheduled.Calls >= MaxScheduledCallsPerHostDay)
             return $"host-day cap of {MaxScheduledCallsPerHostDay} scheduled decision calls reached";
@@ -76,6 +77,7 @@ public static class DecisionCostCapPolicy
         if (scheduled.Tokens.Output + events.Tokens.Output + output > MaxOutputTokensPerHostDay)
             return $"host-day cap of {MaxOutputTokensPerHostDay} decision output tokens reached";
         return scheduled.PricedUsd + events.PricedUsd >= MaxPricedUsdPerHostDay
+            || scheduled.PricedUsd + events.PricedUsd + estimatedUsd > MaxPricedUsdPerHostDay
             ? $"host-day priced decision spend cap of {MaxPricedUsdPerHostDay} USD reached"
             : null;
     }

@@ -121,26 +121,24 @@ public sealed class OrchestrationRolloutStore
     }
 
     public void Compare(string profile, OrchestrationDecisionReceipt monolith,
-        OrchestrationDecisionReceipt engine)
+        OrchestrationDecisionReceipt engine, DateTime? createdAt = null, long creationSequence = 0)
     {
         ValidateProfile(profile);
         lock (Gate)
         {
             var state = Read(_path);
             var item = state.Profiles.GetValueOrDefault(profile) ?? Initial(profile);
-            if (!item.ComparedOccurrences.Add(engine.Occurrence)) return;
-            if (monolith.InputsDigest == engine.InputsDigest
-                && monolith.Action == engine.Action)
+            var matched = monolith.InputsDigest == engine.InputsDigest
+                && monolith.Action == engine.Action;
+            // Older journals have ComparedOccurrences but no ordered outcomes.
+            // Recovery supplies their creation time and backfills the order.
+            if (!item.Outcomes.TryAdd(engine.Occurrence,
+                    new(createdAt ?? engine.RecordedAt, creationSequence, matched))) return;
+            if (item.ComparedOccurrences.Add(engine.Occurrence) && !matched)
             {
-                item.Streak++;
-                if (item.Streak >= _threshold && item.State == "shadow") item.State = "ready";
-            }
-            else
-            {
-                item.Streak = 0;
-                if (item.State == "ready") item.State = "shadow";
                 item.Mismatches.Add(new(monolith, engine));
             }
+            RecomputeStreak(item);
             state.Profiles[profile] = item;
             Save(state);
         }
@@ -150,19 +148,32 @@ public sealed class OrchestrationRolloutStore
     /// Counts an occurrence that cannot be compared as a break in the streak.
     /// Like Compare, it counts each occurrence once.
     /// </summary>
-    public void Discount(string profile, string occurrence)
+    public void Discount(string profile, string occurrence, DateTime? createdAt = null,
+        long creationSequence = 0)
     {
         ValidateProfile(profile);
         lock (Gate)
         {
             var state = Read(_path);
             var item = state.Profiles.GetValueOrDefault(profile) ?? Initial(profile);
-            if (!item.ComparedOccurrences.Add(occurrence)) return;
-            item.Streak = 0;
-            if (item.State == "ready") item.State = "shadow";
+            if (!item.Outcomes.TryAdd(occurrence, new(createdAt ?? DateTime.MaxValue,
+                    creationSequence, false))) return;
+            item.ComparedOccurrences.Add(occurrence);
+            RecomputeStreak(item);
             state.Profiles[profile] = item;
             Save(state);
         }
+    }
+
+    private void RecomputeStreak(ProfileRecord item)
+    {
+        item.Streak = 0;
+        foreach (var outcome in item.Outcomes.OrderBy(pair => pair.Value.CreationSequence)
+                     .ThenBy(pair => pair.Value.CreatedAt)
+                     .ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Value))
+            item.Streak = outcome.Matched ? item.Streak + 1 : 0;
+        if (item.State == "ready" && item.Streak < _threshold) item.State = "shadow";
+        else if (item.State == "shadow" && item.Streak >= _threshold) item.State = "ready";
     }
 
     public static OrchestrationDecisionReceipt Receipt(string occurrence, string trigger,
@@ -229,6 +240,9 @@ public sealed class OrchestrationRolloutStore
         public string State { get; set; } = "monolith";
         public int Streak { get; set; }
         public HashSet<string> ComparedOccurrences { get; set; } = new(StringComparer.Ordinal);
+        public Dictionary<string, ShadowOutcome> Outcomes { get; set; } = new(StringComparer.Ordinal);
         public List<OrchestrationMismatch> Mismatches { get; set; } = [];
     }
+
+    public sealed record ShadowOutcome(DateTime CreatedAt, long CreationSequence, bool Matched);
 }

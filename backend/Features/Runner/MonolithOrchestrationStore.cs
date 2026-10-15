@@ -25,7 +25,8 @@ public sealed record MonolithOrchestrationOccurrence(
     string? CancellationReason = null,
     OrchestrationDecisionReceipt? MonolithIntent = null,
     string? MonolithIntentTarget = null,
-    string? ShadowResolution = null);
+    string? ShadowResolution = null,
+    long CreationSequence = 0);
 
 public interface IMonolithOrchestrationApplier
 {
@@ -46,6 +47,7 @@ public sealed class MonolithOrchestrationStore
     private readonly IMonolithOrchestrationApplier _applier;
     private readonly OrchestrationRolloutStore? _rollout;
     private readonly Dictionary<string, MonolithOrchestrationOccurrence> _runs = new(StringComparer.Ordinal);
+    private long _nextCreationSequence;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _completionGates = new(StringComparer.Ordinal);
 
     public MonolithOrchestrationStore(IConfiguration configuration, TimeProvider time,
@@ -72,6 +74,7 @@ public sealed class MonolithOrchestrationStore
             var occurrence = JsonSerializer.Deserialize<MonolithOrchestrationOccurrence>(File.ReadAllText(file), Json)
                 ?? throw new InvalidDataException($"Orchestration occurrence is empty: {file}");
             _runs.Add(occurrence.Run.RunId, occurrence);
+            _nextCreationSequence = Math.Max(_nextCreationSequence, occurrence.CreationSequence);
         }
     }
 
@@ -128,6 +131,7 @@ public sealed class MonolithOrchestrationStore
             var occurrence = new MonolithOrchestrationOccurrence(run, idempotencyKey,
                 expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch,
                 Claimable: claimable, Profile: profile, Shadow: shadow,
+                CreationSequence: ++_nextCreationSequence,
                 MonolithReceipt: monolithAction is null ? null : OrchestrationRolloutStore.Receipt(
                     run.RunId, idempotencyKey, payloadJson, monolithAction,
                     monolithReason ?? string.Empty,
@@ -233,7 +237,9 @@ public sealed class MonolithOrchestrationStore
     public void RecoverShadowComparisons()
     {
         lock (_gate)
-            foreach (var item in _runs.Values.Where(value => value.Shadow).ToArray())
+            foreach (var item in _runs.Values.Where(value => value.Shadow)
+                         .OrderBy(value => value.CreationSequence).ThenBy(value => value.Run.CreatedAt)
+                         .ThenBy(value => value.Run.RunId).ToArray())
                 CompareShadow(item);
     }
 
@@ -271,7 +277,8 @@ public sealed class MonolithOrchestrationStore
             }
             // The streak reset comes first: it is idempotent, so a stop before
             // the save repeats it instead of losing it.
-            if (item.Profile is not null) _rollout?.Discount(item.Profile, runId);
+            if (item.Profile is not null) _rollout?.Discount(item.Profile, runId, item.Run.CreatedAt,
+                item.CreationSequence);
             item = item with { ShadowResolution = "monolith-outcome-unverified",
                 MonolithIntent = null, MonolithIntentTarget = null };
             Save(item);
@@ -291,7 +298,9 @@ public sealed class MonolithOrchestrationStore
         {
             if (string.Equals(target, "engine", StringComparison.OrdinalIgnoreCase))
             {
-                foreach (var item in _runs.Values.Where(value => value.Shadow).ToArray())
+                foreach (var item in _runs.Values.Where(value => value.Shadow)
+                             .OrderBy(value => value.CreationSequence).ThenBy(value => value.Run.CreatedAt)
+                             .ThenBy(value => value.Run.RunId).ToArray())
                     CompareShadow(item);
                 if (_runs.Values.Any(item => item.Shadow && item.Profile == profile
                         && item.Run.Status != "cancelled" && item.ShadowResolution is null
@@ -305,7 +314,8 @@ public sealed class MonolithOrchestrationStore
     private void CompareShadow(MonolithOrchestrationOccurrence item)
     {
         if (item.MonolithReceipt is not null && item.EngineReceipt is not null && item.Profile is not null)
-            _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+            _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt, item.Run.CreatedAt,
+                item.CreationSequence);
     }
 
     private static OrchestrationDecisionReceipt MonolithDecisionReceipt(MonolithOrchestrationOccurrence item,
@@ -503,7 +513,8 @@ public sealed class MonolithOrchestrationStore
             if (item.Profile is null || item.EngineReceipt is null)
                 throw new InvalidDataException("Shadow occurrence has no engine decision receipt.");
             if (item.MonolithReceipt is not null)
-                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt, item.Run.CreatedAt,
+                    item.CreationSequence);
         }
         else await _applier.ApplyAsync(item, request, ct);
         lock (_gate)
