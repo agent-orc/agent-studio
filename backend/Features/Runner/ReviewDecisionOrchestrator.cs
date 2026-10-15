@@ -179,6 +179,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     internal Func<int, TimeSpan> BuildTestGateRetryBackoff { get; set; }
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
+    internal Func<Task>? GateFailureDecisionCheckpointAsync { get; set; }
 
     private readonly AgentStudio.AdHoc.AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
@@ -2427,6 +2428,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var gateMode = MonolithTransitionSwitch.For(_configuration, "GateResult");
         var gateIntervention = buildGateResult?.Verdict == BuildTestGateVerdict.Fail
             ? await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct) : null;
+        if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
+            && GateFailureDecisionCheckpointAsync is { } checkpoint)
+            await checkpoint();
+        if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
+            && GateResultWasSuperseded(current, entry, buildGateResult))
+            return;
         var gateOccurrenceKey = buildGateResult is null ? null
             : $"gate-result:{current.Id}:{buildGateResult.GateRunId ?? _attemptAuthority?.GetTaskProjection(current.Key ?? current.TaskKey).CurrentRunAttempt?.AttemptId}:{buildGateResult.ExpectedSha}:{buildGateResult.Verdict}";
         if (buildGateResult is { Verdict: BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
@@ -4463,6 +4470,38 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string Executor,
         string? SubjectRef,
         bool IsRemote);
+
+    private bool GateResultWasSuperseded(TaskInfo reviewed, WatchPathEntry entry,
+        BuildTestGateResult result)
+    {
+        var live = _scanner.FindJob(reviewed.Id, entry.Path);
+        var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
+        if (GateCancellationPolicy.OwnsResult(result.ExpectedSha, liveSubject?.Sha,
+                result.AttemptChainId, liveSubject?.AttemptChainId,
+                reviewed.State, live?.State, live?.PendingIntent is not null))
+            return false;
+
+        // An intervention can invalidate the scanner index while the operator
+        // moves the card. Prefer the physical current folder for the receipt.
+        var evidenceFolder = TaskStates.All
+            .Select(state => Path.Combine(entry.Path, state, reviewed.Id))
+            .FirstOrDefault(path => File.Exists(Path.Combine(path, "task.json")))
+            ?? live?.FolderPath ?? reviewed.FolderPath;
+        _timeline?.Append(evidenceFolder, new TimelineEvent
+        {
+            Ts = _gateTime.GetUtcNow().UtcDateTime,
+            Kind = "gate-result-superseded", Actor = TimelineActors.System,
+            Summary = "Build/test gate result was superseded before the failure decision.",
+            Details = new Dictionary<string, string>
+            {
+                ["expectedSha"] = result.ExpectedSha ?? "",
+                ["attemptChainId"] = result.AttemptChainId ?? "",
+                ["gateId"] = result.GateId,
+                ["verdict"] = result.Verdict.ToString(),
+            },
+        });
+        return true;
+    }
 
     private bool ReviewResultWasSuperseded(TaskInfo reviewed, WatchPathEntry entry,
         BuildTestGateSubject subject, AspectRunReport report)
@@ -6584,27 +6623,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         AgentStudio.Review.CodeReviewStepReport? gradeReport,
         CancellationToken ct)
     {
-        var live = _scanner.FindJob(current.Id, entry.Path);
-        var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
-        if (!GateCancellationPolicy.OwnsResult(result.ExpectedSha, liveSubject?.Sha,
-                result.AttemptChainId, liveSubject?.AttemptChainId,
-                current.State, live?.State, live?.PendingIntent is not null))
-        {
-            _timeline?.Append(live?.FolderPath ?? current.FolderPath, new TimelineEvent
-            {
-                Ts = _gateTime.GetUtcNow().UtcDateTime,
-                Kind = "gate-result-superseded", Actor = TimelineActors.System,
-                Summary = "Build/test gate result was superseded before the failure decision.",
-                Details = new Dictionary<string, string>
-                {
-                    ["expectedSha"] = result.ExpectedSha ?? "",
-                    ["attemptChainId"] = result.AttemptChainId ?? "",
-                    ["gateId"] = result.GateId,
-                    ["verdict"] = result.Verdict.ToString(),
-                },
-            });
-            return;
-        }
+        if (GateResultWasSuperseded(current, entry, result)) return;
         var councilReaction = gradeReport is null
             ? null
             : DeriveCouncilReviewReaction(workspace, entry, current, gradeReport);
