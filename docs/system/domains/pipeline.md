@@ -72,6 +72,16 @@ path. Explicit operator cancellation keeps the failed-gate parking behavior.
 Each cancelled run adds one `gate-cancelled` timeline receipt naming
 `superseded`, `shutdown`, or `operator`.
 
+Completed gate verdicts have the same ownership boundary. Before recording a
+pipeline step or applying a red verdict, the per-task review gate compares its
+captured SHA, attempt chain and Auto Review lane with the live card, including
+any pending continuation. A superseded result keeps its gate log and a
+`gate-result-superseded` timeline receipt with the original verdict; it does
+not rewrite the newer attempt's pipeline step or move the card (AGT-3151).
+Local aspect review also checks the captured subject after its asynchronous
+verdict and grade work. A superseded review records `review-result-superseded`
+with the original aspect statuses and leaves the newer round alone.
+
 ## Exact-SHA gate verdict cache
 
 `BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact

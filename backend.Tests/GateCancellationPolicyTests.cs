@@ -7,6 +7,19 @@ namespace AgentStudio.Tests;
 public sealed class GateCancellationPolicyTests
 {
     [Theory]
+    [InlineData("same", "same", "attempt", "attempt", "review", "review", false, true)]
+    [InlineData("old", "new", "attempt", "attempt", "review", "review", false, false)]
+    [InlineData("same", "same", "old", "new", "review", "review", false, false)]
+    [InlineData("same", "same", "attempt", "attempt", "review", "progress", false, false)]
+    [InlineData("same", "same", "attempt", "attempt", "review", "review", true, false)]
+    public void Completed_gate_result_requires_current_delivery_and_attempt(
+        string expectedSha, string liveSha, string expectedAttempt, string liveAttempt,
+        string expectedLane, string liveLane, bool pending, bool owns)
+        => Assert.Equal(owns, GateCancellationPolicy.OwnsResult(
+            expectedSha, liveSha, expectedAttempt, liveAttempt,
+            expectedLane, liveLane, pending));
+
+    [Theory]
     [InlineData("old", "new", "review", "review", false, false, null, "superseded")]
     [InlineData("same", "same", "review", "ready", false, false, null, "superseded")]
     [InlineData("same", "same", "review", "review", true, false, null, "superseded")]
