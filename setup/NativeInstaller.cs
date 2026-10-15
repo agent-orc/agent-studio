@@ -24,7 +24,8 @@ internal sealed record HostConfiguration(
     string? CodexPath,
     string? GitRemote,
     string? GitPushRemote,
-    int MaxParallelism);
+    int MaxParallelism,
+    string? GitSshKeyFile = null);
 
 internal sealed class NativeInstaller(
     InstallPaths paths,
@@ -44,6 +45,7 @@ internal sealed class NativeInstaller(
     {
         Console.WriteLine();
         Console.WriteLine("Installing the Control Plane");
+        ValidateStudioRelease(orchestratorRelease, studioRelease);
         var studioCredential = ExistingCredential("studio.token")
                                ?? ExistingCredential("task-server.token")
                                ?? RandomNumberGenerator.GetHexString(64).ToLowerInvariant();
@@ -75,11 +77,10 @@ internal sealed class NativeInstaller(
             environment,
             cancellationToken: cancellationToken);
         await InstallStudioAsync(studioRelease, version, cancellationToken);
+        await InstallStudioServicesAsync(listenUrl, cancellationToken);
 
         Console.WriteLine($"  [ok] Task Server and Orchestrator Engine: {listenUrl}");
-        Console.WriteLine($"  [ok] Agent Studio static files: {paths.StudioOpt}/current/browser");
-        Console.WriteLine(
-            $"  Caddy remains host infrastructure. Template: {paths.OrchestratorOpt}/current/config/Caddyfile.template");
+        Console.WriteLine($"  [ok] Agent Studio UI: http://127.0.0.1:4011/");
         if (!new Uri(hostVisibleServerUrl).IsLoopback)
         {
             Console.WriteLine(
@@ -89,6 +90,32 @@ internal sealed class NativeInstaller(
         return new ControlPlaneResult(hostVisibleServerUrl, studioCredential, version);
     }
 
+    internal static void ValidateStudioRelease(string orchestratorRelease, string studioRelease)
+    {
+        foreach (var required in new[]
+                 {
+                     Path.Combine(orchestratorRelease, "api", "OrchestratorApi"),
+                     Path.Combine(orchestratorRelease, "bff", "agent-studio-bff"),
+                     Path.Combine(studioRelease, "browser", "index.html"),
+                     Path.Combine(studioRelease, "agent-studio-setup"),
+                 })
+            if (!File.Exists(required))
+                throw new InvalidDataException($"Native Studio release is missing {required}.");
+    }
+
+    internal static void ValidateHostRelease(string hostRelease)
+    {
+        foreach (var required in new[]
+                 {
+                     Path.Combine(hostRelease, "linux-x64", "agent-host"),
+                     Path.Combine(hostRelease, "systemd", "agent-host.service"),
+                     Path.Combine(hostRelease, "agent-host-resource-governance.sh"),
+                     Path.Combine(hostRelease, "agent-studio-setup"),
+                 })
+            if (!File.Exists(required))
+                throw new InvalidDataException($"Agent Host release is missing {required}.");
+    }
+
     public async Task InstallAgentHostAsync(
         string hostRelease,
         HostConfiguration configuration,
@@ -96,14 +123,10 @@ internal sealed class NativeInstaller(
     {
         Console.WriteLine();
         Console.WriteLine($"Installing the {configuration.Role} agent host");
+        ValidateHostRelease(hostRelease);
         var binarySource = Path.Combine(hostRelease, "linux-x64", "agent-host");
-        var unitSource = Path.Combine(hostRelease, "systemd", "agent-host.service");
         var governanceSource = Path.Combine(hostRelease, "agent-host-resource-governance.sh");
-        foreach (var required in new[] { binarySource, unitSource, governanceSource })
-        {
-            if (!File.Exists(required))
-                throw new InvalidDataException($"Agent Host release is missing {required}.");
-        }
+        var setupSource = Path.Combine(hostRelease, "agent-studio-setup");
 
         var versionRoot = Path.Combine(paths.HostOpt, configuration.ReleaseVersion);
         var unitName = configuration.Role == "coding"
@@ -138,6 +161,10 @@ internal sealed class NativeInstaller(
         await processes.RequireAsync(
             "install",
             ["-m", "0755", governanceSource, Path.Combine(versionRoot, "agent-host-resource-governance")],
+            cancellationToken: cancellationToken);
+        await processes.RequireAsync(
+            "install",
+            ["-m", "0755", setupSource, Path.Combine(versionRoot, "agent-studio-setup")],
             cancellationToken: cancellationToken);
         await processes.RequireAsync(
             "ln",
@@ -243,6 +270,14 @@ internal sealed class NativeInstaller(
         ExplainStartupStatus(startupStatus);
     }
 
+    internal async Task LinkHostSetupCommandAsync(CancellationToken cancellationToken)
+    {
+        if (Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_ROOT_CHECK") == "1") return;
+        await processes.RequireAsync("ln", ["-sfnT",
+            Path.Combine(paths.HostOpt, "current", "agent-studio-setup"),
+            "/usr/local/bin/agent-studio-setup"], cancellationToken: cancellationToken);
+    }
+
     public async Task ConfigureGitHubCredentialAsync(
         HostConfiguration configuration,
         string username,
@@ -321,7 +356,8 @@ internal sealed class NativeInstaller(
                 "git",
                 ["ls-remote", variant],
                 cancellationToken: cancellationToken,
-                requireSuccess: false);
+                requireSuccess: false,
+                gitSshKeyFile: configuration.GitSshKeyFile);
             if (result.ExitCode != 0)
                 throw new InvalidOperationException(
                     $"Git could not read {variant} as {configuration.ExecutionUser}. Configure the host credential, then rerun setup.");
@@ -329,7 +365,30 @@ internal sealed class NativeInstaller(
         }
     }
 
-    private async Task InstallStudioAsync(
+    public async Task<string> PrepareDeployKeyAsync(string user, string homeDirectory,
+        string keyPath, bool unattended, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(keyPath))
+        {
+            if (unattended)
+                throw new InvalidOperationException(
+                    "Unattended deploy-key setup requires a key that is already registered with GitHub.");
+            var sshDirectory = Path.GetDirectoryName(keyPath)
+                ?? throw new ArgumentException("SSH key path has no parent directory.");
+            await RunAsUserAsync(user, homeDirectory, "install", ["-d", "-m", "0700", sshDirectory],
+                cancellationToken: cancellationToken);
+            await RunAsUserAsync(user, homeDirectory, "ssh-keygen",
+                ["-q", "-t", "ed25519", "-f", keyPath, "-N", "", "-C", "agent-studio-deploy"],
+                cancellationToken: cancellationToken);
+        }
+        SetupSecrets.RequireProtected(keyPath, "SSH private key");
+        var publicKeyPath = keyPath + ".pub";
+        if (!File.Exists(publicKeyPath))
+            throw new FileNotFoundException("Deploy key public half is missing.", publicKeyPath);
+        return File.ReadAllText(publicKeyPath).Trim();
+    }
+
+    internal async Task InstallStudioAsync(
         string studioRelease,
         string version,
         CancellationToken cancellationToken)
@@ -350,6 +409,117 @@ internal sealed class NativeInstaller(
             "ln",
             ["-sfnT", target, Path.Combine(paths.StudioOpt, "current")],
             cancellationToken: cancellationToken);
+        await processes.RequireAsync(
+            "install",
+            ["-m", "0755", Path.Combine(studioRelease, "agent-studio-setup"),
+                Path.Combine(target, "agent-studio-setup")],
+            cancellationToken: cancellationToken);
+        if (Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_ROOT_CHECK") != "1")
+            await processes.RequireAsync("ln", ["-sfnT",
+                Path.Combine(paths.StudioOpt, "current", "agent-studio-setup"),
+                "/usr/local/bin/agent-studio-setup"], cancellationToken: cancellationToken);
+    }
+
+    internal async Task InstallStudioServicesAsync(string taskServerUrl, CancellationToken cancellationToken,
+        bool restartExisting = false)
+    {
+        var current = Path.Combine(paths.OrchestratorOpt, "current");
+        var api = Path.Combine(current, "api", "OrchestratorApi");
+        var bff = Path.Combine(current, "bff", "agent-studio-bff");
+        var web = Path.Combine(paths.StudioOpt, "current", "agent-studio-setup");
+        if (!dryRun && new[] { api, bff, web }.Any(path => !File.Exists(path)))
+            throw new InvalidDataException("Native Studio release is missing the API, BFF or web executable.");
+        var workspace = Path.Combine(paths.OrchestratorState, "workspace");
+        var home = Path.Combine(paths.OrchestratorState, "api-home");
+        await processes.RequireAsync("install", ["-d", "-m", "0750", workspace, home],
+            cancellationToken: cancellationToken);
+        if (Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_ROOT_CHECK") != "1")
+            await processes.RequireAsync("chown", ["-R", "agent-orchestrator:agent-orchestrator",
+                workspace, home], cancellationToken: cancellationToken);
+        var studioToken = Path.Combine(paths.OrchestratorConfig, "studio.token");
+        var units = new Dictionary<string, string>
+        {
+            ["agent-studio-api.service"] = BuildStudioUnit("Agent Studio API", api,
+                Path.Combine(current, "api"),
+                ["ASPNETCORE_URLS=http://127.0.0.1:5031",
+                 $"TaskServer__BaseUrl={taskServerUrl}",
+                 $"TaskServer__AuthTokenFile={studioToken}",
+                 $"TaskRepository={workspace}", $"HOME={home}"],
+                paths.OrchestratorState),
+            ["agent-studio-bff.service"] = BuildStudioUnit("Agent Studio BFF", bff,
+                Path.Combine(current, "bff"),
+                ["ASPNETCORE_URLS=http://127.0.0.1:5072",
+                 $"TaskServer__BaseUrl={taskServerUrl}",
+                 $"TaskServer__AuthTokenFile={studioToken}",
+                 "Studio__AllowedOrigins=http://127.0.0.1:4011,http://localhost:4011"],
+                paths.OrchestratorState),
+            ["agent-studio-web.service"] = BuildStudioUnit("Agent Studio UI", web,
+                Path.Combine(paths.StudioOpt, "current"),
+                [], paths.OrchestratorState,
+                $"serve-native --browser {Path.Combine(paths.StudioOpt, "current", "browser")} " +
+                "--listen http://127.0.0.1:4011 --api http://127.0.0.1:5031 " +
+                "--bff http://127.0.0.1:5072"),
+        };
+        foreach (var (unitName, content) in units)
+            WriteProtectedFile(Path.Combine(paths.Systemd, unitName), content,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite
+                | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        if (Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_SYSTEMD") == "1")
+        {
+            Console.WriteLine("  [test] Studio systemd start skipped by AGENT_SETUP_SKIP_SYSTEMD=1");
+            return;
+        }
+        var systemctl = Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") ?? "systemctl";
+        await processes.RequireAsync(systemctl, ["daemon-reload"], cancellationToken: cancellationToken);
+        foreach (var name in units.Keys)
+        {
+            await processes.RequireAsync(systemctl, ["enable", "--now", name],
+                cancellationToken: cancellationToken);
+            if (restartExisting)
+                await processes.RequireAsync(systemctl, ["restart", name],
+                    cancellationToken: cancellationToken);
+        }
+        if (dryRun) return;
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        foreach (var url in new[]
+                 {
+                     "http://127.0.0.1:5031/healthz", "http://127.0.0.1:5072/healthz",
+                     "http://127.0.0.1:4011/",
+                 })
+        {
+            var healthy = false;
+            for (var attempt = 0; attempt < 24 && !healthy; attempt++)
+            {
+                try
+                {
+                    using var response = await client.GetAsync(url, cancellationToken);
+                    healthy = response.IsSuccessStatusCode;
+                }
+                catch (HttpRequestException) { await Task.Delay(1000, cancellationToken); }
+                if (!healthy) await Task.Delay(1000, cancellationToken);
+            }
+            if (!healthy)
+                throw new InvalidOperationException($"Native Studio service did not become healthy at {url}.");
+        }
+    }
+
+    internal static string BuildStudioUnit(string description, string executable,
+        string workingDirectory, IEnumerable<string> environment, string stateRoot,
+        string arguments = "")
+    {
+        if (new[] { executable, workingDirectory, stateRoot }.Any(value => value.Contains('\n'))
+            || environment.Any(value => value.Contains('\n')))
+            throw new ArgumentException("Service paths and environment must not contain newlines.");
+        var lines = environment.Select(value => $"Environment=\"{value.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"");
+        return string.Join('\n',
+            ["[Unit]", $"Description={description}", "After=network-online.target agent-task-server.service",
+             "Requires=agent-task-server.service", "", "[Service]", "Type=simple",
+             "User=agent-orchestrator", "Group=agent-orchestrator",
+             $"WorkingDirectory={workingDirectory}", .. lines,
+             $"ExecStart={executable}{(arguments.Length == 0 ? "" : " " + arguments)}",
+             "Restart=always", "RestartSec=5s", "NoNewPrivileges=true", "ProtectHome=true",
+             "ProtectSystem=strict", $"ReadWritePaths={stateRoot}", "", "[Install]",
+             "WantedBy=multi-user.target", ""]);
     }
 
     private string? ExistingCredential(string fileName)
@@ -406,6 +576,8 @@ internal sealed class NativeInstaller(
             lines.Add($"RUNNER_GIT_REMOTE={EnvironmentValue(configuration.GitRemote)}");
         if (configuration.GitPushRemote is not null)
             lines.Add($"RUNNER_GIT_PUSH_REMOTE={EnvironmentValue(configuration.GitPushRemote)}");
+        if (configuration.GitSshKeyFile is not null)
+            lines.Add($"GIT_SSH_COMMAND={EnvironmentValue(SshCommand(configuration.GitSshKeyFile))}");
         return string.Join(Environment.NewLine, lines) + Environment.NewLine;
     }
 
@@ -440,7 +612,7 @@ internal sealed class NativeInstaller(
             stateRoot,
         ];
 
-    private async Task ReplaceReviewServiceAsync(
+    internal async Task ReplaceReviewServiceAsync(
         string systemctl,
         string unitName,
         string candidateBinary,
@@ -821,7 +993,8 @@ internal sealed class NativeInstaller(
         IEnumerable<string> arguments,
         string? input = null,
         CancellationToken cancellationToken = default,
-        bool requireSuccess = true)
+        bool requireSuccess = true,
+        string? gitSshKeyFile = null)
     {
         var runCurrentUserDirectly =
             Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_ROOT_CHECK") == "1"
@@ -830,8 +1003,10 @@ internal sealed class NativeInstaller(
         {
             "env",
             $"HOME={homeDirectory}",
-            command,
         };
+        if (gitSshKeyFile is not null)
+            commandArguments.Add($"GIT_SSH_COMMAND={SshCommand(gitSshKeyFile)}");
+        commandArguments.Add(command);
         if (!runCurrentUserDirectly)
             commandArguments.InsertRange(0, ["-u", user, "--"]);
         commandArguments.AddRange(arguments);
@@ -845,6 +1020,9 @@ internal sealed class NativeInstaller(
                 $"{command} failed for execution user {user} with code {result.ExitCode}.");
         return result;
     }
+
+    private static string SshCommand(string path)
+        => $"ssh -i '{path.Replace("'", "'\\''", StringComparison.Ordinal)}' -o IdentitiesOnly=yes -o BatchMode=yes";
 
     private static IReadOnlyList<string> GitHubUrlVariants(string remote)
     {

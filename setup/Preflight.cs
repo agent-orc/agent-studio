@@ -161,10 +161,10 @@ internal static class PreflightProbe
             authority.Trusted,
             journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority) && backupPath is not null
                 ? Writable(backupPath) : null,
-            journey == InstallationJourney.JoinHost
-                ? await SucceedsAsync(processes, "codex", ["--version"])
-                  || await SucceedsAsync(processes, "claude", ["--version"])
-                : null,
+            // The execution user is selected after preflight. Checking root's
+            // PATH here rejects a valid CLI installed in that user's home.
+            // ConfigureAndInstallHostAsync checks version and login as that user.
+            null,
             journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority) && secretFile is not null
                 ? SetupSecrets.IsProtected(secretFile) : null,
             authority.Reachable,

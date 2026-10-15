@@ -29,30 +29,27 @@ registered origins.
 
 ## Before you start
 
-On every machine, download the setup executable and its checksum from the same
-release:
+On every machine, run the verified release script or download it first:
 
 ```sh
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-studio-setup
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/SHA256SUMS
-grep '  agent-studio-setup$' SHA256SUMS | sha256sum -c -
-chmod +x agent-studio-setup
+curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
 ```
 
-The executable downloads the matching release archives and verifies each one
-against `SHA256SUMS`. Use `--release-dir <path>` on an offline machine after
-placing the three archives and `SHA256SUMS` in that directory.
+The script verifies the setup executable. Setup downloads matching archives
+and verifies each one against `SHA256SUMS`. Use `--release-dir <path>` on an
+offline machine after placing the four archives and `SHA256SUMS` there.
 
 Prepare the public DNS name and TLS termination for the Control Plane. The
-host-visible Task Server URL must use HTTPS. Caddy remains host infrastructure;
-the Control Plane archive contains the site template.
+host-visible Task Server URL must use HTTPS. Native setup serves the local UI
+at `http://127.0.0.1:4011/`; a public origin still needs TLS termination.
 
 ## 1. Install the Control Plane
 
 On the Control Plane machine:
 
 ```sh
-sudo ./agent-studio-setup --mode control-plane --target native
+curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh \
+  | sudo sh -s -- --mode control-plane --target native
 ```
 
 `--target native` installs the systemd services described here; `systemd` is
@@ -66,16 +63,18 @@ The guide asks for:
 2. the HTTPS URL visible from Agent Hosts, for example
    `https://tasks.example.com`.
 
-It installs the Task Server and Orchestrator Engine as one versioned unit,
-installs the matching static Studio files, waits for readiness, and prints:
+It installs the Task Server, Orchestrator Engine, Studio API, BFF and UI
+service as one versioned unit, waits for readiness, and prints:
 
 ```text
 sudo ./agent-studio-setup --join
 ```
 
-followed by a join token. Configure the supplied Caddy template so the public
-origin serves the Studio files and proxies `/api/*`, `/healthz`, and `/readyz`
-to the private listener. Confirm from an Agent Host network:
+and writes an owner-only join-token file in the Control Plane configuration
+directory. The owner bootstrap code is stored at
+`/etc/agent-orchestrator/owner-bootstrap.code`; use it in the first-owner
+screen at the local UI. Configure the public origin to proxy Studio routes to
+the local UI over HTTPS. Confirm from an Agent Host network:
 
 ```sh
 curl -fsS https://tasks.example.com/healthz
@@ -93,19 +92,15 @@ a one-time enrollment. Transfer it through the same protected administration
 channel used for host access. Do not put it in shell history, tickets, chat,
 task text, or source control.
 
-For automation, write it to a root-readable file:
-
-```sh
-sudo install -m 0600 /dev/stdin /root/agent-studio.join
-```
-
-Paste the token, send end-of-file, then use `--join-token-file`. Remove the file
-after the host registers.
+Transfer the generated `join.token` over a protected channel to an owner-only
+file on the Agent Host, then use `--join-token-file`. Remove the transferred
+file after the host registers.
 
 ## 2. Prepare each Agent Host
 
-Install Git and authenticate at least one supported host CLI as the Linux user
-that will execute tasks:
+Install Git and at least one supported host CLI as the Linux user that will
+execute tasks. Guided setup can start Codex device authorization or Claude
+sign-in as that user. For unattended setup, authenticate beforehand:
 
 ```sh
 git --version
@@ -139,23 +134,25 @@ The full repository credential and rotation contract is in
 Run on the Agent Host:
 
 ```sh
-sudo ./agent-studio-setup --join
+curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh \
+  | sudo sh -s -- --join --join-token-file /root/agent-studio.join
 ```
 
-Paste the join token at the hidden prompt. The installer then asks for the
-execution user, host name, CLI, service role, Git probe origin, and maximum
-parallelism. It:
+With `--join-token-file`, the installer reads the protected file. In a guided
+run without that option, it asks for the token at a hidden prompt. It then
+asks for the execution user, host name, CLI, service role, Git probe origin,
+and maximum parallelism. It:
 
 1. verifies Linux x64, Git, systemd, the selected CLI version, and that CLI's
    host-owned authentication;
 2. downloads and verifies the matching `agent-host` archive;
-3. optionally stores the GitHub credential for both repository URL forms and
-   runs both read checks;
+3. asks for a GitHub token file, a per-project deploy key, or an existing SSH
+   key, then verifies read access before starting the host;
 4. writes the Task Server credential to a separate protected file;
-5. installs and starts the role-specific systemd service;
+5. installs the setup command and starts the role-specific systemd service;
 6. waits until the Task Server reports that exact Agent Host registration.
 
-To avoid a token in a paste prompt:
+To use an already downloaded setup executable instead:
 
 ```sh
 sudo ./agent-studio-setup \
@@ -167,6 +164,11 @@ sudo rm /root/agent-studio.join
 The coding service is `agent-host.service`. A separately installed review role
 uses `agent-host-review.service`, a different identity, environment, state
 directory, and resource envelope.
+
+Native updates use `agent-studio-setup update --release-version X.Y.Z` with a
+verified newer release. `agent-studio-setup rollback` reactivates the retained
+previous version. Both commands preserve credentials and host data; setup
+records the active release in `installation.json`.
 
 ## 4. Verify both sides
 
