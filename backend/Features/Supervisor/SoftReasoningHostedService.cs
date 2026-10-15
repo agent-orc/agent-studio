@@ -31,7 +31,6 @@ public sealed class SoftReasoningHostedService : BackgroundService
     private readonly AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
     private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
-    private readonly TimeProvider _time;
 
     private readonly Queue<DateTime> _callTimestamps = new();
 
@@ -44,8 +43,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
         AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? usage = null,
         AgentStudio.Cli.CliOneShotRegistry? oneShotRegistry = null,
-        ReviewInputDecisionGateway? reviewInputDecisions = null,
-        TimeProvider? time = null)
+        ReviewInputDecisionGateway? reviewInputDecisions = null)
     {
         _taskRunner = taskRunner;
         _observe = observe;
@@ -56,7 +54,6 @@ public sealed class SoftReasoningHostedService : BackgroundService
         _usage = usage;
         _oneShotRegistry = oneShotRegistry;
         _reviewInputDecisions = reviewInputDecisions;
-        _time = time ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -125,7 +122,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
                         System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
                     _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
                         "supervision", project, observation.CurrentJobId, TaskStates.Progress,
-                        $"{observation.CurrentJobId}:{_time.GetUtcNow():yyyyMMddHHmm}", summary, digest,
+                        $"{observation.CurrentJobId}:{digest}", summary, digest,
                         observation.Omissions.Select(reason => new GroundsOmissionV1("supervision", reason)).ToArray(),
                         observation.CurrentJobId));
                     continue;

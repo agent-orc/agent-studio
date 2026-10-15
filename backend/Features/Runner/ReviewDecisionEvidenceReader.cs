@@ -74,8 +74,11 @@ public static class ReviewDecisionEvidenceReader
         var prompt = string.Join('\n', selected.TakeLast(PromptLines)
             .Select(Redact));
         var omissions = new List<string>();
-        if (prompt.Contains("[omitted: secret]", StringComparison.Ordinal)) omissions.Add("secret");
-        if (prompt.Contains("[omitted: raw session path]", StringComparison.Ordinal))
+        if (prompt.Contains("[omitted: secret]", StringComparison.Ordinal)
+            || Credential.IsMatch(latest.Reason ?? string.Empty))
+            omissions.Add("secret");
+        if (prompt.Contains("[omitted: raw session path]", StringComparison.Ordinal)
+            || SessionPath.IsMatch(latest.Reason ?? string.Empty))
             omissions.Add("raw-session-path");
         if (Encoding.UTF8.GetByteCount(prompt) > PromptBytes)
         {
