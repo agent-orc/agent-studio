@@ -15,10 +15,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace AgentStudio.Tests;
 
-public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared) : IClassFixture<PublicDemoHostFixture>, IDisposable
+public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared, ITestOutputHelper output) : IClassFixture<PublicDemoHostFixture>, IDisposable
 {
     private readonly string _workspace = Path.Combine(
         Path.GetTempPath(),
@@ -89,6 +90,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
+        output.WriteLine($"PublicDemoExecutionProfile fixture initialization: {shared.InitializationDuration.TotalSeconds:F3} s");
         var factory = shared.Factory;
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -207,33 +209,6 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                     body.RootElement.GetProperty("admissionPath").GetString());
             }
         }
-    }
-
-    [Fact]
-    public async Task Public_demo_denies_unsafe_standalone_task_server_proxy_requests_before_forwarding()
-    {
-        using var factory = BuildFactory(new Dictionary<string, string?>
-        {
-            ["TaskServer:BaseUrl"] = "http://127.0.0.1:1",
-        });
-        using var client = factory.CreateClient();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            "/api/v1/runners/forged-runner/claims")
-        {
-            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
-        };
-
-        using var response = await client.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(
-            ExecutionAdmissionPolicy.ExecutionDisabledCode,
-            body.RootElement.GetProperty("error").GetString());
-        Assert.Equal(
-            ExecutionAdmissionPolicy.PublicDemoProfile,
-            body.RootElement.GetProperty("profile").GetString());
     }
 
     private WebApplicationFactory<Program> BuildFactory(

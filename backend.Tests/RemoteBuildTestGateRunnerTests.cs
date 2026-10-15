@@ -277,6 +277,30 @@ public sealed class RemoteBuildTestGateRunnerTests
         Assert.Throws<InvalidOperationException>(() => RemoteGateOptions.Read(configuration));
     }
 
+    [Fact]
+    public void Remote_slot_wait_and_acquisition_report_both_machine_gate_callbacks()
+    {
+        var transport = new RemoteGateTransport(new ConfigurationBuilder().Build(),
+            NullLogger<RemoteGateTransport>.Instance);
+        var events = new List<string>();
+        var request = Request() with
+        {
+            OnMachineGateWaiting = () => events.Add("waiting"),
+            OnMachineGateSlotWaiting = (busy, total) => events.Add($"slot-waiting:{busy}/{total}"),
+            OnMachineGateAcquired = () => events.Add("acquired"),
+            OnMachineGateSlotAcquired = (slot, total) => events.Add($"slot-acquired:{slot}/{total}"),
+        };
+        const string runId = "run-1";
+
+        transport.ReportWorkerLine("REMOTE_GATE_WAITING other-run 2/3", runId, "gate-host", request);
+        transport.ReportWorkerLine("REMOTE_GATE_WAITING run-1 4/3", runId, "gate-host", request);
+        transport.ReportWorkerLine("REMOTE_GATE_WAITING run-1 2/3", runId, "gate-host", request);
+        transport.ReportWorkerLine("REMOTE_GATE_ACQUIRED run-1", runId, "gate-host", request);
+        transport.ReportWorkerLine("REMOTE_GATE_SLOT run-1 2/3", runId, "gate-host", request);
+
+        Assert.Equal(["waiting", "slot-waiting:2/3", "acquired", "slot-acquired:2/3"], events);
+    }
+
     [Theory]
     [InlineData(3, 6, 24, false)]
     [InlineData(4, 6, 24, false)]

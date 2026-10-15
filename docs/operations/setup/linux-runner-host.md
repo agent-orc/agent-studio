@@ -231,6 +231,30 @@ authenticated private Task Server URL is available to the host, point
 `RUNNER_SERVER_URL` at it and disable the tunnel keeper instead of carrying both
 routes forward.
 
+### Dedicated Orchestrator Engine for the monolith transition plane
+
+AGT-3059 adds a separate Compose service profile at
+[`deploy/compose/monolith-engine/compose.yaml`](../../../deploy/compose/monolith-engine/compose.yaml).
+Run it on `agent-runner-01`, apart from the coding and review daemons. Host
+networking lets the engine reach the supervised runner link at
+`http://127.0.0.1:15031`; `MONOLITH_RUNNER_LINK_URL` overrides that address.
+Enroll a separate `engine_` principal with only `orchestration.write` on the
+monolith and place its credential in an owner-protected file on the runner host.
+Set `ENGINE_CLIENT_ID` to that exact enrolled id, `ENGINE_CREDENTIAL_FILE` to
+the credential path, and `ENGINE_VERSION` to the published engine image tag.
+Then run `docker compose -f deploy/compose/monolith-engine/compose.yaml up -d`
+from a checkout on the host. Compose supervises restarts, and the image health
+check probes the engine's loopback health listener. The engine uses per-occurrence
+leases, so another instance can take over after lease expiry without a leader.
+
+Leave the three transition profiles in Monolith until AGT-3135 is integrated
+on Stable. After that prerequisite, use Workspace Settings > Orchestrator to
+start shadow separately for coding completion, review reports, and gate results.
+Each profile needs 50 consecutive matching actions by default; reaching that
+streak marks it ready, and an operator switches it to Engine with a reason.
+The same control rolls it back. A pending Engine occurrence stays durable while
+the engine is unavailable; rollback returns pending work to the monolith policy.
+
 ## Product onboarding from Execution Hosts
 
 The primary setup path is **Workspace Settings -> Execution Hosts -> Set up agent

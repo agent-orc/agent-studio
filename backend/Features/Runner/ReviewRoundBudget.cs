@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.Review;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -48,6 +50,23 @@ public static class ReviewRoundBudgetStore
             Write(folder, updated);
             return updated;
         }
+    }
+
+    public static void RecordAcceptedEngineReview(string folder, StagePayload payload)
+    {
+        if (payload.ReviewAttemptId is null
+            || payload.ReviewOutcome is not (ReviewOutcomeKinds.Pass
+                or ReviewOutcomeKinds.ProductFailure or ReviewOutcomeKinds.IntegrationBranchDefect))
+            return;
+        var blocked = (payload.Verdicts ?? [])
+            .Where(verdict => AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+            .Select(verdict => verdict.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var seed = payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty;
+        var decision = ReviewRoundBudgetPolicy.Decide(seed, payload.ReviewAttemptId, blocked,
+            payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
+            payload.ReissuesUsed, payload.MaximumReissues);
+        Record(folder, seed, new DeliveredReviewRound(payload.ReviewAttemptId, blocked,
+            decision.DegradedAspects, SpentBy: decision.SpentBy));
     }
 
     public static void MarkFollowUp(string folder, string attemptId, string taskKey)

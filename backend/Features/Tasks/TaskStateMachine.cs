@@ -128,7 +128,8 @@ public class TaskStateMachine
         DecisionReopenPermit? decisionReopenPermit = null,
         bool archiveOverride = false,
         bool archiveOverrideRollback = false,
-        bool historicalAcceptanceRepair = false)
+        bool historicalAcceptanceRepair = false,
+        bool publishedContainmentProven = false)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -196,8 +197,11 @@ public class TaskStateMachine
             var status = targetState == TaskStates.Completed
                 ? _integrationStatus.BuildForCompletion(recheck)
                 : _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
+            var admissionStatus = publishedContainmentProven
+                && recheck.State == TaskStates.HumanReview && targetState == TaskStates.Completed
+                ? IntegrationStatuses.Integrated : status?.Status;
             var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
-                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
+                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), admissionStatus, archiveOverride);
             if (!admission.Allowed && !historicalAcceptanceRepair)
             {
                 if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview)

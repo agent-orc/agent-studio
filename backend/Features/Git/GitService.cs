@@ -5231,8 +5231,11 @@ public class GitService
         return missing;
     }
 
-    private bool IsDeliveryPublished(string repoRoot, string deliverySha, string publishedTip)
+    /// <summary>Checks ancestry or full-tree containment at a known published tip.</summary>
+    public bool IsDeliveryPublished(string repoRoot, string deliverySha, string publishedTip)
     {
+        if (!ReviewSubjectStore.IsValidResultSha(deliverySha)
+            || !ReviewSubjectStore.IsValidResultSha(publishedTip)) return false;
         if (IsAncestor(repoRoot, deliverySha, publishedTip)) return true;
         // git cherry omits merge commits, including changes made while resolving
         // conflicts. A clean virtual merge contains the delivery's full tree.

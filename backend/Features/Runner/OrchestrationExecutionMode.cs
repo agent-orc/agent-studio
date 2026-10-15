@@ -8,6 +8,7 @@ namespace AgentStudio.Runner;
 public enum OrchestrationExecutionMode
 {
     Monolith,
+    Shadow,
     Engine,
 }
 
@@ -20,6 +21,6 @@ public static class OrchestrationExecutionModeParser
         return Enum.TryParse<OrchestrationExecutionMode>(configured, true, out var mode)
             ? mode
             : throw new InvalidOperationException(
-                "Orchestration:ExecutionMode must be either 'Monolith' or 'Engine'.");
+                "Orchestration:ExecutionMode must be 'Monolith', 'Shadow', or 'Engine'.");
     }
 }

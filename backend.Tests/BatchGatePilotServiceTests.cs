@@ -795,6 +795,86 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(containedIn, RemoteTip());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Acceptance_repairs_an_unintegrated_fallback_marker_when_delivery_is_published(
+        bool patchEquivalent)
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-FALLBACK-CONTAINED", "docs/fallback-contained.md",
+            initialState: TaskStates.HumanReview);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        var marker = BatchGateOwnershipStore.Read(folder)!;
+        BatchGateOwnershipStore.Write(folder, marker with
+        {
+            FallbackTestedSha = member.ResultSha,
+            FallbackIntegrated = false,
+        });
+        if (patchEquivalent)
+        {
+            Git(_repo, "checkout", "-q", "--detach", "origin/develop");
+            File.WriteAllText(Path.Combine(_repo, "unrelated.txt"), "other published work\n");
+            Git(_repo, "add", "unrelated.txt");
+            Git(_repo, "commit", "-qm", "unrelated publication");
+            Git(_repo, "cherry-pick", member.ResultSha);
+            Git(_repo, "push", "-q", "origin", "HEAD:develop");
+            Assert.NotEqual(member.ResultSha, RemoteTip());
+        }
+        else Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+        var containedIn = RemoteTip();
+
+        using var response = await http.PostAsJsonAsync(
+            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Published delivery verified by operator." });
+
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
+        AssertLane(member.Key, TaskStates.Completed);
+        var ownership = Ownership(member.Key)!;
+        Assert.Equal(containedIn, ownership.ContainedInSha);
+        Assert.True(ownership.FallbackIntegrated);
+        Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(
+            Path.Combine(_watchPath, TaskStates.Completed, member.Key)),
+            ownership.FallbackEvidencePath!)));
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task Acceptance_with_uncontained_fallback_marker_returns_typed_conflict()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-FALLBACK-MISSING", "docs/fallback-missing.md",
+            initialState: TaskStates.HumanReview);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        BatchGateOwnershipStore.Write(folder, BatchGateOwnershipStore.Read(folder)! with
+        {
+            FallbackTestedSha = string.Empty,
+            FallbackIntegrated = false,
+        });
+
+        using var response = await http.PostAsJsonAsync(
+            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Operator reviewed the delivery." });
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("batch-gate-evidence-missing", body.RootElement.GetProperty("code").GetString());
+        Assert.Equal("batch-gate-evidence-missing", body.RootElement.GetProperty("error").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(body.RootElement.GetProperty("hint").GetString()));
+        Assert.Null(Ownership(member.Key)?.ContainedInSha);
+        AssertLane(member.Key, TaskStates.HumanReview);
+    }
+
     [Fact]
     public async Task Published_recovery_does_not_wait_for_an_ejected_members_running_fallback()
     {
@@ -2238,7 +2318,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         string changedFile, bool settleReview = true, string? parentSha = null,
         bool deferredPlan = true, string? taskId = null,
         Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
-        string? mergeFrom = null, string generation = "")
+        string? mergeFrom = null, string generation = "",
+        string initialState = TaskStates.AutoReview)
     {
         var baseSha = Git(_repo, "rev-parse", "origin/develop");
         var resultRef = "refs/heads/agent-studio/results/" + key;
@@ -2270,11 +2351,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.True(settledRun.Accepted, settledRun.Message);
         // The card carries what a remote completion records: the attributed
         // result commit and the card-local review subject.
-        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, key);
+        var folder = Path.Combine(_watchPath, initialState, key);
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = taskId ?? key, key, title = key, state = TaskStates.AutoReview, order = 1, agent = "claude",
+            id = taskId ?? key, key, title = key, state = initialState, order = 1, agent = "claude",
             kind = TaskKinds.Task, enteredLaneAt = _clock.UtcDateTime,
             commits = new[]
             {

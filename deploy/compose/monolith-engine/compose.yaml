@@ -1,0 +1,29 @@
+# Dedicated Orchestrator Engine on agent-runner-01 while the monolith owns tasks.
+# Host networking lets the container use the supervised runner link's loopback
+# listener. The engine has its own enrolled engine_ principal and credential.
+name: agent-studio-monolith-engine
+
+services:
+  orchestrator-engine:
+    image: ${ORCHESTRATOR_ENGINE_IMAGE:-ghcr.io/agent-orc/agent-studio-orchestrator-engine}:${ENGINE_VERSION:?set ENGINE_VERSION}
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'export CLIENT_CREDENTIAL="$$(cat /run/secrets/engine_token)"; exec dotnet orchestrator-engine.dll'
+    environment:
+      SERVER_URL: ${MONOLITH_RUNNER_LINK_URL:-http://127.0.0.1:15031}
+      CLIENT_ID: ${ENGINE_CLIENT_ID:?enroll a separate engine_ principal}
+      HEALTH_PORT: "5073"
+      ENGINE_ALLOW_INSECURE_HTTP: "1"
+    secrets:
+      - engine_token
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512m
+
+secrets:
+  engine_token:
+    file: ${ENGINE_CREDENTIAL_FILE:?set ENGINE_CREDENTIAL_FILE to the enrolled engine credential path}
