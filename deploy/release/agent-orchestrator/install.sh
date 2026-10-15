@@ -146,6 +146,22 @@ else
     log "Keeping existing operator configuration in $CONFIG_ROOT."
 fi
 
+# Arm the first-owner screen with a one-time code kept on the authority host.
+# Re-runs retain the same code; the Task Server ignores it once an owner exists.
+owner_code_file="$CONFIG_ROOT/owner-bootstrap.code"
+if [ ! -f "$owner_code_file" ]; then
+    command -v openssl >/dev/null 2>&1 \
+        || die "openssl is required to create the owner bootstrap code."
+    umask 077
+    openssl rand -hex 24 >"$owner_code_file"
+    chmod 0640 "$owner_code_file"
+    chown "root:$SERVICE_USER" "$owner_code_file" 2>/dev/null || true
+fi
+if ! grep -q '^OWNER_BOOTSTRAP_CODE_FILE=' "$CONFIG_ROOT/server.env"; then
+    printf 'OWNER_BOOTSTRAP_CODE_FILE=%s\n' "$owner_code_file" >>"$CONFIG_ROOT/server.env"
+fi
+log "Owner bootstrap code: $owner_code_file (read it on this host to claim the first owner account)."
+
 target=$(install_release_tree "$source_dir")
 if [ "$already_active" -eq 0 ]; then
     atomic_link "$target" "$OPT_ROOT/current"

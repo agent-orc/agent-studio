@@ -37,6 +37,7 @@ SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     [ -x agent-studio-setup ]
     [ -x install.sh ]
     grep -Fq 'sha256sum -c' install.sh
+    grep -q '^release_version=1.2.3$' install.sh
     sha256sum -c SHA256SUMS
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/update.sh'

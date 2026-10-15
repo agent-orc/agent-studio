@@ -51,7 +51,8 @@ internal sealed record ProductCommand(
     private static readonly HashSet<string> DelegatedValueOptions = new(StringComparer.Ordinal)
     {
         "--listen-url", "--runner-name", "--execution-user", "--agent-cli", "--git-remote",
-        "--git-push-remote", "--wg-address", "--offhost-backup-path", "--role",
+        "--git-push-remote", "--git-access", "--git-username", "--git-token-file",
+        "--git-ssh-key-file", "--wg-address", "--offhost-backup-path", "--role",
         "--max-parallelism",
     };
 
@@ -188,16 +189,15 @@ internal static class ProductPlanner
         if (windows)
             throw new PlatformNotSupportedException(
                 $"--mode {mode} installs Linux services. Run the Linux x64 setup binary on the target host.");
-        if (command.Verb is not ("install" or "uninstall"))
-            throw new ArgumentException(mode == "studio"
-                ? $"{command.Verb} for the Linux native profile uses update.sh and rollback.sh in /opt/agent-orchestrator/current; see docs/operations/setup/multi-machine.md."
-                : $"{command.Verb} is supported for the Studio and connector installations only.");
+        if (command.Verb is not ("install" or "uninstall" or "update" or "rollback")
+            || command.Verb is ("update" or "rollback") && target != "native")
+            throw new ArgumentException($"{command.Verb} is unavailable for --mode {mode} --target {target}.");
 
         var arguments = new List<string>
         {
             "--mode", mode == "studio" ? "single" : mode,
         };
-        if (command.Verb == "uninstall")
+        if (command.Verb is "uninstall" or "update" or "rollback")
             return new ProductPlan(profile, mode, target, []);
         if (mode == "control-plane")
             arguments.AddRange(["--target", target == "native" ? "systemd" : "docker"]);

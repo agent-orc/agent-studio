@@ -102,10 +102,13 @@ public sealed class ProductSetupTests
             ProductPlanner.Plan(Parse(), "studio", "native", windows: false, []).DelegatedArguments);
 
     [Fact]
-    public void Delegated_profiles_install_only()
-        => Assert.Contains("update.sh",
-            Assert.Throws<ArgumentException>(
-                () => ProductPlanner.Plan(Parse("update"), "studio", "native", windows: false, [])).Message);
+    public void Linux_native_update_and_rollback_are_product_commands()
+    {
+        Assert.Empty(ProductPlanner.Plan(Parse("update"), "studio", "native", windows: false, [])
+            .DelegatedArguments);
+        Assert.Empty(ProductPlanner.Plan(Parse("rollback"), "studio", "native", windows: false, [])
+            .DelegatedArguments);
+    }
 
     [Fact]
     public void Linux_only_options_are_rejected_for_the_docker_profile()
