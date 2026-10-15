@@ -27,8 +27,7 @@ public static class StageDecisionPolicy
     {
         var reissuesUsed = payload.ReissuesUsed ?? reissues;
         var findings = (payload.Verdicts ?? []).Where(verdict =>
-            !string.Equals(verdict.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
-                StringComparison.OrdinalIgnoreCase)).Select(verdict => new ReviewFollowUpFinding(
+            !ReviewRoundBudgetPolicy.IsUncitedBlock(verdict.Classification)).Select(verdict => new ReviewFollowUpFinding(
             verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
             verdict.Missing, verdict.Classification)).Concat((payload.ReviewFindings ?? []).Select(item =>
                 new ReviewFollowUpFinding("review-finding",
@@ -49,13 +48,10 @@ public static class StageDecisionPolicy
 
     public static ReviewRoundBudgetLedger DeliveredHistory(IEnumerable<StagePayload> priorOldestFirst)
         => new(priorOldestFirst.Where(payload => payload.ReviewAttemptId is not null
-                && payload.ReviewOutcome is ReviewOutcomeKinds.Pass or ReviewOutcomeKinds.ProductFailure or ReviewOutcomeKinds.IntegrationBranchDefect)
+                && ReviewRoundBudgetPolicy.IsDeliveredOutcome(payload.ReviewOutcome))
             .GroupBy(payload => payload.ReviewAttemptId, StringComparer.Ordinal).Select(group => group.Last())
             .Select(payload => new DeliveredReviewRound(payload.ReviewAttemptId!,
-                (payload.Verdicts ?? []).Where(verdict => ReviewGradingPolicy.IsBlockingToken(verdict.Status)
-                    && !string.Equals(verdict.Classification, ReviewVerdictCitationPolicy.BlockWithoutCitation,
-                        StringComparison.OrdinalIgnoreCase))
-                    .Select(verdict => verdict.Aspect).ToArray(), [])).ToArray());
+                ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []), [])).ToArray());
 
     public static int ConcernRoundsUsed(IEnumerable<StagePayload> priorReports)
         => priorReports.Count(payload => TransitionDecisionPolicy.Decide(Facts(

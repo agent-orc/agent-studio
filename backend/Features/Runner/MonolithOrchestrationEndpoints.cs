@@ -124,6 +124,15 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
                 }
+                try
+                {
+                    RecoverShadowOutcomes();
+                    store.RecoverShadowComparisons();
+                }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-shadow-comparison-retry-pending");
+                }
                 await RecoverRolledBackAsync(stoppingToken);
                 AlertLongWaits();
                 await Task.Delay(PreparationGrace, time, stoppingToken);
@@ -234,6 +243,26 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             && now - occurrence.Run.CreatedAt > TimeSpan.FromMinutes(1)
             || occurrence.Run.Status == "leased"
                 && occurrence.Lease is { ExpiresAt: var expiry } && expiry <= now;
+
+    /// <summary>
+    /// A process can stop after the monolith applied a shadow transition but
+    /// before it recorded the receipt; the card has then left the lane that
+    /// replays the transition. The current lane resolves such an occurrence.
+    /// </summary>
+    internal void RecoverShadowOutcomes()
+    {
+        var unrecorded = store.UnrecordedShadowOutcomes();
+        if (unrecorded.Count == 0) return;
+        // A cached lane can predate the move; resolve only from a fresh scan.
+        scanner.InvalidateCache();
+        var tasks = scanner.ScanAllJobs();
+        foreach (var occurrence in unrecorded)
+        {
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
+            store.ResolveShadowOutcome(occurrence.Run.RunId, card?.State);
+        }
+    }
 
     internal void RecoverOnce()
     {
