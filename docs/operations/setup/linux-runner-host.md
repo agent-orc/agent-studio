@@ -255,6 +255,15 @@ streak marks it ready, and an operator switches it to Engine with a reason.
 The same control rolls it back. A pending Engine occurrence stays durable while
 the engine is unavailable; rollback returns pending work to the monolith policy.
 
+While coding completion is in shadow, the engine also asks a strong model for
+the same transition (AGT-3063). The call is a decision job that a runner
+connected to the monolith claims and runs with its own CLI login; no provider
+credential is added to the engine. The runner needs a working login for the
+`Orchestration:DecisionModel:Cli` family (`codex` by default). The engine waits
+up to `SHADOW_DECISION_TIMEOUT_SECONDS` (900) and otherwise records
+`decision-unavailable`. The Orchestrator settings panel lists the receipts with
+an Evidence link; nothing is dispatched from them.
+
 ## Product onboarding from Execution Hosts
 
 The primary setup path is **Workspace Settings -> Execution Hosts -> Set up agent

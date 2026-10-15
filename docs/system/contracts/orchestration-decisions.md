@@ -46,6 +46,50 @@ occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
 occurrence raises an operator feed alert and waits for a leased engine instance.
 
+## Decision grounds and shadow receipts
+
+AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
+is in Shadow. When the monolith records the shadow occurrence,
+`DecisionGroundsCollector` freezes a `DecisionShadowInputV1` under
+`<TaskRepository>/.orchestrator-decisions/inputs`. It holds typed facts with
+source refs, freshness, coverage and reliability, explicit omissions, the
+candidate actions with floor-rejected ones visible, the last decisions with
+their applied outcome, the model route, and the AGT-W68 RB-S1 card ledger and
+progress definition. The deterministic choice sits beside the grounds and stays
+out of the model prompt. The first frozen input of an occurrence wins.
+
+The library owns the pure rules. `CardRunLedgerPolicy` deduplicates usage by
+provider call id (falling back to a run, time, model and counter fingerprint),
+subtracts cached input from a raw OpenAI total before pricing, keeps unknown
+prices unpriced, and reports excluded duplicate rows, tokens and value.
+`DecisionGroundsPolicy.Freeze` builds `DecisionGroundsV1` with fixed row caps,
+truncation markers, at most 32 KiB, a 6,500-token pack budget that leaves room
+for the prompt inside the 8,000-token call cap, an incomplete-pack flag, and a
+SHA-256 content digest. `DecisionReceiptPolicy` renders the prompt, accepts only
+an available candidate from the closed union with valid confidence and cited
+fact ids, and builds `OrchestratorDecisionReceiptV1`. Any other answer, an
+unavailable model, an expired wait, a cap or an incomplete pack records
+`ask(reason=decision-unavailable)`.
+
+The engine's `ShadowDecisionService` drains occurrences without a receipt. By
+default the model call is a claimable decision job on a runner host
+(`runner-host-job` custody), so provider credentials stay on runner hosts. A
+runner claims it at `/api/runner/orchestrator-decisions/claim` with the
+`runner.claim` scope and runs one read-only CLI turn in an empty directory. A
+transport failure gets one attempt on `Orchestration:DecisionModel:Alternate*`.
+The monolith prices the deduplicated usage with `ITokenPricing` at the call
+time. It refuses a job beyond 24 calls or 5 USD priced spend per card and keeps
+the job as `cap-exhausted`. Receipts are immutable: the store checks the grounds
+digest against the frozen input and returns the first receipt on every replay.
+Storing a receipt also closes any job that is still open. Studio reads
+`/api/orchestration/decision-receipts`; each row's `evidenceRef` opens the full
+receipt with grounds and response, and `outcomeLink` shows the applied action.
+The model choice is never dispatched. `Orchestration:DecisionModel:Cli`, `Model`
+and `ThinkingLevel` default to `codex`, `gpt-6-sol` and `medium`; the engine
+reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
+(900). An engine-held provider credential remains a separate follow-up decision
+if claim latency proves too high.
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled

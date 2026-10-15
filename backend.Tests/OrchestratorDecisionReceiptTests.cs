@@ -1,0 +1,358 @@
+extern alias Runner;
+extern alias EngineAssembly;
+
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Runner;
+using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tokens;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+using RClient = Runner::AgentRunner.TaskServerClient;
+using RAcquire = Runner::AgentRunner.RunLeaseAcquireRequest;
+using RRemoteComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
+using EngineOptions = EngineAssembly::AgentStudio.OrchestratorEngine.EngineOptions;
+using IDecisionReceiptPlane = EngineAssembly::AgentStudio.OrchestratorEngine.IDecisionReceiptPlane;
+using ShadowDecisionStep = EngineAssembly::AgentStudio.OrchestratorEngine.ShadowDecisionStep;
+
+/// <summary>
+/// AGT-3063 acceptance: a shadow coding completion freezes typed grounds, a
+/// runner host answers the claimable model job, the engine stores one
+/// immutable receipt per occurrence, and the card exposes a one-click
+/// evidence ref. Duplicate and cached usage never inflate spend.
+/// </summary>
+public sealed class OrchestratorDecisionReceiptTests : IDisposable
+{
+    private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
+    private readonly string _workspace = Path.Combine(Path.GetTempPath(),
+        "orchestrator-decision-receipts-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Shadow_coding_completion_records_one_immutable_receipt_with_a_one_click_evidence_ref()
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-SHADOW-DECISION";
+        const string runnerId = "coding-runner";
+        const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
+        const string baseSha = "4136f00d4136f00d4136f00d4136f00d4136f00d";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var cardFolder = Path.Combine(projectPath, TaskStates.Progress, card);
+        Directory.CreateDirectory(cardFolder);
+        // A legacy raw Codex row (cached input inside input_tokens) recorded
+        // twice under two attempts: one provider call, priced once on 10k
+        // uncached plus 90k cached input.
+        var usage = new
+        {
+            ts = At, model = "gpt-5.5", participantId = "agent:remote-runner:earlier:usage:call-1",
+            inputTokens = 100_000, outputTokens = 1_000, cacheReadTokens = 90_000, cacheCreationTokens = 0,
+        };
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Shadow decision", state = TaskStates.Progress,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+            tokenSummary = new
+            {
+                calls = 2,
+                entries = new object[]
+                {
+                    usage,
+                    usage with { participantId = "agent:remote-runner:later:usage:call-1" },
+                },
+            },
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Build and verify.");
+        File.WriteAllText(Path.Combine(cardFolder, "status.md"), "Result: pending.");
+
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                    ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
+                    ["Supervisor:StuckResumeWindowMinutes"] = "0",
+                    ["DeliveryChain:Guarded"] = "false",
+                    ["Orchestration:Transitions:CodingCompletion"] = "Shadow",
+                }));
+        });
+        using var http = factory.CreateClient();
+        using var coding = new RClient(http, runnerId);
+        await coding.RegisterAsync(project, "service", CancellationToken.None);
+        var lease = await coding.AcquireLeaseAsync(
+            new RAcquire(card, runnerId, project, "coding-host", 4242, "codex"), CancellationToken.None);
+        Assert.True(lease.Granted);
+        var completionRequest = new RRemoteComplete(
+            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, "Done",
+            ResultSha: resultSha, AttemptChainId: lease.Lease.LeaseId,
+            Repository: "https://example.invalid/agent-studio.git",
+            AttemptId: lease.Lease.AttemptId, AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "shadow-coding-completion", BaseSha: baseSha,
+            ImmutableResultRef: FencedGitRefs.ImmutableResult(
+                lease.Lease.AttemptId!, lease.Lease.FencingToken, resultSha),
+            ArtifactManifestDigest: new string('a', 64));
+        var completion = await coding.CompleteRunAsync(completionRequest, CancellationToken.None);
+        // Shadow mode: the monolith applies its own decision; the model step changes no dispatch.
+        Assert.Equal(TaskStates.AutoReview, completion!.TargetState);
+        await coding.CompleteRunAsync(completionRequest, CancellationToken.None);
+
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var occurrence = Assert.Single(orchestration.List(project, null));
+        var decisions = factory.Services.GetRequiredService<OrchestratorDecisionStore>();
+        var frozen = decisions.GetInputs(occurrence.RunId)!;
+        Assert.Equal([occurrence.RunId], decisions.PendingReceipts(10));
+        Assert.Equal((DecisionActionKinds.Prepare, "review-subject"),
+            (frozen.DeterministicAction, frozen.DeterministicTarget));
+        var ledger = frozen.Grounds.RunLedger;
+        Assert.Equal((2, 1, 1), (ledger.RawRows, ledger.CountedRows, ledger.ExcludedDuplicateRows));
+        Assert.Equal(new DecisionTokenUsageV1(10_000, 90_000, 0, 1_000), ledger.Tokens);
+        Assert.Contains(frozen.Grounds.Facts, fact => fact.Id == "result.sha" && fact.Value == resultSha);
+        Assert.DoesNotContain(frozen.Grounds.Facts, fact => fact.Value.Contains("CreateReview"));
+
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var engine = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "engine-one", [RunnerScopes.Orchestration], null, null)).Code);
+        using var engineHttp = factory.CreateClient();
+        engineHttp.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
+        engineHttp.DefaultRequestHeaders.Add("X-Client-Id", engine.Runner.Id);
+        var plane = new HttpDecisionPlane(engineHttp);
+        Assert.Equal([occurrence.RunId], await plane.GetPendingDecisionGroundsAsync(10, CancellationToken.None));
+        // The engine clock stays before the job deadline and moves only when the test advances it.
+        var engineClock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var step = new ShadowDecisionStep(plane,
+            new EngineOptions { ServerUrl = "http://127.0.0.1", ClientId = engine.Runner.Id, PollSeconds = 1 },
+            engineClock);
+        var recording = step.RecordAsync(occurrence.RunId, CancellationToken.None);
+
+        var claim = await ClaimAsync(coding, runnerId);
+        Assert.Equal(DecisionDefaultsCli, claim.Cli);
+        Assert.Contains(frozen.Grounds.Facts[0].Id, claim.Prompt);
+        Assert.DoesNotContain("CreateReview", claim.Prompt);
+        var frame = new DecisionUsageFrameV1("codex:thread-1", "gpt-6-sol", 6_000, 1_000, 0, 300, false);
+        Assert.True(await coding.CompleteOrchestratorDecisionJobAsync(new OrchestratorDecisionJobCompletion(
+            claim.JobId, claim.ClaimToken, runnerId, true,
+            """{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":0.82,"reasoning":"The attempt settled an immutable envelope.","citedFacts":["result.envelope","run.outcome"],"prediction":"Review passes in one round."}""",
+            "gpt-6-sol", [frame, frame], At, At.AddSeconds(12), null, false), CancellationToken.None));
+        Assert.False(await coding.CompleteOrchestratorDecisionJobAsync(new OrchestratorDecisionJobCompletion(
+            claim.JobId, "stale-token", runnerId, true, "{}", null, [], At, At, null, false),
+            CancellationToken.None));
+
+        for (var tick = 0; tick < 200 && !recording.IsCompleted; tick++)
+        {
+            engineClock.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(25);
+        }
+        var receipt = (await recording)!;
+        Assert.Equal(DecisionCallStatuses.Completed, receipt.Call.Status);
+        Assert.True(receipt.MatchesDeterministic);
+        Assert.Equal(DecisionReceiptPolicy.ShadowDispatch, receipt.DispatchOutcome);
+        Assert.Equal(DecisionModelCustody.RunnerHostJob, receipt.Call.Custody);
+        Assert.Equal(runnerId, receipt.Call.HostId);
+        Assert.Equal(new DecisionTokenUsageV1(6_000, 1_000, 0, 300), receipt.Call.Tokens);
+        Assert.Equal(1, receipt.Call.ExcludedDuplicateFrames);
+        Assert.Equal(["codex:thread-1"], receipt.Call.ProviderCallIds);
+        Assert.Equal(receipt.Call.Price.Status == DecisionPriceStatuses.Priced,
+            receipt.Call.Price.EstimatedUsd is not null);
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(card, projectPath)?.State);
+
+        // Replay of the same occurrence, including a degraded late writer, keeps the first receipt.
+        var replay = await step.RecordAsync(occurrence.RunId, CancellationToken.None);
+        var degraded = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(frozen.Grounds),
+            new(frozen.DeterministicAction, frozen.DeterministicTarget, "applied:deterministic"),
+            frozen.DeterministicReason, null, 0, false, "late writer"));
+        var late = await plane.PutDecisionReceiptAsync(degraded, CancellationToken.None);
+        Assert.Equal(JsonSerializer.Serialize(receipt), JsonSerializer.Serialize(replay));
+        Assert.Equal(JsonSerializer.Serialize(receipt), JsonSerializer.Serialize(late));
+        Assert.Single(Directory.GetFiles(Path.Combine(_workspace, ".orchestrator-decisions", "receipts")));
+        Assert.Empty(decisions.PendingReceipts(10));
+
+        // The card's receipt row links in one request to the full evidence.
+        var rows = await http.GetFromJsonAsync<OrchestratorDecisionReceiptSummary[]>(
+            $"/api/orchestration/decision-receipts?taskId={card}", DecisionGroundsPolicy.Json);
+        var row = Assert.Single(rows!);
+        Assert.Equal("prepare(review-subject)", row.ChosenAction);
+        var evidence = await http.GetFromJsonAsync<OrchestratorDecisionReceiptV1>(row.EvidenceRef,
+            DecisionGroundsPolicy.Json);
+        Assert.Equal(receipt.ReceiptId, evidence!.ReceiptId);
+        Assert.True(DecisionGroundsPolicy.IsIntact(evidence.Grounds));
+        Assert.Equal(1, evidence.Grounds.RunLedger.ExcludedDuplicateRows);
+        Assert.Contains("prepare", evidence.ResponseContent);
+        using var outcome = JsonDocument.Parse(await http.GetStringAsync(evidence.OutcomeLink));
+        Assert.Equal(nameof(TransitionAction.CreateReview), outcome.RootElement.GetProperty("appliedAction").GetString());
+    }
+
+    [Fact]
+    public void Store_caps_card_calls_prices_unknown_models_explicitly_and_supersedes_open_jobs()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(At));
+        var directory = Path.Combine(_workspace, "store");
+        var store = new OrchestratorDecisionStore(directory, clock, new RatePricing());
+        var input = Shadow("orch_cap");
+        store.FreezeInputs(input);
+        Assert.Same(store.GetInputs("orch_cap"), store.FreezeInputs(input with { DeterministicReason = "changed" }));
+
+        var job = store.CreateJob(Request("orch_cap", 1, "mystery-model"));
+        Assert.Equal(job, store.CreateJob(Request("orch_cap", 1, "mystery-model")));
+        Assert.Throws<InvalidOperationException>(() => store.CreateJob(Request("orch_cap", 1, "other-model")));
+        var claim = store.Claim(new("runner-one", "runner")).Work!;
+        Assert.Equal(DecisionJobClaimStatuses.Empty, store.Claim(new("runner-two", "runner")).Status);
+        Assert.False(store.Complete(Completion(claim, "runner-two")));
+        Assert.True(store.Complete(Completion(claim, "runner-one")));
+        Assert.True(store.Complete(Completion(claim, "runner-one")));
+        var priced = store.GetJob(job.JobId)!.Result!;
+        Assert.Equal(new DecisionPriceV1(DecisionPriceStatuses.UnknownModel, null), priced.Price);
+        Assert.Equal(new DecisionTokenUsageV1(500, 1_500, 0, 100), priced.Tokens);
+        Assert.Equal(1, priced.ExcludedDuplicateFrames);
+
+        var open = store.CreateJob(Request("orch_cap", 2, "gpt-6-sol"));
+        var grounds = DecisionGroundsPolicy.Freeze(input.Grounds);
+        var receipt = DecisionReceiptPolicy.Build(new(grounds, DecisionGroundsPolicyTests.Deterministic,
+            "settled", store.GetJob(job.JobId), 1, false, null));
+        store.PutReceipt(receipt);
+        Assert.Equal(DecisionJobStatuses.Failed, store.GetJob(open.JobId)!.Status);
+        Assert.Equal(DecisionJobClaimStatuses.Empty, store.Claim(new("runner-one", "runner")).Status);
+        store.FreezeInputs(Shadow("orch_other"));
+        Assert.Throws<InvalidOperationException>(() => store.PutReceipt(receipt with
+        {
+            OccurrenceId = "orch_other",
+        }));
+
+        // The claimed call counts; the superseded job never reached a runner.
+        for (var index = 0; index < OrchestratorDecisionStore.MaxCallsPerCard - 1; index++)
+        {
+            store.FreezeInputs(Shadow($"orch_{index}"));
+            Assert.Equal(DecisionJobStatuses.Pending, store.CreateJob(Request($"orch_{index}", 1, "gpt-6-sol")).Status);
+        }
+        store.FreezeInputs(Shadow("orch_over"));
+        var capped = store.CreateJob(Request("orch_over", 1, "gpt-6-sol"));
+        Assert.Equal(DecisionJobStatuses.CapExhausted, capped.Status);
+        Assert.Contains("call cap", capped.Error);
+
+        var reloaded = new OrchestratorDecisionStore(directory, clock, new RatePricing());
+        Assert.Equal(receipt.ReceiptId, reloaded.GetReceipt(receipt.ReceiptId)!.ReceiptId);
+        Assert.Equal(DecisionJobStatuses.CapExhausted, reloaded.GetJob(capped.JobId)!.Status);
+    }
+
+    [Fact]
+    public void Ledger_row_mapping_reads_the_provider_call_id_and_legacy_raw_input()
+    {
+        var legacy = new AgentStudio.Shared.TaskTokenCall
+        {
+            Ts = At, Model = "gpt-5.5", ParticipantId = "agent:remote-runner:attempt-7:usage:call-9",
+            InputTokens = 100_000, CacheReadTokens = 90_000, OutputTokens = 10,
+        };
+        var normalized = legacy with { InputTokens = 10_000, InputIncludesCached = true };
+
+        var raw = DecisionGroundsCollector.LedgerRow(legacy);
+        var settled = DecisionGroundsCollector.LedgerRow(normalized);
+
+        Assert.Equal(("call-9", "attempt-7", true), (raw.ProviderCallId, raw.RunId, raw.InputIncludesCached));
+        Assert.False(settled.InputIncludesCached);
+        Assert.Equal(CardRunLedgerPolicy.Normalize(raw), CardRunLedgerPolicy.Normalize(settled));
+    }
+
+    private const string DecisionDefaultsCli = "codex";
+
+    private static async Task<OrchestratorDecisionJobWork> ClaimAsync(RClient client, string runnerId)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var claim = await client.ClaimOrchestratorDecisionJobAsync(
+                new OrchestratorDecisionJobClaimRequest(runnerId, "service"), CancellationToken.None);
+            if (claim.Work is { } work) return work;
+            await Task.Delay(100);
+        }
+        throw new TimeoutException("No orchestrator decision job became claimable.");
+    }
+
+    private static DecisionShadowInputV1 Shadow(string occurrence)
+        => new(DecisionGroundsPolicyTests.Input() with { OccurrenceId = occurrence },
+            DecisionActionKinds.Prepare, "review-subject", "settled");
+
+    private static OrchestratorDecisionJobRequest Request(string occurrence, int attempt, string model)
+        => new(occurrence, "project", "AGT-1", attempt,
+            DecisionGroundsPolicy.Freeze(Shadow(occurrence).Grounds).ContentDigest, "prompt", "codex", model,
+            "medium", DecisionGroundsPolicy.MaxCallInputTokens, DecisionGroundsPolicy.MaxCallOutputTokens);
+
+    private static OrchestratorDecisionJobCompletion Completion(OrchestratorDecisionJobWork work, string runner)
+    {
+        var frame = new DecisionUsageFrameV1("call-1", "mystery-model", 2_000, 1_500, 0, 100, true);
+        return new(work.JobId, work.ClaimToken, runner, true, "{}", "mystery-model", [frame, frame],
+            At, At.AddSeconds(3), null, false);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
+    }
+
+    private sealed class HttpDecisionPlane(HttpClient client) : IDecisionReceiptPlane
+    {
+        public async Task<IReadOnlyList<string>> GetPendingDecisionGroundsAsync(int limit, CancellationToken ct)
+            => (await client.GetFromJsonAsync<string[]>(
+                $"/api/v1/orchestration/decision-grounds/pending?limit={limit}", DecisionGroundsPolicy.Json, ct))!;
+
+        public async Task<DecisionShadowInputV1?> GetGroundsInputAsync(string runId, CancellationToken ct)
+            => await client.GetFromJsonAsync<DecisionShadowInputV1>(
+                $"/api/v1/orchestration/runs/{runId}/grounds-input", DecisionGroundsPolicy.Json, ct);
+
+        public async Task<OrchestratorDecisionJobDto> CreateDecisionJobAsync(OrchestratorDecisionJobRequest request,
+            CancellationToken ct)
+            => await Read<OrchestratorDecisionJobDto>(await client.PostAsJsonAsync(
+                "/api/v1/orchestration/decision-jobs", request, DecisionGroundsPolicy.Json, ct));
+
+        public async Task<OrchestratorDecisionJobDto> GetDecisionJobAsync(string jobId, CancellationToken ct)
+            => (await client.GetFromJsonAsync<OrchestratorDecisionJobDto>(
+                $"/api/v1/orchestration/decision-jobs/{jobId}", DecisionGroundsPolicy.Json, ct))!;
+
+        public async Task<OrchestratorDecisionReceiptV1> PutDecisionReceiptAsync(
+            OrchestratorDecisionReceiptV1 receipt, CancellationToken ct)
+            => await Read<OrchestratorDecisionReceiptV1>(await client.PutAsJsonAsync(
+                $"/api/v1/orchestration/runs/{receipt.OccurrenceId}/decision-receipt", receipt,
+                DecisionGroundsPolicy.Json, ct));
+
+        private static async Task<T> Read<T>(HttpResponseMessage response)
+        {
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            return (await response.Content.ReadFromJsonAsync<T>(DecisionGroundsPolicy.Json))!;
+        }
+    }
+
+    private sealed class RatePricing : ITokenPricing
+    {
+        public TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
+            long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
+        {
+            if (modelId == "mystery-model")
+                return new(0, 0, 0, 0, 0, modelId, false, TokenEconomy.PriceStatus.UnknownModel, null);
+            var input = inputTokens * 10m / 1_000_000m;
+            var output = outputTokens * 50m / 1_000_000m;
+            var read = cacheReadTokens * 1m / 1_000_000m;
+            var write = cacheCreationTokens * 2m / 1_000_000m;
+            return new(input, output, read, write, input + output + read + write, modelId ?? "unknown", true,
+                TokenEconomy.PriceStatus.Resolved, null);
+        }
+
+        public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
+            => throw new NotSupportedException();
+    }
+}

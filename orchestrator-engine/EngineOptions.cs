@@ -18,6 +18,8 @@ public sealed class EngineOptions
     public int LeaseSeconds { get; init; } = 120;
     public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
     public bool RemotePostBuildTestEnabled { get; init; }
+    public int ShadowDecisionConcurrency { get; init; } = 2;
+    public int ShadowDecisionTimeoutSeconds { get; init; } = 900;
 
     public static EngineOptions FromEnvironment()
         => Parse(Environment.GetEnvironmentVariable);
@@ -70,6 +72,8 @@ public sealed class EngineOptions
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),
             HealthPort = EngineHealthProbe.ResolvePort(value),
             RemotePostBuildTestEnabled = OptIn(value("REMOTE_POST_BUILD_TEST_GATE_ENABLED")),
+            ShadowDecisionConcurrency = Cap(value, "SHADOW_DECISION_CONCURRENCY", 2),
+            ShadowDecisionTimeoutSeconds = Number(value, "SHADOW_DECISION_TIMEOUT_SECONDS", 900, 60, 3600),
         };
     }
 

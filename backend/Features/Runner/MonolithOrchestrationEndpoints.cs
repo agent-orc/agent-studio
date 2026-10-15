@@ -70,7 +70,7 @@ public static class MonolithOrchestrationEndpoints
         => Authorize(context, security) is { } principal
             && string.Equals(principal.RunnerId, engineId, StringComparison.Ordinal);
 
-    private static RunnerPrincipal? Authorize(HttpContext context, AccessSecurityStore security)
+    internal static RunnerPrincipal? Authorize(HttpContext context, AccessSecurityStore security)
     {
         var principal = context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] as RunnerPrincipal;
         if (principal is null)
@@ -85,7 +85,7 @@ public static class MonolithOrchestrationEndpoints
             ? principal : null;
     }
 
-    private static IResult Execute(Func<IResult> action)
+    internal static IResult Execute(Func<IResult> action)
     {
         try { return action(); }
         catch (KeyNotFoundException exception) { return Results.NotFound(new ApiError("not-found", exception.Message)); }
