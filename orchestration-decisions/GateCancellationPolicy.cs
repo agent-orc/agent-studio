@@ -10,6 +10,14 @@ public static class GateCancellationReasons
 /// <summary>Cancellation is a lifecycle event; subject ownership wins over its source.</summary>
 public static class GateCancellationPolicy
 {
+    public static bool OwnsResult(string? expectedSha, string? currentSha,
+        string? expectedAttempt, string? currentAttempt,
+        string? expectedLane, string? currentLane, bool continuePending)
+        => string.Equals(expectedSha, currentSha, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(expectedAttempt, currentAttempt, StringComparison.Ordinal)
+           && string.Equals(expectedLane, currentLane, StringComparison.OrdinalIgnoreCase)
+           && !continuePending;
+
     public static string Decide(string? expectedSha, string? currentSha,
         string? expectedLane, string? currentLane, bool continuePending,
         bool shuttingDown, string? reportedReason = null)
