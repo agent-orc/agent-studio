@@ -39,20 +39,69 @@ public static class DecisionRulePolicy
     {
         var applicable = rules.Where(rule => rule.Trigger == receipt.Trigger.Kind
             || rule.Trigger == receipt.Trigger.Profile).ToArray();
-        var missing = applicable.Any(rule => receipt.Grounds.Facts.All(fact => fact.Id != rule.FactId));
-        var signals = applicable.Select(rule => receipt.Grounds.Facts.FirstOrDefault(fact => fact.Id == rule.FactId)
-                is { } fact ? $"{rule.Id}: {fact.Value} ({ThresholdState(rule, fact.Value)})"
-                : $"{rule.Id}: missing").ToArray();
-        var candidates = applicable.SelectMany(rule => rule.CandidateActions)
+        var missing = applicable.Any(rule => FreshFact(rule, receipt.Grounds.Facts,
+            receipt.Trigger.ObservedAt) is null);
+        var signals = applicable.Select(rule => FreshFact(rule, receipt.Grounds.Facts,
+                receipt.Trigger.ObservedAt) is { } fact
+                ? $"{rule.Id}: {fact.Value} ({ThresholdState(rule, fact.Value)})"
+                : $"{rule.Id}: missing or stale").ToArray();
+        // A frozen receipt retains every offered candidate. Remove only refusals
+        // introduced by the old rule version before evaluating a new version.
+        var offered = receipt.Grounds.Alternatives.Select(candidate =>
+            candidate.RejectionReason is "rule-candidate-excluded" or "rule-missing-evidence-hold"
+                or "rule-missing-evidence-ask" or "human-operator-required"
+                ? candidate with { Available = true, RejectionReason = null } : candidate).ToArray();
+        var candidates = Apply(rules, receipt.Trigger.Kind, receipt.Trigger.Profile,
+            receipt.Grounds.Facts, offered, receipt.Trigger.ObservedAt)
+            .Where(candidate => candidate.Available).Select(candidate => candidate.Action)
             .Distinct(StringComparer.Ordinal).OrderBy(value => value).ToArray();
         return new(signals, candidates, missing);
     }
+
+    /// <summary>Apply editable limits to host-offered candidates without raising platform authority.</summary>
+    public static IReadOnlyList<GroundsAlternativeV1> Apply(IReadOnlyList<DecisionRuleV1> rules,
+        string trigger, string profile, IReadOnlyList<GroundsFactV1> facts,
+        IReadOnlyList<GroundsAlternativeV1> alternatives, DateTime observedAt)
+    {
+        var applicable = rules.Where(rule => rule.Trigger == trigger || rule.Trigger == profile).ToArray();
+        if (applicable.Length == 0) return alternatives.ToArray();
+        var allowed = applicable.SelectMany(rule => rule.CandidateActions).ToHashSet(StringComparer.Ordinal);
+        var missing = applicable.Where(rule => FreshFact(rule, facts, observedAt) is null).ToArray();
+        var hold = missing.Any(rule => rule.MissingDataBehavior == "hold");
+        var ask = missing.Any(rule => rule.MissingDataBehavior == "ask");
+        var result = alternatives.Select(candidate =>
+        {
+            var matching = applicable.Where(rule => rule.CandidateActions.Contains(candidate.Action,
+                StringComparer.Ordinal)).ToArray();
+            var approval = matching.Select(rule => rule.AutonomyClass)
+                .Append(candidate.RequiredApproval).OrderByDescending(value => value,
+                    StringComparer.Ordinal).First();
+            var refusal = !candidate.Available ? candidate.RejectionReason
+                : !allowed.Contains(candidate.Action)
+                    && !(ask && candidate.Action == DecisionActionKinds.Ask)
+                    ? "rule-candidate-excluded"
+                : hold ? "rule-missing-evidence-hold"
+                : ask && candidate.Action != DecisionActionKinds.Ask ? "rule-missing-evidence-ask"
+                : approval == "A3" ? "human-operator-required" : null;
+            return candidate with { RequiredApproval = approval,
+                Available = candidate.Available && refusal is null, RejectionReason = refusal };
+        }).ToList();
+        if (ask && !hold && result.All(candidate => candidate.Action != DecisionActionKinds.Ask))
+            result.Add(new(DecisionActionKinds.Ask, "operator:ai", "reversible", "A1", true));
+        return result;
+    }
+
+    private static GroundsFactV1? FreshFact(DecisionRuleV1 rule,
+        IReadOnlyList<GroundsFactV1> facts, DateTime observedAt)
+        => facts.FirstOrDefault(fact => fact.Id == rule.FactId
+            && fact.ObservedAt <= observedAt
+            && observedAt - fact.ObservedAt <= TimeSpan.FromMinutes(rule.FreshnessMinutes));
 
     public static IReadOnlyList<GroundsFactV1> Signals(IReadOnlyList<DecisionRuleV1> rules,
         string trigger, IReadOnlyList<GroundsFactV1> facts, string policyVersion, DateTime observedAt)
         => rules.Where(rule => rule.Trigger == trigger).Take(16).Select(rule =>
         {
-            var source = facts.FirstOrDefault(fact => fact.Id == rule.FactId);
+            var source = FreshFact(rule, facts, observedAt);
             var value = source is null ? "missing"
                 : rule.WarningThreshold is null ? "observed"
                 : rule.WarningThreshold is { } threshold
