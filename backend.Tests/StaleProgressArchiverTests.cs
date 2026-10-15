@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using AgentStudio.OrchestrationDecisions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -538,6 +539,44 @@ public sealed class StaleProgressArchiverTests : IDisposable
 
         Assert.True(Directory.Exists(folder));
         Assert.Empty(decisions);
+    }
+
+    [Fact]
+    public async Task Receipt_rechecks_the_active_run_before_requeueing()
+    {
+        const string slug = "became-active";
+        WriteJob(TaskStates.Progress, slug);
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        WriteCliLog(folder, "agent started");
+        var log = Path.Combine(folder, "logs", "cli-output.log");
+        SetMtimeOldEnough(log);
+        var subject = $"stale:{slug}:{File.GetLastWriteTimeUtc(log):O}";
+        var payload = new AiOperatorDecisionPayload(AiOperatorDeciders.StaleProgress, subject,
+            StaleProgress: new StaleProgressFacts(false, 7200, 3600, null));
+        var decision = new AiOperatorDecision(AiOperatorDeciders.StaleProgress, subject,
+            AiOperatorDisposition.Act, AutonomyClass.A1, AiOperatorEffects.RequeueToReady,
+            StaleProgressReasons.RunInterrupted, "requeue");
+        var application = new AiOperatorApplication("receipt", ProjectName, slug, TaskStates.Progress,
+            "receipt:write", payload, decision, "", 0, 0);
+        var (archiver, scanner) = Build();
+        var isActive = true;
+        archiver.StatusProviderOverride = () => new RunnerStatus
+        {
+            Projects = new Dictionary<string, ProjectRunnerStatus>
+            {
+                [ProjectName] = new ProjectRunnerStatus { ProjectName = ProjectName, ActiveJobId = isActive ? slug : null }
+            }
+        };
+
+        await archiver.ApplyAsync(application, default);
+
+        scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Progress, scanner.FindJob(slug, _watchPath)?.State);
+
+        isActive = false;
+        await archiver.ApplyAsync(application, default);
+        scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(slug, _watchPath)?.State);
     }
 
     private (StaleProgressArchiver Archiver, TaskScannerService Scanner) Build(int stuckResumeWindowMinutes = 60)

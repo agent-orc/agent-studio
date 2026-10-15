@@ -48,7 +48,7 @@ builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
-var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
+_ = OrchestrationExecutionModeParser.Parse(
     builder.Configuration["Orchestration:ExecutionMode"]);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -886,7 +886,7 @@ builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
 // Transitional single-owner boundary. Engine mode deliberately registers none
 // of the legacy review/council/post-processing hosted loops.
 if (!publicDemoExecutionProfile)
-    builder.Services.AddOrchestrationExecutionLoops(orchestrationExecutionMode);
+    builder.Services.AddOrchestrationExecutionLoops(builder.Configuration);
 // Orchestrator-intake (ready-orchestrator-intake-lane). Off by default per
 // project; see ProjectSettings.IntakeEnabled. The hosted service is cheap
 // (heuristic only, no LLM) and skips projects that have not opted in.

@@ -208,7 +208,7 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
                 if (c.HasLiveHeartbeat || c.HasVisibleWaitingState)
                     continue;
                 var jobId = TryReadJobId(c.JobFolder) ?? c.Slug;
-                var payload = new AiOperatorDecisionPayload(Decider, $"progress:{jobId}",
+                var payload = new AiOperatorDecisionPayload(Decider, $"progress:{jobId}:{(c.CoreRunFinished ? "finished" : "running")}",
                     RunLiveness: new RunLivenessFacts(
                         HasLiveRunHeartbeat: c.HasLiveHeartbeat,
                         CoreRunFinished: c.CoreRunFinished,
@@ -262,6 +262,10 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
             return;
         var facts = application.Payload.RunLiveness
             ?? throw new InvalidDataException("The run-liveness occurrence has no facts.");
+        // The run can finish while the engine decides. A finished run must never
+        // be requeued by a receipt based on its earlier running phase. The next
+        // sweep submits a distinct occurrence for the finished phase.
+        if (RunFinishedSignal.CoreRunFinished(folder) != facts.CoreRunFinished) return;
         var candidate = new Candidate(Path.GetFileName(folder), folder, HasJobJson: true, IsActiveHere: false,
             HasRemoteLeaseHistory: false, HasLiveHeartbeat: false, HasVisibleWaitingState: false,
             CoreRunFinished: facts.CoreRunFinished, SecondsSinceActivity: facts.SecondsSinceActivity);

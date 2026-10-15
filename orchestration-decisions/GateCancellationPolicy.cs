@@ -1,4 +1,4 @@
-namespace AgentStudio.Pipeline;
+namespace AgentStudio.OrchestrationDecisions;
 
 public static class GateCancellationReasons
 {
@@ -23,7 +23,4 @@ public static class GateCancellationPolicy
         return shuttingDown || reportedReason == GateCancellationReasons.Shutdown
             ? GateCancellationReasons.Shutdown : GateCancellationReasons.Operator;
     }
-
-    public static BuildTestGateResult Apply(BuildTestGateResult result, string reason)
-        => result with { CancellationReason = reason, Reason = $"Gate cancelled: {reason}." };
 }

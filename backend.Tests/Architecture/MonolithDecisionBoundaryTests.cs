@@ -47,15 +47,12 @@ public sealed class MonolithDecisionBoundaryTests
     /// <summary>
     /// Pre-existing local deciders outside the background-decider slice: the
     /// local runner retires with local execution (D16 A, I11) and the
-    /// supervisor loops are off by default and become AI Operator occurrences
-    /// later (AGT-W73). The set is closed; a new hosted decider must be routed.
+    /// the local runner retires with local execution (D16 A, I11).
+    /// The set is closed; a new hosted decider must be routed.
     /// </summary>
     private static readonly IReadOnlySet<string> LocalDeciders = new HashSet<string>(StringComparer.Ordinal)
     {
         "TaskRunnerService",
-        "AutoInterventionHostedService",
-        "MetaCycleHostedService",
-        "OrchestratorPrepHostedService",
     };
 
     /// <summary>
@@ -141,6 +138,24 @@ public sealed class MonolithDecisionBoundaryTests
             if (HostPolicy.Match(stripped) is { Success: true } rule)
                 violations.Add($"{path} ({service}) defines {rule.Groups[1].Value}");
         }
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void Moved_transition_rules_cannot_be_redeclared_in_backend()
+    {
+        var sources = BackendSources(RepositoryRoot.Find());
+        string[] movedRules =
+        [
+            "RunLivenessPolicy", "StaleProgressPolicy", "SteerTimeoutPolicy",
+            "RunTimeoutSalvageContinuationPolicy", "GateEnvironmentRetryPolicy",
+            "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy",
+            "AcceptanceRailDecisionPolicy", "GateCancellationPolicy",
+        ];
+        var violations = sources.SelectMany(file => movedRules
+            .Where(rule => Regex.IsMatch(StripComments(file.Value),
+                @"\bclass\s+" + Regex.Escape(rule) + @"\b"))
+            .Select(rule => $"{file.Key} redeclares {rule}"));
         Assert.Empty(violations);
     }
 

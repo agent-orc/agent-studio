@@ -119,6 +119,10 @@ public static class GateEnvironmentRetryFactsReader
         var acceptanceInFlight = integrationInFlight
             || (string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal)
                 && task.State != TaskStates.AutoReview);
+        // A shutdown cancellation consumes only one existing infrastructure rung.
+        if (integration?.Failure?.Code == AcceptedIntegrationFailureCodes.GateInterrupted
+            && integration.Failure.Reason?.Contains("Gate cancelled: shutdown.", StringComparison.Ordinal) == true)
+            options = options with { Backoff = options.Backoff.Take(1).ToArray() };
         return new GateEnvironmentRetryFacts(
             options.Enabled,
             Lanes.Contains(task.State),

@@ -71,6 +71,10 @@ public sealed class AutoInterventionHostedService : BackgroundService
 
     internal async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
+        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
+                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
+            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
+            return;
         var status = _taskRunner.GetStatus();
         if (status?.Projects == null) return;
 

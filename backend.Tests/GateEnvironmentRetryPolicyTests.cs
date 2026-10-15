@@ -274,7 +274,7 @@ public sealed class GateEnvironmentRetryPolicyTests
                 Reason = "Gate cancelled: shutdown.",
             },
         };
-        var result = GateEnvironmentRetryPolicy.Decide(Task(TaskStates.AutoReview), status,
+        var result = DecideFacts(Task(TaskStates.AutoReview), status,
             reviewPassed: true, attemptsSpent: spent, lastAttemptAt: null, failedAt: Failed,
             GateEnvironmentRetryOptions.Default, now: Failed.AddHours(1));
         Assert.Equal(expected, result.Action);

@@ -312,6 +312,26 @@ public sealed class AiOperatorDecisionTests : IDisposable
         Assert.Equal(TaskStates.Progress, scanner.FindJob(LivenessCard, projectPath)?.State);
     }
 
+    [Fact]
+    public async Task Liveness_receipt_does_not_requeue_a_run_that_finished_after_submission()
+    {
+        using var factory = LivenessHost(out var projectPath);
+        var monitor = factory.Services.GetRequiredService<RunLivenessMonitor>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        Assert.Empty(await monitor.SweepAsync());
+
+        var folder = Path.Combine(projectPath, TaskStates.Progress, LivenessCard);
+        TaskJsonFile.UpdateField(folder, "phase", LifecyclePhases.PostProcessingRunning,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        var runId = await CompleteWithEngineAsync(store);
+
+        Assert.Equal("completed", store.Get(runId)!.Status);
+        Assert.Equal("Act:demote-to-ready", store.GetOccurrence(runId)!.EngineReceipt!.Action);
+        scanner.InvalidateCache();
+        Assert.Equal(TaskStates.Progress, scanner.FindJob(LivenessCard, projectPath)?.State);
+    }
+
     private const string LivenessProject = "ai-operator";
     private const string LivenessCard = "AGT-LIVENESS";
 

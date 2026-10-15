@@ -123,6 +123,10 @@ public sealed class OrchestratorPrepHostedService : BackgroundService
     /// </summary>
     public Task TickOnceAsync(CancellationToken ct)
     {
+        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
+                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
+            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
+            return Task.CompletedTask;
         var maxPerHour = _configuration.GetValue("Orchestrator:PrepCallsPerHour", 30);
         var maxIterations = _configuration.GetValue("Orchestrator:MaxPrepIterations", 3);
         var queueFloor = _configuration.GetValue("Orchestrator:QueueFloor", 2);

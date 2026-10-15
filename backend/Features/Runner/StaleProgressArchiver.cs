@@ -289,8 +289,8 @@ public sealed class StaleProgressArchiver : IAiOperatorEffect
 
     /// <summary>
     /// AGT-3060: applies the engine's stale-progress receipt. A card that left
-    /// 3-progress or showed new run activity after the facts were frozen is
-    /// settled without an effect.
+    /// 3-progress, became the active run, or showed new run activity after
+    /// the facts were frozen is settled without an effect.
     /// </summary>
     public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
     {
@@ -298,6 +298,10 @@ public sealed class StaleProgressArchiver : IAiOperatorEffect
             string.Equals(item.Name, application.ProjectId, StringComparison.Ordinal));
         var job = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
         if (entry is null || job is null || job.State != TaskStates.Progress) return;
+        if (SafeGetActiveJobIds().TryGetValue(entry.Name, out var activeJobId)
+            && (string.Equals(activeJobId, Path.GetFileName(job.FolderPath), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(activeJobId, application.TaskId, StringComparison.OrdinalIgnoreCase)))
+            return;
         var (lastActivity, _) = MeasureFolder(job.FolderPath);
         if (application.Payload.SubjectKey != $"stale:{application.TaskId}:{lastActivity:O}") return;
         var facts = application.Payload.StaleProgress

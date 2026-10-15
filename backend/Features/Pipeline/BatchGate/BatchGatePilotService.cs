@@ -1957,7 +1957,7 @@ public sealed partial class BatchGatePilotService
                     latest.Subject.CurrentGeneration ? pending.Subject.ResultSha : null,
                     TaskStates.AutoReview, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, gate.CancellationReason);
-                gate = GateCancellationPolicy.Apply(gate, reason);
+                gate = GateCancellationResultProjector.Apply(gate, reason);
                 if (live is not null)
                     evidence = Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence));
                 _timeline?.Append(live?.FolderPath ?? task.FolderPath, new TimelineEvent
