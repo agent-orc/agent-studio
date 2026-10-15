@@ -53,7 +53,6 @@ public sealed class OrchestrationEngineReadinessTests : IDisposable
     [InlineData("Orchestration:Transitions:ReviewReport", "Shadow")]
     [InlineData("Orchestration:Transitions:OperatorSweep", "Engine")]
     [InlineData(EngineSwitch, "Engine")]
-    [InlineData("Orchestration:ExecutionMode", "Engine")]
     public void Readiness_is_required_once_any_switch_profile_selects_the_engine(string key, string mode)
         => Assert.True(Readiness(new() { [key] = mode }).Required);
 

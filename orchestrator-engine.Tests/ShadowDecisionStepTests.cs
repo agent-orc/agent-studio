@@ -25,7 +25,7 @@ public sealed class ShadowDecisionStepTests
         var plane = new FakePlane(Input(alternate: true), (request, job) => request.Attempt == 1
             ? job with { Status = DecisionJobStatuses.Failed, Result = Result(false, null, transport: true) }
             : job with { Status = DecisionJobStatuses.Completed, Result = Result(true,
-                """{"chosenActions":[{"action":"ask","target":"operator:human-review"}],"confidence":0.6,"reasoning":"Unclear.","citedFacts":["run.outcome"]}""") });
+                """{"chosenActions":[{"action":"ask","target":"operator:ai"}],"confidence":0.6,"reasoning":"Unclear.","citedFacts":["run.outcome"]}""") });
 
         var receipt = (await Step(plane).RecordAsync("orch_test", default))!;
 
