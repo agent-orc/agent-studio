@@ -66,8 +66,6 @@
                             (click)="submitIntent(item, 'raise')">Raise limit</button>
                           <button type="button" [disabled]="!intentReason().trim() || intentBusy() || cutMinutes() < 1 || cutMinutes() > 1440"
                             (click)="submitIntent(item, 'cut')">Cut smaller</button>
-                          <button type="button" [disabled]="!intentReason().trim() || intentBusy()"
-                            (click)="submitIntent(item, 'stop')">Stop</button>
                         </div>
                         <p>The receipt shows recorded, not applied until the action takes effect.</p>
                         @if (intentError(); as error) { <p role="alert">{{ error }}</p> }

@@ -155,6 +155,12 @@ public static class OrchestratorDecisionEndpoints
     {
         var receipt = AuthorizedReceipt(context, receiptId, store, projects);
         if (receipt is null) return Results.NotFound();
+        // AGT-3147: a pending remote decision Stop can be lost on lease release
+        // or takeover. Keep the action unavailable until every attempt exit
+        // applies the card hold before another claim can begin.
+        if (request.Action == "stop")
+            return Results.Conflict(new ApiError("stop-not-available",
+                "Stop is temporarily unavailable for decision receipts."));
         var activeRunner = receipt.Scope.TaskId is { } taskKey
             ? leases.Peek(taskKey).Lease?.RunnerId : null;
         var location = receipt.Scope.ProjectId is { } projectId

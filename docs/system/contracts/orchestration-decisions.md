@@ -168,8 +168,9 @@ dispatch. The audit entry starts as `recorded, not applied` and names its actor.
 Raise and Cut choose a card run limit in minutes. The monolith applies that
 limit to later remote run specs. Their direction is checked against the coding
 runner's reported timeout, or the last applied card limit. A remote runner
-without a reported timeout cannot accept a limit change. Stop uses a fenced
-run-stop request and holds the card in Human Review after the active run settles.
+without a reported timeout cannot accept a limit change. Decision receipt Stop
+is temporarily unavailable: the route returns `409 stop-not-available` and the
+card view hides the control until all remote attempt exit paths can hold the card.
 A shadow receipt never dispatches itself. The bus projection includes billed alternate attempts, and
 late billed calls emit additional usage evidence.
 

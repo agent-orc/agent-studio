@@ -282,8 +282,9 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         var answer = await http.PostAsJsonAsync($"{own.EvidenceRef}/operator-intent",
             new DecisionOperatorIntentRequest("stop", "Stop this card"));
         Assert.Equal(System.Net.HttpStatusCode.Conflict, answer.StatusCode);
-        Assert.Equal("recorded, not applied", decisions.GetOperatorIntent(own.ReceiptId)!.Outcome);
-        Assert.Contains($"operator-response:{own.ReceiptId}", decisions.PendingReceipts(10));
+        Assert.Contains("stop-not-available", await answer.Content.ReadAsStringAsync());
+        Assert.Null(decisions.GetOperatorIntent(own.ReceiptId));
+        Assert.DoesNotContain($"operator-response:{own.ReceiptId}", decisions.PendingReceipts(10));
     }
 
     [Fact]
@@ -594,7 +595,6 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [Theory]
     [InlineData("raise", 120, 7200, "Monolith")]
     [InlineData("cut", 30, 1800, "Monolith")]
-    [InlineData("stop", null, null, "Monolith")]
     [InlineData("raise", 120, 7200, "Shadow")]
     [InlineData("raise", 120, 7200, "Engine")]
     [InlineData("raise", 120, 7200, "Monolith", 5400)]
@@ -694,12 +694,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.StartsWith("applied:", intent.Outcome);
         Assert.NotNull(intent.AppliedAt);
         Assert.Equal(expectedSeconds, store.AppliedRunLimitSeconds(card));
-        if (action == "stop")
-            Assert.Equal(TaskStates.Escalated,
-                factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
-        else
-            Assert.Equal(TaskStates.Ready,
-                factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
+        Assert.Equal(TaskStates.Ready,
+            factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
         Assert.Equal(intent, store.GetOperatorIntent(receipt.ReceiptId));
         var outcome = await http.GetFromJsonAsync<JsonElement>($"{receipt.EvidenceRef}/outcome");
         Assert.Equal(intent.Outcome,
@@ -707,7 +703,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     }
 
     [Fact]
-    public async Task Stop_answer_stops_the_active_remote_run_and_holds_the_card_after_settlement()
+    public async Task Stop_answer_is_rejected_without_recording_or_dispatching_a_remote_stop()
     {
         const string project = "project";
         const string card = "AGT-1";
@@ -757,56 +753,13 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         store.PutReceipt(receipt);
         var posted = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
             new DecisionOperatorIntentRequest("stop", "Stop and hold this run"), DecisionGroundsPolicy.Json);
-        Assert.True(posted.IsSuccessStatusCode, await posted.Content.ReadAsStringAsync());
-        Assert.Equal("recorded, not applied:stop-requested",
-            store.GetOperatorIntent(receipt.ReceiptId)!.Outcome);
-        Assert.Equal(RemoteRunStopReasons.DecisionStop,
-            factory.Services.GetRequiredService<RemoteRunStopRequestStore>().Peek(card)!.Reason);
-        var leases = factory.Services.GetRequiredService<RunLeaseService>();
-        var stops = factory.Services.GetRequiredService<RemoteRunStopRequestStore>();
-        Assert.Equal("Released", leases.Release(new AgentStudio.Shared.RunLeaseReleaseRequest(
-            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId,
-            lease.Lease.AttemptId, lease.Lease.AuthorityEpoch, "replace-before-stop-delivery")).Outcome);
-        var replacement = leases.TryAcquire(new AgentStudio.Shared.RunLeaseAcquireRequest(
-            card, runnerId, runnerId, "coding-host", 4242, "codex",
-            IdempotencyKey: "replacement-after-stop-request"));
-        Assert.True(replacement.Granted);
-        var oldStop = Assert.Single(stops.ListForTask(card));
-        Assert.Equal("superseded", stops.ReconcileWithLease(oldStop, leases.Peek(card)).TerminalReason);
-        Assert.Null(store.GetOperatorIntent(receipt.ReceiptId)!.AppliedAt);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, posted.StatusCode);
+        Assert.Contains("stop-not-available", await posted.Content.ReadAsStringAsync());
+        Assert.Null(store.GetOperatorIntent(receipt.ReceiptId));
+        Assert.DoesNotContain($"operator-response:{receipt.ReceiptId}", store.PendingReceipts(10));
+        Assert.Null(factory.Services.GetRequiredService<RemoteRunStopRequestStore>().Peek(card));
         Assert.NotEqual(TaskStates.Escalated,
             factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
-        var retried = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
-            new DecisionOperatorIntentRequest("stop", "Stop and hold this run"), DecisionGroundsPolicy.Json);
-        Assert.True(retried.IsSuccessStatusCode, await retried.Content.ReadAsStringAsync());
-        Assert.Equal(replacement.Lease!.AttemptId, stops.Peek(card)!.AttemptId);
-        Assert.NotEqual(oldStop.CommandId, stops.Peek(card)!.CommandId);
-        var renewed = await coding.RenewLeaseAsync(new RHeartbeat(
-            card, replacement.Lease.LeaseId, replacement.Lease.FencingToken, runnerId, null,
-            replacement.Lease.AttemptId, replacement.Lease.AuthorityEpoch, "decision-stop-renew"), CancellationToken.None);
-        Assert.Equal(RemoteRunStopReasons.DecisionStop, renewed.StopRequest?.Reason);
-        var request = new RRemoteComplete(
-            card, replacement.Lease.LeaseId, replacement.Lease.FencingToken, runnerId, "Stopped",
-            AttemptId: replacement.Lease.AttemptId, AuthorityEpoch: replacement.Lease.AuthorityEpoch,
-            IdempotencyKey: "decision-stop-completion");
-        var currentFolder = factory.Services.GetRequiredService<TaskScannerService>()
-            .FindJob(card, projectPath)!.FolderPath;
-        var timelinePath = TaskPaths.TimelineLog(currentFolder);
-        var priorTimeline = timelinePath + ".prior";
-        File.Move(timelinePath, priorTimeline);
-        Directory.CreateDirectory(timelinePath);
-        var failed = await http.PostAsJsonAsync("/api/runner/completion", request);
-        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, failed.StatusCode);
-        Assert.NotNull(stops.Peek(card));
-        Assert.Null(store.GetOperatorIntent(receipt.ReceiptId)!.AppliedAt);
-        Directory.Delete(timelinePath);
-        File.Move(priorTimeline, timelinePath);
-        var completed = await coding.CompleteRunAsync(request, CancellationToken.None);
-        Assert.Equal(TaskStates.Escalated, completed!.TargetState);
-        Assert.Equal(TaskStates.Escalated,
-            factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
-        Assert.Equal("applied:stopped-and-held", store.GetOperatorIntent(receipt.ReceiptId)!.Outcome);
-        Assert.Null(stops.Peek(card));
     }
 
     [Fact]

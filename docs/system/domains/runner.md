@@ -281,8 +281,9 @@ unreported claim expires with its lease and is queued again.
 - An applied operator Raise or Cut answer on a decision receipt supplies the
   card's `RunSpec.RunTimeoutSeconds` for later remote rounds. The runner passes
   it to the detached process; a mechanical resume keeps its shorter ceiling.
-  Stop is delivered through the existing fenced remote stop request and holds
-  the settled card in Human Review.
+  Decision receipt Stop is temporarily unavailable because lease release and
+  takeover can bypass the card hold. The route returns `409 stop-not-available`
+  and the card view hides the control.
 - `RemoteRunPrompt` receives server-composed concept and coding mode framing.
   Both modes tell the agent to deliver before sight review, decision acceptance,
   and operator approval. Promoted coding prompts list Dossier decisions and
