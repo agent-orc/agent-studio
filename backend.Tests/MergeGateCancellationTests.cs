@@ -7,6 +7,34 @@ namespace AgentStudio.Tests;
 
 public sealed partial class MergeIntoDevelopRunnerTests
 {
+    [Fact]
+    public async Task Clear_owned_keeps_a_newer_journal_opened_after_the_owner_check()
+    {
+        var folder = Path.Combine(_tempDir, "journal-owner-race");
+        var old = new IntegrationGateJournalEntry
+        {
+            Owner = "old-attempt", Project = "Fixture", JobId = "race", RepoRoot = folder,
+            StartedAt = new MergeCancellationClock().GetUtcNow(),
+        };
+        IntegrationGateJournal.Open(folder, old);
+        using var started = new ManualResetEventSlim();
+        Task? newerWrite = null;
+
+        IntegrationGateJournal.ClearOwned(folder, old.Owner!, () =>
+        {
+            newerWrite = Task.Run(() =>
+            {
+                started.Set();
+                IntegrationGateJournal.Open(folder, old with { Owner = "newer-attempt" });
+            });
+            Assert.True(started.Wait(TimeSpan.FromSeconds(5)));
+            Assert.False(newerWrite.Wait(TimeSpan.FromMilliseconds(100)));
+        });
+
+        await newerWrite!;
+        Assert.Equal("newer-attempt", IntegrationGateJournal.Read(folder)?.Owner);
+    }
+
     [Theory]
     [Trait("Category", "MachineBound")]
     [InlineData("shutdown")]

@@ -182,9 +182,30 @@ public sealed partial class TaskServerStore
               FROM runs r LEFT JOIN runners runner ON runner.id = r.runner_id
              WHERE r.id = $run;
             """, ct, transaction, ("$run", runId)), CultureInfo.InvariantCulture);
+        string? bundleArtifactId = null;
+        if (envelope.SourceBundleDigest is not null)
+        {
+            bundleArtifactId = Convert.ToString(await ScalarAsync(connection, """
+                SELECT id FROM artifacts
+                 WHERE run_id = $run AND lower(sha256) = lower($digest)
+                   AND content IS NOT NULL AND archived = 0
+                 ORDER BY created_at, id LIMIT 1;
+                """, ct, transaction, ("$run", runId), ("$digest", envelope.SourceBundleDigest)),
+                CultureInfo.InvariantCulture);
+            if (bundleArtifactId is null)
+            {
+                await AuditAsync(connection, transaction, actorId, "review.subject-not-created", "run", runId,
+                    JsonSerializer.Serialize(new { taskId, reason = "Source bundle artifact is unavailable.", template.Version }), ct);
+                return;
+            }
+            await ExecuteAsync(connection, """
+                UPDATE runs SET source_bundle_artifact_id = $bundle WHERE id = $run;
+                """, ct, transaction, ("$bundle", bundleArtifactId), ("$run", runId));
+        }
         var request = new CreateReviewSubjectRequest(
             taskId, runId, envelope.RepositoryId, envelope.RepositoryUrl, envelope.ResultSha,
-            envelope.ImmutableRemoteRef, null, null, string.IsNullOrWhiteSpace(codingHost) ? null : codingHost,
+            envelope.ImmutableRemoteRef, bundleArtifactId, envelope.SourceBundleDigest,
+            string.IsNullOrWhiteSpace(codingHost) ? null : codingHost,
             template.ReviewPolicyHash,
             ReviewLibraryStepPolicy.Seal(ReviewPlanResourcePolicy.Apply(template.Plan), envelope.ResultSha),
             $"completion-review:{runId}");

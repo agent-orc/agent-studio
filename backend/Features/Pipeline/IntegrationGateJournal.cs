@@ -63,6 +63,7 @@ public static class IntegrationGateJournal
 {
     public const string PreDevelopBuildGateStep = "pre-develop-build-gate";
     private const string FileName = "integration-gate.inflight.json";
+    private static readonly Lock Gate = new();
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -78,7 +79,9 @@ public static class IntegrationGateJournal
     /// integration the operator already accepted.
     /// </summary>
     public static void Open(string jobFolderPath, IntegrationGateJournalEntry entry)
-        => Write(jobFolderPath, entry);
+    {
+        lock (Gate) Write(jobFolderPath, entry);
+    }
 
     /// <summary>
     /// Completes the entry with the merge result the gate will judge. No-op when
@@ -86,16 +89,20 @@ public static class IntegrationGateJournal
     /// </summary>
     public static void RecordMergeResult(string jobFolderPath, string? gatedSha, string? preMergeTip)
     {
-        if (Read(jobFolderPath) is not { } entry) return;
-        Write(jobFolderPath, entry with
+        lock (Gate)
         {
-            GatedSha = string.IsNullOrWhiteSpace(gatedSha) ? entry.GatedSha : gatedSha,
-            PreMergeTip = string.IsNullOrWhiteSpace(preMergeTip) ? entry.PreMergeTip : preMergeTip,
-        });
+            if (Read(jobFolderPath) is not { } entry) return;
+            Write(jobFolderPath, entry with
+            {
+                GatedSha = string.IsNullOrWhiteSpace(gatedSha) ? entry.GatedSha : gatedSha,
+                PreMergeTip = string.IsNullOrWhiteSpace(preMergeTip) ? entry.PreMergeTip : preMergeTip,
+            });
+        }
     }
 
     public static IntegrationGateJournalEntry? Read(string jobFolderPath)
     {
+        lock (Gate)
         try
         {
             var path = PathFor(jobFolderPath);
@@ -115,6 +122,7 @@ public static class IntegrationGateJournal
     /// <summary>Clears the entry once the gate has reached a verdict, in either direction.</summary>
     public static void Clear(string jobFolderPath)
     {
+        lock (Gate)
         try
         {
             var path = PathFor(jobFolderPath);
@@ -131,8 +139,16 @@ public static class IntegrationGateJournal
     /// An entry another invocation opened since then is its in-flight record.
     /// </summary>
     public static void ClearOwned(string jobFolderPath, string owner)
+        => ClearOwned(jobFolderPath, owner, null);
+
+    internal static void ClearOwned(string jobFolderPath, string owner, Action? afterOwnerRead)
     {
-        if (Read(jobFolderPath)?.Owner == owner) Clear(jobFolderPath);
+        lock (Gate)
+            if (Read(jobFolderPath)?.Owner == owner)
+            {
+                afterOwnerRead?.Invoke();
+                Clear(jobFolderPath);
+            }
     }
 
     private static void Write(string jobFolderPath, IntegrationGateJournalEntry entry)

@@ -35,7 +35,15 @@ public sealed class ClaimedBatchGateRunner(IBatchGateSubjectAuthority gates, Git
     {
         var configured = configuration?[ExecutionKey]?.Trim();
         if (string.IsNullOrEmpty(configured)) return BridgeMode;
-        if (string.Equals(configured, ExecutionMode, StringComparison.OrdinalIgnoreCase)) return ExecutionMode;
+        if (string.Equals(configured, ExecutionMode, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(configuration?["TaskServer:BaseUrl"]))
+                throw new InvalidOperationException(
+                    $"{ExecutionKey}=claimed cannot run with TaskServer:BaseUrl: batch member task and run IDs "
+                    + "belong to the monolith and cannot be claimed by the Task Server. "
+                    + $"Unset TaskServer:BaseUrl or set {ExecutionKey}=bridge.");
+            return ExecutionMode;
+        }
         if (string.Equals(configured, BridgeMode, StringComparison.OrdinalIgnoreCase)) return BridgeMode;
         throw new InvalidOperationException($"{ExecutionKey} must be '{ExecutionMode}' or '{BridgeMode}'.");
     }

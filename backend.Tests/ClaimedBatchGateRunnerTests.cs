@@ -88,6 +88,21 @@ public sealed class ClaimedBatchGateRunnerTests
     }
 
     [Fact]
+    public void Claimed_execution_refuses_the_Task_Server_proxy_before_subject_creation()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [ClaimedBatchGateRunner.ExecutionKey] = "claimed",
+                ["TaskServer:BaseUrl"] = "https://task-server.test/",
+            }).Build();
+
+        var error = Assert.Throws<InvalidOperationException>(() => ClaimedBatchGateRunner.Mode(configuration));
+        Assert.Contains("TaskServer:BaseUrl", error.Message, StringComparison.Ordinal);
+        Assert.Contains("BatchGate:Execution=bridge", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Task_server_authority_creates_and_reads_the_subject_where_runner_claims_land()
     {
         var store = new MonolithGateStore((string?)null, _clock, new GateHosts());
