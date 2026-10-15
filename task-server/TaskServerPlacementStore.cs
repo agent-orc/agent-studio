@@ -186,6 +186,42 @@ public sealed partial class TaskServerStore
         ProjectPlacementDto? Placement,
         CapabilityAdmission? Admission);
 
+    /// <summary>The smaller of the placement and the Studio project parallelism.</summary>
+    private static async Task<int> ReadEffectiveProjectParallelismAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ProjectPlacementDto placement,
+        CancellationToken ct)
+    {
+        var configured = Convert.ToInt32(await ScalarAsync(connection, """
+            SELECT COALESCE(max_parallelism, 1)
+              FROM studio_project_settings WHERE project_id = $project;
+            """, ct, transaction, ("$project", placement.ProjectId)) ?? 1,
+            CultureInfo.InvariantCulture);
+        return Math.Min(placement.MaxParallelism, Math.Clamp(configured, 1, 256));
+    }
+
+    /// <summary>
+    /// F8: the pinned-runner and project-concurrency refusal of the claim path
+    /// for the permit path. A project without a placement row keeps legacy
+    /// routing, as on the claim path.
+    /// </summary>
+    private static async Task<string?> PermitPlacementRefusalAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string projectId,
+        string runnerId,
+        CancellationToken ct)
+    {
+        var placement = await ReadProjectPlacementAsync(connection, transaction, projectId, ct);
+        if (placement is null) return null;
+        return ProjectPlacementAdmissionPolicy.PlacementRefusal(
+            placement,
+            runnerId,
+            await CountProjectLeasesAsync(connection, transaction, projectId, ct),
+            await ReadEffectiveProjectParallelismAsync(connection, transaction, placement, ct));
+    }
+
     private static async Task<int> CountProjectLeasesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -233,6 +269,24 @@ internal static class ProjectPlacementSelection
 
 internal static class ProjectPlacementAdmissionPolicy
 {
+    /// <summary>
+    /// The project refusals every admission path shares: the claim, the
+    /// host-permit listing and the permit acceptance (F8).
+    /// </summary>
+    public static string? PlacementRefusal(
+        ProjectPlacementDto placement,
+        string runnerId,
+        int occupiedProjectSlots,
+        int effectiveProjectParallelism)
+    {
+        if (placement.PinnedRunnerId is not null
+            && !string.Equals(placement.PinnedRunnerId, runnerId, StringComparison.Ordinal))
+            return "pinned-runner-mismatch";
+        if (occupiedProjectSlots >= effectiveProjectParallelism)
+            return "project-concurrency-full";
+        return null;
+    }
+
     public static string? Refusal(
         ProjectPlacementDto placement,
         string runnerId,
@@ -242,11 +296,8 @@ internal static class ProjectPlacementAdmissionPolicy
         double? cpuPercent,
         int targetLoadPercent)
     {
-        if (placement.PinnedRunnerId is not null
-            && !string.Equals(placement.PinnedRunnerId, runnerId, StringComparison.Ordinal))
-            return "pinned-runner-mismatch";
-        if (occupiedProjectSlots >= effectiveProjectParallelism)
-            return "project-concurrency-full";
+        if (PlacementRefusal(placement, runnerId, occupiedProjectSlots, effectiveProjectParallelism) is { } refusal)
+            return refusal;
         if (!capacityAcknowledged)
             return "capacity-version-unacknowledged";
         if (cpuPercent is >= 0 and <= 100 && cpuPercent > targetLoadPercent)

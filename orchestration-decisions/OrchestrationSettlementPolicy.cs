@@ -14,6 +14,44 @@ public sealed record OrchestrationSettlementDecision(
 
 public static class OrchestrationSettlementPolicy
 {
+    public const string IntegratingStatus = "integrating";
+
+    /// <summary>
+    /// Settles one stage and, when the run accepted the delivery for
+    /// integration (AGT-3061), holds the card in Auto Review until the
+    /// integration of the accepted delivery reports: a run that would hand the
+    /// card to Human Review settles as <see cref="IntegratingStatus"/> instead.
+    /// <paramref name="acceptedAction"/> is the engine transition the run
+    /// accepted, from this stage or an earlier one; <paramref name="reviewedPublication"/>
+    /// is the project's delivery policy.
+    /// </summary>
+    public static OrchestrationSettlementDecision Decide(
+        OrchestrationAction action,
+        IReadOnlyList<OrchestrationStage> stages,
+        OrchestrationStage currentStage,
+        int currentReissueAttempts,
+        int maxReissueAttempts,
+        string currentTaskState,
+        long expectedTaskVersion,
+        long currentTaskVersion,
+        RepeatedReviewBlockDiagnosis? repeatedBlock,
+        TransitionDecision? transition,
+        TransitionAction? acceptedAction,
+        bool reviewedPublication)
+    {
+        var decision = Decide(action, stages, currentStage, currentReissueAttempts, maxReissueAttempts,
+            currentTaskState, expectedTaskVersion, currentTaskVersion, repeatedBlock, transition);
+        return acceptedAction == TransitionAction.AcceptAndIntegrate && reviewedPublication
+            && decision is { RunStatus: "completed", TaskState: TaskStates.HumanReview }
+            ? decision with
+            {
+                RunStatus = IntegratingStatus,
+                TaskState = null,
+                SettlementReason = "The accepted delivery waits in Auto Review for its integration.",
+            }
+            : decision;
+    }
+
     public static OrchestrationSettlementDecision Decide(
         OrchestrationAction action,
         IReadOnlyList<OrchestrationStage> stages,

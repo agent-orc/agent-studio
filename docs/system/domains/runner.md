@@ -104,6 +104,20 @@ restart; the Engine retains no attempt state. See the
 [Gates Dossier](../../operations/gates/index.html#sect4) for the contract and
 rollout decision.
 
+### Integration host (standalone review loop)
+
+`RUNNER_ROLE=integration` starts `RemoteIntegrationDaemon` (AGT-3061, AGT-W65
+I11). It registers the `integration-executor` role. It claims an accepted
+delivery with `POST /api/v1/integrations/claims` under the project's
+publication lease: one holder per project and integration ref, with a fence
+that rises on every grant. `IntegrationPublisher` fetches the integration ref
+and the fenced result ref into a disposable repository below
+`RUNNER_STATE_DIR`. It fast-forwards or merges, pushes without force, and
+reports `integrated`, `already-integrated`, `conflict`, `stale-base`, or
+`failed` with `POST /api/v1/integrations/{id}/report`. The Task Server applies
+the lane through `IntegrationResultPolicy`. An unreported claim expires with
+its lease and is queued again.
+
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery

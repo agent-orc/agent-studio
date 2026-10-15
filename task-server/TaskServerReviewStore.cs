@@ -212,46 +212,60 @@ public sealed partial class TaskServerStore
                         $"The concept review plan targets prompt.md SHA-256 {briefHash}, but the current brief is {currentBriefHash ?? "missing"}.");
             }
 
-            var subjectId = $"rsub_{Guid.NewGuid():N}";
-            var attemptId = $"rat_{Guid.NewGuid():N}";
-            var now = UtcNow;
-            var planJson = JsonSerializer.Serialize(request.Plan, ReviewJson);
-            await ExecuteAsync(connection, """
-                INSERT INTO review_subjects(
-                    id, task_id, source_run_id, repository_id, repository_url,
-                    expected_result_sha, result_ref, source_bundle_artifact_id,
-                    source_bundle_sha256, coding_host_id, review_policy_hash,
-                    plan_json, idempotency_key, created_at)
-                VALUES (
-                    $id, $task, $run, $repository, $url, $sha, $ref, $bundle,
-                    $bundleSha, $codingHost, $policy, $plan, $key, $now);
-                INSERT INTO review_attempts(
-                    id, subject_id, task_id, attempt_number, status, created_at)
-                VALUES ($attempt, $id, $task, 1, 'queued', $now);
-                """, ct, transaction,
-                ("$id", subjectId), ("$task", request.TaskId), ("$run", request.SourceRunId),
-                ("$repository", request.RepositoryId), ("$url", request.RepositoryUrl),
-                ("$sha", request.ExpectedResultSha.ToLowerInvariant()), ("$ref", request.ResultRef),
-                ("$bundle", request.SourceBundleArtifactId), ("$bundleSha", request.SourceBundleSha256),
-                ("$codingHost", request.CodingHostId), ("$policy", request.ReviewPolicyHash),
-                ("$plan", planJson), ("$key", request.IdempotencyKey), ("$now", Iso(now)),
-                ("$attempt", attemptId));
-            await AuditAsync(connection, transaction, actorId, "review.subject-created", "review-subject", subjectId,
-                JsonSerializer.Serialize(new
-                {
-                    request.TaskId,
-                    request.SourceRunId,
-                    request.RepositoryId,
-                    request.ExpectedResultSha,
-                    attemptId,
-                }), ct);
-            result = new ReviewSubjectDto(
-                subjectId, request.TaskId, request.SourceRunId, request.RepositoryId,
-                request.RepositoryUrl, request.ExpectedResultSha.ToLowerInvariant(), request.ResultRef,
-                request.SourceBundleArtifactId, request.SourceBundleSha256, request.CodingHostId,
-                request.ReviewPolicyHash, request.Plan, now);
+            result = await InsertReviewSubjectAsync(connection, transaction, request, actorId, ct);
         }, ct);
         return result!;
+    }
+
+    /// <summary>
+    /// Inserts one validated review subject and its first queued attempt. The
+    /// caller owns validation against the fenced coding result.
+    /// </summary>
+    private async Task<ReviewSubjectDto> InsertReviewSubjectAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CreateReviewSubjectRequest request,
+        string actorId,
+        CancellationToken ct)
+    {
+        var subjectId = $"rsub_{Guid.NewGuid():N}";
+        var attemptId = $"rat_{Guid.NewGuid():N}";
+        var now = UtcNow;
+        var planJson = JsonSerializer.Serialize(request.Plan, ReviewJson);
+        await ExecuteAsync(connection, """
+            INSERT INTO review_subjects(
+                id, task_id, source_run_id, repository_id, repository_url,
+                expected_result_sha, result_ref, source_bundle_artifact_id,
+                source_bundle_sha256, coding_host_id, review_policy_hash,
+                plan_json, idempotency_key, created_at)
+            VALUES (
+                $id, $task, $run, $repository, $url, $sha, $ref, $bundle,
+                $bundleSha, $codingHost, $policy, $plan, $key, $now);
+            INSERT INTO review_attempts(
+                id, subject_id, task_id, attempt_number, status, created_at)
+            VALUES ($attempt, $id, $task, 1, 'queued', $now);
+            """, ct, transaction,
+            ("$id", subjectId), ("$task", request.TaskId), ("$run", request.SourceRunId),
+            ("$repository", request.RepositoryId), ("$url", request.RepositoryUrl),
+            ("$sha", request.ExpectedResultSha.ToLowerInvariant()), ("$ref", request.ResultRef),
+            ("$bundle", request.SourceBundleArtifactId), ("$bundleSha", request.SourceBundleSha256),
+            ("$codingHost", request.CodingHostId), ("$policy", request.ReviewPolicyHash),
+            ("$plan", planJson), ("$key", request.IdempotencyKey), ("$now", Iso(now)),
+            ("$attempt", attemptId));
+        await AuditAsync(connection, transaction, actorId, "review.subject-created", "review-subject", subjectId,
+            JsonSerializer.Serialize(new
+            {
+                request.TaskId,
+                request.SourceRunId,
+                request.RepositoryId,
+                request.ExpectedResultSha,
+                attemptId,
+            }), ct);
+        return new ReviewSubjectDto(
+            subjectId, request.TaskId, request.SourceRunId, request.RepositoryId,
+            request.RepositoryUrl, request.ExpectedResultSha.ToLowerInvariant(), request.ResultRef,
+            request.SourceBundleArtifactId, request.SourceBundleSha256, request.CodingHostId,
+            request.ReviewPolicyHash, request.Plan, now);
     }
 
     public async Task<ReviewClaimResponse> ClaimReviewAsync(

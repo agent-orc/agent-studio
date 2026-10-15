@@ -653,6 +653,10 @@
   <strong>AGT-3059 · Remote engine transition rollout</strong>
   <span>Delivered: D14 A, D15 A and D20 A use a separate engine service with per-occurrence leases. Coding, review and gate transitions gain engine receipts, shadow comparison, a default 50-match operator switch, rollback recovery and a visible wait with an operator alert. D17 A and D18 A remain in the shared decision library; Stable shadow and engine activation wait for AGT-3135.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3061" data-delivered-at="2026-10-15" data-slice="Standalone review loop for cutover">
+  <strong>AGT-3061 · Standalone review loop for cutover</strong>
+  <span>Delivered: D14 A, D16 A, D17 A and D18 A on the standalone Task Server. Coding completion seals the project review plan into the review subject. The Task Server applies the engine&#39;s typed decision: a fix round gets the reviewed base with the review-fix-round reason and the findings prompt on claim and permit. Degrade and escalate follow the library. Under reviewed publication, a pass waits in Auto Review until a runner in the new integration role publishes it under the project publication lease; Human Review follows. Permits refuse pinned-runner and full-project work (F8). Evidence: StandaloneReviewLoopCutoverTests, listed as cutover gate 5, plus permit, policy and Git publisher tests.</span>
+</li>
 <!-- agent-studio:implementation-log:end --></ol></section><!-- agent-studio:implementation-section:end -->
 <section id="sources"><h2>Code index</h2><p>Every reference resolves to an inspected writer, reader or wire contract. Line numbers and SHA-256 file hashes are pinned in <a href="evidence.json">evidence.json</a>. Revalidate them if develop advances.</p><table><thead><tr><th>Ref</th><th>File, location and purpose</th></tr></thead><tbody>
 <tr id="src-A"><td>A</td><td class="source-path"><a href="../../backend/Features/Runner/AttemptAuthorityService.cs">backend/Features/Runner/AttemptAuthorityService.cs</a>, line 45: <code>public const string RelativePath</code>. File-backed attempt authority; acquisition, fencing, epochs, settlement and restart adoption.</td></tr>

@@ -529,9 +529,20 @@ public sealed partial class TaskServerStore
             }
             var stagePayload = JsonSerializer.Deserialize<StagePayload>(run.PayloadJson,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            var transition = stagePayload?.Verdicts is not null
+            // D14: the engine is the decider. Its typed decision carries the
+            // findings and the D17 continuation base. A stage without one
+            // (post-processing, gate, completion judge) applies the engine's
+            // stage action under the decision the run already accepted. Only
+            // an engine that sends no typed decision at all gets the same
+            // library decision derived from the frozen payload.
+            var engineTransition = ReadEngineTransition(request.OutputJson, run, request.Action, stagePayload);
+            var acceptedAction = await ReadAcceptedTransitionAsync(connection, transaction, runId, ct);
+            var transition = engineTransition ?? (acceptedAction is null && stagePayload?.Verdicts is not null
                 ? TaskServerTransitionAdapter.Decide(StageDecisionPolicy.Facts(run.TaskId, run.ReissueAttempts, stagePayload))
-                : null;
+                : null);
+            var decider = engineTransition is not null ? "engine"
+                : acceptedAction is not null ? "engine-stage-action" : "task-server-compatibility";
+            acceptedAction ??= transition?.Action;
             var decision = OrchestrationSettlementPolicy.Decide(
                 request.Action,
                 stages,
@@ -541,18 +552,27 @@ public sealed partial class TaskServerStore
                 currentTaskState,
                 run.TaskVersion,
                 currentTaskVersion,
-                repeatedBlock, transition);
+                repeatedBlock, transition, acceptedAction,
+                await IsReviewedPublicationAsync(connection, transaction, run.ProjectId, ct));
             if (decision.Transition?.RequiresLinkedFollowUp == true)
                 await ApplyDecisionFollowUpAsync(connection, transaction, run, decision.Transition, actorId, now, ct);
             if (decision.Transition?.ContinuationBase is { } continuationBase
                 && stagePayload?.RunAttemptId is { } sourceRunId)
                 await ExecuteAsync(connection, """
-                    INSERT INTO task_starting_points(task_id, source_run_id, result_ref, result_sha)
-                    VALUES ($task, $run, $ref, $sha)
+                    INSERT INTO task_starting_points(task_id, source_run_id, result_ref, result_sha, reason)
+                    VALUES ($task, $run, $ref, $sha, $reason)
                     ON CONFLICT(task_id) DO UPDATE SET source_run_id = excluded.source_run_id,
-                        result_ref = excluded.result_ref, result_sha = excluded.result_sha;
+                        result_ref = excluded.result_ref, result_sha = excluded.result_sha,
+                        reason = excluded.reason;
                     """, ct, transaction, ("$task", run.TaskId), ("$run", sourceRunId),
-                    ("$ref", continuationBase.ResultRef), ("$sha", continuationBase.ResultSha));
+                    ("$ref", continuationBase.ResultRef), ("$sha", continuationBase.ResultSha),
+                    ("$reason", ContinuationBaseReasons.ReviewFixRound));
+            if (decision.TaskState == AgentStudio.Shared.TaskStates.Ready
+                && decision.Transition is { Action: TransitionAction.FindingRound or TransitionAction.ConcernRound })
+                await QueueFixRoundPromptAsync(connection, transaction, run, decision.Transition,
+                    currentTaskVersion, actorId, now, ct);
+            if (decision.RunStatus == OrchestrationSettlementPolicy.IntegratingStatus)
+                await QueueIntegrationAsync(connection, transaction, run, stagePayload!, actorId, now, ct);
             var completedAt = decision.IsTerminal ? now : (DateTime?)null;
 
             await ExecuteAsync(connection, """
@@ -652,6 +672,7 @@ public sealed partial class TaskServerStore
                     decision.SupersededReason,
                     decision.SettlementReason,
                     decision.Transition,
+                    decider,
                 }),
                 ct);
             result = await ReadOrchestrationRunAsync(connection, transaction, runId, ct)
