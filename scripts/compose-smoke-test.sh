@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-box deployment smoke. Default builds this checkout; set
-# COMPOSE_SMOKE_MODE=images to exercise published release images.
+# COMPOSE_SMOKE_MODE=images to exercise the version-tagged images already loaded
+# by release CI, or published images on an operator host.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/docker-scenario-images.sh
@@ -55,7 +56,7 @@ finish() {
             "$image_id" -R "$(id -u):$(id -g)" /fixtures >/dev/null 2>&1 || true
     fi
     "${compose[@]}" "${profiles[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-    # Dev mode built this run's images; images mode only pulled published ones.
+    # Dev mode built this run's images; images mode reuses tagged images.
     if [ "$mode" = dev ]; then
         docker_scenario_remove_project_images "$project"
     fi

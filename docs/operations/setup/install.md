@@ -27,6 +27,34 @@ chmod +x agent-studio-setup
 ./agent-studio-setup
 ```
 
+For a one-line Linux install after a release is published, run
+`curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh`.
+The script downloads the matching setup executable and `SHA256SUMS`, verifies
+the executable, and starts setup. Inspect the script before piping it to a shell
+if your environment requires that review.
+
+The Release workflow also accepts `workflow_dispatch` with
+`mode=release-candidate`. It runs the same Linux Docker and native and Windows
+native and connector install smoke tests, then uploads a
+`release-candidate-<commit-sha>` artifact to the workflow run. That mode does
+not push images or create a GitHub Release. The archive contains both setup
+executables, four Linux archives, the Windows archive, `install.sh`,
+`SHA256SUMS`, and notes extracted from the matching `CHANGELOG.md` section.
+The `candidate-images` run artifact carries the same local images used by the
+Docker smoke test in numbered archive parts; load it with
+`cat candidate-images.tar.zst.part-* | zstd -dc | docker load` before an offline
+scenario rehearsal.
+The Windows archive includes the Studio browser files and `agent-host.exe` for
+the native Windows installer to consume.
+
+For a tagged release, all install smoke jobs finish before any GHCR push. The
+workflow first pushes all eight images under `sha-<commit>` staging tags,
+creates the GitHub Release, then promotes those staged manifests to the
+`v<version>` and `latest` tags. Anonymous pulls are checked afterward and
+reported in the workflow summary. If a package is private, an organization
+operator must make that GHCR package public before unauthenticated installs
+can pull it.
+
 On Windows PowerShell, download `agent-studio-setup.exe` and `SHA256SUMS` from
 the same release. Compare the SHA-256 value for the executable:
 

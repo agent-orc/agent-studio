@@ -145,6 +145,9 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance);
         var claude = GenericCliExecutionService.ForClaude(NullLogger<GenericCliExecutionService>.Instance, config);
+        // The service checks CLI availability before the remote-only boundary.
+        // dotnet is a harmless version-capable stand-in on every test host.
+        claude.SetCliPath("dotnet");
         var codex = GenericCliExecutionService.ForCodex(
             NullLogger<GenericCliExecutionService>.Instance, config,
             new CodexModelDiscovery(NullLogger<CodexModelDiscovery>.Instance, config),

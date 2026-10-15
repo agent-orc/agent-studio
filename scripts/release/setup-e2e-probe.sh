@@ -16,7 +16,7 @@ report_path="$(realpath -m "$report_path")"
 probe_root="$(mktemp -d)"
 runtime_root="$probe_root/runtime"
 publish_root="$probe_root/publish"
-release_root="$probe_root/release"
+release_root="${SETUP_E2E_RELEASE_DIR:-$probe_root/release}"
 frontend_root="$probe_root/frontend/browser"
 version="$(tr -d '\r\n' <"$repo_root/VERSION")"
 git_sha="$(git -C "$repo_root" rev-parse HEAD)"
@@ -59,6 +59,7 @@ common=(
 )
 
 mkdir -p "$publish_root" "$frontend_root" "$runtime_root"
+if [[ -z "${SETUP_E2E_RELEASE_DIR:-}" ]]; then
 dotnet publish "$repo_root/task-server/TaskServer.csproj" "${common[@]}" \
   --runtime linux-x64 --output "$publish_root/task-server"
 dotnet publish "$repo_root/orchestrator-engine/OrchestratorEngine.csproj" "${common[@]}" \
@@ -73,6 +74,7 @@ dotnet publish "$repo_root/setup/AgentOrchestratorSetup.csproj" "${common[@]}" \
 printf '<!doctype html><title>Setup E2E fixture</title>\n' >"$frontend_root/index.html"
 SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
   "$version" "$git_sha" "$publish_root" "$frontend_root" "$release_root"
+fi
 
 fake_systemctl="$probe_root/systemctl"
 cat >"$fake_systemctl" <<'SYSTEMCTL'
@@ -193,6 +195,18 @@ umask 077
   --non-interactive \
   >"$control_output"
 
+if [[ "${SETUP_E2E_CONTROL_ONLY:-0}" == 1 ]]; then
+  rm -f -- "$control_output"
+  curl -fsS "$base_url/readyz" >"$runtime_root/ready.json"
+  (cd "$release_root" && sha256sum -c SHA256SUMS >/dev/null)
+  [[ -f "$studio_opt/current/browser/index.html" ]]
+  kill -0 "$(cat "$runtime_root/task-server.pid")"
+  kill -0 "$(cat "$runtime_root/engine.pid")"
+  mkdir -p "$(dirname "$report_path")"
+  printf '# Linux native install smoke\n\nPASS: setup, Task Server, Engine, Studio UI, checksums, and readyz for %s (%s).\n' "$version" "$git_sha" >"$report_path"
+  exit 0
+fi
+
 join_token="$(awk '$1 ~ /^aosj1[.]/ { print $1 }' "$control_output" | tail -n 1)"
 [[ "$join_token" == aosj1.* ]] || {
   echo "Control Plane setup did not emit a join token." >&2
@@ -253,7 +267,7 @@ cat >"$report_path" <<REPORT
 
 PASS
 
-1. The release packager produced one setup executable, three archives, and one SHA256SUMS file.
+1. The release packager produced one setup executable, four archives, and one SHA256SUMS file.
 2. Every release asset passed SHA-256 verification before extraction.
 3. The setup executable installed the Control Plane into isolated native paths and /readyz reported ready.
 4. The setup executable installed the matching Studio static tree.
