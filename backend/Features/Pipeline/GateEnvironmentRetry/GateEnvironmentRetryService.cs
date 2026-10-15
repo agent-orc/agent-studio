@@ -18,8 +18,11 @@ public enum GateEnvironmentRetryStatus
     AlreadyRunning,
 }
 
-/// <summary>One automatic agent round for a parked gate fault on each delivery.</summary>
-public static class GateEnvironmentContinuationPolicy
+/// <summary>
+/// Reads the automatic continuation rounds already queued for a parked gate
+/// fault; the one-round rule is <see cref="GateEnvironmentContinuationPolicy"/>.
+/// </summary>
+public static class GateEnvironmentContinuationRounds
 {
     private const string Source = "gate-environment-continuation";
 
@@ -33,9 +36,6 @@ public static class GateEnvironmentContinuationPolicy
             && string.Equals(entry.Details.GetValueOrDefault("deliverySha"),
                 deliverySha, StringComparison.OrdinalIgnoreCase));
     }
-
-    public static bool ShouldStart(bool automaticEnabled, int priorRoundsForDelivery)
-        => automaticEnabled && priorRoundsForDelivery < 1;
 }
 
 /// <param name="DeliverySha">Delivery SHA whose passed review was reused.</param>
@@ -92,12 +92,12 @@ public sealed record GateEnvironmentRetrySweep(
 /// attempt: it verifies that the card's current delivery SHA still carries a
 /// settled <c>Pass</c> in attempt authority and then re-runs
 /// <see cref="MergeIntoDevelopRunner"/> against that same SHA. Scheduling,
-/// bounds, and the parked reason are decided by
-/// <see cref="GateEnvironmentRetryPolicy"/>; this class owns only the reads,
-/// the serialization, and the writes.
+/// bounds, and parking are decided by the AI Operator in the Orchestrator
+/// Engine (AGT-3060); this class owns only the reads, the serialization, and
+/// the writes of each receipt.
 /// </para>
 /// </summary>
-public sealed class GateEnvironmentRetryService
+public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperatorEffect
 {
     private readonly TaskScannerService _scanner;
     private readonly ProjectSettingsService _settings;
@@ -111,6 +111,7 @@ public sealed class GateEnvironmentRetryService
     private readonly ILogger<GateEnvironmentRetryService> _logger;
     private readonly TimeProvider _time;
     private readonly TaskRunnerService? _continuations;
+    private readonly AgentStudio.Runner.AiOperatorDecisionGateway _decisions;
 
     // One replay per card at a time. A sweep rung and the operator action run
     // the same merge against the same branch, so letting both in would spend two
@@ -130,7 +131,8 @@ public sealed class GateEnvironmentRetryService
         IConfiguration configuration,
         ILogger<GateEnvironmentRetryService> logger,
         TimeProvider? time = null,
-        TaskRunnerService? continuations = null)
+        TaskRunnerService? continuations = null,
+        AgentStudio.Runner.AiOperatorDecisionGateway? decisions = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -144,7 +146,10 @@ public sealed class GateEnvironmentRetryService
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _continuations = continuations;
+        _decisions = decisions ?? AgentStudio.Runner.AiOperatorDecisionGateway.ForTestHost(configuration);
     }
+
+    public string Decider => AiOperatorDeciders.GateEnvironmentRetry;
 
     public GateEnvironmentRetryOptions Options
         => GateEnvironmentRetryOptions.FromConfiguration(_configuration);
@@ -159,7 +164,7 @@ public sealed class GateEnvironmentRetryService
         if (!options.Enabled) return new GateEnvironmentRetrySweep(0, 0, 0, 0);
 
         var jobs = _scanner.ScanAllAutomationJobs()
-            .Where(job => GateEnvironmentRetryPolicy.Lanes.Contains(job.State))
+            .Where(job => GateEnvironmentRetryFactsReader.Lanes.Contains(job.State))
             .OrderBy(job => job.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(job => job.EnteredLaneAt)
             .ThenBy(job => job.Id, StringComparer.OrdinalIgnoreCase)
@@ -179,33 +184,33 @@ public sealed class GateEnvironmentRetryService
             try
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
+                // Trigger signal only: a card without a gate-environment failure
+                // raises no occurrence. The AI Operator decides the ladder.
+                if (!GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status)) continue;
                 var evaluation = Evaluate(job, status, options);
-                if (evaluation.Decision.Action == GateEnvironmentRetryAction.Ignore) continue;
+                if (GateEnvironmentRetryPolicy.OperatorReplayRefusal(evaluation.Facts) is not null) continue;
 
                 candidates++;
-                switch (evaluation.Decision.Action)
+                var payload = new AiOperatorDecisionPayload(Decider,
+                    $"gate-environment:{evaluation.DeliverySha}:{evaluation.Ledger.AttemptsSpent}",
+                    GateEnvironmentRetry: OperatorFacts(job, evaluation));
+                var submission = _decisions.Submit(new AgentStudio.Runner.AiOperatorDecisionRequest(
+                    job.ProjectName, job.Id, job.State, payload, options.SweepInterval));
+                if (submission.MonolithDecision is not { } decision)
+                {
+                    waiting++;
+                    continue;
+                }
+                switch (await ApplyDecisionAsync(job, evaluation, decision, ct).ConfigureAwait(false))
                 {
                     case GateEnvironmentRetryAction.Wait:
                         waiting++;
                         break;
                     case GateEnvironmentRetryAction.Park:
-                        if (await ParkAsync(job, evaluation, ct).ConfigureAwait(false)) parked++;
+                        parked++;
                         break;
                     case GateEnvironmentRetryAction.Retry:
-                        if (!_inFlight.TryAdd(job.TaskKey, 0)) break;
-                        try
-                        {
-                            var result = await ReplayAsync(
-                                job,
-                                evaluation,
-                                GateEnvironmentRetrySources.Sweep,
-                                ct).ConfigureAwait(false);
-                            if (result.Status == GateEnvironmentRetryStatus.Replayed) retried++;
-                        }
-                        finally
-                        {
-                            _inFlight.TryRemove(job.TaskKey, out _);
-                        }
+                        retried++;
                         break;
                 }
             }
@@ -273,21 +278,20 @@ public sealed class GateEnvironmentRetryService
         {
             var status = _integrationStatus.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
             var evaluation = Evaluate(job, status, Options);
-            var decision = evaluation.Decision;
-            // Wait and Park are timing verdicts the operator is entitled to
-            // override; Ignore is the policy saying this card has nothing to
-            // replay, and the sweep and the button must agree about that.
-            if (decision.Action == GateEnvironmentRetryAction.Ignore)
+            // The operator intent overrides the ladder's timing; the authority
+            // only validates that there is something to replay, and the sweep
+            // and the button must agree about that.
+            if (GateEnvironmentRetryPolicy.OperatorReplayRefusal(evaluation.Facts) is { } refusal)
             {
                 var lookupFailure = evaluation.ReviewLookup.FailureReason;
                 return new GateEnvironmentRetryResult(
-                    decision.Reason == GateEnvironmentRetryReasons.NoPassedReview
+                    refusal == GateEnvironmentRetryReasons.NoPassedReview
                         ? GateEnvironmentRetryStatus.NoPassedReview
                         : GateEnvironmentRetryStatus.NotApplicable,
-                    lookupFailure ?? GateEnvironmentRetryReasons.Explain(decision.Reason),
+                    lookupFailure ?? GateEnvironmentRetryReasons.Explain(refusal),
                     evaluation.DeliverySha,
                     evaluation.IntegrationBranch,
-                    Code: decision.Reason,
+                    Code: refusal,
                     ComparedDeliverySha: evaluation.DeliverySha,
                     LatestAttempt: evaluation.ReviewLookup.LatestAttempt);
             }
@@ -305,7 +309,61 @@ public sealed class GateEnvironmentRetryService
     }
 
     /// <summary>
-    /// Everything the policy needs plus the facts the writes need, read once so
+    /// AGT-3060: applies the engine's gate-environment receipt. The facts are
+    /// read again; a card whose failure, delivery or spent rungs changed since
+    /// the occurrence was frozen is settled without an effect.
+    /// </summary>
+    public async Task ApplyAsync(AgentStudio.Runner.AiOperatorApplication application, CancellationToken ct)
+    {
+        var job = _scanner.ScanAllAutomationJobs().FirstOrDefault(candidate =>
+            candidate.ProjectName == application.ProjectId
+            && (candidate.Id == application.TaskId || candidate.TaskKey == application.TaskId));
+        if (job is null || job.State != application.ExpectedSourceState) return;
+        var status = _integrationStatus.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
+        var evaluation = Evaluate(job, status, Options);
+        if (GateEnvironmentRetryPolicy.OperatorReplayRefusal(evaluation.Facts) is not null
+            || application.Payload.SubjectKey
+                != $"gate-environment:{evaluation.DeliverySha}:{evaluation.Ledger.AttemptsSpent}")
+            return;
+        await ApplyDecisionAsync(job, evaluation, application.Decision, ct).ConfigureAwait(false);
+    }
+
+    private async Task<GateEnvironmentRetryAction> ApplyDecisionAsync(TaskInfo job,
+        GateEnvironmentRetryEvaluation evaluation, AiOperatorDecision decision, CancellationToken ct)
+    {
+        switch (decision.Effect)
+        {
+            case AiOperatorEffects.ParkIntegration:
+            case AiOperatorEffects.ParkAndContinue:
+                return await ParkAsync(job, evaluation,
+                    decision.Effect == AiOperatorEffects.ParkAndContinue, ct).ConfigureAwait(false)
+                    ? GateEnvironmentRetryAction.Park : GateEnvironmentRetryAction.Ignore;
+            case AiOperatorEffects.ReplayIntegration:
+                if (!_inFlight.TryAdd(job.TaskKey, 0)) return GateEnvironmentRetryAction.Ignore;
+                try
+                {
+                    var result = await ReplayAsync(job, evaluation, GateEnvironmentRetrySources.Sweep, ct)
+                        .ConfigureAwait(false);
+                    return result.Status == GateEnvironmentRetryStatus.Replayed
+                        ? GateEnvironmentRetryAction.Retry : GateEnvironmentRetryAction.Ignore;
+                }
+                finally
+                {
+                    _inFlight.TryRemove(job.TaskKey, out _);
+                }
+            default:
+                return GateEnvironmentRetryAction.Wait;
+        }
+    }
+
+    private GateEnvironmentRetryOperatorFacts OperatorFacts(TaskInfo job, GateEnvironmentRetryEvaluation evaluation)
+        => new(evaluation.Facts, evaluation.Ledger.Parked,
+            _settings.Get(job.ProjectName).AutomaticFailureContinuationsEnabled,
+            evaluation.DeliverySha is null ? 0 : GateEnvironmentContinuationRounds.CountPriorRounds(
+                _timeline.ReadAll(job.FolderPath), evaluation.DeliverySha));
+
+    /// <summary>
+    /// The facts the ladder needs plus the facts the writes need, read once so
     /// the sweep and the operator action cannot disagree about the same card.
     /// </summary>
     internal GateEnvironmentRetryEvaluation Evaluate(
@@ -326,7 +384,7 @@ public sealed class GateEnvironmentRetryService
         // the card's stable public key, as GET /api/attempts/tasks/{key} does.
         var now = _time.GetUtcNow();
         var inFlight = IntegrationGateJournal.Read(job.FolderPath) is not null;
-        var withoutReview = GateEnvironmentRetryPolicy.Decide(
+        var withoutReview = GateEnvironmentRetryFactsReader.Facts(
             job,
             status,
             false,
@@ -336,26 +394,15 @@ public sealed class GateEnvironmentRetryService
             options,
             now,
             inFlight);
-        // Let the policy decide whether review evidence matters before loading
-        // archives. Most cards in these lanes have no gate failure to retry.
-        var reviewLookup = withoutReview.Reason == GateEnvironmentRetryReasons.NoPassedReview
+        // Load review archives only when every other eligibility fact holds.
+        // Most cards in these lanes have no gate failure to retry.
+        var reviewLookup = GateEnvironmentRetryPolicy.OperatorReplayRefusal(withoutReview)
+            == GateEnvironmentRetryReasons.NoPassedReview
             ? HasPassedReview(job.Key ?? job.TaskKey, deliverySha)
             : new GateEnvironmentReviewLookup(false, null);
-        var decision = reviewLookup.Passed
-            ? GateEnvironmentRetryPolicy.Decide(
-                job,
-                status,
-                true,
-                ledger.AttemptsSpent,
-                ledger.LastAttemptAt,
-                AsOffset(mergeStep?.CompletedAt ?? mergeStep?.StartedAt),
-                options,
-                now,
-                inFlight)
-            : withoutReview;
 
         return new GateEnvironmentRetryEvaluation(
-            decision,
+            withoutReview with { ReviewPassed = reviewLookup.Passed },
             ledger,
             deliverySha,
             integrationBranch,
@@ -433,7 +480,7 @@ public sealed class GateEnvironmentRetryService
         // it restarts the ladder, so it carries rung 0.
         var isOperator = source == GateEnvironmentRetrySources.Operator;
         var rung = isOperator ? 0 : evaluation.Ledger.AttemptsSpent + 1;
-        var maximum = evaluation.Decision.MaxAttempts;
+        var maximum = evaluation.Facts.Backoff.Count;
         GateEnvironmentRetryReceipts.RecordRetry(
             _timeline,
             job.FolderPath,
@@ -530,14 +577,15 @@ public sealed class GateEnvironmentRetryService
     /// receipt makes the repeat sweeps idempotent.
     /// </summary>
     private async Task<bool> ParkAsync(
-        TaskInfo job, GateEnvironmentRetryEvaluation evaluation, CancellationToken ct)
+        TaskInfo job, GateEnvironmentRetryEvaluation evaluation, bool continueOnce, CancellationToken ct)
     {
         if (evaluation.Ledger.Parked) return false;
         var step = evaluation.MergeStep;
         if (step is null || evaluation.DeliverySha is null) return false;
 
+        var attempts = Math.Clamp(evaluation.Ledger.AttemptsSpent, 0, evaluation.Facts.Backoff.Count);
         var reason = GateEnvironmentRetryPolicy.ParkedReason(
-            evaluation.Decision.AttemptsSpent,
+            attempts,
             evaluation.IntegrationBranch,
             step.Reason) + " Gate evidence: post-steps/pre-develop-build-gate-*.log (resource measurements and slow tests).";
         _pipelineLog.RecordStep(job.FolderPath, step with { Reason = reason });
@@ -545,14 +593,15 @@ public sealed class GateEnvironmentRetryService
             _timeline,
             job.FolderPath,
             evaluation.DeliverySha,
-            evaluation.Decision.AttemptsSpent,
+            attempts,
             reason);
         _logger.LogWarning(
             "gate-environment-retry parked project={Project} job={JobId} attempts={Attempts}",
             job.ProjectName,
             job.Id,
-            evaluation.Decision.AttemptsSpent);
-        await ContinueParkedFailureOnceAsync(job, evaluation, reason, ct).ConfigureAwait(false);
+            attempts);
+        if (continueOnce)
+            await ContinueParkedFailureOnceAsync(job, evaluation, reason, ct).ConfigureAwait(false);
         return true;
     }
 
@@ -563,12 +612,6 @@ public sealed class GateEnvironmentRetryService
         CancellationToken ct)
     {
         if (_continuations is null || evaluation.DeliverySha is null) return;
-        var priorRounds = GateEnvironmentContinuationPolicy.CountPriorRounds(
-            _timeline.ReadAll(job.FolderPath), evaluation.DeliverySha);
-        if (!GateEnvironmentContinuationPolicy.ShouldStart(
-                _settings.Get(job.ProjectName).AutomaticFailureContinuationsEnabled,
-                priorRounds))
-            return;
 
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         var prompt = IntegrationContinuationPrompt.Build(
@@ -637,7 +680,7 @@ public sealed class GateEnvironmentRetryService
 
 /// <summary>One card's gate-environment retry facts, read once per evaluation.</summary>
 internal sealed record GateEnvironmentRetryEvaluation(
-    GateEnvironmentRetryDecision Decision,
+    GateEnvironmentRetryFacts Facts,
     GateEnvironmentRetryLedger Ledger,
     string? DeliverySha,
     string IntegrationBranch,

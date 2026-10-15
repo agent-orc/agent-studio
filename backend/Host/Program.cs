@@ -42,9 +42,13 @@ builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
+// AGT-3060: reports whether the engine that a transition switched to Engine
+// waits for is live; see /healthz/orchestration-engine.
+builder.Services.AddSingleton<OrchestrationEngineReadiness>();
+builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
-var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
+_ = OrchestrationExecutionModeParser.Parse(
     builder.Configuration["Orchestration:ExecutionMode"]);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -479,6 +483,7 @@ builder.Services.AddSingleton<DecisionCardRequests>();
 builder.Services.AddSingleton<DecisionReminderSweep>();
 builder.Services.AddHostedService<DecisionReminderSweepHostedService>();
 builder.Services.AddSingleton<DeliveryChainReconciler>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();
@@ -586,6 +591,7 @@ builder.Services.AddSingleton<ICauseWaitRelease, SchedulerCauseWaitRelease>();
 builder.Services.AddSingleton<ICauseWaitMarkerStore, FileCauseWaitMarkerStore>();
 builder.Services.AddSingleton<CauseBreakerService>();
 builder.Services.AddSingleton<CauseBreakerHostedService>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<CauseBreakerHostedService>());
 // AGT-2826: the release this process runs is the reference every execution host
 // is compared against, so it is resolved once and shared by /api/system/version
 // and the host-release drift watchdog.
@@ -627,21 +633,32 @@ builder.Services.AddSingleton<TaskRunnerService>();
 builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
 builder.Services.AddSingleton<CrashRecoveryDismissalStore>();
 builder.Services.AddSingleton<CrashRecoveryService>();
+// AGT-3060 (I18): background deciders collect facts and submit them to the AI
+// Operator. The OperatorDecision transition switch selects who decides: on
+// Monolith (default) the monolith decides in process through the shared
+// decision library; on Engine the Orchestrator Engine decides and each
+// registered effect applies the receipt through the existing keyed writers.
+builder.Services.AddSingleton<AiOperatorDecisionGateway>(sp => AiOperatorDecisionGateway.Deferred(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<MonolithOrchestrationStore>));
 builder.Services.AddSingleton<StaleProgressArchiver>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<StaleProgressArchiver>());
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor
 // (boot adoption scan + uptime sweep). See
 // docs/concepts/run-liveness-and-slot-semantics.md.
 builder.Services.AddSingleton<RunLivenessMonitor>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<RunLivenessMonitor>());
 // Run-Liveness Slice B: the steer-timeout monitor - no steered / NeedsInput card
 // waits indefinitely. See docs/concepts/run-liveness-and-slot-semantics.md Rule 2.
 builder.Services.AddSingleton<ISteerTimeoutResolver, SteerTimeoutResolver>();
 builder.Services.AddSingleton<SteerTimeoutMonitor>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<SteerTimeoutMonitor>());
 builder.Services.AddSingleton<PickupFailureLog>();
 builder.Services.AddSingleton<InfraHaltLog>();
 builder.Services.AddSingleton<CrossSlugInfraCircuitBreaker>();
 builder.Services.AddSingleton<ProviderLimitRegistry>();
 builder.Services.AddSingleton<HumanReviewEscalation>();
 builder.Services.AddSingleton<RunTimeoutContinuationService>();
+builder.Services.AddSingleton<IAiOperatorEffect, RunTimeoutSalvageEffect>();
 // AGT-2870: operator stops for remotely executed runs. The request is parked
 // here until the owning runner picks it up on its next lease renewal.
 builder.Services.AddSingleton<RemoteRunStopRequestStore>();
@@ -869,11 +886,12 @@ builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
 // Transitional single-owner boundary. Engine mode deliberately registers none
 // of the legacy review/council/post-processing hosted loops.
 if (!publicDemoExecutionProfile)
-    builder.Services.AddOrchestrationExecutionLoops(orchestrationExecutionMode);
+    builder.Services.AddOrchestrationExecutionLoops(builder.Configuration);
 // Orchestrator-intake (ready-orchestrator-intake-lane). Off by default per
 // project; see ProjectSettings.IntakeEnabled. The hosted service is cheap
 // (heuristic only, no LLM) and skips projects that have not opted in.
 builder.Services.AddSingleton<IntakeRunner>();
+builder.Services.AddSingleton<IAiOperatorEffect, IntakeRoutingEffect>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<IntakeHostedService>();
 builder.Services.AddSingleton<GitService>();
@@ -946,12 +964,15 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>();
 builder.Services.AddSingleton<IntegrationGenerationReconcileSweep>();
 builder.Services.AddSingleton<AcceptanceRailHostedService>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
 // AGT-2824: a gate environment failure rolls the merge back and says it will
 // be retried. The accepted-integration backstop only re-drives accepted cards
 // and the acceptance rail only reacts to conflict-skipped, so the bounded
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp =>
+    sp.GetRequiredService<AgentStudio.Pipeline.GateEnvironmentRetryService>());
 // AGT-3009: a red merge gate is classified (environment, product, integration
 // branch, undecidable) and routed by the delivery-chain reconciler before it may
 // park. The fingerprint counter is the Task Server store the cause breaker reads.

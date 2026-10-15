@@ -600,7 +600,7 @@ public sealed partial class MergeIntoDevelopRunner
                 var reason = GateCancellationPolicy.Decide(cancellationSubject.Sha, live.Sha,
                     cancellationSubject.Lane, live.Lane, live.ContinuePending,
                     ct.IsCancellationRequested, cancelledGate.CancellationReason);
-                cancelledGate = GateCancellationPolicy.Apply(cancelledGate, reason);
+                cancelledGate = GateCancellationResultProjector.Apply(cancelledGate, reason);
                 supersededCancellation = reason == GateCancellationReasons.Superseded;
                 conclusionFolderPath = live.Folder;
                 IntegrationGateReceipts.Record(live.Folder,

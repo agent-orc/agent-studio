@@ -66,6 +66,8 @@ public sealed class IntakeHostedService : BackgroundService
                     .GetRequiredService<AgentStudio.Registry.OrchestratorDefaultsProvider>();
 
                 var escalation = scope.ServiceProvider.GetRequiredService<HumanReviewEscalation>();
+                var decisions = scope.ServiceProvider.GetService<AiOperatorDecisionGateway>()
+                    ?? AiOperatorDecisionGateway.ForTestHost(scope.ServiceProvider.GetRequiredService<IConfiguration>());
 
                 var allSettings = settings.GetAll();
                 // AGT-1812: autonomy resolves project override -> workspace
@@ -85,7 +87,7 @@ public sealed class IntakeHostedService : BackgroundService
                 foreach (var entry in enabledProjects)
                 {
                     if (stoppingToken.IsCancellationRequested) break;
-                    ProcessProject(scanner, intake, escalation, entry, stoppingToken);
+                    ProcessProject(scanner, intake, escalation, decisions, entry, stoppingToken);
                 }
             }
             catch (OperationCanceledException) { break; }
@@ -99,7 +101,8 @@ public sealed class IntakeHostedService : BackgroundService
         }
     }
 
-    private void ProcessProject(TaskScannerService scanner, IntakeRunner intake, HumanReviewEscalation escalation, WatchPathEntry entry, CancellationToken stoppingToken)
+    private void ProcessProject(TaskScannerService scanner, IntakeRunner intake, HumanReviewEscalation escalation,
+        AiOperatorDecisionGateway decisions, WatchPathEntry entry, CancellationToken stoppingToken)
     {
         // Drain every 2-ready job that has not yet been intaked, oldest first,
         // up to the per-tick cap. A null phase counts as human-ready under the
@@ -120,8 +123,14 @@ public sealed class IntakeHostedService : BackgroundService
                 // Done-precheck routing (prompt requirement 5): a card the prompt
                 // declares already finished is not executed. Route it to
                 // 5-human-review for a person to confirm-and-complete instead of
-                // leaving it parked in intake-blocked.
-                if (verdict.Outcome == IntakeOutcome.AlreadyDone)
+                // leaving it parked in intake-blocked. AGT-3060: the routing is
+                // the AI Operator decider intake-routing; on the Engine switch
+                // IntakeRoutingEffect applies the receipt.
+                var facts = new IntakeOperatorFacts(verdict.Outcome.ToString(), verdict.Reason);
+                var submission = decisions.Submit(new AiOperatorDecisionRequest(entry.Name, candidate.Id,
+                    candidate.State, new AiOperatorDecisionPayload(AiOperatorDeciders.IntakeRouting,
+                        IntakeRoutingEffect.SubjectKey(candidate.Id, facts), IntakeRouting: facts), Period: null));
+                if (submission.MonolithDecision?.Effect == AiOperatorEffects.Escalate)
                     RouteAlreadyDone(escalation, candidate.Id, entry.Path, entry.Name, verdict.Reason, _logger);
             }
             catch (Exception ex)

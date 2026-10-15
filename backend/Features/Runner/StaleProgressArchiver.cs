@@ -74,7 +74,7 @@ namespace AgentStudio.Runner;
 /// active job (would be unusual at boot, but possible if invoked later) is
 /// never touched.</para>
 /// </summary>
-public sealed class StaleProgressArchiver
+public sealed class StaleProgressArchiver : IAiOperatorEffect
 {
     private readonly TaskScannerService _scanner;
     private readonly TaskStateMachine _states;
@@ -85,6 +85,7 @@ public sealed class StaleProgressArchiver
     private readonly ILogger<StaleProgressArchiver> _logger;
     private readonly IJsonlAppender _appender;
     private readonly ITaskAccess _taskAccess;
+    private readonly AiOperatorDecisionGateway _decisions;
 
     public const int DefaultStuckResumeWindowMinutes = 60;
     private const int SentinelTailLineWindow = 50;
@@ -105,7 +106,8 @@ public sealed class StaleProgressArchiver
         IConfiguration configuration,
         ITaskAccess taskAccess,
         ILogger<StaleProgressArchiver> logger,
-        IJsonlAppender? appender = null)
+        IJsonlAppender? appender = null,
+        AiOperatorDecisionGateway? decisions = null)
     {
         _scanner = scanner;
         _states = states;
@@ -116,7 +118,10 @@ public sealed class StaleProgressArchiver
         _taskAccess = taskAccess;
         _logger = logger;
         _appender = appender ?? new JsonlAppender();
+        _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
     }
+
+    public string Decider => AiOperatorDeciders.StaleProgress;
 
     /// <summary>
     /// Runs the sweep across all watched projects. Returns one decision per
@@ -182,14 +187,38 @@ public sealed class StaleProgressArchiver
             {
                 ct.ThrowIfCancellationRequested();
 
-                if (!string.IsNullOrEmpty(activeJobId)
-                    && string.Equals(slug, activeJobId, StringComparison.OrdinalIgnoreCase))
+                var isActiveJob = !string.IsNullOrEmpty(activeJobId)
+                    && string.Equals(slug, activeJobId, StringComparison.OrdinalIgnoreCase);
+                var age = now - lastActivity;
+                var hasJobJson = File.Exists(Path.Combine(jobFolder, "task.json"));
+                if (hasJobJson && !isActiveJob && age >= threshold)
+                {
+                    // AGT-3060: a stale card is a lane decision for the AI
+                    // Operator. Only the active-job and resume-window signals
+                    // are read here, so a fresh card raises no occurrence.
+                    var jobId = TryReadJobId(jobFolder) ?? slug;
+                    var payload = new AiOperatorDecisionPayload(Decider, $"stale:{jobId}:{lastActivity:O}",
+                        StaleProgress: new StaleProgressFacts(isActiveJob, age.TotalSeconds,
+                            threshold.TotalSeconds, TryFindSentinel(jobFolder, out var sentinel) ? sentinel : null));
+                    var submission = _decisions.Submit(new AiOperatorDecisionRequest(entry.Name, jobId,
+                        TaskStates.Progress, payload, Period: null));
+                    if (submission.MonolithDecision is { } verdict)
+                    {
+                        var applied = await ApplyDecisionAsync(entry, jobFolder, slug, verdict, payload.StaleProgress!,
+                            now, lastActivity, ct);
+                        decisions.Add(applied);
+                        if (applied.Kind is not (StaleProgressDecisionKinds.Fresh or StaleProgressDecisionKinds.Skipped))
+                            AppendOrphanRecoveryEntry(applied);
+                    }
+                    continue;
+                }
+
+                if (isActiveJob)
                 {
                     decisions.Add(Skip(entry.Name, slug, "matches active job", at: now));
                     continue;
                 }
 
-                var age = now - lastActivity;
                 if (age < threshold)
                 {
                     decisions.Add(new StaleProgressDecision
@@ -230,24 +259,12 @@ public sealed class StaleProgressArchiver
                 // `orphan-detection-checks-other-lanes`): every code path that
                 // decides "this is an orphan" must first check whether the same
                 // slug already exists in a later lane.
-                var hasJobJson = File.Exists(Path.Combine(jobFolder, "task.json"));
-                StaleProgressDecision decision;
-                if (!hasJobJson && TryFindSlugInLaterLane(entry.Path, slug, out var twinLane))
-                {
-                    decision = RemoveMidMoveCasualty(entry, slug, twinLane!, now);
-                }
-                else if (hasJobJson && TryFindSentinel(jobFolder, out var keyword))
-                {
-                    decision = await RecoverViaTransitionAsync(entry, jobFolder, slug, keyword!, now, ct);
-                }
-                else if (hasJobJson)
-                {
-                    decision = await RequeueOrphanToReadyAsync(entry, jobFolder, slug, now, lastActivity, ct);
-                }
-                else
-                {
-                    decision = ArchiveDebrisFolder(entry, jobFolder, slug, now, lastActivity);
-                }
+                // Only folders without a task.json reach this point: they are
+                // not cards, so removing or archiving them is authority
+                // filesystem recovery rather than a lane decision.
+                var decision = TryFindSlugInLaterLane(entry.Path, slug, out var twinLane)
+                    ? RemoveMidMoveCasualty(entry, slug, twinLane!, now)
+                    : ArchiveDebrisFolder(entry, jobFolder, slug, now, lastActivity);
 
                 decisions.Add(decision);
                 AppendOrphanRecoveryEntry(decision);
@@ -269,6 +286,54 @@ public sealed class StaleProgressArchiver
 
         return decisions;
     }
+
+    /// <summary>
+    /// AGT-3060: applies the engine's stale-progress receipt. A card that left
+    /// 3-progress, became the active run, or showed new run activity after
+    /// the facts were frozen is settled without an effect.
+    /// </summary>
+    public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
+    {
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(item =>
+            string.Equals(item.Name, application.ProjectId, StringComparison.Ordinal));
+        var job = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
+        if (entry is null || job is null || job.State != TaskStates.Progress) return;
+        if (SafeGetActiveJobIds().TryGetValue(entry.Name, out var activeJobId)
+            && (string.Equals(activeJobId, Path.GetFileName(job.FolderPath), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(activeJobId, application.TaskId, StringComparison.OrdinalIgnoreCase)))
+            return;
+        var (lastActivity, _) = MeasureFolder(job.FolderPath);
+        if (application.Payload.SubjectKey != $"stale:{application.TaskId}:{lastActivity:O}") return;
+        var facts = application.Payload.StaleProgress
+            ?? throw new InvalidDataException("The stale-progress occurrence has no facts.");
+        var applied = await ApplyDecisionAsync(entry, job.FolderPath, Path.GetFileName(job.FolderPath),
+            application.Decision, facts, DateTime.UtcNow, lastActivity, ct);
+        if (applied.Kind is StaleProgressDecisionKinds.Fresh or StaleProgressDecisionKinds.Skipped) return;
+        AppendOrphanRecoveryEntry(applied);
+        if (applied.Kind is StaleProgressDecisionKinds.RecoveryFailed or StaleProgressDecisionKinds.RequeueFailed)
+            throw new InvalidOperationException(applied.Reason);
+    }
+
+    private async Task<StaleProgressDecision> ApplyDecisionAsync(WatchPathEntry entry, string jobFolder,
+        string slug, AiOperatorDecision decision, StaleProgressFacts facts, DateTime now, DateTime lastActivity,
+        CancellationToken ct)
+        => decision.Effect switch
+        {
+            AiOperatorEffects.RecoverToReview => await RecoverViaTransitionAsync(entry, jobFolder, slug,
+                facts.CompletionSentinel ?? throw new InvalidDataException("The recovery has no sentinel."), now, ct),
+            AiOperatorEffects.RequeueToReady => await RequeueOrphanToReadyAsync(entry, jobFolder, slug, now,
+                lastActivity, ct),
+            _ when decision.ReasonCode == StaleProgressReasons.ActiveJob => Skip(entry.Name, slug, decision.Detail, at: now),
+            _ => new StaleProgressDecision
+            {
+                At = now,
+                Kind = StaleProgressDecisionKinds.Fresh,
+                ProjectName = entry.Name,
+                Slug = slug,
+                AgeSeconds = (long)facts.SecondsSinceActivity,
+                Reason = decision.Detail,
+            },
+        };
 
     /// <summary>
     /// One-time-per-boot drain of folders that linger in

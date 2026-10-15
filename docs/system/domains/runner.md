@@ -844,7 +844,14 @@ unreported claim expires with its lease and is queued again.
 - `backend/Features/Runner/OrchestrationExecutionMode.cs`: transition switch
   for the legacy host. `Orchestration:ExecutionMode` accepts exactly
   `Monolith` or `Engine`; Engine mode omits the legacy review/post-processing
-  hosted services from the monolith.
+  hosted services from the monolith. It is also the fallback of the
+  per-transition switch `Orchestration:Transitions:<profile>`. Since AGT-3060
+  the background deciders (liveness, stale progress, steer timeout, timeout
+  salvage, gate environment, delivery chain, cause breaker, intake routing,
+  acceptance rail) share the `OperatorDecision` profile: on `Monolith` (default)
+  they decide in process through the decision library, on `Engine` they submit
+  `OperatorDecision` occurrences
+  ([inventory](../architecture/monolith-hosted-services.md)).
 - Canonical Remote ReviewAttempts are excluded from the legacy
   `ReviewDecisionOrchestrator` scan. They remain visibly in Auto Review until a
   fenced Remote Review Executor claims them. This is the fail-closed bootstrap

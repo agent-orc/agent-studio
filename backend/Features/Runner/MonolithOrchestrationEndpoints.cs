@@ -67,8 +67,13 @@ public static class MonolithOrchestrationEndpoints
         => Results.Json(value, WireJson, statusCode: statusCode);
 
     private static bool Matches(HttpContext context, AccessSecurityStore security, string engineId)
-        => Authorize(context, security) is { } principal
-            && string.Equals(principal.RunnerId, engineId, StringComparison.Ordinal);
+    {
+        if (Authorize(context, security) is not { } principal
+            || !string.Equals(principal.RunnerId, engineId, StringComparison.Ordinal)) return false;
+        // AGT-3060: every authenticated engine request is the engine's readiness signal.
+        context.RequestServices.GetService<OrchestrationEngineReadiness>()?.Observe(engineId);
+        return true;
+    }
 
     internal static RunnerPrincipal? Authorize(HttpContext context, AccessSecurityStore security)
     {
@@ -318,7 +323,10 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     occurrence.Run.RunId);
             }
         }
-        foreach (var occurrence in store.WaitingOccurrences())
+        // AI Operator occurrences carry no card wait marker: one marker file
+        // names one run, and a lane occurrence on the same card owns it.
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            item.Run.CurrentStage != OrchestrationStage.OperatorDecision))
         {
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);

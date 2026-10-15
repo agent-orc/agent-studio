@@ -30,9 +30,13 @@ public sealed record AcceptanceRailSnapshot
 /// <summary>
 /// Durable deterministic owner for routine Human Review acceptance and
 /// integration-conflict requeue. It runs independently of every orchestrator
-/// session and makes no model calls.
+/// session and makes no model calls. AGT-3060: the rule is the AI Operator
+/// decider <c>acceptance-rail</c> (<see cref="AcceptanceRailDecisionPolicy"/>);
+/// the <c>OperatorDecision</c> switch selects whether the monolith decides it in
+/// process or the engine does. This service collects the facts and applies the
+/// decision or the engine receipt.
 /// </summary>
-public sealed class AcceptanceRailHostedService : BackgroundService
+public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperatorEffect
 {
     private static readonly object BounceClaimGate = new();
     private readonly TaskScannerService _scanner;
@@ -45,6 +49,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
     private readonly TimelineLog _timeline;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AcceptanceRailHostedService> _logger;
+    private readonly AiOperatorDecisionGateway _decisions;
     private readonly object _snapshotGate = new();
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
@@ -72,8 +77,10 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         IConfiguration configuration,
         ILogger<AcceptanceRailHostedService> logger,
         IntegrationGenerationReconcileSweep? generationReconcile = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        AiOperatorDecisionGateway? decisions = null)
     {
+        _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
         _scanner = scanner;
         _generationReconcile = generationReconcile;
         _attemptAuthority = attemptAuthority;
@@ -100,11 +107,29 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         }
     }
 
+    public string Decider => AiOperatorDeciders.AcceptanceRail;
+
     public async Task<AcceptanceRailSnapshot> RunOnceAsync(CancellationToken ct = default)
     {
         await _runGate.WaitAsync(ct);
         try { return await RunCoreAsync(ct); }
         finally { _runGate.Release(); }
+    }
+
+    /// <summary>Counters of one rail pass or one applied receipt.</summary>
+    private sealed class RailTally
+    {
+        public int Held;
+        public int Accepted;
+        public int Requeued;
+        public int Escalated;
+        public int Failed;
+        public int Suppressed;
+        public int BounceEligible;
+        public int BounceDeferred;
+        public int BounceShadowed;
+        public int BounceFalseEligibility;
+        public int WaitingForEngine;
     }
 
     private async Task<AcceptanceRailSnapshot> RunCoreAsync(CancellationToken ct)
@@ -125,16 +150,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         var humanReviewDepth = jobs.Count(job => job.State == TaskStates.HumanReview);
         var escalatedDepth = jobs.Count(job => job.State == TaskStates.Escalated);
         var statusByKey = _integrationStatus.BuildLookup(jobs);
-        var held = 0;
-        var accepted = 0;
-        var requeued = 0;
-        var escalated = 0;
-        var failed = 0;
-        var suppressed = 0;
-        var bounceEligible = 0;
-        var bounceDeferred = 0;
-        var bounceShadowed = 0;
-        var bounceFalseEligibility = 0;
+        var tally = new RailTally();
         ForgetCardsOutsideRailLanes(jobs);
 
         foreach (var job in jobs)
@@ -143,133 +159,26 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             try
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
-                if (_configuration.GetValue("DeliveryChain:Guarded", true)
-                    && job.State == TaskStates.HumanReview
-                    && AcceptanceIntegrationPolicy.IsIntegrationRequired(job)
-                    && status?.Status != IntegrationStatuses.Integrated)
-                {
-                    // The delivery reconciler returns this legacy or newly
-                    // stale card to the integration phase. It is not an
-                    // operator review decision for the rail to consume.
-                    held++;
-                    continue;
-                }
-                if (status is not null && _generationReconcile?.Reconcile(job, status) == false)
+                var deliveryChainOwns = DeliveryChainOwns(job, status);
+                if (!deliveryChainOwns && status is not null && _generationReconcile?.Reconcile(job, status) == false)
                 {
                     _logger.LogWarning("integration-generation-reconcile write failed for {TaskKey}", job.TaskKey);
-                    failed++;
+                    tally.Failed++;
                     continue;
                 }
                 var recoveryBudget = CountConflictRequeues(job);
-                var used = recoveryBudget.Used;
                 var infrastructureUsed = CountInfrastructureRequeues(job);
-                var decision = AcceptanceRailPolicy.Decide(
-                    job,
-                    status,
-                    used,
-                    options,
-                    DateTimeOffset.UtcNow,
-                    infrastructureUsed.Count,
-                    infrastructureUsed.LastAt,
-                    // The provider reset instant is not carried on the card, so
-                    // the rail backs off exponentially instead of waiting for a
-                    // known reset. The policy takes the instant for the callers
-                    // that do know it.
-                    quotaResetAt: null);
-                if (decision.Reason == "operator-hold")
-                {
-                    if (status?.Status == IntegrationStatuses.ConflictSkipped
-                        && status.Failure?.RebaseRecoveryAvailable == true
-                        && ReviewSubjectStore.Read(job.FolderPath) is { } heldSubject)
-                    {
-                        IntegrationBounceObligationStore.Ensure(job.FolderPath,
-                            IntegrationBounceObligationStore.Project(
-                                job, heldSubject, status,
-                                OperatorReviewRequeueService.ReadEpoch(job.FolderPath),
-                                used, "operator-hold", "operator-hold",
-                                status.Failure.Reason));
-                        bounceDeferred++;
-                    }
-                    held++;
-                    continue;
-                }
-
-                // AGT-2856: the same facts always produce the same outcome, so a
-                // refused attempt is not retried until a new fact arrives. This
-                // is what keeps a card that cannot be accepted from re-running
-                // the move - and re-logging the refusal - on every interval.
-                var fingerprint = AcceptanceRailAttemptPolicy.Fingerprint(
-                    job, status, decision, _integrationStatus.ReadLatestMergeStep(job)?.Reason);
-                if (decision.Action != AcceptanceRailAction.Ignore
-                    && !AcceptanceRailAttemptPolicy.ShouldAttempt(fingerprint, LastRefusal(job)))
-                {
-                    suppressed++;
-                    continue;
-                }
-
-                switch (decision.Action)
-                {
-                    case AcceptanceRailAction.Accept:
-                        // In the guarded chain acceptance binds a human
-                        // judgement to the already integrated result. The
-                        // rail may diagnose and recover, but cannot supply
-                        // that judgement on the operator's behalf.
-                        if (_configuration.GetValue("DeliveryChain:Guarded", true))
-                            held++;
-                        else if (await AcceptAsync(job, ct)) accepted++;
-                        else { failed++; RememberRefusal(job, fingerprint); }
-                        break;
-                    case AcceptanceRailAction.Requeue:
-                        if (status is null) { failed++; RememberRefusal(job, fingerprint); break; }
-                        var bounce = ProcessBounce(job, status, used + 1);
-                        if (bounce == "queued") { requeued++; bounceEligible++; }
-                        else if (bounce == "shadow") { bounceEligible++; bounceShadowed++; }
-                        else if (bounce == "deferred") { bounceEligible++; bounceDeferred++; }
-                        else
-                        {
-                            if (bounce == "false-eligibility") bounceFalseEligibility++;
-                            failed++;
-                            RememberRefusal(job, fingerprint);
-                        }
-                        break;
-                    case AcceptanceRailAction.RequeueInfrastructure:
-                        if (status is not null
-                            && await RequeueInfrastructureAsync(
-                                job,
-                                status,
-                                infrastructureUsed.Count + 1,
-                                options.MaxInfrastructureRequeues,
-                                ct))
-                        {
-                            requeued++;
-                        }
-                        else { failed++; RememberRefusal(job, fingerprint); }
-                        break;
-                    case AcceptanceRailAction.Escalate:
-                        if (job.State == TaskStates.Escalated && HasExhaustionReceipt(job))
-                            break;
-                        if (decision.Reason == "infrastructure-requeue-budget-exhausted")
-                        {
-                            if (await EscalateInfrastructureAsync(
-                                    job,
-                                    status,
-                                    infrastructureUsed.Count,
-                                    options.MaxInfrastructureRequeues,
-                                    ct))
-                            {
-                                escalated++;
-                            }
-                            else { failed++; RememberRefusal(job, fingerprint); }
-                            break;
-                        }
-                        if (await EscalateAsync(job, recoveryBudget, options.MaxRequeues, ct)) escalated++;
-                        else { failed++; RememberRefusal(job, fingerprint); }
-                        break;
-                }
+                var facts = Facts(job, status, deliveryChainOwns, recoveryBudget, infrastructureUsed, options);
+                var submission = _decisions.Submit(new AiOperatorDecisionRequest(job.ProjectName, job.Id, job.State,
+                    new AiOperatorDecisionPayload(Decider, SubjectKey(job, facts), AcceptanceRail: facts),
+                    Period: null));
+                if (submission.WaitsForEngine) { tally.WaitingForEngine++; continue; }
+                await ApplyDecisionAsync(job, status, RailDecision(submission.MonolithDecision!), recoveryBudget,
+                    infrastructureUsed, options, tally, ct);
             }
             catch (Exception ex)
             {
-                failed++;
+                tally.Failed++;
                 _logger.LogError(
                     ex,
                     "acceptance-rail-item-failed project={Project} job={JobId}",
@@ -284,19 +193,19 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             LastRunAtUtc = DateTime.UtcNow,
             HumanReviewDepth = humanReviewDepth,
             EscalatedDepth = escalatedDepth,
-            Held = held,
-            Accepted = accepted,
-            Requeued = requeued,
-            Escalated = escalated,
-            Failed = failed,
-            Suppressed = suppressed,
-            BounceEligible = bounceEligible,
-            BounceDeferred = bounceDeferred,
-            BounceShadowed = bounceShadowed,
-            BounceFalseEligibility = bounceFalseEligibility,
+            Held = tally.Held,
+            Accepted = tally.Accepted,
+            Requeued = tally.Requeued,
+            Escalated = tally.Escalated,
+            Failed = tally.Failed,
+            Suppressed = tally.Suppressed,
+            BounceEligible = tally.BounceEligible,
+            BounceDeferred = tally.BounceDeferred,
+            BounceShadowed = tally.BounceShadowed,
+            BounceFalseEligibility = tally.BounceFalseEligibility,
         });
         _logger.LogInformation(
-            "acceptance-rail-run humanReviewDepth={HumanReviewDepth} escalatedDepth={EscalatedDepth} held={Held} accepted={Accepted} requeued={Requeued} escalated={Escalated} failed={Failed} suppressed={Suppressed} lastRunAtUtc={LastRunAtUtc}",
+            "acceptance-rail-run humanReviewDepth={HumanReviewDepth} escalatedDepth={EscalatedDepth} held={Held} accepted={Accepted} requeued={Requeued} escalated={Escalated} failed={Failed} suppressed={Suppressed} waitingForEngine={WaitingForEngine} lastRunAtUtc={LastRunAtUtc}",
             snapshot.HumanReviewDepth,
             snapshot.EscalatedDepth,
             snapshot.Held,
@@ -305,8 +214,176 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             snapshot.Escalated,
             snapshot.Failed,
             snapshot.Suppressed,
+            tally.WaitingForEngine,
             snapshot.LastRunAtUtc);
         return snapshot;
+    }
+
+    /// <summary>
+    /// Applies the engine's <c>acceptance-rail</c> receipt under the rail's run
+    /// gate. A card that left its lane or whose facts changed after submission
+    /// is settled without an effect; the next pass asks again. A refused
+    /// attempt is remembered like an in-process one (AGT-2856).
+    /// </summary>
+    public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
+    {
+        await _runGate.WaitAsync(ct);
+        try
+        {
+            var options = AcceptanceRailOptions.FromConfiguration(_configuration);
+            var job = _scanner.ScanAllAutomationJobs().FirstOrDefault(candidate =>
+                string.Equals(candidate.ProjectName, application.ProjectId, StringComparison.Ordinal)
+                && string.Equals(candidate.Id, application.TaskId, StringComparison.Ordinal));
+            if (job is null || job.State != application.ExpectedSourceState) return;
+            _integrationStatus.BuildLookup([job]).TryGetValue(job.TaskKey, out var status);
+            var recoveryBudget = CountConflictRequeues(job);
+            var infrastructureUsed = CountInfrastructureRequeues(job);
+            var facts = Facts(job, status, DeliveryChainOwns(job, status), recoveryBudget, infrastructureUsed, options);
+            if (SubjectKey(job, facts) != application.Payload.SubjectKey) return;
+            await ApplyDecisionAsync(job, status, RailDecision(application.Decision), recoveryBudget,
+                infrastructureUsed, options, new RailTally(), ct);
+        }
+        finally { _runGate.Release(); }
+    }
+
+    private bool DeliveryChainOwns(TaskInfo job, TaskIntegrationStatus? status)
+        => _configuration.GetValue("DeliveryChain:Guarded", true)
+            && job.State == TaskStates.HumanReview
+            && AcceptanceIntegrationPolicy.IsIntegrationRequired(job)
+            && status?.Status != IntegrationStatuses.Integrated;
+
+    private static AcceptanceRailOperatorFacts Facts(TaskInfo job, TaskIntegrationStatus? status,
+        bool deliveryChainOwns, IntegrationRecoveryBudgetUsage recoveryBudget,
+        (int Count, DateTimeOffset? LastAt) infrastructureUsed, AcceptanceRailOptions options)
+        => AcceptanceRailFacts.From(
+            job,
+            status,
+            recoveryBudget.Used,
+            options,
+            DateTimeOffset.UtcNow,
+            infrastructureUsed.Count,
+            infrastructureUsed.LastAt,
+            // The provider reset instant is not carried on the card, so the
+            // rail backs off exponentially instead of waiting for a known
+            // reset. The facts take the instant for the callers that know it.
+            quotaResetAt: null,
+            deliveryChainOwns: deliveryChainOwns);
+
+    private static string SubjectKey(TaskInfo job, AcceptanceRailOperatorFacts facts)
+        => AiOperatorDecisionGateway.FactsSubjectKey("acceptance-rail", job.Id, facts);
+
+    /// <summary>The rail's action vocabulary for one AI Operator decision.</summary>
+    internal static AcceptanceRailDecision RailDecision(AiOperatorDecision decision)
+        => new(decision.Effect switch
+        {
+            AiOperatorEffects.AcceptDelivery => AcceptanceRailAction.Accept,
+            AiOperatorEffects.RequeueRebase => AcceptanceRailAction.Requeue,
+            AiOperatorEffects.RequeueInfrastructure => AcceptanceRailAction.RequeueInfrastructure,
+            AiOperatorEffects.Escalate => AcceptanceRailAction.Escalate,
+            _ => AcceptanceRailAction.Ignore,
+        }, decision.ReasonCode);
+
+    private async Task ApplyDecisionAsync(TaskInfo job, TaskIntegrationStatus? status,
+        AcceptanceRailDecision decision, IntegrationRecoveryBudgetUsage recoveryBudget,
+        (int Count, DateTimeOffset? LastAt) infrastructureUsed, AcceptanceRailOptions options,
+        RailTally tally, CancellationToken ct)
+    {
+        var used = recoveryBudget.Used;
+        if (decision.Reason == AcceptanceRailReasons.DeliveryChainOwned)
+        {
+            tally.Held++;
+            return;
+        }
+        if (decision.Reason == AcceptanceRailReasons.OperatorHold)
+        {
+            if (status?.Status == IntegrationStatuses.ConflictSkipped
+                && status.Failure?.RebaseRecoveryAvailable == true
+                && ReviewSubjectStore.Read(job.FolderPath) is { } heldSubject)
+            {
+                IntegrationBounceObligationStore.Ensure(job.FolderPath,
+                    IntegrationBounceObligationStore.Project(
+                        job, heldSubject, status,
+                        OperatorReviewRequeueService.ReadEpoch(job.FolderPath),
+                        used, "operator-hold", "operator-hold",
+                        status.Failure.Reason));
+                tally.BounceDeferred++;
+            }
+            tally.Held++;
+            return;
+        }
+
+        // AGT-2856: the same facts always produce the same outcome, so a
+        // refused attempt is not retried until a new fact arrives. This
+        // is what keeps a card that cannot be accepted from re-running
+        // the move - and re-logging the refusal - on every interval.
+        var fingerprint = AcceptanceRailAttemptPolicy.Fingerprint(
+            job, status, decision, _integrationStatus.ReadLatestMergeStep(job)?.Reason);
+        if (decision.Action != AcceptanceRailAction.Ignore
+            && !AcceptanceRailAttemptPolicy.ShouldAttempt(fingerprint, LastRefusal(job)))
+        {
+            tally.Suppressed++;
+            return;
+        }
+
+        switch (decision.Action)
+        {
+            case AcceptanceRailAction.Accept:
+                // In the guarded chain acceptance binds a human
+                // judgement to the already integrated result. The
+                // rail may diagnose and recover, but cannot supply
+                // that judgement on the operator's behalf.
+                if (_configuration.GetValue("DeliveryChain:Guarded", true))
+                    tally.Held++;
+                else if (await AcceptAsync(job, ct)) tally.Accepted++;
+                else { tally.Failed++; RememberRefusal(job, fingerprint); }
+                break;
+            case AcceptanceRailAction.Requeue:
+                if (status is null) { tally.Failed++; RememberRefusal(job, fingerprint); break; }
+                var bounce = ProcessBounce(job, status, used + 1);
+                if (bounce == "queued") { tally.Requeued++; tally.BounceEligible++; }
+                else if (bounce == "shadow") { tally.BounceEligible++; tally.BounceShadowed++; }
+                else if (bounce == "deferred") { tally.BounceEligible++; tally.BounceDeferred++; }
+                else
+                {
+                    if (bounce == "false-eligibility") tally.BounceFalseEligibility++;
+                    tally.Failed++;
+                    RememberRefusal(job, fingerprint);
+                }
+                break;
+            case AcceptanceRailAction.RequeueInfrastructure:
+                if (status is not null
+                    && await RequeueInfrastructureAsync(
+                        job,
+                        status,
+                        infrastructureUsed.Count + 1,
+                        options.MaxInfrastructureRequeues,
+                        ct))
+                {
+                    tally.Requeued++;
+                }
+                else { tally.Failed++; RememberRefusal(job, fingerprint); }
+                break;
+            case AcceptanceRailAction.Escalate:
+                if (job.State == TaskStates.Escalated && HasExhaustionReceipt(job))
+                    break;
+                if (decision.Reason == AcceptanceRailReasons.InfrastructureBudgetExhausted)
+                {
+                    if (await EscalateInfrastructureAsync(
+                            job,
+                            status,
+                            infrastructureUsed.Count,
+                            options.MaxInfrastructureRequeues,
+                            ct))
+                    {
+                        tally.Escalated++;
+                    }
+                    else { tally.Failed++; RememberRefusal(job, fingerprint); }
+                    break;
+                }
+                if (await EscalateAsync(job, recoveryBudget, options.MaxRequeues, ct)) tally.Escalated++;
+                else { tally.Failed++; RememberRefusal(job, fingerprint); }
+                break;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

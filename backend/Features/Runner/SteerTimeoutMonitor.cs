@@ -39,7 +39,7 @@ namespace AgentStudio.Runner;
 /// finds it there.
 /// </para>
 /// </summary>
-public sealed class SteerTimeoutMonitor
+public sealed class SteerTimeoutMonitor : IAiOperatorEffect
 {
     private readonly TaskScannerService _scanner;
     private readonly TaskTransitionService _transitions;
@@ -54,6 +54,7 @@ public sealed class SteerTimeoutMonitor
     private readonly ILogger<SteerTimeoutMonitor> _logger;
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly IJsonlAppender _appender;
+    private readonly AiOperatorDecisionGateway _decisions;
 
     /// <summary>Default bounded wait before an unanswered steer times out (concept Rule 2: "Default 120s, konfigurierbar").</summary>
     public const int DefaultTimeoutSeconds = 120;
@@ -74,7 +75,8 @@ public sealed class SteerTimeoutMonitor
         AgentStudio.TaskAccess.ITaskAccess taskAccess,
         ILogger<SteerTimeoutMonitor> logger,
         AgentStudio.Tasks.TimelineLog? timeline = null,
-        IJsonlAppender? appender = null)
+        IJsonlAppender? appender = null,
+        AiOperatorDecisionGateway? decisions = null)
     {
         _scanner = scanner;
         _transitions = transitions;
@@ -89,7 +91,10 @@ public sealed class SteerTimeoutMonitor
         _logger = logger;
         _timeline = timeline;
         _appender = appender ?? new JsonlAppender();
+        _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
     }
+
+    public string Decider => AiOperatorDeciders.SteerTimeout;
 
     /// <summary>
     /// One uptime sweep: for every <c>3-progress</c> card carrying a
@@ -157,42 +162,27 @@ public sealed class SteerTimeoutMonitor
                 var timeoutSeconds = c.Marker.TimeoutSeconds > 0 ? c.Marker.TimeoutSeconds : configTimeout;
                 var secondsWaiting = (now - c.Marker.WaitStartedAt).TotalSeconds;
 
-                // Only run the (git-touching) resolver once the wait has actually
-                // timed out; within-timeout cards keep waiting with no I/O.
-                SteerResolveResult? resolved = null;
-                if (secondsWaiting >= timeoutSeconds)
-                    resolved = ResolveSafe(entry, c);
-
-                var facts = new SteerTimeoutFacts(
-                    SecondsWaiting: secondsWaiting,
-                    TimeoutSeconds: timeoutSeconds,
-                    HasConfidentAutoAnswer: resolved?.HasAnswer ?? false,
-                    AutoAnswerText: resolved?.AnswerText,
-                    AmbiguityReason: resolved?.AmbiguityReason);
-                var decision = SteerTimeoutPolicy.Decide(facts);
-
-                switch (decision.Action)
+                // Trigger signal only: a card inside its bounded wait keeps its
+                // "waiting for answer" pill and is not asked about, so the
+                // (git-touching) resolver runs only once the wait timed out.
+                if (secondsWaiting < timeoutSeconds)
+                    continue;
+                var resolved = ResolveSafe(entry, c);
+                var jobId = TryReadJobId(c.JobFolder) ?? c.Slug;
+                var payload = new AiOperatorDecisionPayload(Decider,
+                    $"steer:{jobId}:{c.Marker.WaitStartedAt:O}",
+                    SteerTimeout: new SteerTimeoutFacts(
+                        SecondsWaiting: secondsWaiting,
+                        TimeoutSeconds: timeoutSeconds,
+                        HasConfidentAutoAnswer: resolved.HasAnswer,
+                        AutoAnswerText: resolved.AnswerText,
+                        AmbiguityReason: resolved.AmbiguityReason));
+                var submission = _decisions.Submit(new AiOperatorDecisionRequest(entry.Name, jobId,
+                    TaskStates.Progress, payload, Period: null));
+                if (submission.MonolithDecision is { } decision)
                 {
-                    case SteerTimeoutAction.KeepWaiting:
-                        // Still waiting: no move, no audit noise -
-                        // the card keeps its "waiting for answer since mm:ss" pill.
-                        break;
-
-                    case SteerTimeoutAction.AutoAnswer:
-                    {
-                        var outcome = await AutoAnswerAsync(entry, c, decision, secondsWaiting, timeoutSeconds, now, ct);
-                        outcomes.Add(outcome);
-                        AppendAudit(outcome);
-                        break;
-                    }
-
-                    case SteerTimeoutAction.RouteBlocked:
-                    {
-                        var outcome = await RouteBlockedAsync(entry, c, decision, secondsWaiting, timeoutSeconds, now, ct);
-                        outcomes.Add(outcome);
-                        AppendAudit(outcome);
-                        break;
-                    }
+                    var outcome = await ApplyDecisionAsync(entry, c, decision, secondsWaiting, timeoutSeconds, now, ct);
+                    if (outcome is not null) outcomes.Add(outcome);
                 }
             }
         }
@@ -205,6 +195,53 @@ public sealed class SteerTimeoutMonitor
                 outcomes.Count(o => o.Kind == SteerTimeoutOutcomeKinds.Blocked));
 
         return outcomes;
+    }
+
+    /// <summary>
+    /// AGT-3060: applies the engine's steer-timeout receipt. A card that left
+    /// 3-progress or whose wait was answered meanwhile (marker gone or newer)
+    /// is settled without an effect.
+    /// </summary>
+    public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
+    {
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(item =>
+            string.Equals(item.Name, application.ProjectId, StringComparison.Ordinal));
+        var job = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
+        if (entry is null || job is null || job.State != TaskStates.Progress) return;
+        var marker = SteerPendingMarker.TryRead(job.FolderPath, _logger);
+        if (marker is null || application.Payload.SubjectKey
+            != $"steer:{application.TaskId}:{marker.WaitStartedAt:O}")
+            return;
+        var facts = application.Payload.SteerTimeout
+            ?? throw new InvalidDataException("The steer-timeout occurrence has no facts.");
+        var outcome = await ApplyDecisionAsync(entry, new Candidate(Path.GetFileName(job.FolderPath),
+                job.FolderPath, marker), application.Decision, facts.SecondsWaiting, facts.TimeoutSeconds,
+            DateTime.UtcNow, ct);
+        if (outcome?.Kind is SteerTimeoutOutcomeKinds.AutoAnswerFailed or SteerTimeoutOutcomeKinds.BlockFailed)
+            throw new InvalidOperationException(outcome.Reason);
+    }
+
+    private async Task<SteerTimeoutOutcome?> ApplyDecisionAsync(WatchPathEntry entry, Candidate c,
+        AiOperatorDecision decision, double secondsWaiting, double timeoutSeconds, DateTime now,
+        CancellationToken ct)
+    {
+        SteerTimeoutOutcome outcome;
+        switch (decision.Effect)
+        {
+            case AiOperatorEffects.AutoAnswer:
+                outcome = await AutoAnswerAsync(entry, c, new SteerTimeoutDecision(SteerTimeoutAction.AutoAnswer,
+                    decision.ReasonCode, decision.AnswerText, decision.Detail), secondsWaiting, timeoutSeconds, now, ct);
+                break;
+            case AiOperatorEffects.Escalate:
+                outcome = await RouteBlockedAsync(entry, c, new SteerTimeoutDecision(SteerTimeoutAction.RouteBlocked,
+                    decision.ReasonCode, null, decision.Detail), secondsWaiting, timeoutSeconds, now, ct);
+                break;
+            default:
+                // Still waiting: no move, no audit noise.
+                return null;
+        }
+        AppendAudit(outcome);
+        return outcome;
     }
 
     /// <summary>

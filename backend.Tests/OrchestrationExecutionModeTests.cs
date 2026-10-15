@@ -94,6 +94,24 @@ public sealed class OrchestrationExecutionModeTests
     }
 
     [Fact]
+    public void Explicit_monolith_profile_registers_legacy_review_loops_under_global_engine_mode()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Orchestration:ExecutionMode"] = "Engine",
+                ["Orchestration:Transitions:ReviewReport"] = "Monolith",
+            }).Build();
+        var services = new ServiceCollection();
+
+        services.AddOrchestrationExecutionLoops(configuration);
+
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(RemoteReviewSettlementReconciler));
+    }
+
+    [Fact]
     public void Monolith_mode_registers_all_six_legacy_loop_owners()
     {
         var services = new ServiceCollection();

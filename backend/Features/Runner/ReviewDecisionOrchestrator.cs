@@ -4653,7 +4653,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 var cancellationReason = GateCancellationPolicy.Decide(subject.Sha, liveSha,
                     current.State, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, result.CancellationReason);
-                result = GateCancellationPolicy.Apply(result, cancellationReason);
+                result = GateCancellationResultProjector.Apply(result, cancellationReason);
                 var folder = live?.FolderPath ?? current.FolderPath;
                 var deferred = cancellationReason == GateCancellationReasons.Superseded;
                 if (cancellationReason == GateCancellationReasons.Shutdown)

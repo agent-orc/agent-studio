@@ -48,66 +48,31 @@ occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
 occurrence raises an operator feed alert and waits for a leased engine instance.
 
-## Decision grounds and shadow receipts
-
-AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
-is in Shadow. When the monolith records the shadow occurrence,
-`DecisionGroundsCollector` freezes a `DecisionShadowInputV1` under
-`<TaskRepository>/.orchestrator-decisions/inputs`. It holds typed facts with
-source refs, freshness, coverage and reliability, explicit omissions, the
-candidate actions with floor-rejected ones visible, the last decisions with
-their applied outcome, the model route, and the AGT-W68 RB-S1 card ledger and
-progress definition. The deterministic choice sits beside the grounds and stays
-out of the model prompt. The first frozen input of an occurrence wins.
-
-The library owns the pure rules. `CardRunLedgerPolicy` deduplicates usage by
-provider call id (falling back to a run, time, model and counter fingerprint),
-subtracts cached input from a raw OpenAI total before pricing, keeps unknown
-prices unpriced, and reports excluded duplicate rows, tokens and value.
-`DecisionGroundsPolicy.Freeze` builds `DecisionGroundsV1` with fixed row caps,
-truncation markers, at most 32 KiB, a 6,500-token pack budget that leaves room
-for the prompt inside the 8,000-token call cap, an incomplete-pack flag, and a
-SHA-256 content digest. `DecisionReceiptPolicy` renders the prompt, accepts only
-an available candidate from the closed union with valid confidence and cited
-fact ids, and builds `OrchestratorDecisionReceiptV1`. Any other answer, an
-unavailable model, an expired wait, a cap or an incomplete pack records
-`ask(reason=decision-unavailable)`.
-
-The engine's `ShadowDecisionService` drains occurrences without a receipt. By
-default the model call is a claimable decision job on a runner host
-(`runner-host-job` custody), so provider credentials stay on runner hosts. A
-runner claims it at `/api/runner/orchestrator-decisions/claim` with the
-`runner.claim` scope and runs one read-only CLI turn in an empty directory. A
-transport failure gets one attempt on `Orchestration:DecisionModel:Alternate*`.
-The monolith prices the deduplicated usage with `ITokenPricing` at the call
-time. `DecisionCostCapPolicy` holds the cost protection. A card occurrence is
-refused beyond 24 calls or 5 USD priced spend per card. An occurrence without a
-card (the Fluid capacity periodic host check) is charged to its host-day
-instead: 48 scheduled plus 12 event calls, 180,000 input and 90,000 output
-tokens and 10 USD priced spend per host and UTC day, where open jobs reserve
-their token envelope and estimated priced cost. Reclaimed claims keep billed
-completions from the replaced runner as separate calls attributed to the same
-job; duplicate reports do not add spend. A refused job stays `cap-exhausted`. Each call carries an
-envelope of at most 8,000 input and 1,000 output tokens. The runner refuses a
-prompt whose conservative estimate with framing margin exceeds it before
-spawning. It passes the output cap to the CLI (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
-Codex `model_max_output_tokens`) and the total context window to Codex as
-`model_context_window`. The
-store rejects a completion whose measured usage broke the envelope. It keeps
-the usage and price but does not accept the answer, so the receipt records
-`ask(reason=decision-unavailable)`. Receipts are immutable: the store checks the grounds
-digest against the frozen input and returns the first receipt on every replay.
-Storing a receipt also closes any job that is still open. A billed completion
-that arrives after that (for example after a timeout receipt) still records
-its usage and price on the job. The card spend counts it, and the receipt row
-and its outcome link add it as a late call (`lateCalls`). Studio reads
-`/api/orchestration/decision-receipts`; each row's `evidenceRef` opens the full
-receipt with grounds and response, and `outcomeLink` shows the applied action.
-The model choice is never dispatched. `Orchestration:DecisionModel:Cli`, `Model`
-and `ThinkingLevel` default to `codex`, `gpt-6-sol` and `medium`; the engine
-reads `SHADOW_DECISION_CONCURRENCY` (2) and `SHADOW_DECISION_TIMEOUT_SECONDS`
-(900). An engine-held provider credential remains a separate follow-up decision
-if claim latency proves too high.
+AGT-3060 (I18) moves the background deciders into this library. The operator
+decision of 15.10.2026 keeps the per-transition switch as the single selector
+of who decides: every profile defaults to `Monolith`, and with `Monolith`
+selected the monolith decides in process through this library; no host forces
+a mode. The run-liveness, stale-progress, steer-timeout, timeout-salvage,
+gate-environment-retry, delivery-chain, cause-breaker, intake-routing and
+acceptance-rail rules live here (`RunLivenessPolicy`, `StaleProgressPolicy`,
+`SteerTimeoutPolicy`, `RunTimeoutSalvageContinuationPolicy`,
+`GateEnvironmentRetryPolicy`, `GateCancellationPolicy`, `DeliveryChainPolicy`, `CauseBreakerClosePolicy`,
+`IntakeRoutingPolicy`, `AcceptanceRailDecisionPolicy`). `AiOperatorDecisionPolicy`
+is the AI Operator role of AGT-W73 O1 A: it selects the decider's policy,
+classifies the effect with an autonomy class, and limits it (A0 and A1 act, A2
+becomes a proposal, A3 is asked of a person). The monolith submits frozen facts
+through `AiOperatorDecisionGateway`, whose profile is `OperatorDecision`. On
+`Monolith` the gateway returns this library's decision at once; on `Engine` it
+records an `OperatorDecision` occurrence, the engine's `AiOperatorDecisionLoop`
+returns the receipt, and the decider's `IAiOperatorEffect` applies it after
+checking the lane and the frozen facts again. One active occurrence exists per
+card and decider; a periodic decider keys each period bucket, an event-triggered
+one keys its subject, and the residual deciders key a hash of their facts. The
+inventory of every hosted service and its owner is
+[monolith-hosted-services.md](../architecture/monolith-hosted-services.md).
+`OrchestrationEngineReadiness` reports, but never holds: while a profile selects
+the engine, `GET /healthz/orchestration-engine` answers `ready` or
+`engine-not-live`.
 
 ## Inputs and outputs
 
@@ -217,6 +182,17 @@ that the source guard rejects reintroduced rules. Host branches may inspect a
 returned decision to apply it or validate persistence results. Add new transition
 policies to the owned-policy inventory and put their facts and rules in this
 library. Broader background-service movement remains I18.
+
+`MonolithDecisionBoundaryTests` (AGT-3060, `Category=Guard`) fails when a host
+forces a decision mode, when a registered hosted service is missing from the
+inventory, when a `decide` row is neither an AI Operator decider reaching
+`AiOperatorDecisionGateway` nor a switched profile reaching
+`MonolithTransitionSwitch` (beyond the closed set of pre-existing local
+deciders), when an AI Operator decider calls a library rule around the switch,
+or when a new host-defined policy, rules or breaker class appears in a workflow
+feature folder. The pre-existing host rules are frozen in
+`backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`, which only
+shrinks.
 
 Run the guard with:
 

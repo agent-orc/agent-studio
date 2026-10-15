@@ -1,3 +1,5 @@
+extern alias EngineAssembly;
+
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -371,6 +373,75 @@ public class TaskBatchMoveTests : IDisposable
     [Fact]
     public async Task DeliveryReconciler_ReopensCompletedAndEscalatesMissingIntegratingDelivery()
     {
+        var reconciler = DeliveryReconcilerScenario(store: null, out var scanner);
+
+        Assert.Equal(2, await reconciler.RunOnceAsync());
+        var lanes = ReadLaneByJob();
+        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
+        Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
+        Assert.Equal(LifecyclePhases.Integrating,
+            scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+    }
+
+    /// <summary>
+    /// AGT-3060: with the OperatorDecision switch on Engine the reconciler only
+    /// submits facts. With the engine stopped no card moves; once the engine
+    /// decides, the authority applies the receipts and the same scenario completes.
+    /// </summary>
+    [Fact]
+    public async Task DeliveryReconciler_OnTheEngineSwitchMovesNothingUntilTheEngineDecides()
+    {
+        var applier = new OperatorEffectApplier();
+        var store = new MonolithOrchestrationStore(directory: null,
+            new Microsoft.Extensions.Time.Testing.FakeTimeProvider(), applier);
+        var reconciler = DeliveryReconcilerScenario(store, out var scanner);
+        applier.Effect = reconciler;
+
+        Assert.Equal(0, await reconciler.RunOnceAsync());
+        Assert.Equal(0, await reconciler.RunOnceAsync());
+        Assert.Equal(2, store.List("batchmove-test", "pending").Count);
+        Assert.Equal(TaskStates.Completed, ReadLaneByJob()["stale-accepted"]);
+        Assert.Equal(TaskStates.AutoReview, ReadLaneByJob()["missing-delivery"]);
+
+        while (store.Claim(new AgentStudio.TaskServer.Contracts.OrchestrationClaimRequest("engine_test", "instance",
+                   [AgentStudio.TaskServer.Contracts.OrchestrationStage.OperatorDecision])) is { Run: { } run } claim)
+        {
+            var decision = await new EngineAssembly::AgentStudio.OrchestratorEngine.AiOperatorDecisionLoop()
+                .ExecuteAsync(run, default);
+            await store.CompleteAsync(run.RunId, new AgentStudio.TaskServer.Contracts.CompleteOrchestrationStageRequest(
+                "engine_test", "instance", claim.Lease!.LeaseId, claim.Lease.Fence,
+                AgentStudio.TaskServer.Contracts.OrchestrationStage.OperatorDecision, decision.Action,
+                decision.OutputJson, "engine:" + run.RunId), default);
+        }
+
+        var lanes = ReadLaneByJob();
+        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
+        Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
+        scanner.InvalidateCache();
+        Assert.Equal(LifecyclePhases.Integrating, scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+        Assert.Empty(store.List("batchmove-test", "pending"));
+    }
+
+    /// <summary>Applies an AI Operator receipt through one effect, like the authority's applier.</summary>
+    private sealed class OperatorEffectApplier : IMonolithOrchestrationApplier
+    {
+        public IAiOperatorEffect? Effect { get; set; }
+
+        public async Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+            AgentStudio.TaskServer.Contracts.CompleteOrchestrationStageRequest completion, CancellationToken ct)
+        {
+            var decision = AiOperatorDecisionGateway.ReadDecision(completion.OutputJson);
+            if (decision.Disposition == AiOperatorDisposition.Hold) return;
+            await Effect!.ApplyAsync(new AiOperatorApplication(occurrence.Run.RunId, occurrence.Run.ProjectId,
+                occurrence.Run.TaskId, occurrence.ExpectedSourceState, "test:" + occurrence.Run.RunId,
+                AiOperatorDecisionGateway.ReadPayload(occurrence.Run.PayloadJson), decision,
+                occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch), ct);
+        }
+    }
+
+    private DeliveryChainReconciler DeliveryReconcilerScenario(MonolithOrchestrationStore? store,
+        out TaskScannerService scanner)
+    {
         WriteJob(TaskStates.Completed, "stale-accepted");
         WriteJob(TaskStates.AutoReview, "missing-delivery");
         var integratingFolder = Path.Combine(_watchPath, TaskStates.AutoReview, "missing-delivery");
@@ -382,9 +453,10 @@ public class TaskBatchMoveTests : IDisposable
             ["WatchPaths:0:Path"] = _watchPath,
             ["TaskRepository"] = _watchPath,
             ["DeliveryChain:Guarded"] = "true",
+            ["Orchestration:Transitions:OperatorDecision"] = store is null ? null : "Engine",
         }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
-        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var status = new TaskIntegrationStatusService(git, settings,
@@ -401,15 +473,8 @@ public class TaskBatchMoveTests : IDisposable
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings,
             NullLogger<TaskTransitionService>.Instance, integrationStatus: status,
             configuration: config);
-        var reconciler = new DeliveryChainReconciler(scanner, status, transitions, config,
-            NullLogger<DeliveryChainReconciler>.Instance);
-
-        Assert.Equal(2, await reconciler.RunOnceAsync());
-        var lanes = ReadLaneByJob();
-        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
-        Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
-        Assert.Equal(LifecyclePhases.Integrating,
-            scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+        return new DeliveryChainReconciler(scanner, status, transitions, config,
+            NullLogger<DeliveryChainReconciler>.Instance, decisions: new AiOperatorDecisionGateway(config, store));
     }
 
     [Fact]

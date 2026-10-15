@@ -144,7 +144,10 @@ mutation.
 `Monolith` or `Engine` from `Orchestration:ExecutionMode` and defaults to
 `Monolith`. `Engine` omits the legacy review and post-processing hosted
 services from the monolith so the external `orchestrator-engine` owns those
-loops instead.
+loops instead. It is also the fallback of the per-transition switch
+`Orchestration:Transitions:<profile>`, which selects who decides each
+transition; since AGT-3060 the background deciders share the `OperatorDecision`
+profile (see [monolith hosted services](../../system/architecture/monolith-hosted-services.md)).
 
 ## API planes and routes
 

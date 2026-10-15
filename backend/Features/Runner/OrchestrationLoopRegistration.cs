@@ -1,12 +1,19 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 
 namespace AgentStudio.Runner;
 
 public static class OrchestrationLoopRegistration
 {
     public static IServiceCollection AddOrchestrationExecutionLoops(
+        this IServiceCollection services, OrchestrationExecutionMode mode)
+        => services.AddOrchestrationExecutionLoops(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Orchestration:ExecutionMode"] = mode.ToString() }).Build());
+
+    public static IServiceCollection AddOrchestrationExecutionLoops(
         this IServiceCollection services,
-        OrchestrationExecutionMode mode)
+        IConfiguration configuration)
     {
         // AGT-3055: the batch tick runs in every mode. It owns the batch decision
         // only where BatchGatePilotService.OwnerOfBatchPlan selects Monolith; in
@@ -14,8 +21,12 @@ public static class OrchestrationLoopRegistration
         // only publishes batch-plan occurrences and applies the engine intent after
         // the authority floors. Without it nothing would advance queued batches.
         services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
-        if (mode != OrchestrationExecutionMode.Monolith)
-            return services;
+        // A global Engine setting may coexist with a Monolith transition
+        // override. Keep the legacy loop alive for that selected profile.
+        var legacyReviewSelected = new[] { "CodingCompletion", "ReviewReport", "GateResult" }
+            .Any(profile => MonolithTransitionSwitch.For(configuration, profile)
+                == OrchestrationExecutionMode.Monolith);
+        if (!legacyReviewSelected) return services;
 
         services.AddHostedService(provider =>
             provider.GetRequiredService<ReviewDecisionOrchestrator>());

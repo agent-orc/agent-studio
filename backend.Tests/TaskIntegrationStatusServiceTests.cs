@@ -1525,7 +1525,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         }, NullLogger.Instance);
         scanner.InvalidateCache();
         card = Assert.IsType<TaskInfo>(scanner.FindJob("accepted", watchPath));
-        var reconciliationTarget = DeliveryLanePolicy.ReconciliationTarget(card, status);
+        var reconciliationTarget = OperatorDecisionHarness.ReconciliationTarget(card, status);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
             integrationStatus: service, configuration: config);
 

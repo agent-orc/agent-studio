@@ -20,7 +20,9 @@ public sealed class MonolithOrchestrationApplier(
     BatchGatePilotService batches,
     AgentStudio.Projects.ProjectSettingsService settings,
     IOperatorSweepActions sweepActions,
-    IConfiguration configuration) : IMonolithOrchestrationApplier
+    IConfiguration configuration,
+    IServiceProvider services,
+    OrchestratorLog operatorLog) : IMonolithOrchestrationApplier
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -54,6 +56,11 @@ public sealed class MonolithOrchestrationApplier(
     private async Task ApplyTransitionAsync(MonolithOrchestrationOccurrence occurrence,
         CompleteOrchestrationStageRequest completion, CancellationToken ct)
     {
+        if (occurrence.Run.CurrentStage == OrchestrationStage.OperatorDecision)
+        {
+            await ApplyOperatorDecisionAsync(occurrence, completion, ct);
+            return;
+        }
         var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
             candidate.ProjectName == occurrence.Run.ProjectId
             && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
@@ -361,6 +368,53 @@ public sealed class MonolithOrchestrationApplier(
         }
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         scanner.InvalidateCache();
+    }
+
+    /// <summary>
+    /// AGT-3060: an AI Operator receipt. Hold has no effect; Propose records an
+    /// A2 proposal for a person; Act and Ask run the decider's keyed effect.
+    /// </summary>
+    private async Task ApplyOperatorDecisionAsync(MonolithOrchestrationOccurrence occurrence,
+        CompleteOrchestrationStageRequest completion, CancellationToken ct)
+    {
+        var payload = AiOperatorDecisionGateway.ReadPayload(occurrence.Run.PayloadJson);
+        var decision = AiOperatorDecisionGateway.ReadDecision(completion.OutputJson);
+        if (decision.Decider != payload.Decider || decision.SubjectKey != payload.SubjectKey)
+            throw new InvalidDataException("The AI Operator receipt does not match its occurrence.");
+        if (decision.Disposition == AiOperatorDisposition.Hold) return;
+        if (decision.Disposition == AiOperatorDisposition.Propose)
+        {
+            RecordOperatorDecision(occurrence, decision, "AI Operator proposal waits for a person");
+            return;
+        }
+        var effect = services.GetServices<IAiOperatorEffect>()
+            .SingleOrDefault(candidate => candidate.Decider == decision.Decider)
+            ?? throw new InvalidOperationException($"No authority effect is registered for {decision.Decider}.");
+        await effect.ApplyAsync(new AiOperatorApplication(occurrence.Run.RunId, occurrence.Run.ProjectId,
+            occurrence.Run.TaskId, occurrence.ExpectedSourceState,
+            $"engine-operator:{occurrence.Run.RunId}:{completion.IdempotencyKey}", payload, decision,
+            occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch), ct);
+        RecordOperatorDecision(occurrence, decision, decision.Disposition == AiOperatorDisposition.Ask
+            ? "AI Operator asked a person" : "AI Operator applied");
+    }
+
+    private void RecordOperatorDecision(MonolithOrchestrationOccurrence occurrence,
+        AiOperatorDecision decision, string summary)
+    {
+        var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
+            candidate.ProjectName == occurrence.Run.ProjectId
+            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
+        if (task is null) return;
+        var topic = "ai-operator:" + occurrence.Run.RunId;
+        if (operatorLog.Read(task.WatchPath).Any(entry => entry.Topic == topic)) return;
+        operatorLog.Append(task.WatchPath, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Decision,
+            Topic = topic,
+            JobId = task.Id,
+            Summary = $"{summary}: {decision.Decider} {decision.Effect} on {task.Key ?? task.Id} ({decision.Autonomy}).",
+            Reasoning = decision.Detail,
+        });
     }
 
     private static string? TargetFromPayload(string payloadJson)

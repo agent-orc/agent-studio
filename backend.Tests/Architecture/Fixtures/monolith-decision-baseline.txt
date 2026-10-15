@@ -1,0 +1,114 @@
+# Host-defined rule baseline for MonolithDecisionBoundaryTests (AGT-3060, I18).
+#
+# Operator decision 15.10.2026: the per-transition switch is the only selector
+# of who decides. With Monolith selected (the default) the monolith decides
+# through the shared decision library in orchestration-decisions/, so a call
+# into that library is the sanctioned monolith path and is not listed here.
+# What may not return to backend/ is a transition rule defined by the host.
+# These entries predate the guard: host-defined policy, rules or breaker
+# classes in workflow feature folders, each owned by a later slice in
+# docs/system/architecture/monolith-hosted-services.md. The list only shrinks:
+#   policy <file> <type>     a new one fails, a removed one must leave the list.
+# Put a new transition rule in orchestration-decisions/ and reach it through
+# AiOperatorDecisionGateway or a MonolithTransitionSwitch profile.
+
+policy backend/Features/Pipeline/AcceptedIntegrationBackstopPolicy.cs AcceptedIntegrationBackstopPolicy
+policy backend/Features/Pipeline/AcceptedIntegrationFailurePolicy.cs AcceptedIntegrationFailurePolicy
+policy backend/Features/Pipeline/BatchGate/BatchGateCarryPolicy.cs BatchGateCarryPolicy
+policy backend/Features/Pipeline/BatchGate/BatchGatePolicy.cs BatchGatePolicy
+policy backend/Features/Pipeline/BatchGate/BatchGatePublicationPolicy.cs BatchGatePublicationPolicy
+policy backend/Features/Pipeline/BuildProfileContradictionPolicy.cs BuildProfileContradictionPolicy
+policy backend/Features/Pipeline/DocsOnlyDeliveryPolicy.cs DocsOnlyDeliveryPolicy
+policy backend/Features/Pipeline/DossierImplementationCardPolicy.cs DossierImplementationCardPolicy
+policy backend/Features/Pipeline/FailureIntervention/FailureInterventionPolicy.cs FailureInterventionPolicy
+policy backend/Features/Pipeline/GateFailureTriage/GateFailureRoutingPolicy.cs GateFailureRoutingPolicy
+policy backend/Features/Pipeline/GateFailureTriage/GateFailureTriagePolicy.cs GateFailureTriagePolicy
+policy backend/Features/Pipeline/GateFailureTriage/GateFailureTriagePolicy.cs GateFlakeLabelPolicy
+policy backend/Features/Pipeline/GateFlakyRerun/GateFlakyRerunPolicy.cs GateFlakyRerunPolicy
+policy backend/Features/Pipeline/GateRunBudgetPolicy.cs GateRunBudgetPolicy
+policy backend/Features/Pipeline/ImmediateIntegrationLineagePolicy.cs ImmediateIntegrationLineagePolicy
+policy backend/Features/Pipeline/IntegrationAgentRoundService.cs RemoteIntegrationContinuationPolicy
+policy backend/Features/Pipeline/IntegrationBranchGateHealthPolicy.cs IntegrationBranchGateHealthPolicy
+policy backend/Features/Pipeline/IntegrationGateReusePolicy.cs IntegrationGateReusePolicy
+policy backend/Features/Pipeline/IntegrationVerification/IntegrationVerificationPolicy.cs IntegrationVerificationPolicy
+policy backend/Features/Pipeline/InterruptedIntegrationGatePolicy.cs InterruptedIntegrationGatePolicy
+policy backend/Features/Pipeline/ModelMigrationCatalogRegistry.cs ModelMigrationPolicy
+policy backend/Features/Pipeline/QualityAnalysis/QualityAnalysisStepRunner.cs QualityAnalysisPolicy
+policy backend/Features/Pipeline/TestQuarantine/TestQuarantinePolicy.cs TestQuarantinePolicy
+policy backend/Features/Runner/AdaptiveReviewParallelismPolicy.cs AdaptiveReviewParallelismPolicy
+policy backend/Features/Runner/AgentGitMutationPolicy.cs AgentGitMutationPolicy
+policy backend/Features/Runner/AutoReviewResumePolicy.cs AutoReviewResumePolicy
+policy backend/Features/Runner/AutoReviewResumePolicy.cs AutoReviewResumeRetryPolicy
+policy backend/Features/Runner/CauseBreaker/CauseBreakerPolicy.cs CauseBreakerPolicy
+policy backend/Features/Runner/CauseBreaker/CauseFingerprint.cs CauseFingerprintPolicy
+policy backend/Features/Runner/CliRecoveryResumePolicy.cs CliRecoveryResumePolicy
+policy backend/Features/Runner/CodingYieldPolicy.cs CodingYieldPolicy
+policy backend/Features/Runner/CompletedPushSelectionPolicy.cs CompletedPushSelectionPolicy
+policy backend/Features/Runner/CompletionEvidencePolicy.cs CompletionEvidencePolicy
+policy backend/Features/Runner/CrossSlugInfraCircuitBreaker.cs CrossSlugInfraCircuitBreaker
+policy backend/Features/Runner/DeferredModePickupPolicy.cs DeferredModePickupPolicy
+policy backend/Features/Runner/EpicRunPolicy.cs EpicRunPolicy
+policy backend/Features/Runner/HostReleaseDrift.cs HostReleaseDriftPolicy
+policy backend/Features/Runner/LoadThrottlePolicy.cs LoadThrottlePolicy
+policy backend/Features/Runner/LostWorkerContinuation.cs LostWorkerContinuationPolicy
+policy backend/Features/Runner/MechanicalFreshRunRoutePolicy.cs MechanicalFreshRunRoutePolicy
+policy backend/Features/Runner/OperatorSweeps/OperatorSweepProjection.cs OperatorSweepHealthPolicy
+policy backend/Features/Runner/OrchestratorPrepRules.cs OrchestratorPrepRules
+policy backend/Features/Runner/ParallelSlotPolicy.cs ParallelSlotPolicy
+policy backend/Features/Runner/PendingIntentTriggerPolicy.cs PendingIntentTriggerPolicy
+policy backend/Features/Runner/ProviderRejectionContinuation.cs ProviderRejectionContinuationPolicy
+policy backend/Features/Runner/RapidCrashBreaker.cs RapidCrashBreaker
+policy backend/Features/Runner/ReadOnlyContainmentPolicy.cs ReadOnlyContainmentPolicy
+policy backend/Features/Runner/RemoteDeliveryFailure.cs RemoteDeliveryFailurePolicy
+policy backend/Features/Runner/RemoteLeaseReleasePolicy.cs RemoteLeaseReleasePolicy
+policy backend/Features/Runner/RemoteQueueStarvationWatchdog.cs RemoteQueueStarvationPolicy
+policy backend/Features/Runner/RemoteReviewContinuation.cs RemoteReviewContinuationPolicy
+policy backend/Features/Runner/RemoteReviewSettlementJournal.cs RemoteReviewSettlementPolicy
+policy backend/Features/Runner/RemoteRunStopRequests.cs RemoteRunStopPolicy
+policy backend/Features/Runner/RepeatedAspectBlockPolicy.cs RepeatedAspectBlockPolicy
+policy backend/Features/Runner/RestartContinuityPolicy.cs RestartContinuityPolicy
+policy backend/Features/Runner/ReviewAspectTimeoutPolicy.cs ReviewAspectTimeoutPolicy
+policy backend/Features/Runner/ReviewBaselineBranchPolicy.cs ReviewBaselineBranchPolicy
+policy backend/Features/Runner/ReviewClaimRepositoryAccessPolicy.cs ReviewClaimRepositoryAccessPolicy
+policy backend/Features/Runner/ReviewClaimStagnation.cs ReviewClaimStagnationPolicy
+policy backend/Features/Runner/ReviewVerifyReusePolicy.cs ReviewVerifyReusePolicy
+policy backend/Features/Runner/RunCompletionPolicy.cs RunCompletionPolicy
+policy backend/Features/Runner/RunDispositionPolicy.cs RunDispositionPolicy
+policy backend/Features/Runner/RunOutcomePolicy.cs RunOutcomePolicy
+policy backend/Features/Runner/RunQuarantineBreaker.cs RunQuarantineBreaker
+policy backend/Features/Runner/RunTimeline.cs RunCloseoutPolicy
+policy backend/Features/Runner/V1ReviewPlaneEndpoints.cs ReviewRestartOutcomePolicy
+policy backend/Features/Runner/VisualQa/VisualQaPolicy.cs VisualQaPolicy
+policy backend/Features/Runner/WorktreeRunPolicy.cs WorktreeRunPolicy
+policy backend/Features/Supervisor/MetaCycleRules.cs MetaCycleRules
+policy backend/Features/Tasks/Acceptance/AcceptanceAttemptLineagePolicy.cs AcceptanceAttemptLineagePolicy
+policy backend/Features/Tasks/Acceptance/AcceptanceIntegrationPolicy.cs AcceptanceIntegrationPolicy
+policy backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs AcceptanceRailAttemptPolicy
+policy backend/Features/Tasks/Acceptance/CompletionContentPolicy.cs CompletionContentPolicy
+policy backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs CompletionContractPolicy
+policy backend/Features/Tasks/Acceptance/DeliveryBounceRepairPolicy.cs DeliveryBounceRepairPolicy
+policy backend/Features/Tasks/Acceptance/DeliveryClaimSweepPolicy.cs DeliveryClaimSweepPolicy
+policy backend/Features/Tasks/Acceptance/DeliveryLanePolicy.cs DeliveryLanePolicy
+policy backend/Features/Tasks/Acceptance/HistoricalIntegrationVerificationSweep.cs HistoricalIntegrationVerificationPolicy
+policy backend/Features/Tasks/Acceptance/IntegrationBounceObligation.cs IntegrationBounceRoutePolicy
+policy backend/Features/Tasks/Acceptance/TaskIntegrationRecordEndpoints.cs TaskIntegrationRecordAppendPolicy
+policy backend/Features/Tasks/ArtifactThumbnailService.cs ArtifactThumbnailPolicy
+policy backend/Features/Tasks/Decisions/DecisionApplyPolicy.cs DecisionApplyPolicy
+policy backend/Features/Tasks/Decisions/DecisionReminderPolicy.cs DecisionReminderPolicy
+policy backend/Features/Tasks/DeliveryGenerationPolicy.cs DeliveryGenerationPolicy
+policy backend/Features/Tasks/GitCallBudgetPolicy.cs GitCallBudgetPolicy
+policy backend/Features/Tasks/OutOfBandStampPolicy.cs OutOfBandStampPolicy
+policy backend/Features/Tasks/ParkedCards/ParkedCardRecallPolicy.cs ParkedCardRecallPolicy
+policy backend/Features/Tasks/ProjectDeliveryPreflightFingerprint.cs ProjectDeliveryPreflightPolicy
+policy backend/Features/Tasks/RemoteClaimReplayLanePolicy.cs RemoteClaimReplayLanePolicy
+policy backend/Features/Tasks/RemoteCompletionEnvelopePolicy.cs RemoteCompletionEnvelopePolicy
+policy backend/Features/Tasks/RemoteDeliveryRefPolicy.cs RemoteDeliveryRefPolicy
+policy backend/Features/Tasks/Results/LegacyResultHistory.cs LegacyResultHistoryPolicy
+policy backend/Features/Tasks/Results/ResultScaffoldPolicy.cs ResultScaffoldPolicy
+policy backend/Features/Tasks/SupersededCommitSweep.cs SupersededCommitSweepPolicy
+policy backend/Features/Tasks/TaskFolderMemoPolicy.cs TaskFolderMemoPolicy
+policy backend/Shared/Runner/ContinueModeGuardPolicy.cs ContinueModeGuardPolicy
+policy backend/Shared/Runner/FollowUpAdmissionPolicy.cs FollowUpAdmissionPolicy
+policy backend/Shared/Runner/HostCapacityPolicy.cs HostCapacityPolicy
+policy backend/Shared/Runner/RemoteRunRequeuePolicy.cs RemoteRunRequeuePolicy
+policy backend/Shared/Runner/RemoteRunStalenessPolicy.cs RemoteRunStalenessPolicy

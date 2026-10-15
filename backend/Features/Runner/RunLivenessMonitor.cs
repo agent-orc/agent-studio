@@ -54,7 +54,7 @@ namespace AgentStudio.Runner;
 /// candidates already gone from <c>3-progress</c>. Every decision is appended to
 /// <c>&lt;workspace&gt;/logs/run-liveness.jsonl</c> for after-the-fact review.</para>
 /// </summary>
-public sealed class RunLivenessMonitor
+public sealed class RunLivenessMonitor : IAiOperatorEffect
 {
     private readonly TaskScannerService _scanner;
     private readonly TaskTransitionService _transitions;
@@ -67,6 +67,7 @@ public sealed class RunLivenessMonitor
     private readonly ILogger<RunLivenessMonitor> _logger;
     private readonly IJsonlAppender _appender;
     private readonly RunLeaseService? _leases;
+    private readonly AiOperatorDecisionGateway _decisions;
 
     /// <summary>Default uptime grace: silence tolerated before a missing heartbeat counts as process-lost.</summary>
     public const int DefaultGraceSeconds = 30;
@@ -85,7 +86,8 @@ public sealed class RunLivenessMonitor
         ITaskAccess taskAccess,
         ILogger<RunLivenessMonitor> logger,
         IJsonlAppender? appender = null,
-        RunLeaseService? leases = null)
+        RunLeaseService? leases = null,
+        AiOperatorDecisionGateway? decisions = null)
     {
         _scanner = scanner;
         _transitions = transitions;
@@ -98,7 +100,10 @@ public sealed class RunLivenessMonitor
         _logger = logger;
         _appender = appender ?? new JsonlAppender();
         _leases = leases;
+        _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
     }
+
+    public string Decider => AiOperatorDeciders.RunLiveness;
 
     /// <summary>
     /// Boot adoption scan: demote every <c>3-progress</c> card that has no live
@@ -197,38 +202,25 @@ public sealed class RunLivenessMonitor
                 if (c.HasRemoteLeaseHistory)
                     continue;
 
-                var facts = new RunLivenessFacts(
-                    HasLiveRunHeartbeat: c.HasLiveHeartbeat,
-                    CoreRunFinished: c.CoreRunFinished,
-                    SecondsSinceActivity: c.SecondsSinceActivity,
-                    GraceSeconds: graceSeconds,
-                    HasVisibleWaitingState: c.HasVisibleWaitingState);
-                var decision = RunLivenessPolicy.Decide(facts);
-
-                switch (decision.Action)
+                // Trigger signal only: a card with a live heartbeat or an
+                // explicit waiting phase is not asked about. The AI Operator
+                // decides grace and phase-aware recovery from the frozen facts.
+                if (c.HasLiveHeartbeat || c.HasVisibleWaitingState)
+                    continue;
+                var jobId = TryReadJobId(c.JobFolder) ?? c.Slug;
+                var payload = new AiOperatorDecisionPayload(Decider, $"progress:{jobId}:{(c.CoreRunFinished ? "finished" : "running")}",
+                    RunLiveness: new RunLivenessFacts(
+                        HasLiveRunHeartbeat: c.HasLiveHeartbeat,
+                        CoreRunFinished: c.CoreRunFinished,
+                        SecondsSinceActivity: c.SecondsSinceActivity,
+                        GraceSeconds: graceSeconds,
+                        HasVisibleWaitingState: c.HasVisibleWaitingState));
+                var submission = _decisions.Submit(new AiOperatorDecisionRequest(entry.Name, jobId,
+                    TaskStates.Progress, payload, ResolveDecisionPeriod()));
+                if (submission.MonolithDecision is { } decision)
                 {
-                    case RunLivenessAction.Healthy:
-                    case RunLivenessAction.VisibleWait:
-                    case RunLivenessAction.WithinGrace:
-                        // Healthy / too-fresh: no move, no audit-log noise (mirrors
-                        // the archiver leaving "fresh" verdicts unpersisted).
-                        break;
-
-                    case RunLivenessAction.DemoteToReady:
-                    {
-                        var outcome = await DemoteToReadyAsync(entry, c, decision, now, ct);
-                        outcomes.Add(outcome);
-                        AppendAudit(outcome);
-                        break;
-                    }
-
-                    case RunLivenessAction.RetriggerPostProcessing:
-                    {
-                        var outcome = await RetriggerPostProcessingAsync(entry, c, decision, now, ct);
-                        outcomes.Add(outcome);
-                        AppendAudit(outcome);
-                        break;
-                    }
+                    var outcome = await ApplyDecisionAsync(entry, c, decision, now, ct);
+                    if (outcome is not null) outcomes.Add(outcome);
                 }
             }
         }
@@ -246,6 +238,70 @@ public sealed class RunLivenessMonitor
 
         return outcomes;
     }
+
+    /// <summary>
+    /// AGT-3060: applies the engine's run-liveness receipt. Every exclusion of
+    /// the sweep is re-checked first: a run that resumed, entered a visible
+    /// waiting phase or a steer wait, or gained remote lease history after the
+    /// facts were frozen keeps its lane.
+    /// </summary>
+    public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
+    {
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(item =>
+            string.Equals(item.Name, application.ProjectId, StringComparison.Ordinal));
+        var job = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
+        if (entry is null || job is null || job.State != TaskStates.Progress) return;
+        var folder = job.FolderPath;
+        var slug = Path.GetFileName(folder);
+        if (_pickupLock.HasLiveOwner(folder)
+            || SafeGetActiveJobIds().TryGetValue(entry.Name, out var active)
+                && string.Equals(active, slug, StringComparison.OrdinalIgnoreCase)
+            || HasVisibleWaitingState(folder)
+            || SteerPendingMarker.TryRead(folder, _logger) != null
+            || HasRemoteLeaseHistory(job, folder, slug, hasJobJson: true))
+            return;
+        var facts = application.Payload.RunLiveness
+            ?? throw new InvalidDataException("The run-liveness occurrence has no facts.");
+        // The run can finish while the engine decides. A finished run must never
+        // be requeued by a receipt based on its earlier running phase. The next
+        // sweep submits a distinct occurrence for the finished phase.
+        if (RunFinishedSignal.CoreRunFinished(folder) != facts.CoreRunFinished) return;
+        var candidate = new Candidate(Path.GetFileName(folder), folder, HasJobJson: true, IsActiveHere: false,
+            HasRemoteLeaseHistory: false, HasLiveHeartbeat: false, HasVisibleWaitingState: false,
+            CoreRunFinished: facts.CoreRunFinished, SecondsSinceActivity: facts.SecondsSinceActivity);
+        var outcome = await ApplyDecisionAsync(entry, candidate, application.Decision, DateTime.UtcNow, ct);
+        if (outcome?.Kind is RunLivenessOutcomeKinds.DemoteFailed or RunLivenessOutcomeKinds.RetriggerFailed)
+            throw new InvalidOperationException(outcome.Reason);
+    }
+
+    private async Task<RunLivenessOutcome?> ApplyDecisionAsync(WatchPathEntry entry, Candidate c,
+        AiOperatorDecision decision, DateTime now, CancellationToken ct)
+    {
+        var verdict = new RunLivenessDecision(
+            decision.Effect == AiOperatorEffects.RetriggerPostProcessing
+                ? RunLivenessAction.RetriggerPostProcessing : RunLivenessAction.DemoteToReady,
+            decision.ReasonCode, decision.Detail);
+        RunLivenessOutcome outcome;
+        switch (decision.Effect)
+        {
+            case AiOperatorEffects.DemoteToReady:
+                outcome = await DemoteToReadyAsync(entry, c, verdict, now, ct);
+                break;
+            case AiOperatorEffects.RetriggerPostProcessing:
+                outcome = await RetriggerPostProcessingAsync(entry, c, verdict, now, ct);
+                break;
+            default:
+                // Healthy, visible wait or within grace: no move and no audit-log noise.
+                return null;
+        }
+        AppendAudit(outcome);
+        return outcome;
+    }
+
+    private TimeSpan ResolveDecisionPeriod()
+        => TimeSpan.FromSeconds(Math.Clamp(
+            _configuration.GetValue<int?>("Runner:RunLiveness:IntervalSeconds")
+                ?? RunLivenessMonitorHostedService.DefaultIntervalSeconds, 5, 55));
 
     private static bool HasVisibleWaitingState(string jobFolder)
     {

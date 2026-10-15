@@ -107,6 +107,10 @@ public sealed class MetaCycleHostedService : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
+        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
+                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
+            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
+            return;
         var status = _taskRunner.GetStatus();
         if (status?.Projects == null) return;
 
@@ -148,6 +152,10 @@ public sealed class MetaCycleHostedService : BackgroundService
         MetaCycleConfig config,
         CancellationToken ct)
     {
+        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
+                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
+            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
+            return null;
         var state = _state.GetOrAdd(project, _ => new ProjectCycleState());
 
         var closedJobs = projectJobs

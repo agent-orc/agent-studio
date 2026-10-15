@@ -110,7 +110,7 @@ public sealed class GateEnvironmentRetryPolicyTests
     public void Decide_ForACardThatExpectsNoBranch_IsIgnored()
     {
         var task = Task(TaskStates.HumanReview) with { NoBranchExpected = true };
-        var decision = GateEnvironmentRetryPolicy.Decide(
+        var decision = DecideFacts(
             task,
             Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure),
             reviewPassed: true,
@@ -130,7 +130,7 @@ public sealed class GateEnvironmentRetryPolicyTests
         // The accepted-integration backstop owns a card with phase=integrating.
         // Two owners would run two merges and spend a rung on the other's work.
         var task = Task(TaskStates.HumanReview) with { Phase = LifecyclePhases.Integrating };
-        var decision = GateEnvironmentRetryPolicy.Decide(
+        var decision = DecideFacts(
             task,
             Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure),
             reviewPassed: true,
@@ -149,7 +149,7 @@ public sealed class GateEnvironmentRetryPolicyTests
     {
         var status = Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure);
         status = status with { Failure = status.Failure! with { Reason = "Remote gate transport failure: ECONNRESET" } };
-        var decision = GateEnvironmentRetryPolicy.Decide(Task(TaskStates.AutoReview), status,
+        var decision = DecideFacts(Task(TaskStates.AutoReview), status,
             reviewPassed: true, attemptsSpent: 0, lastAttemptAt: null, failedAt: Failed,
             GateEnvironmentRetryOptions.Default, Failed.AddHours(1));
         Assert.Equal(GateEnvironmentRetryAction.Ignore, decision.Action);
@@ -159,7 +159,7 @@ public sealed class GateEnvironmentRetryPolicyTests
     public void Decide_WhenDisabled_IsIgnored()
     {
         var options = GateEnvironmentRetryOptions.Default with { Enabled = false };
-        var decision = GateEnvironmentRetryPolicy.Decide(
+        var decision = DecideFacts(
             Task(TaskStates.HumanReview),
             Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure),
             reviewPassed: true,
@@ -178,7 +178,7 @@ public sealed class GateEnvironmentRetryPolicyTests
     {
         // A missing anchor must not mean "never retry"; it means the evidence is
         // too old to schedule from.
-        var decision = GateEnvironmentRetryPolicy.Decide(
+        var decision = DecideFacts(
             Task(TaskStates.HumanReview),
             Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure),
             reviewPassed: true,
@@ -274,7 +274,7 @@ public sealed class GateEnvironmentRetryPolicyTests
                 Reason = "Gate cancelled: shutdown.",
             },
         };
-        var result = GateEnvironmentRetryPolicy.Decide(Task(TaskStates.AutoReview), status,
+        var result = DecideFacts(Task(TaskStates.AutoReview), status,
             reviewPassed: true, attemptsSpent: spent, lastAttemptAt: null, failedAt: Failed,
             GateEnvironmentRetryOptions.Default, now: Failed.AddHours(1));
         Assert.Equal(expected, result.Action);
@@ -289,7 +289,7 @@ public sealed class GateEnvironmentRetryPolicyTests
         DateTimeOffset? lastAttemptAt = null,
         DateTimeOffset? failedAt = null,
         DateTimeOffset? now = null)
-        => GateEnvironmentRetryPolicy.Decide(
+        => DecideFacts(
             Task(state),
             Status(failureCode),
             reviewPassed,
@@ -318,4 +318,16 @@ public sealed class GateEnvironmentRetryPolicyTests
         IntegrationBranch = "develop",
         Failure = new TaskIntegrationFailure { Code = failureCode },
     };
+
+    private static GateEnvironmentRetryDecision DecideFacts(
+        TaskInfo task,
+        TaskIntegrationStatus? status,
+        bool reviewPassed,
+        int attemptsSpent,
+        DateTimeOffset? lastAttemptAt,
+        DateTimeOffset? failedAt,
+        GateEnvironmentRetryOptions options,
+        DateTimeOffset now)
+        => GateEnvironmentRetryPolicy.Decide(GateEnvironmentRetryFactsReader.Facts(
+            task, status, reviewPassed, attemptsSpent, lastAttemptAt, failedAt, options, now));
 }

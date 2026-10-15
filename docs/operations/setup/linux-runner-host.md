@@ -255,6 +255,22 @@ streak marks it ready, and an operator switches it to Engine with a reason.
 The same control rolls it back. A pending Engine occurrence stays durable while
 the engine is unavailable; rollback returns pending work to the monolith policy.
 
+AGT-3060 adds the AI Operator profile `Orchestration:Transitions:OperatorDecision`
+for the background deciders (run liveness, stale progress, steer timeout,
+timeout salvage, gate-environment retry, delivery chain, cause breaker, intake
+routing and the acceptance rail). It defaults to `Monolith`: the monolith
+decides in process through the shared decision library. With `Engine` the
+deciders only record pending `OperatorDecision` occurrences until the engine
+decides; set it back to `Monolith` to roll back. While any profile selects the
+engine, `curl -fsS http://127.0.0.1:<port>/healthz/orchestration-engine`
+answers `ready` once an engine instance contacted `/api/v1/orchestration` within
+`Orchestration:EngineReadiness:ContactWindowSeconds` (default 30) and
+`engine-not-live` (HTTP 503) otherwise; with every profile on `Monolith` it
+answers `not-required`. After `Orchestration:EngineReadiness:StartupGraceSeconds`
+(default 60) without engine contact, the operator feed of every project shows
+one `engine-not-live` alert per outage. Set `OPERATOR_DECISION_CONCURRENCY` in
+the engine environment to size the AI Operator stage (default 2).
+
 While coding completion is in shadow, the engine also asks a strong model for
 the same transition (AGT-3063). The call is a decision job that a runner
 connected to the monolith claims and runs with its own CLI login; no provider

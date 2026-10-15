@@ -39,14 +39,14 @@ public sealed class GateEnvironmentContinuationPolicyTests
             },
         };
 
-        Assert.Equal(1, GateEnvironmentContinuationPolicy.CountPriorRounds(events, oldSha));
-        Assert.Equal(2, GateEnvironmentContinuationPolicy.CountPriorRounds(events, currentSha));
-        Assert.Equal(0, GateEnvironmentContinuationPolicy.CountPriorRounds(events,
+        Assert.Equal(1, GateEnvironmentContinuationRounds.CountPriorRounds(events, oldSha));
+        Assert.Equal(2, GateEnvironmentContinuationRounds.CountPriorRounds(events, currentSha));
+        Assert.Equal(0, GateEnvironmentContinuationRounds.CountPriorRounds(events,
             "cccccccccccccccccccccccccccccccccccccccc"));
         Assert.False(GateEnvironmentContinuationPolicy.ShouldStart(true,
-            GateEnvironmentContinuationPolicy.CountPriorRounds(events, currentSha)));
+            GateEnvironmentContinuationRounds.CountPriorRounds(events, currentSha)));
         Assert.True(GateEnvironmentContinuationPolicy.ShouldStart(true,
-            GateEnvironmentContinuationPolicy.CountPriorRounds(events,
+            GateEnvironmentContinuationRounds.CountPriorRounds(events,
                 "cccccccccccccccccccccccccccccccccccccccc")));
     }
 
