@@ -145,7 +145,10 @@ public sealed record ClaimResponse(
     MechanicalFreshRunRoute? MechanicalFreshRoute = null,
     FollowUpDeliveryDto? FollowUp = null,
     string? PlacementReason = null,
-    ContinuationIntentProjection? ContinuationIntent = null);
+    ContinuationIntentProjection? ContinuationIntent = null,
+    // AGT-3061: why the base was recorded. "review-fix-round" (D17) makes the
+    // base required for the worktree; see ContinuationBaseReasons.
+    string? ContinuationBaseReason = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(

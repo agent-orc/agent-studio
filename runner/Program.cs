@@ -303,6 +303,14 @@ try
         Log("gate daemon stopped");
         return 0;
     }
+    if (options.Role == "integration")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Integration Executor runs as a polling service and does not accept coding task keys.");
+        await new RemoteIntegrationDaemon(options, client, Log).RunAsync(shutdown.Token);
+        Log("integration daemon stopped");
+        return 0;
+    }
     if (options.Role == "review")
     {
         if (!daemonMode)

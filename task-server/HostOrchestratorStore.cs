@@ -103,7 +103,7 @@ public sealed partial class TaskServerStore
             if (_mode == TaskServerMode.Normal)
                 await RefreshAvailablePermitsAsync(connection, transaction, ct);
             var permits = _mode == TaskServerMode.Normal
-                ? await ReadAvailablePermitsAsync(connection, transaction, request.HostId, ct)
+                ? await ReadAvailablePermitsAsync(connection, transaction, request.HostId, runnerId, ct)
                 : [];
             response = new HostReportResponse(
                 status,
@@ -231,6 +231,14 @@ public sealed partial class TaskServerStore
                     "work-permit-project-not-allowed",
                     $"Host '{request.HostId}' is not allowed to claim project '{projectId}'.");
             }
+            // F8: the permit path refuses what the claim path refuses for a
+            // pinned runner or a full project.
+            var placementRefusal = await PermitPlacementRefusalAsync(
+                connection, transaction, projectId, request.RunnerId, ct);
+            if (placementRefusal is not null)
+                throw new TaskServerConflictException(
+                    "work-permit-" + placementRefusal,
+                    $"Project '{projectId}' refuses runner '{request.RunnerId}': {placementRefusal}.");
             if (expiresAt <= UtcNow)
                 throw new TaskServerConflictException("work-permit-expired", $"Permit '{permitId}' has expired.");
             if (!string.Equals(taskState, "2-ready", StringComparison.Ordinal))
@@ -287,6 +295,7 @@ public sealed partial class TaskServerStore
                 ("$result_step_id", HostPostStepIds.ResultFinalization));
             if (await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, taskId, ct) is not null)
                 await ClaimMechanicalDeltaAsync(connection, transaction, taskId, createdRunId, ct);
+            await BindPermitContinuationAsync(connection, transaction, taskId, createdRunId, fence, ct);
             await AuditAsync(connection, transaction, actorId, "work.permit.accepted", "run", createdRunId,
                 JsonSerializer.Serialize(new
                 {
@@ -553,6 +562,26 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
+        string runnerId,
+        CancellationToken ct)
+    {
+        var permits = await ReadHostPolicyPermitsAsync(connection, transaction, hostId, ct);
+        var refusals = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var admitted = new List<WorkPermitDto>(permits.Count);
+        foreach (var permit in permits)
+        {
+            if (!refusals.TryGetValue(permit.Task.ProjectId, out var refusal))
+                refusals[permit.Task.ProjectId] = refusal = await PermitPlacementRefusalAsync(
+                    connection, transaction, permit.Task.ProjectId, runnerId, ct);
+            if (refusal is null) admitted.Add(permit);
+        }
+        return admitted;
+    }
+
+    private async Task<IReadOnlyList<WorkPermitDto>> ReadHostPolicyPermitsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string hostId,
         CancellationToken ct)
     {
         await using var command = Command(connection, """
@@ -648,6 +677,8 @@ public sealed partial class TaskServerStore
         var mechanicalDelta = await ReadClaimedMechanicalDeltaAsync(
             connection, transaction, task.TaskId, runId, ct);
         var mechanicalBase = MechanicalFallbackBase(previousSession);
+        var (baseRef, baseSha, baseReason) = await ReadRunContinuationBaseAsync(connection, transaction, runId, ct);
+        var followUp = await ReadRunFollowUpAsync(connection, transaction, task.TaskId, runId, ct);
         return new WorkPermitAcceptanceDto(
             status,
             permitId,
@@ -660,8 +691,10 @@ public sealed partial class TaskServerStore
             MechanicalDelta: mechanicalDelta,
             MechanicalFreshRoute: await ReadMechanicalFreshRouteAsync(
                 connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct),
-            ContinuationBaseRef: mechanicalBase.Ref,
-            ContinuationBaseSha: mechanicalBase.Sha);
+            ContinuationBaseRef: baseRef ?? mechanicalBase.Ref,
+            ContinuationBaseSha: baseSha ?? mechanicalBase.Sha,
+            ContinuationBaseReason: baseRef is null ? null : baseReason,
+            FollowUp: followUp);
     }
 
     private static async Task<PostStepPlanDto> ReadPostStepAsync(
