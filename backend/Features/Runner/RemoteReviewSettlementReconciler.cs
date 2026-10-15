@@ -6,7 +6,7 @@ namespace AgentStudio.Runner;
 
 public enum RemoteReviewSettlementReconcileStatus
 {
-    NoWork, PendingAuthority, PendingEvidence, Complete, Repair,
+    NoWork, PendingAuthority, PendingEvidence, Complete, Repair, DeferredOwnership,
 }
 
 /// <summary>Replays only derived work belonging to the current, settled review generation.</summary>
@@ -33,6 +33,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     // rather than inside them (AGT-3091): a pass can await a whole merge gate.
     private readonly object _resumeGate = new();
     private Task _resumePass = Task.CompletedTask;
+    internal Action? BeforeReconcile { get; set; }
 
     public RemoteReviewSettlementReconciler(
         TaskScannerService scanner,
@@ -88,8 +89,13 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
             if (archived && _settledArchive.TryGetValue(taskKey, out var settled) && settled == generation) continue;
             var status = RemoteReviewSettlementReconcileStatus.Repair;
             Exception? failure = null;
-            try { status = Reconcile(task); }
+            try
+            {
+                BeforeReconcile?.Invoke();
+                status = Reconcile(task);
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { failure = ex; }
+            if (status == RemoteReviewSettlementReconcileStatus.DeferredOwnership) return;
             if (archived && failure is null && status is RemoteReviewSettlementReconcileStatus.Complete
                     or RemoteReviewSettlementReconcileStatus.NoWork or RemoteReviewSettlementReconcileStatus.Repair)
                 _settledArchive[taskKey] = generation;
@@ -138,7 +144,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
     public RemoteReviewSettlementReconcileStatus Reconcile(TaskInfo task)
     {
-        if (!OwnsReviewReport()) return RemoteReviewSettlementReconcileStatus.NoWork;
+        if (!OwnsReviewReport()) return RemoteReviewSettlementReconcileStatus.DeferredOwnership;
         var taskKey = TaskKeyOf(task);
         if (taskKey is null) return RemoteReviewSettlementReconcileStatus.NoWork;
         var review = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;

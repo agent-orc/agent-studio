@@ -95,7 +95,7 @@ public sealed class TransitionDecisionBoundaryTests
         var decisionFlows = new Dictionary<string, string[]>
         {
             ["backend/Features/Runner/MonolithOrchestrationEndpoints.cs"] =
-                [@"transition\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,1500}StageDecisionPolicy\.ToStageAction\(transition\.Action\)"],
+                [@"transition\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,1500}MonolithTransitionAdapter\.StageDecisionPolicyToStageAction\(transition\.Action\)"],
             ["backend/Features/Runner/V1ReviewPlaneEndpoints.cs"] =
                 [@"var\s+budgetDecision\s*=\s*MonolithTransitionAdapter\.ReviewBudget\([\s\S]{0,1800}var\s+roundBudget\s*=\s*budgetDecision\.RoundBudget",
                  @"var\s+shadowDecision\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,900}monolithAction:\s*shadowDecision\.Action"],
@@ -111,8 +111,8 @@ public sealed class TransitionDecisionBoundaryTests
                 Assert.Matches(flow, source);
         }
 
-        // Every exported Decide method is a transition decision entry point,
-        // regardless of its result type. This also covers policies added later.
+        // Every public static policy call crosses the adapter, regardless of
+        // method name or result type. Newly exported policies are included.
         var directCalls = Sources(Path.Combine(root, "backend"))
             .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal))
             .SelectMany(path => DirectDecisionCalls(File.ReadAllText(path))
@@ -152,20 +152,18 @@ public sealed class TransitionDecisionBoundaryTests
     [InlineData("AgentStudio.OrchestrationDecisions.GateCancellationPolicy.Decide(a, b, c, d, false, false)", "GateCancellationPolicy.Decide(")]
     [InlineData("StageDecisionPolicy.Coding(task, attempt, state)", "StageDecisionPolicy.Coding(")]
     [InlineData("CardRoundBudgetPolicy.DecideForReview(budget, aspects, true)", "CardRoundBudgetPolicy.DecideForReview(")]
+    [InlineData("ReissueLoopBreaker.Evaluate(1, 2, false, true)", "ReissueLoopBreaker.Evaluate(")]
+    [InlineData("LocalLoopDecisionPolicy.RepeatedNoProgress(1, true, 0, 0, 0)", "LocalLoopDecisionPolicy.RepeatedNoProgress(")]
     public void Direct_call_guard_covers_non_receipt_decisions(string source, string expected)
         => Assert.Contains(expected, DirectDecisionCalls(source));
 
     private static string[] DirectDecisionCalls(string source)
     {
         var entryPoints = typeof(TransitionDecisionPolicy).Assembly.GetExportedTypes()
-            .Where(type => type.Name.EndsWith("Policy", StringComparison.Ordinal))
+            .Where(type => type.IsAbstract && type.IsSealed
+                && (type.Name.EndsWith("Policy", StringComparison.Ordinal)
+                    || type.Name.EndsWith("Breaker", StringComparison.Ordinal)))
             .SelectMany(type => type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                .Where(method => method.Name.StartsWith("Decide", StringComparison.Ordinal)
-                    || method.ReturnType == typeof(TransitionDecision)
-                    || method.ReturnType == typeof(ReviewBudgetDecision)
-                    || method.ReturnType == typeof(OperatorSweepDecision)
-                    || method.ReturnType == typeof(AiOperatorDecision)
-                    || method.ReturnType == typeof(StagePolicyDecision))
                 .Select(method => Regex.Escape(type.Name) + @"\." + Regex.Escape(method.Name)))
             .Distinct()
             .ToArray();

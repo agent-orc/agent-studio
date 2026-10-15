@@ -49,7 +49,7 @@ public sealed class RunTimeoutSalvageEffect(
             // The bounded round could not start; the person sees why.
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             if (task.State != application.ExpectedSourceState) return;
-            reason = RunTimeoutSalvageContinuationPolicy.ComposeEscalationReason(
+            reason = MonolithTransitionAdapter.RunTimeoutSalvageContinuationPolicyComposeEscalationReason(
                 $"{facts.ReportedReason} (continuation not started: {continuation.Reason})".Trim(),
                 facts.Salvage, facts.AutomaticContinuationRoundsUsed);
         }

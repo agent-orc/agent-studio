@@ -37,7 +37,7 @@ public static class CouncilReviewPolicy
         string reviewFileName, CodeReviewGrade? grade, IReadOnlyList<string> findings,
         int priorReissues, int maxReissues, string jobId, int? targetRunAttempt = null,
         string? executionError = null, DateTime? now = null)
-        => AgentStudio.OrchestrationDecisions.CouncilDecisionPolicy.Derive(
+        => AgentStudio.Runner.MonolithTransitionAdapter.CouncilDecisionPolicyDerive(
             reviewFileName, grade is null ? "?" : CodeReviewGradeParsing.GradeToken(grade.Value),
             findings, priorReissues, maxReissues, jobId, targetRunAttempt, executionError, now ?? DateTime.UtcNow);
 
@@ -62,7 +62,7 @@ public static class CouncilReviewPolicy
     }
 
     public static CouncilReviewReaction EscalateBecause(CouncilReviewReaction reaction, string reason)
-        => AgentStudio.OrchestrationDecisions.CouncilDecisionPolicy.EscalateBecause(reaction, reason);
+        => AgentStudio.Runner.MonolithTransitionAdapter.CouncilDecisionPolicyEscalateBecause(reaction, reason);
 
 }
 

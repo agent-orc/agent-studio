@@ -123,11 +123,62 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var reconciler = Reconciler(stack);
         var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
         stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
-        Assert.Equal(RemoteReviewSettlementReconcileStatus.NoWork, reconciler.Reconcile(task));
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.DeferredOwnership, reconciler.Reconcile(task));
         Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
         stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
         Assert.NotEqual(RemoteReviewSettlementReconcileStatus.NoWork, reconciler.Reconcile(task));
         Assert.NotNull(RemoteDeliverySettlementStore.Read(card.FolderPath));
+    }
+
+    [Fact]
+    public async Task Archived_settlement_switch_between_checks_is_not_cached_as_settled()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "settlement-owner-race", lane: TaskStates.Archive);
+        RemoteReviewSettlementJournal.Write(card.FolderPath,
+            JournalEntry(card, stack) with { Delivery = Settlement(card, shouldIntegrate: true) });
+        var reconciler = Reconciler(stack);
+        var checks = 0;
+        reconciler.BeforeReconcile = () =>
+        {
+            if (++checks == 1)
+                stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        };
+
+        await reconciler.RunOnceAsync();
+        Assert.Equal(1, checks);
+
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        await reconciler.RunOnceAsync();
+        Assert.Equal(2, checks);
+    }
+
+    [Fact]
+    public async Task Delivery_resume_rechecks_owner_after_integration_and_rollback_retries()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<MergeIntoIntegrationResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var stack = Build(_ =>
+        {
+            started.TrySetResult();
+            return release.Task;
+        });
+        var card = SeedPassedDelivery(stack, "delivery-owner-race");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        var pending = stack.Resume.ResumeAsync(task, "owner-race");
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        release.SetResult(MergeIntoIntegrationResult.Of(
+            MergeIntoIntegrationOutcome.Merged, mergedSha: new string('a', 40)));
+        Assert.Equal("engine-owned", (await pending).Reason);
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        Assert.True((await stack.Resume.ResumeAsync(task, "owner-rollback")).Resumed);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
     }
 
     [Fact]
@@ -1773,7 +1824,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                     Reason = detail,
                     FailureCode = failureCode,
                 });
-            });
+            }, configuration: configuration);
         var resume = new AutoReviewDeliveryResumeService(
             scanner,
             authority,

@@ -314,6 +314,41 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_gate_switch_to_engine_before_completion_defers_lane_move()
+    {
+        const string slug = "gate-owner-switch";
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        var green = new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 123, "build passed", "build gate passed", true, false);
+        var gate = new FakeBuildTestGateRunner(_ =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                entered.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+            }
+            return green;
+        });
+        IConfigurationRoot? configuration = null;
+        var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 3, gate,
+            configure: value => configuration = value);
+        var processing = Task.Run(() => orchestrator.ProcessCardAsync(
+            _workspace, Project, slug, _watchPath, CancellationToken.None));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        configuration!["Orchestration:Transitions:ReviewReport"] = "Engine";
+        release.Set();
+        await processing;
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, slug)));
+
+        configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        await orchestrator.ProcessCardAsync(_workspace, Project, slug, _watchPath, CancellationToken.None);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, slug)));
+    }
+
+    [Fact]
     public async Task TaskDone_UnrelatedTestFailure_AdvancesAndPersistsSeparateFinding()
     {
         const string slug = "build-unrelated-red";
@@ -526,7 +561,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         int maxReissues,
         IBuildTestGateRunner? buildGate = null,
         TimeProvider? timeProvider = null,
-        Microsoft.Extensions.Logging.ILogger<TaskStateMachine>? stateLogger = null)
+        Microsoft.Extensions.Logging.ILogger<TaskStateMachine>? stateLogger = null,
+        Action<IConfigurationRoot>? configure = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -542,6 +578,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             ["ReviewDecisionOrchestrator:MaxAutoReissueAttempts"] = maxReissues.ToString(),
         };
         var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
+        configure?.Invoke(config);
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var stateMachine = new TaskStateMachine(scanner, stateLogger ?? NullLogger<TaskStateMachine>.Instance);

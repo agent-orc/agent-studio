@@ -41,7 +41,7 @@ public sealed class DecisionGroundsCollector(
     public DecisionShadowInputV1 FreezeCodingCompletion(CodingCompletionObservation observed,
         string mode = DecisionReceiptPolicy.ShadowMode)
     {
-        var choice = DecisionGroundsPolicy.CodingCompletionChoice(observed.Deterministic);
+        var choice = MonolithTransitionAdapter.DecisionGroundsPolicyCodingCompletionChoice(observed.Deterministic);
         return decisions.FreezeInputs(new DecisionShadowInputV1(CodingCompletion(observed),
             choice.Action, choice.Target, observed.Deterministic.Reason, mode));
     }
@@ -65,7 +65,7 @@ public sealed class DecisionGroundsCollector(
             IsExhaustion(run.TerminalOutcome) || IsExhaustion(run.TerminalReason))).ToArray();
         var rows = (task.TokenSummary ?? PersistedTokenSummary(task.FolderPath))?.Entries
             .Select(LedgerRow).ToArray() ?? [];
-        var ledger = CardRunLedgerPolicy.Build(rows, rounds, verifiedTrees, (row, usage) =>
+        var ledger = MonolithTransitionAdapter.CardRunLedgerPolicyBuild(rows, rounds, verifiedTrees, (row, usage) =>
         {
             var estimate = pricing.Estimate(row.Model, usage.UncachedInput, usage.Output,
                 usage.CachedInput, usage.CacheWrite, row.At);
@@ -158,7 +158,7 @@ public sealed class DecisionGroundsCollector(
             $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}/{DecisionReceiptPolicy.PromptVersion}",
             Route(configuration),
             facts,
-            DecisionGroundsPolicy.CodingCompletionAlternatives(observed.Deterministic, observed.HasSettledEnvelope,
+            MonolithTransitionAdapter.DecisionGroundsPolicyCodingCompletionAlternatives(observed.Deterministic, observed.HasSettledEnvelope,
                 ledger.Progress.LastVerifiedTreeSha, observed.ResultSha, observed.ResultRef),
             prior,
             ledger.Ledger,

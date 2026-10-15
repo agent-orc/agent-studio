@@ -665,6 +665,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _postProcessingGitGate.Wait();
         try
         {
+            if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
+                return new MoveJobOutcome(MoveJobStatus.Failure, "engine-owned-coding-completion");
             var result = _taskAccess.TransitionLaneAsync(new TaskTransitionRequest
                 {
                     JobId = jobId,
@@ -1532,7 +1534,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // recoverable by another sharpened prompt. Escalate it to
         // 5-human-review so it is not picked again automatically.
         var noProgressEvidence = InspectNoOpProgressSinceLastRecovery(pending);
-        if (LocalLoopDecisionPolicy.RepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
+        if (MonolithTransitionAdapter.LocalLoopDecisionPolicyRepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
             noProgressEvidence.ToolCalls, noProgressEvidence.FileChanges, noProgressEvidence.AgentSubstanceChars))
         {
             var count = prior + 1;
@@ -2419,6 +2421,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Gate);
         var buildGateResult = await RunBuildTestGatePostStepAsync(workspace, entry, current, ct);
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration)) return;
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Skipped
             && buildGateResult.CancellationReason is GateCancellationReasons.Superseded or GateCancellationReasons.Shutdown)
             return;
@@ -2799,7 +2802,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // the settled verdicts determine followUpDecision before degradation.
         // Degraded findings move to the linked follow-up card below; they must
         // not start a further automatic concern round on this delivery.
-        var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
+        var followUpDecision = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyFollowUp(initialFollowUpDecision, roundBudget);
         if (roundBudget.Degrade)
         {
             if (!CreateReviewBudgetFollowUp(current, localAttemptId, report, roundBudget)) return;
@@ -2838,7 +2841,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 current.Id,
                 OperatorReviewRequeueService.ReadEpoch(current.FolderPath),
                 ConfiguredIdenticalBlockRounds());
-            var loopBreak = ReissueLoopBreaker.Evaluate(
+            var loopBreak = MonolithTransitionAdapter.ReissueLoopBreakerEvaluate(
                 CountReissuesInCurrentChain(reviewRecords, current.Id),
                 ConfiguredMaxReissues(entry.Name),
                 emptyFollowupDiff: IsLatestRunEmptyDiff(current, entry.Path),
@@ -3567,7 +3570,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     }
 
     private static string? LocalAspectFinding(AspectVerdict verdict)
-        => ReviewFollowUpPolicy.ExtractFindingSection(verdict.Body)
+        => MonolithTransitionAdapter.ReviewFollowUpPolicyExtractFindingSection(verdict.Body)
            ?? AspectVerdictParsing.ParseVerdictField(verdict.Body, "missing");
 
     internal static AspectRunReport MarkRetryAspectAsInfrastructure(

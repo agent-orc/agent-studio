@@ -95,7 +95,7 @@ public static class CardRoundBudget
         IEnumerable<TimelineEvent> timeline,
         string jobId)
     {
-        return AgentStudio.OrchestrationDecisions.RoundCounterPolicy.Count(
+        return AgentStudio.Runner.MonolithTransitionAdapter.RoundCounterPolicyCount(
             journal.Select(record => new AgentStudio.OrchestrationDecisions.RoundDecisionFact(
                 record.JobId, record.Kind.ToString())),
             timeline.Select(entry => new AgentStudio.OrchestrationDecisions.RoundTimelineFact(
