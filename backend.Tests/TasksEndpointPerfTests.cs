@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -266,6 +267,39 @@ public class JobsEndpointPerfTests : IDisposable
                     },
                 }));
 
+            var budgetNow = new DateTime(2026, 10, 15, 10, 0, 0, DateTimeKind.Utc);
+            var evidence = Enumerable.Range(0, 80)
+                .Select(index => $"evidence-{index:D2}-" + new string('x', 960)).ToArray();
+            var subjects = Enumerable.Range(0, 200).ToDictionary(
+                index => $"AGT-BUDGET-{index:D4}",
+                index => new
+                {
+                    subjectId = $"subject-{index:D4}", repositoryId = "PROJ-002",
+                    expectedResultSha = $"result-{index:D4}", sourceRunAttemptId = $"run-{index:D4}",
+                    evidenceDigestInputs = evidence, createdAt = budgetNow,
+                });
+            var authorityPath = Path.Combine(workspace, AgentStudio.Runner.AttemptAuthorityService.RelativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(authorityPath)!);
+            File.WriteAllText(authorityPath, JsonSerializer.Serialize(new
+            {
+                schemaVersion = 6, authorityEpoch = 1,
+                runAttempts = Enumerable.Range(0, 200).Select(index => new
+                {
+                    attemptId = $"run-{index:D4}", taskKey = $"AGT-BUDGET-{index:D4}",
+                    repositoryId = "PROJ-002", state = AgentStudio.Shared.AttemptLifecycleState.Completed,
+                    createdAt = budgetNow, terminalAt = budgetNow,
+                }),
+                reviewAttempts = Enumerable.Range(0, 200).Select(index => new
+                {
+                    attemptId = $"review-{index:D4}", taskKey = $"AGT-BUDGET-{index:D4}",
+                    repositoryId = "PROJ-002", sourceRunAttemptId = $"run-{index:D4}",
+                    subject = subjects[$"AGT-BUDGET-{index:D4}"],
+                    state = AgentStudio.Shared.AttemptLifecycleState.Completed,
+                    createdAt = budgetNow, terminalAt = budgetNow,
+                }),
+                currentSubjectByTask = subjects,
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
             var telemetry = new StructuredTelemetryLoggerProvider();
             using var factory = new WebApplicationFactory<Program>()
                 .WithWebHostBuilder(builder =>
@@ -277,6 +311,7 @@ public class JobsEndpointPerfTests : IDisposable
                         config.AddInMemoryCollection(new Dictionary<string, string?>
                         {
                             ["TaskRepository"] = workspace,
+                            ["AttemptAuthority:TerminalRetentionCount"] = "500",
                             ["WatchPaths:0:Name"] = "task-list-perf",
                             ["WatchPaths:0:Path"] = jobs,
                             ["WatchPaths:0:RootPath"] = repo,
@@ -371,6 +406,31 @@ public class JobsEndpointPerfTests : IDisposable
             detailResponse.EnsureSuccessStatusCode();
             Assert.Equal(0, Assert.Single(telemetry.Rollups("tasks/detail/git")).Spawns);
             Assert.Equal(0, Assert.Single(telemetry.Rollups("tasks/detail")).Spawns);
+
+            // Reproduce the board read over 400 migrated attempts while lease
+            // writes are active, through the actual HTTP path.
+            var authority = factory.Services.GetRequiredService<AgentStudio.Runner.AttemptAuthorityService>();
+            var active = authority.AcquireRun(
+                "PERF-1", "PROJ-002", null, "runner", "host", 600, "board-budget-create").RunAttempt!;
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var renewals = Task.Run(() =>
+            {
+                started.SetResult();
+                for (var index = 0; index < 60; index++)
+                    Assert.Equal(AgentStudio.Shared.AttemptWriteStatus.Accepted,
+                        authority.RenewRun(new AgentStudio.Shared.AttemptWriteReference(
+                            active.AttemptId, active.LastFence, active.AuthorityEpoch,
+                            $"board-budget-renew-{index}"), "runner", 600).Status);
+            });
+            await started.Task;
+            stopwatch.Restart();
+            using var concurrentBoard = await client.GetAsync("/api/tasks", timeout.Token);
+            stopwatch.Stop();
+            concurrentBoard.EnsureSuccessStatusCode();
+            await renewals;
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+                $"GET /api/tasks during 60 lease renewals took {stopwatch.ElapsedMilliseconds} ms.");
+            Console.WriteLine($"Concurrent HTTP board read: {stopwatch.ElapsedMilliseconds} ms during 60 renewals.");
         }
         finally
         {

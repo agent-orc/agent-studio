@@ -732,7 +732,17 @@ unreported claim expires with its lease and is queued again.
   acquire-delivery replay is idempotent; a new acquire from the same executor
   cannot renew a live lease without the canonical attempt and fence. Replayed
   review settlements become superseded once another subject is current. It
-  lives under `<TaskRepository>/.metadata/` and performs no
+  lives under `<TaskRepository>/.metadata/`. Since schema 7, review subjects
+  and reclaim response receipts live in content-addressed files beside the
+  authority snapshot; the snapshot and journal retain their digests. Startup
+  migrates inline subjects before checkpointing. Journal updates carry changed
+  record fields, and routine lease writes hash only records reached by the
+  mutation. Recent idempotency keys remain bounded in the hot authority file.
+  Completed and archived lane transitions supersede orphaned attempts and move
+  terminal records into the hourly archive; current projections resolve archived
+  records on demand. A completed run with a result envelope stays live during
+  the existing 30-day handoff window.
+  It performs no
   checkout, build, test, provider CLI, vision, or semantic review work.
   Remote claim and completion lane facts carry the same attempt, fence, epoch,
   and idempotency tuple. Claim, standalone acquire, and completion are serialized
