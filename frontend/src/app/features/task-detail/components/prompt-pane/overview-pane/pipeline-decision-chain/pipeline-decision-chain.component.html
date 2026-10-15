@@ -53,21 +53,23 @@
                     <section class="decision-chain__operator" data-testid="decision-operator-ask" aria-label="Human Operator response">
                       <strong>Human Operator · run limit decision</strong>
                       @if (operatorIntent(); as intent) {
-                        <p data-testid="decision-operator-recorded">{{ intent.action }}@if (intent.requestedEmergencyHours) { to {{ intent.requestedEmergencyHours }} h } · {{ intent.reason }} · recorded for the next engine decision</p>
+                        <p data-testid="decision-operator-recorded">{{ intent.action }}@if (intent.requestedEmergencyMinutes) { to {{ intent.requestedEmergencyMinutes }} min } · {{ intent.reason }} · {{ intent.actor }} · {{ intentOutcomeText(intent) }}</p>
                       } @else {
                         <label>Reason <input type="text" maxlength="500" [value]="intentReason()"
                           (input)="intentReason.set($any($event.target).value)" /></label>
-                        <label>Emergency limit, hours <input type="number" min="1" max="24" [value]="emergencyHours()"
-                          (input)="emergencyHours.set(+$any($event.target).value)" /></label>
+                        <label>Raise limit to, minutes <input type="number" min="1" max="1440" [value]="raiseMinutes()"
+                          (input)="raiseMinutes.set(+$any($event.target).value)" /></label>
+                        <label>Cut limit to, minutes <input type="number" min="1" max="1440" [value]="cutMinutes()"
+                          (input)="cutMinutes.set(+$any($event.target).value)" /></label>
                         <div class="decision-chain__operator-actions">
-                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || emergencyHours() < 1 || emergencyHours() > 24"
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || raiseMinutes() < 1 || raiseMinutes() > 1440"
                             (click)="submitIntent(item, 'raise')">Raise limit</button>
-                          <button type="button" [disabled]="!intentReason().trim() || intentBusy()"
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || cutMinutes() < 1 || cutMinutes() > 1440"
                             (click)="submitIntent(item, 'cut')">Cut smaller</button>
                           <button type="button" [disabled]="!intentReason().trim() || intentBusy()"
                             (click)="submitIntent(item, 'stop')">Stop</button>
                         </div>
-                        <p>Choice is recorded as grounds for the next engine decision.</p>
+                        <p>The receipt shows recorded, not applied until the action takes effect.</p>
                         @if (intentError(); as error) { <p role="alert">{{ error }}</p> }
                       }
                     </section>

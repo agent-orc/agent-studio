@@ -278,6 +278,11 @@ unreported claim expires with its lease and is queued again.
   missing or unwritable report is an admission failure, while selector failure
   may use the authored prompt only after a `fallback-unenriched` report has been
   persisted.
+- An applied operator Raise or Cut answer on a decision receipt supplies the
+  card's `RunSpec.RunTimeoutSeconds` for later remote rounds. The runner passes
+  it to the detached process; a mechanical resume keeps its shorter ceiling.
+  Stop is delivered through the existing fenced remote stop request and holds
+  the settled card in Human Review.
 - `RemoteRunPrompt` receives server-composed concept and coding mode framing.
   Both modes tell the agent to deliver before sight review, decision acceptance,
   and operator approval. Promoted coding prompts list Dossier decisions and
