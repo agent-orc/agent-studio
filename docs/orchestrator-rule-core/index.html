@@ -514,6 +514,10 @@
   <strong>AGT-3060 · AI Operator periodic deciders</strong>
   <span>Delivered: O1 A AI Operator deciders in the shared decision library for run liveness, stale progress, steer timeout, timeout salvage, gate-environment retry, delivery chain, cause breaker, intake routing and the acceptance rail, each with a receipt naming decider, effect and autonomy class (A0 and A1 act, A2 proposes, A3 asks a person). Per the operator decision of 15.10.2026 the per-transition switch stays the single selector: the OperatorDecision profile defaults to Monolith, where the monolith decides in process through the same library, and on Engine the deciders submit facts and the authority applies the engine receipt after rechecking lane and facts. No host forces engine-only decisions. OD-S6 can reuse the OperatorDecision stage as its periodic seam. Focused tests cover both switch positions, including a delivery-chain scenario that moves nothing while the engine is stopped and completes once it decides.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3064" data-delivered-at="2026-10-15" data-slice="Active post-core model choice">
+  <strong>AGT-3064 · Active post-core model choice</strong>
+  <span>Delivered: the Engine coding-completion profile freezes grounds before claim, records an active model receipt, and dispatches one offered A0 or A1 choice through the fenced authority adapter. The adapter checks the current epoch, fence, settled result SHA and ref, action floor, and matching receipt; invalid, forbidden, unavailable, and capped decisions ask the AI Operator and hold. The verified-tree checkpoint and immutable-result salvage handoff are selectable actions. Focused integration, policy, build, guard, and lint checks cover the slice.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

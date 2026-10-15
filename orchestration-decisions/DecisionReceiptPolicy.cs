@@ -23,7 +23,8 @@ public sealed record DecisionReceiptFacts(
     OrchestratorDecisionJobDto? Job,
     int Attempts,
     bool AlternateUsed,
-    string? UnavailableReason);
+    string? UnavailableReason,
+    string Mode = DecisionReceiptPolicy.ShadowMode);
 
 /// <summary>
 /// Prompt, response validation and receipt construction for an AGT-W73
@@ -37,7 +38,10 @@ public static class DecisionReceiptPolicy
     public const string SchemaVersion = "orchestrator-decision-receipt.v1";
     public const string PromptVersion = "od-s1.step-transition.v1";
     public const string ShadowMode = "shadow";
+    public const string ActiveMode = "active";
     public const string ShadowDispatch = "not-dispatched:shadow";
+    public const string ActiveDispatch = "submitted:authority-adapter";
+    public const string ActiveHold = "held:operator-ai";
     public const string DegradedTarget = "decision-unavailable";
     public const int MaxReasoningChars = 2_000;
     public const int MaxResponseChars = 16_384;
@@ -149,8 +153,14 @@ public static class DecisionReceiptPolicy
         var response = unavailable is null ? Parse(result!.ResponseText, grounds) : null;
         var callStatus = unavailable ?? (response!.Valid ? DecisionCallStatuses.Completed
             : DecisionCallStatuses.InvalidResponse);
-        var degraded = new DecisionChoiceV1(DecisionActionKinds.Ask, DegradedTarget, ShadowDispatch);
-        IReadOnlyList<DecisionChoiceV1> chosen = response is { Valid: true } ? response.Chosen
+        var dispatch = facts.Mode == ActiveMode
+            ? response is { Valid: true } && response.Chosen.Count == 1
+                && response.Chosen[0].Action != DecisionActionKinds.Ask
+                ? ActiveDispatch : ActiveHold
+            : ShadowDispatch;
+        var degraded = new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai", dispatch);
+        IReadOnlyList<DecisionChoiceV1> chosen = response is { Valid: true }
+            ? response.Chosen.Select(choice => choice with { Outcome = dispatch }).ToArray()
             : [.. response?.Chosen ?? [], degraded];
         var matches = response is { Valid: true } && response.Chosen.Count == 1
             && response.Chosen[0].Action == facts.Deterministic.Action
@@ -173,7 +183,8 @@ public static class DecisionReceiptPolicy
             result?.ExcludedDuplicateFrames ?? 0,
             tokens.UncachedInput + tokens.CachedInput + tokens.CacheWrite > DecisionGroundsPolicy.MaxCallInputTokens
                 || tokens.Output > DecisionGroundsPolicy.MaxCallOutputTokens,
-            Bound(facts.UnavailableReason ?? result?.Error ?? job?.Error ?? response?.Failure, 400));
+            Bound(facts.UnavailableReason ?? result?.Error ?? job?.Error ?? response?.Failure
+                ?? (grounds.Pack.Incomplete ? "incomplete-pack" : null), 400));
         var reasoning = response is { Valid: true } ? response.Reasoning
             : $"Degraded mode: {response?.Failure ?? facts.UnavailableReason ?? job?.Error ?? unavailable}. "
               + "The transition rests in ask(reason=decision-unavailable).";
@@ -181,7 +192,7 @@ public static class DecisionReceiptPolicy
             SchemaVersion,
             receiptId,
             grounds.OccurrenceId,
-            ShadowMode,
+            facts.Mode,
             grounds.Trigger,
             grounds.Scope,
             grounds.PriorStep,
@@ -205,7 +216,7 @@ public static class DecisionReceiptPolicy
             PromptVersion,
             grounds.ModelRoute,
             call,
-            ShadowDispatch,
+            dispatch,
             EvidenceRef(receiptId),
             EvidenceRef(receiptId) + "/outcome",
             result?.StartedAt ?? grounds.Trigger.ObservedAt,
