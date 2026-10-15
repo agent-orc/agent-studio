@@ -9,6 +9,9 @@ namespace AgentStudio.Runner;
 public sealed class ActiveDecisionAuthorityAdapter(
     OrchestratorDecisionStore decisions, AttemptAuthorityService authority)
 {
+    public bool HasActiveGrounds(string occurrenceId)
+        => decisions.GetInputs(occurrenceId)?.Mode == DecisionReceiptPolicy.ActiveMode;
+
     public DecisionChoiceV1 Validate(MonolithOrchestrationOccurrence occurrence, TaskInfo task,
         OrchestrationAction stageAction, JsonElement output)
     {
@@ -53,7 +56,11 @@ public sealed class ActiveDecisionAuthorityAdapter(
         var run = authority.GetRun(occurrence.AuthorityAttemptId);
         var taskKey = run?.TaskKey ?? task.Id;
         var projection = authority.GetTaskProjection(taskKey);
-        if (task.State != occurrence.ExpectedSourceState
+        var replayingSalvageMove = choice is { Action: DecisionActionKinds.Adapt,
+                Target: "salvage-handoff" }
+            && task.State == TaskStates.Ready
+            && EngineDecisionWaitMarker.Read(task.FolderPath) == occurrence.Run.RunId;
+        if (task.State != occurrence.ExpectedSourceState && !replayingSalvageMove
             || projection.AuthorityEpoch != occurrence.AuthorityEpoch
             || run is null || run.AttemptId != occurrence.AuthorityAttemptId
             || authority.CurrentFence(taskKey) != occurrence.AuthorityFence

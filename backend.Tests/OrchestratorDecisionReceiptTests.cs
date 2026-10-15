@@ -11,8 +11,10 @@ using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tokens;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -44,6 +46,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [InlineData("invalid", false)]
     [InlineData("forbidden", false)]
     [InlineData("prepare", true)]
+    [InlineData("salvage", true)]
     public async Task Active_coding_choice_dispatches_once_or_holds_on_invalid_output_and_stale_authority(
         string scenario, bool staleAuthority)
     {
@@ -63,6 +66,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "Build and verify.");
         File.WriteAllText(Path.Combine(folder, "status.md"), "Result: pending.");
+        var operatorQueue = new RecordingAiOperatorQueue();
+        var serverClock = new FakeTimeProvider(new DateTimeOffset(At));
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -81,6 +86,13 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
                     ["DeliveryChain:Guarded"] = "false",
                     ["Orchestration:Transitions:CodingCompletion"] = "Engine",
                 }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAiOperatorDecisionQueue>();
+                services.AddSingleton<IAiOperatorDecisionQueue>(operatorQueue);
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(serverClock);
+            });
         });
         using var http = factory.CreateClient();
         using var coding = new RClient(http, runnerId);
@@ -173,8 +185,19 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             : !staleAuthority && scenario == "salvage" ? TaskStates.Ready : TaskStates.Progress,
             finalState);
         if (scenario == "salvage" && !staleAuthority)
-            Assert.Equal(resultSha, ContinuationBaseStore.Read(Path.Combine(projectPath,
-                TaskStates.Ready, card))?.CommitSha);
+        {
+            var continuation = ContinuationBaseStore.Read(Path.Combine(projectPath,
+                TaskStates.Ready, card));
+            Assert.Equal(resultSha, continuation?.CommitSha);
+            Assert.Equal(At, continuation?.SavedAtUtc);
+        }
+        if (scenario == "salvage" && staleAuthority)
+            Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        if (scenario is "invalid" or "forbidden")
+        {
+            Assert.Equal(1, operatorQueue.Count);
+            Assert.Null(EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        }
     }
 
     [Fact]
@@ -609,6 +632,14 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
+    }
+
+    private sealed class RecordingAiOperatorQueue : IAiOperatorDecisionQueue
+    {
+        public int Count { get; private set; }
+
+        public void Enqueue(AgentStudio.Shared.TaskInfo task, string occurrenceId, DecisionChoiceV1 choice)
+            => Count++;
     }
 
     private sealed class HttpDecisionPlane(HttpClient client) : IDecisionReceiptPlane
