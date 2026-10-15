@@ -151,7 +151,9 @@ public sealed class TaskTransitionService
         string? transitionDetail = null,
         DecisionReopenPermit? decisionReopenPermit = null,
         bool archiveOverride = false,
-        bool acceptOlderBriefDelivery = false)
+        bool acceptOlderBriefDelivery = false,
+        bool engineDecisionRequeue = false,
+        AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -171,7 +173,31 @@ public sealed class TaskTransitionService
             return new MoveJobOutcome(MoveJobStatus.Failure,
                 "Archive override requires a human actor and a written reason.");
 
-        var settledRunRecovery = PrepareSettledRunRecovery(info, targetState, cause, acceptOlderBriefDelivery);
+        if (engineContinuationBase is not null && !engineDecisionRequeue)
+            return new MoveJobOutcome(MoveJobStatus.Failure, "A continuation base requires an engine requeue.");
+        if (engineDecisionRequeue && (!string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal)
+            || targetState != TaskStates.Ready || cause != "engine-decision"
+            || authorityWrite is null || expectedSourceState != TaskStates.Progress
+            || _attemptAuthority?.GetRun(authorityWrite.AttemptId) is not { } decisionRun
+            || decisionRun.State != AttemptLifecycleState.Completed
+            || decisionRun.ResultEnvelope is null
+            || !new[] { info.Key, info.TaskKey, info.Id }
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Any(key => _attemptAuthority.GetTaskProjection(key!).CurrentRunAttempt?.AttemptId
+                    == decisionRun.AttemptId)
+            || decisionRun.LastFence != authorityWrite.Fence
+            || decisionRun.AuthorityEpoch != authorityWrite.AuthorityEpoch
+            || _attemptAuthority.CurrentFence(decisionRun.TaskKey) != authorityWrite.Fence
+            || _attemptAuthority.GetTaskProjection(decisionRun.TaskKey).AuthorityEpoch != authorityWrite.AuthorityEpoch
+            || engineContinuationBase is not null
+                && (engineContinuationBase.AttemptId != authorityWrite.AttemptId
+                    || engineContinuationBase.CommitSha != decisionRun.ResultSha
+                    || engineContinuationBase.Ref != decisionRun.ResultEnvelope.ImmutableRemoteRef)))
+            return new MoveJobOutcome(MoveJobStatus.Failure, "The engine requeue has no current settled-run authority.");
+
+        var settledRunRecovery = engineDecisionRequeue
+            ? SettledRunRecoveryPreparation.None
+            : PrepareSettledRunRecovery(info, targetState, cause, acceptOlderBriefDelivery);
         if (settledRunRecovery.Error is not null)
         {
             return new MoveJobOutcome(
@@ -481,10 +507,24 @@ public sealed class TaskTransitionService
             : boundCompletionClaim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
         var completionClaimStaged = stampedCompletionClaim is not null
             && _mutations.SetCompletionClaimOnFolder(info.FolderPath, stampedCompletionClaim);
+        // The base is present before Ready becomes claimable. On a refused move,
+        // restore the prior base so another claim cannot consume this decision.
+        var priorContinuationBase = engineContinuationBase is null
+            ? null : AgentStudio.Runner.ContinuationBaseStore.Read(info.FolderPath);
+        if (engineContinuationBase is not null
+            && !AgentStudio.Runner.ContinuationBaseStore.Save(info.FolderPath, engineContinuationBase))
+            return new MoveJobOutcome(MoveJobStatus.Failure, "The engine continuation base could not be staged.");
         var outcome = _reviewAttemptLifecycle is not null
                       && targetState is TaskStates.Completed or TaskStates.Archive
             ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
             : MoveCore();
+        if (engineContinuationBase is not null && outcome.Status != MoveJobStatus.Success)
+        {
+            if (priorContinuationBase is null)
+                AgentStudio.Runner.ContinuationBaseStore.Clear(info.FolderPath);
+            else
+                AgentStudio.Runner.ContinuationBaseStore.Save(info.FolderPath, priorContinuationBase);
+        }
         if (completionClaimStaged && outcome.Status != MoveJobStatus.Success)
             RestoreCompletionClaim(info);
         if (enteringTerminalState && stagedPendingIntent && outcome.Status != MoveJobStatus.Success)

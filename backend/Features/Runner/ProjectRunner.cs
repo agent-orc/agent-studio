@@ -8782,6 +8782,7 @@ public class ProjectRunner
     private bool IsReadyPickupCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex)
         => AgentTypes.IsAutoPickupEligible(job.Agent)
            && !job.Fixture
+           && !job.WaitingForEngineDecision
            // Epics are containers, not work items: their sub-tasks flow through
            // the pipeline, the epic card never code-executes. Skip it hard so it
            // can never be loaded into a slot, even if it has come to rest in a
@@ -10458,6 +10459,7 @@ public class ProjectRunner
     private static bool IsSnapshotReadyCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex)
         => AgentTypes.IsAutoPickupEligible(job.Agent)
            && !job.Fixture
+           && !job.WaitingForEngineDecision
            && !TaskKinds.IsEpic(job.Kind)
            && !TaskKinds.IsDecision(job.Kind)
            && !TaskSlugs.IsHumanDecisionNeeded(job.Id)

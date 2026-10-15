@@ -106,6 +106,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     TaskScannerService scanner,
     AttemptAuthorityService authority,
     OrchestrationRolloutStore rollout,
+    IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
     TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
@@ -118,6 +119,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             while (!stoppingToken.IsCancellationRequested)
             {
+                aiOperator.RecoverPending();
                 RecoverOnce();
                 try { await store.RecoverApplyingAsync(stoppingToken); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
