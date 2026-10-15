@@ -90,6 +90,13 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             var attemptRecorded = false;
             try
             {
+                var branch = _settings.Get(job.ProjectName).IntegrationBranch;
+                var lost = AcceptedIntegrationPublishedDeliveryGuard.LostOperatorAcceptance(job, branch, _git);
+                if (lost is not null)
+                {
+                    ReturnTransactionalAcceptToReview(job, "PublishedContainmentLost", lost, null);
+                    continue;
+                }
                 statusByKey.TryGetValue(job.TaskKey, out var status);
                 var decision = _integrationStatus.ResolveAcceptedIntegrationRecovery(
                     job, status, _timeline is null ? null : () => _timeline.ReadAll(job.FolderPath));

@@ -76,6 +76,15 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         var sw = Stopwatch.StartNew();
         try
         {
+            var current = _scanner.FindJob(request.JobId, request.WatchPath);
+            var lost = current is null ? null : AcceptedIntegrationPublishedDeliveryGuard.LostOperatorAcceptance(
+                current, request.IntegrationBranch, _git);
+            if (lost is not null)
+            {
+                var invalidated = MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: lost);
+                await ReturnToReviewWithFailureAsync(request, invalidated).ConfigureAwait(false);
+                return invalidated;
+            }
             // Deliberately not the host stopping token. Once merge/gate/rollback
             // starts it must reach a consistent terminal state. A process exit
             // can still interrupt it; the accepted-integration backstop then

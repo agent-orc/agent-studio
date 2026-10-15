@@ -428,6 +428,11 @@ public sealed class TaskTransitionService
                 transitionDetail,
                 decisionReopenPermit, archiveOverride,
                 publishedContainmentProven: operatorOverride && containedOwnership?.ContainedInSha is not null);
+            if (moved.Status == MoveJobStatus.Success && operatorOverride
+                && fromState == TaskStates.HumanReview && targetState == TaskStates.Completed
+                && _scanner.FindJob(jobId, watchPath) is { } acceptedOverride)
+                RecordDurableOperatorAcceptance(acceptedOverride, cause, reason,
+                    completionIntegrationStatus, containedOwnership);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
@@ -697,7 +702,9 @@ public sealed class TaskTransitionService
                 if (accepted != null)
                 {
                     if (operatorOverride)
+                    {
                         RecordOperatorIntegrationOverride(accepted, cause, reason);
+                    }
                     else
                         ClearAcceptanceIntegrationMarkers(accepted);
                     if (acceptanceLineage?.Admission == AcceptanceLineageAdmission.AcceptOnDeliveryEvidence)
@@ -1985,6 +1992,59 @@ public sealed class TaskTransitionService
                 ["resultSha"] = subject?.ResultSha ?? "unknown",
                 ["commits"] = commits.Length == 0 ? "none" : string.Join(",", commits),
             });
+    }
+
+    private void RecordDurableOperatorAcceptance(
+        TaskInfo accepted, string? actor, string? reason,
+        TaskIntegrationStatus? status, AgentStudio.Pipeline.BatchGateOwnership? ownership)
+    {
+        if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(accepted)) return;
+        var root = _git.ResolveRepoRootForWatchPath(accepted.WatchPath);
+        if (root is null) return;
+        var branch = TaskIntegrationBranch.Name(status?.IntegrationBranch
+            ?? ownership?.Subject.IntegrationBranch
+            ?? _settings.Get(accepted.ProjectName).IntegrationBranch);
+        var published = _git.GetBranchTip(root, _git.HasOriginRemote(root)
+            ? $"refs/remotes/origin/{branch}" : $"refs/heads/{branch}");
+        var delivery = accepted.CompletionClaim?.ResultSha;
+        if (!ReviewSubjectStore.IsValidResultSha(delivery))
+            delivery = status?.Sha;
+        if (!ReviewSubjectStore.IsValidResultSha(published)
+            || !ReviewSubjectStore.IsValidResultSha(delivery)
+            || !_git.IsAncestor(root, delivery!, published!)) return;
+
+        var commits = (accepted.Commits ?? [])
+            .Where(TaskCommitSupersession.IsEffectiveDelivery)
+            .Select(commit => commit.Sha)
+            .Where(ReviewSubjectStore.IsValidResultSha)
+            .ToList();
+        if (commits.Any(commit => !_git.IsAncestor(root, commit, published!))) return;
+        var external = AgentStudio.Pipeline.ExternalPublishedVerificationStore.Read(accepted.WatchPath)
+            .FirstOrDefault(item => AgentStudio.Pipeline.IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch)
+                && _git.IsAncestor(root, item.CandidateSha, published!)
+                && _git.IsAncestor(root, delivery!, item.CandidateSha));
+        var record = new TaskIntegrationRecord
+        {
+            Id = $"operator-acceptance-{published![..12]}-{delivery![..12]}",
+            Classification = IntegrationRecordClasses.IntegratedVerified,
+            RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
+            AcceptedAtUtc = _time.GetUtcNow().UtcDateTime,
+            IntegrationBranch = branch,
+            IntegrationSha = published,
+            SourceSha = delivery,
+            CommitShas = commits,
+            Actor = actor ?? "operator:unspecified",
+            Reason = reason?.Trim(),
+            VerificationHost = external?.VerificationHost,
+            SuiteSummary = external?.SuiteSummary,
+            LogHash = external?.LogHash,
+            Evidence = external is null
+                ? "Operator accepted the published containing tree with a written override."
+                : $"Operator accepted the published containing tree with external suite verification on {external.CandidateSha}.",
+        };
+        if (!_mutations.AppendIntegrationRecordOnFolder(accepted.FolderPath, record).Succeeded)
+            _logger.LogError("operator-acceptance-record-write-failed project={Project} job={JobId}",
+                accepted.ProjectName, accepted.Id);
     }
 
     private void RecordOperatorIntegrationOverride(

@@ -64,7 +64,7 @@ public sealed partial class MergeIntoDevelopRunner
         var sha = containmentSha ?? _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
         var integrationRecords = ReadIntegrationRecords(jobId, watchPath);
         var carried = noOp
-            ? CarriedVerifiedTree(project, jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
+            ? CarriedVerifiedTree(project, watchPath, jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
             : null;
         var tree = ReviewSubjectStore.IsValidResultSha(sha) ? _git.GetCommitTree(repoRoot, sha!) : null;
         bool SameTree(string candidate)
@@ -225,6 +225,7 @@ public sealed partial class MergeIntoDevelopRunner
     /// </summary>
     private CarriedTree? CarriedVerifiedTree(
         string project,
+        string? watchPath,
         string jobFolderPath,
         string repoRoot,
         string branch,
@@ -244,6 +245,11 @@ public sealed partial class MergeIntoDevelopRunner
         {
             return new(own.Sha!);
         }
+
+        var external = ExternalPublishedVerificationStore.Read(watchPath)
+            .FirstOrDefault(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
+                && Carries(record.CandidateSha));
+        if (external is not null) return new(external.CandidateSha);
 
         var recorded = integrationRecords
             .Where(record => string.Equals(record.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
