@@ -121,7 +121,11 @@ public sealed record WorkPermitAcceptanceDto(
     MechanicalRoundDelta? MechanicalDelta = null,
     MechanicalFreshRunRoute? MechanicalFreshRoute = null,
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    // AGT-3061: the permit path carries the same review fix round as a claim:
+    // the recorded base reason and the ordered rework prompt.
+    string? ContinuationBaseReason = null,
+    FollowUpDeliveryDto? FollowUp = null);
 
 public sealed record RunReconcileRequest(
     string SchemaVersion,

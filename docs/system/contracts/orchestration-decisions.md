@@ -154,7 +154,19 @@ payload. Its transactional settlement applies linked follow-up creation and
 reviewed-base persistence before the terminal lane write. The shared D18
 decision sets the linked follow-up lane to Ready for every adapter. Stage
 receipts carry the full typed decision; the existing stage protocol still uses its five wire
-actions. Completing the standalone execution loop remains I11.
+actions.
+
+I11 (AGT-3061) completes the standalone loop. The Task Server applies the
+engine's typed decision from the stage output after checking that it names the
+card, matches the stage action, and continues on the reviewed result of the
+run. Only an engine without a typed decision falls back to the same library
+decision derived from the frozen payload; the settlement audit names the
+decider. A fix round writes the D17 base with its `review-fix-round` reason and
+one ordered rework prompt (`ReviewFindingRoundPrompt`, shared with the
+monolith). Under the `reviewed-publication` delivery policy,
+`OrchestrationSettlementPolicy` holds an accepted delivery in Auto Review as an
+`integrating` run. `IntegrationResultPolicy` maps the integration report to
+Human Review, a bounded stale-base retry, or escalation.
 
 The monolith retains the existing delivered-round and recurrence limits as well
 as the lifetime automatic-round cap. Extraction does not replenish a counter or

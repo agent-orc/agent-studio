@@ -3105,19 +3105,7 @@ public static class V1ReviewPlaneEndpoints
         IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
         string reviewAttemptId,
         bool continuesReviewedDelivery)
-    {
-        var lines = new List<string>
-        {
-            $"# Remote Review finding fix round ({reviewAttemptId})",
-            "",
-            ReviewFixRoundBase.PromptSentence(continuesReviewedDelivery),
-            "",
-            "Fix exactly the blocking findings below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
-            "",
-        };
-        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
-        return string.Join('\n', lines).TrimEnd();
-    }
+        => Contract.ReviewFindingRoundPrompt.Build(findings, reviewAttemptId, continuesReviewedDelivery);
 
     internal static bool TryOutcome(string value, out ReviewTerminalOutcome outcome)
     {

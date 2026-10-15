@@ -358,6 +358,36 @@ production evidence must be attached before cutover:
      `connector-negative-matrix.md` and `.json` into the deployment regression
      scenario evidence bundle.
 
+5. **Standalone review loop with the engine, scenario added by AGT-3061
+   (AGT-W65 I11).** Before cutover the standalone Task Server must run the
+   whole loop with the Orchestrator Engine as the only decider:
+   coding, rejected review, a fix round on the reviewed delivery with the
+   findings as its prompt, passed review, integration, and Human Review,
+   without an operator call. The precondition scenario is
+   `orchestrator-engine.Tests/StandaloneReviewLoopCutoverTests.cs`. It runs
+   the real engine service over authenticated HTTP against the Task Server,
+   and asserts that every settlement applied a typed engine decision and that
+   no actor other than the hosts and the engine wrote during the loop. Its
+   escalation scenarios pass a source-bundle-only delivery and a delivery
+   pushed to another remote; each escalates in exactly one settlement without
+   queueing an integration (`IntegrationSourcePolicy` classifies the source).
+   The permit path refuses what the claim path refuses for a pinned runner or
+   a full project (`HostOrchestratorStoreTests.Permit_path_refuses_pinned_runner_and_full_project_like_the_claim_path`).
+   Production configuration needed for the loop:
+   - Register the project repository with the `reviewed-publication` delivery
+     policy.
+   - Store the project flow definition.
+   - Store the project review plan
+     (`PUT /api/v1/orchestration/projects/{projectId}/review-plan`). Coding
+     completion seals it into the review subject.
+   - Run one runner service with `RUNNER_ROLE=integration`. It claims accepted
+     deliveries under the project's publication lease
+     (`POST /api/v1/integrations/claims`), renews the lease while it
+     publishes (`POST /api/v1/integrations/{id}/lease/renew`), pushes only to
+     the registered project repository, and reports the published tip.
+
+   Attach the scenario run of the release candidate to the D7 cutover card.
+
 No API listener may open on `wg0` until Studio route ownership is complete and
 the Task Server, Agent Host, Studio BFF, and connector authentication paths pass
 their negative tests. The connector's part of that condition is the negative

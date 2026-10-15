@@ -12,8 +12,68 @@ public sealed record OrchestrationSettlementDecision(
     string? SettlementReason = null,
     TransitionDecision? Transition = null);
 
+/// <summary>
+/// Whether the integration executor can publish an accepted delivery from the
+/// registered project repository (AGT-3061).
+/// </summary>
+public enum IntegrationSource { Publishable, ResultMissing, RepositoryMismatch }
+
 public static class OrchestrationSettlementPolicy
 {
+    public const string IntegratingStatus = "integrating";
+
+    /// <summary>
+    /// Settles one stage and, when the run accepted the delivery for
+    /// integration (AGT-3061), holds the card in Auto Review until the
+    /// integration of the accepted delivery reports: a run that would hand the
+    /// card to Human Review settles as <see cref="IntegratingStatus"/> instead.
+    /// <paramref name="acceptedAction"/> is the engine transition the run
+    /// accepted, from this stage or an earlier one; <paramref name="reviewedPublication"/>
+    /// is the project's delivery policy. <paramref name="source"/> says whether
+    /// the integration executor can publish the accepted delivery: a
+    /// source-bundle-only delivery without a fenced result ref, or a result
+    /// pushed to another remote than the registered project repository,
+    /// escalates instead of queueing an integration that can never settle.
+    /// </summary>
+    public static OrchestrationSettlementDecision Decide(
+        OrchestrationAction action,
+        IReadOnlyList<OrchestrationStage> stages,
+        OrchestrationStage currentStage,
+        int currentReissueAttempts,
+        int maxReissueAttempts,
+        string currentTaskState,
+        long expectedTaskVersion,
+        long currentTaskVersion,
+        RepeatedReviewBlockDiagnosis? repeatedBlock,
+        TransitionDecision? transition,
+        TransitionAction? acceptedAction,
+        bool reviewedPublication,
+        IntegrationSource source)
+    {
+        var decision = Decide(action, stages, currentStage, currentReissueAttempts, maxReissueAttempts,
+            currentTaskState, expectedTaskVersion, currentTaskVersion, repeatedBlock, transition);
+        if (acceptedAction != TransitionAction.AcceptAndIntegrate || !reviewedPublication
+            || decision is not { RunStatus: "completed", TaskState: TaskStates.HumanReview })
+            return decision;
+        return source == IntegrationSource.Publishable
+            ? decision with
+            {
+                RunStatus = IntegratingStatus,
+                TaskState = null,
+                SettlementReason = "The accepted delivery waits in Auto Review for its integration.",
+            }
+            : decision with
+            {
+                RunStatus = "escalated",
+                TaskState = TaskStates.Escalated,
+                SettlementReason = source == IntegrationSource.RepositoryMismatch
+                    ? "The accepted delivery was pushed to another remote than the registered project repository; " +
+                      "reviewed publication needs an operator."
+                    : "The accepted delivery has no fenced result ref and SHA to publish; " +
+                      "reviewed publication needs an operator.",
+            };
+    }
+
     public static OrchestrationSettlementDecision Decide(
         OrchestrationAction action,
         IReadOnlyList<OrchestrationStage> stages,

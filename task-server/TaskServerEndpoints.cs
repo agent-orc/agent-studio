@@ -663,6 +663,48 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.CleanupReviewAsync(attemptId, request, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        // AGT-3061: an accepted delivery is published by a runner host that
+        // holds the project's publication lease; the report applies the lane.
+        var integrations = api.MapGroup("/integrations")
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        integrations.MapGet("", async (string? taskId, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListIntegrationsAsync(taskId, ct)));
+        integrations.MapPost("/claims", async (
+            HttpContext context, IntegrationClaimRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.RunnerId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "Integration executor identity differs from its principal."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            return await InvokeAsync(() => store.ClaimIntegrationAsync(request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.RunsClaim);
+        integrations.MapPost("/{integrationId}/lease/renew", async (
+            HttpContext context, string integrationId, IntegrationLeaseRenewRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.RunnerId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "Integration executor identity differs from its principal."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            return await InvokeAsync(() => store.RenewPublicationLeaseAsync(integrationId, request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        integrations.MapPost("/{integrationId}/report", async (
+            HttpContext context, string integrationId, IntegrationReportRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.RunnerId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "Integration executor identity differs from its principal."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            return await InvokeAsync(() => store.ReportIntegrationAsync(integrationId, request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+
         var orchestration = api.MapGroup("/orchestration")
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestration.MapGet("/projects/{projectId}/flow-definition", async (
@@ -678,6 +720,20 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.UpsertFlowDefinitionAsync(
+                projectId, request, Actor(context), ct)));
+        orchestration.MapGet("/projects/{projectId}/review-plan", async (
+            string projectId,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetProjectReviewPlanAsync(projectId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        orchestration.MapPut("/projects/{projectId}/review-plan", async (
+            HttpContext context,
+            string projectId,
+            UpsertProjectReviewPlanRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.UpsertProjectReviewPlanAsync(
                 projectId, request, Actor(context), ct)));
         orchestration.MapGet("/runs", async (
             string? projectId,
