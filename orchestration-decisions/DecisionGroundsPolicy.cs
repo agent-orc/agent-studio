@@ -19,6 +19,7 @@ public static class DecisionGroundsPolicy
     public const int MaxPackBytes = 32 * 1024;
     public const int MaxCallInputTokens = 8_000;
     public const int MaxCallOutputTokens = 1_000;
+    public const int MaxCapacityPackTokens = 3_000;
     public const int PromptReserveTokens = 1_500;
     public const int MaxFacts = 48;
     public const int MaxAlternatives = 16;
@@ -73,7 +74,9 @@ public static class DecisionGroundsPolicy
         if (input.RunLedger.Rounds.Count > MaxRounds)
             markers.Add($"runLedger.rounds: {input.RunLedger.Rounds.Count - MaxRounds} older rounds summarized in totals");
 
-        var budgetBytes = Math.Min(MaxPackBytes, PackTokenBudget * 4);
+        var maxPackTokens = input.Scope.Kind == "host" && input.Trigger.Profile == "capacity-check"
+            ? MaxCapacityPackTokens : PackTokenBudget;
+        var budgetBytes = Math.Min(MaxPackBytes, maxPackTokens * 4);
         DecisionGroundsV1 Compose() => Build(input, facts, alternatives, prior,
             input.RunLedger with { Rounds = rounds },
             omissions.Take(MaxOmissions).ToList(), markers, null);
@@ -107,10 +110,10 @@ public static class DecisionGroundsPolicy
         }
 
         var incomplete = bytes > budgetBytes
-            || !alternatives.Any(item => item.Available)
+            || (input.Scope.Kind == "card" && !alternatives.Any(item => item.Available))
             || string.IsNullOrWhiteSpace(input.Scope.Kind);
         if (incomplete) markers.Add("pack: required grounds do not fit or no available candidate exists");
-        var pack = new GroundsPackV1(bytes, EstimateTokens(bytes), MaxPackBytes, PackTokenBudget,
+        var pack = new GroundsPackV1(bytes, EstimateTokens(bytes), MaxPackBytes, maxPackTokens,
             markers.Count > 0, incomplete, markers.ToArray());
         var unsigned = Build(input, facts, alternatives, prior, input.RunLedger with { Rounds = rounds },
             omissions.Take(MaxOmissions).ToList(), markers, pack);

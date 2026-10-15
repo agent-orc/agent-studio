@@ -3,6 +3,7 @@ using System.Text.Json;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tokens;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Runner;
 
@@ -34,7 +35,9 @@ public sealed class DecisionGroundsCollector(
     ITokenPricing pricing,
     AttemptAuthorityService authority,
     MonolithOrchestrationStore orchestration,
-    OrchestratorDecisionStore decisions)
+    OrchestratorDecisionStore decisions,
+    ProjectRegistry projects,
+    DecisionRuleVersionStore rules)
 {
     public const string Profile = "CodingCompletion";
 
@@ -148,15 +151,31 @@ public sealed class DecisionGroundsCollector(
                     ? "applied:" + applied : null,
                 receipt.EndedAt)).ToArray();
 
+        var project = projects.FindByIdOrDisplayName(task.ProjectName);
+        var workspaceId = project?.WorkspaceId;
+        var workspaceRuleVersion = workspaceId is null ? null : rules.ActiveVersionId(workspaceId);
+        var projectRuleVersion = workspaceId is null || project is null ? null
+            : rules.ActiveVersionId(workspaceId, project.Id);
+        var route = Route(configuration);
+        IReadOnlyList<DecisionRuleV1> activeRules = workspaceId is null ? []
+            : rules.EffectiveRules(workspaceId, project?.Id);
+        var ruleModel = activeRules
+            .Where(rule => rule.Trigger == Profile || rule.Trigger == "step-transition")
+            .Select(rule => rule.Model).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        if (!string.IsNullOrWhiteSpace(ruleModel)) route = route with { Model = ruleModel };
+        var policyVersion = (workspaceRuleVersion ?? "platform.v1")
+            + (projectRuleVersion is null ? string.Empty : "+" + projectRuleVersion);
+        facts.AddRange(DecisionRulePolicy.Signals(activeRules, Profile, facts, policyVersion, at));
+        facts.AddRange(DecisionRulePolicy.Signals(activeRules, "step-transition", facts, policyVersion, at));
         return new DecisionGroundsInputV1(
             observed.OccurrenceId,
             new GroundsTriggerV1("step-transition", Profile, at),
             new GroundsScopeV1("card", task.ProjectName, task.Id, observed.AttemptId, observed.Fence,
-                observed.Epoch, null),
+                observed.Epoch, null, workspaceId),
             "core",
             observed.TargetState,
-            $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}/{DecisionReceiptPolicy.PromptVersion}",
-            Route(configuration),
+            $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}/{DecisionReceiptPolicy.PromptVersion}/rules:{policyVersion}",
+            route,
             facts,
             DecisionGroundsPolicy.CodingCompletionAlternatives(observed.Deterministic, observed.HasSettledEnvelope,
                 ledger.Progress.LastVerifiedTreeSha, observed.ResultSha, observed.ResultRef),
