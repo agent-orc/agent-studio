@@ -266,7 +266,8 @@ public sealed record RunSpecDto(
     // field gives daemon claims and persisted slots one deterministic seam.
     string? ModeFraming = null,
     AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null,
-    string? BriefVersion = null);
+    string? BriefVersion = null,
+    int? RunTimeoutSeconds = null);
 
 public sealed record RunnerClaimResponse(
     RunnerClaimStatus Status,

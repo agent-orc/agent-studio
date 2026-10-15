@@ -1439,7 +1439,8 @@ public sealed class RemoteTaskRunner
                 resumeSessionId: slot.InputSessionId,
                 cleanContextKey: taskKey,
                 tokenCeiling: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.TokenCeiling,
-                timeoutSeconds: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.DurationCeilingSeconds,
+                timeoutSeconds: slot.InputSessionId is null
+                    ? runSpec?.RunTimeoutSeconds : MechanicalSessionResumePolicy.DurationCeilingSeconds,
                 tokenBaseline: slot.InputSessionId is null ? null : slot.PreviousSession?.TotalTokens,
                 // The agent runs this repository's own build, test and lint
                 // commands. Without the preparation's cache binding its first

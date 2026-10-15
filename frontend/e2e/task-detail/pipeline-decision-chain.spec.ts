@@ -177,7 +177,8 @@ test('decision chain and cost of deciding render on the card and in project usag
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/operator-intent')) {
       if (route.request().method() === 'POST') {
-        operatorIntent = route.request().postDataJSON() as Record<string, unknown>;
+        operatorIntent = { ...route.request().postDataJSON() as Record<string, unknown>,
+          actor: 'Human Operator', outcome: 'applied:run-limit:7200s' };
         await route.fulfill({ json: operatorIntent });
       } else if (operatorIntent) await route.fulfill({ json: operatorIntent });
       else await route.fulfill({ status: 404, body: '' });
@@ -231,7 +232,8 @@ test('decision chain and cost of deciding render on the card and in project usag
   await expect(ask).toContainText('Human Operator');
   await ask.getByRole('textbox', { name: 'Reason' }).fill('Continue only with a bounded limit');
   await ask.getByRole('button', { name: 'Raise limit' }).click();
-  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('raise to 24 h');
+  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('raise to 120 min');
+  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('applied to the card');
   await expect(page.getByTestId('escalation-title')).toHaveText('Escalation');
   const transitions = chain.getByTestId('overview-decision-transition');
   await expect(transitions).toHaveCount(5);
@@ -262,9 +264,9 @@ test('decision chain and cost of deciding render on the card and in project usag
   await dismissDevErrorDialog(page);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.getByTestId('escalation-summary').screenshot({ path: path.join(resultsDir, `escalated-blocker-${theme}.png`) });
+    await page.getByTestId('escalation-summary').screenshot({ path: path.join(resultsDir, `escalated-blocker-${theme}--mocked.png`) });
     await chain.scrollIntoViewIfNeeded();
-    await page.getByTestId('overview-pipeline').screenshot({ path: path.join(resultsDir, `overview-decision-chain-${theme}.png`) });
+    await page.getByTestId('overview-pipeline').screenshot({ path: path.join(resultsDir, `overview-decision-chain-${theme}--mocked.png`) });
   }
 
   // The open card receives a new receipt on the next pipeline poll.
@@ -291,6 +293,6 @@ test('decision chain and cost of deciding render on the card and in project usag
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.getByTestId('token-usage-pipeline-cost').screenshot({ path: path.join(resultsDir, `project-cost-of-deciding-${theme}.png`) });
+    await page.getByTestId('token-usage-pipeline-cost').screenshot({ path: path.join(resultsDir, `project-cost-of-deciding-${theme}--mocked.png`) });
   }
 });

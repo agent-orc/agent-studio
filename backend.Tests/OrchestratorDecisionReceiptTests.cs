@@ -17,12 +17,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 using RClient = Runner::AgentRunner.TaskServerClient;
 using RAcquire = Runner::AgentRunner.RunLeaseAcquireRequest;
+using RHeartbeat = Runner::AgentRunner.RunLeaseHeartbeatRequest;
 using RRemoteComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
 using EngineOptions = EngineAssembly::AgentStudio.OrchestratorEngine.EngineOptions;
 using IDecisionReceiptPlane = EngineAssembly::AgentStudio.OrchestratorEngine.IDecisionReceiptPlane;
@@ -278,7 +280,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Null(decisions.GetOperatorIntent(other.ReceiptId));
         var answer = await http.PostAsJsonAsync($"{own.EvidenceRef}/operator-intent",
             new DecisionOperatorIntentRequest("stop", "Stop this card"));
-        Assert.True(answer.IsSuccessStatusCode, await answer.Content.ReadAsStringAsync());
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, answer.StatusCode);
+        Assert.Equal("recorded, not applied", decisions.GetOperatorIntent(own.ReceiptId)!.Outcome);
         Assert.Contains($"operator-response:{own.ReceiptId}", decisions.PendingReceipts(10));
     }
 
@@ -558,7 +561,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             new DecisionOperatorIntentRequest("raise", "More time for the verified build", 24));
         Assert.Equal(("raise", 24), (intent.Action, intent.RequestedEmergencyHours));
         Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Adapt,
-            "raise-emergency-limit:24h", "operator-intent"), intent.TypedChoice);
+            "raise-emergency-limit:1440m", "recorded, not applied"), intent.TypedChoice);
         Assert.Equal(intent, store.LatestOperatorIntentForTask("AGT-1"));
         var responseOccurrence = $"operator-response:{timeout.ReceiptId}";
         Assert.Contains(responseOccurrence, store.PendingReceipts(10));
@@ -587,8 +590,154 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Equal(intent, reloaded.GetOperatorIntent(timeout.ReceiptId));
     }
 
+    [Theory]
+    [InlineData("raise", 120, 7200, "Monolith")]
+    [InlineData("cut", 30, 1800, "Monolith")]
+    [InlineData("stop", null, null, "Monolith")]
+    [InlineData("raise", 120, 7200, "Shadow")]
+    [InlineData("raise", 120, 7200, "Engine")]
+    public async Task Operator_action_applies_on_the_card_through_monolith_authority(
+        string action, int? minutes, int? expectedSeconds, string codingProfile)
+    {
+        const string project = "project";
+        const string card = "AGT-1";
+        var projectPath = Path.Combine(_workspace, action + codingProfile, project);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var cardFolder = Path.Combine(projectPath, TaskStates.Ready, card);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, key = card, title = "Operator action", state = TaskStates.Ready,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Build and verify.");
+        File.WriteAllText(Path.Combine(cardFolder, "status.md"), "Result: pending.");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = Path.Combine(_workspace, action + codingProfile),
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                    ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
+                    ["DeliveryChain:Guarded"] = "false",
+                    ["Orchestration:Transitions:CodingCompletion"] = codingProfile,
+                    ["Orchestration:Transitions:ReviewReport"] = "Monolith",
+                    ["Orchestration:Transitions:GateResult"] = "Monolith",
+                    ["Orchestration:Transitions:OperatorSweep"] = "Monolith",
+                    ["Orchestration:Transitions:BatchPlan"] = "Monolith",
+                }));
+        });
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var store = factory.Services.GetRequiredService<OrchestratorDecisionStore>();
+        var input = Shadow("operator-action-" + action + codingProfile);
+        store.FreezeInputs(input);
+        var receipt = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(input.Grounds),
+            DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false,
+            "operator answer needed"));
+        store.PutReceipt(receipt);
+        var posted = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
+            new DecisionOperatorIntentRequest(action, "Operator selected the next run boundary",
+                RequestedEmergencyMinutes: minutes), DecisionGroundsPolicy.Json);
+        Assert.True(posted.IsSuccessStatusCode, await posted.Content.ReadAsStringAsync());
+        var intent = (await posted.Content.ReadFromJsonAsync<DecisionOperatorIntentV1>(
+            DecisionGroundsPolicy.Json))!;
+        Assert.Equal("Human Operator", intent.Actor);
+        Assert.StartsWith("applied:", intent.Outcome);
+        Assert.NotNull(intent.AppliedAt);
+        Assert.Equal(expectedSeconds, store.AppliedRunLimitSeconds(card));
+        if (action == "stop")
+            Assert.Equal(TaskStates.Escalated,
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
+        else
+            Assert.Equal(TaskStates.Ready,
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
+        Assert.Equal(intent, store.GetOperatorIntent(receipt.ReceiptId));
+        var outcome = await http.GetFromJsonAsync<JsonElement>($"{receipt.EvidenceRef}/outcome");
+        Assert.Equal(intent.Outcome,
+            outcome.GetProperty("operatorIntent").GetProperty("outcome").GetString());
+    }
+
     [Fact]
-    public void Alternate_model_attempt_spend_is_included_once_in_occurrence_total()
+    public async Task Stop_answer_stops_the_active_remote_run_and_holds_the_card_after_settlement()
+    {
+        const string project = "project";
+        const string card = "AGT-1";
+        const string runnerId = "coding-runner";
+        var projectPath = Path.Combine(_workspace, "remote-stop", project);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var cardFolder = Path.Combine(projectPath, TaskStates.Progress, card);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, key = card, title = "Stop active run", state = TaskStates.Progress,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Build and verify.");
+        File.WriteAllText(Path.Combine(cardFolder, "status.md"), "Result: pending.");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = Path.Combine(_workspace, "remote-stop"),
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                    ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
+                    ["DeliveryChain:Guarded"] = "false",
+                    ["Orchestration:Transitions:CodingCompletion"] = "Monolith",
+                }));
+        });
+        using var http = factory.CreateClient();
+        using var coding = new RClient(http, runnerId);
+        await coding.RegisterAsync(project, "service", CancellationToken.None);
+        var lease = await coding.AcquireLeaseAsync(
+            new RAcquire(card, runnerId, project, "coding-host", 4242, "codex"), CancellationToken.None);
+        Assert.True(lease.Granted);
+        var store = factory.Services.GetRequiredService<OrchestratorDecisionStore>();
+        var input = Shadow("operator-active-stop");
+        store.FreezeInputs(input);
+        var receipt = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(input.Grounds),
+            DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false,
+            "operator answer needed"));
+        store.PutReceipt(receipt);
+        var posted = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
+            new DecisionOperatorIntentRequest("stop", "Stop and hold this run"), DecisionGroundsPolicy.Json);
+        Assert.True(posted.IsSuccessStatusCode, await posted.Content.ReadAsStringAsync());
+        Assert.Equal("recorded, not applied:stop-requested",
+            store.GetOperatorIntent(receipt.ReceiptId)!.Outcome);
+        Assert.Equal(RemoteRunStopReasons.DecisionStop,
+            factory.Services.GetRequiredService<RemoteRunStopRequestStore>().Peek(card)!.Reason);
+        var renewed = await coding.RenewLeaseAsync(new RHeartbeat(
+            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, null,
+            lease.Lease.AttemptId, lease.Lease.AuthorityEpoch, "decision-stop-renew"), CancellationToken.None);
+        Assert.Equal(RemoteRunStopReasons.DecisionStop, renewed.StopRequest?.Reason);
+        var completed = await coding.CompleteRunAsync(new RRemoteComplete(
+            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, "Stopped",
+            AttemptId: lease.Lease.AttemptId, AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "decision-stop-completion"), CancellationToken.None);
+        Assert.Equal(TaskStates.Escalated, completed!.TargetState);
+        Assert.Equal(TaskStates.Escalated,
+            factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
+        Assert.Equal("applied:stopped-and-held", store.GetOperatorIntent(receipt.ReceiptId)!.Outcome);
+    }
+
+    [Fact]
+    public async Task Alternate_model_attempt_spend_is_included_once_in_occurrence_total()
     {
         var store = new OrchestratorDecisionStore((string?)null,
             new FakeTimeProvider(new DateTimeOffset(At)), new RatePricing());
@@ -614,6 +763,50 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Equal(150, row.OutputTokens);
         Assert.Equal(row.EstimatedUsd ?? 0, store.SpendSummary("AGT-1", null).PricedUsd);
         Assert.Equal(0, row.LateCalls);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _workspace }).Build();
+        var messages = new AgentMessageBusStore();
+        var bridge = new AgentMessageBusBridge(messages, configuration,
+            NullLogger<AgentMessageBusBridge>.Instance);
+        await bridge.EmitDecisionReceiptAsync(receipt,
+            otherBilledCalls: store.OtherBilledCalls(receipt));
+        var projected = Assert.Single(messages.Recent(_workspace, "project", 10));
+        Assert.Equal(3_000, projected.Tokens!.Input);
+        Assert.Equal(150, projected.Tokens.Output);
+        Assert.Equal((double)(row.EstimatedUsd ?? 0), projected.Tokens.Dollars);
+    }
+
+    [Fact]
+    public async Task Late_billed_call_adds_one_bus_usage_projection()
+    {
+        var store = new OrchestratorDecisionStore((string?)null,
+            new FakeTimeProvider(new DateTimeOffset(At)), new RatePricing());
+        var input = Shadow("orch_late_bus");
+        store.FreezeInputs(input);
+        var job = store.CreateJob(Request("orch_late_bus", 1, "gpt-6-sol"));
+        var claim = store.Claim(new("runner-one", "runner")).Work!;
+        var receipt = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(input.Grounds),
+            DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false, "call timed out"));
+        store.PutReceipt(receipt);
+        var completion = new OrchestratorDecisionJobCompletion(claim.JobId, claim.ClaimToken,
+            "runner-one", true, "{}", "gpt-6-sol",
+            [new DecisionUsageFrameV1("late-call", "gpt-6-sol", 1_000, 0, 0, 50, false)],
+            At, At.AddMinutes(1), null, false);
+        var added = store.CompleteWithProjection(completion);
+        Assert.True(added.Accepted);
+        var call = Assert.Single(added.NewLateCalls);
+        Assert.Empty(store.CompleteWithProjection(completion).NewLateCalls);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _workspace }).Build();
+        var messages = new AgentMessageBusStore();
+        var bridge = new AgentMessageBusBridge(messages, configuration,
+            NullLogger<AgentMessageBusBridge>.Instance);
+        await bridge.EmitDecisionLateCallAsync(receipt, call);
+        var projected = Assert.Single(messages.Recent(_workspace, "project", 10));
+        Assert.Equal(1_000, projected.Tokens!.Input);
+        Assert.Equal(50, projected.Tokens.Output);
+        Assert.Equal("engine-decision-late-call", projected.Topic);
+        Assert.Equal(1, store.Summary(receipt).LateCalls);
     }
 
     [Fact]

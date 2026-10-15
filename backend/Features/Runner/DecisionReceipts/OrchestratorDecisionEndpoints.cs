@@ -4,6 +4,7 @@ using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Registry;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
@@ -43,17 +44,24 @@ public static class OrchestratorDecisionEndpoints
                 OrchestratorDecisionReceiptV1 receipt, AccessSecurityStore security,
                 OrchestratorDecisionStore store, AgentMessageBusBridge bus, CancellationToken ct) =>
             {
-                var existed = store.GetReceipt(receipt.ReceiptId) is not null;
+                OrchestratorDecisionReceiptV1? createdReceipt = null;
+                IReadOnlyList<DecisionLateCallV1> billedCalls = [];
                 var result = MonolithOrchestrationEndpoints.Execute(() =>
                 {
                     if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
                         return Results.Unauthorized();
                     if (receipt.OccurrenceId != runId)
                         return Results.BadRequest(new ApiError("invalid-request", "Receipt occurrence does not match the route."));
-                    return Wire(store.PutReceipt(receipt));
+                    var projection = store.PutReceiptWithProjection(receipt);
+                    if (projection.Created)
+                    {
+                        createdReceipt = projection.Receipt;
+                        billedCalls = projection.OtherBilledCalls;
+                    }
+                    return Wire(projection.Receipt);
                 });
-                if (!existed && store.GetReceipt(receipt.ReceiptId) is { } stored)
-                    await bus.EmitDecisionReceiptAsync(stored, ct);
+                if (createdReceipt is not null)
+                    await bus.EmitDecisionReceiptAsync(createdReceipt, ct, billedCalls);
                 return result;
             });
         }
@@ -62,11 +70,21 @@ public static class OrchestratorDecisionEndpoints
             OrchestratorDecisionJobClaimRequest request, OrchestratorDecisionStore store) =>
             RunnerMatches(context, request.RunnerId) ? Wire(store.Claim(request)) : Results.Unauthorized())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
-        app.MapPost("/api/runner/orchestrator-decisions/complete", (HttpContext context,
-            OrchestratorDecisionJobCompletion completion, OrchestratorDecisionStore store) =>
-            !RunnerMatches(context, completion.RunnerId) ? Results.Unauthorized()
-                : store.Complete(completion) ? Results.Ok(new { accepted = true })
-                : Results.Conflict(new { accepted = false, error = "stale decision-job claim" }))
+        app.MapPost("/api/runner/orchestrator-decisions/complete", async (HttpContext context,
+            OrchestratorDecisionJobCompletion completion, OrchestratorDecisionStore store,
+            AgentMessageBusBridge bus, CancellationToken ct) =>
+        {
+            if (!RunnerMatches(context, completion.RunnerId)) return Results.Unauthorized();
+            var job = store.GetJob(completion.JobId);
+            var projection = store.CompleteWithProjection(completion);
+            if (!projection.Accepted)
+                return Results.Conflict(new { accepted = false, error = "stale decision-job claim" });
+            var receipt = job is null ? null : store.ReceiptForOccurrence(job.OccurrenceId);
+            if (receipt is not null)
+                foreach (var call in projection.NewLateCalls)
+                    await bus.EmitDecisionLateCallAsync(receipt, call, ct);
+            return Results.Ok(new { accepted = true });
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         var studio = app.MapGroup("/api/orchestration/decision-receipts");
@@ -88,11 +106,13 @@ public static class OrchestratorDecisionEndpoints
             OrchestratorDecisionStore store, ProjectRegistry projects) =>
             AuthorizedReceipt(context, receiptId, store, projects) is null ? Results.NotFound()
                 : store.GetOperatorIntent(receiptId) is { } intent ? Wire(intent) : Results.NotFound());
-        studio.MapPost("/{receiptId}/operator-intent", (HttpContext context, string receiptId,
+        studio.MapPost("/{receiptId}/operator-intent", async (HttpContext context, string receiptId,
             DecisionOperatorIntentRequest request, OrchestratorDecisionStore store,
-            ProjectRegistry projects) => MonolithOrchestrationEndpoints.Execute(() =>
-                AuthorizedReceipt(context, receiptId, store, projects) is null ? Results.NotFound()
-                    : Wire(store.PutOperatorIntent(receiptId, request))))
+            ProjectRegistry projects, TaskScannerService scanner, TaskRunnerService runner,
+            RunLeaseService leases, RemoteRunStopRequestStore stops,
+            TaskTransitionService transitions, IConfiguration configuration, CancellationToken ct) =>
+            await ApplyOperatorIntentAsync(context, receiptId, request, store, projects, scanner,
+                runner, leases, stops, transitions, configuration, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         studio.MapGet("/{receiptId}/outcome", (HttpContext context, string receiptId,
             OrchestratorDecisionStore store, MonolithOrchestrationStore orchestration,
@@ -114,6 +134,7 @@ public static class OrchestratorDecisionEndpoints
                 appliedAction = occurrence?.MonolithReceipt?.Action,
                 appliedReason = occurrence?.MonolithReceipt?.Reason,
                 engineAction = occurrence?.EngineReceipt?.Action,
+                operatorIntent = store.GetOperatorIntent(receipt.ReceiptId),
                 spend = store.Summary(receipt),
                 lateCalls = store.LateCalls(receipt.OccurrenceId),
                 laterDecisions = later,
@@ -122,6 +143,58 @@ public static class OrchestratorDecisionEndpoints
     }
 
     private static IResult Wire(object value) => Results.Json(value, WireJson);
+
+    private static async Task<IResult> ApplyOperatorIntentAsync(HttpContext context, string receiptId,
+        DecisionOperatorIntentRequest request, OrchestratorDecisionStore store, ProjectRegistry projects,
+        TaskScannerService scanner, TaskRunnerService runner, RunLeaseService leases,
+        RemoteRunStopRequestStore stops, TaskTransitionService transitions,
+        IConfiguration configuration, CancellationToken ct)
+    {
+        var receipt = AuthorizedReceipt(context, receiptId, store, projects);
+        if (receipt is null) return Results.NotFound();
+        DecisionOperatorIntentV1 intent;
+        try
+        {
+            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                ? human.User.Username : context.User.Identity?.Name ?? "Human Operator";
+            intent = store.PutOperatorIntent(receiptId, request, actor);
+            if (intent.AppliedAt is not null) return Wire(intent);
+            if (intent.Action is "raise" or "cut")
+                return Wire(store.ApplyRunLimit(receiptId,
+                    configuration.GetValue("Runner:RunTimeoutSeconds", 3600)));
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-request", ex.Message)); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new ApiError("invalid-state", ex.Message)); }
+
+        var task = scanner.ScanAllJobs().FirstOrDefault(item => item.Id == intent.TaskId
+            && item.ProjectName == receipt.Scope.ProjectId);
+        if (task is null) return Results.Conflict(new ApiError("card-missing", "The card is no longer available."));
+        var authorityKey = TaskIdentity.AuthorityKey(task);
+        var lease = leases.Peek(authorityKey).Lease;
+        if (lease is { AttemptId: not null })
+        {
+            try
+            {
+                var stop = stops.Record(authorityKey, RemoteRunStopReasons.DecisionStop, lease.AttemptId,
+                    intent.Actor, lease.FencingToken, "decision-stop:" + receiptId, lease.RunnerId);
+                stop = stops.ReconcileWithLease(stop, leases.Peek(authorityKey));
+                if (stop.TerminalAtUtc is null)
+                    return Wire(store.SetOperatorOutcome(receiptId, "recorded, not applied:stop-requested"));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new ApiError("stop-conflict", ex.Message));
+            }
+        }
+        runner.StopJob(task.Id, task.WatchPath);
+        var move = await transitions.MoveAsync(task.Id, TaskStates.Escalated, task.WatchPath, ct,
+            cause: TimelineActors.Human(intent.Actor), reason: intent.Reason,
+            suppressProductExecution: true, transitionCause: LaneChangeCauses.RunnerRequeue,
+            transitionDetail: "decision-stop");
+        if (move.Status != MoveJobStatus.Success)
+            return Results.Conflict(new ApiError("stop-hold-refused", move.Message ?? move.Status.ToString()));
+        return Wire(store.SetOperatorOutcome(receiptId, "applied:stopped-and-held"));
+    }
 
     private static OrchestratorDecisionReceiptV1? AuthorizedReceipt(HttpContext context, string receiptId,
         OrchestratorDecisionStore store, ProjectRegistry projects)
