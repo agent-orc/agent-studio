@@ -137,7 +137,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
             AcceptedIntegrationFailureCodes.GateInterrupted,
             afterRecovery.Failure?.Code);
         // The retry ladder owns the replay and never starts a new review round.
-        Assert.True(GateEnvironmentRetryPolicy.IsGateEnvironmentFailure(afterRecovery));
+        Assert.True(GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(afterRecovery));
     }
 
     /// <summary>

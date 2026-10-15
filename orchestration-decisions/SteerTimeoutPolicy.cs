@@ -1,4 +1,4 @@
-namespace AgentStudio.Shared;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// Pure decision core for Run-Liveness Slice B - the steer-timeout invariant

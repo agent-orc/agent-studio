@@ -14,6 +14,7 @@ public sealed class EngineOptions
     public int PostProcessingConcurrency { get; init; } = 3;
     public int GateDispatchConcurrency { get; init; } = 2;
     public int CompletionJudgeConcurrency { get; init; } = 4;
+    public int OperatorDecisionConcurrency { get; init; } = 2;
     public int PollSeconds { get; init; } = 2;
     public int LeaseSeconds { get; init; } = 120;
     public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
@@ -66,6 +67,7 @@ public sealed class EngineOptions
             PostProcessingConcurrency = Cap(value, "POST_PROCESSING_CONCURRENCY", 3),
             GateDispatchConcurrency = Cap(value, "GATE_DISPATCH_CONCURRENCY", 2),
             CompletionJudgeConcurrency = Cap(value, "COMPLETION_JUDGE_CONCURRENCY", 4),
+            OperatorDecisionConcurrency = Cap(value, "OPERATOR_DECISION_CONCURRENCY", 2),
             PollSeconds = Number(value, "POLL_SECONDS", 2, 1, 60),
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),
             HealthPort = EngineHealthProbe.ResolvePort(value),

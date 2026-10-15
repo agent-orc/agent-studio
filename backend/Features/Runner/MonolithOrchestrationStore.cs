@@ -154,6 +154,35 @@ public sealed class MonolithOrchestrationStore
         }
     }
 
+    /// <summary>
+    /// AGT-3060: one AI Operator occurrence per card, decider and subject. A
+    /// periodic decider gets a new key per period bucket; an event-triggered
+    /// one (null <paramref name="period"/>) keys on its subject alone. An active
+    /// occurrence of the same decider for the card is returned instead.
+    /// </summary>
+    public OrchestrationRunDto CreateOperatorDecision(string projectId, string taskId, string decider,
+        string payloadJson, string subjectKey, string expectedSourceState, string authorityAttemptId,
+        long authorityFence, long authorityEpoch, TimeSpan? period)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(decider);
+        if (period is { } value && value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(period));
+        var profile = OperatorDecisionProfile(decider);
+        lock (_gate)
+        {
+            var active = _runs.Values.FirstOrDefault(item => item.Run.ProjectId == projectId
+                && item.Run.TaskId == taskId && item.Run.CurrentStage == OrchestrationStage.OperatorDecision
+                && item.Profile == profile && item.Run.Status is "pending" or "leased" or "applying");
+            if (active is not null) return active.Run;
+            var key = period is { } bucketPeriod
+                ? $"operator:{decider}:{projectId}:{taskId}:{subjectKey}:{_time.GetUtcNow().Ticks / bucketPeriod.Ticks}"
+                : $"operator:{decider}:{projectId}:{taskId}:{subjectKey}";
+            return Create(projectId, taskId, OrchestrationStage.OperatorDecision, payloadJson, key,
+                expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch, profile: profile);
+        }
+    }
+
+    public static string OperatorDecisionProfile(string decider) => "AiOperator:" + decider;
+
     public OrchestrationRunDto? Get(string runId)
     {
         lock (_gate) return _runs.GetValueOrDefault(runId)?.Run;

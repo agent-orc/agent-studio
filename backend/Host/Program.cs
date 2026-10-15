@@ -94,6 +94,12 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 }
 
+// AGT-3060 (I18, AGT-W65 D14 A): the Orchestrator Engine is the only decider.
+// Outside a test host every transition profile and AI Operator decider waits
+// for an engine receipt; the Monolith and Shadow decision modes are test-only.
+if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
+    OrchestrationDecisionAuthority.RequireEngine(builder.Configuration);
+
 // Test-isolation guard (prevention). An integration test that boots
 // WebApplicationFactory<Program> must never touch the production task
 // workspace or registry. A loaded xunit assembly is the reliable in-process
@@ -625,21 +631,30 @@ builder.Services.AddSingleton<TaskRunnerService>();
 builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
 builder.Services.AddSingleton<CrashRecoveryDismissalStore>();
 builder.Services.AddSingleton<CrashRecoveryService>();
+// AGT-3060 (I18): background deciders collect facts and submit them to the AI
+// Operator in the Orchestrator Engine; each registered effect applies the
+// engine receipt through the existing keyed writers.
+builder.Services.AddSingleton<AiOperatorDecisionGateway>(sp => new AiOperatorDecisionGateway(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<MonolithOrchestrationStore>()));
 builder.Services.AddSingleton<StaleProgressArchiver>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<StaleProgressArchiver>());
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor
 // (boot adoption scan + uptime sweep). See
 // docs/concepts/run-liveness-and-slot-semantics.md.
 builder.Services.AddSingleton<RunLivenessMonitor>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<RunLivenessMonitor>());
 // Run-Liveness Slice B: the steer-timeout monitor - no steered / NeedsInput card
 // waits indefinitely. See docs/concepts/run-liveness-and-slot-semantics.md Rule 2.
 builder.Services.AddSingleton<ISteerTimeoutResolver, SteerTimeoutResolver>();
 builder.Services.AddSingleton<SteerTimeoutMonitor>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<SteerTimeoutMonitor>());
 builder.Services.AddSingleton<PickupFailureLog>();
 builder.Services.AddSingleton<InfraHaltLog>();
 builder.Services.AddSingleton<CrossSlugInfraCircuitBreaker>();
 builder.Services.AddSingleton<ProviderLimitRegistry>();
 builder.Services.AddSingleton<HumanReviewEscalation>();
 builder.Services.AddSingleton<RunTimeoutContinuationService>();
+builder.Services.AddSingleton<IAiOperatorEffect, RunTimeoutSalvageEffect>();
 // AGT-2870: operator stops for remotely executed runs. The request is parked
 // here until the owning runner picks it up on its next lease renewal.
 builder.Services.AddSingleton<RemoteRunStopRequestStore>();
@@ -933,6 +948,8 @@ builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp =>
+    sp.GetRequiredService<AgentStudio.Pipeline.GateEnvironmentRetryService>());
 // AGT-3009: a red merge gate is classified (environment, product, integration
 // branch, undecidable) and routed by the delivery-chain reconciler before it may
 // park. The fingerprint counter is the Task Server store the cause breaker reads.

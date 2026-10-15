@@ -298,3 +298,35 @@ public sealed class OperatorSweepLoop : IOrchestrationStageHandler
             JsonSerializer.Serialize(new { sweepDecision = decision })));
     }
 }
+
+/// <summary>
+/// AGT-3060 (I18): the AI Operator role for the periodic and event-triggered
+/// deciders that left the monolith. The authority applies the receipt.
+/// </summary>
+public sealed class AiOperatorDecisionLoop : IOrchestrationStageHandler
+{
+    public OrchestrationStage Stage => OrchestrationStage.OperatorDecision;
+
+    public Task<OrchestrationStageDecision> ExecuteAsync(OrchestrationRunDto run, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var payload = JsonSerializer.Deserialize<AiOperatorDecisionPayload>(run.PayloadJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidDataException("AI Operator occurrence payload is missing.");
+        var decision = EngineTransitionAdapter.Operator(payload);
+        return Task.FromResult(new OrchestrationStageDecision(
+            decision.Disposition switch
+            {
+                AiOperatorDisposition.Act => OrchestrationAction.Reissue,
+                AiOperatorDisposition.Ask => OrchestrationAction.Escalate,
+                _ => OrchestrationAction.Continue,
+            },
+            JsonSerializer.Serialize(new
+            {
+                component = nameof(AiOperatorDecisionLoop),
+                operatorDecision = decision,
+                decision = decision.ReceiptAction,
+                decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}:ai-operator",
+            })));
+    }
+}

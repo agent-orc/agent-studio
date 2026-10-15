@@ -101,7 +101,7 @@ public sealed class GateFailureRouterTests : IDisposable
         Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, step.FailureCode);
         Assert.StartsWith("[gate-triage environment]", step.Reason);
         var status = stack.Integration.BuildLookup([card])[card.TaskKey];
-        var ladder = GateEnvironmentRetryPolicy.Decide(card, status, reviewPassed: true, attemptsSpent: 0,
+        var ladder = DecideFacts(card, status, reviewPassed: true, attemptsSpent: 0,
             lastAttemptAt: null, failedAt: Now, GateEnvironmentRetryOptions.Default,
             Now);
         Assert.Equal(GateEnvironmentRetryAction.Wait, ladder.Action);
@@ -564,4 +564,16 @@ public sealed class GateFailureRouterTests : IDisposable
             return Task.FromResult<IReadOnlyList<string>?>(Cards(fingerprint));
         }
     }
+
+    private static GateEnvironmentRetryDecision DecideFacts(
+        TaskInfo task,
+        TaskIntegrationStatus? status,
+        bool reviewPassed,
+        int attemptsSpent,
+        DateTimeOffset? lastAttemptAt,
+        DateTimeOffset? failedAt,
+        GateEnvironmentRetryOptions options,
+        DateTimeOffset now)
+        => GateEnvironmentRetryPolicy.Decide(GateEnvironmentRetryFactsReader.Facts(
+            task, status, reviewPassed, attemptsSpent, lastAttemptAt, failedAt, options, now));
 }

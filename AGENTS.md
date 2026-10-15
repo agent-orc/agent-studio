@@ -35,8 +35,9 @@ apply only under `frontend/`.
   typed facts and apply returned decisions; do not duplicate rules in the
   monolith, Task Server, or engine adapters. Follow the
   [decision-library contract](docs/system/contracts/orchestration-decisions.md)
-  and keep `TransitionDecisionBoundaryTests` green. The monolith calls the
-  library only until I17 moves decision execution to the Orchestrator Engine.
+  and keep `TransitionDecisionBoundaryTests` and `MonolithDecisionBoundaryTests`
+  green. A production host is engine-only; background deciders submit facts
+  through `AiOperatorDecisionGateway` (AGT-3060).
 - UI work obeys the style-guide hard rules in
   [docs/quality/design/style-guide-hard-rules.md](./docs/quality/design/style-guide-hard-rules.md).
   Most-cited: no coloured left accent line or bar on cards, panels, rows,

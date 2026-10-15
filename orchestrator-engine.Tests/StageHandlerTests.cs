@@ -27,6 +27,30 @@ public sealed class StageHandlerTests
         Assert.Equal(OrchestrationAction.Reissue, result.Action);
         Assert.Contains("sweepDecision", result.OutputJson);
     }
+
+    [Theory]
+    [InlineData(false, OrchestrationAction.Reissue, "Act:demote-to-ready")]
+    [InlineData(true, OrchestrationAction.Continue, "Hold:none")]
+    public async Task Ai_operator_stage_decides_a_periodic_occurrence_with_a_receipt(
+        bool heartbeat, OrchestrationAction expected, string receipt)
+    {
+        var payload = new AiOperatorDecisionPayload(AiOperatorDeciders.RunLiveness, "progress:card",
+            RunLiveness: new RunLivenessFacts(heartbeat, false, 120, 30));
+        var at = new FrozenTimeProvider(DateTimeOffset.UnixEpoch).GetUtcNow().UtcDateTime;
+        var run = new OrchestrationRunDto("run", "project", "card", 1, "leased",
+            OrchestrationStage.OperatorDecision,
+            JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            0, at, at, null);
+
+        var result = await new AiOperatorDecisionLoop().ExecuteAsync(run, default);
+
+        Assert.Equal(expected, result.Action);
+        using var output = JsonDocument.Parse(result.OutputJson);
+        Assert.Equal(receipt, output.RootElement.GetProperty("decision").GetString());
+        Assert.Equal(AiOperatorDeciders.RunLiveness, output.RootElement
+            .GetProperty("operatorDecision").GetProperty("Decider").GetString());
+        Assert.EndsWith(":ai-operator", output.RootElement.GetProperty("decider").GetString());
+    }
     [Theory]
     [InlineData("""{"agentOutcome":"done"}""", OrchestrationAction.Continue)]
     [InlineData("""{"agentOutcome":"needs-input"}""", OrchestrationAction.Escalate)]
