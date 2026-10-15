@@ -644,6 +644,15 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false,
             "operator answer needed"));
         store.PutReceipt(receipt);
+        if (action is "raise" or "cut")
+        {
+            var rejected = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
+                new DecisionOperatorIntentRequest(action, "Wrong limit direction",
+                    RequestedEmergencyMinutes: action == "raise" ? 30 : 120), DecisionGroundsPolicy.Json);
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, rejected.StatusCode);
+            Assert.Null(store.GetOperatorIntent(receipt.ReceiptId));
+            Assert.DoesNotContain($"operator-response:{receipt.ReceiptId}", store.PendingReceipts(10));
+        }
         var posted = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
             new DecisionOperatorIntentRequest(action, "Operator selected the next run boundary",
                 RequestedEmergencyMinutes: minutes), DecisionGroundsPolicy.Json);

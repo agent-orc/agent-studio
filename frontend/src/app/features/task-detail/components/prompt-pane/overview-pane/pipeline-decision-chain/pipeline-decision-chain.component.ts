@@ -67,6 +67,7 @@ export class PipelineDecisionChainComponent implements OnDestroy {
   readonly intentBusy = signal(false);
   readonly intentError = signal<string | null>(null);
   private loadSequence = 0;
+  private intentLoadSequence = 0;
   private readonly refreshTimer = setVisibleInterval(() => {
     const taskId = this.taskId();
     if (taskId && this.current())
@@ -113,9 +114,29 @@ export class PipelineDecisionChainComponent implements OnDestroy {
       this.receipts.set([...receipts].reverse());
       this.cardSpend.set(card);
       this.projectSpend.set(project);
+      void this.refreshOpenIntent(receipts);
     } catch {
       if (sequence === this.loadSequence)
         this.loadError.set('Could not refresh engine decision receipts.');
+    }
+  }
+
+  private async refreshOpenIntent(receipts: ReceiptSummary[]): Promise<void> {
+    const receiptId = this.openReceipt();
+    const item = receipts.find(receipt => receipt.receiptId === receiptId);
+    if (!item || this.intentBusy()) return;
+    const sequence = ++this.intentLoadSequence;
+    try {
+      const intent = await firstValueFrom(this.http.get<OperatorIntent>(`${item.evidenceRef}/operator-intent`))
+        .catch((error: unknown) => {
+          if (error instanceof HttpErrorResponse && error.status === 404) return null;
+          throw error;
+        });
+      if (this.openReceipt() === receiptId && sequence === this.intentLoadSequence)
+        this.operatorIntent.set(intent);
+    } catch {
+      if (this.openReceipt() === receiptId && sequence === this.intentLoadSequence)
+        this.receiptError.set('Could not refresh the operator choice.');
     }
   }
 
@@ -126,6 +147,7 @@ export class PipelineDecisionChainComponent implements OnDestroy {
     this.receiptError.set(null);
     this.operatorIntent.set(null);
     this.intentError.set(null);
+    const intentSequence = ++this.intentLoadSequence;
     try {
       const [detail, intent] = await Promise.all([
         firstValueFrom(this.http.get<ReceiptDetail>(item.evidenceRef)),
@@ -136,7 +158,8 @@ export class PipelineDecisionChainComponent implements OnDestroy {
           }),
       ]);
       if (this.openReceipt() === item.receiptId) this.receiptDetail.set(detail);
-      if (this.openReceipt() === item.receiptId) this.operatorIntent.set(intent);
+      if (this.openReceipt() === item.receiptId && intentSequence === this.intentLoadSequence)
+        this.operatorIntent.set(intent);
     } catch {
       if (this.openReceipt() === item.receiptId) this.receiptError.set('Could not load the decision receipt.');
     }
@@ -146,6 +169,7 @@ export class PipelineDecisionChainComponent implements OnDestroy {
     const reason = this.intentReason().trim();
     if (!reason || this.intentBusy()) return;
     this.intentBusy.set(true);
+    ++this.intentLoadSequence;
     this.intentError.set(null);
     try {
       const intent = await firstValueFrom(this.http.post<OperatorIntent>(
