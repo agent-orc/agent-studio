@@ -746,9 +746,12 @@ public sealed class ProjectRegistry
         var trimmed = string.IsNullOrWhiteSpace(repositoryUrl) ? null : repositoryUrl.Trim();
         if (trimmed == null) return null;
         if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var parsed)
-            || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp))
+            || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp)
+            || !string.IsNullOrEmpty(parsed.UserInfo)
+            || !string.IsNullOrEmpty(parsed.Query)
+            || !string.IsNullOrEmpty(parsed.Fragment))
             throw new ArgumentException(
-                "repositoryUrl must be an absolute http or https URL", nameof(repositoryUrl));
+                "repositoryUrl must be an absolute http or https URL without credentials, query, or fragment", nameof(repositoryUrl));
         return trimmed;
     }
 

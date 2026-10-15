@@ -19,6 +19,7 @@ import { AppearanceSettingsComponent } from '../../../studio-shell/components/ap
 import { UpdatesSettingsComponent } from '../../../update';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
+import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
@@ -85,6 +86,7 @@ interface SettingsRailItem {
     UpdatesSettingsComponent,
     WorkspaceManagementComponent,
     RetentionAdminComponent,
+    FirstRunChecklistComponent,
     SectionHeaderComponent,
     TreeRowComponent,
     StudioIconComponent,
@@ -116,6 +118,7 @@ export class WorkspaceOverlaysComponent {
   /** Rail order: overview first, then the Global group, then the Workspace group. */
   readonly railItems: readonly SettingsRailItem[] = [
     { key: 'overview', label: 'Overview', description: 'Everything in one place, split into Global and Workspace.', icon: 'grid', group: 'general' },
+    { key: 'first-run', label: 'First-run checklist', description: 'Set up access, a project, an execution host, and a proof card.', icon: 'list', group: 'general' },
     { key: 'appearance', label: 'Appearance', description: 'Theme and activity-bar side. Applies to you everywhere.', icon: 'sun', group: 'global' },
     { key: 'updates', label: 'Updates', description: 'Keep this instance in sync with stable.', icon: 'refresh', group: 'global' },
     { key: 'workspaces', label: 'Workspaces', description: 'Manage every workspace and its projects.', icon: 'folder', group: 'global' },
@@ -200,6 +203,7 @@ export class WorkspaceOverlaysComponent {
       case 'workspaces': return 'workspace-management-overlay';
       case 'task-server': return 'workspace-task-server-overlay';
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
+      case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
       case 'working-memory': return 'workspace-working-memory-overlay';
       case 'overview': return 'workspace-settings-overview-panel';
