@@ -543,6 +543,7 @@ public sealed partial class TaskServerStore
             var decider = engineTransition is not null ? "engine"
                 : acceptedAction is not null ? "engine-stage-action" : "task-server-compatibility";
             acceptedAction ??= transition?.Action;
+            var integrationSource = await ReadIntegrationSourceAsync(connection, transaction, run, stagePayload, ct);
             var decision = OrchestrationSettlementPolicy.Decide(
                 request.Action,
                 stages,
@@ -553,7 +554,8 @@ public sealed partial class TaskServerStore
                 run.TaskVersion,
                 currentTaskVersion,
                 repeatedBlock, transition, acceptedAction,
-                await IsReviewedPublicationAsync(connection, transaction, run.ProjectId, ct));
+                await IsReviewedPublicationAsync(connection, transaction, run.ProjectId, ct),
+                integrationSource.Source);
             if (decision.Transition?.RequiresLinkedFollowUp == true)
                 await ApplyDecisionFollowUpAsync(connection, transaction, run, decision.Transition, actorId, now, ct);
             if (decision.Transition?.ContinuationBase is { } continuationBase
@@ -572,7 +574,7 @@ public sealed partial class TaskServerStore
                 await QueueFixRoundPromptAsync(connection, transaction, run, decision.Transition,
                     currentTaskVersion, actorId, now, ct);
             if (decision.RunStatus == OrchestrationSettlementPolicy.IntegratingStatus)
-                await QueueIntegrationAsync(connection, transaction, run, stagePayload!, actorId, now, ct);
+                await QueueIntegrationAsync(connection, transaction, run, stagePayload!, integrationSource, actorId, now, ct);
             var completedAt = decision.IsTerminal ? now : (DateTime?)null;
 
             await ExecuteAsync(connection, """

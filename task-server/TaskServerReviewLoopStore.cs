@@ -381,25 +381,23 @@ public sealed partial class TaskServerStore
     }
 
     /// <summary>
-    /// Queues the integration of an accepted delivery. The card waits in Auto
-    /// Review; a runner host holding the project's publication lease executes
-    /// the command and its report applies the lane.
+    /// What the integration executor would publish for this run's accepted
+    /// delivery: the fenced result of the coding RunAttempt, always fetched
+    /// from and pushed to the registered project repository. A result without
+    /// a ref and SHA (source bundle only) or recorded against another remote
+    /// cannot be published; the settlement policy escalates it.
     /// </summary>
-    private async Task QueueIntegrationAsync(
+    private static async Task<IntegrationSourceFacts> ReadIntegrationSourceAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         OrchestrationRunDto run,
-        StagePayload payload,
-        string actorId,
-        DateTime now,
+        StagePayload? payload,
         CancellationToken ct)
     {
-        var repository = await ReadProjectRepositoryAsync(connection, transaction, run.ProjectId, ct)
-            ?? throw new TaskServerConflictException("integration-repository-missing",
-                "Reviewed publication requires a registered project repository.");
-        var sourceRunId = payload.RunAttemptId
-            ?? throw new TaskServerConflictException("orchestration-envelope-incomplete",
-                "The accepted delivery names no coding RunAttempt.");
+        var repository = await ReadProjectRepositoryAsync(connection, transaction, run.ProjectId, ct);
+        var sourceRunId = payload?.RunAttemptId;
+        if (repository is null || string.IsNullOrWhiteSpace(sourceRunId))
+            return new(IntegrationSource.ResultMissing, repository, sourceRunId, null, null);
         string? repositoryUrl = null, resultRef = null, resultSha = null;
         await using (var command = Command(connection, """
             SELECT repository_url, result_ref, result_sha FROM runs WHERE id = $run AND task_id = $task;
@@ -414,8 +412,53 @@ public sealed partial class TaskServerStore
             }
         }
         if (string.IsNullOrWhiteSpace(resultRef) || string.IsNullOrWhiteSpace(resultSha))
+            return new(IntegrationSource.ResultMissing, repository, sourceRunId, null, null);
+        if (!string.IsNullOrWhiteSpace(repositoryUrl) && !SameRepository(repositoryUrl, repository.RepositoryUrl))
+            return new(IntegrationSource.RepositoryMismatch, repository, sourceRunId, resultRef, resultSha);
+        return new(IntegrationSource.Publishable, repository, sourceRunId, resultRef, resultSha);
+    }
+
+    private static bool SameRepository(string runRepositoryUrl, string registeredRepositoryUrl)
+    {
+        try
+        {
+            return string.Equals(ProjectRepositoryPolicy.Canonicalize(runRepositoryUrl), registeredRepositoryUrl,
+                StringComparison.Ordinal);
+        }
+        catch (ArgumentException)
+        {
+            // A remote that is not even canonical is never the registered one.
+            return false;
+        }
+    }
+
+    private sealed record IntegrationSourceFacts(
+        IntegrationSource Source,
+        ProjectRepositoryDto? Repository,
+        string? SourceRunId,
+        string? ResultRef,
+        string? ResultSha);
+
+    /// <summary>
+    /// Queues the integration of an accepted delivery. The card waits in Auto
+    /// Review; a runner host holding the project's publication lease executes
+    /// the command and its report applies the lane.
+    /// </summary>
+    private async Task QueueIntegrationAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        OrchestrationRunDto run,
+        StagePayload payload,
+        IntegrationSourceFacts source,
+        string actorId,
+        DateTime now,
+        CancellationToken ct)
+    {
+        // The settlement policy queues an integration only for a publishable source.
+        if (source is not { Source: IntegrationSource.Publishable, Repository: { } repository,
+                SourceRunId: { } sourceRunId, ResultRef: { } resultRef, ResultSha: { } resultSha })
             throw new TaskServerConflictException("integration-result-missing",
-                "The accepted delivery has no fenced result ref and SHA.");
+                "The accepted delivery has no publishable fenced result.");
         var integrationId = $"int_{Guid.NewGuid():N}";
         await ExecuteAsync(connection, """
             INSERT INTO integration_commands(
@@ -428,7 +471,7 @@ public sealed partial class TaskServerStore
             """, ct, transaction,
             ("$id", integrationId), ("$project", run.ProjectId), ("$task", run.TaskId), ("$run", run.RunId),
             ("$source", sourceRunId), ("$review", payload.ReviewAttemptId ?? string.Empty),
-            ("$repository", repository.RepositoryId), ("$url", repositoryUrl ?? repository.RepositoryUrl),
+            ("$repository", repository.RepositoryId), ("$url", repository.RepositoryUrl),
             ("$ref", repository.IntegrationRef), ("$result_ref", resultRef), ("$sha", resultSha.ToLowerInvariant()),
             ("$now", Iso(now)));
         await AuditAsync(connection, transaction, actorId, "integration.queued", "task", run.TaskId,
@@ -551,6 +594,60 @@ public sealed partial class TaskServerStore
                 lease);
         }, ct);
         return response!;
+    }
+
+    /// <summary>
+    /// Extends the publication lease of a running integration so a long fetch,
+    /// merge, or push keeps its fence. A lease that already expired, was
+    /// granted again, or belongs to another holder is not revived.
+    /// </summary>
+    public async Task<PublicationLeaseDto> RenewPublicationLeaseAsync(
+        string integrationId, IntegrationLeaseRenewRequest request, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        PublicationLeaseDto? renewed = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            IntegrationCommandDto command;
+            await using (var read = Command(connection, IntegrationSelect + " WHERE id = $id;",
+                transaction, ("$id", integrationId)))
+            await using (var reader = await read.ExecuteReaderAsync(ct))
+            {
+                if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Integration command was not found.");
+                command = ReadIntegration(reader);
+            }
+            PublicationLeaseDto lease;
+            string status;
+            await using (var read = Command(connection, """
+                SELECT lease_id, integration_id, runner_id, instance_id, fence, acquired_at, expires_at, status
+                  FROM publication_leases WHERE project_id = $project AND integration_ref = $ref;
+                """, transaction, ("$project", command.ProjectId), ("$ref", command.IntegrationRef)))
+            await using (var reader = await read.ExecuteReaderAsync(ct))
+            {
+                if (!await reader.ReadAsync(ct))
+                    throw new TaskServerConflictException("publication-lease-missing", "No publication lease is held.");
+                lease = new PublicationLeaseDto(reader.GetString(0), command.ProjectId, command.IntegrationRef,
+                    reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4),
+                    Parse(reader.GetString(5)), Parse(reader.GetString(6)));
+                status = reader.GetString(7);
+            }
+            if (lease.LeaseId != request.LeaseId || lease.Fence != request.Fence || lease.RunnerId != request.RunnerId
+                || lease.InstanceId != request.InstanceId || lease.IntegrationId != integrationId)
+                throw new TaskServerConflictException("stale-fence",
+                    "The renewal does not hold the current publication lease for this integration.");
+            var now = UtcNow;
+            if (status != "active" || lease.ExpiresAt <= now || command.Status != IntegrationCommandStates.Leased)
+                throw new TaskServerConflictException("publication-lease-expired",
+                    "The publication lease expired before the renewal.");
+            var ttl = Math.Clamp(request.RequestedTtlSeconds, MinimumPublicationLeaseSeconds, MaximumPublicationLeaseSeconds);
+            renewed = lease with { ExpiresAt = now.AddSeconds(ttl) };
+            await ExecuteAsync(connection, """
+                UPDATE publication_leases SET expires_at = $expires
+                 WHERE project_id = $project AND integration_ref = $ref AND lease_id = $lease AND status = 'active';
+                """, ct, transaction, ("$expires", Iso(renewed.ExpiresAt)), ("$project", command.ProjectId),
+                ("$ref", command.IntegrationRef), ("$lease", lease.LeaseId));
+        }, ct);
+        return renewed!;
     }
 
     public async Task<IntegrationReportResponse> ReportIntegrationAsync(

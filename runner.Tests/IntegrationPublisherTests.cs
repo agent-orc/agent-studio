@@ -12,6 +12,7 @@ public sealed class IntegrationPublisherTests : IDisposable
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "agent-runner-integration-" + Guid.NewGuid().ToString("N"));
+    private readonly List<string> _log = [];
 
     [Fact]
     public async Task Fast_forward_publishes_the_result_and_a_repeat_reports_it_contained()
@@ -21,13 +22,13 @@ public sealed class IntegrationPublisherTests : IDisposable
         await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/one");
 
         var published = await IntegrationPublisher.PublishAsync(
-            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 1, Path.Combine(_root, "state"), default);
+            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 1, Path.Combine(_root, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Integrated, published.Outcome);
         Assert.Equal(result, published.IntegratedSha);
         Assert.Equal(result, await RevParseAsync(origin, "refs/heads/develop"));
         var repeat = await IntegrationPublisher.PublishAsync(
-            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 2, Path.Combine(_root, "state"), default);
+            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 2, Path.Combine(_root, "state"), _log.Add, default);
         Assert.Equal(IntegrationOutcomeKinds.AlreadyIntegrated, repeat.Outcome);
         Assert.False(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "state")).Any());
     }
@@ -45,7 +46,7 @@ public sealed class IntegrationPublisherTests : IDisposable
         var moved = await RevParseAsync(origin, "refs/heads/develop");
 
         var merged = await IntegrationPublisher.PublishAsync(
-            Command(origin, "develop", "refs/heads/results/two", result), 1, Path.Combine(_root, "state"), default);
+            Command(origin, "develop", "refs/heads/results/two", result), 1, Path.Combine(_root, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Integrated, merged.Outcome);
         var tip = await RevParseAsync(origin, "refs/heads/develop");
@@ -57,7 +58,7 @@ public sealed class IntegrationPublisherTests : IDisposable
         var conflicting = await CommitAsync(work, "feature.txt", "conflict", "Conflicting");
         await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/three");
         var conflict = await IntegrationPublisher.PublishAsync(
-            Command(origin, "develop", "refs/heads/results/three", conflicting), 1, Path.Combine(_root, "state"), default);
+            Command(origin, "develop", "refs/heads/results/three", conflicting), 1, Path.Combine(_root, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Conflict, conflict.Outcome);
         Assert.Null(conflict.IntegratedSha);
@@ -73,7 +74,7 @@ public sealed class IntegrationPublisherTests : IDisposable
 
         var refused = await IntegrationPublisher.PublishAsync(
             Command(origin, "develop", "refs/heads/results/four", new string('9', 40)),
-            1, Path.Combine(_root, "state"), default);
+            1, Path.Combine(_root, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Failed, refused.Outcome);
         Assert.NotEqual(new string('9', 40), await RevParseAsync(origin, "refs/heads/develop"));
