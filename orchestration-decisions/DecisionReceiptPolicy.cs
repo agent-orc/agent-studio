@@ -110,7 +110,7 @@ public static class DecisionReceiptPolicy
                     return Invalid("forbidden-action", Rejected(chosen, "forbidden-action:" + match.RejectionReason));
             }
             double? confidence = root.TryGetProperty("confidence", out var value)
-                && value.TryGetDouble(out var parsed) ? parsed : null;
+                && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var parsed) ? parsed : null;
             if (confidence is not (>= 0 and <= 1))
                 return Invalid("confidence-out-of-range", Rejected(chosen, "confidence-out-of-range"));
             var reasoning = Text(root, "reasoning")?.Trim();

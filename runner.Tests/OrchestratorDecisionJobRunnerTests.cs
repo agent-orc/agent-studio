@@ -7,6 +7,7 @@ namespace AgentRunner.Tests;
 /// <summary>AGT-3063 runner-hosted shadow decision job.</summary>
 public sealed class OrchestratorDecisionJobRunnerTests
 {
+    // clock-independent: completion mapping and admission take start and end times as data and never read "now".
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
     private static readonly OrchestratorDecisionJobWork Work = new("odj_1", "claim-1", "prompt", "codex",
         "gpt-6-sol", "medium", 540, At.AddMinutes(10));
@@ -41,6 +42,29 @@ public sealed class OrchestratorDecisionJobRunnerTests
         Assert.Empty(completion.Usage);
         Assert.True(completion.TransportFailure);
         Assert.Equal("connection reset", completion.Error);
+    }
+
+    [Fact]
+    public void Prompt_beyond_the_input_envelope_is_refused_before_any_call()
+    {
+        var bounded = Work with { MaxInputTokens = 8_000, MaxOutputTokens = 1_000 };
+
+        Assert.Null(OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 32_000) }));
+        Assert.Equal("call-token-cap-exceeded: prompt estimate 8001 input tokens against 8000",
+            OrchestratorDecisionJobRunner.PromptOverrunReason(bounded with { Prompt = new string('x', 32_001) }));
+        Assert.Null(OrchestratorDecisionJobRunner.PromptOverrunReason(Work with { Prompt = new string('x', 64_000) }));
+    }
+
+    [Fact]
+    public void Output_envelope_reaches_each_cli_through_its_native_knob()
+    {
+        Assert.Equal(new Dictionary<string, string> { ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = "1000" },
+            ReadOnlyCarTurn.OutputCapEnvironment("claude", 1_000));
+        Assert.Null(ReadOnlyCarTurn.OutputCapTuning("claude", 1_000));
+        Assert.Equal(new Dictionary<string, string> { ["model_max_output_tokens"] = "1000" },
+            ReadOnlyCarTurn.OutputCapTuning("codex", 1_000));
+        Assert.Null(ReadOnlyCarTurn.OutputCapEnvironment("codex", 1_000));
+        Assert.Null(ReadOnlyCarTurn.OutputCapTuning("codex", null));
     }
 
     [Fact]

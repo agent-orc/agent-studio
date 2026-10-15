@@ -8,6 +8,7 @@ namespace AgentStudio.Tests;
 /// <summary>AGT-3063 pure grounds, ledger, response and receipt rules (AGT-W73 OD-S1).</summary>
 public sealed class DecisionGroundsPolicyTests
 {
+    // clock-independent: pure policy inputs; no rule here reads "now", every time is passed in as data.
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
 
     // $10 per million uncached input, $1 cached, $2 cache write, $50 output.
@@ -170,6 +171,11 @@ public sealed class DecisionGroundsPolicyTests
     [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"},{"action":"ask","target":"operator:human-review"}],"confidence":0.8,"reasoning":"r","citedFacts":["run.outcome"]}""", "chosen-action-count")]
     [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":1.7,"reasoning":"r","citedFacts":["run.outcome"]}""", "confidence-out-of-range")]
     [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":0.8,"reasoning":"r","citedFacts":["invented"]}""", "insufficient-evidence")]
+    [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":"high","reasoning":"r","citedFacts":["run.outcome"]}""", "confidence-out-of-range")]
+    [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":null,"reasoning":"r","citedFacts":["run.outcome"]}""", "confidence-out-of-range")]
+    [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":{"value":0.8},"reasoning":"r","citedFacts":["run.outcome"]}""", "confidence-out-of-range")]
+    [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":true,"reasoning":"r","citedFacts":["run.outcome"]}""", "confidence-out-of-range")]
+    [InlineData("""{"chosenActions":[{"action":"prepare","target":"review-subject"}],"reasoning":"r","citedFacts":["run.outcome"]}""", "confidence-out-of-range")]
     [InlineData("The model wrote prose.", "no-json-object")]
     public void Model_response_must_choose_an_available_candidate_from_the_closed_union(string text, string? failure)
     {
@@ -207,6 +213,87 @@ public sealed class DecisionGroundsPolicyTests
         Assert.Equal(0.9, receipt.Confidence);
         Assert.Equal("Review passes.", receipt.Prediction);
         Assert.Contains(receipt.FloorRejected, item => item.Action == DecisionActionKinds.Halt);
+    }
+
+    [Fact]
+    public void Malformed_confidence_still_yields_the_degraded_receipt()
+    {
+        var grounds = DecisionGroundsPolicy.Freeze(Input());
+        var job = Job(new OrchestratorDecisionJobResult(true,
+            """{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":"0.9","reasoning":"r","citedFacts":["run.outcome"]}""",
+            "codex", "gpt-6-sol", "medium", new(6_000, 0, 0, 300), new(DecisionPriceStatuses.Priced, 0.075m),
+            ["codex:thread-1"], 0, At, At.AddSeconds(20), "runner-one", null, false));
+
+        var receipt = DecisionReceiptPolicy.Build(new(grounds, Deterministic, "settled", job, 1, false, null));
+
+        Assert.Equal(DecisionCallStatuses.InvalidResponse, receipt.Call.Status);
+        Assert.Equal("confidence-out-of-range", receipt.Call.Error);
+        Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Ask, DecisionReceiptPolicy.DegradedTarget,
+            DecisionReceiptPolicy.ShadowDispatch), receipt.Chosen[^1]);
+        Assert.Null(receipt.Confidence);
+        Assert.Equal(0.075m, receipt.Call.Price.EstimatedUsd);
+    }
+
+    [Theory]
+    [InlineData(23, 4.99, null)]
+    [InlineData(24, 0, "card call cap of 24 decision calls reached")]
+    [InlineData(1, 5, "card priced decision spend cap of 5 USD reached")]
+    public void Card_cost_cap_counts_calls_and_priced_spend(int calls, double usd, string? reason)
+        => Assert.Equal(reason, DecisionCostCapPolicy.CardReason(
+            new(calls, DecisionTokenUsageV1.Zero, (decimal)usd)));
+
+    [Theory]
+    [InlineData(true, 47, 0, 0, 0, 0, null)]
+    [InlineData(true, 48, 0, 0, 0, 0, "host-day cap of 48 scheduled decision calls reached")]
+    [InlineData(false, 48, 11, 0, 0, 0, null)]
+    [InlineData(false, 0, 12, 0, 0, 0, "host-day cap of 12 event decision calls reached")]
+    [InlineData(true, 10, 2, 172_001, 0, 0, "host-day cap of 180000 decision input tokens reached")]
+    [InlineData(true, 10, 2, 172_000, 89_000, 0, null)]
+    [InlineData(true, 10, 2, 0, 89_001, 0, "host-day cap of 90000 decision output tokens reached")]
+    [InlineData(false, 10, 2, 0, 0, 10, "host-day priced decision spend cap of 10 USD reached")]
+    public void Host_day_cap_splits_calls_and_shares_tokens_and_spend_with_the_new_call_envelope(
+        bool scheduledTrigger, int scheduledCalls, int eventCalls, long input, long output, double usd, string? reason)
+    {
+        // Half of the usage sits in each bucket, so the shared totals are what counts.
+        var scheduled = new DecisionSpendSnapshot(scheduledCalls,
+            new(input / 2, 0, 0, output / 2), (decimal)usd / 2);
+        var events = new DecisionSpendSnapshot(eventCalls,
+            new(input - input / 2, 0, 0, output - output / 2), (decimal)usd - (decimal)usd / 2);
+
+        Assert.Equal(reason, DecisionCostCapPolicy.HostDayReason(scheduled, events, scheduledTrigger,
+            DecisionGroundsPolicy.MaxCallInputTokens, DecisionGroundsPolicy.MaxCallOutputTokens));
+    }
+
+    [Fact]
+    public void Host_day_budget_applies_to_occurrences_without_a_card_per_host_and_utc_day()
+    {
+        var card = new GroundsScopeV1("card", "project", "AGT-1", "attempt-1", 1, 3, "host-a");
+        var host = new GroundsScopeV1("host", null, null, null, null, null, "host-a");
+
+        Assert.True(DecisionCostCapPolicy.ChargesCard(card));
+        Assert.False(DecisionCostCapPolicy.ChargesCard(host));
+        Assert.True(DecisionCostCapPolicy.IsScheduled(new("periodic", "FluidCapacity", At)));
+        Assert.False(DecisionCostCapPolicy.IsScheduled(new("step-transition", "CodingCompletion", At)));
+        Assert.Equal("host-a:2026-10-15", DecisionCostCapPolicy.HostDayKey(host, At));
+        Assert.Equal("local:2026-10-16", DecisionCostCapPolicy.HostDayKey(host with { HostId = null }, At.AddHours(16)));
+    }
+
+    [Theory]
+    [InlineData(8_000, 0, 0, 1_000, null)]
+    [InlineData(1_000, 6_500, 501, 10, "call-token-cap-exceeded: measured 8001 input and 10 output tokens against 8000 and 1000")]
+    [InlineData(100, 0, 0, 1_001, "call-token-cap-exceeded: measured 100 input and 1001 output tokens against 8000 and 1000")]
+    public void Measured_usage_over_the_call_envelope_is_an_overrun(long uncached, long cached, long write,
+        long output, string? reason)
+        => Assert.Equal(reason, DecisionCostCapPolicy.MeasuredOverrunReason(new(uncached, cached, write, output),
+            DecisionGroundsPolicy.MaxCallInputTokens, DecisionGroundsPolicy.MaxCallOutputTokens));
+
+    [Fact]
+    public void Requested_call_envelope_defaults_to_and_may_not_exceed_the_per_call_cap()
+    {
+        Assert.Equal((8_000, 1_000), DecisionCostCapPolicy.Envelope(0, -1));
+        Assert.Null(DecisionCostCapPolicy.CallEnvelopeReason(8_000, 1_000));
+        Assert.NotNull(DecisionCostCapPolicy.CallEnvelopeReason(8_001, 1_000));
+        Assert.NotNull(DecisionCostCapPolicy.CallEnvelopeReason(8_000, 1_001));
     }
 
     [Fact]

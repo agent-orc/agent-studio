@@ -339,7 +339,9 @@ public sealed record OrchestratorDecisionJobWork(
     string Model,
     string? ThinkingLevel,
     int TimeoutSeconds,
-    DateTime ClaimExpiresAt);
+    DateTime ClaimExpiresAt,
+    int MaxInputTokens = 0,
+    int MaxOutputTokens = 0);
 
 public sealed record OrchestratorDecisionJobClaimResponse(
     string Status,
@@ -438,4 +440,19 @@ public sealed record OrchestratorDecisionReceiptSummary(
     string PriceStatus,
     decimal? EstimatedUsd,
     string EvidenceRef,
-    DateTime EndedAt);
+    DateTime EndedAt,
+    int LateCalls = 0);
+
+/// <summary>
+/// Usage of a decision call that a runner reported after the receipt of its
+/// occurrence was stored. The receipt stays immutable; spend views add this.
+/// </summary>
+public sealed record DecisionLateCallV1(
+    string JobId,
+    string? HostId,
+    string? Model,
+    DecisionTokenUsageV1 Tokens,
+    DecisionPriceV1 Price,
+    IReadOnlyList<string> ProviderCallIds,
+    DateTime EndedAt,
+    string? Error);

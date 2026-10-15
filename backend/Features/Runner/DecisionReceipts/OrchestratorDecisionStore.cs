@@ -14,8 +14,9 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed class OrchestratorDecisionStore
 {
-    public const int MaxCallsPerCard = 24;
-    public const decimal MaxPricedUsdPerCard = 5m;
+    public const int MaxCallsPerCard = DecisionCostCapPolicy.MaxCallsPerCard;
+    public const decimal MaxPricedUsdPerCard = DecisionCostCapPolicy.MaxPricedUsdPerCard;
+    public const string SupersededByReceipt = "superseded-by-receipt";
     public static readonly TimeSpan ClaimTtl = TimeSpan.FromMinutes(10);
     private static readonly JsonSerializerOptions Json = DecisionGroundsPolicy.Json;
     private readonly object _gate = new();
@@ -79,7 +80,9 @@ public sealed class OrchestratorDecisionStore
         {
             var input = _inputs.GetValueOrDefault(request.OccurrenceId)?.Grounds
                 ?? throw new KeyNotFoundException("No decision grounds were frozen for this occurrence.");
-            if (input.Scope.TaskId != request.TaskId || input.Scope.ProjectId != request.ProjectId)
+            // An occurrence without a card has null scope ids; the engine sends them as empty strings.
+            if ((input.Scope.TaskId ?? string.Empty) != request.TaskId
+                || (input.Scope.ProjectId ?? string.Empty) != request.ProjectId)
                 throw new InvalidOperationException("decision-job-scope-mismatch");
             var existing = _jobs.Values.FirstOrDefault(job => job.Dto.OccurrenceId == request.OccurrenceId
                 && job.Dto.Attempt == request.Attempt);
@@ -90,19 +93,22 @@ public sealed class OrchestratorDecisionStore
                     throw new InvalidOperationException("decision-job-idempotency-conflict");
                 return existing.Dto;
             }
-            // A call counts once a runner claimed it or while it may still be claimed.
-            var cardJobs = _jobs.Values.Where(job => job.Dto.TaskId == request.TaskId
-                && (job.Dto.ClaimedAt is not null
-                    || job.Dto.Status is DecisionJobStatuses.Pending or DecisionJobStatuses.Claimed)).ToArray();
-            var spent = cardJobs.Sum(job => job.Dto.Result?.Price is { Status: DecisionPriceStatuses.Priced } price
-                ? price.EstimatedUsd ?? 0 : 0);
-            var capReason = cardJobs.Length >= MaxCallsPerCard
-                ? $"card call cap of {MaxCallsPerCard} decision calls reached"
-                : spent >= MaxPricedUsdPerCard ? $"card priced decision spend cap of {MaxPricedUsdPerCard} USD reached"
-                : request.MaxInputTokens > DecisionGroundsPolicy.MaxCallInputTokens
-                    || request.MaxOutputTokens > DecisionGroundsPolicy.MaxCallOutputTokens
-                    ? "requested per-call token envelope exceeds the decision cap" : null;
             var now = _time.GetUtcNow().UtcDateTime;
+            var (maxInput, maxOutput) = DecisionCostCapPolicy.Envelope(request.MaxInputTokens, request.MaxOutputTokens);
+            var capReason = DecisionCostCapPolicy.CallEnvelopeReason(maxInput, maxOutput);
+            if (capReason is null && DecisionCostCapPolicy.ChargesCard(input.Scope))
+                capReason = DecisionCostCapPolicy.CardReason(Spend(_jobs.Values.Where(job => job.Dto.TaskId == request.TaskId)));
+            else if (capReason is null)
+            {
+                var day = DecisionCostCapPolicy.HostDayKey(input.Scope, now);
+                var hostDay = _jobs.Values.Where(job => _inputs.GetValueOrDefault(job.Dto.OccurrenceId)?.Grounds is { } grounds
+                    && !DecisionCostCapPolicy.ChargesCard(grounds.Scope)
+                    && DecisionCostCapPolicy.HostDayKey(grounds.Scope, job.Dto.CreatedAt) == day).ToArray();
+                bool Scheduled(JobRecord job) => DecisionCostCapPolicy.IsScheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger);
+                capReason = DecisionCostCapPolicy.HostDayReason(Spend(hostDay.Where(Scheduled)),
+                    Spend(hostDay.Where(job => !Scheduled(job))), DecisionCostCapPolicy.IsScheduled(input.Trigger),
+                    maxInput, maxOutput);
+            }
             var record = new JobRecord
             {
                 Dto = new($"odj_{Guid.NewGuid():N}", request.OccurrenceId, request.ProjectId, request.TaskId,
@@ -111,6 +117,8 @@ public sealed class OrchestratorDecisionStore
                     null, capReason),
                 GroundsDigest = request.GroundsDigest,
                 Prompt = request.Prompt,
+                MaxInputTokens = maxInput,
+                MaxOutputTokens = maxOutput,
             };
             Save("jobs", record.Dto.JobId, record);
             _jobs.Add(record.Dto.JobId, record);
@@ -142,11 +150,15 @@ public sealed class OrchestratorDecisionStore
             Save("jobs", next.Dto.JobId, next);
             return new(DecisionJobClaimStatuses.Claimed, new(next.Dto.JobId, next.ClaimToken, next.Prompt,
                 next.Dto.Cli, next.Dto.Model, next.Dto.ThinkingLevel, (int)ClaimTtl.TotalSeconds - 60,
-                next.ClaimExpiresAt.Value));
+                next.ClaimExpiresAt.Value, Envelope(next).Input, Envelope(next).Output));
         }
     }
 
-    /// <summary>False for a stale claim. A repeated completion of the same claim is accepted once.</summary>
+    /// <summary>
+    /// False for a stale claim. A repeated completion of the same claim is
+    /// accepted once. A completion that arrives after a receipt closed the
+    /// claimed job still records its usage and price, so spend is not lost.
+    /// </summary>
     public bool Complete(OrchestratorDecisionJobCompletion completion)
     {
         lock (_gate)
@@ -154,24 +166,45 @@ public sealed class OrchestratorDecisionStore
             var job = _jobs.GetValueOrDefault(completion.JobId);
             if (job is null || job.ClaimToken != completion.ClaimToken || job.Dto.RunnerId != completion.RunnerId)
                 return false;
-            if (DecisionJobStatuses.IsTerminal(job.Dto.Status)) return true;
-            if (job.Dto.Status != DecisionJobStatuses.Claimed) return false;
+            var late = job.Dto.Status == DecisionJobStatuses.Failed && job.Dto.Error == SupersededByReceipt
+                && job.Dto.Result is null;
+            if (DecisionJobStatuses.IsTerminal(job.Dto.Status) && !late) return true;
+            if (job.Dto.Status != DecisionJobStatuses.Claimed && !late) return false;
             var usage = CardRunLedgerPolicy.Deduplicate(completion.Usage);
             var model = string.IsNullOrWhiteSpace(completion.Model) ? job.Dto.Model : completion.Model.Trim();
-            var success = completion.Success && !string.IsNullOrWhiteSpace(completion.ResponseText);
+            var (maxInput, maxOutput) = Envelope(job);
+            var overrun = DecisionCostCapPolicy.MeasuredOverrunReason(usage.Tokens, maxInput, maxOutput);
+            var success = completion.Success && !string.IsNullOrWhiteSpace(completion.ResponseText) && overrun is null;
+            var error = success ? null : overrun ?? completion.Error ?? "empty-response";
             job.Dto = job.Dto with
             {
-                Status = success ? DecisionJobStatuses.Completed : DecisionJobStatuses.Failed,
-                Error = success ? null : completion.Error ?? "empty-response",
-                Result = new(success, completion.ResponseText, job.Dto.Cli, model, job.Dto.ThinkingLevel,
+                Status = success && !late ? DecisionJobStatuses.Completed : DecisionJobStatuses.Failed,
+                Error = late ? SupersededByReceipt : error,
+                Result = new(success && !late, completion.ResponseText, job.Dto.Cli, model, job.Dto.ThinkingLevel,
                     usage.Tokens, Price(model, usage.Tokens, completion.EndedAt), usage.ProviderCallIds,
                     usage.ExcludedDuplicateFrames, completion.StartedAt, completion.EndedAt,
-                    completion.RunnerId, completion.Error, completion.TransportFailure),
+                    completion.RunnerId, error, completion.TransportFailure),
             };
+            job.LateAfterReceipt = late;
             Save("jobs", job.Dto.JobId, job);
             return true;
         }
     }
+
+    /// <summary>Billed calls of an occurrence that completed after its receipt was stored.</summary>
+    public IReadOnlyList<DecisionLateCallV1> LateCalls(string occurrenceId)
+    {
+        lock (_gate) return LateCallsLocked(occurrenceId);
+    }
+
+    private IReadOnlyList<DecisionLateCallV1> LateCallsLocked(string occurrenceId)
+        => _jobs.Values.Where(job => job.LateAfterReceipt && job.Dto.OccurrenceId == occurrenceId
+                && job.Dto.Result is not null)
+            .OrderBy(job => job.Dto.Result!.EndedAt).ThenBy(job => job.Dto.JobId, StringComparer.Ordinal)
+            .Select(job => new DecisionLateCallV1(job.Dto.JobId, job.Dto.Result!.HostId, job.Dto.Result.Model,
+                job.Dto.Result.Tokens, job.Dto.Result.Price, job.Dto.Result.ProviderCallIds,
+                job.Dto.Result.EndedAt, job.Dto.Result.Error))
+            .ToArray();
 
     /// <summary>
     /// Stores the receipt once per occurrence after checking that it was built
@@ -198,7 +231,7 @@ public sealed class OrchestratorDecisionStore
             foreach (var job in _jobs.Values.Where(job => job.Dto.OccurrenceId == receipt.OccurrenceId
                          && !DecisionJobStatuses.IsTerminal(job.Dto.Status)))
             {
-                job.Dto = job.Dto with { Status = DecisionJobStatuses.Failed, Error = "superseded-by-receipt" };
+                job.Dto = job.Dto with { Status = DecisionJobStatuses.Failed, Error = SupersededByReceipt };
                 Save("jobs", job.Dto.JobId, job);
             }
             return receipt;
@@ -222,16 +255,55 @@ public sealed class OrchestratorDecisionStore
             .Where(item => taskId is null || item.Scope.TaskId == taskId)
             .OrderByDescending(item => item.EndedAt).ThenBy(item => item.ReceiptId, StringComparer.Ordinal)
             .Take(Math.Clamp(limit, 1, 100))
-            .Select(Summary).ToArray();
+            .Select(item => Summary(item, LateCallsLocked(item.OccurrenceId))).ToArray();
     }
 
-    public static OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt)
-        => new(receipt.ReceiptId, receipt.OccurrenceId, receipt.Scope.TaskId, receipt.Trigger.Profile,
+    public OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt)
+    {
+        lock (_gate) return Summary(receipt, LateCallsLocked(receipt.OccurrenceId));
+    }
+
+    /// <summary>Spend columns add late calls to the immutable receipt call; unknown prices stay explicit.</summary>
+    public static OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt,
+        IReadOnlyList<DecisionLateCallV1> lateCalls)
+    {
+        var prices = lateCalls.Select(call => call.Price).Prepend(receipt.Call.Price)
+            .Where(price => price.Status != DecisionPriceStatuses.NoUsage).ToArray();
+        var priceStatus = prices.Length == 0 ? receipt.Call.Price.Status
+            : prices.All(price => price.Status == DecisionPriceStatuses.Priced) ? DecisionPriceStatuses.Priced
+            : prices.Any(price => price.Status == DecisionPriceStatuses.Priced) ? DecisionPriceStatuses.Partial
+            : prices[0].Status;
+        decimal? usd = prices.Any(price => price.Status == DecisionPriceStatuses.Priced)
+            ? prices.Sum(price => price.Status == DecisionPriceStatuses.Priced ? price.EstimatedUsd ?? 0 : 0)
+            : null;
+        return new(receipt.ReceiptId, receipt.OccurrenceId, receipt.Scope.TaskId, receipt.Trigger.Profile,
             receipt.Mode, string.Join(", ", receipt.Chosen.Where(item => !item.Outcome.StartsWith("rejected:",
                 StringComparison.Ordinal)).Select(item => $"{item.Action}({item.Target})")),
             receipt.DeterministicAction, receipt.MatchesDeterministic, receipt.Call.Status, receipt.Call.Model,
-            receipt.Call.ThinkingLevel, receipt.Call.Custody, receipt.Call.Tokens.Total, receipt.Call.Price.Status,
-            receipt.Call.Price.EstimatedUsd, receipt.EvidenceRef, receipt.EndedAt);
+            receipt.Call.ThinkingLevel, receipt.Call.Custody,
+            receipt.Call.Tokens.Total + lateCalls.Sum(call => call.Tokens.Total), priceStatus, usd,
+            receipt.EvidenceRef, receipt.EndedAt, lateCalls.Count);
+    }
+
+    /// <summary>
+    /// A call counts once a runner claimed it or while it may still be claimed.
+    /// Settled calls add measured usage; open calls reserve their envelope.
+    /// </summary>
+    private static DecisionSpendSnapshot Spend(IEnumerable<JobRecord> jobs)
+    {
+        var counted = jobs.Where(job => job.Dto.ClaimedAt is not null
+            || job.Dto.Status is DecisionJobStatuses.Pending or DecisionJobStatuses.Claimed).ToArray();
+        var tokens = counted.Aggregate(DecisionTokenUsageV1.Zero, (total, job) => total.Add(
+            job.Dto.Result?.Tokens ?? (DecisionJobStatuses.IsTerminal(job.Dto.Status) ? DecisionTokenUsageV1.Zero
+                : new DecisionTokenUsageV1(Envelope(job).Input, 0, 0, Envelope(job).Output))));
+        var usd = counted.Sum(job => job.Dto.Result?.Price is { Status: DecisionPriceStatuses.Priced } price
+            ? price.EstimatedUsd ?? 0 : 0);
+        return new(counted.Length, tokens, usd);
+    }
+
+    /// <summary>Records written before the envelope was stored use the per-call cap.</summary>
+    private static (int Input, int Output) Envelope(JobRecord job)
+        => DecisionCostCapPolicy.Envelope(job.MaxInputTokens, job.MaxOutputTokens);
 
     private DecisionPriceV1 Price(string model, DecisionTokenUsageV1 tokens, DateTime at)
     {
@@ -281,5 +353,8 @@ public sealed class OrchestratorDecisionStore
         public string Prompt { get; set; } = string.Empty;
         public string? ClaimToken { get; set; }
         public DateTime? ClaimExpiresAt { get; set; }
+        public int MaxInputTokens { get; set; }
+        public int MaxOutputTokens { get; set; }
+        public bool LateAfterReceipt { get; set; }
     }
 }

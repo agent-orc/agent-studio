@@ -117,7 +117,10 @@ public sealed class ShadowDecisionService(
             }
         }
         try { await Task.WhenAll(active.Values); }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            logger.LogDebug("shadow decision service stopped with {Count} occurrences cancelled", active.Count);
+        }
     }
 
     private bool IsBackingOff(string occurrenceId)
@@ -135,7 +138,11 @@ public sealed class ShadowDecisionService(
                     "shadow decision recorded; occurrence={Occurrence} receipt={Receipt} call={Call} matches={Matches}",
                     occurrenceId, receipt.ReceiptId, receipt.Call.Status, receipt.MatchesDeterministic);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown: the frozen grounds stay pending and the next engine start records the receipt.
+            logger.LogDebug("shadow decision cancelled by shutdown; occurrence={Occurrence}", occurrenceId);
+        }
         catch (Exception exception)
         {
             lock (_retryAfter) _retryAfter[occurrenceId] = DateTime.UtcNow + FailureBackoff;

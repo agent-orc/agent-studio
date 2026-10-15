@@ -78,10 +78,23 @@ runner claims it at `/api/runner/orchestrator-decisions/claim` with the
 `runner.claim` scope and runs one read-only CLI turn in an empty directory. A
 transport failure gets one attempt on `Orchestration:DecisionModel:Alternate*`.
 The monolith prices the deduplicated usage with `ITokenPricing` at the call
-time. It refuses a job beyond 24 calls or 5 USD priced spend per card and keeps
-the job as `cap-exhausted`. Receipts are immutable: the store checks the grounds
+time. `DecisionCostCapPolicy` holds the cost protection. A card occurrence is
+refused beyond 24 calls or 5 USD priced spend per card. An occurrence without a
+card (the Fluid capacity periodic host check) is charged to its host-day
+instead: 48 scheduled plus 12 event calls, 180,000 input and 90,000 output
+tokens and 10 USD priced spend per host and UTC day, where open jobs reserve
+their envelope. A refused job stays `cap-exhausted`. Each call carries an
+envelope of at most 8,000 input and 1,000 output tokens. The runner refuses a
+prompt whose estimate exceeds it before spawning, and passes the output cap to
+the CLI (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`, Codex `model_max_output_tokens`). The
+store rejects a completion whose measured usage broke the envelope. It keeps
+the usage and price but does not accept the answer, so the receipt records
+`ask(reason=decision-unavailable)`. Receipts are immutable: the store checks the grounds
 digest against the frozen input and returns the first receipt on every replay.
-Storing a receipt also closes any job that is still open. Studio reads
+Storing a receipt also closes any job that is still open. A billed completion
+that arrives after that (for example after a timeout receipt) still records
+its usage and price on the job. The card spend counts it, and the receipt row
+and its outcome link add it as a late call (`lateCalls`). Studio reads
 `/api/orchestration/decision-receipts`; each row's `evidenceRef` opens the full
 receipt with grounds and response, and `outcomeLink` shows the applied action.
 The model choice is never dispatched. `Orchestration:DecisionModel:Cli`, `Model`

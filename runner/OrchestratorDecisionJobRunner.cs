@@ -72,13 +72,22 @@ internal sealed class OrchestratorDecisionJobRunner(RunnerOptions options, TaskS
         var workingDirectory = Path.Combine(Path.GetTempPath(), "agent-decision", work.JobId);
         Directory.CreateDirectory(workingDirectory);
         var cli = string.IsNullOrWhiteSpace(work.Cli) ? "codex" : work.Cli.Trim().ToLowerInvariant();
+        if (PromptOverrunReason(work) is { } overrun)
+        {
+            // Spawning would bill a call the decision cap already forbids.
+            log($"orchestrator-decision-refused job={work.JobId} reason={overrun}");
+            DeleteWorkingDirectory(workingDirectory);
+            return await CompleteAsync(work, Failure(work, options.RunnerId, startedAt, overrun, transport: false),
+                shutdown);
+        }
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(30, work.TimeoutSeconds)));
             var process = await ReadOnlyCarTurn.RunAsync(options, work.JobId, cli, work.Prompt,
                 workingDirectory, work.Model, work.ThinkingLevel, "agent-decision-car",
-                "orchestrator-decision", null, log, timeout.Token, shutdown);
+                "orchestrator-decision", null, log, timeout.Token, shutdown,
+                work.MaxOutputTokens > 0 ? work.MaxOutputTokens : null);
             var parsed = cli == "claude"
                 ? RemoteProjectChatRunner.ParseClaude(process, work.Model)
                 : RemoteProjectChatRunner.ParseCodex(process, work.Model);
@@ -102,9 +111,29 @@ internal sealed class OrchestratorDecisionJobRunner(RunnerOptions options, TaskS
         }
         finally
         {
-            try { Directory.Delete(workingDirectory, recursive: true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            DeleteWorkingDirectory(workingDirectory);
+        }
+    }
+
+    /// <summary>
+    /// The prompt alone must fit the input envelope the job was admitted with,
+    /// using the four-bytes-per-token estimate of the grounds pack.
+    /// </summary>
+    internal static string? PromptOverrunReason(OrchestratorDecisionJobWork work)
+    {
+        if (work.MaxInputTokens <= 0) return null;
+        var estimated = (System.Text.Encoding.UTF8.GetByteCount(work.Prompt) + 3) / 4;
+        return estimated > work.MaxInputTokens
+            ? $"call-token-cap-exceeded: prompt estimate {estimated} input tokens against {work.MaxInputTokens}"
+            : null;
+    }
+
+    private void DeleteWorkingDirectory(string workingDirectory)
+    {
+        try { Directory.Delete(workingDirectory, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log($"orchestrator-decision-cleanup-failed path={workingDirectory} error={ex.GetType().Name}: {ex.Message}");
         }
     }
 

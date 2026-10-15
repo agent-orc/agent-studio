@@ -73,7 +73,7 @@ public static class OrchestratorDecisionEndpoints
             var occurrence = orchestration.GetOccurrence(receipt.OccurrenceId);
             var later = receipt.Scope.TaskId is { } taskId
                 ? store.ReceiptsForTask(taskId).Where(item => item.EndedAt > receipt.EndedAt)
-                    .Select(OrchestratorDecisionStore.Summary).ToArray()
+                    .Select(store.Summary).ToArray()
                 : [];
             return Wire(new
             {
@@ -83,6 +83,8 @@ public static class OrchestratorDecisionEndpoints
                 appliedAction = occurrence?.MonolithReceipt?.Action,
                 appliedReason = occurrence?.MonolithReceipt?.Reason,
                 engineAction = occurrence?.EngineReceipt?.Action,
+                spend = store.Summary(receipt),
+                lateCalls = store.LateCalls(receipt.OccurrenceId),
                 laterDecisions = later,
             });
         });

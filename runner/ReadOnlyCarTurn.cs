@@ -31,7 +31,8 @@ internal static class ReadOnlyCarTurn
         Action<int>? started,
         Action<string> log,
         CancellationToken timeoutToken,
-        CancellationToken shutdown)
+        CancellationToken shutdown,
+        int? maxOutputTokens = null)
     {
         var logDirectory = Path.Combine(Path.GetTempPath(), logFolder, runId);
         var runner = new CliRunner(
@@ -78,6 +79,8 @@ internal static class ReadOnlyCarTurn
                     ThinkingLevel = thinkingLevel,
                     PermissionMode = CliPermissionModes.ReadOnly,
                     ContextMode = CliContextModes.Shared,
+                    ExtraEnvironment = OutputCapEnvironment(cliType, maxOutputTokens),
+                    Tuning = OutputCapTuning(cliType, maxOutputTokens),
                 },
                 shutdown);
             if (run is null)
@@ -104,10 +107,26 @@ internal static class ReadOnlyCarTurn
             driver.OnOutput -= OnOutput;
             driver.OnFinished -= OnFinished;
             driver.Forget(runId);
+            // Per-turn log hygiene is best effort; a leftover folder is logged, not fatal.
             try { if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true); }
-            catch { /* per-turn log hygiene is best effort */ }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log($"{logPrefix}-{cliType} log-cleanup-failed path={logDirectory} error={ex.GetType().Name}: {ex.Message}");
+            }
         }
     }
+
+    /// <summary>Claude Code reads its response cap from the environment.</summary>
+    internal static Dictionary<string, string>? OutputCapEnvironment(string cliType, int? maxOutputTokens)
+        => maxOutputTokens is > 0 && string.Equals(cliType, "claude", StringComparison.OrdinalIgnoreCase)
+            ? new() { ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = maxOutputTokens.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) }
+            : null;
+
+    /// <summary>Codex applies a tuning entry as its <c>-c model_max_output_tokens=N</c> override.</summary>
+    internal static Dictionary<string, string>? OutputCapTuning(string cliType, int? maxOutputTokens)
+        => maxOutputTokens is > 0 && string.Equals(cliType, "codex", StringComparison.OrdinalIgnoreCase)
+            ? new() { ["model_max_output_tokens"] = maxOutputTokens.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) }
+            : null;
 
     /// <summary>Keeps CAR's per-run output log inside a per-turn temp folder that is deleted with the turn.</summary>
     private sealed class TurnLogPathProvider(string directory) : IRunLogPathProvider
