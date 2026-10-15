@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build a downloadable release candidate without publishing
+        type: choice
+        options: [release-candidate]
+        default: release-candidate
 
 permissions:
   contents: write
@@ -17,7 +24,7 @@ concurrency:
 
 jobs:
   version:
-    name: Validate tag and repository version
+    name: Validate release source and version
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -33,16 +40,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
-          version="${GITHUB_REF_NAME#v}"
-          test "$(tr -d '\r\n' < VERSION)" = "$version"
-          test "$(git tag --points-at "$GITHUB_SHA" | grep -Fx "$GITHUB_REF_NAME")" = "$GITHUB_REF_NAME"
+          version="$(tr -d '\r\n' < VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+            test "$(git tag --points-at "$GITHUB_SHA" | grep -Fx "$GITHUB_REF_NAME")" = "$GITHUB_REF_NAME"
+          fi
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=all)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   test-build-release:
-    name: Test, build and publish Linux release
+    name: Test and build Linux release
     needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -82,6 +91,13 @@ jobs:
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=critical
 
+      - name: Build .NET solution
+        run: dotnet build agent-taskboard.sln --configuration Release --no-restore
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
       - name: Test release shell contracts
         run: |
           bash scripts/release/release-scripts.test.sh
@@ -93,7 +109,7 @@ jobs:
         run: >-
           dotnet test agent-taskboard.sln
           --configuration Release
-          --no-restore
+          --no-build
           --filter "Category!=MachineBound"
           --logger "console;verbosity=minimal"
 
@@ -134,10 +150,6 @@ jobs:
       - name: Test frontend
         working-directory: frontend
         run: npm run test:release
-
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
 
       - name: Publish self-contained binaries
         env:
@@ -187,7 +199,7 @@ jobs:
           test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
-      - name: Create guided setup executable, three archives, and SHA-256 checksums
+      - name: Create guided setup executable, four archives, and SHA-256 checksums
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           scripts/release/package-release.sh \
@@ -196,55 +208,6 @@ jobs:
             artifacts/publish \
             frontend/dist/frontend/browser \
             artifacts/release
-
-      - name: Publish pinned release images
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.version.outputs.version }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          short_sha="${SHA:0:7}"
-          declare -A dockerfiles=(
-            [agent-studio-api]=backend/Dockerfile
-            [agent-studio-web]=frontend/Dockerfile
-            [agent-task-server]=task-server/Dockerfile
-            [agent-orchestrator-engine]=orchestrator-engine/Dockerfile
-            [agent-studio-bff]=studio-bff/Dockerfile
-            [agent-host]=runner/Dockerfile
-            [agent-operations-server]=operations-server/Dockerfile
-            [agent-operations-agent]=operations-agent/Dockerfile
-          )
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          for name in "${!dockerfiles[@]}"; do
-            image="ghcr.io/agent-orc/$name"
-            docker build -f "${dockerfiles[$name]}" \
-              --build-arg VERSION="$VERSION" \
-              --build-arg SHA="$SHA" \
-              -t "$image:v$VERSION" \
-              -t "$image:sha-$short_sha" \
-              -t "$image:latest" \
-              .
-            docker push "$image:v$VERSION"
-            docker push "$image:sha-$short_sha"
-            docker push "$image:latest"
-          done
-          docker logout ghcr.io
-          for name in "${!dockerfiles[@]}"; do
-            image="ghcr.io/agent-orc/$name"
-            docker image rm "$image:v$VERSION" "$image:sha-$short_sha" "$image:latest"
-            docker pull "$image:v$VERSION"
-            docker pull "$image:sha-$short_sha"
-          done
-          echo "image size report (v$VERSION):"
-          docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' \
-            | grep "ghcr.io/agent-orc/" | grep ":v$VERSION"
-
-      - name: Smoke published one-box images
-        env:
-          COMPOSE_SMOKE_MODE: images
-          AGENT_STUDIO_VERSION: ${{ needs.version.outputs.version }}
-        run: scripts/compose-smoke-test.sh
 
       - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4
@@ -255,8 +218,8 @@ jobs:
           retention-days: 7
 
   publish-windows:
-    name: Publish Windows fallback package (win-x64)
-    needs: version
+    name: Build Windows fallback package (win-x64)
+    needs: [version, test-build-release]
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -270,7 +233,7 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.301'
 
       - name: Publish win-x64 self-contained binaries
         env:
@@ -286,8 +249,8 @@ jobs:
             '-p:IncludeNativeLibrariesForSelfExtract=true',
             '-p:DebugType=None',
             '-p:DebugSymbols=false',
-            '-p:Version=' + $env:VERSION,
-            '-p:SourceRevisionId=' + $env:SHA
+            "-p:Version=$env:VERSION",
+            "-p:SourceRevisionId=$env:SHA"
           )
           dotnet publish task-server/TaskServer.csproj @common --output artifacts/publish/task-server
           if ($LASTEXITCODE -ne 0) { throw 'task-server win-x64 publish failed.' }
@@ -297,6 +260,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
           dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
           if ($LASTEXITCODE -ne 0) { throw 'agent-studio-setup win-x64 publish failed.' }
+          dotnet publish runner/AgentRunner.csproj @common --output artifacts/publish/agent-host
+          if ($LASTEXITCODE -ne 0) { throw 'agent-host win-x64 publish failed.' }
 
       - name: Sign Windows setup when a certificate is configured
         if: ${{ env.WINDOWS_CODESIGN_PFX != '' }}
@@ -318,6 +283,12 @@ jobs:
             Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
           }
 
+      - name: Download Linux release artifacts for Studio UI
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: linux-release
+
       - name: Stage Windows setup executable
         shell: pwsh
         run: |
@@ -333,7 +304,8 @@ jobs:
           $checks = @(
             @{ Name = 'task-server'; Path = 'artifacts/publish/task-server/task-server.exe' },
             @{ Name = 'orchestrator-engine'; Path = 'artifacts/publish/orchestrator-engine/orchestrator-engine.exe' },
-            @{ Name = 'studio-bff'; Path = 'artifacts/publish/studio-bff/agent-studio-bff.exe' }
+            @{ Name = 'studio-bff'; Path = 'artifacts/publish/studio-bff/agent-studio-bff.exe' },
+            @{ Name = 'agent-host'; Path = 'artifacts/publish/agent-host/agent-host.exe' }
           )
           foreach ($check in $checks) {
             $output = & $check.Path '--version'
@@ -349,26 +321,23 @@ jobs:
           SHA: ${{ github.sha }}
         shell: pwsh
         run: |
-          $component = "agent-orchestrator-$env:VERSION-win-x64"
-          $root = "windows-package/$component"
-          New-Item -ItemType Directory -Path $root -Force | Out-Null
-          Copy-Item artifacts/publish/task-server/task-server.exe $root
-          Copy-Item artifacts/publish/orchestrator-engine/orchestrator-engine.exe $root
-          Copy-Item artifacts/publish/studio-bff/agent-studio-bff.exe $root
-          Copy-Item deploy/windows $root/deploy-windows -Recurse
-          New-Item -ItemType Directory -Path "$root/config" -Force | Out-Null
-          Copy-Item deploy/release/agent-orchestrator/config/*.template "$root/config/"
-          Set-Content -LiteralPath "$root/VERSION" -Value $env:VERSION -NoNewline -Encoding ascii
-          Set-Content -LiteralPath "$root/RELEASE-SHA" -Value $env:SHA -NoNewline -Encoding ascii
-          @(
-            'component=agent-orchestrator',
-            "version=$env:VERSION",
-            "gitSha=$env:SHA",
-            'runtimeIdentifiers=win-x64',
-            'protocolMinimum=1',
-            'protocolMaximum=2'
-          ) | Set-Content -LiteralPath "$root/RELEASE" -Encoding ascii
-          Compress-Archive -Path $root -DestinationPath "windows-package/$component.zip"
+          ./scripts/release/package-release-windows.ps1 -Version $env:VERSION -Sha $env:SHA -PublishRoot artifacts/publish -LinuxReleaseRoot linux-release -OutputRoot windows-package
+
+      - name: Test Windows package contents
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead("windows-package/agent-orchestrator-$env:VERSION-win-x64.zip")
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\\', '/') })
+            foreach ($file in @('agent-studio-setup.exe', 'agent-host.exe', 'task-server.exe', 'orchestrator-engine.exe', 'studio/browser/index.html')) {
+              if (-not ($names -contains "agent-orchestrator-$env:VERSION-win-x64/$file")) { throw "Windows package lacks $file" }
+            }
+          } finally {
+            $archive.Dispose()
+          }
 
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v4
@@ -380,33 +349,104 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-images:
+    name: Build candidate images without publishing
+    needs: [version, test-build-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and save pinned images
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          declare -A dockerfiles=(
+            [agent-studio-api]=backend/Dockerfile
+            [agent-studio-web]=frontend/Dockerfile
+            [agent-task-server]=task-server/Dockerfile
+            [agent-orchestrator-engine]=orchestrator-engine/Dockerfile
+            [agent-studio-bff]=studio-bff/Dockerfile
+            [agent-host]=runner/Dockerfile
+            [agent-operations-server]=operations-server/Dockerfile
+            [agent-operations-agent]=operations-agent/Dockerfile
+          )
+          images=()
+          for name in "${!dockerfiles[@]}"; do
+            image="ghcr.io/agent-orc/$name:v$VERSION"
+            docker build -f "${dockerfiles[$name]}" \
+              --build-arg VERSION="$VERSION" --build-arg SHA="$SHA" \
+              -t "$image" .
+            images+=("$image")
+          done
+          mkdir -p artifacts/images
+          docker save "${images[@]}" | zstd -T0 -3 | split -b 1024m - artifacts/images/candidate-images.tar.zst.part-
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-images
+          path: artifacts/images/candidate-images.tar.zst.part-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   install-smoke-linux:
     name: Install smoke with Linux setup (Docker)
-    needs: test-build-release
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    needs: [version, test-build-release, build-images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: linux-release-artifacts
           path: artifacts/release
-      - name: Authenticate to the release image registry
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-images
+          path: artifacts/images
+      - name: Load candidate images
+        run: |
+          set -euo pipefail
+          cat artifacts/images/candidate-images.tar.zst.part-* | zstd -dc | docker load
+          docker pull caddy:2.10-alpine
       - name: Install, verify, and purge
         run: |
           set -euo pipefail
           chmod +x artifacts/release/agent-studio-setup
           install_root="$RUNNER_TEMP/agent-studio-install-smoke"
           trap 'artifacts/release/agent-studio-setup uninstall --install-dir "$install_root" --purge || true' EXIT
-          artifacts/release/agent-studio-setup --unattended \
+          artifacts/release/agent-studio-setup --unattended --offline \
             --release-dir artifacts/release --install-dir "$install_root"
           curl --fail --silent http://127.0.0.1:4011/healthz
           docker compose --project-name agent-studio \
             --env-file "$install_root/.env" \
             -f "$install_root/releases/$(tr -d '\r\n' < "$install_root/releases/"*/VERSION)/docker-compose.yml" \
             ps --status running
+      - name: Smoke candidate one-box images
+        env:
+          COMPOSE_SMOKE_MODE: images
+          AGENT_STUDIO_VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/compose-smoke-test.sh
+
+  install-smoke-linux-native:
+    name: Install smoke with Linux setup (native)
+    needs: [version, test-build-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: artifacts/release
+      - name: Install and verify native control plane
+        env:
+          SETUP_E2E_RELEASE_DIR: ${{ github.workspace }}/artifacts/release
+          SETUP_E2E_CONTROL_ONLY: '1'
+        run: |
+          chmod +x artifacts/release/agent-studio-setup
+          scripts/release/setup-e2e-probe.sh "$RUNNER_TEMP/linux-native-smoke.md"
 
   install-smoke-windows:
     name: Install smoke with Windows setup (native services)
@@ -489,35 +529,92 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Connector uninstall failed.' }
           if (Get-ScheduledTask -TaskName 'AgentOrchestrator-StudioConnector' -ErrorAction SilentlyContinue) { throw 'Connector task is still registered.' }
 
-  publish-release:
-    name: Merge artifacts and publish the GitHub Release
-    needs: [version, test-build-release, publish-windows, install-smoke-linux, install-smoke-windows]
+  release-candidate:
+    name: Assemble downloadable release candidate
+    needs: [version, test-build-release, publish-windows, install-smoke-linux, install-smoke-linux-native, install-smoke-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out exact tag
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download Linux release artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: linux-release-artifacts
           path: artifacts/release
-
-      - name: Download Windows release artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: windows-release-artifacts
           path: artifacts/release
-
-      - name: Recompute the combined SHA256SUMS
+      - name: Extract version notes from CHANGELOG.md
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          chmod +x artifacts/release/agent-studio-setup
-          (cd artifacts/release && rm -f SHA256SUMS && sha256sum * > SHA256SUMS)
+          scripts/release/extract-release-notes.sh "$VERSION" > artifacts/release/RELEASE-NOTES.md
+          grep -q '[^[:space:]]' artifacts/release/RELEASE-NOTES.md
+      - name: Recompute and verify complete SHA256SUMS
+        run: |
+          set -euo pipefail
+          chmod +x artifacts/release/agent-studio-setup artifacts/release/install.sh
+          (cd artifacts/release && rm -f SHA256SUMS && sha256sum *.tar.gz *.zip agent-studio-setup agent-studio-setup.exe install.sh RELEASE-NOTES.md > SHA256SUMS)
           (cd artifacts/release && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: artifacts/release/
+          if-no-files-found: error
+          retention-days: 30
 
+  publish-images:
+    name: Publish tested candidate images
+    if: github.event_name == 'push'
+    needs: [version, build-images, release-candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-images
+          path: artifacts/images
+      - name: Load and push candidate images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cat artifacts/images/candidate-images.tar.zst.part-* | zstd -dc | docker load
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          short_sha="${SHA:0:7}"
+          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent; do
+            image="ghcr.io/agent-orc/$name"
+            docker tag "$image:v$VERSION" "$image:sha-$short_sha"
+            docker tag "$image:v$VERSION" "$image:latest"
+            docker push "$image:v$VERSION"
+            docker push "$image:sha-$short_sha"
+            docker push "$image:latest"
+          done
+          docker logout ghcr.io
+          for name in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host agent-operations-server agent-operations-agent; do
+            image="ghcr.io/agent-orc/$name"
+            docker image rm "$image:v$VERSION" "$image:sha-$short_sha" "$image:latest"
+            docker pull "$image:v$VERSION"
+          done
+
+  publish-release:
+    name: Publish GitHub Release after every smoke passes
+    if: github.event_name == 'push'
+    needs: [version, release-candidate, publish-images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: artifacts/release
+      - name: Verify release assets
+        run: (cd artifacts/release && sha256sum -c SHA256SUMS)
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2
         with:
@@ -526,17 +623,15 @@ jobs:
             artifacts/release/*.zip
             artifacts/release/agent-studio-setup
             artifacts/release/agent-studio-setup.exe
-
+            artifacts/release/install.sh
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME"
-          artifacts/release/*.tar.gz
-          artifacts/release/*.zip
-          artifacts/release/agent-studio-setup
-          artifacts/release/agent-studio-setup.exe
-          artifacts/release/SHA256SUMS
-          --verify-tag
-          --generate-notes
-          --title "Agent Studio ${{ needs.version.outputs.version }}"
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            artifacts/release/*.tar.gz artifacts/release/*.zip \
+            artifacts/release/agent-studio-setup artifacts/release/agent-studio-setup.exe \
+            artifacts/release/install.sh artifacts/release/SHA256SUMS artifacts/release/RELEASE-NOTES.md \
+            --verify-tag --notes-file artifacts/release/RELEASE-NOTES.md \
+            --title "Agent Studio $VERSION"
