@@ -33,7 +33,11 @@ internal sealed record HostFacts(
     bool? ProtectedSecretFile,
     bool? AuthorityReachable = null,
     bool? AuthorityUrlKnown = null,
-    bool? GitInstalled = null);
+    bool? GitInstalled = null,
+    bool? WindowsVersionSupported = null,
+    bool? GitAvailable = null,
+    bool? NativePortsAvailable = null,
+    bool? ExistingInstallation = null);
 
 /// <summary>Pure preflight policy: observed facts in, findings with recovery actions out.</summary>
 internal static class PreflightPolicy
@@ -53,6 +57,17 @@ internal static class PreflightPolicy
                     ? "Enable virtualization (VT-x/AMD-V) in firmware and the Virtual Machine Platform Windows feature, then reboot."
                     : "On a VM, enable nested virtualization or use a host with KVM; Docker containers need a working kernel namespace setup."),
         };
+        if (facts.Windows && target == "native" && journey == InstallationJourney.OneBox)
+        {
+            findings.Add(Check("Windows version", facts.WindowsVersionSupported, "Windows 10 22H2, Windows 11, or Windows Server 2022 or newer",
+                "Update Windows to a supported x64 release and retry."));
+            findings.Add(Check("Git for Windows", facts.GitAvailable, "git.exe available",
+                "Install Git for Windows and reopen setup so git.exe is on PATH."));
+            findings.Add(Check("Local ports", facts.NativePortsAvailable, "4011, 5031 and 5071 available",
+                "Close the processes using 4011, 5031 or 5071, then retry. Existing Agent Studio services are reused during repair."));
+            findings.Add(new("Existing installation", PreflightStatus.Pass,
+                facts.ExistingInstallation == true ? "repair or update available" : "fresh install", null));
+        }
 
         var docker = target == "docker" && journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority);
         if (facts.Windows && docker)
@@ -171,9 +186,17 @@ internal static class PreflightProbe
                 ? SetupSecrets.IsProtected(secretFile) : null,
             authority.Reachable,
             contactsAuthority ? host is not null : null,
-            journey is InstallationJourney.OneBox or InstallationJourney.JoinHost
+    journey is InstallationJourney.OneBox or InstallationJourney.JoinHost
                 ? await SucceedsAsync(processes, "git", ["--version"])
-                : null);
+                : null,
+    windows && target == "native" && journey == InstallationJourney.OneBox
+                ? Environment.OSVersion.Version.Build >= 19045 : null,
+            windows && target == "native" && journey == InstallationJourney.OneBox
+                ? await SucceedsAsync(processes, "git", ["--version"]) : null,
+            windows && target == "native" && journey == InstallationJourney.OneBox
+                ? File.Exists(Path.Combine(installRoot, "install-state.json")) || NativePortsFree() : null,
+    windows && target == "native" && journey == InstallationJourney.OneBox
+                ? File.Exists(Path.Combine(installRoot, "install-state.json")) : null);
     }
 
     private static async Task<bool?> VirtualizationAsync(bool windows, ProcessRunner processes)
@@ -261,6 +284,21 @@ internal static class PreflightProbe
             return true;
         }
         catch (Exception) { return false; }
+    }
+
+    private static bool NativePortsFree()
+    {
+        foreach (var port in new[] { 4011, 5031, 5071 })
+        {
+            try
+            {
+                var listener = new TcpListener(IPAddress.Loopback, port);
+                listener.Start();
+                listener.Stop();
+            }
+            catch (SocketException) { return false; }
+        }
+        return true;
     }
 }
 
