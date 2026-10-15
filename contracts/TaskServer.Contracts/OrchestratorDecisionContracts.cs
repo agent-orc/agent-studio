@@ -466,12 +466,19 @@ public sealed record DecisionOperatorIntentV1(
     string Reason,
     int? RequestedEmergencyHours,
     DateTime RecordedAt,
-    DecisionChoiceV1? TypedChoice = null);
+    DecisionChoiceV1? TypedChoice = null)
+{
+    public string Actor { get; init; } = "Human Operator";
+    public int? RequestedEmergencyMinutes { get; init; }
+    public string Outcome { get; init; } = "recorded, not applied";
+    public DateTime? AppliedAt { get; init; }
+}
 
 public sealed record DecisionOperatorIntentRequest(
     string Action,
     string Reason,
-    int? RequestedEmergencyHours = null);
+    int? RequestedEmergencyHours = null,
+    int? RequestedEmergencyMinutes = null);
 
 /// <summary>
 /// Usage of a decision call that a runner reported after the receipt of its
