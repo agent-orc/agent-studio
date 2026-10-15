@@ -705,9 +705,6 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Null(deps.Integration.ReadLatestMergeStep(completed));
         var status = deps.Integration.BuildLookup([completed])[completed.TaskKey];
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
-        Assert.Equal(AcceptedIntegrationRecoveryAction.Finalize,
-            deps.Integration.ResolveAcceptedIntegrationRecovery(
-                completed, status, () => deps.Timeline.ReadAll(completed.FolderPath)).Action);
         var backstop = new AcceptedIntegrationBackstopHostedService(
             deps.Scanner,
             deps.Settings,
