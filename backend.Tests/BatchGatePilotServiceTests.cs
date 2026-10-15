@@ -1088,7 +1088,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         // A passed content review records the claim on the integrated delivery
         // instead of the override; the reconciler must keep that claim fresh.
-        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(accepted with
+        Assert.Null(OperatorDecisionHarness.ReconciliationTarget(accepted with
         {
             CompletionClaim = accepted.CompletionClaim! with
             {
