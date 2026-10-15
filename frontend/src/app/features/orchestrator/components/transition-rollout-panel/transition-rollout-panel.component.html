@@ -50,17 +50,23 @@
   <section class="rollout__decisions" data-testid="shadow-decisions">
     <h4>Shadow model decisions</h4>
     <p>Recorded beside the deterministic decision; nothing is dispatched from them.</p>
+    @if (workspaceSpend(); as spend) {
+      <p data-testid="decision-workspace-spend">Workspace · {{ spend.occurrences }} occurrences ·
+        {{ spend.inputTokens }} input / {{ spend.outputTokens }} output tokens ·
+        {{ workspacePrice(spend) }}@if (spend.unknownPriceCalls) { + {{ spend.unknownPriceCalls }} unknown price }
+      </p>
+    }
     @if (decisions().length === 0) {
       <p>No shadow model decision recorded yet.</p>
     } @else {
       <ul>
         @for (decision of decisions(); track decision.receiptId) {
           <li class="rollout__decision" [attr.data-testid]="'shadow-decision-' + decision.receiptId">
-            <span class="rollout__card">{{ decision.taskId ?? 'host' }}</span>
+            <span class="rollout__card">{{ decision.taskId ?? 'Periodic host occurrence' }}</span>
             <span>Model {{ decision.chosenAction || 'none' }} · applied {{ decision.deterministicAction }}</span>
             <span class="rollout__state">{{ decision.matchesDeterministic ? 'match' : decision.callStatus === 'completed' ? 'differs' : decision.callStatus }}</span>
-            <span>{{ decision.model ?? 'no model' }}{{ decision.thinkingLevel ? ' / ' + decision.thinkingLevel : '' }}</span>
-            <span class="rollout__number">{{ decision.totalTokens }} tokens · {{ price(decision) }}</span>
+            <span>Decision step · {{ decision.model ?? 'model unavailable' }}{{ decision.thinkingLevel ? ' / ' + decision.thinkingLevel : '' }}</span>
+            <span class="rollout__number">{{ decision.inputTokens ?? decision.totalTokens }} input / {{ decision.outputTokens ?? 0 }} output tokens · {{ price(decision) }}</span>
             <a [href]="decision.evidenceRef" target="_blank" rel="noopener">Evidence</a>
           </li>
         }

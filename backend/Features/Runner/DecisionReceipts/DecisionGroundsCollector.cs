@@ -126,6 +126,19 @@ public sealed class DecisionGroundsCollector(
                 ledger.Progress.LastVerifiedTreeSha ?? "none", null, authorityRef, at),
         };
 
+        if (decisions.LatestOperatorIntentForTask(task.Id) is { } intent
+            && IsCurrentOperatorIntent(intent, at, decisions.ReceiptsForTask(task.Id)))
+        {
+            var intentRef = new GroundsSourceRefV1("operator-intent",
+                $"/api/orchestration/decision-receipts/{intent.ReceiptId}/operator-intent");
+            facts.Add(Fact("operator.intent", "authority", "Human Operator choice",
+                intent.TypedChoice is { } choice ? $"{choice.Action}({choice.Target})"
+                    : intent.Action == "raise" ? $"raise to {intent.RequestedEmergencyHours} h" : intent.Action,
+                null, intentRef, intent.RecordedAt, required: true));
+            facts.Add(Fact("operator.reason", "authority", "Human Operator reason",
+                intent.Reason, null, intentRef, intent.RecordedAt));
+        }
+
         var prior = decisions.ReceiptsForTask(task.Id)
             .Where(receipt => receipt.OccurrenceId != observed.OccurrenceId)
             .Select(receipt => new GroundsPriorDecisionV1(receipt.ReceiptId, receipt.OccurrenceId,
@@ -155,6 +168,10 @@ public sealed class DecisionGroundsCollector(
                 new("test.evidence", "Test evidence arrives with the review; the latest review outcome stands in."),
             ]);
     }
+
+    internal static bool IsCurrentOperatorIntent(DecisionOperatorIntentV1 intent, DateTime at,
+        IReadOnlyList<OrchestratorDecisionReceiptV1> receipts)
+        => intent.RecordedAt <= at && receipts.LastOrDefault()?.ReceiptId == intent.ReceiptId;
 
     /// <summary>
     /// Configured deciding route. Runner-host custody is the default (AGT-W63);
