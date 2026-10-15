@@ -91,6 +91,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             try
             {
                 var branch = _settings.Get(job.ProjectName).IntegrationBranch;
+                if (AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(job, branch, _git))
+                    continue;
                 var lost = AcceptedIntegrationPublishedDeliveryGuard.LostOperatorAcceptance(job, branch, _git);
                 if (lost is not null)
                 {
