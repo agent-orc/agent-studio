@@ -11,6 +11,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
 {
     private TaskStateMachine? _cancellationStateMachine;
     private TaskMutationService? _cancellationMutations;
+    private TaskScannerService? _cancellationScanner;
 
     [Fact]
     public async Task Completed_aspect_review_for_superseded_delivery_does_not_move_new_run()
@@ -184,6 +185,10 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         var receipt = Assert.Single(timeline.ReadAll(folder), item => item.Kind == "gate-result-superseded");
         Assert.Equal("Fail", receipt.Details!["verdict"]);
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, slug)));
+        var live = Assert.Single(_cancellationScanner!.ScanAllJobs());
+        Assert.Equal(slug, live.Id);
+        Assert.Empty(live.References.BlockedBy);
+        Assert.Empty(live.References.RaisedFollowUps);
     }
 
     [Theory]

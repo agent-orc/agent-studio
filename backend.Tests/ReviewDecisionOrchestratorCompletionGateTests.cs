@@ -567,6 +567,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
                 new PipelineStepSetting { Enabled = true });
         _cancellationStateMachine = stateMachine;
         _cancellationMutations = mutations;
+        _cancellationScanner = scanner;
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, stateMachine, transitions, indexCache,

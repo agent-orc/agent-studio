@@ -2121,7 +2121,9 @@ public static class LeaseEndpoints
             }
             // Ready retries keep the reviewed delivery unless a newer salvage
             // or mechanical fallback base replaces it later in this completion.
-            if (targetState != TaskStates.Ready)
+            var queuedContinuation = scanner.FindJob(task.Id, task.WatchPath);
+            if (targetState != TaskStates.Ready
+                && queuedContinuation is not { State: TaskStates.Ready, PendingIntent: not null })
                 ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
             RemoteClaimFailureDecision? claimFailure = null;
             if (outcome == "environmentfailure")

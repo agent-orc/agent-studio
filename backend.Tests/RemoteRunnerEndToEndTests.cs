@@ -311,6 +311,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 TimelineActors.Human("operator")).Status);
         Assert.NotNull(mutations.SavePendingIntent(TaskKey, ContinueModes.Continue,
             "Second fix round", "operator", null, _watchPath));
+        var reviewedRef = Contract.FencedGitRefs.ImmutableResult("run-old-delivery", 1, oldSha);
+        Assert.True(AgentStudio.Runner.ContinuationBaseStore.Save(
+            Path.Combine(_watchPath, TaskStates.Ready, TaskKey),
+            AgentStudio.Runner.ReviewFixRoundBase.Decide(
+                "rev-old-delivery", reviewedRef, oldSha, clock.GetUtcNow().UtcDateTime)!));
         var newSha = new string('b', 40);
         var lateCompletion = await client.CompleteRunAsync(new RRemoteComplete(
             active.TaskKey!, active.Lease!.LeaseId, active.Lease.FencingToken,
@@ -324,6 +329,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(TaskStates.Ready, lateCompletion!.TargetState);
         Assert.Contains("Second fix round", File.ReadAllText(Path.Combine(
             _watchPath, TaskStates.Ready, TaskKey, "pending-intent.json")));
+        Assert.Equal(reviewedRef, AgentStudio.Runner.ContinuationBaseStore.Read(
+            Path.Combine(_watchPath, TaskStates.Ready, TaskKey))?.Ref);
         await client.ReleaseLeaseAsync(new RRelease(
             active.TaskKey!, active.Lease.LeaseId, active.Lease.FencingToken, RunnerId,
             active.Lease.AttemptId, active.Lease.AuthorityEpoch,
@@ -333,6 +340,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             IdempotencyKey: "second-fix-claim"), CancellationToken.None);
         Assert.Equal(RClaimStatus.Claimed, next.Status);
         Assert.Equal("Second fix round", next.RunSpec!.FollowUp!.Prompt);
+        Assert.Equal(reviewedRef, next.ContinuationBaseRef);
+        Assert.Equal(oldSha, next.ContinuationBaseSha);
     }
 
     [Theory]
