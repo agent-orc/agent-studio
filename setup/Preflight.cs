@@ -79,13 +79,13 @@ internal static class PreflightPolicy
                     "Free at least 20 GiB for repositories, run worktrees and backups, or choose --install-dir on a larger volume."));
 
         findings.Add(Check("Authority URL", remote ? facts.AuthorityUrlKnown : null, "existing authority URL known",
-            "Pass --server-url with the authority's https URL; a join-host run reads it from the join token issued by that authority."));
+            "Pass --server-url with the authority's HTTPS URL; a join-host run reads its selected route from the join token, including loopback HTTP for a reverse tunnel."));
         findings.Add(Check("DNS", remote ? facts.DnsResolves : null, "authority name resolves",
-            "Add the private Task Server name to the WireGuard DNS resolver or /etc/hosts (C:\\Windows\\System32\\drivers\\etc\\hosts), then retry."));
-        findings.Add(Check("WireGuard", remote ? facts.WireGuardInterface : null, "WireGuard interface up",
+            "Resolve the selected Task Server name through DNS or the host's hosts file, then retry."));
+        findings.Add(Check("WireGuard", journey == InstallationJourney.RelocateAuthority ? facts.WireGuardInterface : null, "WireGuard interface up",
             "Install WireGuard, import this peer's configuration from the control-plane administrator and bring the tunnel up ('wg-quick up wg0')."));
         findings.Add(Check("Connectivity", remote ? facts.AuthorityReachable : null, "authority reachable",
-            "Check the private URL, listener, firewall and WireGuard route from this host, then retry."));
+            "Check the selected URL, listener, firewall and tunnel or LAN route from this host, then retry."));
         findings.Add(Check("TLS", remote ? facts.TlsTrusted : null, "authority certificate trusted",
             "Install the private CA certificate or pin the published certificate fingerprint; never disable certificate validation."));
         findings.Add(Check("Backup mount", authority ? facts.BackupMountWritable : null, "off-host backup mount writable",
@@ -133,7 +133,8 @@ internal static class PreflightProbe
         string? backupPath,
         string? secretFile,
         string installRoot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? executionUser = null)
     {
         var windows = OperatingSystem.IsWindows();
         var docker = target == "docker" && journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority);
@@ -154,16 +155,15 @@ internal static class PreflightProbe
             journey is InstallationJourney.OneBox or InstallationJourney.JoinHost or InstallationJourney.RelocateAuthority
                 ? FreeBytes(installRoot) : null,
             host is not null && !host.IsLoopback ? await ResolvesAsync(host.Host, cancellationToken) : null,
-            journey == InstallationJourney.RelocateAuthority && contactsAuthority
-                || (host is not null && !host.IsLoopback && IsPrivate(host.Host))
+            journey == InstallationJourney.RelocateAuthority
                 ? WireGuardUp(windows)
                 : null,
             authority.Trusted,
             journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority) && backupPath is not null
                 ? Writable(backupPath) : null,
-            journey == InstallationJourney.JoinHost
-                ? await SucceedsAsync(processes, "codex", ["--version"])
-                  || await SucceedsAsync(processes, "claude", ["--version"])
+            journey == InstallationJourney.JoinHost && !string.IsNullOrWhiteSpace(executionUser)
+                ? await processes.FindCommandAsync("codex", executionUser) is not null
+                  || await processes.FindCommandAsync("claude", executionUser) is not null
                 : null,
             journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority) && secretFile is not null
                 ? SetupSecrets.IsProtected(secretFile) : null,
@@ -211,12 +211,6 @@ internal static class PreflightProbe
         catch (SocketException) { return false; }
     }
 
-    private static bool IsPrivate(string host)
-        => !IPAddress.TryParse(host, out var address)
-            ? host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)
-              || host.EndsWith(".wg", StringComparison.OrdinalIgnoreCase)
-            : address.GetAddressBytes() is [10, ..] or [192, 168, ..] or [172, >= 16 and <= 31, ..];
-
     private static bool WireGuardUp(bool windows)
         => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().Any(nic =>
             nic.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up
@@ -236,7 +230,7 @@ internal static class PreflightProbe
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             using var response = await http.GetAsync(new Uri(uri, "/healthz"), cancellationToken);
-            return (true, https ? true : null);
+            return (response.IsSuccessStatusCode, https ? true : null);
         }
         catch (HttpRequestException error) when (https && error.InnerException is System.Security.Authentication.AuthenticationException)
         {
