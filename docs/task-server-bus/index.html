@@ -649,6 +649,10 @@
   <strong>AGT-3058 · Monolith orchestration plane</strong>
   <span>Delivered: D14 A adds file-backed, fenced orchestration occurrences and engine-scoped v1 routes to the monolith; coding completions, review reports, gate results and periodic operator sweeps can wait in their current lane for an engine decision. The completion adapter applies keyed lane moves, fix prompts and reviewed bases, integration and batch enqueue, linked follow-ups and escalation. Focused lease, protocol, action and board tests cover the authority handoff.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3059" data-delivered-at="2026-10-14" data-slice="Remote engine transition rollout">
+  <strong>AGT-3059 · Remote engine transition rollout</strong>
+  <span>Delivered: D14 A, D15 A and D20 A use a separate engine service with per-occurrence leases. Coding, review and gate transitions gain engine receipts, shadow comparison, a default 50-match operator switch, rollback recovery and a visible wait with an operator alert. D17 A and D18 A remain in the shared decision library; Stable shadow and engine activation wait for AGT-3135.</span>
+</li>
 <!-- agent-studio:implementation-log:end --></ol></section><!-- agent-studio:implementation-section:end -->
 <section id="sources"><h2>Code index</h2><p>Every reference resolves to an inspected writer, reader or wire contract. Line numbers and SHA-256 file hashes are pinned in <a href="evidence.json">evidence.json</a>. Revalidate them if develop advances.</p><table><thead><tr><th>Ref</th><th>File, location and purpose</th></tr></thead><tbody>
 <tr id="src-A"><td>A</td><td class="source-path"><a href="../../backend/Features/Runner/AttemptAuthorityService.cs">backend/Features/Runner/AttemptAuthorityService.cs</a>, line 45: <code>public const string RelativePath</code>. File-backed attempt authority; acquisition, fencing, epochs, settlement and restart adoption.</td></tr>

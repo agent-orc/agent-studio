@@ -156,9 +156,13 @@ public sealed class MonolithOrchestrationApplier(
             using var reviewPayload = JsonDocument.Parse(occurrence.Run.PayloadJson);
             var outcome = reviewPayload.RootElement.GetProperty("reviewOutcome").GetString()
                 ?? throw new InvalidDataException("The review outcome is missing.");
+            var reviewAttemptId = reviewPayload.RootElement.TryGetProperty("reviewAttemptId", out var reviewId)
+                && reviewId.ValueKind == JsonValueKind.String
+                ? reviewId.GetString() : occurrence.AuthorityAttemptId;
             escalation.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
                 task.FolderPath, outcome, decision?.Reason ?? string.Empty,
-                reviewAttemptId: occurrence.AuthorityAttemptId, requireJournal: true);
+                reviewAttemptId: reviewAttemptId,
+                requireJournal: !HasPayloadProperty(occurrence.Run.PayloadJson, "monolithGateResult"));
         }
 
         if (target == TaskStates.AutoReview)

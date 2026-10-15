@@ -37,6 +37,7 @@ Log.Logger = new LoggerConfiguration()
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
+builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
