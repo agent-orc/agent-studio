@@ -34,17 +34,14 @@
 ## Install
 
 ```bash
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-studio-setup
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/SHA256SUMS
-grep '  agent-studio-setup$' SHA256SUMS | sha256sum -c -
-chmod +x agent-studio-setup
-./agent-studio-setup
+curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
 ```
 
-The default path needs Docker Engine on Linux or Docker Desktop with WSL2 on
-Windows; `--target native` installs services instead on hosts without Docker.
-The installer uses the version of the downloaded release, verifies its Compose
-bundle, starts the full one-box stack, and opens the browser. Windows users
+The Linux script checks the distribution and architecture, verifies the setup
+executable against `SHA256SUMS`, then offers a one-box Docker or native systemd
+install, or an agent host that joins an existing Studio. Native setup serves
+the UI locally and guides provider login and GitHub access for the execution
+user. Windows users
 download `agent-studio-setup.exe` and verify it against `SHA256SUMS`.
 See the [install guide](./docs/operations/setup/install.md) for Windows commands,
 the native and connector profiles, unattended answers, update, rollback, uninstall, and remote topologies.

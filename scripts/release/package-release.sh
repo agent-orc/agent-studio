@@ -139,8 +139,9 @@ archive "$studio" "$output_dir/$studio.tar.gz"
 archive "$compose" "$output_dir/$compose.tar.gz"
 install -m 0755 "$publish_root/setup/agent-studio-setup" \
     "$output_dir/agent-studio-setup"
-install -m 0755 "$repo_root/scripts/release/install.sh" \
-    "$output_dir/install.sh"
+sed "s/^release_version=DEV$/release_version=$version/" \
+    "$repo_root/install.sh" >"$output_dir/install.sh"
+chmod 0755 "$output_dir/install.sh"
 (
     cd "$output_dir"
     sha256sum \

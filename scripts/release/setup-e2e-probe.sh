@@ -16,12 +16,12 @@ report_path="$(realpath -m "$report_path")"
 probe_root="$(mktemp -d)"
 runtime_root="$probe_root/runtime"
 publish_root="$probe_root/publish"
-release_root="${SETUP_E2E_RELEASE_DIR:-$probe_root/release}"
+release_root="${SETUP_E2E_RELEASE_DIR:-${AGENT_SETUP_E2E_RELEASE_DIR:-$probe_root/release}}"
 frontend_root="$probe_root/frontend/browser"
 version="$(tr -d '\r\n' <"$repo_root/VERSION")"
-git_sha="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
+git_sha="${AGENT_SETUP_E2E_GIT_SHA:-${GITHUB_SHA:-$(git -c safe.directory='*' -C "$repo_root" rev-parse HEAD)}}"
 port=""
-candidate_dir="${SETUP_E2E_RELEASE_DIR:-}"
+candidate_dir="${SETUP_E2E_RELEASE_DIR:-${AGENT_SETUP_E2E_RELEASE_DIR:-}}"
 
 cleanup() {
   if [[ -d "$runtime_root" ]]; then
@@ -269,6 +269,9 @@ umask 077
   --release-dir "$release_root" \
   --listen-url "$base_url" \
   --server-url "$base_url" \
+  --execution-user "$(id -un)" \
+  --agent-cli codex \
+  --runner-name agent-runner-01-e2e \
   --non-interactive \
   >"$control_output"
 
@@ -284,12 +287,11 @@ if [[ "${SETUP_E2E_CONTROL_ONLY:-0}" == 1 ]]; then
   exit 0
 fi
 
-join_token="$(awk '$1 ~ /^aosj1[.]/ { print $1 }' "$control_output" | tail -n 1)"
-[[ "$join_token" == aosj1.* ]] || {
-  echo "Control Plane setup did not emit a join token." >&2
+[[ -s "$orchestrator_config/join.token" ]] || {
+  echo "Control Plane setup did not create a protected join token file." >&2
   exit 4
 }
-printf '%s\n' "$join_token" >"$join_file"
+cp "$orchestrator_config/join.token" "$join_file"
 chmod 0600 "$join_file"
 rm -f -- "$control_output"
 
@@ -299,12 +301,12 @@ rm -f -- "$control_output"
   --release-dir "$release_root" \
   --execution-user "$(id -un)" \
   --agent-cli codex \
-  --runner-name agent-runner-01-e2e \
+  --runner-name agent-runner-02-e2e \
   --git-remote "$SCENARIO_GIT_REMOTE" \
   --non-interactive \
   >"$runtime_root/host-setup.log"
 rm -f -- "$join_file"
-if ! grep -Eq 'registered as agent-runner-01-e2e \((ready|ready-no-workflow-scope)\)' "$runtime_root/host-setup.log"; then
+if ! grep -Eq 'registered as agent-runner-02-e2e \((ready|ready-no-workflow-scope)\)' "$runtime_root/host-setup.log"; then
     python3 - "$runtime_root/host-setup.log" "$runtime_root/agent-host.log" <<'PY' >&2
 import pathlib
 import re
@@ -336,6 +338,7 @@ remote_hosts="$(
     "$base_url/api/v1/management/remote-hosts"
 )"
 grep -Fq '"runnerId":"agent-runner-01-e2e"' <<<"$remote_hosts"
+grep -Fq '"runnerId":"agent-runner-02-e2e"' <<<"$remote_hosts"
 (
   cd "$release_root"
   sha256sum -c SHA256SUMS >/dev/null
@@ -364,7 +367,7 @@ cat >"$report_path" <<REPORT
 
 PASS
 
-1. The release directory contained one setup executable, four archives, and one SHA256SUMS file.
+1. The release directory contained one setup executable, install.sh, four archives, and one SHA256SUMS file.
 2. Every release asset passed SHA-256 verification before extraction.
 3. The setup executable installed the Control Plane into isolated native paths and /readyz reported ready.
 4. The setup executable installed the matching Studio static tree.
@@ -372,7 +375,7 @@ PASS
 6. The same setup executable consumed the join token, verified a fake host-owned Codex login and Git read access, installed agent-host, and started it through the isolated systemctl fixture.
 7. Setup waited for the daemon's startup capability result and required Git write access to the scratch repository.
 8. The owner bootstrap API accepted the installer-generated one-time code, and the owner registered the scratch repository as a project.
-9. The real Task Server management API reported runnerId agent-runner-01-e2e.
+9. The real Task Server management API reported both one-box and joined runner identities.
 10. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
 
 ## Isolation

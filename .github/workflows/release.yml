@@ -101,6 +101,7 @@ jobs:
       - name: Test release shell contracts
         run: |
           bash scripts/release/release-scripts.test.sh
+          sh scripts/release/linux-install-script.test.sh
           python3 scripts/release/installation-scenarios.test.py
           python3 -m unittest discover \
             -s deploy/agent-host/tests \
@@ -200,7 +201,7 @@ jobs:
           test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
-      - name: Create guided setup executable, four archives, and SHA-256 checksums
+      - name: Create guided setup executable, install script, four archives, and SHA-256 checksums
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           scripts/release/package-release.sh \
@@ -521,7 +522,9 @@ jobs:
           AGENT_STUDIO_SCENARIO_GIT_REMOTE: ${{ vars.AGENT_STUDIO_SCENARIO_GIT_REMOTE }}
           AGENT_STUDIO_SCENARIO_DEPLOY_KEY: ${{ secrets.AGENT_STUDIO_SCENARIO_DEPLOY_KEY }}
           AGENT_STUDIO_SCENARIO_KNOWN_HOSTS: ${{ secrets.AGENT_STUDIO_SCENARIO_KNOWN_HOSTS }}
-        run: bash scripts/release/installation-container-probe.sh artifacts/release artifacts/installation-evidence
+        run: |
+          sh scripts/release/linux-install-script.test.sh
+          bash scripts/release/installation-container-probe.sh artifacts/release artifacts/installation-evidence
       - name: Upload installation evidence
         if: always()
         uses: actions/upload-artifact@v4
