@@ -3005,6 +3005,13 @@
           <td>The per-task, batch fallback, and merge callers treated Cancellation as failed verification without checking current delivery ownership or shutdown.</td>
           <td>The observed terminal was Escalated. Superseded cancellations now retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. Operator stops still park the card. The timeline records superseded, shutdown, or operator.</td>
         </tr>
+        <tr id="case-completed-gate-superseded-delivery">
+          <td>2026-10-15</td>
+          <td><code>AGT-3147 / AGT-3151</code><br><span class="small">completed-gate-superseded-delivery</span></td>
+          <td>A red gate for delivery <code>f893685a4</code> finished after an operator fix round had started. It moved the active card from Progress to Escalated. A second continuation queued in Ready was then bypassed when the first run completed and moved the card to Auto Review.</td>
+          <td>Completed gate verdicts lacked the ownership check used for cancellations. Remote completion changed the lane after settling an older run without checking for a newer pending continuation.</td>
+          <td>The observed terminal was Auto Review on delivery <code>15e940d6e</code>, with the second continuation unrun. The corrected path records superseded gate evidence without moving the card, and keeps a newer queued continuation in Ready when the old run finishes.</td>
+        </tr>
       </tbody>
     </table>
 

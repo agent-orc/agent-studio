@@ -188,6 +188,66 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(resultRef, AgentStudio.Runner.ContinuationBaseStore.Read(progressFolder)?.Ref);
     }
 
+    [Fact]
+    public async Task Completed_run_in_ready_keeps_newer_queued_continuation_for_next_claim()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Queued second continuation", "Original prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://example.invalid/agent-studio.git");
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex"));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+
+        var states = factory.Services.GetRequiredService<TaskStateMachine>();
+        Assert.Equal(MoveJobStatus.Success,
+            states.MoveJob(TaskKey, TaskStates.Ready, _watchPath,
+                TimelineActors.Human("operator")).Status);
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        Assert.NotNull(mutations.SavePendingIntent(TaskKey, ContinueModes.Continue,
+            "Run the second continuation", "operator", null, _watchPath));
+
+        var sha = new string('b', 40);
+        var completionRequest = new RRemoteComplete(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken,
+            RunnerId, "Done", ResultSha: sha, AttemptChainId: claim.Lease.LeaseId,
+            Repository: "https://example.invalid/agent-studio.git",
+            AttemptId: claim.Lease.AttemptId, AuthorityEpoch: claim.Lease.AuthorityEpoch,
+            IdempotencyKey: "older-continuation-completion",
+            BaseSha: new string('a', 40),
+            ImmutableResultRef: Contract.FencedGitRefs.ImmutableResult(
+                claim.Lease.AttemptId!, claim.Lease.FencingToken, sha),
+            ArtifactManifestDigest: new string('c', 64));
+        var completion = await client.CompleteRunAsync(completionRequest, CancellationToken.None);
+
+        Assert.Equal(TaskStates.Ready, completion!.TargetState);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, TaskKey)));
+        Assert.Contains("Run the second continuation", File.ReadAllText(Path.Combine(
+            _watchPath, TaskStates.Ready, TaskKey, "pending-intent.json")));
+        Assert.Contains(ReadTimelineAt(Path.Combine(_watchPath, TaskStates.Ready, TaskKey)),
+            item => item.GetProperty("kind").GetString() == "run-completion-superseded");
+        Assert.Null(factory.Services.GetRequiredService<AttemptAuthorityService>()
+            .GetTaskProjection(TaskKey).CurrentReviewAttempt);
+        var readyReplay = await client.CompleteRunAsync(completionRequest, CancellationToken.None);
+        Assert.Equal(TaskStates.Ready, readyReplay!.TargetState);
+
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+            "older-continuation-release"), CancellationToken.None);
+        var next = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex",
+            IdempotencyKey: "second-continuation-claim"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, next.Status);
+        Assert.Equal("Run the second continuation", next.RunSpec!.FollowUp!.Prompt);
+        var oldReplay = await http.PostAsJsonAsync("/api/runner/completion", completionRequest);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, oldReplay.StatusCode);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, TaskKey)));
+    }
+
     [Theory]
     [InlineData("Stopped")]
     [InlineData("MechanicalFallback")]

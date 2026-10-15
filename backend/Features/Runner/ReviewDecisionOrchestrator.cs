@@ -2614,8 +2614,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
+        var aspectSubject = ResolveBuildTestGateSubject(current, entry.Path);
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
+        if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
         if (scopedReview.CarriedVerdicts.Count > 0)
         {
             var merged = report.Verdicts.Concat(scopedReview.CarriedVerdicts).ToArray();
@@ -2648,6 +2650,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             entry.Name, current.Id, AutoReviewActivitySteps.Grade);
         var gradeReport = await RunCodeReviewGradePostStepAsync(
             entry, current, taskBody, buildGateResult, ct);
+        if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Decision);
 
@@ -2748,6 +2751,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             await RunTaskSpawnerPostStepAsync(
                 entry, current, report, taskBody, statusSummary, diffSummary, resultsInventory, ct);
         }
+        if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
 
         // Council pattern: the quality-grade reviewer is advisory, while this
         // orchestrator owns the explicit per-finding ruling. A named deficiency
@@ -4460,6 +4464,32 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string? SubjectRef,
         bool IsRemote);
 
+    private bool ReviewResultWasSuperseded(TaskInfo reviewed, WatchPathEntry entry,
+        BuildTestGateSubject subject, AspectRunReport report)
+    {
+        var live = _scanner.FindJob(reviewed.Id, entry.Path);
+        var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
+        if (GateCancellationPolicy.OwnsResult(subject.Sha, liveSubject?.Sha,
+                subject.AttemptChainId, liveSubject?.AttemptChainId,
+                reviewed.State, live?.State, live?.PendingIntent is not null))
+            return false;
+
+        _timeline?.Append(live?.FolderPath ?? reviewed.FolderPath, new TimelineEvent
+        {
+            Ts = _gateTime.GetUtcNow().UtcDateTime,
+            Kind = "review-result-superseded", Actor = TimelineActors.System,
+            Summary = "Aspect review result belongs to an earlier delivery or attempt.",
+            Details = new Dictionary<string, string>
+            {
+                ["expectedSha"] = subject.Sha ?? "",
+                ["attemptChainId"] = subject.AttemptChainId ?? "",
+                ["verdicts"] = string.Join(",", report.Verdicts.Select(verdict =>
+                    $"{verdict.Aspect}:{verdict.Status}")),
+            },
+        });
+        return true;
+    }
+
     private void RecordLintScssStep(
         string jobFolderPath,
         PipelineStepStatus status,
@@ -4651,6 +4681,37 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         : BuildTestGateRunner.Fingerprint(
                             normalizedKind, result.Reason + "\n" + result.Output)),
             };
+
+            var liveSubjectTask = _scanner.FindJob(current.Id, entry.Path);
+            var liveSubject = liveSubjectTask is null
+                ? null : ResolveBuildTestGateSubject(liveSubjectTask, entry.Path);
+            if (result.FailureKind != BuildTestGateFailureKind.Cancellation
+                && !GateCancellationPolicy.OwnsResult(subject.Sha, liveSubject?.Sha,
+                    subject.AttemptChainId, liveSubject?.AttemptChainId,
+                    current.State, liveSubjectTask?.State,
+                    liveSubjectTask?.PendingIntent is not null))
+            {
+                var folder = liveSubjectTask?.FolderPath ?? current.FolderPath;
+                WriteBuildTestGateLog(folder, result, changedFiles);
+                _timeline?.Append(folder, new TimelineEvent
+                {
+                    Ts = _gateTime.GetUtcNow().UtcDateTime,
+                    Kind = "gate-result-superseded", Actor = TimelineActors.System,
+                    Summary = "Build/test gate result belongs to an earlier delivery or attempt.",
+                    Details = new Dictionary<string, string>
+                    {
+                        ["expectedSha"] = subject.Sha ?? "",
+                        ["attemptChainId"] = subject.AttemptChainId ?? "",
+                        ["gateId"] = result.GateId,
+                        ["verdict"] = result.Verdict.ToString(),
+                    },
+                });
+                return result with
+                {
+                    Verdict = BuildTestGateVerdict.Skipped,
+                    CancellationReason = GateCancellationReasons.Superseded,
+                };
+            }
 
             if (result.FailureKind == BuildTestGateFailureKind.Cancellation)
             {
@@ -6523,6 +6584,27 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         AgentStudio.Review.CodeReviewStepReport? gradeReport,
         CancellationToken ct)
     {
+        var live = _scanner.FindJob(current.Id, entry.Path);
+        var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
+        if (!GateCancellationPolicy.OwnsResult(result.ExpectedSha, liveSubject?.Sha,
+                result.AttemptChainId, liveSubject?.AttemptChainId,
+                current.State, live?.State, live?.PendingIntent is not null))
+        {
+            _timeline?.Append(live?.FolderPath ?? current.FolderPath, new TimelineEvent
+            {
+                Ts = _gateTime.GetUtcNow().UtcDateTime,
+                Kind = "gate-result-superseded", Actor = TimelineActors.System,
+                Summary = "Build/test gate result was superseded before the failure decision.",
+                Details = new Dictionary<string, string>
+                {
+                    ["expectedSha"] = result.ExpectedSha ?? "",
+                    ["attemptChainId"] = result.AttemptChainId ?? "",
+                    ["gateId"] = result.GateId,
+                    ["verdict"] = result.Verdict.ToString(),
+                },
+            });
+            return;
+        }
         var councilReaction = gradeReport is null
             ? null
             : DeriveCouncilReviewReaction(workspace, entry, current, gradeReport);

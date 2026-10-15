@@ -1673,6 +1673,15 @@ public static class LeaseEndpoints
             // Settlement has already committed the attempt's terminal fact. The
             // stop receipt must be retired even if a later projection fails.
             var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
+            if (settled.Status == AttemptWriteStatus.Duplicate
+                && timeline.ReadAll(task.FolderPath).Any(item =>
+                    item.Kind == "run-completion-superseded"
+                    && string.Equals(item.RunId, attemptId, StringComparison.Ordinal)))
+            {
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, reportedOutcome, task.State,
+                    "Superseded run completion already recorded.", RunAttemptId: attemptId));
+            }
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
@@ -2223,6 +2232,32 @@ public static class LeaseEndpoints
                 req.FencingToken,
                 epoch,
                 $"lane-completion:{completionKey}");
+
+            // The fenced run can finish after an operator has returned the card
+            // to Ready and queued another continuation. Its terminal attempt and
+            // timeline evidence are durable above; keep the queued prompt in
+            // Ready so the next claim can consume it.
+            task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+            if (task.State == TaskStates.Ready && task.PendingIntent is not null)
+            {
+                if (!timeline.Append(task.FolderPath, "run-completion-superseded",
+                    TimelineActors.System,
+                    $"Run {attemptId} finished after a newer continuation was queued; the continuation remains ready.",
+                    runId: attemptId,
+                    details: new Dictionary<string, string>
+                    {
+                        ["attemptId"] = attemptId,
+                        ["outcome"] = outcome,
+                        ["resultSha"] = resultSha ?? string.Empty,
+                    }))
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Superseded completion receipt persistence failed",
+                        detail: "The run is settled, but its supersession receipt was not saved. Retry the completion.");
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, responseOutcome, TaskStates.Ready,
+                    "Run completion recorded; queued continuation remains ready.",
+                    RunAttemptId: attemptId));
+            }
 
             // A remote claim reads the run-scoped fallback from the pending
             // intent. Once that run settles, remove both pending and consumed
