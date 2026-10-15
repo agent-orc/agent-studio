@@ -39,6 +39,8 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
+builder.Services.AddSingleton<OrchestratorDecisionStore>();
+builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);

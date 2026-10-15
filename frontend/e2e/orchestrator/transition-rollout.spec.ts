@@ -22,6 +22,24 @@ test('transition profiles show comparison state and require an operator reason',
       ] });
     } else await route.continue();
   });
+  const receipt = 'odr_0123456789abcdef0123456789abcdef';
+  await page.route(/\/api\/orchestration\/decision-receipts\?limit=5$/, route => route.fulfill({ json: [
+    { receiptId: receipt, occurrenceId: 'orch_sample', taskId: 'AGT-4242', profile: 'CodingCompletion',
+      mode: 'shadow', chosenAction: 'prepare(review-subject)', deterministicAction: 'prepare(review-subject)',
+      matchesDeterministic: true, callStatus: 'completed', model: 'gpt-6-sol', thinkingLevel: 'medium',
+      custody: 'runner-host-job', totalTokens: 6412, priceStatus: 'priced', estimatedUsd: 0.0412,
+      evidenceRef: `/api/orchestration/decision-receipts/${receipt}`, endedAt: '2026-10-15T08:00:00Z' },
+    { receiptId: 'odr_fedcba9876543210fedcba9876543210', occurrenceId: 'orch_other', taskId: 'AGT-4243',
+      profile: 'CodingCompletion', mode: 'shadow', chosenAction: 'ask(decision-unavailable)',
+      deterministicAction: 'prepare(review-subject)', matchesDeterministic: false, callStatus: 'unavailable',
+      model: 'gpt-6-sol', thinkingLevel: 'medium', custody: 'runner-host-job', totalTokens: 0,
+      priceStatus: 'no-usage', estimatedUsd: null,
+      evidenceRef: '/api/orchestration/decision-receipts/odr_fedcba9876543210fedcba9876543210',
+      endedAt: '2026-10-15T08:05:00Z' },
+  ] }));
+  await page.context().route(`**/api/orchestration/decision-receipts/${receipt}`, route => route.fulfill({ json: {
+    receiptId: receipt, occurrenceId: 'orch_sample', groundsDigest: 'sha256:abc', grounds: { facts: [] },
+  } }));
   await page.goto('/#/workspace/settings/orchestrator');
   const panel = page.getByTestId('transition-rollout');
   await expect(panel).toBeVisible();
@@ -30,6 +48,17 @@ test('transition profiles show comparison state and require an operator reason',
   await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeDisabled();
   await panel.getByTestId('transition-rollout-reason').fill('Shadow receipts matched');
   await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeEnabled();
+  const decision = panel.getByTestId(`shadow-decision-${receipt}`);
+  await expect(decision).toContainText('AGT-4242');
+  await expect(decision).toContainText('match');
+  await expect(decision).toContainText('$0.0412');
+  await expect(panel.getByTestId('shadow-decision-odr_fedcba9876543210fedcba9876543210'))
+    .toContainText('no usage data');
+  const evidence = decision.getByRole('link', { name: 'Evidence' });
+  await expect(evidence).toHaveAttribute('href', `/api/orchestration/decision-receipts/${receipt}`);
+  const [opened] = await Promise.all([page.waitForEvent('popup'), evidence.click()]);
+  await expect(opened.locator('body')).toContainText('sha256:abc');
+  await opened.close();
   await panel.screenshot({ path: path.join(shots, 'transition-rollout-light.png') });
   await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'dark'; });
   await panel.screenshot({ path: path.join(shots, 'transition-rollout-dark.png') });

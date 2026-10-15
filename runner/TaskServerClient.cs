@@ -1110,6 +1110,46 @@ public sealed class TaskServerClient : IDisposable
         return JsonSerializer.Deserialize<Contract.ArtifactContentDto>(detail, Json);
     }
 
+    /// <summary>
+    /// AGT-3063: a shadow orchestrator decision call queued on the monolith
+    /// authority. The runner runs it with its own provider credential.
+    /// </summary>
+    public async Task<OrchestratorDecisionJobClaimResponse> ClaimOrchestratorDecisionJobAsync(
+        OrchestratorDecisionJobClaimRequest request,
+        CancellationToken ct)
+    {
+        if (_useV1)
+            return new OrchestratorDecisionJobClaimResponse(DecisionJobClaimStatuses.Empty);
+        try
+        {
+            return await PostJsonAsync<OrchestratorDecisionJobClaimRequest, OrchestratorDecisionJobClaimResponse>(
+                       "/api/runner/orchestrator-decisions/claim",
+                       request with { CapabilityInstanceId = request.CapabilityInstanceId ?? RunnerInstanceId }, ct)
+                   ?? new OrchestratorDecisionJobClaimResponse(DecisionJobClaimStatuses.Empty);
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.NotFound)
+        {
+            // A Studio release without the decision plane has no jobs to hand out.
+            return new OrchestratorDecisionJobClaimResponse(DecisionJobClaimStatuses.Empty);
+        }
+    }
+
+    public async Task<bool> CompleteOrchestratorDecisionJobAsync(
+        OrchestratorDecisionJobCompletion completion,
+        CancellationToken ct)
+    {
+        try
+        {
+            _ = await PostJsonAsync<OrchestratorDecisionJobCompletion, object>(
+                "/api/runner/orchestrator-decisions/complete", completion, ct);
+            return true;
+        }
+        catch (TaskServerException ex) when (ex.StatusCode == (int)HttpStatusCode.Conflict)
+        {
+            return false;
+        }
+    }
+
     public async Task<RemoteChatWorkClaimResponse> ClaimProjectChatWorkAsync(
         RemoteChatWorkClaimRequest request,
         CancellationToken ct)
