@@ -91,6 +91,14 @@ public sealed class OrchestrationRolloutStore
         ValidateProfile(profile);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        // AGT-3055: behind the Task Server proxy the engine cannot claim batch-plan occurrences.
+        if (profile == AgentStudio.Pipeline.BatchGatePilotService.BatchPlanProfile
+            && target.ToLowerInvariant() is "shadow" or "engine"
+            && AgentStudio.Host.TaskServerPlaneProxy.IsConfigured(_configuration))
+            throw new InvalidOperationException("orchestration-profile-batch-plan-task-server-proxy: "
+                + AgentStudio.Pipeline.BatchGatePilotService.BatchPlanProxyRefusal(
+                    target.ToLowerInvariant() == "shadow" ? OrchestrationExecutionMode.Shadow
+                        : OrchestrationExecutionMode.Engine));
         lock (Gate)
         {
             var state = Read(_path);

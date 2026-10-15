@@ -72,13 +72,16 @@ public sealed class ClaimedBatchGateRunnerTests
     }
 
     [Fact]
-    public void Claimed_execution_is_the_default_and_bridge_is_the_only_rollback()
+    public void Unset_execution_keeps_the_ssh_bridge_and_claimed_is_opt_in()
     {
         static IConfiguration Config(string? value) => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { [ClaimedBatchGateRunner.ExecutionKey] = value })
             .Build();
 
-        Assert.True(ClaimedBatchGateRunner.Enabled(Config(null)));
+        Assert.Equal(ClaimedBatchGateRunner.BridgeMode, ClaimedBatchGateRunner.Mode(Config(null)));
+        Assert.Equal(ClaimedBatchGateRunner.BridgeMode, ClaimedBatchGateRunner.Mode(Config(" ")));
+        Assert.False(ClaimedBatchGateRunner.Enabled(Config(null)));
+        Assert.False(ClaimedBatchGateRunner.Enabled(null));
         Assert.True(ClaimedBatchGateRunner.Enabled(Config("Claimed")));
         Assert.False(ClaimedBatchGateRunner.Enabled(Config("bridge")));
         Assert.Throws<InvalidOperationException>(() => ClaimedBatchGateRunner.Mode(Config("ssh")));

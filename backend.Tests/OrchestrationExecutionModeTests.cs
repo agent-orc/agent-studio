@@ -38,6 +38,44 @@ public sealed class OrchestrationExecutionModeTests
             MonolithTransitionSwitch.For(configuration, "GateResult"));
     }
 
+    // AGT-3055 fix round: engine ownership of BatchPlan is opt-in and refused
+    // behind the Task Server proxy, where the engine cannot claim its occurrences.
+    [Theory]
+    [InlineData("Engine", null, OrchestrationExecutionMode.Engine, false)]
+    [InlineData("Shadow", null, OrchestrationExecutionMode.Shadow, false)]
+    [InlineData(null, null, OrchestrationExecutionMode.Monolith, false)]
+    [InlineData("Engine", "http://127.0.0.1:5071", OrchestrationExecutionMode.Monolith, true)]
+    [InlineData("Shadow", "http://127.0.0.1:5071", OrchestrationExecutionMode.Monolith, true)]
+    [InlineData(null, "http://127.0.0.1:5071", OrchestrationExecutionMode.Monolith, false)]
+    public void Batch_plan_owner_is_opt_in_and_refused_behind_the_task_server_proxy(
+        string? mode, string? taskServer, OrchestrationExecutionMode expected, bool refused)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Orchestration:ExecutionMode"] = mode,
+                ["TaskServer:BaseUrl"] = taskServer,
+            }).Build();
+
+        var owner = AgentStudio.Pipeline.BatchGatePilotService.OwnerOfBatchPlan(configuration, out var refusal);
+
+        Assert.Equal(expected, owner);
+        Assert.Equal(refused, refusal is not null);
+        if (refused) Assert.Contains("TaskServer:BaseUrl", refusal);
+    }
+
+    [Fact]
+    public void Rollout_switch_refuses_batch_plan_shadow_behind_the_task_server_proxy()
+    {
+        var store = new OrchestrationRolloutStore(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskServer:BaseUrl"] = "http://127.0.0.1:5071" }).Build());
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            store.Switch("BatchPlan", "shadow", "operator", "pilot"));
+
+        Assert.StartsWith("orchestration-profile-batch-plan-task-server-proxy", error.Message);
+    }
+
     // AGT-3055: the batch tick is the only hosted loop in Engine and Shadow
     // mode. There it publishes batch-plan occurrences and applies the engine
     // intent; without it no batch would close or advance.

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Host;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
@@ -28,6 +29,34 @@ public sealed partial class BatchGatePilotService
 
     private sealed record EngineBatchPlan(string RunId, BatchPlanDecision Decision, DateTimeOffset AtUtc);
 
+    private int _batchPlanRefusalLogged;
+
+    /// <summary>
+    /// Effective owner of the <c>BatchPlan</c> transition. Engine and Shadow
+    /// ownership are opt-in through <see cref="MonolithTransitionSwitch"/>. With
+    /// <c>TaskServer:BaseUrl</c> set, <c>/api/v1/orchestration</c> is proxied to
+    /// the Task Server, where the engine claims occurrences; batch-plan
+    /// occurrences live in the monolith store and would never be claimed, so
+    /// engine ownership is refused and the monolith keeps the decision.
+    /// </summary>
+    public static OrchestrationExecutionMode OwnerOfBatchPlan(IConfiguration? configuration, out string? refusal)
+    {
+        refusal = null;
+        if (configuration is null) return OrchestrationExecutionMode.Monolith;
+        var requested = MonolithTransitionSwitch.For(configuration, BatchPlanProfile);
+        if (requested == OrchestrationExecutionMode.Monolith || !TaskServerPlaneProxy.IsConfigured(configuration))
+            return requested;
+        refusal = BatchPlanProxyRefusal(requested);
+        return OrchestrationExecutionMode.Monolith;
+    }
+
+    /// <summary>Operator-facing reason the batch decision stays in the monolith behind the Task Server proxy.</summary>
+    public static string BatchPlanProxyRefusal(OrchestrationExecutionMode requested)
+        => $"{BatchPlanProfile} {requested} ownership is refused because TaskServer:BaseUrl proxies "
+           + "/api/v1/orchestration to the Task Server, where the engine cannot claim batch-plan occurrences. "
+           + "The monolith keeps the batch decision; unset TaskServer:BaseUrl or set "
+           + $"Orchestration:Transitions:{BatchPlanProfile}=Monolith.";
+
     /// <summary>Occurrence task id of one project scope; it never names a card.</summary>
     public static string BatchPlanTaskId(string scopeKey) => "batch-plan:" + scopeKey;
 
@@ -40,9 +69,9 @@ public sealed partial class BatchGatePilotService
     {
         var settings = _settings.Get(project);
         var advisorMode = (settings.BatchGate.Advisor ?? new BatchGateAdvisorOptions()).Mode;
-        var owner = _configuration is null
-            ? OrchestrationExecutionMode.Monolith
-            : MonolithTransitionSwitch.For(_configuration, BatchPlanProfile);
+        var owner = OwnerOfBatchPlan(_configuration, out var refusal);
+        if (refusal is not null && Interlocked.Exchange(ref _batchPlanRefusalLogged, 1) == 0)
+            _logger.LogError("batch-plan-engine-ownership-refused: {Refusal}", refusal);
         var occurrences = _services?.GetService<MonolithOrchestrationStore>();
         var prior = _store.LatestPlanDecision(project);
         if (owner == OrchestrationExecutionMode.Engine)

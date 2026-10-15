@@ -87,13 +87,20 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   store. In the networked profile, a runner credential reaches the monolith gate
   routes with `runner.claim` (claim, subject read), `runner.lease` (renew),
   `runner.events` (phase), and `runner.completion` (report, containment).
-  `BatchGate:Execution` selects the path: `claimed` (default) or `bridge`, which
-  is the rollback to the SSH bridge build/test gate runner. Any other value
-  stops the backend at startup.
+  `BatchGate:Execution` selects the path: `bridge` (default when unset), the
+  SSH bridge build/test gate runner, or `claimed`, the opt-in claimable gate
+  work. Any other value stops the backend at startup.
 - AGT-3055 (D14 option A, D15 option A): the batch decision runs one shared
   library (`BatchPlanDecisionPolicy`) in the monolith and in the Orchestrator
   Engine. `MonolithTransitionSwitch` selects the owner for the `BatchPlan`
-  transition. The batch tick runs in every execution mode. In Engine mode it
+  transition; Monolith stays the default and Engine or Shadow ownership is
+  opt-in. With `TaskServer:BaseUrl` set, `/api/v1/orchestration` is proxied to
+  the Task Server, where the engine claims occurrences, so the backend refuses
+  Engine and Shadow ownership of `BatchPlan`: it logs
+  `batch-plan-engine-ownership-refused` once and keeps the decision in the
+  monolith, and the rollout switch answers `409`
+  `orchestration-profile-batch-plan-task-server-proxy`. The batch tick runs in
+  every execution mode. In Engine mode it
   publishes a `BatchPlan` occurrence and applies the returned intent only after
   the authority floors. In Shadow mode it decides itself and records the engine
   comparison. The occurrence carries the advisor CLI type and the model that
@@ -108,8 +115,8 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 
 - The claimed suite needs at least one registered gate host with the plan's
   capabilities. Without one, the attempt expires at its dispatch deadline as
-  gate infrastructure. Use `BatchGate:Execution: bridge` until a host is
-  enrolled.
+  gate infrastructure. Keep `BatchGate:Execution` unset (`bridge`) until a
+  host is enrolled.
 - The D10 historical proxy is not a real combined-tree pass rate. Compare the
   state and report with actual batches before increasing the size bounds.
 - The first red candidate on a new base SHA can require one separate full

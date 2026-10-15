@@ -9,7 +9,7 @@ public static class OrchestrationLoopRegistration
         OrchestrationExecutionMode mode)
     {
         // AGT-3055: the batch tick runs in every mode. It owns the batch decision
-        // only where MonolithTransitionSwitch selects Monolith for "BatchPlan"; in
+        // only where BatchGatePilotService.OwnerOfBatchPlan selects Monolith; in
         // Shadow mode it also records the engine occurrence, and in Engine mode it
         // only publishes batch-plan occurrences and applies the engine intent after
         // the authority floors. Without it nothing would advance queued batches.

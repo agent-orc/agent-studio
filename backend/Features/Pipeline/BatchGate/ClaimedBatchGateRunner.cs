@@ -19,11 +19,14 @@ public sealed class ClaimedBatchGateRunner(IBatchGateSubjectAuthority gates, Git
 {
     public const string ExecutionKey = "BatchGate:Execution";
     public const string ExecutionMode = "claimed";
-    /// <summary>Rollback value: the batch suite runs through the build/test gate runner (SSH bridge).</summary>
+    /// <summary>Default: the batch suite runs through the build/test gate runner (SSH bridge).</summary>
     public const string BridgeMode = "bridge";
     internal TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
-    /// <summary>Claimed gate work is the default; only <see cref="BridgeMode"/> keeps the SSH bridge.</summary>
+    /// <summary>
+    /// Claimed gate work is opt-in (operator decision 15.10.2026): an unset
+    /// value keeps the SSH bridge, so production behavior does not change.
+    /// </summary>
     public static bool Enabled(IConfiguration? configuration)
         => Mode(configuration) == ExecutionMode;
 
@@ -31,7 +34,7 @@ public sealed class ClaimedBatchGateRunner(IBatchGateSubjectAuthority gates, Git
     public static string Mode(IConfiguration? configuration)
     {
         var configured = configuration?[ExecutionKey]?.Trim();
-        if (string.IsNullOrEmpty(configured)) return ExecutionMode;
+        if (string.IsNullOrEmpty(configured)) return BridgeMode;
         if (string.Equals(configured, ExecutionMode, StringComparison.OrdinalIgnoreCase)) return ExecutionMode;
         if (string.Equals(configured, BridgeMode, StringComparison.OrdinalIgnoreCase)) return BridgeMode;
         throw new InvalidOperationException($"{ExecutionKey} must be '{ExecutionMode}' or '{BridgeMode}'.");
