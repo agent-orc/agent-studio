@@ -85,6 +85,7 @@ jobs:
       - name: Test release shell contracts
         run: |
           bash scripts/release/release-scripts.test.sh
+          sh scripts/release/linux-install-script.test.sh
           python3 -m unittest discover \
             -s deploy/agent-host/tests \
             -p 'test_*.py'
@@ -159,6 +160,10 @@ jobs:
             --runtime linux-x64 --output artifacts/publish/task-server
           dotnet publish orchestrator-engine/OrchestratorEngine.csproj "${common[@]}" \
             --runtime linux-x64 --output artifacts/publish/orchestrator-engine
+          dotnet publish backend/OrchestratorApi.csproj "${common[@]}" \
+            --runtime linux-x64 --output artifacts/publish/orchestrator-api
+          dotnet publish studio-bff/StudioBff.csproj "${common[@]}" \
+            --runtime linux-x64 --output artifacts/publish/studio-bff
           dotnet publish runner/AgentRunner.csproj "${common[@]}" \
             --runtime linux-x64 --output artifacts/publish/agent-host-linux-x64
           dotnet publish runner/AgentRunner.csproj "${common[@]}" \
@@ -187,7 +192,7 @@ jobs:
           test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
-      - name: Create guided setup executable, three archives, and SHA-256 checksums
+      - name: Create guided setup executable, install script, four archives, and SHA-256 checksums
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           scripts/release/package-release.sh \
@@ -196,6 +201,11 @@ jobs:
             artifacts/publish \
             frontend/dist/frontend/browser \
             artifacts/release
+
+      - name: Rehearse native install, owner bootstrap, runner registration and uninstall
+        env:
+          AGENT_SETUP_E2E_RELEASE_DIR: artifacts/release
+        run: scripts/release/setup-e2e-probe.sh artifacts/native-install-probe.md
 
       - name: Publish pinned release images
         env:
@@ -403,10 +413,30 @@ jobs:
           artifacts/release/agent-studio-setup --unattended \
             --release-dir artifacts/release --install-dir "$install_root"
           curl --fail --silent http://127.0.0.1:4011/healthz
-          docker compose --project-name agent-studio \
+          installed_version="$(sed -n 's/^AGENT_STUDIO_VERSION=//p' "$install_root/.env")"
+          compose=(docker compose --project-name agent-studio \
             --env-file "$install_root/.env" \
-            -f "$install_root/releases/$(tr -d '\r\n' < "$install_root/releases/"*/VERSION)/docker-compose.yml" \
-            ps --status running
+            -f "$install_root/releases/$installed_version/docker-compose.yml")
+          "${compose[@]}" ps --status running
+          owner_code="$("${compose[@]}" exec -T task-server cat /run/agent-studio-secrets/owner_bootstrap_code)"
+          owner_password="$(openssl rand -hex 20)"
+          jq -n --arg code "$owner_code" --arg password "$owner_password" \
+            '{username:"owner-smoke",displayName:"Owner Smoke",password:$password,bootstrapCode:$code}' \
+            >"$RUNNER_TEMP/owner-smoke.json"
+          unset owner_code owner_password
+          curl --fail --silent -X POST -H 'Origin: http://127.0.0.1:4011' \
+            -H 'Content-Type: application/json' --data-binary "@$RUNNER_TEMP/owner-smoke.json" \
+            http://127.0.0.1:4011/api/v1/studio/auth/bootstrap >/dev/null
+          rm -f "$RUNNER_TEMP/owner-smoke.json"
+          curl --fail --silent http://127.0.0.1:4011/api/v1/studio/auth/status \
+            | jq -e '.bootstrapRequired == false'
+          studio_token="$("${compose[@]}" exec -T task-server cat /run/agent-studio-secrets/studio/studio_token)"
+          curl --fail --silent -H "Authorization: Bearer $studio_token" \
+            -H 'X-Task-Protocol-Version: 2' \
+            http://127.0.0.1:5071/api/v1/management/remote-hosts \
+            | jq -e 'any(.[]; .runnerId == "distributed-runner")'
+          unset studio_token
+          artifacts/release/agent-studio-setup uninstall --install-dir "$install_root" --purge
 
   install-smoke-windows:
     name: Install smoke with Windows setup (native services)
@@ -489,9 +519,58 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Connector uninstall failed.' }
           if (Get-ScheduledTask -TaskName 'AgentOrchestrator-StudioConnector' -ErrorAction SilentlyContinue) { throw 'Connector task is still registered.' }
 
+  install-script-matrix:
+    name: Linux script and native journey (${{ matrix.distro }})
+    needs: test-build-release
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: Debian
+            image: debian:12
+          - distro: Ubuntu
+            image: ubuntu:24.04
+          - distro: Fedora
+            image: fedora:42
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: artifacts/release
+      - name: Install test host tools
+        run: |
+          set -eu
+          . /etc/os-release
+          case "$ID" in
+            debian|ubuntu)
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                bash curl coreutils gawk git jq openssl iproute2 procps passwd util-linux python3 \
+                ca-certificates libicu-dev libstdc++6 tar gzip
+              ;;
+            fedora)
+              dnf install -y bash curl coreutils findutils gawk git jq openssl python3 \
+                iproute procps-ng shadow-utils util-linux ca-certificates libicu
+              dnf install -y libstdc++ tar gzip
+              ;;
+          esac
+          useradd -m installer
+      - name: Verify script and native install journey
+        run: |
+          set -eu
+          sh scripts/release/linux-install-script.test.sh
+          runuser -u installer -- env \
+            AGENT_SETUP_E2E_RELEASE_DIR="$GITHUB_WORKSPACE/artifacts/release" \
+            "$GITHUB_WORKSPACE/scripts/release/setup-e2e-probe.sh" \
+            /tmp/agent-studio-native-probe.md
+
   publish-release:
     name: Merge artifacts and publish the GitHub Release
-    needs: [version, test-build-release, publish-windows, install-smoke-linux, install-smoke-windows]
+    needs: [version, test-build-release, publish-windows, install-smoke-linux, install-smoke-windows, install-script-matrix]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -525,6 +604,7 @@ jobs:
             artifacts/release/*.tar.gz
             artifacts/release/*.zip
             artifacts/release/agent-studio-setup
+            artifacts/release/install.sh
             artifacts/release/agent-studio-setup.exe
 
       - name: Create GitHub Release
@@ -535,6 +615,7 @@ jobs:
           artifacts/release/*.tar.gz
           artifacts/release/*.zip
           artifacts/release/agent-studio-setup
+          artifacts/release/install.sh
           artifacts/release/agent-studio-setup.exe
           artifacts/release/SHA256SUMS
           --verify-tag

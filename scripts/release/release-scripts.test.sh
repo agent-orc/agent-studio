@@ -9,7 +9,8 @@ trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
 publish_root="$test_root/publish"
 frontend_root="$test_root/frontend/browser"
 output_root="$test_root/artifacts"
-for directory in task-server orchestrator-engine agent-host-linux-x64 agent-host-osx-arm64 setup
+for directory in task-server orchestrator-engine orchestrator-api studio-bff \
+    agent-host-linux-x64 agent-host-osx-arm64 setup
 do
     install -d -m 0755 "$publish_root/$directory"
 done
@@ -17,6 +18,8 @@ install -d -m 0755 "$frontend_root"
 for executable in \
     task-server/task-server \
     orchestrator-engine/orchestrator-engine \
+    orchestrator-api/OrchestratorApi \
+    studio-bff/agent-studio-bff \
     agent-host-linux-x64/agent-host \
     agent-host-osx-arm64/agent-host \
     setup/agent-studio-setup
@@ -32,14 +35,22 @@ SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     cd "$output_root"
     [ "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4 ]
     [ -x agent-studio-setup ]
+    [ -x install.sh ]
+    grep -q '^release_version=1.2.3$' install.sh
     sha256sum -c SHA256SUMS
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/update.sh'
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/host_secret_transport.py'
+    tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
+        | grep -q 'agent-orchestrator-1.2.3-linux-x64/api/OrchestratorApi'
+    tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
+        | grep -q 'agent-orchestrator-1.2.3-linux-x64/bff/agent-studio-bff'
     tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/osx-arm64/agent-host'
+    tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/agent-studio-setup'
     tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/host_secret_transport.py'
     tar -tzf agent-studio-1.2.3.tar.gz | grep -q 'agent-studio-1.2.3/browser/index.html'
+    tar -tzf agent-studio-1.2.3.tar.gz | grep -q 'agent-studio-1.2.3/agent-studio-setup'
     tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/docker-compose.yml'
     tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/deploy/host_secret_transport.py'
 )
@@ -168,9 +179,13 @@ run_env()
 
 run_env "$release_1/install.sh" "$release_1"
 config_hash=$(sha256sum "$config_root/server.env")
+owner_code_hash=$(sha256sum "$config_root/owner-bootstrap.code")
+[ "$(stat -c %a "$config_root/owner-bootstrap.code")" = 640 ]
+[ "$(sed -n '/^OWNER_BOOTSTRAP_CODE_FILE=/p' "$config_root/server.env" | wc -l)" -eq 1 ]
 printf '%s\n' Draining >"$mode_file"
 run_env "$release_1/install.sh" "$release_1"
 [ "$(sha256sum "$config_root/server.env")" = "$config_hash" ]
+[ "$(sha256sum "$config_root/owner-bootstrap.code")" = "$owner_code_hash" ]
 [ "$(basename "$(readlink -f "$opt_root/current")")" = "1.0.0" ]
 [ "$(cat "$mode_file")" = "Draining" ]
 printf '%s\n' Normal >"$mode_file"

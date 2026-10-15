@@ -103,6 +103,7 @@ internal static class SetupApplication
                 payload.ReleaseVersion,
                 options.ReleaseDirectory);
             var hostRelease = await hostArtifacts.ExtractHostAsync(cancellationToken);
+            NativeInstaller.ValidateHostRelease(hostRelease);
             await releaseVerified();
             await ConfigureAndInstallHostAsync(
                 options,
@@ -111,7 +112,8 @@ internal static class SetupApplication
                 hostRelease,
                 payload,
                 cancellationToken,
-                paths);
+                paths,
+                standaloneHost: true);
             PrintHostFinish(payload.ServerUrl);
             return;
         }
@@ -178,6 +180,11 @@ internal static class SetupApplication
         await using var artifacts = new ReleaseArtifacts(version, options.ReleaseDirectory);
         var orchestratorRelease = await artifacts.ExtractOrchestratorAsync(cancellationToken);
         var studioRelease = await artifacts.ExtractStudioAsync(cancellationToken);
+        var oneBoxHostRelease = mode == SetupMode.SingleMachine
+            ? await artifacts.ExtractHostAsync(cancellationToken)
+            : null;
+        if (oneBoxHostRelease is not null)
+            NativeInstaller.ValidateHostRelease(oneBoxHostRelease);
         await releaseVerified();
         var native = new NativeInstaller(paths, processes, options.DryRun);
         var control = await native.InstallControlPlaneAsync(
@@ -196,24 +203,24 @@ internal static class SetupApplication
 
         if (mode == SetupMode.SingleMachine)
         {
-            var hostRelease = await artifacts.ExtractHostAsync(cancellationToken);
             await ConfigureAndInstallHostAsync(
                 options,
                 prompter,
                 processes,
-                hostRelease,
+                oneBoxHostRelease!,
                 joinPayload,
                 cancellationToken,
                 paths);
             Console.WriteLine();
             Console.WriteLine("Single-machine setup is complete.");
             Console.WriteLine($"Task Server: {control.ServerUrl}");
-            Console.WriteLine(
-                "Serve /opt/agent-studio/current/browser with the supplied Caddy template to open the native Studio UI.");
+            Console.WriteLine("Open Agent Studio at http://127.0.0.1:4011/.");
+            PrintJoinInstructions(joinPayload, paths.OrchestratorConfig, options.DryRun,
+                "Single-machine Studio");
         }
         else
         {
-            PrintJoinInstructions(joinPayload);
+            PrintJoinInstructions(joinPayload, paths.OrchestratorConfig, options.DryRun);
         }
     }
 
@@ -224,7 +231,8 @@ internal static class SetupApplication
         string hostRelease,
         JoinPayload payload,
         CancellationToken cancellationToken,
-        InstallPaths paths)
+        InstallPaths paths,
+        bool standaloneHost = false)
     {
         var executionUser = options.ExecutionUser
                             ?? Environment.GetEnvironmentVariable("SUDO_USER");
@@ -264,6 +272,8 @@ internal static class SetupApplication
                 $"Agent CLI '{agentCli}' is not installed for {executionUser}. Found: {string.Join(", ", installedClis.Keys)}.");
         await VerifyCliAsync(
             processes,
+            prompter,
+            options.NonInteractive,
             executionUser,
             homeDirectory,
             agentCli,
@@ -292,6 +302,28 @@ internal static class SetupApplication
         var gitPushRemote = string.IsNullOrWhiteSpace(options.GitPushRemote)
             ? gitRemote
             : SetupValidation.RequireGitRemote(options.GitPushRemote);
+        string? gitAccess = null;
+        string? sshKeyFile = null;
+        if (gitRemote is not null)
+        {
+            Console.WriteLine("GitHub access: token file, a deploy key for this project, or an existing SSH key.");
+            gitAccess = options.GitAccess ?? prompter.Ask(
+                "Access method (token-file, deploy-key, existing-ssh)",
+                gitRemote.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                    ? "token-file" : "existing-ssh");
+            if (gitAccess is not ("token-file" or "deploy-key" or "existing-ssh"))
+                throw new ArgumentException("GitHub access must be token-file, deploy-key, or existing-ssh.");
+            if (gitAccess is "deploy-key" or "existing-ssh")
+            {
+                if (gitRemote.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("SSH key access requires a git@github.com: or ssh:// Git remote.");
+                sshKeyFile = options.GitSshKeyFile
+                             ?? (gitAccess == "deploy-key"
+                                 ? Path.Combine(homeDirectory, ".ssh", $"agent-studio-{runnerName}")
+                                 : prompter.Ask("Existing SSH private key path"));
+                sshKeyFile = Path.GetFullPath(sshKeyFile);
+            }
+        }
         var configuration = new HostConfiguration(
             payload.ServerUrl,
             runnerCredential,
@@ -307,25 +339,20 @@ internal static class SetupApplication
             installedClis.GetValueOrDefault("codex"),
             gitRemote,
             gitPushRemote,
-            options.MaxParallelism);
+            options.MaxParallelism,
+            sshKeyFile);
         var native = new NativeInstaller(paths, processes, options.DryRun);
 
         if (gitRemote is not null)
         {
-            PrintGitHubTokenGuide(gitRemote);
-            var storeCredential = Uri.TryCreate(gitRemote, UriKind.Absolute, out var gitUri)
-                                  && gitUri.Scheme == Uri.UriSchemeHttps
-                                  && string.Equals(
-                                      gitUri.Host,
-                                      "github.com",
-                                      StringComparison.OrdinalIgnoreCase)
-                                  && prompter.Confirm(
-                                      $"Store and verify a GitHub PAT for {executionUser}",
-                                      defaultValue: false);
-            if (storeCredential)
+            if (gitAccess == "token-file")
             {
-                var username = prompter.Ask("GitHub username");
-                var token = prompter.Secret("GitHub token");
+                PrintGitHubTokenGuide(gitRemote);
+                var username = options.GitUsername ?? prompter.Ask("GitHub username");
+                var tokenFile = options.GitTokenFile
+                    ?? prompter.Ask("Owner-only file containing the GitHub token");
+                SetupSecrets.RequireProtected(tokenFile, "GitHub token file");
+                var token = File.ReadAllText(tokenFile).Trim();
                 try
                 {
                     await native.ConfigureGitHubCredentialAsync(
@@ -339,12 +366,23 @@ internal static class SetupApplication
                     token = string.Empty;
                 }
             }
+            else if (gitAccess == "deploy-key")
+            {
+                var publicKey = await native.PrepareDeployKeyAsync(
+                    executionUser, homeDirectory, sshKeyFile!, options.NonInteractive, cancellationToken);
+                Console.WriteLine("Add this public key as a write-enabled deploy key to the selected GitHub project:");
+                Console.WriteLine(publicKey);
+                if (!options.NonInteractive && !prompter.Confirm("Deploy key is registered with write access"))
+                    throw new InvalidOperationException("Register the deploy key on GitHub and rerun setup.");
+                await native.VerifyGitReadAsync(configuration, cancellationToken);
+            }
             else
             {
+                SetupSecrets.RequireProtected(sshKeyFile!, "SSH private key");
                 await native.VerifyGitReadAsync(configuration, cancellationToken);
-                Console.WriteLine(
-                    "  Setup will let the daemon report the actual push capability. A read-only result registers the host but blocks new claims.");
             }
+            Console.WriteLine(
+                "  The daemon will test push capability at startup and block coding claims if access is read-only.");
         }
         else
         {
@@ -356,6 +394,8 @@ internal static class SetupApplication
             hostRelease,
             configuration,
             cancellationToken);
+        if (standaloneHost)
+            await native.LinkHostSetupCommandAsync(cancellationToken);
     }
 
     internal static async Task<string> MintRunnerCredentialAsync(
@@ -527,7 +567,17 @@ internal static class SetupApplication
         }
 
         foreach (var command in new[] { "systemctl", "install", "cp", "ln" })
-            await RequireCommandAsync(processes, command, $"Install the Linux package that provides '{command}'.");
+        {
+            if (command == "systemctl"
+                && Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") is { Length: > 0 } fixture
+                && File.Exists(fixture))
+            {
+                Console.WriteLine($"  [ok] systemctl at {fixture}");
+                continue;
+            }
+            await RequireCommandAsync(processes, command,
+                $"Install the Linux package that provides '{command}'.");
+        }
         if (controlPlane)
             await RequireCommandAsync(processes, "curl", "Install curl with your distribution package manager.");
         if (host)
@@ -581,6 +631,8 @@ internal static class SetupApplication
 
     private static async Task VerifyCliAsync(
         ProcessRunner processes,
+        ConsolePrompter prompter,
+        bool nonInteractive,
         string user,
         string homeDirectory,
         string cli,
@@ -623,11 +675,28 @@ internal static class SetupApplication
             cancellationToken: cancellationToken);
         if (auth.ExitCode != 0)
         {
-            var login = cli.Equals("codex", StringComparison.OrdinalIgnoreCase)
-                ? $"sudo -u {user} -H {path} login --device-auth"
-                : $"sudo -u {user} -H {path} auth login --claudeai";
-            throw new InvalidOperationException(
-                $"{cli} is not authenticated for {user}. Run '{login}' on this host, verify the login, then rerun setup.");
+            if (nonInteractive || !prompter.Confirm($"Start {cli} provider login as {user} now", true))
+                throw new InvalidOperationException(
+                    $"{cli} is not authenticated for {user}. Sign in as that user and rerun setup.");
+            var loginArguments = new List<string> { "env", $"HOME={homeDirectory}", path };
+            loginArguments.AddRange(cli.Equals("codex", StringComparison.OrdinalIgnoreCase)
+                ? ["login", "--device-auth"]
+                : ["auth", "login", "--claudeai"]);
+            if (!inspectCurrentUserDirectly)
+                loginArguments.InsertRange(0, ["-u", user, "--"]);
+            Console.WriteLine($"Follow the {cli} sign-in instructions displayed by the CLI.");
+            await processes.RequireInteractiveAsync(
+                inspectCurrentUserDirectly ? loginArguments[0] : "runuser",
+                inspectCurrentUserDirectly ? loginArguments.Skip(1) : loginArguments,
+                cancellationToken);
+            auth = await inspection.RunAsync(
+                inspectCurrentUserDirectly ? authArguments[0] : "runuser",
+                inspectCurrentUserDirectly ? authArguments.Skip(1) : authArguments,
+                printOutput: false,
+                cancellationToken: cancellationToken);
+            if (auth.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"{cli} login did not pass the authentication check for {user}.");
         }
         Console.WriteLine($"  [ok] {cli} authentication belongs to host user {user}");
     }
@@ -650,18 +719,26 @@ internal static class SetupApplication
         };
     }
 
-    private static void PrintJoinInstructions(JoinPayload payload)
+    private static void PrintJoinInstructions(JoinPayload payload, string configRoot, bool dryRun,
+        string label = "Control Plane")
     {
         var token = JoinTokenCodec.Encode(payload);
+        var tokenPath = Path.Combine(configRoot, "join.token");
+        if (!dryRun)
+        {
+            Directory.CreateDirectory(configRoot);
+            var temporary = tokenPath + $".{Guid.NewGuid():N}";
+            File.WriteAllText(temporary, token + Environment.NewLine);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.Move(temporary, tokenPath, overwrite: true);
+        }
         Console.WriteLine();
-        Console.WriteLine("Control Plane setup is complete.");
-        Console.WriteLine("On each Agent Host machine, copy the setup executable and run:");
+        Console.WriteLine($"{label} setup is complete.");
+        Console.WriteLine($"Join token file (owner-only): {tokenPath}");
+        Console.WriteLine("Transfer it over a protected channel, then run on each Agent Host:");
         Console.WriteLine();
-        Console.WriteLine("  sudo ./agent-studio-setup --join");
-        Console.WriteLine();
-        Console.WriteLine("Paste this token when prompted:");
-        Console.WriteLine();
-        Console.WriteLine($"  {token}");
+        Console.WriteLine("  curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sudo sh -s -- --join --join-token-file /secure/path/join.token");
         Console.WriteLine();
         Console.WriteLine(
             "Treat the join token as a secret. It contains a credential that setup uses to mint one bound Runner principal; it is encoded, not encrypted.");

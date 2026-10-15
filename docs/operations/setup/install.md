@@ -1,12 +1,22 @@
 # Install Agent Studio
 
-The `agent-studio-setup` release executable installs the pinned one-box Docker
-stack by default, or native services with `--target native` on hosts without
-Docker. The Linux binary and Windows `.exe` are single-file, self-contained
-applications. Download the newest published release from the
+The Linux `install.sh` detects the distribution and x64 architecture, downloads
+`agent-studio-setup`, verifies it against the release `SHA256SUMS`, and starts
+the guided installer. Debian, Ubuntu, and Fedora are tested. Choose a one-box
+Studio with a runner (Docker or native systemd), or join an existing Studio as
+an agent host. Download the newest published release from the
 [Agent Studio releases page](https://github.com/agent-orc/agent-studio/releases/latest).
-The executable's release version is the default image tag. It verifies the
-versioned Compose archive against the release `SHA256SUMS` before use.
+The executable's release version is the default image tag. It verifies each
+downloaded archive against the release `SHA256SUMS` before use.
+
+```sh
+curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
+```
+
+To inspect the script first, download it and run `sh install.sh`. Both forms
+verify the executable before running it. For guided prompts, a piped script
+reads from the terminal. Pass setup options with `sh -s --`, for example
+`curl -fsSL .../install.sh | sh -s -- --target native`.
 
 ## Docker installation
 
@@ -17,7 +27,7 @@ companies; Docker Engine on Linux does not. The Docker installation runs as
 your user and does not request elevation. The Windows executable reports
 the Docker Desktop install link if Docker or WSL2 is unavailable.
 
-On Ubuntu, download and verify the assets:
+To download and verify the executable directly:
 
 ```bash
 curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-studio-setup
@@ -72,6 +82,14 @@ its version, retain the previous images and Compose bundle, and verify health.
 update attempts to restart the installed version. Run
 `agent-studio-setup uninstall` to stop and remove containers while retaining
 the data volumes; add `--purge` to remove the volumes and installer files.
+
+For native Linux, an answers file also accepts `listenUrl`, `runnerName`,
+`executionUser`, `agentCli`, `gitRemote`, `gitPushRemote`, `gitAccess`,
+`gitUsername`, `gitTokenFile`, `gitSshKeyFile`, `role`, and `maxParallelism`.
+Secret values never go in the file. Give paths to owner-only join-token and
+GitHub-token files. Unattended runs require a signed-in provider CLI; guided
+runs can start Codex device authorization or Claude sign-in for the execution
+user.
 
 ## Installation journeys, preflight, and re-runs
 
@@ -306,8 +324,12 @@ requires the Docker path.
 
 On Linux, `sudo ./agent-studio-setup --target native` runs the systemd
 single-machine profile. It installs the Task Server, Engine, an agent host, and
-the static Studio files. Update and roll it back with `update.sh` and
-`rollback.sh` in `/opt/agent-orchestrator/current`; see
+the Studio API, BFF, and UI service. The local UI is
+`http://127.0.0.1:4011/`. The first-owner code is kept in
+`/etc/agent-orchestrator/owner-bootstrap.code`. Setup also writes an owner-only
+`/etc/agent-orchestrator/join.token` for adding agent hosts later. Use a newer verified setup
+executable with `sudo agent-studio-setup update`, or run
+`sudo agent-studio-setup rollback` for the retained previous release; see
 [multi-machine setup](./multi-machine.md).
 
 ## Connector and remote topologies
