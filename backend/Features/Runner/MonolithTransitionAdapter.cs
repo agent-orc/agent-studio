@@ -11,6 +11,6 @@ public static class MonolithTransitionAdapter
     public static OperatorSweepDecision Sweep(string sweep, OperatorSweepTrigger? trigger, OperatorSweepGuardFacts facts)
         => OperatorSweepPolicy.Decide(sweep, trigger, facts);
 
-    /// <summary>Test-host Monolith decision mode only; a production host is engine-only.</summary>
+    /// <summary>The AI Operator decision while the <c>OperatorDecision</c> switch selects Monolith.</summary>
     public static AiOperatorDecision Operator(AiOperatorDecisionPayload payload) => AiOperatorDecisionPolicy.Decide(payload);
 }

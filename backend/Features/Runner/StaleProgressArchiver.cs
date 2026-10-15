@@ -202,7 +202,7 @@ public sealed class StaleProgressArchiver : IAiOperatorEffect
                             threshold.TotalSeconds, TryFindSentinel(jobFolder, out var sentinel) ? sentinel : null));
                     var submission = _decisions.Submit(new AiOperatorDecisionRequest(entry.Name, jobId,
                         TaskStates.Progress, payload, Period: null));
-                    if (submission.TestHostDecision is { } verdict)
+                    if (submission.MonolithDecision is { } verdict)
                     {
                         var applied = await ApplyDecisionAsync(entry, jobFolder, slug, verdict, payload.StaleProgress!,
                             now, lastActivity, ct);

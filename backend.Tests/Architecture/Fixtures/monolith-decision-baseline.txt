@@ -1,34 +1,17 @@
-# Monolith decision baseline for MonolithDecisionBoundaryTests (AGT-3060, I18).
+# Host-defined rule baseline for MonolithDecisionBoundaryTests (AGT-3060, I18).
 #
-# The Orchestrator Engine is the only decider (AGT-W65 D14 A). These entries
-# predate the guard and name the residual monolith decision code with its owner
-# in docs/system/architecture/monolith-hosted-services.md. The list
-# only shrinks:
-#   call <file> <n>          the file calls a decision-library policy or the
-#                            test-host MonolithTransitionAdapter exactly n times;
-#                            a new call fails, a removed call must lower n.
-#   policy <file> <type>     a host-defined policy, rules or breaker class in a
-#                            workflow feature folder; a new one fails. Put a new
-#                            transition rule in orchestration-decisions/ and
-#                            submit its facts through AiOperatorDecisionGateway.
+# Operator decision 15.10.2026: the per-transition switch is the only selector
+# of who decides. With Monolith selected (the default) the monolith decides
+# through the shared decision library in orchestration-decisions/, so a call
+# into that library is the sanctioned monolith path and is not listed here.
+# What may not return to backend/ is a transition rule defined by the host.
+# These entries predate the guard: host-defined policy, rules or breaker
+# classes in workflow feature folders, each owned by a later slice in
+# docs/system/architecture/monolith-hosted-services.md. The list only shrinks:
+#   policy <file> <type>     a new one fails, a removed one must leave the list.
+# Put a new transition rule in orchestration-decisions/ and reach it through
+# AiOperatorDecisionGateway or a MonolithTransitionSwitch profile.
 
-call backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs 1
-call backend/Features/Pipeline/GateEnvironmentRetry/GateEnvironmentRetryService.cs 5
-call backend/Features/Review/CouncilReviewReaction.cs 2
-call backend/Features/Runner/AiOperator/AiOperatorDecisionGateway.cs 1
-call backend/Features/Runner/AiOperator/RunTimeoutSalvageEffect.cs 1
-call backend/Features/Runner/MonolithOrchestrationApplier.cs 1
-call backend/Features/Runner/MonolithOrchestrationEndpoints.cs 5
-call backend/Features/Runner/MonolithTransitionAdapter.cs 4
-call backend/Features/Runner/OperatorSweeps/CardRoundBudget.cs 3
-call backend/Features/Runner/OperatorSweeps/OperatorSweepService.cs 1
-call backend/Features/Runner/OperatorSweeps/OperatorSweepTriggers.cs 1
-call backend/Features/Runner/RemoteReviewContinuation.cs 2
-call backend/Features/Runner/RepeatedAspectBlockPolicy.cs 2
-call backend/Features/Runner/ReviewDecisionOrchestrator.cs 6
-call backend/Features/Runner/ReviewRoundBudget.cs 1
-call backend/Features/Runner/V1ReviewPlaneEndpoints.cs 13
-call backend/Features/Tasks/LeaseEndpoints.cs 6
 policy backend/Features/Pipeline/AcceptedIntegrationBackstopPolicy.cs AcceptedIntegrationBackstopPolicy
 policy backend/Features/Pipeline/AcceptedIntegrationFailurePolicy.cs AcceptedIntegrationFailurePolicy
 policy backend/Features/Pipeline/BatchGate/BatchGateCarryPolicy.cs BatchGateCarryPolicy
@@ -101,7 +84,6 @@ policy backend/Features/Supervisor/MetaCycleRules.cs MetaCycleRules
 policy backend/Features/Tasks/Acceptance/AcceptanceAttemptLineagePolicy.cs AcceptanceAttemptLineagePolicy
 policy backend/Features/Tasks/Acceptance/AcceptanceIntegrationPolicy.cs AcceptanceIntegrationPolicy
 policy backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs AcceptanceRailAttemptPolicy
-policy backend/Features/Tasks/Acceptance/AcceptanceRailPolicy.cs AcceptanceRailPolicy
 policy backend/Features/Tasks/Acceptance/CompletionContentPolicy.cs CompletionContentPolicy
 policy backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs CompletionContractPolicy
 policy backend/Features/Tasks/Acceptance/DeliveryBounceRepairPolicy.cs DeliveryBounceRepairPolicy

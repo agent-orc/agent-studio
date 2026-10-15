@@ -569,14 +569,14 @@ public sealed class IntegrationVerificationPolicyTests
         var now = DateTimeOffset.UnixEpoch;
         var integration = new TaskIntegrationStatus { Status = status, IntegrationBranch = "develop" };
 
-        var unverified = AcceptanceRailPolicy.Decide(
+        var unverified = OperatorDecisionHarness.RailDecide(
             card,
             integration with { Verification = new TaskIntegrationVerification { State = IntegrationVerificationStates.Unverified } },
             0,
             options,
             now);
-        var unknown = AcceptanceRailPolicy.Decide(card, integration, 0, options, now);
-        var verified = AcceptanceRailPolicy.Decide(
+        var unknown = OperatorDecisionHarness.RailDecide(card, integration, 0, options, now);
+        var verified = OperatorDecisionHarness.RailDecide(
             card,
             integration with { Verification = new TaskIntegrationVerification { State = IntegrationVerificationStates.Verified, Sha = Sha } },
             0,

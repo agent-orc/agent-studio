@@ -247,35 +247,29 @@ from a checkout on the host. Compose supervises restarts, and the image health
 check probes the engine's loopback health listener. The engine uses per-occurrence
 leases, so another instance can take over after lease expiry without a leader.
 
-Since AGT-3060 the engine is a required service of every production host
-(AGT-W65 D14 A). The monolith pins coding completion, review reports, gate
-results, operator sweeps and the AI Operator deciders (run liveness, stale
-progress, steer timeout, timeout salvage, gate-environment retry) to the engine.
-Startup fails when `Orchestration:Transitions` names `Monolith` or `Shadow`. The
-Workspace Settings > Orchestrator rollout panel shows every profile as Engine
-and refuses shadow and rollback with `orchestration-monolith-decisions-retired`.
-There is no monolith fallback. Upgrade in this order:
+Leave the three transition profiles in Monolith until AGT-3135 is integrated
+on Stable. After that prerequisite, use Workspace Settings > Orchestrator to
+start shadow separately for coding completion, review reports, and gate results.
+Each profile needs 50 consecutive matching actions by default; reaching that
+streak marks it ready, and an operator switches it to Engine with a reason.
+The same control rolls it back. A pending Engine occurrence stays durable while
+the engine is unavailable; rollback returns pending work to the monolith policy.
 
-1. Enroll the engine principal (`engine_` identity) if the host has none, and
-   start or keep the engine running.
-2. Upgrade the monolith.
-3. Wait until `curl -fsS http://127.0.0.1:<port>/healthz/orchestration-engine`
-   answers `ready`. It answers `engine-not-live` (HTTP 503) until an engine
-   instance contacts `/api/v1/orchestration` within
-   `Orchestration:EngineReadiness:ContactWindowSeconds` (default 30).
-
-While the engine is not live, no automatic decision runs: the engine
-occurrences stay pending and durable, and every residual monolith decider
-(acceptance rail, delivery chain reconciler, cause breaker, intake, supervisor
-cycles, legacy review loop, batch pilot, local auto-pickup) skips its pass, so no
-card moves. At startup the log states whether an engine identity is enrolled
-(`orchestration-engine-not-provisioned` when none is). After
-`Orchestration:EngineReadiness:StartupGraceSeconds` (default 60) without engine
-contact, or when the engine goes silent, the operator feed of every project
-shows one `engine-not-live` alert per outage; a pending occurrence still raises
-its own engine-unavailable alert after one minute. Set
-`OPERATOR_DECISION_CONCURRENCY` in the engine environment to size the AI
-Operator stage (default 2).
+AGT-3060 adds the AI Operator profile `Orchestration:Transitions:OperatorDecision`
+for the background deciders (run liveness, stale progress, steer timeout,
+timeout salvage, gate-environment retry, delivery chain, cause breaker, intake
+routing and the acceptance rail). It defaults to `Monolith`: the monolith
+decides in process through the shared decision library. With `Engine` the
+deciders only record pending `OperatorDecision` occurrences until the engine
+decides; set it back to `Monolith` to roll back. While any profile selects the
+engine, `curl -fsS http://127.0.0.1:<port>/healthz/orchestration-engine`
+answers `ready` once an engine instance contacted `/api/v1/orchestration` within
+`Orchestration:EngineReadiness:ContactWindowSeconds` (default 30) and
+`engine-not-live` (HTTP 503) otherwise; with every profile on `Monolith` it
+answers `not-required`. After `Orchestration:EngineReadiness:StartupGraceSeconds`
+(default 60) without engine contact, the operator feed of every project shows
+one `engine-not-live` alert per outage. Set `OPERATOR_DECISION_CONCURRENCY` in
+the engine environment to size the AI Operator stage (default 2).
 
 While coding completion is in shadow, the engine also asks a strong model for
 the same transition (AGT-3063). The call is a decision job that a runner

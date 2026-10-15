@@ -1,6 +1,7 @@
 extern alias EngineAssembly;
 
 using System.Text.Json;
+using AgentStudio.Diagnostics;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
@@ -14,8 +15,10 @@ using EngineLoop = EngineAssembly::AgentStudio.OrchestratorEngine.AiOperatorDeci
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// AGT-3060 (I18): the background deciders are AI Operator occurrences in the
-/// Orchestrator Engine. The monolith submits facts and applies receipts.
+/// AGT-3060 (I18): the background deciders are AI Operator decisions of the
+/// shared decision library. The OperatorDecision switch selects who decides:
+/// the monolith in process (Monolith, the default) or the Orchestrator Engine,
+/// whose receipt the authority applies (Engine).
 /// </summary>
 public sealed class AiOperatorDecisionTests : IDisposable
 {
@@ -121,59 +124,116 @@ public sealed class AiOperatorDecisionTests : IDisposable
             AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(AiOperatorDeciders.RunLiveness, "subject")));
     }
 
-    [Fact]
-    public void Production_authority_pins_every_profile_to_the_engine_and_retires_the_monolith_modes()
+    [Theory]
+    [InlineData("6-completed", AiOperatorDisposition.Act, AiOperatorEffects.CloseBreaker)]
+    [InlineData("7-archive", AiOperatorDisposition.Hold, AiOperatorEffects.None)]
+    [InlineData("4-auto-review", AiOperatorDisposition.Hold, AiOperatorEffects.None)]
+    [InlineData(null, AiOperatorDisposition.Hold, AiOperatorEffects.None)]
+    public void Cause_breaker_closes_only_on_a_delivered_cause_card(string? causeState,
+        AiOperatorDisposition disposition, string effect)
     {
-        Directory.CreateDirectory(_workspace);
-        var configuration = new ConfigurationManager();
-        configuration.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["TaskRepository"] = _workspace,
-            ["Orchestration:ExecutionMode"] = "Monolith",
-            ["Orchestration:Transitions:GateResult"] = "Engine",
-        });
-        var rollout = new OrchestrationRolloutStore(configuration);
-        rollout.Switch("ReviewReport", "shadow", "operator", "compare before the cutover");
-        rollout.Switch("ReviewReport", "rollback", "operator", "recorded before AGT-3060");
+        var decision = AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(
+            AiOperatorDeciders.CauseBreaker, "cause-breaker:fp",
+            CauseBreaker: new CauseBreakerOperatorFacts("fp", causeState)));
 
-        OrchestrationDecisionAuthority.RequireEngine(configuration);
-
-        Assert.True(OrchestrationDecisionAuthority.IsEngineOnly(configuration));
-        foreach (var profile in new[] { "CodingCompletion", "ReviewReport", "GateResult", "OperatorSweep",
-                     AiOperatorDecisionGateway.Transition })
-            Assert.Equal(OrchestrationExecutionMode.Engine, MonolithTransitionSwitch.For(configuration, profile));
-        Assert.False(rollout.IsRolledBack("ReviewReport"));
-        Assert.All(rollout.GetProfiles(), profile => Assert.Equal("engine", profile.State));
-        var refused = Assert.Throws<InvalidOperationException>(() =>
-            rollout.Switch("GateResult", "rollback", "operator", "engine outage"));
-        Assert.Equal(OrchestrationDecisionAuthority.RetiredError, refused.Message);
-        Assert.True(new AiOperatorDecisionGateway(configuration).EngineDecides);
+        Assert.Equal((disposition, effect), (decision.Disposition, decision.Effect));
     }
 
     [Theory]
-    [InlineData("Monolith")]
-    [InlineData("Shadow")]
-    public void Production_host_refuses_a_configured_monolith_decision_mode(string mode)
+    [InlineData("AlreadyDone", AiOperatorDisposition.Ask, AiOperatorEffects.Escalate)]
+    [InlineData("Passed", AiOperatorDisposition.Hold, AiOperatorEffects.None)]
+    [InlineData("Blocked", AiOperatorDisposition.Hold, AiOperatorEffects.None)]
+    public void Intake_routes_only_an_already_done_card_to_a_person(string outcome,
+        AiOperatorDisposition disposition, string effect)
     {
-        var configuration = new ConfigurationManager();
-        configuration.AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Orchestration:Transitions:OperatorSweep"] = mode });
+        var decision = AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(
+            AiOperatorDeciders.IntakeRouting, "intake:card", IntakeRouting: new IntakeOperatorFacts(outcome, "done")));
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            OrchestrationDecisionAuthority.RequireEngine(configuration));
+        Assert.Equal((disposition, effect), (decision.Disposition, decision.Effect));
+    }
 
-        Assert.Contains($"OperatorSweep={mode}", error.Message);
-        Assert.False(OrchestrationDecisionAuthority.IsEngineOnly(configuration));
+    [Theory]
+    [InlineData("4-auto-review", true, true, false, false, false, AiOperatorEffects.PromoteToHumanReview)]
+    [InlineData("4-auto-review", true, false, true, false, false, AiOperatorEffects.Escalate)]
+    [InlineData("4-auto-review", true, false, false, false, false, AiOperatorEffects.None)]
+    [InlineData("4-auto-review", false, true, false, false, false, AiOperatorEffects.None)]
+    [InlineData("5-human-review", false, false, false, false, false, AiOperatorEffects.ReturnToAutoReview)]
+    [InlineData("5-human-review", false, false, true, false, false, AiOperatorEffects.Escalate)]
+    [InlineData("5-human-review", false, true, false, false, false, AiOperatorEffects.None)]
+    [InlineData("6-completed", false, true, false, true, false, AiOperatorEffects.ReturnToAutoReview)]
+    [InlineData("6-completed", false, true, false, true, true, AiOperatorEffects.None)]
+    [InlineData("6-completed", false, true, false, false, false, AiOperatorEffects.None)]
+    public void Delivery_chain_promotes_returns_reopens_or_escalates(string state, bool integrating,
+        bool integrated, bool fatal, bool stale, bool limit, string effect)
+        => Assert.Equal(effect, AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(
+            AiOperatorDeciders.DeliveryChain, "delivery:card",
+            DeliveryChain: new DeliveryChainOperatorFacts(state, integrating, integrated, fatal, stale, limit))).Effect);
+
+    [Fact]
+    public void Acceptance_rail_records_a_held_recoverable_conflict_as_A0_and_escalates_an_exhausted_budget()
+    {
+        var held = Rail(decisionHeld: true, rebase: true);
+        var exhausted = Rail(rebase: true, conflictRequeues: 2);
+        var requeue = Rail(rebase: true);
+        var replay = Rail(failure: RunFailureClass.Infrastructure, replayDue: true);
+        var backoff = Rail(failure: RunFailureClass.Infrastructure);
+        var owned = Rail(owned: true, rebase: true);
+
+        Assert.Equal((AiOperatorDisposition.Act, AutonomyClass.A0, AiOperatorEffects.RecordHeldBounce),
+            (held.Disposition, held.Autonomy, held.Effect));
+        Assert.Equal((AiOperatorDisposition.Ask, "integration-requeue-budget-exhausted"),
+            (exhausted.Disposition, exhausted.ReasonCode));
+        Assert.Equal(AiOperatorEffects.RequeueRebase, requeue.Effect);
+        Assert.Equal((AiOperatorEffects.RequeueInfrastructure, "requeueable-infrastructure-failure"),
+            (replay.Effect, replay.ReasonCode));
+        Assert.Equal((AiOperatorDisposition.Hold, AcceptanceRailReasons.InfrastructureBackoff),
+            (backoff.Disposition, backoff.ReasonCode));
+        Assert.Equal((AiOperatorDisposition.Hold, AcceptanceRailReasons.DeliveryChainOwned),
+            (owned.Disposition, owned.ReasonCode));
     }
 
     [Fact]
-    public void The_loop_host_switch_no_longer_selects_who_decides()
+    public void Default_switch_decides_in_the_monolith_through_the_shared_library()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Orchestration:ExecutionMode"] = "Engine" }).Build();
+            new Dictionary<string, string?> { ["Orchestration:ExecutionMode"] = "Monolith" }).Build();
+        var store = new MonolithOrchestrationStore(directory: null, new FakeTimeProvider(Now), new NoApplier());
+        var gateway = new AiOperatorDecisionGateway(configuration, store);
+        var payload = new AiOperatorDecisionPayload(AiOperatorDeciders.CauseBreaker, "cause-breaker:fp",
+            CauseBreaker: new CauseBreakerOperatorFacts("fp", TaskStates.Completed));
 
-        Assert.Equal(OrchestrationExecutionMode.Monolith, MonolithTransitionSwitch.For(configuration, "GateResult"));
-        Assert.False(new AiOperatorDecisionGateway(configuration).EngineDecides);
+        var submission = gateway.Submit(new AiOperatorDecisionRequest("project", "card", TaskStates.Completed,
+            payload, Period: null));
+
+        foreach (var profile in OrchestrationEngineReadiness.EngineProfiles)
+            Assert.Equal(OrchestrationExecutionMode.Monolith, MonolithTransitionSwitch.For(configuration, profile));
+        Assert.False(gateway.EngineDecides);
+        Assert.False(submission.WaitsForEngine);
+        Assert.Equal(AiOperatorDecisionPolicy.Decide(payload), submission.MonolithDecision);
+        Assert.Empty(store.List(null, null));
+    }
+
+    [Theory]
+    [InlineData("Engine", true)]
+    [InlineData("Shadow", true)]
+    [InlineData("Monolith", false)]
+    public void The_operator_decision_switch_alone_selects_who_decides(string mode, bool engineDecides)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Orchestration:ExecutionMode"] = "Monolith",
+            ["Orchestration:Transitions:OperatorDecision"] = mode,
+            ["Orchestration:Transitions:GateResult"] = "Engine",
+        }).Build();
+        var store = new MonolithOrchestrationStore(directory: null, new FakeTimeProvider(Now), new NoApplier());
+
+        var submission = new AiOperatorDecisionGateway(configuration, store).Submit(new AiOperatorDecisionRequest(
+            "project", "card", TaskStates.Ready, new AiOperatorDecisionPayload(AiOperatorDeciders.IntakeRouting,
+                "intake:card", IntakeRouting: new IntakeOperatorFacts("AlreadyDone", "done")), Period: null));
+
+        Assert.Equal(engineDecides, submission.WaitsForEngine);
+        Assert.Equal(engineDecides, submission.MonolithDecision is null);
+        Assert.Equal(engineDecides ? 1 : 0, store.List("project", "pending").Count);
     }
 
     [Fact]
@@ -302,6 +362,14 @@ public sealed class AiOperatorDecisionTests : IDisposable
         return claim.Run.RunId;
     }
 
+    private static AiOperatorDecision Rail(bool decisionHeld = false, bool rebase = false, int conflictRequeues = 0,
+        RunFailureClass? failure = null, bool replayDue = false, bool owned = false)
+        => AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(AiOperatorDeciders.AcceptanceRail,
+            "acceptance-rail:card", AcceptanceRail: new AcceptanceRailOperatorFacts(TaskStates.HumanReview,
+                ExplicitlyHeld: false, decisionHeld, IntegrationRequired: true, Merged: false,
+                VerificationPermitsCompletion: false, rebase, failure, conflictRequeues, MaxRequeues: 2,
+                InfrastructureRequeues: 0, MaxInfrastructureRequeues: 3, replayDue, owned)));
+
     private static AiOperatorDecisionPayload Steer(SteerTimeoutFacts facts)
         => new(AiOperatorDeciders.SteerTimeout, "steer:card", SteerTimeout: facts);
 
@@ -311,8 +379,10 @@ public sealed class AiOperatorDecisionTests : IDisposable
     public void Dispose()
     {
         try { if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "AiOperatorDecisionTests: fixture cleanup is best-effort");
+        }
     }
 
     private sealed class NoApplier : IMonolithOrchestrationApplier

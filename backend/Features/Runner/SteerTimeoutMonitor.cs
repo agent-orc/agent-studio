@@ -179,7 +179,7 @@ public sealed class SteerTimeoutMonitor : IAiOperatorEffect
                         AmbiguityReason: resolved.AmbiguityReason));
                 var submission = _decisions.Submit(new AiOperatorDecisionRequest(entry.Name, jobId,
                     TaskStates.Progress, payload, Period: null));
-                if (submission.TestHostDecision is { } decision)
+                if (submission.MonolithDecision is { } decision)
                 {
                     var outcome = await ApplyDecisionAsync(entry, c, decision, secondsWaiting, timeoutSeconds, now, ct);
                     if (outcome is not null) outcomes.Add(outcome);

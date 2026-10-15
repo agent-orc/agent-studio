@@ -144,9 +144,10 @@ mutation.
 `Monolith` or `Engine` from `Orchestration:ExecutionMode` and defaults to
 `Monolith`. `Engine` omits the legacy review and post-processing hosted
 services from the monolith so the external `orchestrator-engine` owns those
-loops instead. Since AGT-3060 this switch only selects the loop host: who
-decides is the decision authority, which is engine-only on every production
-host (see [monolith hosted services](../../system/architecture/monolith-hosted-services.md)).
+loops instead. It is also the fallback of the per-transition switch
+`Orchestration:Transitions:<profile>`, which selects who decides each
+transition; since AGT-3060 the background deciders share the `OperatorDecision`
+profile (see [monolith hosted services](../../system/architecture/monolith-hosted-services.md)).
 
 ## API planes and routes
 
@@ -347,10 +348,9 @@ Control stays on HTTP with leases and fences, as described in
 - **The coding plane has not moved.** The monolith advertises only
   `review-plane` and `capability-advertisement`, so coding runners still claim,
   lease and complete over `/api/runner/*`.
-- **Orchestration loops still default to the monolith host.**
+- **Orchestration still defaults to `Monolith`.**
   `Orchestration:ExecutionMode` must be set to `Engine` for the external Engine
-  to own the review, council, post-processing, gate and completion loops. The
-  decisions themselves are engine-only on production hosts since AGT-3060.
+  to own the review, council, post-processing, gate and completion loops.
 - **The Studio surface is only partly on the versioned plane.** Since
   AGT-2983 the 27 P0 core-attach operations call their `/api/v1` routes and
   `/hubs/v1/studio` (the local OrchestratorApi profile serves those paths from

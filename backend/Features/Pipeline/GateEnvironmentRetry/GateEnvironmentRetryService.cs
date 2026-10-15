@@ -196,7 +196,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
                     GateEnvironmentRetry: OperatorFacts(job, evaluation));
                 var submission = _decisions.Submit(new AgentStudio.Runner.AiOperatorDecisionRequest(
                     job.ProjectName, job.Id, job.State, payload, options.SweepInterval));
-                if (submission.TestHostDecision is not { } decision)
+                if (submission.MonolithDecision is not { } decision)
                 {
                     waiting++;
                     continue;

@@ -1,14 +1,15 @@
 namespace AgentStudio.Runner;
 
 /// <summary>
-/// AGT-3060 (I18, AGT-W65 D14 A): readiness of the Orchestrator Engine as the
-/// authority sees it. The engine is the only decider, so a production host has
-/// no monolith fallback. Instead every automatic decision waits for engine
-/// readiness: the pinned transition profiles and AI Operator deciders leave
-/// pending occurrences, and each residual monolith decider holds its pass while
-/// no engine instance has contacted the orchestration endpoints within the
-/// contact window. <c>GET /healthz/orchestration-engine</c> reports the state
-/// so an upgrade can wait for it.
+/// AGT-3060 (I18): readiness of the Orchestrator Engine as the authority sees
+/// it. The per-transition switch (<see cref="MonolithTransitionSwitch"/>) is
+/// the only selector of who decides; this class never holds a decision. When a
+/// transition profile or the AI Operator profile selects the engine, its
+/// occurrences wait for an engine receipt, so <c>GET
+/// /healthz/orchestration-engine</c> reports whether an engine instance
+/// contacted the orchestration endpoints within the contact window, and the
+/// readiness service alerts the operator when it did not. With every profile
+/// on Monolith (the default) readiness is not required.
 /// </summary>
 public sealed class OrchestrationEngineReadiness
 {
@@ -18,12 +19,15 @@ public sealed class OrchestrationEngineReadiness
     public const string NotLive = "engine-not-live";
     public const string NotRequired = "not-required";
 
+    /// <summary>Every switch profile whose Engine or Shadow mode waits for an engine receipt.</summary>
+    public static readonly IReadOnlyList<string> EngineProfiles =
+        [.. OrchestrationRolloutStore.Profiles, "OperatorSweep", AiOperatorDecisionGateway.Transition];
+
     private readonly IConfiguration _configuration;
     private readonly TimeProvider _time;
     private readonly ILogger<OrchestrationEngineReadiness> _logger;
     private long _lastContactTicks;
     private string? _lastEngineId;
-    private int _holding;
 
     public OrchestrationEngineReadiness(IConfiguration configuration, TimeProvider time,
         ILogger<OrchestrationEngineReadiness> logger)
@@ -34,12 +38,13 @@ public sealed class OrchestrationEngineReadiness
     }
 
     /// <summary>
-    /// True on an engine-only host whose orchestration endpoints are served
-    /// locally. Behind the Task Server plane proxy the engine talks to the Task
-    /// Server, so this host cannot observe it (I11 owns that topology); a
-    /// public-demo host runs no automation.
+    /// True when a switch profile selects the engine and the orchestration
+    /// endpoints are served locally. Behind the Task Server plane proxy the
+    /// engine talks to the Task Server, so this host cannot observe it (I11
+    /// owns that topology); a public-demo host runs no automation.
     /// </summary>
-    public bool Required => OrchestrationDecisionAuthority.IsEngineOnly(_configuration)
+    public bool Required => EngineProfiles.Any(profile =>
+            MonolithTransitionSwitch.For(_configuration, profile) != OrchestrationExecutionMode.Monolith)
         && !TaskServerPlaneProxy.IsConfigured(_configuration)
         && !SecurityProfiles.IsPublicDemo(_configuration);
 
@@ -61,30 +66,11 @@ public sealed class OrchestrationEngineReadiness
     public void Observe(string engineId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(engineId);
+        if (LastContact is not { } last || _time.GetUtcNow() - last > ContactWindow)
+            _logger.LogInformation("orchestration-engine-live engine={EngineId}", engineId);
         Volatile.Write(ref _lastEngineId, engineId);
         Interlocked.Exchange(ref _lastContactTicks, _time.GetUtcNow().UtcTicks);
-        if (Interlocked.Exchange(ref _holding, 0) == 1)
-            _logger.LogInformation("orchestration-engine-live engine={EngineId}; residual deciders resume", engineId);
     }
-
-    /// <summary>
-    /// The guard of every residual monolith decider (see
-    /// docs/system/architecture/monolith-hosted-services.md): false while the
-    /// engine is not live, so the decider skips its pass and moves no card.
-    /// </summary>
-    public bool AllowsResidualDecision(string decider)
-    {
-        if (IsLive) return true;
-        if (Interlocked.Exchange(ref _holding, 1) == 0)
-            _logger.LogWarning(
-                "orchestration-engine-not-live decider={Decider} lastContact={LastContact}; residual deciders hold",
-                decider, LastContact);
-        return false;
-    }
-
-    /// <summary>Static form for deciders that tests construct without the readiness service.</summary>
-    public static bool Allows(OrchestrationEngineReadiness? readiness, string decider)
-        => readiness?.AllowsResidualDecision(decider) ?? true;
 }
 
 /// <summary>
@@ -155,7 +141,7 @@ public sealed class OrchestrationEngineReadinessService(
 
     internal void Alert(DateTimeOffset outage)
     {
-        logger.LogError("orchestration-engine-not-live lastContact={LastContact}; no automatic decision runs",
+        logger.LogError("orchestration-engine-not-live lastContact={LastContact}; engine-switched transitions wait",
             readiness.LastContact);
         var topic = "engine-not-live:" + outage.UtcTicks;
         foreach (var entry in scanner.GetWatchPaths())
@@ -166,12 +152,13 @@ public sealed class OrchestrationEngineReadinessService(
             {
                 Kind = OrchestratorLogKinds.Alert,
                 Topic = topic,
-                Summary = "The Orchestrator Engine is not running; no automatic decision runs.",
+                Summary = "The Orchestrator Engine is not running; transitions switched to Engine wait.",
                 Reasoning = HasEnrolledEngine()
                     ? "No engine instance contacted the orchestration endpoints. Pending occurrences stay durable and "
-                        + "resume when an engine runs; start or restart the Orchestrator Engine."
-                    : "No engine identity is enrolled. Enroll an Orchestrator Engine and start it; pending "
-                        + "occurrences stay durable until then.",
+                        + "resume when an engine runs; start or restart the Orchestrator Engine, or switch the "
+                        + "transitions back to Monolith."
+                    : "No engine identity is enrolled. Enroll an Orchestrator Engine and start it, or switch the "
+                        + "transitions back to Monolith; pending occurrences stay durable until then.",
             });
         }
     }

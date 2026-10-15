@@ -217,7 +217,7 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
                         HasVisibleWaitingState: c.HasVisibleWaitingState));
                 var submission = _decisions.Submit(new AiOperatorDecisionRequest(entry.Name, jobId,
                     TaskStates.Progress, payload, ResolveDecisionPeriod()));
-                if (submission.TestHostDecision is { } decision)
+                if (submission.MonolithDecision is { } decision)
                 {
                     var outcome = await ApplyDecisionAsync(entry, c, decision, now, ct);
                     if (outcome is not null) outcomes.Add(outcome);
