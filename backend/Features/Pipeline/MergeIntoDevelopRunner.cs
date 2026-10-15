@@ -987,8 +987,10 @@ public sealed partial class MergeIntoDevelopRunner
         // integration branch that may carry a merge nobody has judged. The
         // journal is the only durable trace of that ownership, so it is opened
         // BEFORE the merge, with the anchor the branch can be returned to.
+        var journalOwner = Guid.NewGuid().ToString("N");
         IntegrationGateJournal.Open(jobFolderPath, new IntegrationGateJournalEntry
         {
+            Owner = journalOwner,
             Project = project,
             JobId = jobId,
             RepoRoot = developerRoot,
@@ -1160,8 +1162,13 @@ public sealed partial class MergeIntoDevelopRunner
 
         // A verdict exists, in either direction: this process is no longer the
         // only thing standing between the branch and an un-gated merge.
-        IntegrationGateJournal.Clear(gate.FailureKind == BuildTestGateFailureKind.Cancellation
-            ? CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder : jobFolderPath);
+        // A cancelled gate may return after a lane move; the live folder can then
+        // hold a newer attempt's journal, which must survive.
+        if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
+            IntegrationGateJournal.ClearOwned(
+                CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder, journalOwner);
+        else
+            IntegrationGateJournal.Clear(jobFolderPath);
 
         if (PreDevelopBuildGate.IsGreen(gate))
         {

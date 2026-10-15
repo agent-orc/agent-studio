@@ -52,6 +52,7 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.Equal(before, RunGit(repo, "rev-parse develop").Out.Trim());
         Assert.False(queue.Reader.TryRead(out _));
         var step = ReadMergeStep(log, folder)!;
+        Assert.Null(IntegrationGateJournal.Read(folder));
         Assert.Equal(reason, Assert.Single(timeline.ReadAll(folder), e => e.Kind == "gate-cancelled").Details!["reason"]);
         if (reason == "shutdown") Assert.Equal(AcceptedIntegrationFailureCodes.GateInterrupted, step.FailureCode);
         else if (reason == "superseded")
@@ -120,6 +121,11 @@ public sealed partial class MergeIntoDevelopRunnerTests
                     CompletedAt = clock.GetUtcNow().UtcDateTime,
                     Verdict = "newer-attempt",
                 });
+                IntegrationGateJournal.Open(liveFolder, new IntegrationGateJournalEntry
+                {
+                    Owner = "newer-attempt", Project = "Fixture", JobId = "lane-move", RepoRoot = repo,
+                    StartedAt = clock.GetUtcNow(),
+                });
             });
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
@@ -137,7 +143,7 @@ public sealed partial class MergeIntoDevelopRunnerTests
             File.ReadAllText(Directory.GetFiles(Path.Combine(liveFolder, "post-steps"),
                 "pre-develop-build-gate-*.log").Single()));
         Assert.Equal("superseded", Assert.Single(timeline.ReadAll(liveFolder), e => e.Kind == "gate-cancelled").Details!["reason"]);
-        Assert.Null(IntegrationGateJournal.Read(liveFolder));
+        Assert.Equal("newer-attempt", IntegrationGateJournal.Read(liveFolder)?.Owner);
     }
 
     private sealed class MergeCancellationClock : TimeProvider

@@ -36,6 +36,13 @@ public sealed record IntegrationGateJournalEntry
 
     public DateTimeOffset StartedAt { get; init; }
 
+    /// <summary>
+    /// Identifies the invocation that opened this entry. A folder that changed
+    /// lanes while the gate ran can hold a newer attempt's entry; only the owner
+    /// clears its own record.
+    /// </summary>
+    public string? Owner { get; init; }
+
     /// <summary>Gate-evidence prefix the verdict for <see cref="GatedSha"/> is written under.</summary>
     public string Step { get; init; } = IntegrationGateJournal.PreDevelopBuildGateStep;
 }
@@ -117,6 +124,15 @@ public static class IntegrationGateJournal
         {
             SilentCatch.Note(ex, "IntegrationGateJournal: clearing the in-flight record is best-effort");
         }
+    }
+
+    /// <summary>
+    /// Clears the entry only while it still belongs to <paramref name="owner"/>.
+    /// An entry another invocation opened since then is its in-flight record.
+    /// </summary>
+    public static void ClearOwned(string jobFolderPath, string owner)
+    {
+        if (Read(jobFolderPath)?.Owner == owner) Clear(jobFolderPath);
     }
 
     private static void Write(string jobFolderPath, IntegrationGateJournalEntry entry)
