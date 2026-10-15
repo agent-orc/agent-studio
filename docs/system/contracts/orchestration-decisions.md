@@ -267,8 +267,12 @@ application boundaries.
 backend.Tests. It pins the owning assembly, rejects host definitions of the
 extracted policies and direct transition construction/branching patterns, and
 forbids boundary access and ambient time in the library. Mutation examples prove
-that the source guard rejects reintroduced rules. Host branches may inspect a
-returned decision to apply it or validate persistence results. Add new transition
+that the source guard rejects reintroduced rules. The guard discovers every
+exported `Decide*` method on a decision-library policy type, regardless of its
+return type, and retains the receipt-returning entry-point scan. It rejects
+backend calls outside `MonolithTransitionAdapter`.
+Host branches may inspect a returned decision to apply it or validate
+persistence results. Add new transition
 policies to the owned-policy inventory and put their facts and rules in this
 library. Broader background-service movement remains I18.
 
@@ -281,9 +285,14 @@ deciders), when an AI Operator decider calls a library rule around the switch,
 or when a backend host constructs a transition receipt. No host-defined rule
 baseline is accepted. OrchestratorPrep, MetaCycle and AutoIntervention remain
 on the monolith path while they have no engine occurrence.
-The review post-processing worker and its recurring sweep stay registered
-across profile changes. They read the current `CodingCompletion` owner before
-processing a card; after rollback the sweep recovers cards left in Auto Review.
+The review post-processing worker, startup recovery, evidence projection, and
+settlement reconciliation stay registered across profile changes. Each checks
+the current transition owner before acting on a card. Coding post-processing and recovery wait while either `CodingCompletion` or
+`ReviewReport` selects Engine; evidence projection and settlement wait while
+`ReviewReport` selects Engine. The delivery resume entry point also waits if
+either profile selects Engine. Recovery keeps waiting for a
+runtime rollback, and recurring settlement and review sweeps recover journaled
+work after ownership returns to Monolith.
 Run-liveness receipt application remeasures log activity before a demotion, so
 activity added after submission restores the card's grace period.
 

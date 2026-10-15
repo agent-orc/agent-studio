@@ -2010,7 +2010,7 @@ public sealed partial class BatchGatePilotService
             {
                 var live = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
                 var latest = Refresh(pending);
-                var reason = GateCancellationPolicy.Decide(pending.Subject.ResultSha,
+                var reason = AgentStudio.Runner.MonolithTransitionAdapter.GateCancellation(pending.Subject.ResultSha,
                     latest.Subject.CurrentGeneration ? pending.Subject.ResultSha : null,
                     TaskStates.AutoReview, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, gate.CancellationReason);
@@ -2194,7 +2194,7 @@ public sealed partial class BatchGatePilotService
     }
 
     private static TransitionDecision BatchShadowDecision(TaskInfo task, string reviewAttemptId)
-        => StageDecisionPolicy.GateTransition(task.Id, reviewAttemptId, 0, 0, 1).Transition!;
+        => AgentStudio.Runner.MonolithTransitionAdapter.StageGateTransition(task.Id, reviewAttemptId, 0, 0, 1).Transition!;
 
     /// <summary>Pending-queue resolution of a member that left as integrated (AGT-3103).</summary>
     internal const string AlreadyIntegratedResolution = "already-integrated";

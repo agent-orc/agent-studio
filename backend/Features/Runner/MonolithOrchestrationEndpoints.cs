@@ -180,7 +180,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             // Rollback decides without the advisor; the monolith owns the next plan anyway.
             var facts = JsonSerializer.Deserialize<BatchPlanOccurrencePayload>(run.PayloadJson,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Facts;
-            var plan = BatchPlanDecisionPolicy.Decide(facts with { AdvisorMode = "off" }).Decision;
+            var plan = MonolithTransitionAdapter.BatchPlan(facts with { AdvisorMode = "off" }).Decision;
             return (OrchestrationAction.Continue, JsonSerializer.Serialize(new
             {
                 batchPlan = plan,
@@ -208,7 +208,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 && infrastructure.ValueKind == JsonValueKind.True;
             var interventionRequired = root.TryGetProperty("interventionRequired", out var intervention)
                 && intervention.ValueKind == JsonValueKind.True;
-            transition = StageDecisionPolicy.GateTransition(run.TaskId, attempt,
+            transition = MonolithTransitionAdapter.StageGateTransition(run.TaskId, attempt,
                 failed, used, allowed, infrastructureFailure, interventionRequired).Transition!;
         }
         else if (payload.RootElement.TryGetProperty("reviewOutcome", out _))
@@ -221,7 +221,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         else
         {
             var root = payload.RootElement;
-            transition = StageDecisionPolicy.Coding(run.TaskId,
+            transition = MonolithTransitionAdapter.StageCoding(run.TaskId,
                 root.TryGetProperty("runAttemptId", out var attempt)
                     ? attempt.GetString() ?? run.RunId : run.RunId,
                 root.TryGetProperty("targetState", out var target) ? target.GetString() : null);

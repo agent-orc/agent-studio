@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -57,6 +58,93 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Git(_repo, "remote", "add", "origin", _origin);
         Git(_repo, "push", "-q", "origin", "develop");
         Git(_repo, "fetch", "-q", "origin");
+    }
+
+    [Fact]
+    public async Task Review_orchestrator_waits_for_engine_delivery_and_resumes_after_rollback()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "owner-orchestrator");
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        var engine = await stack.Orchestrator.ProcessCardAsync(
+            _root, Project, card.Id, _watchPath, CancellationToken.None);
+        Assert.Equal(PostProcessingCardStatus.Deferred, engine.Status);
+        Assert.Equal("engine-owned-coding-completion", engine.Reason);
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        var rollback = await stack.Orchestrator.ProcessCardAsync(
+            _root, Project, card.Id, _watchPath, CancellationToken.None);
+        Assert.NotEqual("engine-owned-coding-completion", rollback.Reason);
+    }
+
+    [Fact]
+    public async Task Post_processing_worker_waits_for_coding_owner_and_runs_after_rollback()
+    {
+        var clock = new FakeTimeProvider();
+        var stack = Build(clock: clock);
+        var card = SeedPassedDelivery(stack, "owner-postprocessing");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+        var request = new AutoReviewPostProcessingRequest(
+            Project, card.Id, _watchPath, clock.GetUtcNow().UtcDateTime, "owner-test");
+        stack.Configuration["Orchestration:Transitions:CodingCompletion"] = "Engine";
+        await stack.Worker.ProcessAsync(request, CancellationToken.None);
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        stack.Configuration["Orchestration:Transitions:CodingCompletion"] = "Monolith";
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        await stack.Worker.ProcessAsync(request, CancellationToken.None);
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        await stack.Worker.ProcessAsync(request, CancellationToken.None);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+    }
+
+    [Fact]
+    public async Task Delivery_resume_waits_for_both_engine_profiles_and_runs_after_rollback()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "owner-resume");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        Assert.Equal(0, (await stack.Resume.RunOnceAsync("engine")).Integrated);
+        Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        stack.Configuration["Orchestration:Transitions:CodingCompletion"] = "Engine";
+        Assert.Equal(0, (await stack.Resume.RunOnceAsync("engine-coding")).Integrated);
+        stack.Configuration["Orchestration:Transitions:CodingCompletion"] = "Monolith";
+        Assert.Equal(1, (await stack.Resume.RunOnceAsync("rollback")).Integrated);
+    }
+
+    [Fact]
+    public void Settlement_reconciler_waits_for_review_owner_and_resumes_after_rollback()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "owner-settlement");
+        var entry = JournalEntry(card, stack) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var reconciler = Reconciler(stack);
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.NoWork, reconciler.Reconcile(task));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        Assert.NotEqual(RemoteReviewSettlementReconcileStatus.NoWork, reconciler.Reconcile(task));
+        Assert.NotNull(RemoteDeliverySettlementStore.Read(card.FolderPath));
+    }
+
+    [Fact]
+    public async Task Evidence_worker_waits_for_review_owner_and_projects_after_rollback()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "owner-evidence");
+        var entry = JournalEntry(card, stack);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var worker = EvidenceWorker(stack);
+        var request = EvidenceRequest(card, stack, entry);
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        await worker.ProcessAsync(request, CancellationToken.None);
+        Assert.False(RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.EvidenceComplete);
+        stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        await worker.ProcessAsync(request, CancellationToken.None);
+        Assert.True(RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.EvidenceComplete);
     }
 
     /// <summary>
@@ -1022,7 +1110,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                 new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
                 new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance,
                     new ConfigurationBuilder().Build())),
-            NullLogger<RemoteReviewEvidenceProjectionWorker>.Instance);
+            NullLogger<RemoteReviewEvidenceProjectionWorker>.Instance,
+            configuration: stack.Configuration);
 
     private static RemoteReviewEvidenceProjectionRequest EvidenceRequest(
         SeededCard card,
@@ -1042,7 +1131,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     private static RemoteReviewSettlementReconciler Reconciler(Stack stack) => new(
         stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(),
         stack.Resume, NullLogger<RemoteReviewSettlementReconciler>.Instance,
-        stack.Mutations, stack.Transitions, stack.Timeline);
+        stack.Mutations, stack.Transitions, stack.Timeline, stack.Configuration);
 
     private static RemoteReviewSettlementEntry FindingRoundEntry(SeededCard card, Stack stack)
     {
@@ -1694,7 +1783,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             transitions,
             escalation,
             NullLogger<AutoReviewDeliveryResumeService>.Instance,
-            time: clock);
+            time: clock, configuration: configuration);
 
         var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, configuration);
         scanner.SetIndexCache(indexCache);
@@ -1729,7 +1818,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             deliveryResume: resume);
 
         return new Stack(scanner, authority, integration, pipeline, timeline, resume, orchestrator, worker,
-            transitions, mutations);
+            transitions, mutations, configuration);
     }
 
     private static object CommitRecord(string sha) => new
@@ -1776,7 +1865,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         ReviewDecisionOrchestrator Orchestrator,
         AutoReviewPostProcessingWorker Worker,
         TaskTransitionService Transitions,
-        TaskMutationService Mutations);
+        TaskMutationService Mutations,
+        IConfigurationRoot Configuration);
 
     private static string Git(string cwd, params string[] args)
     {
