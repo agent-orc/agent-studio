@@ -20,6 +20,7 @@ public sealed class MonolithOrchestrationApplier(
     BatchGatePilotService batches,
     AgentStudio.Projects.ProjectSettingsService settings,
     IOperatorSweepActions sweepActions,
+    ActiveDecisionAuthorityAdapter activeDecisionAuthority,
     IConfiguration configuration) : IMonolithOrchestrationApplier
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -65,6 +66,12 @@ public sealed class MonolithOrchestrationApplier(
         }
         using var output = JsonDocument.Parse(completion.OutputJson);
         var root = output.RootElement;
+        DecisionChoiceV1? activeChoice = null;
+        if (root.TryGetProperty("activeChoice", out _))
+            activeChoice = activeDecisionAuthority.Validate(occurrence, task, completion.Action, root);
+        else if (occurrence.Profile == "CodingCompletion"
+            && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", true))
+            throw new InvalidOperationException("active-decision-receipt-required");
         TransitionDecision? decision = null;
         if (root.TryGetProperty("transition", out var transition)
             && transition.ValueKind == JsonValueKind.Object)
@@ -78,6 +85,32 @@ public sealed class MonolithOrchestrationApplier(
             throw new InvalidDataException("The engine gate decision is missing its transition.");
         if (decision is null && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
             throw new InvalidDataException("The engine review decision is missing its transition.");
+        if (activeChoice is { Action: DecisionActionKinds.Ask or DecisionActionKinds.Defer })
+        {
+            // The decision step has ended. The card stays in its source lane for the AI Operator.
+            return;
+        }
+        if (activeChoice is { Action: DecisionActionKinds.Checkpoint })
+        {
+            var verified = activeDecisionAuthority.VerifiedTree(occurrence.Run.RunId);
+            var directory = Path.Combine(task.FolderPath, "results");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "checkpoint.md");
+            if (!File.Exists(path))
+                File.WriteAllText(path, $"# Verified-tree checkpoint\n\nLast verified tree: `{verified}`\n"
+                    + $"Decision occurrence: `{occurrence.Run.RunId}`\n");
+            return;
+        }
+        if (activeChoice is { Action: DecisionActionKinds.Adapt, Target: "salvage-handoff" })
+        {
+            using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+            var resultRef = payload.RootElement.GetProperty("resultRef").GetString()!;
+            var resultSha = payload.RootElement.GetProperty("resultSha").GetString()!;
+            if (!ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
+                resultRef, resultSha, "model-selected-salvage-handoff",
+                occurrence.AuthorityAttemptId, DateTime.UtcNow)))
+                throw new IOException("The salvage handoff could not be saved.");
+        }
         if (decision?.Action == TransitionAction.ReviewInfrastructureRetry)
         {
             if (!authority.HasScheduledReviewInfrastructureRetry(occurrence.AuthorityAttemptId))

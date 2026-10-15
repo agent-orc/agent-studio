@@ -2589,6 +2589,8 @@ public static class LeaseEndpoints
             }
 
             var codingMode = MonolithTransitionSwitch.For(configuration, "CodingCompletion");
+            var codingModelActive = codingMode == OrchestrationExecutionMode.Engine
+                && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", true);
             var codingOccurrenceKey = $"coding-completion:{attemptId}:{completionKey}";
             var priorCodingOccurrence = orchestration.GetByIdempotencyKey(codingOccurrenceKey);
             var pendingCodingOccurrence = priorCodingOccurrence is not null
@@ -2627,22 +2629,21 @@ public static class LeaseEndpoints
                             DateTimeKind.Utc)),
                     },
                 });
-                var codingDecision = codingMode == OrchestrationExecutionMode.Shadow
-                    ? AgentStudio.OrchestrationDecisions.StageDecisionPolicy.Coding(
-                        task.Id, attemptId, targetState) : null;
+                var codingDecision = AgentStudio.OrchestrationDecisions.StageDecisionPolicy.Coding(
+                    task.Id, attemptId, targetState);
                 var occurrence = orchestration.Create(task.ProjectName, task.Id,
                     AgentStudio.TaskServer.Contracts.OrchestrationStage.ReviewDecision,
                     payload, codingOccurrenceKey, task.State,
                     attemptId, req.FencingToken, epoch,
+                    claimable: !codingModelActive,
                     profile: "CodingCompletion", shadow: codingMode == OrchestrationExecutionMode.Shadow,
-                    monolithAction: codingDecision?.Action.ToString(),
-                    monolithReason: codingDecision?.Reason);
-                if (codingDecision is not null
-                    && orchestration.GetOccurrence(occurrence.RunId) is { Shadow: true })
+                    monolithAction: codingMode == OrchestrationExecutionMode.Shadow
+                        ? codingDecision.Action.ToString() : null,
+                    monolithReason: codingMode == OrchestrationExecutionMode.Shadow
+                        ? codingDecision.Reason : null);
+                if (codingMode == OrchestrationExecutionMode.Shadow || codingModelActive)
                 {
-                    // AGT-3063: the shadow model step decides from typed grounds
-                    // frozen with the occurrence. Collection never changes the
-                    // deterministic transition below.
+                    // The engine receives the same frozen grounds in shadow and active modes.
                     try
                     {
                         decisionGrounds.FreezeCodingCompletion(new CodingCompletionObservation(
@@ -2650,15 +2651,21 @@ public static class LeaseEndpoints
                             settledRun?.ResultSha ?? resultSha,
                             settledRun?.ResultEnvelope?.BaseSha ?? req.BaseSha,
                             settledRun?.ResultEnvelope?.ImmutableRemoteRef ?? req.ImmutableResultRef,
-                            settledRun?.ResultEnvelope is not null, codingDecision, occurrence.CreatedAt));
+                            settledRun?.ResultEnvelope is not null, codingDecision, occurrence.CreatedAt),
+                            codingModelActive
+                                ? AgentStudio.OrchestrationDecisions.DecisionReceiptPolicy.ActiveMode
+                                : AgentStudio.OrchestrationDecisions.DecisionReceiptPolicy.ShadowMode);
                     }
                     catch (Exception exception)
                     {
+                        if (codingModelActive) throw;
                         loggerFactory.CreateLogger("AgentStudio.Runner.DecisionGrounds").LogWarning(exception,
                             "decision-grounds-freeze-failed task={TaskKey} occurrence={Occurrence}",
                             req.TaskKey, occurrence.RunId);
                     }
                 }
+                if (codingModelActive)
+                    orchestration.Activate(occurrence.RunId);
                 var occurrenceIsEngine = orchestration.GetOccurrence(occurrence.RunId)?.Shadow != true;
                 if (occurrenceIsEngine
                     && occurrence.Status is ("pending" or "leased" or "applying"))

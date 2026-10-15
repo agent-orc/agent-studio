@@ -511,6 +511,10 @@
   <strong>AGT-3063 · Grounds and shadow receipt</strong>
   <span>Delivered: OD-S1 for the coding-completion profile in shadow mode. The monolith freezes typed facts with source refs, omissions, candidates, prior decisions and the RB-S1 card ledger; the engine builds DecisionGroundsV1 (32 KiB and 6,500-token pack, truncation markers, SHA-256 digest), runs the model as a claimable runner-host job (custody recorded), retries a transport failure once on the alternate route, and stores one immutable OrchestratorDecisionReceiptV1 per occurrence with tokens, price status, reasoning, confidence, evidence and outcome links. Dispatch is unchanged; replay, duplicate and cached-usage, cap and evidence-link tests pass. Fix round (15 Oct 2026): non-numeric confidence degrades to ask; per-call token envelope enforced on the runner and against measured usage; host-day caps (48 scheduled plus 12 event calls, 180,000 input, 90,000 output tokens, 10 USD) charge occurrences without a card; a billed completion after a timeout receipt is recorded as a late call in the spend.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3064" data-delivered-at="2026-10-15" data-slice="Active post-core model choice">
+  <strong>AGT-3064 · Active post-core model choice</strong>
+  <span>Delivered: the Engine coding-completion profile freezes grounds before claim, records an active model receipt, and dispatches one offered A0 or A1 choice through the fenced authority adapter. The adapter checks the current epoch, fence, settled result SHA and ref, action floor, and matching receipt; invalid, forbidden, unavailable, and capped decisions ask the AI Operator and hold. The verified-tree checkpoint and immutable-result salvage handoff are selectable actions. Focused integration, policy, build, guard, and lint checks cover the slice.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
