@@ -966,8 +966,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(containedIn, RemoteTip());
     }
 
-    [Fact]
-    public async Task Ejected_member_published_under_another_sha_leaves_as_integrated_without_a_gate()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ejected_member_published_under_another_sha_leaves_as_integrated_without_a_gate(
+        bool interruptedGate)
     {
         // AGT-3143: the eject handoff skips formation, so it must apply the
         // containment check itself. A patch-equal copy on the branch counts.
@@ -980,6 +983,13 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _gate.Fallback = _ => throw new InvalidOperationException("Contained member ran a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
+        if (interruptedGate)
+        {
+            var pending = Assert.Single(store.ListPending());
+            BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+                new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                    FallbackGateActive: true, FallbackGateStarts: 1));
+        }
         Assert.True(pilot.RequestEject(ProjectName, member.Key));
 
         await pilot.TickAsync(CancellationToken.None);
@@ -991,6 +1001,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var ownership = HumanReviewOwnership(member.Key);
         Assert.Equal(containedIn, ownership?.ContainedInSha);
         Assert.True(ownership!.FallbackIntegrated);
+        Assert.False(ownership.FallbackGateActive);
         Assert.Equal(Git(_origin, "rev-parse", containedIn + "^{tree}"),
             Git(_origin, "rev-parse", "refs/heads/develop^{tree}"));
     }
@@ -1831,10 +1842,13 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Empty(store.ListPending());
     }
 
-    [Fact]
-    public async Task Unattributable_member_of_a_publication_interrupted_by_a_restart_still_runs_its_per_task_gate()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unattributable_member_leaves_through_containment_after_batch_or_publication_recovery(
+        bool interruptedPublication)
     {
-        var factory = BuildFactory();
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var contained = SeedMember(factory, "DOC-RESTART-CONTAINED", "docs/restart-contained.md",
@@ -1855,42 +1869,47 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         string? blockedPath = null;
         _gate.Batch = request =>
         {
-            var manifest = Assert.Single(store.ListManifests());
-            blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
-            Directory.CreateDirectory(blockedPath);
+            if (interruptedPublication)
+            {
+                var manifest = Assert.Single(store.ListManifests());
+                blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
+                Directory.CreateDirectory(blockedPath);
+            }
             return Green(request.ExpectedSha);
         };
-        _gate.Fallback = request => Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("Contained member ran a per-task gate.");
 
-        // The process stops after the remote push and before it schedules
-        // the ejected member's per-task gate.
+        // With an interrupted publication, the process stops after the remote
+        // push and before it schedules the ejected member's fallback.
         await pilot.TickAsync(CancellationToken.None);
 
         var closed = Assert.Single(store.ListManifests());
         Assert.Equal(2, closed.Members.Count);
         Assert.Equal("unattributable", store.ReadReplay(closed.BatchId, contained.Key).Outcome);
-        AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
-        Assert.Equal(0, _gate.FallbackRuns);
-        Assert.False(Ownership(contained.Key)?.FallbackGateActive ?? false);
-        AssertLane(contained.Key, TaskStates.AutoReview);
+        if (interruptedPublication)
+        {
+            AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
+            Assert.Equal(0, _gate.FallbackRuns);
+            Assert.False(Ownership(contained.Key)?.FallbackGateActive ?? false);
+            AssertLane(contained.Key, TaskStates.AutoReview);
 
-        Directory.Delete(blockedPath!);
-        factory.Dispose();
-        using var restarted = BuildFactory();
-        _ = restarted.CreateClient();
-        EnableBatchGate(restarted, closeSize: 2);
-        await restarted.Services.GetRequiredService<BatchGatePilotService>()
-            .TickAsync(CancellationToken.None);
+            Directory.Delete(blockedPath!);
+            factory.Dispose();
+            using var restarted = BuildFactory();
+            _ = restarted.CreateClient();
+            EnableBatchGate(restarted, closeSize: 2);
+            await restarted.Services.GetRequiredService<BatchGatePilotService>()
+                .TickAsync(CancellationToken.None);
+        }
 
         AssertPhase(store, closed.BatchId, BatchPhase.Published);
         AssertLane(admitted.Key, TaskStates.HumanReview);
         Assert.Equal(1, _gate.BatchRuns);
-        Assert.Equal(1, _gate.FallbackRuns);
-        // The green per-task gate completes the card the batch could not attribute.
+        Assert.Equal(Assert.Single(store.ListRuns(closed.BatchId)).CandidateSha, RemoteTip());
         var completed = Path.Combine(_watchPath, TaskStates.HumanReview, contained.Key);
-        Assert.Equal(contained.ResultSha, BatchGateOwnershipStore.Read(completed)?.FallbackTestedSha);
-        Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(completed),
-            $"batch-fallback-{contained.ReviewAttemptId}.json")));
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Equal(RemoteTip(), BatchGateOwnershipStore.Read(completed)?.ContainedInSha);
+        Assert.True(BatchGateOwnershipStore.Read(completed)?.FallbackIntegrated);
         Assert.Empty(store.ListPending());
     }
 

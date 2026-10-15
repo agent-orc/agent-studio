@@ -738,7 +738,8 @@ public sealed partial class BatchGatePilotService
             foreach (var item in released)
                 if (!ejectedOnly)
                 {
-                    var containedInSha = PublishedIn(Refresh(item), fetchedBases, ct);
+                    var containedInSha = PublishedIn(Refresh(item), fetchedBases, ct,
+                        gateInterrupted: !FallbackInFlight(item.ReviewAttemptId));
                     var handoff = ScheduleFallback(item, ct, containedInSha: containedInSha);
                     if (containedInSha is not null) await handoff.ConfigureAwait(false);
                 }
@@ -772,10 +773,23 @@ public sealed partial class BatchGatePilotService
         Dictionary<(string Repo, string Branch), string?> fetchedBases,
         CancellationToken ct)
     {
-        var containedInSha = PublishedIn(Refresh(pending), fetchedBases, ct);
+        var containedInSha = PublishedIn(Refresh(pending), fetchedBases, ct,
+            gateInterrupted: !FallbackInFlight(pending.ReviewAttemptId));
         var handoff = ScheduleFallback(pending, ct, clearEject: true,
             containedInSha: containedInSha);
         if (containedInSha is not null) await handoff.ConfigureAwait(false);
+    }
+
+    private void HandOffPublishedEject(BatchGatePendingRecord pending,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct)
+    {
+        var current = Refresh(pending);
+        // A conflict or unattributable replay has released this member, even
+        // though its durable ownership still names the published batch.
+        current = current with { Subject = current.Subject with { OwningBatchId = null } };
+        ScheduleFallback(pending, ct, containedInSha: PublishedIn(current, fetchedBases, ct,
+            gateInterrupted: !FallbackInFlight(pending.ReviewAttemptId)));
     }
 
     private bool HeldOnRedBase(BatchGatePendingRecord pending)
@@ -848,6 +862,7 @@ public sealed partial class BatchGatePilotService
     private async Task RecoverPublishedAsync(CancellationToken ct)
     {
         var waiting = _store.ListPending();
+        var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
         foreach (var manifest in _store.ListManifests())
         {
             ct.ThrowIfCancellationRequested();
@@ -964,14 +979,13 @@ public sealed partial class BatchGatePilotService
                     && item.Subject.RunAttempt == member.RunAttempt);
                 if (pending is null) continue;
                 var replay = _store.TryReadReplay(manifest.BatchId, member.TaskKey);
-                // Every ejected member owes a per-task gate. The in-tick
-                // fallback dies with a restart between publication and its
-                // first marker, and the published batch's ownership keeps the
-                // member out of every later batch, so only this branch can
-                // still deliver it.
+                // Every ejected member needs fallback handling. A restart
+                // can lose the in-tick handoff before its first marker, while
+                // batch ownership keeps the member out of later batches.
+                // Containment may release it without another gate.
                 if (replay?.Outcome is "conflict" or "unattributable")
                 {
-                    ScheduleFallback(pending, ct);
+                    HandOffPublishedEject(pending, fetchedBases, ct);
                     continue;
                 }
                 if (replay?.Outcome != "admitted") continue;
@@ -1255,8 +1269,9 @@ public sealed partial class BatchGatePilotService
             }
             _leases.Release(lease);
             reservation?.Dispose();
+            var publishedBases = new Dictionary<(string Repo, string Branch), string?>();
             foreach (var key in fallbackKeys)
-                ScheduleFallback(pending[key], ct);
+                HandOffPublishedEject(pending[key], publishedBases, ct);
         }
 
         bool MembersCurrent() => manifest.Members.All(member =>
