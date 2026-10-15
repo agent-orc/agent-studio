@@ -9,6 +9,7 @@ internal sealed record WindowsServiceLayout(string InstallBase, string ConfigRoo
 {
     public const string TaskServerUrl = "http://127.0.0.1:5071";
     public const string ConnectorUrl = "http://127.0.0.1:5031";
+    public const string StudioUrl = "http://127.0.0.1:4011";
     public const string ConnectorTaskName = "AgentOrchestrator-StudioConnector";
 
     public static WindowsServiceLayout ForHost(string stateRoot)
@@ -35,7 +36,10 @@ internal static class WindowsServiceScripts
         WindowsServiceLayout layout,
         string packageRoot,
         string? upstreamUrl,
-        string? upstreamTokenFile)
+        string? upstreamTokenFile,
+        WindowsNativeDecisions? decisions = null,
+        bool runnerPasswordFromStdin = false,
+        bool unattended = false)
     {
         var scripts = layout.ScriptsRoot(packageRoot);
         var arguments = new List<string>(HostArguments);
@@ -51,7 +55,18 @@ internal static class WindowsServiceScripts
                     "-ListenUrl", WindowsServiceLayout.TaskServerUrl,
                     "-ConnectorListenUrl", WindowsServiceLayout.ConnectorUrl,
                     "-RestMode", "Normal",
+                    "-FullStudio",
                 ]);
+                if (decisions is not null)
+                {
+                    arguments.AddRange(["-ProviderCli", decisions.ProviderCli, "-GitAccess", decisions.GitAccess]);
+                    if (decisions.GitTokenFile is not null)
+                        arguments.AddRange(["-GitTokenFile", decisions.GitTokenFile]);
+                    if (decisions.GitRemote is not null)
+                        arguments.AddRange(["-GitRemote", decisions.GitRemote]);
+                }
+                if (runnerPasswordFromStdin) arguments.Add("-RunnerPasswordFromStdin");
+                if (unattended) arguments.Add("-Unattended");
                 break;
             case ProductProfile.ConnectorWindows:
                 arguments.AddRange([
@@ -101,6 +116,24 @@ internal static class WindowsServiceScripts
             : [layout.ConfigRoot];
 }
 
+internal static class WindowsPackageInventory
+{
+    private static readonly string[] FullStudioFiles =
+    [
+        "task-server.exe", "orchestrator-engine.exe", "agent-studio-bff.exe",
+        "OrchestratorApi.exe", "agent-host.exe", "provider-codex.exe", "provider-claude.exe",
+        "browser/index.html", "appsettings.json",
+        "agent-rules/core.md", "deploy-windows/fallback/register-native-service.ps1",
+    ];
+
+    public static void RequireFullStudio(string packageRoot)
+    {
+        foreach (var relative in FullStudioFiles)
+            if (!File.Exists(Path.Combine(packageRoot, relative)))
+                throw new InvalidDataException($"Windows Studio package is missing {relative}.");
+    }
+}
+
 /// <summary>
 /// Windows native service path. It needs administrator rights because it
 /// registers start-up scheduled tasks and writes ProgramData; the Docker path
@@ -120,10 +153,14 @@ internal sealed class WindowsServiceSetup(ProcessRunner process, WindowsServiceL
     }
 
     /// <summary>Stages <paramref name="packageRoot"/> as the current release and starts its tasks.</summary>
-    public async Task ApplyAsync(ProductProfile profile, string packageRoot, string? upstreamUrl, string? upstreamTokenFile)
+    public async Task ApplyAsync(ProductProfile profile, string packageRoot, string? upstreamUrl,
+        string? upstreamTokenFile, WindowsNativeDecisions? decisions = null,
+        string? runnerPassword = null, bool unattended = false)
     {
         await process.RequireAsync("powershell.exe",
-            WindowsServiceScripts.Install(profile, layout, packageRoot, upstreamUrl, upstreamTokenFile));
+            WindowsServiceScripts.Install(profile, layout, packageRoot, upstreamUrl, upstreamTokenFile,
+                decisions, runnerPassword is not null, unattended),
+            input: runnerPassword is null ? null : runnerPassword + "\n");
         if (!dryRun) await VerifyAsync(profile);
     }
 
@@ -158,12 +195,16 @@ internal sealed class WindowsServiceSetup(ProcessRunner process, WindowsServiceL
         {
             Console.WriteLine($"Task Server: {WindowsServiceLayout.TaskServerUrl} (mode Normal)");
             Console.WriteLine("Engine: scheduled task AgentOrchestrator-Engine");
+            Console.WriteLine($"Studio: {WindowsServiceLayout.StudioUrl}");
+            Console.WriteLine("Runner: scheduled task AgentOrchestrator-Runner");
         }
         else
         {
             Console.WriteLine($"Upstream Task Server: {upstreamUrl ?? "unchanged"}");
         }
-        Console.WriteLine($"Studio connector: {WindowsServiceLayout.ConnectorUrl}");
+        Console.WriteLine(profile == ProductProfile.StudioWindowsServices
+            ? $"Studio backend: {WindowsServiceLayout.ConnectorUrl}"
+            : $"Studio connector: {WindowsServiceLayout.ConnectorUrl}");
         Console.WriteLine($"Configuration and credentials: {layout.ConfigRoot}");
         if (profile == ProductProfile.StudioWindowsServices)
             Console.WriteLine($"Task data: {layout.DataDirectory}");
@@ -180,10 +221,14 @@ internal sealed class WindowsServiceSetup(ProcessRunner process, WindowsServiceL
                 || !ready.Contains("\"mode\":\"Normal\"", StringComparison.Ordinal))
                 throw new InvalidOperationException(
                     $"Task Server is not ready in mode Normal at {WindowsServiceLayout.TaskServerUrl}/readyz: {ready}");
+            using var backendResponse = await http.GetAsync($"{WindowsServiceLayout.ConnectorUrl}/healthz");
+            backendResponse.EnsureSuccessStatusCode();
         }
-        var live = await http.GetStringAsync($"{WindowsServiceLayout.ConnectorUrl}/healthz");
+        var edgeUrl = profile == ProductProfile.StudioWindowsServices
+            ? WindowsServiceLayout.StudioUrl : WindowsServiceLayout.ConnectorUrl;
+        var live = await http.GetStringAsync($"{edgeUrl}/healthz");
         if (!live.Contains("\"status\":\"live\"", StringComparison.Ordinal))
             throw new InvalidOperationException(
-                $"Studio connector is not live at {WindowsServiceLayout.ConnectorUrl}/healthz: {live}");
+                $"Studio connector is not live at {edgeUrl}/healthz: {live}");
     }
 }
