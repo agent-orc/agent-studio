@@ -71,6 +71,9 @@ public class ProjectRunner
     private static readonly Regex CompactTokenValueRegex = new(
         @"(?<value>\d+(?:[.,]\d+)?)\s*(?<suffix>[kKmM])?",
         RegexOptions.Compiled);
+    private static readonly Regex AbortEvidenceCredentialRegex = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex GitMutationCommandRegex = new(
         @"(?:^|[`""'\s>$:])git\s+(?:-C\s+\S+\s+)?(?:commit|push)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -8002,31 +8005,31 @@ public class ProjectRunner
     {
         if (lines == null || lines.Count == 0) return "(no CLI output captured)";
         var start = Math.Max(0, lines.Count - maxLines);
-        return string.Join("\n", lines.Skip(start).Select(l => l.Text));
+        var window = string.Join("\n", lines.Skip(start).Select(l =>
+            AbortEvidenceCredentialRegex.Replace(l.Text ?? string.Empty, "[omitted: secret]")));
+        const int maxBytes = 8 * 1024;
+        if (Encoding.UTF8.GetByteCount(window) <= maxBytes) return window;
+        window = window[^Math.Min(window.Length, maxBytes)..];
+        while (Encoding.UTF8.GetByteCount(window) > maxBytes) window = window[1..];
+        return "[omitted: oversize]\n" + window;
     }
 
-    private const int ToolCallsLivenessTailBytes = 64 * 1024;
-
-    /// <summary>Tails <c>logs/tool-calls.jsonl</c> so the model can judge
-    /// whether a tool call started shortly before the abort and never
-    /// returned (a live long-op) vs. a genuine stall. Best-effort.</summary>
-    private string BuildToolCallsLiveness(string jobFolderPath, int maxLines = 12)
+    /// <summary>Captures typed file metadata for abort review without reading
+    /// raw tool-call rows into a decision prompt.</summary>
+    private string BuildToolCallsLiveness(string jobFolderPath)
     {
         try
         {
             var path = Path.Combine(TaskPaths.LogsDir(jobFolderPath), "tool-calls.jsonl");
             if (!File.Exists(path)) return "(no tool-calls.jsonl on disk)";
-            // tool-calls.jsonl grows by one row per tool call for the whole
-            // task; read only the newest window (AGT-2991).
-            var all = BoundedFileRead.ReadTailLines(path, ToolCallsLivenessTailBytes);
-            if (all.Count == 0) return "(tool-calls.jsonl is empty)";
-            var start = Math.Max(0, all.Count - maxLines);
-            return string.Join("\n", all.Skip(start));
+            var file = new FileInfo(path);
+            return $"tool-call evidence present; bytes={file.Length}; lastWriteUtc={file.LastWriteTimeUtc:O}; " +
+                "content omitted pending authorized artefact drill-down";
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "abort-review tool-calls.jsonl read failed for {Folder}", jobFolderPath);
-            return "(tool-calls.jsonl unreadable)";
+            _logger.LogDebug(ex, "abort-review tool-call metadata read failed for {Folder}", jobFolderPath);
+            return "(tool-call evidence metadata unavailable)";
         }
     }
 

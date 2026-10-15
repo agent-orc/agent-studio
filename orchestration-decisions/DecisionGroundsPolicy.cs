@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AgentStudio.OrchestrationDecisions;
 
@@ -26,6 +27,9 @@ public static class DecisionGroundsPolicy
     public const int MaxRounds = 12;
     public const int MaxOmissions = 24;
     public const int MaxValueChars = 512;
+    private static readonly Regex Credential = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -40,10 +44,15 @@ public static class DecisionGroundsPolicy
         var markers = new List<string>();
         var omissions = input.Omissions.ToList();
 
-        var facts = input.Facts
+        var loopFacts = input.LoopSignals.Select(signal => new GroundsFactV1(
+            signal.Name, "loop", "Loop re-entry blocked",
+            $"count={signal.MeasuredCount}; limit={signal.Limit}; window={signal.Window}; attempt={signal.Attempt}; candidates={string.Join(',', signal.CandidateActions)}",
+            "attempts", new GroundsSourceRefV1("loop-signal", $"occurrence:{input.OccurrenceId}/{signal.Name}"),
+            input.Trigger.ObservedAt, "complete", GroundsReliability.Reliable, true));
+        var facts = input.Facts.Concat(loopFacts)
             .Select((fact, index) => (fact, index))
             .OrderBy(item => item.fact.Required ? 0 : 1).ThenBy(item => item.index)
-            .Select(item => BoundValue(item.fact, markers))
+            .Select(item => BoundValue(item.fact, markers, omissions))
             .ToList();
         if (facts.Count > MaxFacts)
         {
@@ -139,16 +148,49 @@ public static class DecisionGroundsPolicy
     private static int BodyBytes(DecisionGroundsV1 grounds)
         => JsonSerializer.SerializeToUtf8Bytes(grounds, Json).Length;
 
-    private static GroundsFactV1 BoundValue(GroundsFactV1 fact, List<string> markers)
+    private static GroundsFactV1 BoundValue(GroundsFactV1 fact, List<string> markers,
+        List<GroundsOmissionV1> omissions)
     {
-        if (fact.Value.Length <= MaxValueChars) return fact;
-        markers.Add($"facts.{fact.Id}.value: {fact.Value.Length - MaxValueChars} characters truncated");
+        // Values in a frozen pack are model input. Reject secrets rather than
+        // preserving even a redacted fragment that might be reconstructed.
+        var secret = Credential.IsMatch(fact.Value);
+        var unsafeRef = IsRawSourcePath(fact.Source.Ref) || Credential.IsMatch(fact.Source.Ref);
+        var sourceDigest = fact.Source.Digest ?? "sha256:" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(secret ? "[omitted: secret]" : fact.Value)))
+            .ToLowerInvariant();
+        var source = fact.Source with
+        {
+            Ref = unsafeRef ? $"snapshot:{sourceDigest}" : fact.Source.Ref,
+            Digest = sourceDigest,
+            Range = unsafeRef ? null : fact.Source.Range,
+        };
+        if (unsafeRef)
+            omissions.Add(new($"facts.{fact.Id}.source", "raw-path"));
+        if (secret)
+        {
+            omissions.Add(new($"facts.{fact.Id}.value", "secret"));
+            markers.Add($"facts.{fact.Id}.value: omitted secret");
+            return fact with { Value = "[omitted: secret]", Coverage = "omitted",
+                Reliability = GroundsReliability.Unreliable, Source = source };
+        }
+        if (fact.Value.Length <= MaxValueChars) return fact with { Source = source };
+        omissions.Add(new($"facts.{fact.Id}.value", "oversize"));
+        markers.Add($"facts.{fact.Id}.value: {fact.Value.Length - MaxValueChars} characters omitted");
         return fact with
         {
-            Value = fact.Value[..MaxValueChars] + $" [truncated {fact.Value.Length - MaxValueChars} chars]",
+            Value = fact.Value[..MaxValueChars] + $" [omitted {fact.Value.Length - MaxValueChars} chars]",
             Coverage = "truncated",
+            Source = source,
         };
     }
+
+    private static bool IsRawSourcePath(string reference)
+        => !reference.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+            && (Path.IsPathRooted(reference)
+                || reference.Contains("cli-output.log", StringComparison.OrdinalIgnoreCase)
+                || reference.Contains("tool-calls.jsonl", StringComparison.OrdinalIgnoreCase)
+                || reference.Contains("/sessions/", StringComparison.OrdinalIgnoreCase)
+                || reference.Contains("\\sessions\\", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Candidates of the coding-completion transition (the first OD-S1 profile).
