@@ -226,7 +226,8 @@ public sealed class TaskServerClient : IDisposable
                 BootstrapMaxParallelism: options.HostMaxParallelism,
                 ActiveAttempts: activeAttempts,
                 AttemptLeaseTtlSeconds: options.TtlSeconds,
-                Release: RunnerReleaseIdentity.CurrentIdentity);
+                Release: RunnerReleaseIdentity.CurrentIdentity,
+                RunTimeoutSeconds: options.Role == "coding" ? options.RunTimeoutSeconds : null);
             try
             {
                 var registered = await SendJsonAsync<Contract.RegisterRunnerRequest, Contract.RunnerDto>(

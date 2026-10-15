@@ -2418,8 +2418,14 @@ public static class LeaseEndpoints
                         $"Decision stop hold refused: {hold.Status} {hold.Message}",
                         RunAttemptId: attemptId));
                 if (settledStop?.CommandId.StartsWith("decision-stop:", StringComparison.Ordinal) == true)
-                    decisionReceipts.SetOperatorOutcome(settledStop.CommandId["decision-stop:".Length..],
+                {
+                    var receiptId = settledStop.CommandId["decision-stop:".Length..];
+                    var fenceSuffix = $":fence:{settledStop.FencingToken}";
+                    if (receiptId.EndsWith(fenceSuffix, StringComparison.Ordinal))
+                        receiptId = receiptId[..^fenceSuffix.Length];
+                    decisionReceipts.SetOperatorOutcome(receiptId,
                         operatorStopped ? "applied:stopped-and-held" : "applied:run-finished-held");
+                }
                 return Results.Ok(new RemoteRunCompletionResponse(
                     req.TaskKey, responseOutcome, TaskStates.Escalated,
                     "The operator decision stopped the run and held the card.",
