@@ -167,9 +167,68 @@ public sealed class DecisionGroundsPolicyTests
         Assert.True(grounds.Pack.Bytes <= DecisionGroundsPolicy.MaxPackBytes);
         Assert.Contains(grounds.Facts, fact => fact.Id == "run.outcome");
         Assert.All(grounds.Facts.Where(fact => fact.Id.StartsWith("noise.", StringComparison.Ordinal)),
-            fact => Assert.Contains("[truncated", fact.Value));
+            fact => Assert.Contains("[omitted", fact.Value));
         Assert.Contains(grounds.Pack.TruncationMarkers, marker => marker.Contains("token budget"));
         Assert.Equal(input.Alternatives.Count, grounds.Alternatives.Count);
+    }
+
+    [Fact]
+    public void Freeze_omits_secrets_and_raw_paths_and_preserves_source_digest_after_rotation()
+    {
+        var secret = "api_key=" + new string('k', 24);
+        var source = new GroundsSourceRefV1("log-window", "/private/sessions/cli-output.log", "sha256:original-log");
+        var input = Input() with
+        {
+            Facts = [.. Input().Facts, new GroundsFactV1("log.secret", "signal", "Log signal",
+                secret, null, source, At, "complete", GroundsReliability.Reliable)],
+        };
+
+        var frozen = DecisionGroundsPolicy.Freeze(input);
+        var fact = Assert.Single(frozen.Facts, item => item.Id == "log.secret");
+
+        Assert.Equal("[omitted: secret]", fact.Value);
+        Assert.Equal("sha256:original-log", fact.Source.Digest);
+        Assert.StartsWith("snapshot:sha256:original-log", fact.Source.Ref);
+        Assert.DoesNotContain(secret, JsonSerializer.Serialize(frozen));
+        Assert.DoesNotContain("/private/sessions", JsonSerializer.Serialize(frozen));
+        Assert.Contains(frozen.Omissions, item => item.Field == "facts.log.secret.value" && item.Reason == "secret");
+        Assert.Contains(frozen.Omissions, item => item.Field == "facts.log.secret.source" && item.Reason == "raw-path");
+        Assert.True(DecisionGroundsPolicy.IsIntact(frozen));
+    }
+
+    [Fact]
+    public void Freeze_records_oversize_omission_and_digests_the_complete_source_value()
+    {
+        var full = new string('z', DecisionGroundsPolicy.MaxValueChars + 20);
+        var input = Input() with
+        {
+            Facts = [.. Input().Facts, new GroundsFactV1("log.window", "signal", "Log window",
+                full, null, new("log-window", "window:1"), At, "complete", GroundsReliability.Reliable)],
+        };
+
+        var frozen = DecisionGroundsPolicy.Freeze(input);
+        var fact = Assert.Single(frozen.Facts, item => item.Id == "log.window");
+        Assert.Contains("[omitted 20 chars]", fact.Value);
+        Assert.Equal("oversize", Assert.Single(frozen.Omissions, item => item.Field == "facts.log.window.value").Reason);
+        Assert.StartsWith("sha256:", fact.Source.Digest);
+        Assert.NotEqual(fact.Source.Digest, DecisionGroundsPolicy.Freeze(input with
+        {
+            Facts = [.. Input().Facts, new GroundsFactV1("log.window", "signal", "Log window",
+                full[..^1] + "y", null, new("log-window", "window:1"), At, "complete", GroundsReliability.Reliable)],
+        }).Facts.Last().Source.Digest);
+    }
+
+    [Fact]
+    public void Frozen_loop_signal_is_required_evidence_for_engine_choice()
+    {
+        var signal = LoopExhaustionPolicy.Signal("abort-review.rerun-per-job", 2, 2,
+            "card-attempt", "attempt-1", ["retry", "ask"]);
+        var grounds = DecisionGroundsPolicy.Freeze(Input() with { LoopSignals = [signal!] });
+
+        var fact = Assert.Single(grounds.Facts, item => item.Id == signal!.Name);
+        Assert.True(fact.Required);
+        Assert.Contains("count=2", fact.Value);
+        Assert.True(DecisionGroundsPolicy.IsIntact(grounds));
     }
 
     [Fact]
