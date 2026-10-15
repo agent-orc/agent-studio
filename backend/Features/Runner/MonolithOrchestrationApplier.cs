@@ -21,6 +21,8 @@ public sealed class MonolithOrchestrationApplier(
     AgentStudio.Projects.ProjectSettingsService settings,
     IOperatorSweepActions sweepActions,
     ActiveDecisionAuthorityAdapter activeDecisionAuthority,
+    IAiOperatorDecisionQueue aiOperator,
+    TimeProvider time,
     IConfiguration configuration,
     IServiceProvider services,
     OrchestratorLog operatorLog) : IMonolithOrchestrationApplier
@@ -77,7 +79,8 @@ public sealed class MonolithOrchestrationApplier(
         if (root.TryGetProperty("activeChoice", out _))
             activeChoice = activeDecisionAuthority.Validate(occurrence, task, completion.Action, root);
         else if (occurrence.Profile == "CodingCompletion"
-            && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", true))
+            && completion.EngineId != "engine_rollback"
+            && activeDecisionAuthority.HasActiveGrounds(occurrence.Run.RunId))
             throw new InvalidOperationException("active-decision-receipt-required");
         TransitionDecision? decision = null;
         if (root.TryGetProperty("transition", out var transition)
@@ -94,7 +97,9 @@ public sealed class MonolithOrchestrationApplier(
             throw new InvalidDataException("The engine review decision is missing its transition.");
         if (activeChoice is { Action: DecisionActionKinds.Ask or DecisionActionKinds.Defer })
         {
-            // The decision step has ended. The card stays in its source lane for the AI Operator.
+            aiOperator.Enqueue(task, occurrence.Run.RunId, activeChoice);
+            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+            scanner.InvalidateCache();
             return;
         }
         if (activeChoice is { Action: DecisionActionKinds.Checkpoint })
@@ -106,17 +111,9 @@ public sealed class MonolithOrchestrationApplier(
             if (!File.Exists(path))
                 File.WriteAllText(path, $"# Verified-tree checkpoint\n\nLast verified tree: `{verified}`\n"
                     + $"Decision occurrence: `{occurrence.Run.RunId}`\n");
+            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+            scanner.InvalidateCache();
             return;
-        }
-        if (activeChoice is { Action: DecisionActionKinds.Adapt, Target: "salvage-handoff" })
-        {
-            using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
-            var resultRef = payload.RootElement.GetProperty("resultRef").GetString()!;
-            var resultSha = payload.RootElement.GetProperty("resultSha").GetString()!;
-            if (!ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
-                resultRef, resultSha, "model-selected-salvage-handoff",
-                occurrence.AuthorityAttemptId, DateTime.UtcNow)))
-                throw new IOException("The salvage handoff could not be saved.");
         }
         if (decision?.Action == TransitionAction.ReviewInfrastructureRetry)
         {
@@ -216,6 +213,17 @@ public sealed class MonolithOrchestrationApplier(
         }
         else if (task.State != target)
             throw new InvalidOperationException("orchestration-source-state-mismatch");
+
+        if (activeChoice is { Action: DecisionActionKinds.Adapt, Target: "salvage-handoff" })
+        {
+            using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+            var resultRef = payload.RootElement.GetProperty("resultRef").GetString()!;
+            var resultSha = payload.RootElement.GetProperty("resultSha").GetString()!;
+            if (!ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
+                resultRef, resultSha, "model-selected-salvage-handoff",
+                occurrence.AuthorityAttemptId, time.GetUtcNow().UtcDateTime)))
+                throw new IOException("The salvage handoff could not be saved.");
+        }
 
         if (target == TaskStates.HumanReview
             && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
