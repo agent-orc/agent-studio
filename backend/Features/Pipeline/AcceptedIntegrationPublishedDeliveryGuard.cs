@@ -65,9 +65,11 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     private static string? CurrentDeliverySha(TaskInfo job)
     {
         var resolved = DeliveryRefResolver.Resolve(job.Id, job.FolderPath).ExpectedResultSha;
-        return ReviewSubjectStore.IsValidResultSha(resolved)
-            ? resolved
-            : ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
+        if (ReviewSubjectStore.IsValidResultSha(resolved)) return resolved;
+        var subject = ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
+        return ReviewSubjectStore.IsValidResultSha(subject)
+            ? subject
+            : job.CompletionClaim?.ResultSha;
     }
 
     public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,
