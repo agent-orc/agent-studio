@@ -151,7 +151,8 @@ Measured usage over the per-call token envelope also records an unavailable ask,
 even when the model response contains a valid action. If the Task Server rejects
 an active choice against the receipt or current authority, it persists an AI
 Operator ask with the rejection reason and completes the occurrence without
-applying that choice. A held AI Operator turn that
+applying that choice. A turn dispatch failure leaves the saved ask available for
+recovery and does not prevent occurrence completion. A held AI Operator turn that
 fails or is parked is retried once after 30 seconds; a second failure records
 the reason in the card timeline and the project operator feed for human review.
 An A2/A3 proposal cannot mutate the card. The active profile can be disabled

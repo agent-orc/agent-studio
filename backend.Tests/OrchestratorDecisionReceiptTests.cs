@@ -145,6 +145,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [InlineData("forbidden", false)]
     [InlineData("over-cap", false)]
     [InlineData("adapter-reject", false)]
+    [InlineData("adapter-reject-dispatch-failure", false)]
     [InlineData("prepare", true)]
     [InlineData("salvage", true)]
     public async Task Active_coding_choice_dispatches_once_or_holds_on_invalid_output_and_stale_authority(
@@ -167,6 +168,10 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "Build and verify.");
         File.WriteAllText(Path.Combine(folder, "status.md"), "Result: pending.");
         var operatorQueue = new RecordingAiOperatorQueue();
+        var dispatcher = new RecordingTurnDispatcher
+        {
+            FailBeforeDispatch = scenario == "adapter-reject-dispatch-failure",
+        };
         var serverClock = new FakeTimeProvider(new DateTimeOffset(At));
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -189,13 +194,26 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
                 }));
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<IAiOperatorDecisionQueue>();
-                services.AddSingleton<IAiOperatorDecisionQueue>(operatorQueue);
+                if (scenario == "adapter-reject-dispatch-failure")
+                {
+                    services.RemoveAll<IAiOperatorTurnDispatcher>();
+                    services.AddSingleton<IAiOperatorTurnDispatcher>(dispatcher);
+                }
+                else
+                {
+                    services.RemoveAll<IAiOperatorDecisionQueue>();
+                    services.AddSingleton<IAiOperatorDecisionQueue>(operatorQueue);
+                }
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(serverClock);
             });
         });
         using var http = factory.CreateClient();
+        if (scenario == "adapter-reject-dispatch-failure")
+        {
+            dispatcher.Registry = factory.Services.GetRequiredService<OrchestratorSessionRegistry>();
+            dispatcher.Time = serverClock;
+        }
         using var coding = new RClient(http, runnerId);
         await coding.RegisterAsync(project, "service", CancellationToken.None);
         var lease = await coding.AcquireLeaseAsync(
@@ -281,7 +299,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
                 .RotateAuthorityEpoch("test stale model decision");
         if (scenario == "salvage-move-failure")
             File.WriteAllText(Path.Combine(projectPath, TaskStates.Ready, card), "blocked");
-        var outputJson = scenario == "adapter-reject"
+        var outputJson = scenario is "adapter-reject" or "adapter-reject-dispatch-failure"
             ? JsonSerializer.Serialize(new
             {
                 activeChoice = new DecisionChoiceV1(DecisionActionKinds.Retry,
@@ -321,6 +339,20 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
         if (scenario == "salvage-move-failure")
             Assert.Null(ContinuationBaseStore.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
+        if (scenario == "adapter-reject-dispatch-failure")
+        {
+            Assert.Equal("completed", orchestration.Get(occurrence.RunId)?.Status);
+            var pendingPath = Path.Combine(_workspace, ".orchestration-ai-asks",
+                occurrence.RunId + ".json");
+            using var pending = JsonDocument.Parse(File.ReadAllText(pendingPath));
+            Assert.Equal("pending", pending.RootElement.GetProperty("status").GetString());
+            Assert.Equal("rejected:decision-choice-mismatch",
+                pending.RootElement.GetProperty("reason").GetString());
+            Assert.Empty(dispatcher.TurnIds);
+            dispatcher.FailBeforeDispatch = false;
+            factory.Services.GetRequiredService<IAiOperatorDecisionQueue>().RecoverPending();
+            Assert.Single(dispatcher.TurnIds);
+        }
         if (scenario is "invalid" or "forbidden" or "over-cap" or "adapter-reject" || staleAuthority)
         {
             Assert.Equal(1, operatorQueue.Count);
@@ -331,7 +363,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             Assert.Equal(occurrence.RunId,
                 EngineDecisionWaitMarker.Read(Path.Combine(projectPath, TaskStates.Progress, card)));
         }
-        if (scenario == "adapter-reject" || staleAuthority)
+        if (scenario is "adapter-reject" or "adapter-reject-dispatch-failure" || staleAuthority)
             Assert.Equal("completed", orchestration.Get(occurrence.RunId)?.Status);
     }
 
@@ -942,6 +974,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
 
     private sealed class RecordingTurnDispatcher : IAiOperatorTurnDispatcher
     {
+        public bool FailBeforeDispatch { get; set; }
         public List<string> TurnIds { get; } = [];
         public List<string> Prompts { get; } = [];
         public OrchestratorSessionRegistry? Registry { get; set; }
@@ -949,6 +982,8 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
 
         public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request)
         {
+            if (FailBeforeDispatch)
+                throw new IOException("The session history could not be written.");
             var turnId = Guid.NewGuid().ToString("N");
             TurnIds.Add(turnId);
             Prompts.Add(request.Prompt);

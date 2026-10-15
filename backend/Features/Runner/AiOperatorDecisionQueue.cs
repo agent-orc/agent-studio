@@ -57,7 +57,12 @@ public sealed class AiOperatorDecisionQueue(
                     $"task:{task.ProjectName}/{task.Key ?? task.Id}", choice.Action, choice.Target,
                     null, null, "pending", task.Id, task.FolderPath, task.WatchPath,
                     choice.Outcome));
-            Dispatch(path);
+            try { Dispatch(path); }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception,
+                    "ai-operator-ask-dispatch-pending occurrence={OccurrenceId}", occurrenceId);
+            }
         }
     }
 
