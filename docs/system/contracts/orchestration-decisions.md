@@ -147,6 +147,13 @@ writes `results/checkpoint.md` with the last verified SHA and retains the engine
 wait marker while the card is held in Progress.
 Unusable output and unavailable or capped calls record `ask(operator:ai)`
 with the call status and no-call reason, and leave the card in its source lane.
+Measured usage over the per-call token envelope also records an unavailable ask,
+even when the model response contains a valid action. If the Task Server rejects
+an active choice against the receipt or current authority, it persists an AI
+Operator ask with the rejection reason and completes the occurrence without
+applying that choice. A held AI Operator turn that
+fails or is parked is retried once after 30 seconds; a second failure records
+the reason in the card timeline and the project operator feed for human review.
 An A2/A3 proposal cannot mutate the card. The active profile can be disabled
 for a compatibility rollback with
 `Orchestration:DecisionModel:ActiveCodingCompletion=false`. It is **off by default**

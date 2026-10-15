@@ -77,11 +77,31 @@ public sealed class MonolithOrchestrationApplier(
         var root = output.RootElement;
         DecisionChoiceV1? activeChoice = null;
         if (root.TryGetProperty("activeChoice", out _))
-            activeChoice = activeDecisionAuthority.Validate(occurrence, task, completion.Action, root);
+        {
+            try
+            {
+                activeChoice = activeDecisionAuthority.Validate(occurrence, task, completion.Action, root);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException
+                or InvalidDataException or JsonException or KeyNotFoundException)
+            {
+                activeChoice = new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai",
+                    "rejected:" + exception.Message);
+                aiOperator.Enqueue(task, occurrence.Run.RunId, activeChoice);
+                scanner.InvalidateCache();
+                return;
+            }
+        }
         else if (occurrence.Profile == "CodingCompletion"
             && completion.EngineId != "engine_rollback"
             && activeDecisionAuthority.HasActiveGrounds(occurrence.Run.RunId))
-            throw new InvalidOperationException("active-decision-receipt-required");
+        {
+            aiOperator.Enqueue(task, occurrence.Run.RunId,
+                new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai",
+                    "rejected:active-decision-receipt-required"));
+            scanner.InvalidateCache();
+            return;
+        }
         TransitionDecision? decision = null;
         if (root.TryGetProperty("transition", out var transition)
             && transition.ValueKind == JsonValueKind.Object)
