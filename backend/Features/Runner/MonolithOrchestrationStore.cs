@@ -175,15 +175,36 @@ public sealed class MonolithOrchestrationStore
         {
             var item = Required(runId);
             if (!item.Shadow) throw new InvalidOperationException("orchestration-not-shadow");
-            if (item.MonolithReceipt is not null) return;
-            item = item with { MonolithReceipt = OrchestrationRolloutStore.Receipt(
-                runId, item.IdempotencyKey, item.Run.PayloadJson, action, reason,
-                $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith") };
-            Save(item);
-            _runs[runId] = item;
-            if (item.EngineReceipt is not null && item.Profile is not null)
-                _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
+            if (item.MonolithReceipt is null)
+            {
+                item = item with { MonolithReceipt = OrchestrationRolloutStore.Receipt(
+                    runId, item.IdempotencyKey, item.Run.PayloadJson, action, reason,
+                    $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith") };
+                Save(item);
+                _runs[runId] = item;
+            }
+            // A replay compares too: the receipt may have been saved by a call
+            // that stopped before its comparison. Compare counts an occurrence once.
+            CompareShadow(item);
         }
+    }
+
+    /// <summary>
+    /// Compares every shadow occurrence that holds both receipts. A comparison
+    /// lost between saving a receipt and comparing it is recovered here, so a
+    /// mismatch always resets the switch streak.
+    /// </summary>
+    public void RecoverShadowComparisons()
+    {
+        lock (_gate)
+            foreach (var item in _runs.Values.Where(value => value.Shadow).ToArray())
+                CompareShadow(item);
+    }
+
+    private void CompareShadow(MonolithOrchestrationOccurrence item)
+    {
+        if (item.MonolithReceipt is not null && item.EngineReceipt is not null && item.Profile is not null)
+            _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt);
     }
 
     public IReadOnlyList<OrchestrationRunDto> List(string? projectId, string? status)

@@ -112,7 +112,11 @@ cancelled preparation remains visible to activation recovery, and a rejected
 report may reopen it with a corrected payload and renewed authority fence.
 Gate decisions carry infrastructure and intervention facts to the shared
 policy, which escalates those failures. Shadow comparison uses the action the
-monolith actually applied after the gate handler completes.
+monolith actually applied after the gate handler completes. A batch
+shadow receipt is written only after the lane move succeeded. Each comparison
+counts an occurrence once; a receipt replay and the recovery service compare
+every shadow occurrence that holds both receipts, so a comparison lost between
+saving a receipt and comparing it still resets the matching streak.
 
 ## Verification and architecture guard
 

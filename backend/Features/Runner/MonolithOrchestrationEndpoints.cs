@@ -124,6 +124,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
                 }
+                try { store.RecoverShadowComparisons(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-shadow-comparison-retry-pending");
+                }
                 await RecoverRolledBackAsync(stoppingToken);
                 AlertLongWaits();
                 await Task.Delay(PreparationGrace, time, stoppingToken);

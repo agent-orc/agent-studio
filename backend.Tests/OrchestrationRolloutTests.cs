@@ -108,6 +108,67 @@ public sealed class OrchestrationRolloutTests
     }
 
     [Fact]
+    public async Task Gate_shadow_recovers_a_saved_receipt_whose_comparison_was_lost()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var shadow = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
+            "{\"monolithGateResult\":true}", "gate:lost-compare", TaskStates.AutoReview,
+            "attempt", 1, 1, profile: "GateResult", shadow: true);
+        var claim = fixture.Store.Claim(new("engine", "first", [OrchestrationStage.GateDispatch]));
+        var output = JsonSerializer.Serialize(new { transition = TransitionDecisionPolicy.Create(
+            TransitionAction.ReturnToReady, "Fix the gate.", "card", "attempt", 0, 4) });
+        await fixture.Store.CompleteAsync(shadow.RunId,
+            new("engine", "first", claim.Lease!.LeaseId, claim.Lease.Fence,
+                OrchestrationStage.GateDispatch, OrchestrationAction.Reissue, output,
+                "complete:gate-lost-compare"), default);
+        // A process without the rollout store saves the receipt and never compares,
+        // like a process that stopped between the two steps.
+        new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time, fixture.Applier)
+            .RecordMonolithDecision(shadow.RunId, TransitionAction.Escalate.ToString(),
+                "The monolith escalated the repeated gate failure.");
+        Assert.Equal(0, fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult").MismatchCount);
+
+        var replayed = new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time,
+            fixture.Applier, fixture.Rollout);
+        replayed.RecordMonolithDecision(shadow.RunId, TransitionAction.Continue.ToString(), "replay");
+        replayed.RecoverShadowComparisons();
+
+        var profile = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(1, profile.MismatchCount);
+        Assert.Equal(0, profile.Streak);
+        Assert.Equal("shadow", profile.State);
+        Assert.Equal("Escalate", profile.LastMismatch!.Monolith.Action);
+    }
+
+    [Fact]
+    public async Task Shadow_recovery_compares_a_completed_occurrence_once()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var shadow = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
+            "{\"monolithGateResult\":true}", "gate:recover-once", TaskStates.AutoReview,
+            "attempt", 1, 1, profile: "GateResult", shadow: true);
+        var claim = fixture.Store.Claim(new("engine", "first", [OrchestrationStage.GateDispatch]));
+        var output = JsonSerializer.Serialize(new { transition = TransitionDecisionPolicy.Create(
+            TransitionAction.ReturnToReady, "Fix the gate.", "card", "attempt", 0, 4) });
+        await fixture.Store.CompleteAsync(shadow.RunId,
+            new("engine", "first", claim.Lease!.LeaseId, claim.Lease.Fence,
+                OrchestrationStage.GateDispatch, OrchestrationAction.Reissue, output,
+                "complete:gate-recover-once"), default);
+        new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time, fixture.Applier)
+            .RecordMonolithDecision(shadow.RunId, TransitionAction.Escalate.ToString(), "escalated");
+
+        var recovered = new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time,
+            fixture.Applier, fixture.Rollout);
+        recovered.RecoverShadowComparisons();
+        recovered.RecoverShadowComparisons();
+
+        Assert.Equal("completed", recovered.Get(shadow.RunId)!.Status);
+        Assert.Single(fixture.Rollout.Mismatches("GateResult"));
+    }
+
+    [Fact]
     public void Recovery_wait_list_excludes_unactivated_review_occurrences()
     {
         using var fixture = new Fixture();
@@ -154,6 +215,8 @@ public sealed class OrchestrationRolloutTests
         public OrchestrationRolloutStore Rollout { get; }
         public CountingApplier Applier { get; } = new();
         public MonolithOrchestrationStore Store { get; }
+        public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero));
+        public string OccurrenceDirectory => Path.Combine(_directory, ".orchestration-occurrences");
 
         public Fixture(int threshold = 50)
         {
@@ -164,9 +227,7 @@ public sealed class OrchestrationRolloutTests
                 ["Orchestration:ShadowMatchThreshold"] = threshold.ToString(),
             }).Build();
             Rollout = new(Configuration);
-            Store = new(Path.Combine(_directory, ".orchestration-occurrences"),
-                new FakeTimeProvider(new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero)),
-                Applier, Rollout);
+            Store = new(OccurrenceDirectory, Time, Applier, Rollout);
         }
 
         public void Dispose() => Directory.Delete(_directory, true);
