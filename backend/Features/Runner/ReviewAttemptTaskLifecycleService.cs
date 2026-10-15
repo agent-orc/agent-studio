@@ -49,7 +49,7 @@ public sealed class ReviewAttemptTaskLifecycleService
 
             var reason =
                 $"Task entered terminal lane '{targetState}'; open ReviewAttempt authority was superseded by the lane transition.";
-            var taskIndex = BuildTaskIndex([task]);
+            var taskIndex = BuildTaskIndex([task with { State = targetState }]);
             var changed = _authority.SupersedeOpenReviewAttempts(taskKey =>
                 taskIndex.ContainsKey(taskKey)
                     ? reason
@@ -60,6 +60,9 @@ public sealed class ReviewAttemptTaskLifecycleService
                 "lane-transition",
                 targetState,
                 outcome.NewFolderPath);
+            _authority.CompactTerminalTasks(taskIndex
+                .Where(item => IsTerminalTaskState(item.Value.State))
+                .Select(item => item.Key));
             return outcome;
         }
     }
@@ -74,7 +77,11 @@ public sealed class ReviewAttemptTaskLifecycleService
         lock (_gate)
         {
             var tasks = BuildTaskIndex(_scanner.ScanAllJobsWithArchive());
-            return SupersedeUnclaimableLocked(tasks, source).Count;
+            var count = SupersedeUnclaimableLocked(tasks, source).Count;
+            _authority.CompactTerminalTasks(tasks
+                .Where(item => IsTerminalTaskState(item.Value.State))
+                .Select(item => item.Key));
+            return count;
         }
     }
 
