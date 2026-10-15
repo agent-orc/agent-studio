@@ -213,6 +213,7 @@ public static class TestTempRoot
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
+                Serilog.Log.Debug(exception, "Retrying temporary test root deletion: {Path}", path);
                 // A Windows handle is released asynchronously after the owning
                 // process exits; a short backoff is what makes the retry useful.
                 Thread.Sleep(25 * (attempt + 1));

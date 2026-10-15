@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-10-14
+Version: 2026-10-15
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -96,6 +96,11 @@ batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
 ## Batch gate for code and documentation deliveries
+
+`BatchGate:Execution=claimed` refuses startup while `TaskServer:BaseUrl` is set.
+The monolith's batch member task and run IDs do not exist in the Task Server,
+so that authority cannot validate or claim the subject. Use the bridge mode
+with the Task Server proxy until batch identity is migrated.
 
 `backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
 membership digest, append-only replay and member evidence records, bounded

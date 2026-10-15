@@ -36,6 +36,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="OrchestratorApi.Tests" />
     <InternalsVisibleTo Include="AgentRunner.Tests" />
+    <InternalsVisibleTo Include="OrchestratorEngine.Tests" />
   </ItemGroup>
 
   <ItemGroup>

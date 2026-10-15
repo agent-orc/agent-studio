@@ -36,7 +36,11 @@ public sealed class TempWorkspace : IDisposable
     public string Combine(params string[] segments)
         => System.IO.Path.Combine([Path, .. segments]);
 
-    public void Dispose() => TestTempRoot.TryDelete(Path);
+    public void Dispose()
+    {
+        if (!TestTempRoot.TryDelete(Path))
+            Serilog.Log.Warning("Temporary test workspace could not be deleted: {Path}", Path);
+    }
 
     public override string ToString() => Path;
 }

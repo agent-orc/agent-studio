@@ -104,6 +104,12 @@ restart; the Engine retains no attempt state. See the
 [Gates Dossier](../../operations/gates/index.html#sect4) for the contract and
 rollout decision.
 
+For a source-bundle-only coding result, completion resolves an uploaded artifact
+whose digest matches the result envelope and includes its artifact ID and digest
+in the review subject. The Review Executor fetches that artifact and verifies
+its digest and HEAD before reporting. Completion leaves no review subject when
+the matching artifact is unavailable.
+
 ### Integration host (standalone review loop)
 
 `RUNNER_ROLE=integration` starts `RemoteIntegrationDaemon` (AGT-3061, AGT-W65

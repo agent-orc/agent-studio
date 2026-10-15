@@ -1,5 +1,6 @@
 extern alias TaskServerAssembly;
 using System.Net.Http.Headers;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using AgentStudio.TestSupport;
+using AgentRunner;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
@@ -163,6 +165,7 @@ public sealed class StandaloneReviewLoopCutoverTests
     public async Task A_passed_source_bundle_only_delivery_escalates_once_without_queueing_an_integration()
     {
         using var workspace = new TempWorkspace("standalone-loop");
+        var (bundle, resultSha) = await SourceBundleAsync(workspace.Path);
         await using var factory = new CutoverFactory(workspace.Path);
         using var bootstrap = factory.CreateClient();
         var store = factory.Services.GetRequiredService<TaskServerStore>();
@@ -172,11 +175,34 @@ public sealed class StandaloneReviewLoopCutoverTests
         await RunEngineAsync(factory, async () =>
         {
             // A valid result envelope carrying a source bundle and no fenced ref.
-            var coded = await CodeAsync(store, null, FirstResultSha, sourceBundleOnly: true);
+            var coded = await CodeAsync(store, null, resultSha, sourceBundleOnly: true, sourceBundle: bundle);
             Assert.Null(coded.Envelope.ImmutableRemoteRef);
             Assert.Equal("4-auto-review", (await TaskAsync(store, projectId, task.TaskId)).State);
-            var subject = await ReviewAsync(store, FirstResultSha, reject: false);
+            var subject = await ReviewAsync(store, resultSha, reject: false, beforeReport: async claim =>
+            {
+                var reviewTransport = factory.CreateClient();
+                reviewTransport.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName,
+                    RunnerOptions.ProtocolVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                using var client = new TaskServerClient(reviewTransport, "review-a",
+                    authToken: CutoverFactory.EngineToken, usesDurableTaskServer: true);
+                var options = new RunnerOptions
+                {
+                    ServerUrl = "http://localhost", RunnerId = "review-a", RunnerName = "review-a",
+                    Hostname = "review-host", BackendName = "cutover", Role = "review",
+                    WorkDir = Path.Combine(workspace.Path, "coding"),
+                    ReviewWorkDir = Path.Combine(workspace.Path, "review-work"),
+                    BaseBranch = "main",
+                };
+                var reviewWorkspace = new RemoteReviewWorkspace(options, claim.Subject!, claim.Lease!,
+                    _ => { });
+                var proof = await reviewWorkspace.PrepareAsync(client, default);
+                Assert.Equal(resultSha, proof.ActualHead);
+                Assert.Equal(resultSha, (await GitAsync(reviewWorkspace.RepositoryPath,
+                    "rev-parse", "HEAD")).Trim());
+            });
             Assert.Null(subject.ResultRef);
+            Assert.NotNull(subject.SourceBundleArtifactId);
+            Assert.Equal(coded.Envelope.SourceBundleDigest, subject.SourceBundleSha256);
             await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "5e-escalated");
         });
 
@@ -251,6 +277,7 @@ public sealed class StandaloneReviewLoopCutoverTests
             "review-a", "review-host", "review-instance", "1.0.0", TaskServerProtocol.Current,
             [
                 ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
+                ReviewCapabilities.SourceBundleMaterialization,
                 ReviewCapabilities.SemanticReview, ReviewCapabilities.BaselineComparison,
                 ReviewCapabilities.DependencyPreparation, ReviewCapabilities.LibraryStepV1,
             ], BootstrapMaxParallelism: 2), "setup", default);
@@ -299,7 +326,7 @@ public sealed class StandaloneReviewLoopCutoverTests
 
     private static async Task<CodingRound> CodeAsync(
         TaskServerStore store, ImmutableResultEnvelope? continuesOn, string resultSha,
-        string repositoryUrl = RepositoryUrl, bool sourceBundleOnly = false)
+        string repositoryUrl = RepositoryUrl, bool sourceBundleOnly = false, byte[]? sourceBundle = null)
     {
         var claim = await store.ClaimAsync(new ClaimRequest("coding-a", "coding-instance"), "coding-a", default);
         Assert.Equal("claimed", claim.Status);
@@ -308,11 +335,21 @@ public sealed class StandaloneReviewLoopCutoverTests
         if (claim.FollowUp is { } followUp)
             await store.RenewLeaseAsync(run.RunId, new LeaseRenewRequest("coding-a", "coding-instance",
                 lease.LeaseId, lease.Fence, StartedPromptSha256: followUp.PromptSha256), "coding-a", default);
+        var bundleDigest = sourceBundle is null ? null
+            : Convert.ToHexString(SHA256.HashData(sourceBundle)).ToLowerInvariant();
+        if (sourceBundleOnly)
+        {
+            Assert.NotNull(sourceBundle);
+            await store.IngestArtifactAsync(run.RunId, new AgentStudio.TaskServer.Contracts.ArtifactIngestRequest(
+                $"bundle-{run.RunId}", "source.bundle", "application/x-git-bundle",
+                Convert.ToBase64String(sourceBundle), bundleDigest!, $"bundle:{run.RunId}", lease.Fence),
+                "coding-a", default);
+        }
         var envelope = new ImmutableResultEnvelope(
             RepositoryIdentityContract.FromUrl(RepositoryUrl)!, run.RunId,
             continuesOn?.ResultSha ?? new string('0', 40), resultSha,
             sourceBundleOnly ? null : FencedGitRefs.ImmutableResult(run.RunId, lease.Fence, resultSha),
-            sourceBundleOnly ? new string('f', 64) : null, new string('a', 64),
+            sourceBundleOnly ? bundleDigest : null, new string('a', 64),
             RepositoryUrl: repositoryUrl);
         var digest = ResultEnvelopeDigest.Compute(envelope);
         await store.AcknowledgeResultHandoffAsync(run.RunId, new ResultHandoffRequest(
@@ -324,7 +361,8 @@ public sealed class StandaloneReviewLoopCutoverTests
         return new CodingRound(claim, completed, envelope);
     }
 
-    private static async Task<ReviewSubjectDto> ReviewAsync(TaskServerStore store, string resultSha, bool reject)
+    private static async Task<ReviewSubjectDto> ReviewAsync(TaskServerStore store, string resultSha, bool reject,
+        Func<ReviewClaimResponse, Task>? beforeReport = null)
     {
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "review-instance"), "review-a", default);
@@ -332,6 +370,7 @@ public sealed class StandaloneReviewLoopCutoverTests
         var subject = claim.Subject!;
         Assert.Equal(resultSha, subject.ExpectedResultSha);
         Assert.Equal("cutover-policy-v1", subject.ReviewPolicyHash);
+        if (beforeReport is not null) await beforeReport(claim);
         var report = Report(claim, resultSha, reject);
         var settled = await store.ReportReviewAsync(claim.Attempt!.AttemptId, report, "review-a", default);
         Assert.Equal(reject ? "ProductFailure" : "Pass", settled.Outcome);
@@ -436,6 +475,40 @@ public sealed class StandaloneReviewLoopCutoverTests
 
     private static string Hash(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static async Task<(byte[] Bundle, string ResultSha)> SourceBundleAsync(string root)
+    {
+        var repository = Path.Combine(root, "bundle-source");
+        Directory.CreateDirectory(repository);
+        await GitAsync(repository, "init", "-q");
+        await File.WriteAllTextAsync(Path.Combine(repository, "product.txt"), "bundle delivery\n");
+        await GitAsync(repository, "add", "product.txt");
+        await GitAsync(repository, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "-m", "bundle delivery");
+        var resultSha = (await GitAsync(repository, "rev-parse", "HEAD")).Trim();
+        var bundlePath = Path.Combine(root, "source.bundle");
+        await GitAsync(repository, "bundle", "create", bundlePath, "--all");
+        return (await File.ReadAllBytesAsync(bundlePath), resultSha);
+    }
+
+    private static async Task<string> GitAsync(string workingDirectory, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)}: {await error}");
+        return await output;
+    }
 
     private sealed class CutoverFactory(string directory) : WebApplicationFactory<TaskServerAssembly::Program>
     {
