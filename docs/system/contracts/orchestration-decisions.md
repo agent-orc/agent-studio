@@ -47,6 +47,11 @@ and resumes them through the monolith's shared library. Unactivated review
 occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
 occurrence raises an operator feed alert and waits for a leased engine instance.
+The per-transition profile is the only ownership selector. Review and delivery
+workers are registered at every startup so a runtime rollback can use them
+without restarting the host. OrchestratorPrep, MetaCycle, and AutoIntervention
+continue to run in the monolith when other profiles select Engine; they have
+no engine occurrences yet.
 
 ## Decision grounds and shadow receipts
 

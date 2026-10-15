@@ -1,9 +1,7 @@
 namespace AgentStudio.Runner;
 
 /// <summary>
-/// Transitional ownership switch for orchestration flow execution. Exactly one
-/// process family owns review, council, post-processing, gate, and completion
-/// loops: the legacy monolith or the API-only orchestrator-engine.
+/// Ownership setting for an individual orchestration transition profile.
 /// </summary>
 public enum OrchestrationExecutionMode
 {
@@ -21,6 +19,6 @@ public static class OrchestrationExecutionModeParser
         return Enum.TryParse<OrchestrationExecutionMode>(configured, true, out var mode)
             ? mode
             : throw new InvalidOperationException(
-                "Orchestration:ExecutionMode must be 'Monolith', 'Shadow', or 'Engine'.");
+                "Orchestration transition mode must be 'Monolith', 'Shadow', or 'Engine'.");
     }
 }

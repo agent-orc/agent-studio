@@ -67,12 +67,14 @@ public sealed class RunLivenessMonitor
     private readonly ILogger<RunLivenessMonitor> _logger;
     private readonly IJsonlAppender _appender;
     private readonly RunLeaseService? _leases;
+    private readonly TimeProvider _time;
 
     /// <summary>Default uptime grace: silence tolerated before a missing heartbeat counts as process-lost.</summary>
     public const int DefaultGraceSeconds = 30;
 
     /// <summary>Test seam mirroring <see cref="StaleProgressArchiver"/>: replaces the runner-status lookup.</summary>
     internal Func<RunnerStatus?>? StatusProviderOverride { get; set; }
+    internal Action<string>? BeforeDemotionRecheck { get; set; }
 
     public RunLivenessMonitor(
         TaskScannerService scanner,
@@ -85,7 +87,8 @@ public sealed class RunLivenessMonitor
         ITaskAccess taskAccess,
         ILogger<RunLivenessMonitor> logger,
         IJsonlAppender? appender = null,
-        RunLeaseService? leases = null)
+        RunLeaseService? leases = null,
+        TimeProvider? time = null)
     {
         _scanner = scanner;
         _transitions = transitions;
@@ -98,6 +101,7 @@ public sealed class RunLivenessMonitor
         _logger = logger;
         _appender = appender ?? new JsonlAppender();
         _leases = leases;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -132,7 +136,7 @@ public sealed class RunLivenessMonitor
         var graceSeconds = isBoot
             ? 0
             : Math.Clamp(_configuration.GetValue("Runner:RunLiveness:GraceSeconds", DefaultGraceSeconds), 0, 55);
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         var activeByProject = SafeGetActiveJobIds();
 
         foreach (var entry in _scanner.GetWatchPaths())
@@ -216,7 +220,24 @@ public sealed class RunLivenessMonitor
 
                     case RunLivenessAction.DemoteToReady:
                     {
-                        var outcome = await DemoteToReadyAsync(entry, c, decision, now, ct);
+                        BeforeDemotionRecheck?.Invoke(c.JobFolder);
+                        // A log line can arrive after the candidate snapshot and
+                        // before the lane write. Recompute the grace verdict at
+                        // the application boundary so that activity wins.
+                        var currentActivityAge = (_time.GetUtcNow().UtcDateTime - MeasureLastActivity(c.JobFolder)).TotalSeconds;
+                        var current = RunLivenessPolicy.Decide(facts with
+                        {
+                            HasLiveRunHeartbeat = c.IsActiveHere || _pickupLock.HasLiveOwner(c.JobFolder),
+                            CoreRunFinished = RunFinishedSignal.CoreRunFinished(c.JobFolder),
+                            HasVisibleWaitingState = HasVisibleWaitingState(c.JobFolder),
+                            SecondsSinceActivity = currentActivityAge,
+                        });
+                        if (current.Action != RunLivenessAction.DemoteToReady)
+                            break;
+                        var outcome = await DemoteToReadyAsync(entry, c with
+                        {
+                            SecondsSinceActivity = currentActivityAge,
+                        }, current, now, ct);
                         outcomes.Add(outcome);
                         AppendAudit(outcome);
                         break;

@@ -191,8 +191,7 @@ public sealed class OrchestrationRolloutStore
     private ProfileRecord Initial(string profile)
     {
         var mode = OrchestrationExecutionModeParser.Parse(
-            _configuration[$"Orchestration:Transitions:{profile}"]
-            ?? _configuration["Orchestration:ExecutionMode"]);
+            _configuration[$"Orchestration:Transitions:{profile}"]);
         return new ProfileRecord { State = mode switch
         {
             OrchestrationExecutionMode.Engine => "engine",
