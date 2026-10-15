@@ -47,6 +47,21 @@ public sealed record TaskIntegrationRecord
 
     [JsonPropertyName("deliveryEpoch")]
     public string? DeliveryEpoch { get; init; }
+
+    [JsonPropertyName("actor")]
+    public string? Actor { get; init; }
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+
+    [JsonPropertyName("verificationHost")]
+    public string? VerificationHost { get; init; }
+
+    [JsonPropertyName("suiteSummary")]
+    public string? SuiteSummary { get; init; }
+
+    [JsonPropertyName("logHash")]
+    public string? LogHash { get; init; }
 }
 
 /// <summary>Durable classifications produced by the historical integration sweep.</summary>

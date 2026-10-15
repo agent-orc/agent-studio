@@ -705,7 +705,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Null(deps.Integration.ReadLatestMergeStep(completed));
         var status = deps.Integration.BuildLookup([completed])[completed.TaskKey];
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
-        Assert.Equal(AcceptedIntegrationRecoveryAction.RecordAcceptanceWithoutRunAttempt,
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Finalize,
             deps.Integration.ResolveAcceptedIntegrationRecovery(
                 completed, status, () => deps.Timeline.ReadAll(completed.FolderPath)).Action);
         var backstop = new AcceptedIntegrationBackstopHostedService(
@@ -727,20 +727,17 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(TaskStates.Completed, kept.State);
         var timeline = deps.Timeline.ReadAll(kept.FolderPath);
         Assert.DoesNotContain(timeline, entry => entry.Kind == TimelineEventKinds.IntegrationFailed);
-        var recorded = Assert.Single(timeline, entry =>
-            entry.Kind == TimelineEventKinds.IntegrationSucceeded
-            && entry.Details?.GetValueOrDefault("outcome")
-                == AcceptanceAttemptLineagePolicy.AcceptedWithoutRunAttemptOutcome);
-        Assert.Equal(subject.RunAttemptId, recorded.Details!["subjectRunAttemptId"]);
-        Assert.Equal(IntegrationStatuses.Integrated, recorded.Details["integrationStatus"]);
-        Assert.Contains("no merge replay", recorded.Summary);
+        Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt
+            && entry.Details?.GetValueOrDefault("subjectRunAttemptId") == subject.RunAttemptId);
+        Assert.Contains(kept.IntegrationRecords, entry => entry.Classification == IntegrationRecordClasses.IntegratedVerified
+            && entry.IntegrationSha == deliverySha);
 
         // The outcome is recorded once; the next sweep leaves the card alone.
         backstop.RunOnce();
         var again = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Completed, again.State);
-        Assert.Single(deps.Timeline.ReadAll(again.FolderPath), entry =>
-            entry.Kind == TimelineEventKinds.IntegrationSucceeded);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(again.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.IntegrationFailed);
         Assert.Equal(0, gate.Invocations);
     }
 
@@ -2766,6 +2763,202 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var verification = IntegrationVerificationStore.Read(card.FolderPath);
         Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
         Assert.Equal(IntegrationVerificationEvidence.IntegrationRecord, verification?.Evidence);
+    }
+
+    [Fact]
+    public async Task OperatorAcceptance_SurvivesWorkerAndRestartBackstop()
+    {
+        var deliverySha = PublishDelivery("operator-durable.txt", "accepted candidate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "must not run");
+        var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate);
+        RunGit(_repo, "checkout", "-q", "-b", "stale-acceptance", "main");
+        File.WriteAllText(Path.Combine(_repo, "stale-acceptance.txt"), "old publication\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "old accepted tree");
+        var staleSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "main");
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        TaskJsonFile.UpdateFieldOrThrow(reviewed.FolderPath, "integrationRecords",
+            new[] { new TaskIntegrationRecord
+            {
+                Id = "operator-acceptance-stale",
+                Classification = IntegrationRecordClasses.IntegratedVerified,
+                RecordedAtUtc = VerificationFixtureAtUtc,
+                IntegrationBranch = "develop",
+                IntegrationSha = staleSha,
+                SourceSha = deliverySha,
+            } });
+        deps.Scanner.InvalidateCache();
+        const string reason = "Operator ran the full suite on the published candidate.";
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"), reason: reason, operatorOverride: true);
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var record = Assert.Single(completed.IntegrationRecords,
+            item => item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal)
+                && item.IntegrationSha == deliverySha);
+        Assert.Equal(IntegrationRecordClasses.IntegratedVerified, record.Classification);
+        Assert.Equal(deliverySha, record.IntegrationSha);
+        Assert.Equal(deliverySha, record.SourceSha);
+        Assert.Equal(TimelineActors.Human("operator"), record.Actor);
+        Assert.Equal(reason, record.Reason);
+
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var worker = new AcceptedIntegrationWorker(deps.AcceptedQueue!, VerifyingRunner(deps, gate),
+            deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+        Assert.False(result.VerificationPending);
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, VerifyingRunner(deps, gate), deps.Integration,
+            deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions, deps.Timeline, deps.Pipeline);
+        backstop.RunOnce();
+        Assert.Equal(0, gate.Invocations);
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
+    [Fact]
+    public async Task OperatorAcceptance_EquivalentPublishedTree_WritesDurableRecord()
+    {
+        var deliverySha = PublishDelivery("equivalent-candidate.txt", "accepted candidate\n");
+        RunGit(_repo, "checkout", "-q", "-b", "equivalent", "main");
+        RunGit(_repo, "cherry-pick", deliverySha);
+        RunGit(_repo, "commit", "--amend", "-q", "-m", "equivalent published candidate");
+        var published = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        Assert.NotEqual(deliverySha, published);
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "checkout", "-q", "main");
+        var deps = Build(deliverySha);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var subject = ReviewSubjectStore.Read(reviewed.FolderPath)!;
+        TaskJsonFile.UpdateFieldOrThrow(reviewed.FolderPath, "integrationRecords",
+            new[] { new TaskIntegrationRecord
+            {
+                Id = "batch-contained-equivalent",
+                Classification = IntegrationRecordClasses.CuratedMapping,
+                RecordedAtUtc = VerificationFixtureAtUtc,
+                IntegrationBranch = "develop",
+                IntegrationSha = published,
+                SourceSha = deliverySha,
+                DeliveryEpoch = subject.RunAttemptId,
+            } });
+        deps.Scanner.InvalidateCache();
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"), reason: "Verified equivalent published tree.",
+            operatorOverride: true);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var record = Assert.Single(completed.IntegrationRecords,
+            item => item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal));
+        Assert.Equal(published, record.IntegrationSha);
+        Assert.Equal(deliverySha, record.SourceSha);
+    }
+
+    [Fact]
+    public async Task ExternalSuiteRecord_VerifiesEveryDeliveryInPublishedCandidateWithoutGate()
+    {
+        var deliverySha = PublishDelivery("external-suite.txt", "verified candidate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "must not run");
+        var deps = Build(deliverySha, gateRunner: gate);
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _tempDir,
+                ["WatchPaths:0:Name"] = Project,
+                ["WatchPaths:0:Path"] = _watchPath,
+                ["WatchPaths:0:RootPath"] = _repo,
+                ["WatchPaths:0:RepositoryPath"] = _repo,
+            }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var projectId = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .FindByStorageLocation(_watchPath)!.Id;
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/{projectId}/external-verifications",
+            new AttachExternalPublishedVerificationRequest(deliverySha, "verification-host",
+                "Full build and test suite passed.", new string('a', 64))).WaitAsync(AsyncTestDeadline);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(deliverySha, Assert.Single(ExternalPublishedVerificationStore.Read(_watchPath)).CandidateSha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var result = await VerifyingRunner(deps, gate).RunAsync(
+            Project, Slug, card.FolderPath, _watchPath, "develop", CancellationToken.None);
+        Assert.False(result.VerificationPending);
+        Assert.Equal(0, gate.Invocations);
+        var status = deps.Integration.BuildLookup([card])[card.TaskKey];
+        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+    }
+
+    [Fact]
+    public async Task OperatorAcceptance_WhenPublishedBranchLosesContainingTree_FallsBack()
+    {
+        var deliverySha = PublishDelivery("rewritten-candidate.txt", "lost candidate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "rewritten branch");
+        var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate);
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"), reason: "Operator verified the published tree.", operatorOverride: true);
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var seed = Git(_repo, "rev-parse", "main").Out.Trim();
+        RunGit(_repo, "push", "-q", "--force", "origin", $"{seed}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin");
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var projected = deps.Integration.BuildLookup([completed])[completed.TaskKey];
+        Assert.False(IntegrationVerificationStates.PermitsCompletion(projected.Verification));
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var worker = new AcceptedIntegrationWorker(deps.AcceptedQueue!, VerifyingRunner(deps, gate),
+            deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+        var returned = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, returned.State);
+        Assert.Contains("no longer in published develop",
+            File.ReadAllText(Path.Combine(returned.FolderPath, "status.md")));
+        Assert.Equal(0, gate.Invocations);
+    }
+
+    [Fact]
+    public async Task Backstop_OperatorAcceptanceAfterPublishedRewrite_ReturnsToReviewWithoutReintegration()
+    {
+        var deliverySha = PublishDelivery("rewritten-backstop.txt", "lost candidate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "must not run");
+        var deps = Build(deliverySha, gateRunner: gate);
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"), reason: "Operator verified the published tree.", operatorOverride: true);
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var seed = Git(_repo, "rev-parse", "main").Out.Trim();
+        RunGit(_repo, "push", "-q", "--force", "origin", $"{seed}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin");
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, VerifyingRunner(deps, gate), deps.Integration,
+            deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions, deps.Timeline, deps.Pipeline, git: git);
+        backstop.RunOnce();
+        var returned = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, returned.State);
+        Assert.Contains("no longer in published develop",
+            File.ReadAllText(Path.Combine(returned.FolderPath, "status.md")));
+        Assert.Equal(0, gate.Invocations);
     }
 
     /// <summary>
