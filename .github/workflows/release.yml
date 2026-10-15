@@ -264,6 +264,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine win-x64 publish failed.' }
           dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
           if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
+          dotnet publish backend/OrchestratorApi.csproj @common --output artifacts/publish/studio-backend
+          if ($LASTEXITCODE -ne 0) { throw 'studio backend win-x64 publish failed.' }
           dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
           if ($LASTEXITCODE -ne 0) { throw 'agent-studio-setup win-x64 publish failed.' }
           dotnet publish runner/AgentRunner.csproj @common --output artifacts/publish/agent-host

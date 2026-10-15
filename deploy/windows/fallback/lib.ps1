@@ -230,7 +230,7 @@ function Set-FallbackCurrentRelease {
     # Ending a task stops its supervisor loop; a service executable it started
     # can outlive it and keep the port, so the binaries are stopped by path.
     $installPrefix = [IO.Path]::GetFullPath($InstallBase).TrimEnd('\') + '\'
-    Get-Process -Name 'task-server', 'orchestrator-engine', 'agent-studio-bff' -ErrorAction SilentlyContinue |
+    Get-Process -Name 'task-server', 'orchestrator-engine', 'agent-studio-bff', 'OrchestratorApi', 'agent-host' -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($installPrefix, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force
     $current = Join-Path $InstallBase 'current'
