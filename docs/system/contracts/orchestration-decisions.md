@@ -192,12 +192,16 @@ library. Broader background-service movement remains I18.
 forces a decision mode, when a registered hosted service is missing from the
 inventory, when a `decide` row is neither an AI Operator decider reaching
 `AiOperatorDecisionGateway` nor a switched profile reaching
-`MonolithTransitionSwitch` (beyond the closed set of pre-existing local
+`MonolithTransitionSwitch` (apart from the closed set of retained monolith
 deciders), when an AI Operator decider calls a library rule around the switch,
-or when a new host-defined policy, rules or breaker class appears in a workflow
-feature folder. The pre-existing host rules are frozen in
-`backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`, which only
-shrinks.
+or when a backend host constructs a transition receipt. No host-defined rule
+baseline is accepted. OrchestratorPrep, MetaCycle and AutoIntervention remain
+on the monolith path while they have no engine occurrence.
+The review post-processing worker and its recurring sweep stay registered
+across profile changes. They read the current `CodingCompletion` owner before
+processing a card; after rollback the sweep recovers cards left in Auto Review.
+Run-liveness receipt application remeasures log activity before a demotion, so
+activity added after submission restores the card's grace period.
 
 Run the guard with:
 

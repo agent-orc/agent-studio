@@ -20,7 +20,6 @@ namespace AgentStudio.Tests.Architecture;
 [Trait("Category", "Guard")]
 public sealed class MonolithDecisionBoundaryTests
 {
-    private const string BaselinePath = "backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt";
     private const string InventoryPath = "docs/system/architecture/monolith-hosted-services.md";
     private const string Operator = "decide, operator";
     private const string Switched = "decide, switched";
@@ -45,14 +44,15 @@ public sealed class MonolithDecisionBoundaryTests
     };
 
     /// <summary>
-    /// Pre-existing local deciders outside the background-decider slice: the
-    /// local runner retires with local execution (D16 A, I11) and the
-    /// the local runner retires with local execution (D16 A, I11).
-    /// The set is closed; a new hosted decider must be routed.
+    /// The local runner and three supervisor deciders without engine
+    /// occurrences remain on the monolith path. The set is closed.
     /// </summary>
     private static readonly IReadOnlySet<string> LocalDeciders = new HashSet<string>(StringComparer.Ordinal)
     {
         "TaskRunnerService",
+        "OrchestratorPrepHostedService",
+        "MetaCycleHostedService",
+        "AutoInterventionHostedService",
     };
 
     /// <summary>
@@ -67,7 +67,9 @@ public sealed class MonolithDecisionBoundaryTests
 
     private static readonly Regex WorkflowFolder = new(
         @"^backend/(Features/(Runner|Pipeline|Tasks|Supervisor)|Shared/Runner)/", RegexOptions.Compiled);
-    private static readonly Regex HostPolicy = new(@"\bclass\s+(\w+(?:Policy|Rules|Breaker))\b", RegexOptions.Compiled);
+    private static readonly Regex HostTransitionRule = new(
+        @"\b(?:new\s+(?:TransitionDecision|AiOperatorDecision)\s*\(|class\s+\w*TransitionDecision\w*\b)",
+        RegexOptions.Compiled);
 
     [Fact]
     public void Production_host_does_not_force_engine_only_decisions()
@@ -135,8 +137,8 @@ public sealed class MonolithDecisionBoundaryTests
             foreach (Match call in calls.Matches(stripped))
                 if (!LibraryHelpers.Contains(Regex.Replace(call.Value, @"[\s(]", string.Empty)))
                     violations.Add($"{path} ({service}) decides around the switch: {call.Value}");
-            if (HostPolicy.Match(stripped) is { Success: true } rule)
-                violations.Add($"{path} ({service}) defines {rule.Groups[1].Value}");
+            if (HostTransitionRule.IsMatch(stripped))
+                violations.Add($"{path} ({service}) defines a transition decision");
         }
         Assert.Empty(violations);
     }
@@ -160,17 +162,11 @@ public sealed class MonolithDecisionBoundaryTests
     }
 
     [Fact]
-    public void Host_defined_rules_do_not_return()
+    public void Backend_cannot_define_transition_decisions()
     {
         var root = RepositoryRoot.Find();
         var sources = BackendSources(root);
-        var baseline = Baseline.Load(Path.Combine(root, BaselinePath));
-        var violations = PolicyViolations(sources, baseline);
-        // The list only shrinks: a removed rule must leave the baseline too.
-        violations.AddRange(baseline
-            .Where(entry => !sources.TryGetValue(entry.Split(' ')[0], out var source)
-                || !Regex.IsMatch(StripComments(source), @"\bclass\s+" + Regex.Escape(entry.Split(' ')[1]) + @"\b"))
-            .Select(entry => $"{entry} is gone; remove it from the baseline"));
+        var violations = PolicyViolations(sources);
         Assert.True(violations.Count == 0,
             "Transition rules belong in orchestration-decisions and are reached through a switch profile "
             + "(AiOperatorDecisionGateway or MonolithTransitionSwitch). " + string.Join("; ", violations));
@@ -208,12 +204,11 @@ public sealed class MonolithDecisionBoundaryTests
     }
 
     [Theory]
-    [InlineData("backend/Features/Tasks/NewRail.cs", "public static class ReviewRetryPolicy { }")]
-    [InlineData("backend/Features/Supervisor/NewCycle.cs", "internal sealed class NightlyRules { }")]
-    [InlineData("backend/Features/Tasks/Acceptance/DeliveryChainReconciler.cs", "static class ReconciliationPolicy { }")]
+    [InlineData("backend/Features/Tasks/NewRail.cs", "return new TransitionDecision(action, reason);")]
+    [InlineData("backend/Features/Supervisor/NewCycle.cs", "internal sealed class NewTransitionDecisionRules { }")]
+    [InlineData("backend/Features/Tasks/Acceptance/DeliveryChainReconciler.cs", "return new AiOperatorDecision(d, s, a, c, e, r, t);")]
     public void Guard_rejects_a_reintroduced_host_rule(string path, string source)
-        => Assert.NotEmpty(PolicyViolations(new Dictionary<string, string> { [path] = source },
-            new HashSet<string>(StringComparer.Ordinal)));
+        => Assert.NotEmpty(PolicyViolations(new Dictionary<string, string> { [path] = source }));
 
     /// <summary>
     /// A <c>decide</c> row must be routed: <c>decide, operator</c> reaches the
@@ -256,15 +251,14 @@ public sealed class MonolithDecisionBoundaryTests
         return violations;
     }
 
-    private static List<string> PolicyViolations(IReadOnlyDictionary<string, string> sources, IReadOnlySet<string> baseline)
+    private static List<string> PolicyViolations(IReadOnlyDictionary<string, string> sources)
     {
         var violations = new List<string>();
         foreach (var (path, raw) in sources)
         {
             if (!WorkflowFolder.IsMatch(path)) continue;
-            foreach (Match match in HostPolicy.Matches(StripComments(raw)))
-                if (!baseline.Contains($"{path} {match.Groups[1].Value}"))
-                    violations.Add($"{path} defines {match.Groups[1].Value}");
+            if (HostTransitionRule.IsMatch(StripComments(raw)))
+                violations.Add($"{path} defines a transition decision");
         }
         return violations;
     }
@@ -307,18 +301,4 @@ public sealed class MonolithDecisionBoundaryTests
                 .ToDictionary(match => match.Groups[1].Value, match => match.Groups[2].Value, StringComparer.Ordinal);
     }
 
-    private static class Baseline
-    {
-        public static IReadOnlySet<string> Load(string path)
-        {
-            var policies = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var line in File.ReadAllLines(path).Select(item => item.Trim())
-                         .Where(item => item.Length > 0 && !item.StartsWith('#')))
-            {
-                if (line.Split(' ', 3) is ["policy", var owner, var type]) policies.Add($"{owner} {type}");
-                else throw new InvalidDataException($"Malformed baseline line: {line}");
-            }
-            return policies;
-        }
-    }
 }

@@ -138,7 +138,7 @@ public sealed class OrchestrationExecutionModeTests
             }).Build();
         var services = new ServiceCollection();
 
-        services.AddOrchestrationExecutionLoops(configuration);
+        services.AddOrchestrationExecutionLoops();
 
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(IHostedService)

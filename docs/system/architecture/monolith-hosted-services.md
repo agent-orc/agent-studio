@@ -14,17 +14,16 @@ This inventory lists every hosted service and background handler that
 classifies it, and names the owner of its decision. Update the table whenever a
 hosted service is added, moved or removed. The guard
 `backend.Tests/Architecture/MonolithDecisionBoundaryTests.cs` enforces the
-classes below and freezes the pre-existing host-defined rules in
-`backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`. That list
-only shrinks.
+classes below and rejects backend construction of transition receipts without
+a baseline exception list.
 
 ## Classes
 
 | Class | Meaning |
 |---|---|
 | decide, operator | An AI Operator decider. Its rule is in `AiOperatorDecisionPolicy` of the decision library. The service collects typed facts and submits them through `AiOperatorDecisionGateway`; the `OperatorDecision` switch selects whether the monolith decides in process (`Monolith`, default) or the engine decides (`Engine`). The service applies the decision, or its `IAiOperatorEffect` applies the engine receipt. |
-| decide, switched | A service gated by an AGT-3058/3059 transition profile (`CodingCompletion`, `ReviewReport`, `GateResult`, `OperatorSweep`, `OperatorDecision`). `MonolithTransitionSwitch.For` selects the owner. The optional supervisor loops are suppressed when `OperatorDecision` selects Engine; their engine occurrences remain an open gap. |
-| decide, local | A pre-existing local decider outside this slice: local execution (retires with I11, D16 A). The guard keeps this set closed. |
+| decide, switched | A service gated by an AGT-3058/3059 transition profile (`CodingCompletion`, `ReviewReport`, `GateResult`, `OperatorSweep`, `OperatorDecision`). `MonolithTransitionSwitch.For` selects the owner. |
+| decide, local | The local runner and three supervisor deciders without engine occurrences. OrchestratorPrep, MetaCycle and AutoIntervention keep running on the monolith when `OperatorDecision` selects Engine. The guard keeps this set closed. |
 | apply-recover | The service applies an already recorded decision, replays a keyed write, or recovers authority state after a restart. It stays with the task authority until the Task Server cutover (I11). |
 | decide, event | A residual decision in a request handler that applies an outcome a runner host reports. It moves with the Task Server planes (I11). |
 | report | Diagnostics, alarms, advisories or projections; no lane move. |
@@ -96,9 +95,9 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | TagMaintenanceWorker | !PD | infra | Authority host |
 | HardHealthCheckHostedService | !PD | report | Authority host |
 | SoftReasoningHostedService | !PD, off by default | report | Authority host |
-| AutoInterventionHostedService | !PD, off by default | decide, switched | OperatorDecision switch (Monolith pass). |
-| MetaCycleHostedService | !PD, off by default | decide, switched | OperatorDecision switch (Monolith pass; `MetaCycleRules` residual). |
-| OrchestratorPrepHostedService | !PD, off by default | decide, switched | OperatorDecision switch (Monolith pass; `OrchestratorPrepRules` residual). |
+| AutoInterventionHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its advisory. |
+| MetaCycleHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its report. |
+| OrchestratorPrepHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its prep verdict. |
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
 | WorkspaceArtifactPushWorker | !PD | infra | Authority host |

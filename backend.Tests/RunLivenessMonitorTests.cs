@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using AgentStudio.OrchestrationDecisions;
 
 using Xunit;
 
@@ -268,6 +269,36 @@ public sealed class RunLivenessMonitorTests : IDisposable
         var outcomes = await monitor.SweepAsync();
 
         Assert.Empty(outcomes);
+        Assert.True(Directory.Exists(folder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
+    }
+
+    [Fact]
+    public async Task EngineReceipt_NewLogActivityAfterSubmission_KeepsCardInProgress()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        const string slug = "engine-activity-after-submission";
+        WriteJobWithSession(TaskStates.Progress, slug, sessionName: null, chain: Array.Empty<string>());
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        WriteCliLog(folder, "old run output");
+        var log = Path.Combine(folder, "logs", "cli-output.log");
+        File.SetLastWriteTimeUtc(log, clock.GetUtcNow().UtcDateTime.AddMinutes(-10));
+        var (monitor, _) = Build(time: clock);
+        var payload = new AiOperatorDecisionPayload(AiOperatorDeciders.RunLiveness,
+            "progress:" + slug + ":running",
+            RunLiveness: new RunLivenessFacts(false, false, 600, 30));
+        var decision = new AiOperatorDecision(AiOperatorDeciders.RunLiveness, payload.SubjectKey,
+            AiOperatorDisposition.Act, AutonomyClass.A1, AiOperatorEffects.DemoteToReady,
+            "process-lost", "stale activity at submission");
+        monitor.BeforeDemotionRecheck = _ =>
+        {
+            File.AppendAllText(log, "new run output");
+            File.SetLastWriteTimeUtc(log, clock.GetUtcNow().UtcDateTime);
+        };
+
+        await monitor.ApplyAsync(new AiOperatorApplication("run-1", ProjectName, slug,
+            TaskStates.Progress, "write-1", payload, decision, slug, 0, 0), CancellationToken.None);
+
         Assert.True(Directory.Exists(folder));
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
     }

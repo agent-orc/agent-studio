@@ -18,6 +18,7 @@ namespace AgentStudio.Supervisor;
 public sealed class AutoInterventionHostedService : BackgroundService
 {
     private readonly TaskRunnerService _taskRunner;
+    internal Func<RunnerStatus?>? StatusProviderOverride { get; set; }
     private readonly SupervisorInterventionService _interventions;
     private readonly ProjectObservationService _observe;
     private readonly SupervisorAdvisoryStore _advisoryStore;
@@ -71,11 +72,7 @@ public sealed class AutoInterventionHostedService : BackgroundService
 
     internal async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
-        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
-                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
-            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
-            return;
-        var status = _taskRunner.GetStatus();
+        var status = (StatusProviderOverride?.Invoke() ?? _taskRunner.GetStatus());
         if (status?.Projects == null) return;
 
         var thresholdName = _configuration.GetValue("Supervisor:AutoInterventionSeverityThreshold", "High");

@@ -280,7 +280,7 @@ public sealed class RunLivenessMonitor : IAiOperatorEffect
     }
 
     private async Task<RunLivenessOutcome?> ApplyDecisionAsync(WatchPathEntry entry, Candidate c,
-        AiOperatorDecision decision, int graceSeconds, DateTime now, CancellationToken ct)
+        AiOperatorDecision decision, double graceSeconds, DateTime now, CancellationToken ct)
     {
         var verdict = new RunLivenessDecision(
             decision.Effect == AiOperatorEffects.RetriggerPostProcessing

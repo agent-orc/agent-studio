@@ -90,26 +90,49 @@ public sealed class TransitionDecisionBoundaryTests
             Assert.Matches(@"Decide\(TransitionFacts facts\)\s*=>\s*TransitionDecisionPolicy\.Decide\(facts\)", source);
         }
 
-        var callSites = new Dictionary<string, string[]>
+        // Follow the returned value into the application path. A stray
+        // adapter call elsewhere in the file cannot satisfy these checks.
+        var decisionFlows = new Dictionary<string, string[]>
         {
-            ["backend/Features/Runner/MonolithOrchestrationEndpoints.cs"] = ["Decide"],
-            ["backend/Features/Runner/V1ReviewPlaneEndpoints.cs"] = ["Decide", "ReviewBudget"],
-            ["backend/Features/Runner/ReviewDecisionOrchestrator.cs"] = ["ReviewBudget"],
-            ["backend/Features/Runner/OperatorSweeps/OperatorSweepService.cs"] = ["Sweep"],
+            ["backend/Features/Runner/MonolithOrchestrationEndpoints.cs"] =
+                [@"transition\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,1500}StageDecisionPolicy\.ToStageAction\(transition\.Action\)"],
+            ["backend/Features/Runner/V1ReviewPlaneEndpoints.cs"] =
+                [@"var\s+budgetDecision\s*=\s*MonolithTransitionAdapter\.ReviewBudget\([\s\S]{0,1800}var\s+roundBudget\s*=\s*budgetDecision\.RoundBudget",
+                 @"var\s+shadowDecision\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,900}monolithAction:\s*shadowDecision\.Action"],
+            ["backend/Features/Runner/ReviewDecisionOrchestrator.cs"] =
+                [@"var\s+budgetDecision\s*=\s*MonolithTransitionAdapter\.ReviewBudget\([\s\S]{0,1800}var\s+roundBudget\s*=\s*budgetDecision\.RoundBudget"],
+            ["backend/Features/Runner/OperatorSweeps/OperatorSweepService.cs"] =
+                [@"var\s+decision\s*=\s*MonolithTransitionAdapter\.Sweep\([\s\S]{0,250}decision\.Action"],
         };
-        foreach (var (path, methods) in callSites)
+        foreach (var (path, flows) in decisionFlows)
         {
             var source = File.ReadAllText(Path.Combine(root, path));
-            foreach (var method in methods)
-                Assert.Matches(@"MonolithTransitionAdapter\." + method + @"\s*\(", source);
+            foreach (var flow in flows)
+                Assert.Matches(flow, source);
         }
 
+        // Discover every policy entry point that returns one of the four
+        // transition receipts. A new receipt policy is guarded automatically;
+        // a host cannot bypass the adapter by calling that policy directly.
+        var receiptTypes = new HashSet<Type>
+        {
+            typeof(TransitionDecision), typeof(ReviewBudgetDecision),
+            typeof(OperatorSweepDecision), typeof(AiOperatorDecision),
+        };
+        var entryPoints = typeof(TransitionDecisionPolicy).Assembly.GetExportedTypes()
+            .Where(type => type.IsAbstract && type.IsSealed)
+            .SelectMany(type => type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .Where(method => receiptTypes.Contains(method.ReturnType))
+                .Select(method => Regex.Escape(type.Name) + @"\." + Regex.Escape(method.Name)))
+            .ToArray();
+        var directCallPattern = @"\b(?:" + string.Join("|", entryPoints) + @")\s*\(";
         var directCalls = Sources(Path.Combine(root, "backend"))
             .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal))
-            .Where(path => Regex.IsMatch(File.ReadAllText(path),
-                @"\b(?:TransitionDecisionPolicy|ReviewBudgetPolicy|OperatorSweepPolicy)\.Decide\s*\("))
-            .Select(path => Path.GetRelativePath(root, path)).ToArray();
-        Assert.Empty(directCalls);
+            .SelectMany(path => Regex.Matches(File.ReadAllText(path), directCallPattern)
+                .Select(match => (Path: Path.GetRelativePath(root, path).Replace('\\', '/'), Call: match.Value)))
+            .Where(site => !IsLibraryStageCall(site.Path, site.Call))
+            .Select(site => $"{site.Path}: {site.Call}").ToArray();
+        Assert.True(directCalls.Length == 0, string.Join(", ", directCalls));
         var batch = File.ReadAllText(Path.Combine(root, "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs"));
         Assert.Matches(@"TransitionDecision BatchShadowDecision\([^)]*\)\s*=>\s*StageDecisionPolicy\.GateTransition\(", batch);
     }
@@ -137,6 +160,13 @@ public sealed class TransitionDecisionBoundaryTests
             || Regex.IsMatch(source, @"\?\s*TransitionAction\.")
             || Regex.IsMatch(source, @"\boutcome\s+switch\s*\{[^}]*=>\s*TaskStates\.", RegexOptions.Singleline);
     }
+
+    private static bool IsLibraryStageCall(string path, string call)
+        => (path == "backend/Features/Tasks/LeaseEndpoints.cs"
+                && call.Contains("StageDecisionPolicy.Coding", StringComparison.Ordinal))
+            || (path == "backend/Features/Runner/MonolithOrchestrationEndpoints.cs"
+                && (call.Contains("StageDecisionPolicy.Coding", StringComparison.Ordinal)
+                    || call.Contains("StageDecisionPolicy.GateTransition", StringComparison.Ordinal)));
 
     private static IEnumerable<string> Sources(string path) => Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
         .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"));
