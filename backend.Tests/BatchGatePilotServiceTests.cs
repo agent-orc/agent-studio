@@ -1519,7 +1519,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
-        using var factory = BuildFactory();
+        var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 1);
         var member = SeedMember(factory, "DOC-PUBLISH-RECOVER", "docs/publish-recover.md");
@@ -1546,6 +1546,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         AssertLane(member.Key, TaskStates.AutoReview);
 
         Directory.Delete(blockedPath!);
+        // A restart stops the first host: two live hosts would race their lane
+        // moves on one workspace, each behind its own in-process lane mutex.
+        factory.Dispose();
         using var restarted = BuildFactory();
         _ = restarted.CreateClient();
         EnableBatchGate(restarted, closeSize: 1);
@@ -2776,6 +2779,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                     descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationType == typeof(BatchGatePilotHostedService));
                 services.Remove(tick);
+                // AGT-3141: the delivery-chain reconciler runs on a 30-second
+                // wall-clock timer and moves seeded Human Review cards whose
+                // delivery is not on develop yet back to Auto Review. Under a
+                // loaded full suite it fired mid-test, so tests own that order too.
+                var reconciler = services.Single(descriptor =>
+                    descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationFactory?.Method.ReturnType == typeof(DeliveryChainReconciler));
+                services.Remove(reconciler);
             });
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
