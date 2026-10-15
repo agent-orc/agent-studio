@@ -178,6 +178,71 @@ public sealed class StepPromptLogTests : IDisposable
         Assert.Equal("prompt that times out", entry.Prompt);
     }
 
+    [Theory]
+    [InlineData("/private/sessions/raw.jsonl", "raw-session-path")]
+    [InlineData("/private/logs/cli-output.log", "raw-session-path")]
+    public async Task Orchestrator_step_rejects_raw_session_paths_before_logging_or_model_call(
+        string path, string reason)
+    {
+        var inner = new FakeOneShot();
+        var decorator = new PromptLoggingCliOneShot(inner, _log);
+
+        var result = await decorator.RunAsync(new CliOneShotRequest("claude", "model", "Read " + path)
+        {
+            JobFolderPath = _jobFolder,
+            StepId = PipelineCatalogue.PostAbortReviewStepId,
+        });
+
+        Assert.False(result.Ok);
+        Assert.Contains(reason, result.Error);
+        Assert.Equal(0, inner.Calls);
+        Assert.Empty(_log.ReadForJob(_jobFolder));
+    }
+
+    [Fact]
+    public async Task Orchestrator_step_rejects_oversize_prompt_without_a_model_call()
+    {
+        var inner = new FakeOneShot();
+        var decorator = new PromptLoggingCliOneShot(inner, _log);
+
+        var result = await decorator.RunAsync(new CliOneShotRequest("claude", "model",
+            new string('x', OrchestratorPromptBoundary.MaxPromptBytes + 1))
+        {
+            JobFolderPath = _jobFolder,
+            StepId = PipelineCatalogue.PostAbortReviewStepId,
+        });
+
+        Assert.False(result.Ok);
+        Assert.Contains("oversize-orchestrator-prompt", result.Error);
+        Assert.Equal(0, inner.Calls);
+    }
+
+    [Fact]
+    public async Task Orchestrator_step_redacts_a_secret_in_the_logged_and_dispatched_prompt()
+    {
+        var inner = new FakeOneShot();
+        string? dispatched = null;
+        inner.ResultFactory = request =>
+        {
+            dispatched = request.Prompt;
+            var at = new DateTime(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
+            return CliOneShotResult.SpawnFailure("test", at, at);
+        };
+        var decorator = new PromptLoggingCliOneShot(inner, _log);
+        var secret = "api_key=" + new string('v', 24);
+
+        await decorator.RunAsync(new CliOneShotRequest("claude", "model", "Evidence " + secret)
+        {
+            JobFolderPath = _jobFolder,
+            StepId = PipelineCatalogue.PostAbortReviewStepId,
+        });
+
+        Assert.DoesNotContain(secret, dispatched);
+        Assert.Contains("[omission: secret]", dispatched);
+        var logged = Assert.Single(_log.ReadForJob(_jobFolder));
+        Assert.Equal(dispatched, logged.Prompt);
+    }
+
     private sealed class FakeOneShot : ICliOneShot
     {
         public int Calls;

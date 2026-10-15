@@ -83,7 +83,10 @@ public sealed record SupervisorObservation(
     SupervisorQuotaWindow? Quota,
     IReadOnlyList<SupervisorRecentDecision> RecentDecisions,
     IReadOnlyList<string> RecentAgentSamples,
-    SupervisorErrorCounts ErrorCounts);
+    SupervisorErrorCounts ErrorCounts)
+{
+    public IReadOnlyList<string> Omissions { get; init; } = [];
+}
 
 public sealed record SupervisorQuotaWindow(
     string Cli,
@@ -93,7 +96,8 @@ public sealed record SupervisorQuotaWindow(
 public sealed record SupervisorRecentDecision(
     DateTime At,
     string Kind,
-    string Summary);
+    string Summary,
+    string? EvidenceRef = null);
 
 public sealed record SupervisorErrorCounts(
     int CliErrorsLastHour,

@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Orchestrator;
 
@@ -16,6 +18,10 @@ public sealed class OrchestratorContextDigestService
     internal const int RunLimit = 8;
     internal const int DecisionLimit = 8;
     internal const int QuotaWindowLimit = 3;
+    internal const int MaxDigestBytes = 32 * 1024;
+    private static readonly Regex Credential = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private const int TransitionCandidateLimit = 64;
 
     private readonly TaskScannerService _scanner;
@@ -27,6 +33,7 @@ public sealed class OrchestratorContextDigestService
     private readonly IConfiguration _configuration;
     private readonly AgentStudio.Registry.ProjectRegistry _projects;
     private readonly ILogger<OrchestratorContextDigestService> _logger;
+    private readonly OrchestratorDecisionStore? _decisionReceipts;
 
     public OrchestratorContextDigestService(
         TaskScannerService scanner,
@@ -37,7 +44,8 @@ public sealed class OrchestratorContextDigestService
         TimelineLog timeline,
         IConfiguration configuration,
         AgentStudio.Registry.ProjectRegistry projects,
-        ILogger<OrchestratorContextDigestService> logger)
+        ILogger<OrchestratorContextDigestService> logger,
+        OrchestratorDecisionStore? decisionReceipts = null)
     {
         _scanner = scanner;
         _runner = runner;
@@ -48,6 +56,7 @@ public sealed class OrchestratorContextDigestService
         _configuration = configuration;
         _projects = projects;
         _logger = logger;
+        _decisionReceipts = decisionReceipts;
     }
 
     /// <summary>
@@ -354,21 +363,21 @@ public sealed class OrchestratorContextDigestService
 
     private List<DigestDecision> ReadDecisions(IReadOnlyCollection<string> projects)
     {
-        var root = _configuration["TaskRepository"];
-        if (string.IsNullOrWhiteSpace(root)) return [];
+        if (_decisionReceipts is null) return [];
 
         var rows = new List<DigestDecision>();
         foreach (var project in projects)
         {
             try
             {
-                rows.AddRange(ReviewDecisionLog.ReadAll(root, project).Select(record =>
+                rows.AddRange(_decisionReceipts.ListReceipts(null, DecisionLimit, project).Select(record =>
                     new DigestDecision(
-                        record.CreatedAt,
-                        record.Project,
-                        record.JobId,
-                        record.Kind.ToString(),
-                        Compact(record.Reason, 160))));
+                        record.EndedAt,
+                        record.ProjectId ?? project,
+                        record.TaskId ?? "periodic",
+                        record.Profile,
+                        Compact(record.ChosenAction, 160),
+                        record.EvidenceRef)));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -517,12 +526,22 @@ public sealed class OrchestratorContextDigestService
         if (data.Decisions.Count == 0) sb.AppendLf("- none");
         foreach (var row in data.Decisions.Take(DecisionLimit))
         {
-            sb.AppendLf($"- {Iso(row.At)} {row.Project}/{row.JobId}: {row.Kind}; {row.Reason}");
+            sb.AppendLf($"- {Iso(row.At)} {row.Project}/{row.JobId}: {row.Kind}; {row.Reason}" +
+                (row.EvidenceRef is null ? "" : $"; source={row.EvidenceRef}"));
         }
 
         sb.AppendLf("Use this digest as current read-only application state. Ask for a refresh when cached quota may be stale. Do not infer operational authority from this context.");
         sb.Append("=== END APPLICATION READ DIGEST ===");
-        return sb.ToString();
+        var unredacted = sb.ToString();
+        var digest = Credential.Replace(unredacted, "[omitted: secret]");
+        if (digest != unredacted)
+            digest += "\nEvidence omissions: secret";
+        if (Encoding.UTF8.GetByteCount(digest) <= MaxDigestBytes) return digest;
+        const string marker = "\n[omitted: oversize context digest]";
+        var allowed = MaxDigestBytes - Encoding.UTF8.GetByteCount(marker);
+        digest = digest[..Math.Min(digest.Length, allowed)];
+        while (Encoding.UTF8.GetByteCount(digest) > allowed) digest = digest[..^1];
+        return digest + marker;
     }
 
     internal static IReadOnlyList<OrchestratorDigestSourceStatus> BuildSourceStatuses(
@@ -678,4 +697,5 @@ internal sealed record DigestDecision(
     string Project,
     string JobId,
     string Kind,
-    string Reason);
+    string Reason,
+    string? EvidenceRef = null);
