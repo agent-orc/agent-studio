@@ -40,6 +40,7 @@ public sealed class BatchGatePilotService
     private readonly ConcurrentDictionary<string, string> _activeBatchGates = new(StringComparer.Ordinal);
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
+    private readonly TimelineLog? _timeline;
     private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
@@ -68,9 +69,11 @@ public sealed class BatchGatePilotService
         PipelineExecutionLog? pipelineLog = null,
         GateSlotUsageTracker? gateSlots = null,
         PipelineHealthDetector? pipelineHealth = null,
-        IServiceProvider? services = null, IConfiguration? configuration = null)
+        IServiceProvider? services = null, IConfiguration? configuration = null,
+        TimelineLog? timeline = null)
     {
         _store = store;
+        _timeline = timeline;
         _leases = leases;
         _refLeases = refLeases;
         _git = git;
@@ -1925,12 +1928,39 @@ public sealed class BatchGatePilotService
                     TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
                         .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                var reason = ct.IsCancellationRequested
+                    ? GateCancellationReasons.Shutdown : GateCancellationReasons.Operator;
+                gate = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0, "",
+                    $"Gate cancelled: {reason}.", false, false)
+                { FailureKind = BuildTestGateFailureKind.Cancellation,
+                    CancellationReason = reason };
+            }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 // The active marker stays; the next tick resumes this gate.
                 _logger.LogWarning(ex, "batch-fallback-gate-interrupted task={TaskKey} attempt={AttemptId} start={Start}",
                     pending.Subject.TaskKey, pending.ReviewAttemptId, starts + 1);
                 return;
+            }
+            if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
+            {
+                var live = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
+                var latest = Refresh(pending);
+                var reason = GateCancellationPolicy.Decide(pending.Subject.ResultSha,
+                    latest.Subject.CurrentGeneration ? pending.Subject.ResultSha : null,
+                    TaskStates.AutoReview, live?.State, live?.PendingIntent is not null,
+                    ct.IsCancellationRequested, gate.CancellationReason);
+                gate = GateCancellationPolicy.Apply(gate, reason);
+                if (live is not null)
+                    evidence = Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence));
+                _timeline?.Append(live?.FolderPath ?? task.FolderPath, new TimelineEvent
+                {
+                    Ts = _time.GetUtcNow().UtcDateTime, Kind = "gate-cancelled",
+                    Actor = TimelineActors.System, Summary = gate.Reason,
+                    Details = new Dictionary<string, string> { ["reason"] = reason },
+                });
             }
             Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
             using (var stream = new FileStream(evidence, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -1943,11 +1973,23 @@ public sealed class BatchGatePilotService
             _store.RecordExecution(new BatchGateExecutionFact(
                 pending.Subject.Project, null, null,
                 gate.TestedSha ?? pending.Subject.ResultSha,
-                gate.Verdict.ToString(), Environment.MachineName,
+                gate.CancellationReason ?? gate.Verdict.ToString(), Environment.MachineName,
                 started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
             Lane(pending, "gate-finished", level: TestExecutionLevels.Full,
                 durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
                 outcome: gate.Verdict.ToString(), reason: "per-task-fallback");
+            if (gate.CancellationReason == GateCancellationReasons.Superseded)
+            {
+                if (recordInStore) ResolveSuperseded(pending, "superseded");
+                else BatchGateOwnershipStore.ClearIfReviewAttempt(
+                    _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath
+                        ?? task.FolderPath, pending.ReviewAttemptId);
+                return;
+            }
+            // Keep the durable active marker. The next host tick spends the
+            // second and final start in the existing interrupted-gate budget.
+            if (gate.CancellationReason == GateCancellationReasons.Shutdown && starts + 1 < FallbackGateStartBudget)
+                return;
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))
@@ -2132,7 +2174,7 @@ public sealed class BatchGatePilotService
         var task = _scanner.FindJob(subject.TaskKey, pending.WatchPath);
         var settings = _settings.Get(subject.Project);
         var ownership = task is null ? null : BatchGateOwnershipStore.Read(task.FolderPath);
-        var current = task is { State: TaskStates.AutoReview }
+        var current = task is { State: TaskStates.AutoReview, PendingIntent: null }
             && projection.CurrentRunAttempt?.AttemptId == subject.RunAttempt
             && projection.CurrentReviewAttempt?.AttemptId == pending.ReviewAttemptId
             && (projection.CurrentReviewAttempt.Outcome is ReviewTerminalOutcome.Pass

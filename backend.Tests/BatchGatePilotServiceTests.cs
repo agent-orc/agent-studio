@@ -26,7 +26,7 @@ namespace AgentStudio.Tests;
 /// endpoint. Only the gate runner is scripted, and the pilot's background
 /// tick is removed so each test owns the tick order.
 /// </summary>
-public sealed class BatchGatePilotServiceTests : IDisposable
+public sealed partial class BatchGatePilotServiceTests : IDisposable
 {
     private const string ProjectName = "batch-pilot";
     private const string RepositoryId = "batch-pilot-repo";
