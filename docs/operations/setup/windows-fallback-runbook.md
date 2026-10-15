@@ -14,7 +14,8 @@ One release package, `agent-orchestrator-<version>-win-x64`, published by the
 `publish-windows` job in `.github/workflows/release.yml` next to the
 `linux-x64` archives with the same `VERSION`/`RELEASE-SHA` identity contract.
 It contains `task-server.exe`, `orchestrator-engine.exe`,
-`agent-studio-bff.exe`, and a copy of `deploy/windows/` (`deploy-windows/`
+`agent-studio-bff.exe`, `OrchestratorApi.exe`, `agent-host.exe`, the browser
+bundle, and a copy of `deploy/windows/` (`deploy-windows/`
 inside the package) so the target machine needs neither a repository
 checkout nor a .NET install.
 
@@ -38,8 +39,9 @@ fresh `C:\ProgramData\AgentOrchestrator` gets new ones. A re-run with a newer
 package stops the three tasks and their executables before it moves the
 `current` junction. Credential files are restricted to the installing account,
 SYSTEM, and Administrators. `agent-studio-setup --target native` runs this
-script with `-RestMode Normal`: the local Task Server is then the primary one,
-not a dormant fallback ([install guide](./install.md)).
+script with `-RestMode Normal -FullStudio`: the local Task Server is then the
+primary one and the browser UI, backend, and Runner tasks start too
+([install guide](./install.md)).
 
 Point the Studio connector back at the remote origin once the install is
 proved:

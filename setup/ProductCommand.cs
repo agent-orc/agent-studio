@@ -134,10 +134,10 @@ internal sealed record ProductCommand(
         };
 
     /// <summary><c>systemd</c> stays accepted as the Linux spelling of <c>native</c>.</summary>
-    public static string NormalizeTarget(string? target, string mode)
+    public static string NormalizeTarget(string? target, string mode, bool? windows = null)
         => target?.Trim().ToLowerInvariant() switch
         {
-            null or "" => mode is "agent-host" or "connector" ? "native" : "docker",
+            null or "" => mode is "agent-host" or "connector" || (windows ?? OperatingSystem.IsWindows()) ? "native" : "docker",
             "docker" => "docker",
             "native" or "systemd" => "native",
             _ => throw new ArgumentException("--target must be docker or native."),

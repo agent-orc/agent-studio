@@ -17,7 +17,14 @@ param(
     # local Task Server is then the primary one.
     [ValidateSet('Maintenance', 'Normal')] [string] $RestMode = 'Maintenance',
 
-    [switch] $NonInteractive
+    [switch] $NonInteractive,
+    [switch] $Unattended,
+    [switch] $FullStudio,
+    [ValidateSet('codex', 'claude', 'skip')] [string] $ProviderCli = 'skip',
+    [ValidateSet('gcm', 'token', 'deploy-key', 'skip')] [string] $GitAccess = 'skip',
+    [string] $GitTokenFile,
+    [string] $GitRemote,
+    [switch] $RunnerPasswordFromStdin
 )
 
 <#
@@ -39,6 +46,7 @@ $ErrorActionPreference = 'Stop'
 
 $packageRoot = (Resolve-Path -LiteralPath $ReleasePackageRoot).Path
 $serviceTaskNames = 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector'
+if ($FullStudio) { $serviceTaskNames += 'AgentOrchestrator-StudioBackend', 'AgentOrchestrator-Runner' }
 $version = (Get-Content -LiteralPath (Join-Path $packageRoot 'VERSION') -TotalCount 1).Trim()
 if ([string]::IsNullOrWhiteSpace($version)) { throw "VERSION file in $packageRoot is empty." }
 $releaseSha = (Get-Content -LiteralPath (Join-Path $packageRoot 'RELEASE-SHA') -TotalCount 1).Trim()
@@ -67,14 +75,42 @@ if (-not $PSCmdlet.ShouldProcess((Join-Path $InstallBase "release-$version"), 'I
 
 New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+if ($FullStudio) {
+    foreach ($subdirectory in 'workspace', 'runner-work', 'runner-state') {
+        New-Item -ItemType Directory -Path (Join-Path $DataDirectory $subdirectory) -Force | Out-Null
+    }
+}
 New-Item -ItemType Directory -Path $ConfigRoot -Force | Out-Null
+if ($FullStudio) {
+    $installAccount = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls.exe $ConfigRoot /inheritance:r /grant:r "${installAccount}:(OI)(CI)(F)" '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to $ConfigRoot." }
+}
 
-$releaseDirectory = Copy-FallbackRelease -PackageRoot $packageRoot -InstallBase $InstallBase `
-    -RequiredFiles 'task-server.exe', 'orchestrator-engine.exe', 'agent-studio-bff.exe'
+$requiredFiles = @('task-server.exe', 'orchestrator-engine.exe', 'agent-studio-bff.exe')
+if ($FullStudio) { $requiredFiles += @('OrchestratorApi.exe', 'agent-host.exe', 'browser\index.html') }
+$releaseDirectory = Copy-FallbackRelease -PackageRoot $packageRoot -InstallBase $InstallBase -RequiredFiles $requiredFiles
 
 $serverEnvPath = Join-Path $ConfigRoot 'server.env'
 $engineEnvPath = Join-Path $ConfigRoot 'engine.env'
 $connectorEnvPath = Join-Path $ConfigRoot 'studio-connector.env'
+$backendEnvPath = Join-Path $ConfigRoot 'studio-backend.env'
+$runnerEnvPath = Join-Path $ConfigRoot 'runner.env'
+$ownerCodePath = Join-Path $ConfigRoot 'owner-bootstrap.code'
+$runnerTokenPath = Join-Path $ConfigRoot 'runner.token'
+
+if ($FullStudio -and -not (Test-Path -LiteralPath $ownerCodePath)) {
+    Set-Content -LiteralPath $ownerCodePath -Value (New-BearerToken) -Encoding ascii -NoNewline
+    Protect-FallbackSecretFile -Path $ownerCodePath
+    if (-not $Unattended) {
+        Write-Host "Owner bootstrap code (shown once): $(Get-Content -LiteralPath $ownerCodePath -Raw)"
+        Write-Host 'Open http://127.0.0.1:4011 and enter this code on the first owner sign-up.'
+    }
+}
+if ($FullStudio -and -not (Test-Path -LiteralPath $runnerTokenPath)) {
+    Set-Content -LiteralPath $runnerTokenPath -Value (New-BearerToken) -Encoding ascii -NoNewline
+    Protect-FallbackSecretFile -Path $runnerTokenPath
+}
 
 if (-not (Test-Path -LiteralPath $serverEnvPath)) {
     $studioToken = ''
@@ -125,7 +161,7 @@ if (-not (Test-Path -LiteralPath $serverEnvPath)) {
 
     @(
         '# Loopback Studio connector configuration (agent-studio-bff.exe).',
-        "ASPNETCORE_URLS=$ConnectorListenUrl",
+        "ASPNETCORE_URLS=$(if ($FullStudio) { 'http://127.0.0.1:4011' } else { $ConnectorListenUrl })",
         "TaskServer__BaseUrl=$ListenUrl",
         "TaskServer__AuthTokenFile=$studioTokenFile"
     ) | Set-Content -LiteralPath $connectorEnvPath -Encoding ascii
@@ -136,9 +172,153 @@ else {
     if (-not (Test-Path -LiteralPath $engineEnvPath) -or -not (Test-Path -LiteralPath $connectorEnvPath)) {
         throw "$serverEnvPath exists but engine.env or studio-connector.env is missing; refusing a partial configuration."
     }
-    Write-FallbackLog "Keeping existing operator configuration in $ConfigRoot."
+    if ($FullStudio) {
+        Set-EnvFileValue -Path $connectorEnvPath -Key 'ASPNETCORE_URLS' -Value 'http://127.0.0.1:4011'
+    }
+    Write-FallbackLog "Keeping existing operator credentials in $ConfigRoot."
 }
 
+if ($FullStudio) {
+Set-EnvFileValue -Path $serverEnvPath -Key 'OWNER_BOOTSTRAP_CODE_FILE' -Value $ownerCodePath
+Set-EnvFileValue -Path $serverEnvPath -Key 'BOOTSTRAP_RUNNER_ID' -Value 'local-coding'
+Set-EnvFileValue -Path $serverEnvPath -Key 'BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE' -Value $runnerTokenPath
+Set-EnvFileValue -Path $connectorEnvPath -Key 'Studio__BrowserRoot' -Value (Join-Path $InstallBase 'current\browser')
+}
+if ($FullStudio -and -not (Test-Path -LiteralPath $backendEnvPath)) {
+    @(
+        "ASPNETCORE_URLS=$ConnectorListenUrl",
+        "TaskRepository=$(Join-Path $DataDirectory 'workspace')",
+        "TaskServer__BaseUrl=$ListenUrl",
+        "TaskServer__AuthTokenFile=$(Join-Path $ConfigRoot 'studio.token')",
+        'ASPNETCORE_ENVIRONMENT=Production'
+    ) | Set-Content -LiteralPath $backendEnvPath -Encoding ascii
+}
+if ($FullStudio) {
+    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__BaseUrl' -Value $ListenUrl
+    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__AuthTokenFile' `
+        -Value (Join-Path $ConfigRoot 'studio.token')
+}
+if ($FullStudio -and -not (Test-Path -LiteralPath $runnerEnvPath)) {
+    @(
+        "RUNNER_SERVER_URL=$ListenUrl",
+        'RUNNER_ID=local-coding',
+        'RUNNER_NAME=Local runner',
+        'RUNNER_ROLE=coding',
+        'RUNNER_CLIENT_ID=local-coding',
+        "RUNNER_AUTH_TOKEN_FILE=$runnerTokenPath",
+        "RUNNER_WORKDIR=$(Join-Path $DataDirectory 'runner-work')",
+        "RUNNER_STATE_DIR=$(Join-Path $DataDirectory 'runner-state')",
+        "RUNNER_CLI_TYPE=$(if ($ProviderCli -eq 'skip') { 'codex' } else { $ProviderCli })",
+        'RUNNER_MAX_PARALLELISM=1'
+    ) | Set-Content -LiteralPath $runnerEnvPath -Encoding ascii
+}
+if ($FullStudio) {
+    if ($ProviderCli -ne 'skip') {
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'RUNNER_CLI_TYPE' -Value $ProviderCli
+        $nativeCli = Get-Command "$ProviderCli.exe" -ErrorAction SilentlyContinue
+        if ($nativeCli) {
+            Set-EnvFileValue -Path $runnerEnvPath -Key "RUNNER_$($ProviderCli.ToUpperInvariant())_CLI_BIN" -Value $nativeCli.Source
+        }
+        else {
+            $nodeExe = (Get-Command 'node.exe' -ErrorAction Stop).Source
+            $npmRoot = (& npm.cmd root -g | Select-Object -Last 1).Trim()
+            if ($LASTEXITCODE -ne 0) { throw 'Could not locate global npm packages for the provider CLI.' }
+            $providerScript = if ($ProviderCli -eq 'codex') {
+                Join-Path $npmRoot '@openai\codex\bin\codex.js'
+            } else {
+                Join-Path $npmRoot '@anthropic-ai\claude-code\cli.js'
+            }
+            if (-not (Test-Path -LiteralPath $providerScript)) {
+                throw "The $ProviderCli npm entry point is missing at $providerScript. Repair the CLI installation."
+            }
+            Set-EnvFileValue -Path $runnerEnvPath -Key 'AGENT_STUDIO_NODE_EXE' -Value $nodeExe
+            Set-EnvFileValue -Path $runnerEnvPath -Key "AGENT_STUDIO_$($ProviderCli.ToUpperInvariant())_JS" -Value $providerScript
+            Set-EnvFileValue -Path $runnerEnvPath -Key "RUNNER_$($ProviderCli.ToUpperInvariant())_CLI_BIN" `
+                -Value (Join-Path $InstallBase "current\provider-$ProviderCli.exe")
+        }
+    }
+    if ($GitAccess -eq 'token') {
+        if (-not $GitTokenFile -or -not (Test-Path -LiteralPath $GitTokenFile)) { throw 'A protected GitTokenFile is required.' }
+        $token = (Get-Content -LiteralPath $GitTokenFile -Raw).Trim()
+        if ($token -match '[\r\n]' -or [string]::IsNullOrWhiteSpace($token)) { throw 'GitTokenFile must contain one token.' }
+        $credentialPath = Join-Path $ConfigRoot 'github.credentials'
+        $encoded = [Uri]::EscapeDataString($token)
+        Set-Content -LiteralPath $credentialPath -Value "https://x-access-token:$encoded@github.com" -Encoding ascii -NoNewline
+        Protect-FallbackSecretFile -Path $credentialPath
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_COUNT' -Value '1'
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_KEY_0' -Value 'credential.helper'
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_VALUE_0' -Value "store --file=$credentialPath"
+        $token = $null
+    }
+    elseif ($GitAccess -eq 'gcm') {
+        & git.exe credential-manager --version | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Git Credential Manager is missing. Repair Git for Windows.' }
+        $env:GCM_INTERACTIVE = 'never'
+        $credentialLines = "protocol=https`nhost=github.com`n`n" | & git.exe -c credential.helper=manager credential fill
+        if ($LASTEXITCODE -ne 0) { throw 'The current Windows account has no GitHub sign-in in Git Credential Manager. Sign in and rerun setup.' }
+        $userLine = $credentialLines | Where-Object { $_.StartsWith('username=') } | Select-Object -First 1
+        $passwordLine = $credentialLines | Where-Object { $_.StartsWith('password=') } | Select-Object -First 1
+        if (-not $userLine -or -not $passwordLine) { throw 'Git Credential Manager returned no GitHub credential.' }
+        $gitUser = [Uri]::EscapeDataString($userLine.Substring(9))
+        $gitPassword = [Uri]::EscapeDataString($passwordLine.Substring(9))
+        $credentialPath = Join-Path $ConfigRoot 'github.credentials'
+        Set-Content -LiteralPath $credentialPath -Value "https://${gitUser}:${gitPassword}@github.com" -Encoding ascii -NoNewline
+        Protect-FallbackSecretFile -Path $credentialPath
+        $credentialLines = $null
+        $gitPassword = $null
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_COUNT' -Value '1'
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_KEY_0' -Value 'credential.helper'
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_VALUE_0' -Value "store --file=$credentialPath"
+    }
+    elseif ($GitAccess -eq 'deploy-key') {
+        if ($GitRemote -notmatch '^git@github\.com:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$') {
+            throw 'Deploy-key mode requires a GitHub SSH project remote.'
+        }
+        $keyRoot = Join-Path $ConfigRoot 'deploy-keys'
+        New-Item -ItemType Directory -Path $keyRoot -Force | Out-Null
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $remoteHash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($GitRemote)) |
+                Select-Object -First 10 | ForEach-Object { $_.ToString('x2') })
+        } finally { $sha.Dispose() }
+        $privateKey = Join-Path $keyRoot $remoteHash
+        if (-not (Test-Path -LiteralPath $privateKey)) {
+            & ssh-keygen.exe -q -t ed25519 -N '' -f $privateKey | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not generate the project deploy key.' }
+            Protect-FallbackSecretFile -Path $privateKey
+        }
+        Set-Content -LiteralPath "$privateKey.remote" -Value $GitRemote -Encoding ascii -NoNewline
+        Write-Host "Add this deploy key to $GitRemote with the repository access needed by the runner:"
+        Write-Host (Get-Content -LiteralPath "$privateKey.pub" -Raw)
+        $sshConfig = Join-Path $keyRoot 'ssh-config'
+        $configLines = @()
+        $index = 0
+        foreach ($record in Get-ChildItem -LiteralPath $keyRoot -Filter '*.remote' -File | Sort-Object Name) {
+            $recordRemote = (Get-Content -LiteralPath $record.FullName -Raw).Trim()
+            $recordKey = $record.FullName.Substring(0, $record.FullName.Length - '.remote'.Length)
+            $alias = "github.com-$($record.BaseName)"
+            $repo = $recordRemote.Substring('git@github.com:'.Length)
+            $configLines += @("Host $alias", '  HostName github.com', '  User git',
+                "  IdentityFile `"$recordKey`"", '  IdentitiesOnly yes', '  BatchMode yes')
+            Set-EnvFileValue -Path $runnerEnvPath -Key "GIT_CONFIG_KEY_$index" -Value "url.git@${alias}:${repo}.insteadOf"
+            Set-EnvFileValue -Path $runnerEnvPath -Key "GIT_CONFIG_VALUE_$index" -Value $recordRemote
+            $index++
+        }
+        $configLines | Set-Content -LiteralPath $sshConfig -Encoding ascii
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_CONFIG_COUNT' -Value "$index"
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'GIT_SSH_COMMAND' -Value "ssh -F `"$sshConfig`""
+    }
+    if ($GitRemote) {
+        Set-EnvFileValue -Path $runnerEnvPath -Key 'RUNNER_GIT_REMOTE' -Value $GitRemote
+        foreach ($line in Get-Content -LiteralPath $runnerEnvPath) {
+            if ($line -match '^(GIT_[A-Z0-9_]+)=(.*)$') {
+                [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+        }
+        & git.exe ls-remote $GitRemote HEAD | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "GitHub access could not be verified for $GitRemote. Grant access and rerun setup." }
+    }
+}
 $current = Set-FallbackCurrentRelease -InstallBase $InstallBase -ReleaseDirectory $releaseDirectory `
     -TaskNames $serviceTaskNames
 $scriptRoot = Get-FallbackScriptRoot -Current $current -CallerRoot $PSScriptRoot
@@ -149,6 +329,19 @@ $scriptRoot = Get-FallbackScriptRoot -Current $current -CallerRoot $PSScriptRoot
     -InstallRoot $current -EnvFile $engineEnvPath
 & (Join-Path $scriptRoot 'studio-connector\register-studio-connector.ps1') `
     -InstallRoot $current -EnvFile $connectorEnvPath
+if ($FullStudio) {
+& (Join-Path $scriptRoot 'fallback\register-native-service.ps1') `
+    -InstallRoot $current -ExecutableName 'OrchestratorApi.exe' -EnvFile $backendEnvPath `
+    -TaskName 'AgentOrchestrator-StudioBackend' -StateDirectory (Join-Path $ConfigRoot 'studio-backend')
+if ($RunnerPasswordFromStdin -or -not (Get-ScheduledTask -TaskName 'AgentOrchestrator-Runner' -ErrorAction SilentlyContinue)) {
+    & (Join-Path $scriptRoot 'fallback\register-native-service.ps1') `
+        -InstallRoot $current -ExecutableName 'agent-host.exe' -EnvFile $runnerEnvPath `
+        -TaskName 'AgentOrchestrator-Runner' -StateDirectory (Join-Path $ConfigRoot 'runner') `
+        -PasswordFromStdin:$RunnerPasswordFromStdin
+} else {
+    Start-ScheduledTask -TaskName 'AgentOrchestrator-Runner'
+}
+}
 
 if (-not (Wait-HttpReady -Url "$($ListenUrl.TrimEnd('/'))/readyz" -TimeoutSeconds 60 -ExpectedText '"status":"ready"')) {
     throw "Task Server did not become ready at $ListenUrl within 60 seconds. Inspect its Scheduled Task event log under $env:ProgramData\AgentOrchestrator\task-server."
@@ -158,10 +351,13 @@ Set-TaskServerMode -BaseUrl $ListenUrl -Token $authToken -Mode 'Normal' -Reason 
 if (-not (Wait-HttpReady -Url "$($ListenUrl.TrimEnd('/'))/readyz" -TimeoutSeconds 30 -ExpectedText '"mode":"Normal"')) {
     throw "Task Server did not report mode Normal at $ListenUrl within 30 seconds."
 }
-if (-not (Wait-HttpReady -Url "$($ConnectorListenUrl.TrimEnd('/'))/healthz" -TimeoutSeconds 60 -ExpectedText '"status":"live"')) {
-    throw "Studio connector did not become healthy at $ConnectorListenUrl within 60 seconds. Inspect its Scheduled Task event log under $env:ProgramData\AgentOrchestrator\studio-connector."
+$edgeUrl = if ($FullStudio) { 'http://127.0.0.1:4011' } else { $ConnectorListenUrl }
+if (-not (Wait-HttpReady -Url "$($edgeUrl.TrimEnd('/'))/healthz" -TimeoutSeconds 60 -ExpectedText '"status":"live"')) {
+    throw "Studio connector did not become healthy at $edgeUrl within 60 seconds. Inspect its Scheduled Task event log under $env:ProgramData\AgentOrchestrator\studio-connector."
 }
-
+if ($FullStudio -and -not (Wait-HttpReady -Url "$($ConnectorListenUrl.TrimEnd('/'))/healthz" -TimeoutSeconds 60)) {
+    throw "Studio backend did not become healthy at $ConnectorListenUrl within 60 seconds. Inspect its Scheduled Task event log under $env:ProgramData\AgentOrchestrator\studio-backend."
+}
 <#
 The install proved every process can reach Normal/healthy; that is the
 "documented install brings up the local Task Server profile" acceptance
