@@ -34,7 +34,7 @@ public static class RemoteReviewContinuationPolicy
     public static RemoteReviewContinuationStep Decide(
         IEnumerable<TimelineEvent> ledger, string attemptId, string cause, string moveKey, string currentState)
     {
-        return AgentStudio.OrchestrationDecisions.ContinuationReplayPolicy.Decide(
+        return MonolithTransitionAdapter.ContinuationReplay(
             ledger.Select(entry => new AgentStudio.OrchestrationDecisions.RoundTimelineFact(entry.Kind, entry.Details)),
             attemptId, cause, moveKey, currentState);
 

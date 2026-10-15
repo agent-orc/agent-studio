@@ -57,7 +57,7 @@ public static class ReviewRoundBudgetStore
             return;
         var blocked = ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []);
         var seed = payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty;
-        var decision = ReviewRoundBudgetPolicy.Decide(seed, payload.ReviewAttemptId, blocked,
+        var decision = MonolithTransitionAdapter.ReviewRoundBudget(seed, payload.ReviewAttemptId, blocked,
             payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
             payload.ReissuesUsed, payload.MaximumReissues);
         Record(folder, seed, new DeliveredReviewRound(payload.ReviewAttemptId, blocked,

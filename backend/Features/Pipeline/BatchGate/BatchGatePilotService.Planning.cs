@@ -86,7 +86,7 @@ public sealed partial class BatchGatePilotService
         }
         var facts = new BatchPlanFacts(project, scopeKey, snapshot, prior,
             _advisor is null ? "off" : advisorMode);
-        var step = BatchPlanDecisionPolicy.Decide(facts);
+        var step = AgentStudio.Runner.MonolithTransitionAdapter.BatchPlan(facts);
         var decision = step.ConsultAdvisor
             ? await _advisor!.AdviseAsync(project, settings, snapshot, step.Decision, ct)
                 .ConfigureAwait(false)
