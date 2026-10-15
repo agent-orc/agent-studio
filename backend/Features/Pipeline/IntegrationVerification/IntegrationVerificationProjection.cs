@@ -32,13 +32,35 @@ public static class IntegrationVerificationProjection
 
         // A later verified integration record can settle a tree previously
         // recorded as unverified. Check it before the task-folder snapshot.
-        if (NamesVerifiedTree(integrationRecords, currentIntegrationSha, currentIntegrationBranch))
+        if (integrationRecords.Any(item =>
+                string.Equals(item.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
+                && string.Equals(item.IntegrationSha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
+                && SameBranch(item.IntegrationBranch, currentIntegrationBranch)
+                && (item.SourceSha is null || !string.IsNullOrWhiteSpace(currentDeliverySha)
+                    && item.SourceSha.StartsWith(currentDeliverySha.Trim(), StringComparison.OrdinalIgnoreCase))))
             return new TaskIntegrationVerification
             {
                 State = IntegrationVerificationStates.Verified,
                 Sha = currentIntegrationSha,
                 Evidence = IntegrationVerificationEvidence.IntegrationRecord,
                 Reason = "An integrated-verified integration record names this exact tree.",
+            };
+
+        var carriedRecord = integrationRecords.FirstOrDefault(item =>
+            string.Equals(item.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
+            && SameBranch(item.IntegrationBranch, currentIntegrationBranch)
+            && ReviewSubjectStore.IsValidResultSha(item.IntegrationSha)
+            && branchCarries?.Invoke(item.IntegrationSha!) == true
+            && !string.IsNullOrWhiteSpace(currentDeliverySha)
+            && ReviewSubjectStore.IsValidResultSha(item.SourceSha)
+            && item.SourceSha!.StartsWith(currentDeliverySha!.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (carriedRecord is not null)
+            return new TaskIntegrationVerification
+            {
+                State = IntegrationVerificationStates.Verified,
+                Sha = carriedRecord.IntegrationSha,
+                Evidence = IntegrationVerificationEvidence.IntegrationRecord,
+                Reason = $"The published branch still carries operator-verified tree {carriedRecord.IntegrationSha}.",
             };
 
         if (record is not null

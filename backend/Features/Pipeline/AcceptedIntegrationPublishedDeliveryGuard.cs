@@ -9,6 +9,26 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
 {
     private static readonly ConcurrentDictionary<string, byte> SignaledLanes = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>A verified operator acceptance expires when its containing tree leaves publication.</summary>
+    public static string? LostOperatorAcceptance(TaskInfo job, string branch, GitService? git)
+    {
+        if (job.State != TaskStates.Completed || git is null) return null;
+        var records = job.IntegrationRecords.Where(item =>
+            item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal)
+            && item.Classification == IntegrationRecordClasses.IntegratedVerified
+            && ReviewSubjectStore.IsValidResultSha(item.IntegrationSha)
+            && AgentStudio.Pipeline.IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch)).ToArray();
+        if (records.Length == 0) return null;
+        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (repo is null) return null;
+        var check = git.CheckPublishedDelivery(repo, branch, records[^1].IntegrationSha!);
+        if (check == PublishedDeliveryContainment.Unavailable) return null;
+        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
+        if (published is not null && records.Any(record =>
+                git.IsAncestor(repo, record.IntegrationSha!, published))) return null;
+        return $"The operator-accepted containing tree {records[^1].IntegrationSha} is no longer in published {branch}; publication was rewritten. The acceptance must return to Human Review.";
+    }
+
     public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,
         AgentMessageBusBridge? bus, ILogger logger)
     {

@@ -29,6 +29,22 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+An operator override that accepts a published delivery writes an append-only
+`integrated-verified` record on the completed card. The record names the actor,
+written reason, delivery SHA, and published containing SHA. The acceptance
+worker, restart backstop, and board projection use it while the published
+branch still carries that tree and the card still names the same delivery.
+If the published branch loses the containing tree, verification is stale and
+normal acceptance recovery returns the card to Human Review.
+
+Operators can attach an external suite result with
+`POST /api/projects/{project}/external-verifications`. The body supplies
+`candidateSha`, `verificationHost`, `suiteSummary`, and a SHA-256 `logHash`.
+The API verifies that the candidate is an ancestor of the published
+integration branch before storing the record in the project task store.
+Every delivery contained in that candidate can use the record as verification;
+later branch tips retain it only while they carry the candidate.
+
 The Ops gate-economics view counts a per-card gated merge only when the
 delivery has both a final green pre-develop gate receipt and a matching
 `published` integration-lane event for its tested SHA. A green gate whose

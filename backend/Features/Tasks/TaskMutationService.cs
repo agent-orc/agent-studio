@@ -922,6 +922,31 @@ public class TaskMutationService
         }
     }
 
+    /// <summary>Removes evidence staged for an operator move that was refused.</summary>
+    public bool RemoveIntegrationRecordOnFolder(string folderPath, string recordId)
+    {
+        var path = Path.Combine(folderPath, "task.json");
+        if (!File.Exists(path)) return false;
+        try
+        {
+            var document = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                File.ReadAllText(path), TaskJsonFile.ReadOpts);
+            if (document is null || !document.TryGetValue("integrationRecords", out var persisted)
+                || persisted.ValueKind != JsonValueKind.Array) return false;
+            var records = persisted.Deserialize<List<TaskIntegrationRecord>>(TaskJsonFile.ReadOpts) ?? [];
+            if (records.RemoveAll(record => string.Equals(record.Id, recordId,
+                    StringComparison.OrdinalIgnoreCase)) == 0) return false;
+            TaskJsonFile.UpdateFieldOrThrow(folderPath, "integrationRecords", records);
+            Updated(folderPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to remove staged integration record in {Folder}", folderPath);
+            return false;
+        }
+    }
+
     private bool WriteCommitState(
         string folderPath,
         List<TaskCommitInfo> chain,

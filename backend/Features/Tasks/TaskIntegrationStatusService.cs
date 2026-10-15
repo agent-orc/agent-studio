@@ -462,7 +462,7 @@ public sealed class TaskIntegrationStatusService
     {
         try
         {
-            return IntegrationVerificationProjection.Resolve(
+            var projected = IntegrationVerificationProjection.Resolve(
                 IntegrationVerificationStore.Read(job.FolderPath),
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
@@ -470,6 +470,22 @@ public sealed class TaskIntegrationStatusService
                 currentIntegrationBranch,
                 currentDeliverySha,
                 branchHistory);
+            if (IntegrationVerificationStates.PermitsCompletion(projected)
+                || branchHistory is null
+                || !ReviewSubjectStore.IsValidResultSha(currentDeliverySha)) return projected;
+            var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+            if (root is null) return projected;
+            var external = ExternalPublishedVerificationStore.Read(job.WatchPath)
+                .FirstOrDefault(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, currentIntegrationBranch)
+                    && branchHistory(record.CandidateSha)
+                    && _git.IsAncestor(root, currentDeliverySha!, record.CandidateSha));
+            return external is null ? projected : new TaskIntegrationVerification
+            {
+                State = IntegrationVerificationStates.Verified,
+                Sha = external.CandidateSha,
+                Evidence = IntegrationVerificationEvidence.IntegrationRecord,
+                Reason = $"External suite verification on {external.VerificationHost} covered published tree {external.CandidateSha}.",
+            };
         }
         catch (Exception ex)
         {
