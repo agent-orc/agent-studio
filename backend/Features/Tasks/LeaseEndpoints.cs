@@ -2511,7 +2511,7 @@ public static class LeaseEndpoints
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
-                    timeoutDecision = submission.TestHostDecision;
+                    timeoutDecision = submission.MonolithDecision;
                 }
                 if (timeoutDecision?.Effect == AiOperatorEffects.StartContinuation)
                 {

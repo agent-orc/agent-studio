@@ -39,7 +39,6 @@ public sealed class MetaCycleHostedService : BackgroundService
     private readonly OrchestratorChatLog _chatLog;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MetaCycleHostedService> _logger;
-    private readonly OrchestrationEngineReadiness? _engine;
     private readonly TimeProvider _time;
     private readonly ITaskAccess _taskAccess;
 
@@ -60,10 +59,8 @@ public sealed class MetaCycleHostedService : BackgroundService
         IConfiguration configuration,
         ITaskAccess taskAccess,
         ILogger<MetaCycleHostedService> logger,
-        TimeProvider? time = null,
-        OrchestrationEngineReadiness? engine = null)
+        TimeProvider? time = null)
     {
-        _engine = engine;
         _taskRunner = taskRunner;
         _scanner = scanner;
         _interventions = interventions;
@@ -110,8 +107,6 @@ public sealed class MetaCycleHostedService : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
-        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
-        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(MetaCycleHostedService))) return;
         var status = _taskRunner.GetStatus();
         if (status?.Projects == null) return;
 

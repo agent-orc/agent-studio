@@ -3,19 +3,6 @@ namespace AgentStudio.Tasks;
 /// <summary>Pure lane admission rule for the guarded delivery chain.</summary>
 public static class DeliveryLanePolicy
 {
-    public static string? ReconciliationTarget(TaskInfo card, TaskIntegrationStatus? status)
-    {
-        var integrated = status?.Status == IntegrationStatuses.Integrated;
-        var fatal = RequiresEscalation(status);
-        if (card.State == TaskStates.AutoReview && card.Phase == LifecyclePhases.Integrating)
-            return integrated ? TaskStates.HumanReview : fatal ? TaskStates.Escalated : null;
-        if (card.State == TaskStates.HumanReview && !integrated)
-            return fatal ? TaskStates.Escalated : TaskStates.AutoReview;
-        if (card.State != TaskStates.Completed) return null;
-
-        return IsAcceptedDeliveryStale(card, status) ? TaskStates.AutoReview : null;
-    }
-
     /// <summary>Shared acceptance freshness check for reconciliation and archive admission.</summary>
     public static bool IsAcceptedDeliveryStale(TaskInfo card, TaskIntegrationStatus? status)
     {

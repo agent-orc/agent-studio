@@ -1,18 +1,12 @@
 namespace AgentStudio.Runner;
 
-/// <summary>
-/// Decision mode for each durable transition entry point. A production host is
-/// engine-only (<see cref="OrchestrationDecisionAuthority"/>); the Monolith and
-/// Shadow modes and the rollout journal apply only to test hosts. The loop-host
-/// switch <c>Orchestration:ExecutionMode</c> no longer selects who decides.
-/// </summary>
+/// <summary>Rollout switch for each durable transition entry point.</summary>
 public static class MonolithTransitionSwitch
 {
     public static OrchestrationExecutionMode For(IConfiguration configuration, string transition)
-        => OrchestrationDecisionAuthority.IsEngineOnly(configuration)
-            ? OrchestrationExecutionMode.Engine
-            : OrchestrationRolloutStore.ReadMode(configuration, transition) ?? OrchestrationExecutionModeParser.Parse(
-                configuration[$"Orchestration:Transitions:{transition}"]);
+        => OrchestrationRolloutStore.ReadMode(configuration, transition) ?? OrchestrationExecutionModeParser.Parse(
+            configuration[$"Orchestration:Transitions:{transition}"]
+            ?? configuration["Orchestration:ExecutionMode"]);
 }
 
 public static class EngineDecisionWaitMarker

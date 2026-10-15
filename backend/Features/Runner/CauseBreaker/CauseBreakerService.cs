@@ -101,6 +101,7 @@ public sealed class CauseBreakerService
     private readonly ICauseWaitMarkerStore _markers;
     private readonly ILogger<CauseBreakerService> _logger;
     private readonly TimeProvider _time;
+    private readonly IConfiguration _configuration;
     private List<CauseBreakerRecord>? _records;
     private readonly HashSet<string> _checkedPendingReviewIds = new(StringComparer.OrdinalIgnoreCase);
     private string? _checkedPendingStamp;
@@ -118,6 +119,7 @@ public sealed class CauseBreakerService
         TimeProvider? time = null)
     {
         _markers = markers;
+        _configuration = configuration;
         var root = configuration["TaskRepository"];
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
         _settings = settings;
@@ -456,7 +458,6 @@ public sealed class CauseBreakerService
                 && Same(item.ProbeTaskKey, taskKey)
                 && Same(item.ProbeAttemptId, attemptId));
             if (record is null) return null;
-            if (CauseBreakerPolicy.Close(null, probeGreen: true) != CauseBreakerCloseReason.ProbeGreen) return null;
             if (record.CloseReason is null)
                 _logger.LogInformation(
                     "cause-breaker-probe-green fingerprint={Fingerprint} cause={CauseKey} probe={TaskKey} attempt={AttemptId}",
@@ -501,9 +502,14 @@ public sealed class CauseBreakerService
     /// <summary>
     /// Closes every open breaker whose cause card has been integrated. Called
     /// by <see cref="CauseBreakerHostedService"/>; returns the number closed.
+    /// AGT-3060: whether the cause card closes the breaker is the AI Operator
+    /// decider <c>cause-breaker</c>; the <c>OperatorDecision</c> switch selects
+    /// whether it is decided here in process or by the engine, whose receipt
+    /// <see cref="ApplyCloseReceipt"/> applies.
     /// </summary>
-    public int Sweep()
+    public int Sweep(AiOperatorDecisionGateway? decisions = null)
     {
+        decisions ??= AiOperatorDecisionGateway.ForTestHost(_configuration);
         lock (_gate)
         {
             var records = Records();
@@ -522,20 +528,14 @@ public sealed class CauseBreakerService
                     if (green is { IsOpen: false }) closed++;
                     continue;
                 }
-                // The mutation service returns a folder slug, while the card's
-                // stable key survives a lane move. Resolve by key first.
-                var cause = string.IsNullOrWhiteSpace(record.CauseKey)
-                    ? null
-                    : _scanner.FindJob(record.CauseKey!, record.CauseWatchPath);
-                cause ??= string.IsNullOrWhiteSpace(record.CauseTaskId)
-                    ? null
-                    : _scanner.FindJob(record.CauseTaskId!, record.CauseWatchPath);
                 var reason = record.CloseReason switch
                 {
                     "probe-green" => CauseBreakerCloseReason.ProbeGreen,
                     "cause-integrated" => CauseBreakerCloseReason.CauseIntegrated,
                     "disabled" => CauseBreakerCloseReason.Disabled,
-                    _ => CauseBreakerPolicy.Close(cause?.State, probeGreen: false),
+                    _ => ClosesInProcess(record, decisions)
+                        ? CauseBreakerCloseReason.CauseIntegrated
+                        : CauseBreakerCloseReason.None,
                 };
                 if (reason == CauseBreakerCloseReason.None) continue;
                 var updated = CloseLocked(records, record, reason, exceptTaskKey: null);
@@ -553,6 +553,67 @@ public sealed class CauseBreakerService
                 Persist(records);
             return closed;
         }
+    }
+
+    /// <summary>
+    /// Applies the engine's <c>cause-breaker</c> receipt. A breaker that closed
+    /// meanwhile, or whose cause card changed after the facts were submitted,
+    /// is settled without an effect.
+    /// </summary>
+    public void ApplyCloseReceipt(AiOperatorApplication application)
+    {
+        if (application.Decision.Effect != AiOperatorEffects.CloseBreaker) return;
+        var frozen = application.Payload.CauseBreaker
+            ?? throw new InvalidDataException("The cause-breaker occurrence has no facts.");
+        lock (_gate)
+        {
+            var records = Records();
+            var record = records.FirstOrDefault(item => item.IsOpen && item.CloseReason is null
+                && string.Equals(item.Fingerprint, frozen.Fingerprint, StringComparison.Ordinal));
+            if (record is null) return;
+            var (_, facts) = CloseQuestion(record);
+            if (CloseSubjectKey(record, facts) != application.Payload.SubjectKey) return;
+            CloseLocked(records, record, CauseBreakerCloseReason.CauseIntegrated, exceptTaskKey: null);
+            ReconcileMarkersLocked(records);
+            Persist(records);
+        }
+    }
+
+    /// <summary>
+    /// Asks the AI Operator whether the cause card closes the breaker. True
+    /// only for an in-process close; on the Engine switch the occurrence waits
+    /// for its receipt.
+    /// </summary>
+    private bool ClosesInProcess(CauseBreakerRecord record, AiOperatorDecisionGateway decisions)
+    {
+        var (cause, facts) = CloseQuestion(record);
+        var submission = decisions.Submit(new AiOperatorDecisionRequest(cause?.ProjectName ?? FleetProject,
+            CloseSubjectTask(record), cause?.State ?? NoCause,
+            new AiOperatorDecisionPayload(AiOperatorDeciders.CauseBreaker, CloseSubjectKey(record, facts),
+                CauseBreaker: facts),
+            Period: null));
+        return submission.MonolithDecision?.Effect == AiOperatorEffects.CloseBreaker;
+    }
+
+    private const string FleetProject = "fleet";
+    private const string NoCause = "none";
+
+    private static string CloseSubjectTask(CauseBreakerRecord record) => "cause-breaker:" + record.Fingerprint;
+
+    private static string CloseSubjectKey(CauseBreakerRecord record, CauseBreakerOperatorFacts facts)
+        => AiOperatorDecisionGateway.FactsSubjectKey("cause-breaker", CloseSubjectTask(record), facts);
+
+    private (TaskInfo? Cause, CauseBreakerOperatorFacts Facts) CloseQuestion(CauseBreakerRecord record)
+    {
+        // The mutation service returns a folder slug, while the card's
+        // stable key survives a lane move. Resolve by key first.
+        var cause = string.IsNullOrWhiteSpace(record.CauseKey)
+            ? null
+            : _scanner.FindJob(record.CauseKey!, record.CauseWatchPath);
+        cause ??= string.IsNullOrWhiteSpace(record.CauseTaskId)
+            ? null
+            : _scanner.FindJob(record.CauseTaskId!, record.CauseWatchPath);
+        return (cause, new CauseBreakerOperatorFacts(record.Fingerprint, cause?.State));
     }
 
     /// <summary>

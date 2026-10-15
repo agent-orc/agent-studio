@@ -66,7 +66,6 @@ public sealed class OrchestratorPrepHostedService : BackgroundService
     private readonly PipelineExecutionLog _pipelineLog;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OrchestratorPrepHostedService> _logger;
-    private readonly OrchestrationEngineReadiness? _engine;
 
     private readonly Queue<DateTime> _callTimestamps = new();
     private bool _migratedStrayLane;
@@ -79,10 +78,8 @@ public sealed class OrchestratorPrepHostedService : BackgroundService
         OrchestratorChatLog chatLog,
         PipelineExecutionLog pipelineLog,
         IConfiguration configuration,
-        ILogger<OrchestratorPrepHostedService> logger,
-        OrchestrationEngineReadiness? engine = null)
+        ILogger<OrchestratorPrepHostedService> logger)
     {
-        _engine = engine;
         _scanner = scanner;
         _states = states;
         _settings = settings;
@@ -126,9 +123,6 @@ public sealed class OrchestratorPrepHostedService : BackgroundService
     /// </summary>
     public Task TickOnceAsync(CancellationToken ct)
     {
-        // AGT-3060: a residual monolith decider; it holds while the engine is not live.
-        if (!OrchestrationEngineReadiness.Allows(_engine, nameof(OrchestratorPrepHostedService)))
-            return Task.CompletedTask;
         var maxPerHour = _configuration.GetValue("Orchestrator:PrepCallsPerHour", 30);
         var maxIterations = _configuration.GetValue("Orchestrator:MaxPrepIterations", 3);
         var queueFloor = _configuration.GetValue("Orchestrator:QueueFloor", 2);

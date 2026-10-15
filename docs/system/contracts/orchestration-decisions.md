@@ -46,32 +46,31 @@ occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
 occurrence raises an operator feed alert and waits for a leased engine instance.
 
-AGT-3060 (I18) makes the engine the only decider on a production host.
-`OrchestrationDecisionAuthority` pins `CodingCompletion`, `ReviewReport`,
-`GateResult`, `OperatorSweep` and `OperatorDecision` to `Engine` outside a test
-host; a configured `Monolith` or `Shadow` transition fails startup, and the
-rollout panel refuses shadow and rollback. The Monolith and Shadow modes remain
-for test hosts only. `Orchestration:ExecutionMode` selects only the loop host.
-The run-liveness, stale-progress, steer-timeout, timeout-salvage and
-gate-environment-retry deciders moved into this library (`RunLivenessPolicy`,
-`StaleProgressPolicy`, `SteerTimeoutPolicy`, `RunTimeoutSalvageContinuationPolicy`,
-`GateEnvironmentRetryPolicy`). `AiOperatorDecisionPolicy` is the AI Operator role
-of AGT-W73 O1 A: it selects the decider's policy, classifies the effect with an
-autonomy class, and limits it (A0 and A1 act, A2 becomes a proposal, A3 is asked
-of a person). The monolith submits frozen facts as an `OperatorDecision`
-occurrence through `AiOperatorDecisionGateway`; the engine's
-`AiOperatorDecisionLoop` returns the receipt, and the decider's
-`IAiOperatorEffect` applies it after checking the lane and the frozen subject
-again. One active occurrence exists per card and decider; a periodic decider
-keys each period bucket, an event-triggered one keys its subject. The inventory
-of every hosted service and its owner is
+AGT-3060 (I18) moves the background deciders into this library. The operator
+decision of 15.10.2026 keeps the per-transition switch as the single selector
+of who decides: every profile defaults to `Monolith`, and with `Monolith`
+selected the monolith decides in process through this library; no host forces
+a mode. The run-liveness, stale-progress, steer-timeout, timeout-salvage,
+gate-environment-retry, delivery-chain, cause-breaker, intake-routing and
+acceptance-rail rules live here (`RunLivenessPolicy`, `StaleProgressPolicy`,
+`SteerTimeoutPolicy`, `RunTimeoutSalvageContinuationPolicy`,
+`GateEnvironmentRetryPolicy`, `DeliveryChainPolicy`, `CauseBreakerClosePolicy`,
+`IntakeRoutingPolicy`, `AcceptanceRailDecisionPolicy`). `AiOperatorDecisionPolicy`
+is the AI Operator role of AGT-W73 O1 A: it selects the decider's policy,
+classifies the effect with an autonomy class, and limits it (A0 and A1 act, A2
+becomes a proposal, A3 is asked of a person). The monolith submits frozen facts
+through `AiOperatorDecisionGateway`, whose profile is `OperatorDecision`. On
+`Monolith` the gateway returns this library's decision at once; on `Engine` it
+records an `OperatorDecision` occurrence, the engine's `AiOperatorDecisionLoop`
+returns the receipt, and the decider's `IAiOperatorEffect` applies it after
+checking the lane and the frozen facts again. One active occurrence exists per
+card and decider; a periodic decider keys each period bucket, an event-triggered
+one keys its subject, and the residual deciders key a hash of their facts. The
+inventory of every hosted service and its owner is
 [monolith-hosted-services.md](../architecture/monolith-hosted-services.md).
-D14 A leaves no monolith fallback, so every automatic decision waits for engine
-readiness: `OrchestrationEngineReadiness` treats the engine as live while an
-authenticated engine request reached `/api/v1/orchestration` within the
-contact window, each residual monolith decider (`decide, held` in the
-inventory) skips its pass otherwise, and `GET /healthz/orchestration-engine`
-reports `ready` or `engine-not-live`.
+`OrchestrationEngineReadiness` reports, but never holds: while a profile selects
+the engine, `GET /healthz/orchestration-engine` answers `ready` or
+`engine-not-live`.
 
 ## Inputs and outputs
 
@@ -158,15 +157,16 @@ returned decision to apply it or validate persistence results. Add new transitio
 policies to the owned-policy inventory and put their facts and rules in this
 library. Broader background-service movement remains I18.
 
-`MonolithDecisionBoundaryTests` (AGT-3060, `Category=Guard`) pins the
-production decision authority and the engine readiness in `Program.cs`, forbids
-decision-library calls in the moved deciders, requires every registered hosted
-service in the inventory and every residual `decide` row to be moved or held
-behind `OrchestrationEngineReadiness.Allows`, and freezes every remaining
-monolith call into a library policy or the test-host `MonolithTransitionAdapter`,
-plus every host-defined policy, rules or breaker class in a workflow feature
-folder, in `backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`.
-That baseline only shrinks; a reintroduced decision in `backend/` fails it.
+`MonolithDecisionBoundaryTests` (AGT-3060, `Category=Guard`) fails when a host
+forces a decision mode, when a registered hosted service is missing from the
+inventory, when a `decide` row is neither an AI Operator decider reaching
+`AiOperatorDecisionGateway` nor a switched profile reaching
+`MonolithTransitionSwitch` (beyond the closed set of pre-existing local
+deciders), when an AI Operator decider calls a library rule around the switch,
+or when a new host-defined policy, rules or breaker class appears in a workflow
+feature folder. The pre-existing host rules are frozen in
+`backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt`, which only
+shrinks.
 
 Run the guard with:
 

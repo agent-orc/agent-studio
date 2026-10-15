@@ -98,7 +98,7 @@ public sealed class DeliveryLanePolicyTests
             TargetRefFingerprint = "current-ref",
         };
 
-        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card, status));
+        Assert.Null(OperatorDecisionHarness.ReconciliationTarget(card, status));
     }
 
     [Fact]
@@ -115,8 +115,8 @@ public sealed class DeliveryLanePolicyTests
         };
         var integrated = new TaskIntegrationStatus { Status = IntegrationStatuses.Integrated };
 
-        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card, integrated));
-        Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+        Assert.Null(OperatorDecisionHarness.ReconciliationTarget(card, integrated));
+        Assert.Equal(TaskStates.AutoReview, OperatorDecisionHarness.ReconciliationTarget(
             card, integrated with { Status = IntegrationStatuses.Pending }));
     }
 
@@ -136,11 +136,11 @@ public sealed class DeliveryLanePolicyTests
             },
         };
 
-        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card,
+        Assert.Null(OperatorDecisionHarness.ReconciliationTarget(card,
             new TaskIntegrationStatus { Status = IntegrationStatuses.Integrated }));
-        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card,
+        Assert.Null(OperatorDecisionHarness.ReconciliationTarget(card,
             new TaskIntegrationStatus { Status = IntegrationStatuses.Pending }));
-        Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+        Assert.Equal(TaskStates.AutoReview, OperatorDecisionHarness.ReconciliationTarget(
             card with { Commits = [new TaskCommitInfo
                 { Sha = new string('b', 40), RunAttemptId = "new-epoch" }] },
             new TaskIntegrationStatus { Status = IntegrationStatuses.Integrated }));
@@ -175,19 +175,19 @@ public sealed class DeliveryLanePolicyTests
                 Status = IntegrationStatuses.Integrated,
                 IntegrationBranch = "develop", TargetRefFingerprint = "ref-1",
             };
-            Assert.Null(DeliveryLanePolicy.ReconciliationTarget(accepted, integrated));
-            Assert.Null(DeliveryLanePolicy.ReconciliationTarget(
+            Assert.Null(OperatorDecisionHarness.ReconciliationTarget(accepted, integrated));
+            Assert.Null(OperatorDecisionHarness.ReconciliationTarget(
                 accepted, integrated with { TargetRefFingerprint = "ref-2" }));
-            Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+            Assert.Equal(TaskStates.AutoReview, OperatorDecisionHarness.ReconciliationTarget(
                 accepted with { CompletionClaim = accepted.CompletionClaim with { DeliveryEpoch = "epoch-0" } }, integrated));
-            Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+            Assert.Equal(TaskStates.AutoReview, OperatorDecisionHarness.ReconciliationTarget(
                 accepted with { CompletionClaim = accepted.CompletionClaim with { ResultSha = new string('b', 40) } }, integrated));
 
             var integrating = accepted with { State = TaskStates.AutoReview, Phase = LifecyclePhases.Integrating };
-            Assert.Equal(TaskStates.HumanReview, DeliveryLanePolicy.ReconciliationTarget(integrating, integrated));
-            Assert.Equal(TaskStates.Escalated, DeliveryLanePolicy.ReconciliationTarget(integrating,
+            Assert.Equal(TaskStates.HumanReview, OperatorDecisionHarness.ReconciliationTarget(integrating, integrated));
+            Assert.Equal(TaskStates.Escalated, OperatorDecisionHarness.ReconciliationTarget(integrating,
                 integrated with { Status = IntegrationStatuses.ConflictSkipped }));
-            Assert.Null(DeliveryLanePolicy.ReconciliationTarget(integrating,
+            Assert.Null(OperatorDecisionHarness.ReconciliationTarget(integrating,
                 integrated with { Status = IntegrationStatuses.Pending }));
         }
         finally { Directory.Delete(folder, recursive: true); }

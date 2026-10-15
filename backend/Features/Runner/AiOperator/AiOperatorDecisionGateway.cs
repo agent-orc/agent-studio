@@ -16,10 +16,11 @@ public sealed record AiOperatorDecisionRequest(
     long AuthorityEpoch = 0);
 
 /// <summary>
-/// Either the occurrence that now waits for an engine receipt, or, on a test
-/// host in the Monolith decision mode only, the in-process decision.
+/// Either the occurrence that now waits for an engine receipt (switch on
+/// Engine), or the decision the monolith took in process through the shared
+/// decision library (switch on Monolith, the default).
 /// </summary>
-public sealed record AiOperatorSubmission(OrchestrationRunDto? Occurrence, AiOperatorDecision? TestHostDecision)
+public sealed record AiOperatorSubmission(OrchestrationRunDto? Occurrence, AiOperatorDecision? MonolithDecision)
 {
     public bool WaitsForEngine => Occurrence is not null;
 }
@@ -53,27 +54,49 @@ public sealed record AiOperatorApplication(
 /// <summary>
 /// AGT-3060 (I18): the monolith's only seam to the AI Operator. Background
 /// services collect typed facts and submit them here; they never call a
-/// decision policy. The engine decides and the store applies the receipt
-/// through <see cref="IAiOperatorEffect"/>.
+/// decision policy. The per-transition switch <see cref="Transition"/> is the
+/// single selector of who decides (operator decision 15.10.2026): on Monolith
+/// (the default) the monolith decides in process through the shared decision
+/// library and the caller applies the decision at once; on Engine the engine
+/// decides and the store applies the receipt through
+/// <see cref="IAiOperatorEffect"/>. Both run the same
+/// <c>AiOperatorDecisionPolicy</c>, so switching back is the rollback.
 /// </summary>
 public sealed class AiOperatorDecisionGateway
 {
-    /// <summary>Transition profile key; only test hosts may set it to Monolith.</summary>
+    /// <summary>Transition profile key: <c>Orchestration:Transitions:OperatorDecision</c>.</summary>
     public const string Transition = "OperatorDecision";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly IConfiguration _configuration;
-    private readonly MonolithOrchestrationStore? _store;
+    private readonly Func<MonolithOrchestrationStore?> _store;
 
     public AiOperatorDecisionGateway(IConfiguration configuration, MonolithOrchestrationStore? store = null)
+        : this(configuration, () => store) { }
+
+    private AiOperatorDecisionGateway(IConfiguration configuration, Func<MonolithOrchestrationStore?> store)
     {
         _configuration = configuration;
         _store = store;
     }
 
     /// <summary>
-    /// The test-host gateway for directly constructed services. Its default
-    /// decision mode is Monolith because the configuration is not engine-only.
+    /// The host gateway. The occurrence store is resolved on the first engine
+    /// submission: the store's applier reaches services that decide through
+    /// this gateway (the acceptance rail via the merge runner), so resolving
+    /// it eagerly would be a dependency cycle.
+    /// </summary>
+    public static AiOperatorDecisionGateway Deferred(IConfiguration configuration,
+        Func<MonolithOrchestrationStore> store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var resolved = new Lazy<MonolithOrchestrationStore>(store);
+        return new AiOperatorDecisionGateway(configuration, () => resolved.Value);
+    }
+
+    /// <summary>
+    /// The gateway for directly constructed services without an occurrence
+    /// store. It decides in process; selecting Engine without a store fails.
     /// </summary>
     public static AiOperatorDecisionGateway ForTestHost(IConfiguration configuration) => new(configuration);
 
@@ -85,13 +108,25 @@ public sealed class AiOperatorDecisionGateway
         ArgumentNullException.ThrowIfNull(request);
         if (!EngineDecides)
             return new(null, MonolithTransitionAdapter.Operator(request.Payload));
-        if (_store is null)
-            throw new InvalidOperationException("The orchestration authority is unavailable.");
-        var run = _store.CreateOperatorDecision(request.ProjectId, request.TaskId, request.Payload.Decider,
+        var store = _store()
+            ?? throw new InvalidOperationException("The orchestration authority is unavailable.");
+        var run = store.CreateOperatorDecision(request.ProjectId, request.TaskId, request.Payload.Decider,
             JsonSerializer.Serialize(request.Payload, Json), request.Payload.SubjectKey,
             request.ExpectedSourceState, request.AuthorityAttemptId ?? request.TaskId,
             request.AuthorityFence, request.AuthorityEpoch, request.Period);
         return new(run, null);
+    }
+
+    /// <summary>
+    /// A subject key that names the exact facts: unchanged facts map to the
+    /// same occurrence, so an engine Hold is not asked again until a fact
+    /// changes, and the effect can tell that the card moved on.
+    /// </summary>
+    public static string FactsSubjectKey<TFacts>(string prefix, string taskId, TFacts facts)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
+        var hash = System.Security.Cryptography.SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(facts, Json));
+        return $"{prefix}:{taskId}:{Convert.ToHexStringLower(hash.AsSpan(0, 8))}";
     }
 
     public static AiOperatorDecisionPayload ReadPayload(string payloadJson)

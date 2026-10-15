@@ -1,68 +1,102 @@
 using System.Text.RegularExpressions;
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Runner;
 using AgentStudio.TestSupport;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace AgentStudio.Tests.Architecture;
 
 /// <summary>
-/// AGT-3060 (I18, AGT-W65 D14 A): no transition decision may return to
-/// <c>backend/</c>. A production host is engine-only, the moved background
-/// deciders call no decision policy, and every remaining monolith call site or
-/// host-defined policy is frozen in a baseline that only shrinks.
+/// AGT-3060 (I18) with the operator decision of 15.10.2026: the per-transition
+/// switch is the single selector of who decides, and its default stays
+/// Monolith. Every background decider of <c>backend/</c> therefore reaches its
+/// rule through the shared decision library behind a switch profile: an AI
+/// Operator decider through <see cref="AiOperatorDecisionGateway"/> or a lane
+/// profile through <see cref="MonolithTransitionSwitch"/>. No hosted service may
+/// decide around the switch, a routed decider calls no library rule directly,
+/// and no new host-defined rule may appear.
 /// </summary>
 [Trait("Category", "Guard")]
 public sealed class MonolithDecisionBoundaryTests
 {
     private const string BaselinePath = "backend.Tests/Architecture/Fixtures/monolith-decision-baseline.txt";
     private const string InventoryPath = "docs/system/architecture/monolith-hosted-services.md";
+    private const string Operator = "decide, operator";
+    private const string Switched = "decide, switched";
+    private const string Local = "decide, local";
 
     /// <summary><c>AddHostedService&lt;T&gt;()</c> and <c>AddHostedService(sp =&gt; sp.GetRequiredService&lt;T&gt;())</c>.</summary>
     private static readonly Regex HostedRegistration = new(
         @"AddHostedService\s*(?:<(?:[\w.]+\.)?(?<type>\w+)>|\(\s*\w+\s*=>\s*\w+\s*\.\s*GetRequiredService<(?:[\w.]+\.)?(?<type>\w+)>)",
         RegexOptions.Compiled);
 
-    /// <summary>A held decider that decides through another held decider's guarded entry point.</summary>
-    private static readonly IReadOnlyDictionary<string, string> HeldThrough = new Dictionary<string, string>
+    /// <summary>A hosted service whose decision runs in the named service it drives.</summary>
+    private static readonly IReadOnlyDictionary<string, string> DecidesThrough = new Dictionary<string, string>
     {
         ["AutoReviewPostProcessingWorker"] = "ReviewDecisionOrchestrator",
+        ["BatchGatePilotHostedService"] = "BatchGatePilotService",
+        ["CauseBreakerHostedService"] = "CauseBreakerService",
+        ["GateEnvironmentRetryHostedService"] = "GateEnvironmentRetryService",
+        ["OperatorSweepHostedService"] = "OperatorSweepService",
+        ["RunLivenessMonitorHostedService"] = "RunLivenessMonitor",
+        ["StaleProgressSweepHostedService"] = "StaleProgressArchiver",
+        ["SteerTimeoutMonitorHostedService"] = "SteerTimeoutMonitor",
     };
+
+    /// <summary>
+    /// Pre-existing local deciders outside the background-decider slice: the
+    /// local runner retires with local execution (D16 A, I11) and the
+    /// supervisor loops are off by default and become AI Operator occurrences
+    /// later (AGT-W73). The set is closed; a new hosted decider must be routed.
+    /// </summary>
+    private static readonly IReadOnlySet<string> LocalDeciders = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "TaskRunnerService",
+        "AutoInterventionHostedService",
+        "MetaCycleHostedService",
+        "OrchestratorPrepHostedService",
+    };
+
+    /// <summary>
+    /// Library helpers a routed decider may call: they validate an operator's
+    /// Retry integration intent or word a park reason; they choose no transition.
+    /// </summary>
+    private static readonly IReadOnlySet<string> LibraryHelpers = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "GateEnvironmentRetryPolicy.OperatorReplayRefusal",
+        "GateEnvironmentRetryPolicy.ParkedReason",
+    };
+
     private static readonly Regex WorkflowFolder = new(
         @"^backend/(Features/(Runner|Pipeline|Tasks|Supervisor)|Shared/Runner)/", RegexOptions.Compiled);
     private static readonly Regex HostPolicy = new(@"\bclass\s+(\w+(?:Policy|Rules|Breaker))\b", RegexOptions.Compiled);
 
-    /// <summary>The background deciders AGT-3060 moved into the engine; they submit facts only.</summary>
-    private static readonly string[] MovedDeciders =
-    [
-        "backend/Features/Runner/RunLivenessMonitor.cs",
-        "backend/Features/Runner/StaleProgressArchiver.cs",
-        "backend/Features/Runner/SteerTimeoutMonitor.cs",
-        "backend/Features/Runner/RunLivenessMonitorHostedService.cs",
-        "backend/Features/Runner/StaleProgressSweepHostedService.cs",
-        "backend/Features/Runner/SteerTimeoutMonitorHostedService.cs",
-        "backend/Features/Pipeline/GateEnvironmentRetry/GateEnvironmentRetryHostedService.cs",
-        "backend/Features/Runner/OperatorSweeps/OperatorSweepHostedService.cs",
-    ];
-
     [Fact]
-    public void Production_host_pins_the_decision_authority_to_the_engine()
+    public void Production_host_does_not_force_engine_only_decisions()
     {
-        var program = File.ReadAllText(Path.Combine(RepositoryRoot.Find(), "backend", "Host", "Program.cs"));
-        Assert.Matches(new Regex(
-            @"if \(!builder\.Environment\.IsEnvironment\(""Test""\) && !underTestHost\)\s*"
-            + @"OrchestrationDecisionAuthority\.RequireEngine\(builder\.Configuration\);"), program);
+        var program = StripComments(File.ReadAllText(Path.Combine(RepositoryRoot.Find(), "backend", "Host", "Program.cs")));
+        Assert.DoesNotMatch(new Regex(@"RequireEngine|DecisionAuthority|Transitions:\w+""\]\s*=\s*""Engine"""), program);
     }
 
     [Fact]
-    public void Production_host_requires_engine_readiness_before_any_decision()
+    public void Default_switch_keeps_every_profile_on_the_monolith_and_honors_explicit_modes()
     {
-        var root = RepositoryRoot.Find();
-        var program = File.ReadAllText(Path.Combine(root, "backend", "Host", "Program.cs"));
-        var endpoints = File.ReadAllText(Path.Combine(root,
-            "backend", "Features", "Runner", "MonolithOrchestrationEndpoints.cs"));
-        Assert.Contains("AddSingleton<OrchestrationEngineReadiness>()", program);
-        Assert.Contains("AddHostedService<OrchestrationEngineReadinessService>()", program);
-        Assert.Contains("GetService<OrchestrationEngineReadiness>()?.Observe(engineId)", endpoints);
+        var empty = new ConfigurationBuilder().Build();
+        foreach (var profile in OrchestrationEngineReadiness.EngineProfiles)
+            Assert.Equal(OrchestrationExecutionMode.Monolith, MonolithTransitionSwitch.For(empty, profile));
+
+        var configured = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Orchestration:ExecutionMode"] = "Engine",
+            ["Orchestration:Transitions:GateResult"] = "Monolith",
+            [$"Orchestration:Transitions:{AiOperatorDecisionGateway.Transition}"] = "Engine",
+        }).Build();
+        Assert.Equal(OrchestrationExecutionMode.Monolith, MonolithTransitionSwitch.For(configured, "GateResult"));
+        Assert.Equal(OrchestrationExecutionMode.Engine,
+            MonolithTransitionSwitch.For(configured, AiOperatorDecisionGateway.Transition));
+        Assert.False(new AiOperatorDecisionGateway(empty).EngineDecides);
+        Assert.True(new AiOperatorDecisionGateway(configured).EngineDecides);
     }
 
     [Fact]
@@ -70,9 +104,8 @@ public sealed class MonolithDecisionBoundaryTests
     {
         var root = RepositoryRoot.Find();
         var inventory = Inventory.Load(Path.Combine(root, InventoryPath));
-        var registered = Directory.EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
-            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"))
-            .SelectMany(file => HostedRegistration.Matches(StripComments(File.ReadAllText(file))))
+        var registered = BackendSources(root).Values
+            .SelectMany(source => HostedRegistration.Matches(StripComments(source)))
             .Select(match => match.Groups["type"].Value)
             .ToHashSet(StringComparer.Ordinal);
 
@@ -81,143 +114,159 @@ public sealed class MonolithDecisionBoundaryTests
     }
 
     [Fact]
-    public void Every_residual_decider_holds_while_the_engine_is_not_live()
+    public void Every_hosted_decider_routes_its_decision_through_the_switch()
     {
         var root = RepositoryRoot.Find();
         var inventory = Inventory.Load(Path.Combine(root, InventoryPath));
-        var sources = Directory.EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
-            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"))
-            .Select(file => StripComments(File.ReadAllText(file)));
 
-        Assert.Empty(ResidualDecisionViolations(inventory, string.Join("\n", sources)));
+        Assert.Empty(RoutingViolations(inventory, BackendSources(root)));
+    }
+
+    [Fact]
+    public void Routed_deciders_call_no_decision_rule_directly()
+    {
+        var root = RepositoryRoot.Find();
+        var inventory = Inventory.Load(Path.Combine(root, InventoryPath));
+        var sources = BackendSources(root);
+        var calls = DecisionCall();
+        var violations = new List<string>();
+        foreach (var service in inventory.Where(row => row.Value == Operator).Select(row => row.Key))
+        foreach (var owner in new[] { service, DecidesThrough.GetValueOrDefault(service, service) }.Distinct())
+        foreach (var (path, source) in DeclaringFiles(sources, owner))
+        {
+            var stripped = StripComments(source);
+            foreach (Match call in calls.Matches(stripped))
+                if (!LibraryHelpers.Contains(Regex.Replace(call.Value, @"[\s(]", string.Empty)))
+                    violations.Add($"{path} ({service}) decides around the switch: {call.Value}");
+            if (HostPolicy.Match(stripped) is { Success: true } rule)
+                violations.Add($"{path} ({service}) defines {rule.Groups[1].Value}");
+        }
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void Host_defined_rules_do_not_return()
+    {
+        var root = RepositoryRoot.Find();
+        var sources = BackendSources(root);
+        var baseline = Baseline.Load(Path.Combine(root, BaselinePath));
+        var violations = PolicyViolations(sources, baseline);
+        // The list only shrinks: a removed rule must leave the baseline too.
+        violations.AddRange(baseline
+            .Where(entry => !sources.TryGetValue(entry.Split(' ')[0], out var source)
+                || !Regex.IsMatch(StripComments(source), @"\bclass\s+" + Regex.Escape(entry.Split(' ')[1]) + @"\b"))
+            .Select(entry => $"{entry} is gone; remove it from the baseline"));
+        Assert.True(violations.Count == 0,
+            "Transition rules belong in orchestration-decisions and are reached through a switch profile "
+            + "(AiOperatorDecisionGateway or MonolithTransitionSwitch). " + string.Join("; ", violations));
     }
 
     [Theory]
     [InlineData("decide", "")]
     [InlineData("decide, held", "")]
-    [InlineData("decide, held", "OrchestrationEngineReadiness.Allows(_engine, nameof(OtherService))")]
-    public void Guard_rejects_a_residual_decider_that_is_not_held(string decisionClass, string source)
+    [InlineData("decide, local", "")]
+    [InlineData(Operator, "")]
+    [InlineData(Operator, "var verdict = DeliveryChainPolicy.Decide(facts);")]
+    [InlineData(Switched, "")]
+    [InlineData(Switched, "var mode = OrchestrationExecutionMode.Monolith;")]
+    public void Guard_rejects_a_hosted_decider_that_bypasses_the_switch(string decisionClass, string body)
     {
         var inventory = new Dictionary<string, string> { ["NewSweepHostedService"] = decisionClass };
-        Assert.NotEmpty(ResidualDecisionViolations(inventory, source));
-    }
-
-    [Fact]
-    public void Guard_accepts_a_held_and_a_moved_decider()
-    {
-        var inventory = new Dictionary<string, string>
+        var sources = new Dictionary<string, string>
         {
-            ["NewSweepHostedService"] = "decide, held",
-            ["MovedSweepHostedService"] = "decide, moved",
+            ["backend/Features/Runner/NewSweepHostedService.cs"] = "public sealed class NewSweepHostedService { " + body + " }",
         };
-        Assert.Empty(ResidualDecisionViolations(inventory,
-            "if (!OrchestrationEngineReadiness.Allows(_engine, nameof(NewSweepHostedService))) return;"));
-    }
-
-    [Fact]
-    public void Moved_background_deciders_call_no_decision_policy()
-    {
-        var root = RepositoryRoot.Find();
-        var pattern = DecisionCall();
-        foreach (var file in MovedDeciders)
-        {
-            var source = StripComments(File.ReadAllText(Path.Combine(root, file)));
-            Assert.False(pattern.IsMatch(source), $"{file} decides in the monolith: {pattern.Match(source).Value}");
-        }
-    }
-
-    [Fact]
-    public void Monolith_decision_code_does_not_grow()
-    {
-        var root = RepositoryRoot.Find();
-        var sources = Directory.EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
-            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"))
-            .ToDictionary(file => Path.GetRelativePath(root, file).Replace('\\', '/'), File.ReadAllText);
-        var baseline = Baseline.Load(Path.Combine(root, BaselinePath));
-        var violations = Violations(sources, baseline);
-        // The list only shrinks: a removed call or policy must leave the baseline too.
-        var calls = DecisionCall();
-        violations.AddRange(baseline.Calls
-            .Where(entry => (sources.TryGetValue(entry.Key, out var source)
-                ? calls.Matches(StripComments(source)).Count : 0) < entry.Value)
-            .Select(entry => $"{entry.Key} has fewer decision calls than its baseline {entry.Value}; lower it"));
-        violations.AddRange(baseline.Policies
-            .Where(entry => !sources.TryGetValue(entry.Split(' ')[0], out var source)
-                || !Regex.IsMatch(StripComments(source), @"\bclass\s+" + Regex.Escape(entry.Split(' ')[1]) + @"\b"))
-            .Select(entry => $"{entry} is gone; remove it from the baseline"));
-        Assert.True(violations.Count == 0,
-            "Transition decisions belong in orchestration-decisions and run in the Orchestrator Engine "
-            + "(submit facts through AiOperatorDecisionGateway). " + string.Join("; ", violations));
+        Assert.NotEmpty(RoutingViolations(inventory, sources));
     }
 
     [Theory]
-    [InlineData("backend/Features/Runner/NewSweep.cs", "var verdict = RunLivenessPolicy.Decide(facts);")]
-    [InlineData("backend/Features/Runner/NewSweep.cs", "var verdict = MonolithTransitionAdapter.Operator(payload);")]
-    [InlineData("backend/Features/Runner/RunLivenessMonitor.cs", "return StaleProgressPolicy.Decide(facts);")]
+    [InlineData(Operator, "_decisions.Submit(new AiOperatorDecisionRequest(p, t, s, payload, null)); AiOperatorDecisionGateway g;")]
+    [InlineData(Switched, "MonolithTransitionSwitch.For(_configuration, \"GateResult\")")]
+    public void Guard_accepts_a_routed_decider(string decisionClass, string body)
+    {
+        var inventory = new Dictionary<string, string> { ["NewSweepHostedService"] = decisionClass };
+        var sources = new Dictionary<string, string>
+        {
+            ["backend/Features/Runner/NewSweepHostedService.cs"] = "public sealed class NewSweepHostedService { " + body + " }",
+        };
+        Assert.Empty(RoutingViolations(inventory, sources));
+    }
+
+    [Theory]
     [InlineData("backend/Features/Tasks/NewRail.cs", "public static class ReviewRetryPolicy { }")]
     [InlineData("backend/Features/Supervisor/NewCycle.cs", "internal sealed class NightlyRules { }")]
-    public void Guard_rejects_a_reintroduced_monolith_decision(string path, string source)
-    {
-        var violations = Violations(new Dictionary<string, string> { [path] = source }, Baseline.Empty);
-        Assert.NotEmpty(violations);
-    }
-
-    [Fact]
-    public void Guard_rejects_a_grown_call_site_and_accepts_a_baselined_one()
-    {
-        var baseline = new Baseline(new Dictionary<string, int> { ["backend/Features/Tasks/Old.cs"] = 1 },
-            new HashSet<string>(StringComparer.Ordinal));
-        const string one = "var a = TransitionDecisionPolicy.CompletionLane(outcome, false);";
-        Assert.Empty(Violations(new Dictionary<string, string> { ["backend/Features/Tasks/Old.cs"] = one }, baseline));
-        Assert.NotEmpty(Violations(new Dictionary<string, string>
-        { ["backend/Features/Tasks/Old.cs"] = one + "\n" + one }, baseline));
-    }
+    [InlineData("backend/Features/Tasks/Acceptance/DeliveryChainReconciler.cs", "static class ReconciliationPolicy { }")]
+    public void Guard_rejects_a_reintroduced_host_rule(string path, string source)
+        => Assert.NotEmpty(PolicyViolations(new Dictionary<string, string> { [path] = source },
+            new HashSet<string>(StringComparer.Ordinal)));
 
     /// <summary>
-    /// A row classed <c>decide</c> must be moved to the engine or held; a held
-    /// one must check readiness under its own name (or the name of the decider
-    /// it delegates to) somewhere in <c>backend/</c>.
+    /// A <c>decide</c> row must be routed: <c>decide, operator</c> reaches the
+    /// AI Operator gateway and submits facts, <c>decide, switched</c> reads a
+    /// transition profile of the switch, either in the service itself or in the
+    /// service it drives. <c>decide, local</c> is limited to the closed set.
     /// </summary>
-    private static List<string> ResidualDecisionViolations(IReadOnlyDictionary<string, string> inventory, string sources)
+    private static List<string> RoutingViolations(IReadOnlyDictionary<string, string> inventory,
+        IReadOnlyDictionary<string, string> sources)
     {
         var violations = new List<string>();
         foreach (var (service, decisionClass) in inventory)
         {
             if (!decisionClass.StartsWith("decide", StringComparison.Ordinal)) continue;
-            if (decisionClass is "decide, moved") continue;
-            if (decisionClass != "decide, held")
+            if (decisionClass == Local)
             {
-                violations.Add($"{service} is classed '{decisionClass}'; move it to the engine or hold it");
+                if (!LocalDeciders.Contains(service))
+                    violations.Add($"{service} is a new local decider; route it through a switch profile");
                 continue;
             }
-            var holder = HeldThrough.GetValueOrDefault(service, service);
-            if (!Regex.IsMatch(sources, @"OrchestrationEngineReadiness\.Allows\([^;]*nameof\("
-                    + Regex.Escape(holder) + @"\)"))
-                violations.Add($"{service} no longer holds while the engine is not live");
+            if (decisionClass is not (Operator or Switched))
+            {
+                violations.Add($"{service} is classed '{decisionClass}'; route it through a switch profile");
+                continue;
+            }
+            var owners = new[] { service, DecidesThrough.GetValueOrDefault(service, service) }.Distinct();
+            var code = string.Join("\n", owners.SelectMany(owner => DeclaringFiles(sources, owner))
+                .Select(file => StripComments(file.Source)));
+            if (code.Length == 0)
+            {
+                violations.Add($"{service} has no source in backend/");
+                continue;
+            }
+            var routed = decisionClass == Operator
+                ? Regex.IsMatch(code, @"\bAiOperatorDecisionGateway\b") && Regex.IsMatch(code, @"\.Submit\(")
+                : Regex.IsMatch(code, @"\bMonolithTransitionSwitch\.For\(");
+            if (!routed)
+                violations.Add($"{service} is classed '{decisionClass}' but does not reach the switch");
         }
         return violations;
     }
 
-    private static List<string> Violations(IReadOnlyDictionary<string, string> sources, Baseline baseline)
+    private static List<string> PolicyViolations(IReadOnlyDictionary<string, string> sources, IReadOnlySet<string> baseline)
     {
         var violations = new List<string>();
-        var calls = DecisionCall();
         foreach (var (path, raw) in sources)
         {
-            var source = StripComments(raw);
-            var count = calls.Matches(source).Count;
-            var allowed = baseline.Calls.GetValueOrDefault(path);
-            if (count > allowed)
-                violations.Add($"{path} has {count} decision call(s), baseline {allowed}");
             if (!WorkflowFolder.IsMatch(path)) continue;
-            foreach (Match match in HostPolicy.Matches(source))
-                if (!baseline.Policies.Contains($"{path} {match.Groups[1].Value}"))
+            foreach (Match match in HostPolicy.Matches(StripComments(raw)))
+                if (!baseline.Contains($"{path} {match.Groups[1].Value}"))
                     violations.Add($"{path} defines {match.Groups[1].Value}");
         }
         return violations;
     }
 
-    /// <summary>Calls into any static policy or breaker of the decision library, and the test-host adapter.</summary>
+    private static IEnumerable<(string Path, string Source)> DeclaringFiles(
+        IReadOnlyDictionary<string, string> sources, string type)
+    {
+        var declaration = new Regex(@"\bclass\s+" + Regex.Escape(type) + @"\b");
+        return sources.Where(item => declaration.IsMatch(item.Value)).Select(item => (item.Key, item.Value));
+    }
+
+    private static Dictionary<string, string> BackendSources(string root)
+        => Directory.EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"))
+            .ToDictionary(file => Path.GetRelativePath(root, file).Replace('\\', '/'), File.ReadAllText);
+
+    /// <summary>Calls into any static policy or breaker of the decision library, and the monolith adapter.</summary>
     private static Regex DecisionCall()
     {
         var names = typeof(TransitionDecisionPolicy).Assembly.GetExportedTypes()
@@ -243,23 +292,18 @@ public sealed class MonolithDecisionBoundaryTests
                 .ToDictionary(match => match.Groups[1].Value, match => match.Groups[2].Value, StringComparer.Ordinal);
     }
 
-    private sealed record Baseline(IReadOnlyDictionary<string, int> Calls, IReadOnlySet<string> Policies)
+    private static class Baseline
     {
-        public static Baseline Empty { get; } = new(new Dictionary<string, int>(), new HashSet<string>());
-
-        public static Baseline Load(string path)
+        public static IReadOnlySet<string> Load(string path)
         {
-            var calls = new Dictionary<string, int>(StringComparer.Ordinal);
             var policies = new HashSet<string>(StringComparer.Ordinal);
             foreach (var line in File.ReadAllLines(path).Select(item => item.Trim())
                          .Where(item => item.Length > 0 && !item.StartsWith('#')))
             {
-                var parts = line.Split(' ', 3);
-                if (parts is ["call", var file, var count]) calls[file] = int.Parse(count);
-                else if (parts is ["policy", var owner, var type]) policies.Add($"{owner} {type}");
+                if (line.Split(' ', 3) is ["policy", var owner, var type]) policies.Add($"{owner} {type}");
                 else throw new InvalidDataException($"Malformed baseline line: {line}");
             }
-            return new(calls, policies);
+            return policies;
         }
     }
 }

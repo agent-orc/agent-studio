@@ -89,16 +89,4 @@ public static class CauseBreakerPolicy
         return new CauseBreakerDecision(CauseBreakerAction.Retry, attempts, cards, thresholds,
             $"{attempts}/{thresholds.Attempts} attempts and {cards}/{thresholds.Cards} cards are below the threshold.");
     }
-
-    /// <summary>
-    /// When an open breaker closes. Only 6-completed counts as integrated; an
-    /// archived cause card did not prove anything (D5 fail-closed), so it keeps
-    /// the breaker open until an operator probe or a green review closes it.
-    /// </summary>
-    public static CauseBreakerCloseReason Close(string? causeCardState, bool probeGreen)
-    {
-        if (string.Equals(causeCardState, AgentStudio.Shared.TaskStates.Completed, StringComparison.OrdinalIgnoreCase))
-            return CauseBreakerCloseReason.CauseIntegrated;
-        return probeGreen ? CauseBreakerCloseReason.ProbeGreen : CauseBreakerCloseReason.None;
-    }
 }

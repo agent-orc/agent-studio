@@ -1,4 +1,5 @@
 using System.Net;
+using AgentStudio.Diagnostics;
 using AgentStudio.Runner;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,70 +13,69 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// AGT-3060 (I18): the engine is the only decider, so a production host has no
-/// monolith fallback. Every automatic decision waits for engine readiness, which
-/// the authority observes from engine requests on the orchestration endpoints.
+/// AGT-3060 (I18): the per-transition switch selects who decides. Readiness is
+/// a report: it is required only while a switch profile selects the engine,
+/// and it never holds a decision.
 /// </summary>
 public sealed class OrchestrationEngineReadinessTests : IDisposable
 {
+    private const string EngineSwitch = "Orchestration:Transitions:OperatorDecision";
     private readonly FakeTimeProvider _time = new();
     private readonly string _workspace = Path.Combine(Path.GetTempPath(),
         "engine-readiness-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void Engine_only_host_is_live_only_within_the_contact_window()
+    public void Engine_switched_host_is_live_only_within_the_contact_window()
     {
-        var readiness = Readiness(new() { [OrchestrationEngineReadiness.ContactWindowKey] = "20" });
+        var readiness = Readiness(new()
+        {
+            [EngineSwitch] = "Engine",
+            [OrchestrationEngineReadiness.ContactWindowKey] = "20",
+        });
 
         Assert.True(readiness.Required);
         Assert.False(readiness.IsLive);
         Assert.Equal(OrchestrationEngineReadiness.NotLive, readiness.State);
-        Assert.False(readiness.AllowsResidualDecision("test-decider"));
 
         readiness.Observe("engine_one");
         Assert.True(readiness.IsLive);
         Assert.Equal(OrchestrationEngineReadiness.Ready, readiness.State);
         Assert.Equal("engine_one", readiness.LastEngineId);
-        Assert.True(readiness.AllowsResidualDecision("test-decider"));
 
         _time.Advance(TimeSpan.FromSeconds(20));
         Assert.True(readiness.IsLive);
         _time.Advance(TimeSpan.FromSeconds(1));
         Assert.False(readiness.IsLive);
-        Assert.False(readiness.AllowsResidualDecision("test-decider"));
     }
 
     [Theory]
+    [InlineData("Orchestration:Transitions:CodingCompletion", "Engine")]
+    [InlineData("Orchestration:Transitions:ReviewReport", "Shadow")]
+    [InlineData("Orchestration:Transitions:OperatorSweep", "Engine")]
+    [InlineData(EngineSwitch, "Engine")]
+    [InlineData("Orchestration:ExecutionMode", "Engine")]
+    public void Readiness_is_required_once_any_switch_profile_selects_the_engine(string key, string mode)
+        => Assert.True(Readiness(new() { [key] = mode }).Required);
+
+    [Theory]
     [InlineData(null, null, null)]
+    [InlineData("Monolith", null, null)]
     [InlineData("Engine", "TaskServer:BaseUrl", "http://task-server:5071")]
     [InlineData("Engine", "Security:Profile", "public-demo-readonly")]
-    public void Readiness_is_not_required_on_a_test_host_behind_the_proxy_or_for_public_demo(
-        string? authority, string? key, string? value)
+    public void Readiness_is_not_required_on_the_monolith_switch_behind_the_proxy_or_for_public_demo(
+        string? mode, string? key, string? value)
     {
-        var settings = new Dictionary<string, string?> { [OrchestrationDecisionAuthority.ConfigurationKey] = authority };
+        var settings = new Dictionary<string, string?>
+        {
+            ["Orchestration:ExecutionMode"] = "Monolith",
+            [EngineSwitch] = mode,
+        };
         if (key is not null) settings[key] = value;
-        var readiness = Readiness(settings, engineOnly: false);
+        var readiness = Readiness(settings);
 
         Assert.False(readiness.Required);
         Assert.True(readiness.IsLive);
         Assert.Equal(OrchestrationEngineReadiness.NotRequired, readiness.State);
-        Assert.True(OrchestrationEngineReadiness.Allows(readiness, "test-decider"));
-        Assert.True(OrchestrationEngineReadiness.Allows(null, "test-decider"));
-    }
-
-    [Fact]
-    public async Task Acceptance_rail_holds_without_reading_a_card_while_the_engine_is_not_live()
-    {
-        var readiness = Readiness([]);
-        // Null collaborators prove that the held pass reads and moves nothing.
-        var rail = new AgentStudio.Tasks.AcceptanceRailHostedService(null!, null!, null!, null!, null!, null!,
-            new ConfigurationBuilder().Build(), NullLogger<AgentStudio.Tasks.AcceptanceRailHostedService>.Instance,
-            engine: readiness);
-
-        var snapshot = await rail.RunOnceAsync();
-
-        Assert.Null(snapshot.LastRunAtUtc);
-        Assert.Equal(0, snapshot.Accepted + snapshot.Requeued + snapshot.Escalated);
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public sealed class OrchestrationEngineReadinessTests : IDisposable
                     ["WatchPaths:0:Path"] = projectPath,
                     ["WatchPaths:0:RootPath"] = projectPath,
                     ["WatchPaths:0:RepositoryPath"] = projectPath,
-                    [OrchestrationDecisionAuthority.ConfigurationKey] = OrchestrationDecisionAuthority.Engine,
+                    [EngineSwitch] = "Engine",
                 }));
         });
         using var client = factory.CreateClient();
@@ -120,9 +120,8 @@ public sealed class OrchestrationEngineReadinessTests : IDisposable
         Assert.Equal(OrchestrationEngineReadiness.Ready, await up.Content.ReadAsStringAsync());
     }
 
-    private OrchestrationEngineReadiness Readiness(Dictionary<string, string?> settings, bool engineOnly = true)
+    private OrchestrationEngineReadiness Readiness(Dictionary<string, string?> settings)
     {
-        if (engineOnly) settings[OrchestrationDecisionAuthority.ConfigurationKey] = OrchestrationDecisionAuthority.Engine;
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         return new OrchestrationEngineReadiness(configuration, _time, NullLogger<OrchestrationEngineReadiness>.Instance);
     }
@@ -130,7 +129,9 @@ public sealed class OrchestrationEngineReadinessTests : IDisposable
     public void Dispose()
     {
         try { if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "OrchestrationEngineReadinessTests: fixture cleanup is best-effort");
+        }
     }
 }

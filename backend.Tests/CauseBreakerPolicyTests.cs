@@ -39,14 +39,15 @@ public sealed class CauseBreakerPolicyTests
         Assert.Equal(2, new ProjectSettings().CauseBreakerCardThreshold);
     }
 
+    // AGT-3060: the cause-card close rule is the library's cause-breaker
+    // decider; a green probe closes on the review report path instead.
     [Theory]
-    [InlineData("6-completed", false, CauseBreakerCloseReason.CauseIntegrated)]
-    [InlineData("7-archived", false, CauseBreakerCloseReason.None)]
-    [InlineData("5-human-review", true, CauseBreakerCloseReason.ProbeGreen)]
-    [InlineData(null, false, CauseBreakerCloseReason.None)]
-    public void Close_requires_integrated_cause_or_green_probe(
-        string? state, bool green, CauseBreakerCloseReason expected)
-        => Assert.Equal(expected, CauseBreakerPolicy.Close(state, green));
+    [InlineData("6-completed", true)]
+    [InlineData("7-archived", false)]
+    [InlineData("5-human-review", false)]
+    [InlineData(null, false)]
+    public void Close_requires_integrated_cause(string? state, bool closes)
+        => Assert.Equal(closes, CauseBreakerClosePolicy.Closes(new CauseBreakerOperatorFacts("fingerprint", state)));
 
     [Fact]
     public void Fingerprint_ignores_card_identity_but_preserves_failure_and_toolchain()

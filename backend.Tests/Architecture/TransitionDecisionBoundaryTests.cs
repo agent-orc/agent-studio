@@ -21,6 +21,7 @@ public sealed class TransitionDecisionBoundaryTests
         // AGT-3060 (I18): background deciders moved out of the monolith.
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
+        "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
     ];
 
     [Fact]
@@ -34,6 +35,8 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(AiOperatorDecisionPolicy).Assembly);
         Assert.Equal(assembly, typeof(RunLivenessPolicy).Assembly);
         Assert.Equal(assembly, typeof(GateEnvironmentRetryPolicy).Assembly);
+        Assert.Equal(assembly, typeof(DeliveryChainPolicy).Assembly);
+        Assert.Equal(assembly, typeof(AcceptanceRailDecisionPolicy).Assembly);
         var referenced = assembly.GetReferencedAssemblies().Select(item => item.Name!).ToArray();
         Assert.DoesNotContain(referenced, name => name is "OrchestratorApi" or "task-server" or "orchestrator-engine"
             || name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)

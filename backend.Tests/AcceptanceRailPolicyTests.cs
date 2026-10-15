@@ -75,7 +75,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void IntegratedCodingCard_IsAccepted()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             Status(IntegrationStatuses.Integrated),
             conflictRequeues: 0,
@@ -88,7 +88,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void IntegratedCodingCardWithoutGateEvidence_IsNotAccepted()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             Status(IntegrationStatuses.Integrated) with { Verification = null },
             conflictRequeues: 0,
@@ -104,7 +104,7 @@ public sealed class AcceptanceRailPolicyTests
     [InlineData("ordinary", "AGT-HOLD")]
     public void HeldCard_IsUntouched(string tag, string key)
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card() with { Key = key, Tags = [tag] },
             Status(IntegrationStatuses.Integrated),
             conflictRequeues: 0,
@@ -118,7 +118,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void RecoverableConflict_IsRequeued()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             RecoverableConflict(),
             conflictRequeues: 1,
@@ -145,7 +145,7 @@ public sealed class AcceptanceRailPolicyTests
             RequiresDecisionCard = true,
         };
 
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card() with { ParkedBlocker = parked },
             RecoverableConflict(),
             conflictRequeues: 0,
@@ -159,7 +159,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void ConflictAtConfiguredLimit_IsEscalated()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             RecoverableConflict(),
             conflictRequeues: Options.MaxRequeues,
@@ -173,7 +173,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void EscalatedGenuineBounce_UsesSameBoundedRequeue()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card() with { State = TaskStates.Escalated },
             RecoverableConflict(),
             conflictRequeues: 0,
@@ -186,7 +186,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void ConceptCard_IsUntouched()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card() with { Mode = TaskModes.Concept },
             Status(IntegrationStatuses.Integrated),
             conflictRequeues: 0,
@@ -217,7 +217,7 @@ public sealed class AcceptanceRailPolicyTests
             }
             : Status(integrationStatus);
 
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             status,
             conflictRequeues: 0,
@@ -246,7 +246,7 @@ public sealed class AcceptanceRailPolicyTests
         AcceptanceRailAction expectedAction,
         string expectedReason)
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             ClassifiedFailure(failureClass),
             conflictRequeues: 0,
@@ -263,7 +263,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void InfrastructureCardInsideItsBackoffWindow_IsIgnored()
     {
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             ClassifiedFailure(RunFailureClass.Infrastructure),
             conflictRequeues: 0,
@@ -279,7 +279,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void QuotaCard_WaitsForTheKnownResetAndThenRequeues()
     {
-        var beforeReset = AcceptanceRailPolicy.Decide(
+        var beforeReset = OperatorDecisionHarness.RailDecide(
             Card(),
             ClassifiedFailure(RunFailureClass.Quota, RunFailureSignatures.CliQuotaExhausted),
             conflictRequeues: 0,
@@ -292,7 +292,7 @@ public sealed class AcceptanceRailPolicyTests
         Assert.Equal(AcceptanceRailAction.Ignore, beforeReset.Action);
         Assert.Equal("infrastructure-backoff", beforeReset.Reason);
 
-        var afterReset = AcceptanceRailPolicy.Decide(
+        var afterReset = OperatorDecisionHarness.RailDecide(
             Card(),
             ClassifiedFailure(RunFailureClass.Quota, RunFailureSignatures.CliQuotaExhausted),
             conflictRequeues: 0,
@@ -320,7 +320,7 @@ public sealed class AcceptanceRailPolicyTests
             },
         };
 
-        var decision = AcceptanceRailPolicy.Decide(
+        var decision = OperatorDecisionHarness.RailDecide(
             Card(),
             status,
             conflictRequeues: 0,
@@ -340,7 +340,7 @@ public sealed class AcceptanceRailPolicyTests
     [InlineData(20, AcceptanceRailDefaults.InfrastructureBackoffCeilingSeconds)]
     public void Backoff_DoublesPerAttemptUpToTheCeiling(int attempt, int expectedSeconds)
     {
-        var wait = AcceptanceRailPolicy.Backoff(
+        var wait = AcceptanceRailBackoff.Remaining(
             attempt,
             RunFailureClass.Infrastructure,
             lastRequeueAt: Now,
@@ -353,7 +353,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void Backoff_IsElapsedOnceTheWindowPassed()
     {
-        var wait = AcceptanceRailPolicy.Backoff(
+        var wait = AcceptanceRailBackoff.Remaining(
             attempt: 2,
             RunFailureClass.Infrastructure,
             lastRequeueAt: Now.AddMinutes(-5),
@@ -366,7 +366,7 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void Backoff_WithoutAPriorRequeue_IsImmediate()
     {
-        var wait = AcceptanceRailPolicy.Backoff(
+        var wait = AcceptanceRailBackoff.Remaining(
             attempt: 0,
             RunFailureClass.Infrastructure,
             lastRequeueAt: null,
@@ -379,13 +379,13 @@ public sealed class AcceptanceRailPolicyTests
     [Fact]
     public void Backoff_ForQuota_WaitsForTheKnownReset()
     {
-        var pending = AcceptanceRailPolicy.Backoff(
+        var pending = AcceptanceRailBackoff.Remaining(
             attempt: 0,
             RunFailureClass.Quota,
             lastRequeueAt: null,
             quotaResetAt: Now.AddMinutes(45),
             Now);
-        var elapsed = AcceptanceRailPolicy.Backoff(
+        var elapsed = AcceptanceRailBackoff.Remaining(
             attempt: 2,
             RunFailureClass.Quota,
             lastRequeueAt: Now,

@@ -47,9 +47,16 @@ public static class AiOperatorDeciders
     public const string SteerTimeout = "steer-timeout";
     public const string TimeoutSalvage = "timeout-salvage";
     public const string GateEnvironmentRetry = "gate-environment-retry";
+    public const string DeliveryChain = "delivery-chain";
+    public const string CauseBreaker = "cause-breaker";
+    public const string IntakeRouting = "intake-routing";
+    public const string AcceptanceRail = "acceptance-rail";
 
     public static readonly IReadOnlyList<string> All =
-        [RunLiveness, StaleProgress, SteerTimeout, TimeoutSalvage, GateEnvironmentRetry];
+    [
+        RunLiveness, StaleProgress, SteerTimeout, TimeoutSalvage, GateEnvironmentRetry,
+        DeliveryChain, CauseBreaker, IntakeRouting, AcceptanceRail,
+    ];
 }
 
 /// <summary>Stable effect tokens the authority applies through its keyed writers.</summary>
@@ -66,6 +73,13 @@ public static class AiOperatorEffects
     public const string ReplayIntegration = "replay-integration";
     public const string ParkIntegration = "park-integration";
     public const string ParkAndContinue = "park-and-continue";
+    public const string PromoteToHumanReview = "promote-to-human-review";
+    public const string ReturnToAutoReview = "return-to-auto-review";
+    public const string CloseBreaker = "close-breaker";
+    public const string AcceptDelivery = "accept-delivery";
+    public const string RequeueRebase = "requeue-rebase";
+    public const string RequeueInfrastructure = "requeue-infrastructure";
+    public const string RecordHeldBounce = "record-held-bounce";
 }
 
 /// <summary>Frozen facts of a timeout completion. The salvage pair is null when none was transferred.</summary>
@@ -86,7 +100,11 @@ public sealed record AiOperatorDecisionPayload(
     StaleProgressFacts? StaleProgress = null,
     SteerTimeoutFacts? SteerTimeout = null,
     TimeoutSalvageFacts? TimeoutSalvage = null,
-    GateEnvironmentRetryOperatorFacts? GateEnvironmentRetry = null);
+    GateEnvironmentRetryOperatorFacts? GateEnvironmentRetry = null,
+    DeliveryChainOperatorFacts? DeliveryChain = null,
+    CauseBreakerOperatorFacts? CauseBreaker = null,
+    IntakeOperatorFacts? IntakeRouting = null,
+    AcceptanceRailOperatorFacts? AcceptanceRail = null);
 
 /// <summary>The receipt-bearing answer of one AI Operator occurrence.</summary>
 public sealed record AiOperatorDecision(
@@ -126,6 +144,14 @@ public static class AiOperatorDecisionPolicy
                 Required(payload.TimeoutSalvage, payload.Decider)),
             AiOperatorDeciders.GateEnvironmentRetry => GateEnvironmentRetry(payload,
                 Required(payload.GateEnvironmentRetry, payload.Decider)),
+            AiOperatorDeciders.DeliveryChain => DeliveryChain(payload,
+                Required(payload.DeliveryChain, payload.Decider)),
+            AiOperatorDeciders.CauseBreaker => CauseBreaker(payload,
+                Required(payload.CauseBreaker, payload.Decider)),
+            AiOperatorDeciders.IntakeRouting => IntakeRouting(payload,
+                Required(payload.IntakeRouting, payload.Decider)),
+            AiOperatorDeciders.AcceptanceRail => AcceptanceRail(payload,
+                Required(payload.AcceptanceRail, payload.Decider)),
             _ => throw new ArgumentOutOfRangeException(nameof(payload), payload.Decider,
                 "Unknown AI Operator decider."),
         };
@@ -213,6 +239,54 @@ public static class AiOperatorDecisionPolicy
                     ? AiOperatorEffects.ParkAndContinue : AiOperatorEffects.ParkIntegration,
                 ladder.Reason, detail),
             _ => Hold(payload, ladder.Reason, detail),
+        };
+    }
+
+    private static AiOperatorDecision DeliveryChain(AiOperatorDecisionPayload payload, DeliveryChainOperatorFacts facts)
+    {
+        var verdict = DeliveryChainPolicy.Decide(facts);
+        return verdict.Action switch
+        {
+            DeliveryChainAction.PromoteToHumanReview => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.PromoteToHumanReview, verdict.ReasonCode, verdict.Detail),
+            DeliveryChainAction.ReturnToAutoReview => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.ReturnToAutoReview, verdict.ReasonCode, verdict.Detail),
+            DeliveryChainAction.Escalate => Ask(payload, verdict.ReasonCode, verdict.Detail),
+            _ => Hold(payload, verdict.ReasonCode, verdict.Detail),
+        };
+    }
+
+    private static AiOperatorDecision CauseBreaker(AiOperatorDecisionPayload payload, CauseBreakerOperatorFacts facts)
+        => CauseBreakerClosePolicy.Closes(facts)
+            ? Effect(payload, AutonomyClass.A1, AiOperatorEffects.CloseBreaker, CauseBreakerClosePolicy.CauseIntegrated,
+                $"The cause card of breaker {facts.Fingerprint} is delivered; its waiting cards are released.")
+            : Hold(payload, CauseBreakerClosePolicy.CauseNotIntegrated,
+                $"The cause card of breaker {facts.Fingerprint} is {facts.CauseCardState ?? "not found"}.");
+
+    private static AiOperatorDecision IntakeRouting(AiOperatorDecisionPayload payload, IntakeOperatorFacts facts)
+        => IntakeRoutingPolicy.RoutesToHumanReview(facts)
+            ? Ask(payload, IntakeRoutingPolicy.AlreadyDoneReason,
+                facts.Reason ?? "The prompt declares the card already finished.")
+            : Hold(payload, IntakeRoutingPolicy.NoRouting, $"Intake outcome {facts.Outcome} needs no routing.");
+
+    private static AiOperatorDecision AcceptanceRail(AiOperatorDecisionPayload payload,
+        AcceptanceRailOperatorFacts facts)
+    {
+        var verdict = AcceptanceRailDecisionPolicy.Decide(facts);
+        var detail = $"Acceptance rail: {verdict.Reason}.";
+        return verdict.Action switch
+        {
+            AcceptanceRailVerdictAction.Accept => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.AcceptDelivery, verdict.Reason, detail),
+            AcceptanceRailVerdictAction.Requeue => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.RequeueRebase, verdict.Reason, detail),
+            AcceptanceRailVerdictAction.RequeueInfrastructure => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.RequeueInfrastructure, verdict.Reason, detail),
+            AcceptanceRailVerdictAction.Escalate => Ask(payload, verdict.Reason, detail),
+            // A held recoverable conflict keeps its bounce obligation visible; recording it is A0.
+            _ when verdict.Reason == AcceptanceRailReasons.OperatorHold && facts.RebaseRecoveryAvailable
+                => Effect(payload, AutonomyClass.A0, AiOperatorEffects.RecordHeldBounce, verdict.Reason, detail),
+            _ => Hold(payload, verdict.Reason, detail),
         };
     }
 

@@ -40,8 +40,8 @@ builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrati
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
-// AGT-3060: no automatic decision runs before the engine is live; see
-// OrchestrationEngineReadiness and /healthz/orchestration-engine.
+// AGT-3060: reports whether the engine that a transition switched to Engine
+// waits for is live; see /healthz/orchestration-engine.
 builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
@@ -97,12 +97,6 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
 {
     builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 }
-
-// AGT-3060 (I18, AGT-W65 D14 A): the Orchestrator Engine is the only decider.
-// Outside a test host every transition profile and AI Operator decider waits
-// for an engine receipt; the Monolith and Shadow decision modes are test-only.
-if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
-    OrchestrationDecisionAuthority.RequireEngine(builder.Configuration);
 
 // Test-isolation guard (prevention). An integration test that boots
 // WebApplicationFactory<Program> must never touch the production task
@@ -487,6 +481,7 @@ builder.Services.AddSingleton<DecisionCardRequests>();
 builder.Services.AddSingleton<DecisionReminderSweep>();
 builder.Services.AddHostedService<DecisionReminderSweepHostedService>();
 builder.Services.AddSingleton<DeliveryChainReconciler>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();
@@ -594,6 +589,7 @@ builder.Services.AddSingleton<ICauseWaitRelease, SchedulerCauseWaitRelease>();
 builder.Services.AddSingleton<ICauseWaitMarkerStore, FileCauseWaitMarkerStore>();
 builder.Services.AddSingleton<CauseBreakerService>();
 builder.Services.AddSingleton<CauseBreakerHostedService>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<CauseBreakerHostedService>());
 // AGT-2826: the release this process runs is the reference every execution host
 // is compared against, so it is resolved once and shared by /api/system/version
 // and the host-release drift watchdog.
@@ -636,10 +632,12 @@ builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
 builder.Services.AddSingleton<CrashRecoveryDismissalStore>();
 builder.Services.AddSingleton<CrashRecoveryService>();
 // AGT-3060 (I18): background deciders collect facts and submit them to the AI
-// Operator in the Orchestrator Engine; each registered effect applies the
-// engine receipt through the existing keyed writers.
-builder.Services.AddSingleton<AiOperatorDecisionGateway>(sp => new AiOperatorDecisionGateway(
-    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<MonolithOrchestrationStore>()));
+// Operator. The OperatorDecision transition switch selects who decides: on
+// Monolith (default) the monolith decides in process through the shared
+// decision library; on Engine the Orchestrator Engine decides and each
+// registered effect applies the receipt through the existing keyed writers.
+builder.Services.AddSingleton<AiOperatorDecisionGateway>(sp => AiOperatorDecisionGateway.Deferred(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<MonolithOrchestrationStore>));
 builder.Services.AddSingleton<StaleProgressArchiver>();
 builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<StaleProgressArchiver>());
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor
@@ -874,6 +872,7 @@ if (!publicDemoExecutionProfile)
 // project; see ProjectSettings.IntakeEnabled. The hosted service is cheap
 // (heuristic only, no LLM) and skips projects that have not opted in.
 builder.Services.AddSingleton<IntakeRunner>();
+builder.Services.AddSingleton<IAiOperatorEffect, IntakeRoutingEffect>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<IntakeHostedService>();
 builder.Services.AddSingleton<GitService>();
@@ -946,6 +945,7 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>();
 builder.Services.AddSingleton<IntegrationGenerationReconcileSweep>();
 builder.Services.AddSingleton<AcceptanceRailHostedService>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
 // AGT-2824: a gate environment failure rolls the merge back and says it will
 // be retried. The accepted-integration backstop only re-drives accepted cards
 // and the acceptance rail only reacts to conflict-skipped, so the bounded

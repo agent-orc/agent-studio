@@ -118,8 +118,6 @@ public class TaskRunnerService : BackgroundService
 
     public event Action<string, ProjectRunnerStatus>? OnRunnerStatusChanged;
 
-    private readonly OrchestrationEngineReadiness? _engine;
-
     public TaskRunnerService(
         IConfiguration config,
         ILogger<TaskRunnerService> logger,
@@ -176,10 +174,8 @@ public class TaskRunnerService : BackgroundService
         RemoteDispatchRejectionStore? dispatchRejections = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         AttemptAuthorityService? attemptAuthority = null,
-        TimeProvider? time = null,
-        OrchestrationEngineReadiness? engine = null)
+        TimeProvider? time = null)
     {
-        _engine = engine;
         _config = config;
         _logger = logger;
         _scanner = scanner;
@@ -452,7 +448,6 @@ public class TaskRunnerService : BackgroundService
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
             runner.ConfigureStuckLoopBudget(_stuckLoopBudget);
-            runner.ConfigureEngineReadiness(_engine);
             runner.OnStatusChanged += status =>
             {
                 // A throwing subscriber here (typically the SignalR fan-out in
@@ -1822,7 +1817,6 @@ public class TaskRunnerService : BackgroundService
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));
-        runner.ConfigureEngineReadiness(_engine);
         runner.OnStatusChanged += status =>
         {
             try { OnRunnerStatusChanged?.Invoke(entry.Name, status); }

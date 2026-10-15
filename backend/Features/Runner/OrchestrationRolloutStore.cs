@@ -63,8 +63,7 @@ public sealed class OrchestrationRolloutStore
             return Profiles.Select(profile =>
             {
                 var item = state.Profiles.GetValueOrDefault(profile) ?? Initial(profile);
-                var current = OrchestrationDecisionAuthority.IsEngineOnly(_configuration) ? "engine" : item.State;
-                return new OrchestrationProfileStatus(profile, current, item.Streak,
+                return new OrchestrationProfileStatus(profile, item.State, item.Streak,
                     _threshold, item.Mismatches.Count, item.Mismatches.LastOrDefault());
             }).ToArray();
         }
@@ -72,9 +71,7 @@ public sealed class OrchestrationRolloutStore
 
     public bool IsRolledBack(string? profile)
     {
-        // A rollback recorded before the engine-only authority must not keep
-        // pending occurrences away from the engine.
-        if (profile is null || OrchestrationDecisionAuthority.IsEngineOnly(_configuration)) return false;
+        if (profile is null) return false;
         lock (Gate) return Read(_path).Profiles.GetValueOrDefault(profile)?.State == "rolled-back";
     }
 
@@ -94,8 +91,6 @@ public sealed class OrchestrationRolloutStore
         ValidateProfile(profile);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-        if (OrchestrationDecisionAuthority.IsEngineOnly(_configuration))
-            throw new InvalidOperationException(OrchestrationDecisionAuthority.RetiredError);
         lock (Gate)
         {
             var state = Read(_path);
@@ -158,7 +153,8 @@ public sealed class OrchestrationRolloutStore
     private ProfileRecord Initial(string profile)
     {
         var mode = OrchestrationExecutionModeParser.Parse(
-            _configuration[$"Orchestration:Transitions:{profile}"]);
+            _configuration[$"Orchestration:Transitions:{profile}"]
+            ?? _configuration["Orchestration:ExecutionMode"]);
         return new ProfileRecord { State = mode switch
         {
             OrchestrationExecutionMode.Engine => "engine",
