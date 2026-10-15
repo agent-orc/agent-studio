@@ -38,7 +38,7 @@ public sealed class OperatorSweepGateFacts : IOperatorSweepGateFacts
             failure?.Reason ?? failed?.Reason ?? string.Empty,
             string.Join("\n", new[] { failed?.VerdictSummary, failure?.EvidenceExcerpt }
                 .Where(value => !string.IsNullOrWhiteSpace(value))),
-            GateEnvironmentRetryPolicy.IsGateEnvironmentFailure(status),
+            GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status),
             failure?.FailureClass ?? AgentStudio.TaskServer.Contracts.RunFailureClass.Unknown);
     }
 }

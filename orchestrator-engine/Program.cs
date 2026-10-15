@@ -26,6 +26,7 @@ if (args is ["--help"] or ["-h"])
           BATCH_PLAN_CONCURRENCY
           ADVISOR_ANTHROPIC_CREDENTIAL / ADVISOR_ANTHROPIC_CREDENTIAL_FILE
           ADVISOR_OPENAI_CREDENTIAL / ADVISOR_OPENAI_CREDENTIAL_FILE
+          OPERATOR_DECISION_CONCURRENCY
           POLL_SECONDS
           LEASE_SECONDS
           HEALTH_PORT
@@ -66,6 +67,7 @@ try
     builder.Services.AddSingleton<IBatchAdvisorModel, AnthropicBatchAdvisorModel>();
     builder.Services.AddSingleton<IBatchAdvisorModel, OpenAiBatchAdvisorModel>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, BatchPlanLoop>();
+    builder.Services.AddSingleton<IOrchestrationStageHandler, AiOperatorDecisionLoop>();
     builder.Services.AddHostedService<OrchestratorEngineService>();
     builder.Services.AddHostedService<EngineHealthServer>();
     builder.Services.AddHostedService<ShadowDecisionService>();

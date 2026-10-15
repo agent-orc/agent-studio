@@ -19,6 +19,9 @@ public sealed class TransitionDecisionBoundaryTests
         "CouncilDecisionPolicy", "LocalLoopDecisionPolicy", "ReviewBudgetPolicy", "TransitionDecisionPolicy",
         "RoundCounterPolicy", "ContinuationReplayPolicy", "RepeatedAspectDecisionPolicy",
         "IntegrationResultPolicy",
+        // AGT-3060 (I18): background deciders moved out of the monolith.
+        "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
+        "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
     ];
 
     [Fact]
@@ -29,6 +32,9 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(ReviewRoundBudgetPolicy).Assembly);
         Assert.Equal(assembly, typeof(OperatorSweepPolicy).Assembly);
         Assert.Equal(assembly, typeof(RemoteDeliveryIntegrationPolicy).Assembly);
+        Assert.Equal(assembly, typeof(AiOperatorDecisionPolicy).Assembly);
+        Assert.Equal(assembly, typeof(RunLivenessPolicy).Assembly);
+        Assert.Equal(assembly, typeof(GateEnvironmentRetryPolicy).Assembly);
         var referenced = assembly.GetReferencedAssemblies().Select(item => item.Name!).ToArray();
         Assert.DoesNotContain(referenced, name => name is "OrchestratorApi" or "task-server" or "orchestrator-engine"
             || name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
