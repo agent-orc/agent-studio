@@ -187,33 +187,11 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                         command.FileName, command.Arguments,
                         Math.Clamp(command.TimeoutSeconds, 1, 7200), command.WorkingSubdir)))
                     .ToArray();
-                var commandText = string.Join(' ', commands.SelectMany(command =>
-                    new[] { command.FileName }.Concat(command.Arguments))).ToLowerInvariant();
-                var capabilities = new HashSet<string>(StringComparer.Ordinal)
-                {
-                    CapabilityProtocol.GitFetch, CapabilityProtocol.RepositoryAccess,
-                };
-                if (commandText.Contains("dotnet", StringComparison.Ordinal))
-                    capabilities.Add(CapabilityProtocol.DotNet);
-                if (commandText.Contains("npm", StringComparison.Ordinal)
-                    || commandText.Contains("node", StringComparison.Ordinal)
-                    || commandText.Contains("npx", StringComparison.Ordinal))
-                    capabilities.Add(CapabilityProtocol.Node);
-                if (commandText.Contains("playwright", StringComparison.Ordinal))
-                    capabilities.Add(CapabilityProtocol.Playwright);
-                // AGT-2981: a Compose-render step routes to a gate host that
-                // can run `docker compose config`; the scripts also need node.
-                if (ComposeRenderGatePolicy.IsRenderInvocation(commandText))
-                {
-                    capabilities.Add(CapabilityProtocol.ComposeRender);
-                    capabilities.Add(CapabilityProtocol.Node);
-                }
                 var plan = new GatePlan("post-build-test-gate", 1, commands, "", 21600,
-                    capabilities.Order(StringComparer.Ordinal).ToArray(),
-                    32768, "always");
+                    GateRules.RequiredCapabilities(commands), 32768, "always");
                 static string Digest(string value) => Convert.ToHexString(
                     SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-                var planHash = Digest(JsonSerializer.Serialize(plan, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+                var planHash = GateRules.PlanHash(plan);
                 var selectionAuditDigest = Digest(JsonSerializer.Serialize(new
                 {
                     gateId = plan.GateId,

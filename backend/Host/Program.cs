@@ -770,6 +770,12 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseServi
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Runner.IGateExecutorDirectory>(sp =>
+    sp.GetRequiredService<V1ReviewExecutorRegistry>());
+builder.Services.AddSingleton(sp => new AgentStudio.Runner.MonolithGateStore(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>()));
+builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
