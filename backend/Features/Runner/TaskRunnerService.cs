@@ -60,6 +60,7 @@ public class TaskRunnerService : BackgroundService
     // project can disable the default-on step through its pipeline convention.
     // Null only when a test fixture builds the service directly.
     private readonly AgentStudio.Runner.PostAbortReviewStepService? _postAbortReview;
+    private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
     // Forwarded to each ProjectRunner for post-hoc Claude token reconstruction
     // from session transcripts. DI injects the registered singleton; null only
     // when a test fixture builds the service directly.
@@ -174,7 +175,8 @@ public class TaskRunnerService : BackgroundService
         RemoteDispatchRejectionStore? dispatchRejections = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         AttemptAuthorityService? attemptAuthority = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ReviewInputDecisionGateway? reviewInputDecisions = null)
     {
         _config = config;
         _logger = logger;
@@ -216,6 +218,7 @@ public class TaskRunnerService : BackgroundService
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
         _postAbortReview = postAbortReview;
+        _reviewInputDecisions = reviewInputDecisions;
         _sessionInspector = sessionInspector;
         _keepAwake = keepAwake;
         _projectRegistry = projectRegistry;
@@ -443,7 +446,8 @@ public class TaskRunnerService : BackgroundService
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
                 dispatchRejections: _dispatchRejections,
-                localCodingAdmission: _localCodingAdmission);
+                localCodingAdmission: _localCodingAdmission,
+                reviewInputDecisions: _reviewInputDecisions);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1813,7 +1817,8 @@ public class TaskRunnerService : BackgroundService
             projectUrls: registryProject?.Urls,
             projectUrlPortInspector: _projectUrlPortInspector,
             dispatchRejections: _dispatchRejections,
-            localCodingAdmission: _localCodingAdmission);
+            localCodingAdmission: _localCodingAdmission,
+            reviewInputDecisions: _reviewInputDecisions);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

@@ -13,6 +13,27 @@ public sealed class ShadowDecisionStepTests
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public async Task Review_input_stage_claim_uses_the_active_bounded_model_receipt()
+    {
+        var input = Input(alternate: false) with { Mode = DecisionReceiptPolicy.ActiveMode };
+        var plane = new FakePlane(input, (_, job) => job with
+        {
+            Status = DecisionJobStatuses.Completed,
+            Result = Result(true,
+                """{"chosenActions":[{"action":"ask","target":"operator:ai"}],"confidence":0.7,"reasoning":"The bounded evidence is inconclusive.","citedFacts":["run.outcome"]}"""),
+        });
+        var run = new OrchestrationRunDto("orch_test", "project", "AGT-1", 1, "leased",
+            OrchestrationStage.ReviewInputDecision, "{}", 0, At, At, null);
+
+        var stage = await new ReviewInputDecisionLoop(Step(plane)).ExecuteAsync(run, default);
+
+        Assert.Equal(OrchestrationAction.Escalate, stage.Action);
+        Assert.Contains("activeChoice", stage.OutputJson);
+        Assert.Equal(DecisionReceiptPolicy.ActiveMode, plane.Stored?.Mode);
+        Assert.Single(plane.Requests);
+    }
+
+    [Fact]
     public async Task Occurrence_without_frozen_grounds_has_no_shadow_step()
     {
         var plane = new FakePlane(null, (_, _) => throw new InvalidOperationException("no job expected"));

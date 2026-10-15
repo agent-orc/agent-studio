@@ -227,6 +227,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly TaskMutationService? _taskMutations;
     private readonly DecisionCardRequests? _decisionRequests;
     private readonly MonolithOrchestrationStore? _orchestration;
+    private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -284,7 +285,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TaskMutationService? taskMutations = null,
         DecisionCardRequests? decisionRequests = null,
         MonolithOrchestrationStore? orchestration = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ReviewInputDecisionGateway? reviewInputDecisions = null)
     {
         _scanner = scanner;
         _stateMachine = stateMachine;
@@ -323,6 +325,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _integrationStatus = integrationStatus;
         _decisionRequests = decisionRequests;
         _orchestration = orchestration;
+        _reviewInputDecisions = reviewInputDecisions;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -1269,7 +1272,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         try
         {
-            if (_sessions?.ReadSessionEvents(job.Id, job.WatchPath).Count > 0)
+            if (_sessions is not null
+                && ReviewDecisionEvidenceReader.CountSessionEvents(_sessions, job.Id, job.WatchPath) > 0)
                 return true;
         }
         catch (Exception ex)
@@ -1319,6 +1323,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string model,
         CancellationToken ct)
     {
+        if (_reviewInputDecisions?.EngineDecides == true)
+        {
+            var logPath = TaskPaths.CliOutputLog(pending.Job.FolderPath);
+            var evidence = ReviewDecisionEvidenceReader.Read(logPath,
+                OperatorReviewRequeueService.ReadCliLogLineBoundary(pending.Job.FolderPath));
+            var run = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "needs-input", entry.Name, pending.Job.Id, pending.Job.State,
+                $"{pending.Job.Id}:{pending.LineNumber}",
+                $"Terminal signal: {evidence.Signal?.Kind ?? "none"}; question: {pending.Reason}",
+                evidence.SourceDigest,
+                evidence.Omissions.Select(reason => new GroundsOmissionV1("cli-log", reason)).ToArray(),
+                pending.Job.Id));
+            EngineDecisionWaitMarker.Write(pending.Job.FolderPath, run.RunId);
+            return;
+        }
         var prompt = BuildPrompt(entry, pending, workspace);
         string response = string.Empty;
         StepModelUsage? decisionUsage = null;
@@ -1538,7 +1557,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // sentinel-only NOOP without any tool/file activity is not
         // recoverable by another sharpened prompt. Escalate it to
         // 5-human-review so it is not picked again automatically.
-        var noProgressEvidence = InspectNoOpProgressSinceLastRecovery(pending);
+        var noProgressEvidence = ReviewDecisionEvidenceReader.ReadRecoveryProgress(TaskPaths.CliOutputLog(pending.Job.FolderPath), pending.LineNumber);
         if (LocalLoopDecisionPolicy.RepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
             noProgressEvidence.ToolCalls, noProgressEvidence.FileChanges, noProgressEvidence.AgentSubstanceChars))
         {
@@ -1988,10 +2007,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (escalated is null) return null;
             // Agent lines only: the escalation above already appended a
             // supervisor line that quotes [[TASK_BLOCKED]].
-            var agentTurn = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(escalated.FolderPath))
-                .Where(line => line is not null && !PendingDecisionScanner.IsFollowUpLine(line))
-                .ToList();
-            var fork = BlockedForkReader.Read(pending.Reason, AgentOutcomeAnalyzer.ExtractBlockedMessage(agentTurn));
+            var fork = BlockedForkReader.Read(pending.Reason,
+                ReviewDecisionEvidenceReader.ReadBlockedMessage(escalated.FolderPath));
             if (fork is null) return null;
             var result = _decisionRequests.Request(new DecisionCardRequest
             {
@@ -2646,8 +2663,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 .Where(verdict => verdict.Status != AspectStatus.Pass)
                 .Select(verdict => verdict.Aspect)
                 .ToArray();
-            var fixRun = _sessions?.ReadSessionEvents(current.Id, entry.Path).Count
-                         ?? usedConcernRound.Used + 1;
+            var fixRun = _sessions is null ? usedConcernRound.Used + 1
+                : ReviewDecisionEvidenceReader.CountSessionEvents(_sessions, current.Id, entry.Path);
             ReviewConcernRoundStore.MarkReviewed(current.FolderPath, fixRun, stillOpenAspects.Length > 0);
             _pipelineLog?.AnnotateReviewRound(
                 current.FolderPath,
@@ -3873,9 +3890,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (_sessions == null) return false;
         try
         {
-            var events = _sessions.ReadSessionEvents(job.Id, watchPath);
-            var lines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(job.FolderPath));
-            var timeline = RunTimelineBuilder.Build(events, lines, DateTime.UtcNow);
+            var timeline = ReviewDecisionEvidenceReader.BuildTimeline(_sessions,
+                job.Id, watchPath, job.FolderPath, DateTime.UtcNow);
             if (timeline.Runs.Count == 0) return false;
             var last = timeline.Runs[^1];
             return !string.IsNullOrWhiteSpace(last.HeadShaBefore)
@@ -4435,10 +4451,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         RunRecord? local = null;
         if (_sessions is not null)
         {
-            var events = _sessions.ReadSessionEvents(current.Id, watchPath);
-            var lines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(current.FolderPath));
             local = SelectLastSuccessfulReviewRun(
-                RunTimelineBuilder.Build(events, lines, DateTime.UtcNow).Runs);
+                ReviewDecisionEvidenceReader.BuildTimeline(_sessions,
+                    current.Id, watchPath, current.FolderPath, DateTime.UtcNow).Runs);
         }
 
         // A Remote completion is authoritative for its fenced attempt. Local
@@ -4865,10 +4880,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (_sessions == null || _git == null) return null;
         try
         {
-            var events = _sessions.ReadSessionEvents(job.Id, watchPath);
-            var lines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(job.FolderPath));
             var latest = SelectLastSuccessfulReviewRun(
-                RunTimelineBuilder.Build(events, lines, DateTime.UtcNow).Runs);
+                ReviewDecisionEvidenceReader.BuildTimeline(_sessions,
+                    job.Id, watchPath, job.FolderPath, DateTime.UtcNow).Runs);
             if (latest == null) return null;
             return _git.GetFilesChangedInShaRange(job.Id, watchPath,
                 latest.HeadShaBefore, latest.HeadShaAfter);
@@ -5704,9 +5718,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             IReadOnlyList<string> taskShas = Array.Empty<string>();
             if (_sessions != null)
             {
-                var events = _sessions.ReadSessionEvents(job.Id, watchPath);
-                var lines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(job.FolderPath));
-                var timeline = RunTimelineBuilder.Build(events, lines, DateTime.UtcNow);
+                var timeline = ReviewDecisionEvidenceReader.BuildTimeline(_sessions,
+                    job.Id, watchPath, job.FolderPath, DateTime.UtcNow);
                 var aggregate = TaskCommitsAggregator.Aggregate(job, SelectAuthoritativeReviewRuns(timeline.Runs),
                     (before, after) => _git!.GetCommitsInShaRange(job.Id, watchPath, before, after));
                 taskShas = aggregate.Commits
@@ -7049,9 +7062,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
         try
         {
-            var events = _sessions.ReadSessionEvents(job.Id, watchPath);
-            var lines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(job.FolderPath));
-            var timeline = RunTimelineBuilder.Build(events, lines, DateTime.UtcNow);
+            var timeline = ReviewDecisionEvidenceReader.BuildTimeline(_sessions,
+                job.Id, watchPath, job.FolderPath, DateTime.UtcNow);
             var aggregate = TaskCommitsAggregator.Aggregate(job, SelectAuthoritativeReviewRuns(timeline.Runs),
                 (before, after) => _git!.GetCommitsInShaRange(job.Id, watchPath, before, after));
             // Commits surfaced from the persisted chain (task.json) carry only a
@@ -7545,139 +7557,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         };
     }
 
-    private static NoOpProgressEvidence InspectNoOpProgressSinceLastRecovery(PendingDecision pending)
-    {
-        var logPath = TaskPaths.CliOutputLog(pending.Job.FolderPath);
-        if (!File.Exists(logPath)) return NoOpProgressEvidence.None;
-
-        string log;
-        try { log = File.ReadAllText(logPath); }
-        catch { return NoOpProgressEvidence.None; }
-
-        if (string.IsNullOrWhiteSpace(log)) return NoOpProgressEvidence.None;
-        var lines = log.Split('\n');
-        var noopIndex = Math.Clamp(pending.LineNumber - 1, 0, Math.Max(lines.Length - 1, 0));
-
-        var reissueIndex = -1;
-        for (var i = noopIndex - 1; i >= 0; i--)
-        {
-            var line = lines[i];
-            if (line.Contains("[orchestrator]", StringComparison.Ordinal)
-                && line.Contains("[reissue]", StringComparison.Ordinal)
-                && line.Contains("NOOP recovery", StringComparison.OrdinalIgnoreCase))
-            {
-                reissueIndex = i;
-                break;
-            }
-        }
-
-        if (reissueIndex < 0) return NoOpProgressEvidence.None;
-
-        var toolCalls = 0;
-        var fileChanges = 0;
-        var agentSubstanceChars = 0;
-
-        for (var i = reissueIndex + 1; i <= noopIndex && i < lines.Length; i++)
-        {
-            InspectProgressLine(lines[i], ref toolCalls, ref fileChanges, ref agentSubstanceChars);
-        }
-
-        return new NoOpProgressEvidence(
-            SawNoOpRecoveryReissue: true,
-            ToolCalls: toolCalls,
-            FileChanges: fileChanges,
-            AgentSubstanceChars: agentSubstanceChars);
-    }
-
-    private static void InspectProgressLine(
-        string line,
-        ref int toolCalls,
-        ref int fileChanges,
-        ref int agentSubstanceChars)
-    {
-        var jsonStart = line.IndexOf('{');
-        if (jsonStart >= 0)
-        {
-            var json = line[jsonStart..].Trim();
-            try
-            {
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                if (!root.TryGetProperty("type", out var typeProp)) return;
-                var type = typeProp.GetString();
-                if (!string.Equals(type, "item.started", StringComparison.Ordinal)
-                    && !string.Equals(type, "item.completed", StringComparison.Ordinal))
-                {
-                    return;
-                }
-
-                if (!root.TryGetProperty("item", out var item)
-                    || item.ValueKind != JsonValueKind.Object
-                    || !item.TryGetProperty("type", out var itemTypeProp))
-                {
-                    return;
-                }
-
-                var itemType = itemTypeProp.GetString();
-                if (string.Equals(itemType, "agent_message", StringComparison.Ordinal))
-                {
-                    var text = item.TryGetProperty("text", out var textProp)
-                        ? textProp.GetString()
-                        : null;
-                    agentSubstanceChars += CountAgentSubstanceChars(text);
-                    return;
-                }
-
-                if (string.Equals(itemType, "file_change", StringComparison.Ordinal))
-                {
-                    fileChanges++;
-                    return;
-                }
-
-                if (!string.IsNullOrWhiteSpace(itemType))
-                {
-                    toolCalls++;
-                }
-                return;
-            }
-            catch (JsonException __ex)
-            {
-                SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: Fall through and treat it as ordinary output text.");
-                // Fall through and treat it as ordinary output text.
-            }
-        }
-
-        var payloadText = ExtractStreamPayload(line);
-        agentSubstanceChars += CountAgentSubstanceChars(payloadText);
-    }
-
-    private static string ExtractStreamPayload(string line)
-    {
-        var stdoutMarker = "] [stdout] ";
-        var stderrMarker = "] [stderr] ";
-        var stdoutAt = line.IndexOf(stdoutMarker, StringComparison.Ordinal);
-        if (stdoutAt >= 0) return line[(stdoutAt + stdoutMarker.Length)..];
-        var stderrAt = line.IndexOf(stderrMarker, StringComparison.Ordinal);
-        if (stderrAt >= 0) return line[(stderrAt + stderrMarker.Length)..];
-        return line;
-    }
-
-    private static int CountAgentSubstanceChars(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return 0;
-        var trimmed = text.Trim();
-        if (trimmed.StartsWith("[[TASK_NOOP", StringComparison.OrdinalIgnoreCase)
-            && trimmed.EndsWith("]]", StringComparison.Ordinal))
-        {
-            return 0;
-        }
-
-        var withoutNoOp = text
-            .Replace("[[TASK_NOOP]]", "", StringComparison.OrdinalIgnoreCase)
-            .Trim();
-        return withoutNoOp.Length;
-    }
-
     private static (string Title, string Body) LoadTaskTitleAndBody(PendingDecision pending)
     {
         var title = pending.Job.Title ?? string.Empty;
@@ -7975,7 +7854,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var folder = pending.Job.FolderPath;
         var promptPath = Path.Combine(folder, "prompt.md");
-        var task = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+        var task = File.Exists(promptPath)
+            ? AgentStudio.Shared.BoundedFileRead.ReadAllTextOrNull(promptPath, 256 * 1024) ?? string.Empty
+            : string.Empty;
         var logPath = TaskPaths.CliOutputLog(folder);
         var recent = ReadActiveEpochLogTail(folder, logPath);
         // The terminal sentinel, final verification summary, and CLI exit are
@@ -7988,17 +7869,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private static string ReadActiveEpochLogTail(string folder, string logPath)
     {
         if (!File.Exists(logPath)) return string.Empty;
-        var lines = File.ReadAllLines(logPath);
-        var boundary = OperatorReviewRequeueService.ReadCliLogLineBoundary(folder);
-        if (boundary is >= 0)
-        {
-            // A shorter file was replaced/truncated after the boundary, so all
-            // of its current content is fresh. Otherwise skip the consumed
-            // prefix retained by the append-only log.
-            var skip = boundary.Value <= lines.Length ? boundary.Value : 0;
-            lines = lines.Skip(skip).ToArray();
-        }
-        return TailLines(string.Join('\n', lines), 200);
+        var evidence = ReviewDecisionEvidenceReader.Read(logPath,
+            OperatorReviewRequeueService.ReadCliLogLineBoundary(folder));
+        return (evidence.PromptWindow.Length == 0 ? string.Empty : evidence.PromptWindow + "\n")
+            + $"Source digest: {evidence.SourceDigest}; omissions: "
+            + $"{string.Join(',', evidence.Omissions)}; typed signal: {evidence.Signal?.Kind ?? "none"}";
     }
 
     /// <summary>
@@ -8209,11 +8084,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 continue;
             }
 
-            string log;
-            try { log = File.ReadAllText(logPath); }
-            catch
+            ReviewDecisionLogEvidence evidence;
+            try
             {
+                evidence = ReviewDecisionEvidenceReader.Read(logPath,
+                    OperatorReviewRequeueService.ReadCliLogLineBoundary(info.FolderPath));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Review decision evidence read failed for {JobId}", info.Id);
                 onSkipped?.Invoke(info.Id, "cli-log-unreadable");
+                continue;
+            }
+            if (evidence.Omissions.Contains("source-window-truncated"))
+            {
+                onSkipped?.Invoke(info.Id, "cli-log-source-window-truncated");
                 continue;
             }
 
@@ -8221,10 +8106,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             // run, but a job folder may have been continued and accumulated
             // multiple kinds across runs. Pick the latest unresolved one so
             // we act on the most recent state.
-            var needs = ReviewDecisionParsing.FindUnresolvedNeedsInput(log);
-            var noop = ReviewDecisionParsing.FindUnresolvedNoOp(log);
-            var blocked = ReviewDecisionParsing.FindUnresolvedBlocked(log);
-            var done = ReviewDecisionParsing.FindUnresolvedDone(log);
+            var signal = evidence.Signal;
+            var needs = signal?.Kind == "needs-input"
+                ? new NeedsInputState(signal.LineNumber, signal.Reason) : null;
+            var noop = signal?.Kind == "noop"
+                ? new NoOpState(signal.LineNumber, signal.Reason) : null;
+            var blocked = signal?.Kind == "blocked"
+                ? new BlockedState(signal.LineNumber, signal.Reason) : null;
+            var done = signal?.Kind == "done"
+                ? new DoneState(signal.LineNumber) : null;
 
             if (needs == null && noop == null && blocked == null && done == null)
             {
@@ -8242,7 +8132,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 // orchestrator wrote a follow-up line and nothing ran since):
                 // the latter returns false and is left untouched, so we never
                 // re-bill an already-handled card.
-                if (ReviewDecisionParsing.LacksTerminalSentinelInLatestRun(log))
+                if (signal?.Kind == "no-completion-signal")
                 {
                     yield return new PendingDecision(info, ReviewSignalKind.NoCompletionSignal, LineNumber: -1, Reason: null, NeedsInput: null);
                 }
@@ -8925,12 +8815,5 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         NeedsInputState? NeedsInput,
         ReviewDecisionKind? StaleVerdict = null);
 
-    private sealed record NoOpProgressEvidence(
-        bool SawNoOpRecoveryReissue,
-        int ToolCalls,
-        int FileChanges,
-        int AgentSubstanceChars)
-    {
-        public static readonly NoOpProgressEvidence None = new(false, 0, 0, 0);
-    }
+
 }
