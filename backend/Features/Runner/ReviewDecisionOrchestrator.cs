@@ -2426,11 +2426,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             && buildGateResult.CancellationReason is GateCancellationReasons.Superseded or GateCancellationReasons.Shutdown)
             return;
         var gateMode = MonolithTransitionSwitch.For(_configuration, "GateResult");
-        var gateIntervention = buildGateResult?.Verdict == BuildTestGateVerdict.Fail
-            ? await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct) : null;
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
             && GateFailureDecisionCheckpointAsync is { } checkpoint)
             await checkpoint();
+        if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
+            && GateResultWasSuperseded(current, entry, buildGateResult))
+            return;
+        var gateIntervention = buildGateResult?.Verdict == BuildTestGateVerdict.Fail
+            ? await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct) : null;
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
             && GateResultWasSuperseded(current, entry, buildGateResult))
             return;

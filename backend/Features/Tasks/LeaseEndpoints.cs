@@ -2119,10 +2119,6 @@ public static class LeaseEndpoints
                 details["missingEnvelopeFacts"] = string.Join(",", envelopeDecision.MissingFacts ?? []);
                 details["deliveryAction"] = deliveryFailure.Escalate ? "escalate" : "requeue";
             }
-            // Ready retries keep the reviewed delivery unless a newer salvage
-            // or mechanical fallback base replaces it later in this completion.
-            if (targetState != TaskStates.Ready)
-                ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
             RemoteClaimFailureDecision? claimFailure = null;
             if (outcome == "environmentfailure")
             {
@@ -2258,6 +2254,13 @@ public static class LeaseEndpoints
                     "Run completion recorded; queued continuation remains ready.",
                     RunAttemptId: attemptId));
             }
+
+            // Ready retries keep the reviewed delivery unless a newer salvage
+            // or mechanical fallback base replaces it later in this completion.
+            // A queued continuation above owns its own base, even when this
+            // older run would otherwise finish in Auto Review.
+            if (targetState != TaskStates.Ready)
+                ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
 
             // A remote claim reads the run-scoped fallback from the pending
             // intent. Once that run settles, remove both pending and consumed
