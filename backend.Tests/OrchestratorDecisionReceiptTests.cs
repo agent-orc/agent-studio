@@ -43,6 +43,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [Theory]
     [InlineData("prepare", false)]
     [InlineData("retry", false)]
+    [InlineData("retry-no-envelope", false)]
     [InlineData("salvage", false)]
     [InlineData("salvage-move-failure", false)]
     [InlineData("invalid", false)]
@@ -103,15 +104,17 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         var lease = await coding.AcquireLeaseAsync(
             new RAcquire(card, runnerId, project, "coding-host", 4242, "codex"), CancellationToken.None);
         Assert.True(lease.Granted);
+        var withoutEnvelope = scenario == "retry-no-envelope";
         var completion = await coding.CompleteRunAsync(new RRemoteComplete(
-            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, "Done",
+            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId,
+            "Done",
             ResultSha: resultSha, AttemptChainId: lease.Lease.LeaseId,
             Repository: "https://example.invalid/agent-studio.git",
             AttemptId: lease.Lease.AttemptId, AuthorityEpoch: lease.Lease.AuthorityEpoch,
             IdempotencyKey: "active-coding-completion", BaseSha: new string('b', 40),
             ImmutableResultRef: FencedGitRefs.ImmutableResult(
                 lease.Lease.AttemptId!, lease.Lease.FencingToken, resultSha),
-            ArtifactManifestDigest: new string('a', 64)), CancellationToken.None);
+            ArtifactManifestDigest: withoutEnvelope ? null : new string('a', 64)), CancellationToken.None);
         Assert.Equal(TaskStates.Progress, completion!.TargetState);
 
         var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
@@ -143,7 +146,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             "forbidden" => """{"chosenActions":[{"action":"halt","target":"card:park"}],"confidence":0.8,"reasoning":"Park it.","citedFacts":["run.outcome"]}""",
             "salvage" => """{"chosenActions":[{"action":"adapt","target":"salvage-handoff"}],"confidence":0.8,"reasoning":"Continue on the immutable result.","citedFacts":["result.sha"]}""",
             "salvage-move-failure" => """{"chosenActions":[{"action":"adapt","target":"salvage-handoff"}],"confidence":0.8,"reasoning":"Continue on the immutable result.","citedFacts":["result.sha"]}""",
-            "retry" => """{"chosenActions":[{"action":"retry","target":"card:ready"}],"confidence":0.8,"reasoning":"Try another round.","citedFacts":["run.outcome"]}""",
+            "retry" or "retry-no-envelope" => """{"chosenActions":[{"action":"retry","target":"card:ready"}],"confidence":0.8,"reasoning":"Try another round.","citedFacts":["run.outcome"]}""",
             _ => """{"chosenActions":[{"action":"prepare","target":"review-subject"}],"confidence":0.8,"reasoning":"The result is settled.","citedFacts":["result.envelope"]}""",
         };
         Assert.True(await coding.CompleteOrchestratorDecisionJobAsync(new OrchestratorDecisionJobCompletion(
@@ -189,8 +192,11 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         var finalState = factory.Services.GetRequiredService<TaskScannerService>()
             .FindJob(card, projectPath)?.State;
         Assert.Equal(!staleAuthority && scenario == "prepare" ? TaskStates.AutoReview
-            : !staleAuthority && scenario is "salvage" or "retry" ? TaskStates.Ready : TaskStates.Progress,
+            : !staleAuthority && scenario is "salvage" or "retry" or "retry-no-envelope" ? TaskStates.Ready : TaskStates.Progress,
             finalState);
+        if (withoutEnvelope)
+            Assert.Null(factory.Services.GetRequiredService<AttemptAuthorityService>()
+                .GetRun(lease.Lease.AttemptId!)?.ResultEnvelope);
         if (scenario == "salvage" && !staleAuthority)
         {
             var continuation = ContinuationBaseStore.Read(Path.Combine(projectPath,

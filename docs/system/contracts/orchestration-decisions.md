@@ -135,9 +135,11 @@ then submits the chosen action through stage completion. The Task Server
 validates the receipt against the frozen grounds, the current authority epoch
 and fence, the settled run and exact result SHA/ref, and the offered action's
 A0 or A1 floor before applying an effect. A valid `prepare(review-subject)`
-creates review; `retry(card:ready)` requeues; `adapt(salvage-handoff)` pins the
+creates review; `retry(card:ready)` requeues even when the settled run has no
+result envelope; `adapt(salvage-handoff)` requires an envelope and pins the
 immutable result ref as the next round's base; `checkpoint(verified-tree)`
-writes `results/checkpoint.md` with the last verified SHA and holds the card.
+writes `results/checkpoint.md` with the last verified SHA and retains the engine
+wait marker while the card is held in Progress.
 Unusable output and unavailable or capped calls record `ask(operator:ai)`
 with the call status and no-call reason, and leave the card in its source lane.
 An A2/A3 proposal cannot mutate the card. The active profile can be disabled

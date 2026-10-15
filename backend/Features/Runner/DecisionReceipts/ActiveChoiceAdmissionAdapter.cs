@@ -6,7 +6,7 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Runner;
 
 /// <summary>Task Server admission for the active coding-completion model choice.</summary>
-public sealed class ActiveDecisionAuthorityAdapter(
+public sealed class ActiveChoiceAdmissionAdapter(
     OrchestratorDecisionStore decisions, AttemptAuthorityService authority)
 {
     public bool HasActiveGrounds(string occurrenceId)

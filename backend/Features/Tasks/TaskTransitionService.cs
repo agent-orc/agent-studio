@@ -175,12 +175,16 @@ public sealed class TaskTransitionService
 
         if (engineContinuationBase is not null && !engineDecisionRequeue)
             return new MoveJobOutcome(MoveJobStatus.Failure, "A continuation base requires an engine requeue.");
+        // An unverified delivery settles Failed without an envelope; the model
+        // may retry it, while salvage still needs a completed immutable result.
         if (engineDecisionRequeue && (!string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal)
             || targetState != TaskStates.Ready || cause != "engine-decision"
             || authorityWrite is null || expectedSourceState != TaskStates.Progress
             || _attemptAuthority?.GetRun(authorityWrite.AttemptId) is not { } decisionRun
-            || decisionRun.State != AttemptLifecycleState.Completed
-            || decisionRun.ResultEnvelope is null
+            || decisionRun.State is not (AttemptLifecycleState.Completed or AttemptLifecycleState.Failed)
+            || engineContinuationBase is not null
+                && (decisionRun.State != AttemptLifecycleState.Completed
+                    || decisionRun.ResultEnvelope is null)
             || !new[] { info.Key, info.TaskKey, info.Id }
                 .Where(key => !string.IsNullOrWhiteSpace(key))
                 .Any(key => _attemptAuthority.GetTaskProjection(key!).CurrentRunAttempt?.AttemptId
@@ -192,7 +196,7 @@ public sealed class TaskTransitionService
             || engineContinuationBase is not null
                 && (engineContinuationBase.AttemptId != authorityWrite.AttemptId
                     || engineContinuationBase.CommitSha != decisionRun.ResultSha
-                    || engineContinuationBase.Ref != decisionRun.ResultEnvelope.ImmutableRemoteRef)))
+                    || engineContinuationBase.Ref != decisionRun.ResultEnvelope!.ImmutableRemoteRef)))
             return new MoveJobOutcome(MoveJobStatus.Failure, "The engine requeue has no current settled-run authority.");
 
         var settledRunRecovery = engineDecisionRequeue

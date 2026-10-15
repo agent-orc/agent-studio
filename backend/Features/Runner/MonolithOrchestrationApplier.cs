@@ -20,7 +20,7 @@ public sealed class MonolithOrchestrationApplier(
     BatchGatePilotService batches,
     AgentStudio.Projects.ProjectSettingsService settings,
     IOperatorSweepActions sweepActions,
-    ActiveDecisionAuthorityAdapter activeDecisionAuthority,
+    ActiveChoiceAdmissionAdapter activeDecisionAuthority,
     IAiOperatorDecisionQueue aiOperator,
     TimeProvider time,
     IConfiguration configuration,
@@ -110,7 +110,6 @@ public sealed class MonolithOrchestrationApplier(
             if (!File.Exists(path))
                 File.WriteAllText(path, $"# Verified-tree checkpoint\n\nLast verified tree: `{verified}`\n"
                     + $"Decision occurrence: `{occurrence.Run.RunId}`\n");
-            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
             scanner.InvalidateCache();
             return;
         }
