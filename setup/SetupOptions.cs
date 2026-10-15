@@ -36,7 +36,11 @@ internal sealed record SetupOptions(
     bool NonInteractive,
     bool DryRun,
     bool ShowHelp,
-    bool ShowVersion)
+    bool ShowVersion,
+    string? GitAccess = null,
+    string? GitUsername = null,
+    string? GitTokenFile = null,
+    string? GitSshKeyFile = null)
 {
     public static SetupOptions Parse(string[] args)
     {
@@ -52,6 +56,10 @@ internal sealed record SetupOptions(
         string? agentCli = null;
         string? gitRemote = null;
         string? gitPushRemote = null;
+        string? gitAccess = null;
+        string? gitUsername = null;
+        string? gitTokenFile = null;
+        string? gitSshKeyFile = null;
         string? wireGuardAddress = null;
         string? offhostBackupPath = null;
         var role = "coding";
@@ -132,6 +140,22 @@ internal sealed record SetupOptions(
                     gitPushRemote = ValueAt(index, "--git-push-remote");
                     index++;
                     break;
+                case "--git-access":
+                    gitAccess = ValueAt(index, "--git-access").Trim().ToLowerInvariant();
+                    index++;
+                    break;
+                case "--git-username":
+                    gitUsername = ValueAt(index, "--git-username");
+                    index++;
+                    break;
+                case "--git-token-file":
+                    gitTokenFile = Path.GetFullPath(ValueAt(index, "--git-token-file"));
+                    index++;
+                    break;
+                case "--git-ssh-key-file":
+                    gitSshKeyFile = Path.GetFullPath(ValueAt(index, "--git-ssh-key-file"));
+                    index++;
+                    break;
                 case "--wg-address":
                     wireGuardAddress = ValueAt(index, "--wg-address");
                     index++;
@@ -169,6 +193,8 @@ internal sealed record SetupOptions(
 
         if (role is not ("coding" or "review"))
             throw new ArgumentException("--role must be coding or review.");
+        if (gitAccess is not null && gitAccess is not ("token-file" or "deploy-key" or "existing-ssh"))
+            throw new ArgumentException("--git-access must be token-file, deploy-key, or existing-ssh.");
         if (nonInteractive && mode == SetupMode.Guided && !showHelp && !showVersion)
             throw new ArgumentException("--non-interactive requires --mode.");
         if (target == SetupTarget.Docker && mode != SetupMode.ControlPlane)
@@ -195,7 +221,11 @@ internal sealed record SetupOptions(
             nonInteractive,
             dryRun,
             showHelp,
-            showVersion);
+            showVersion,
+            gitAccess,
+            gitUsername,
+            gitTokenFile,
+            gitSshKeyFile);
     }
 
     internal static SetupMode ParseMode(string value)

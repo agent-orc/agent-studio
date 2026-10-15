@@ -7,6 +7,28 @@ internal sealed record ProcessResult(int ExitCode, string Output, string Error);
 
 internal sealed class ProcessRunner(bool dryRun)
 {
+    public async Task RequireInteractiveAsync(string fileName, IEnumerable<string> arguments,
+        CancellationToken cancellationToken = default)
+    {
+        var args = arguments.ToArray();
+        if (dryRun)
+        {
+            Console.WriteLine($"[dry-run] {fileName} {string.Join(' ', args.Select(QuoteForDisplay))}");
+            return;
+        }
+        var start = new ProcessStartInfo(fileName)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in args) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException($"Could not start {fileName}.");
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"{fileName} exited with code {process.ExitCode}.");
+    }
+
     public async Task<ProcessResult> RunAsync(
         string fileName,
         IEnumerable<string> arguments,
@@ -110,7 +132,7 @@ internal sealed class ProcessRunner(bool dryRun)
                 userArguments.Add($"HOME={homeDirectory}");
             }
             userArguments.Add("/bin/sh");
-            userArguments.Add("-lc");
+            userArguments.Add(inspectCurrentUserDirectly ? "-c" : "-lc");
             userArguments.Add(shellCommand);
             result = await inspectionRunner.RunAsync(
                 inspectCurrentUserDirectly ? userArguments[0] : "runuser",

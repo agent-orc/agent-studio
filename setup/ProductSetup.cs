@@ -18,7 +18,19 @@ internal static class ProductSetup
         int? UiPort = null,
         string? ServerUrl = null,
         string? JoinTokenFile = null,
-        string? TokenFile = null);
+        string? TokenFile = null,
+        string? ListenUrl = null,
+        string? RunnerName = null,
+        string? ExecutionUser = null,
+        string? AgentCli = null,
+        string? GitRemote = null,
+        string? GitPushRemote = null,
+        string? GitAccess = null,
+        string? GitUsername = null,
+        string? GitTokenFile = null,
+        string? GitSshKeyFile = null,
+        string? Role = null,
+        int? MaxParallelism = null);
 
     internal sealed record InstalledState(string Mode, string Target, string Version,
         string? PreviousVersion, int UiPort, string? ServerUrl = null);
@@ -73,6 +85,22 @@ internal static class ProductSetup
         // unless the operator names a profile explicitly.
         var explicitMode = Get("--mode", answers.Mode);
         var explicitTarget = Get("--target", answers.Target);
+        if (command == "install" && !unattended && explicitMode is null
+            && explicitTarget is null && !values.ContainsKey("--join-token-file"))
+        {
+            Console.WriteLine("Choose an installation:");
+            Console.WriteLine("  1. Studio and runner on this machine with Docker");
+            Console.WriteLine("  2. Studio and runner on this machine with native systemd services");
+            Console.WriteLine("  3. Agent host joining an existing Studio");
+            var selection = prompter.Ask("Selection", "1");
+            (explicitMode, explicitTarget) = selection switch
+            {
+                "1" => ("studio", "docker"),
+                "2" => ("studio", "native"),
+                "3" => ("agent-host", "native"),
+                _ => throw new ArgumentException("Selection must be 1, 2, or 3."),
+            };
+        }
         var installDirectory = Get("--install-dir", answers.InstallDirectory);
         var serverUrl = Get("--server-url", answers.ServerUrl);
         var joinTokenFile = Get("--join-token-file", answers.JoinTokenFile);
@@ -88,18 +116,46 @@ internal static class ProductSetup
                 backupPath,
                 Environment.GetEnvironmentVariable(AcceptanceJourney.CanaryCommandVariable),
                 AcceptanceJourney.DefaultCanaryTimeout));
-        var located = command is not ("install" or "preflight") && explicitMode is null && explicitTarget is null
+        var locatedNative = command is not ("install" or "preflight") && explicitMode is null
+                            && explicitTarget is null && OperatingSystem.IsLinux()
+            ? await LocateNativeManifestAsync(installDirectory)
+            : null;
+        var located = command is not ("install" or "preflight") && explicitMode is null
+                      && explicitTarget is null && locatedNative is null
             ? await LocateInstallationAsync(installDirectory)
             : null;
-        var mode = located?.State.Mode ?? ProductCommand.NormalizeMode(explicitMode, joinTokenFile is not null);
-        var target = located?.State.Target ?? ProductCommand.NormalizeTarget(explicitTarget, mode);
+        var mode = locatedNative?.Mode ?? located?.State.Mode
+                   ?? ProductCommand.NormalizeMode(explicitMode, joinTokenFile is not null);
+        var target = locatedNative?.Target ?? located?.State.Target
+                     ?? ProductCommand.NormalizeTarget(explicitTarget, mode);
+        if (command == "install" && target == "native" && OperatingSystem.IsLinux()
+            && !dryRun && Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_ROOT_CHECK") != "1"
+            && Environment.UserName != "root")
+            return await RelaunchAsRootAsync(args, mode);
+        using var promptedJoin = command == "install" && mode == "agent-host"
+                                 && joinTokenFile is null && !unattended
+            ? TemporaryJoinFile.Create(prompter.Secret("Join token from the existing Studio"))
+            : null;
+        joinTokenFile ??= promptedJoin?.Path;
         var forwarded = new List<(string, string)>();
         foreach (var (option, answer) in new[]
         {
             ("--release-version", answers.ReleaseVersion),
             ("--release-dir", answers.ReleaseDirectory),
             ("--server-url", answers.ServerUrl),
-            ("--join-token-file", answers.JoinTokenFile),
+            ("--join-token-file", joinTokenFile),
+            ("--listen-url", answers.ListenUrl),
+            ("--runner-name", answers.RunnerName),
+            ("--execution-user", answers.ExecutionUser),
+            ("--agent-cli", answers.AgentCli),
+            ("--git-remote", answers.GitRemote),
+            ("--git-push-remote", answers.GitPushRemote),
+            ("--git-access", answers.GitAccess),
+            ("--git-username", answers.GitUsername),
+            ("--git-token-file", answers.GitTokenFile),
+            ("--git-ssh-key-file", answers.GitSshKeyFile),
+            ("--role", answers.Role),
+            ("--max-parallelism", answers.MaxParallelism?.ToString()),
         })
         {
             if (Get(option, answer) is { } value) forwarded.Add((option, value));
@@ -141,7 +197,7 @@ internal static class ProductSetup
             throw new InvalidOperationException(blocker);
         if (command == "install" && mode == "agent-host" && joinTokenFile is null)
             throw new ArgumentException(
-                "Joining a host requires --join-token-file with an owner-only token file; interactive token paste is not supported by the guided installer.");
+                "Unattended agent-host setup requires --join-token-file with an owner-only token file.");
         if (command == "install" && secretFile is not null && !dryRun)
             SetupSecrets.RequireProtected(Path.GetFullPath(secretFile),
                 mode == "agent-host" ? "Join token file" : "Token file");
@@ -189,7 +245,9 @@ internal static class ProductSetup
             var paths = ResolveDelegatedPaths(plan, installDirectory);
             var delegatedRoot = plan.Mode == "agent-host" ? paths.HostConfig : paths.OrchestratorConfig;
             var requestedDelegatedVersion = SetupOptions.NormalizeVersion(Get("--release-version", answers.ReleaseVersion));
-            var delegatedVersion = requestedDelegatedVersion ?? ReleaseArtifacts.CurrentVersion();
+            var delegatedVersion = command == "rollback"
+                ? NativeLifecycle.PreviousVersion(plan, paths)
+                : requestedDelegatedVersion ?? ReleaseArtifacts.CurrentVersion();
             if (plan.Mode == "agent-host" && join is not null)
             {
                 if (requestedDelegatedVersion is not null && requestedDelegatedVersion != join.ReleaseVersion)
@@ -208,6 +266,12 @@ internal static class ProductSetup
                     PurgeDelegatedPaths(plan, paths);
                 await FinishManifestAsync(delegatedRoot, pendingDelegated?.Manifest, dryRun,
                     flags.Contains("--purge"), InstallationManifest.PhaseUninstalled, "uninstalled");
+                return 0;
+            }
+            if (command is "update" or "rollback")
+            {
+                await NativeLifecycle.RunAsync(plan, paths, command, delegatedVersion,
+                    Get("--release-dir", answers.ReleaseDirectory), pendingDelegated, dryRun);
                 return 0;
             }
             // The release pin is recorded once the delegated flow has verified the
@@ -697,9 +761,11 @@ internal static class ProductSetup
             ? new[] { "agent-host-review.service", "agent-host.service" }
             : plan.Mode == "studio"
                 ? new[] { "agent-host-review.service", "agent-host.service",
+                    "agent-studio-web.service", "agent-studio-bff.service", "agent-studio-api.service",
                     "agent-orchestrator-engine.service", "agent-task-server.service",
                     "agent-task-server-backup.timer", "agent-task-server-backup.service" }
-                : new[] { "agent-orchestrator-engine.service", "agent-task-server.service",
+                : new[] { "agent-studio-web.service", "agent-studio-bff.service",
+                    "agent-studio-api.service", "agent-orchestrator-engine.service", "agent-task-server.service",
                     "agent-task-server-backup.timer", "agent-task-server-backup.service" };
         var systemctl = Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") ?? "systemctl";
         if (plan.Mode is "agent-host" or "studio"
@@ -723,6 +789,18 @@ internal static class ProductSetup
             if (!dryRun) File.Delete(path);
         }
         await process.RequireAsync(systemctl, ["daemon-reload"]);
+        if (!dryRun)
+        {
+            const string commandPath = "/usr/local/bin/agent-studio-setup";
+            var linkTarget = File.Exists(commandPath)
+                ? new FileInfo(commandPath).LinkTarget
+                : null;
+            var expected = plan.Mode == "agent-host"
+                ? Path.Combine(paths.HostOpt, "current", "agent-studio-setup")
+                : Path.Combine(paths.StudioOpt, "current", "agent-studio-setup");
+            if (linkTarget == expected)
+                File.Delete(commandPath);
+        }
     }
 
     private static void PurgeDelegatedPaths(ProductPlan plan, InstallPaths paths)
@@ -732,7 +810,8 @@ internal static class ProductSetup
             : plan.Mode == "studio"
                 ? new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig,
                     paths.StudioOpt, paths.HostOpt, paths.HostState, paths.HostConfig }
-                : new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig };
+                : new[] { paths.OrchestratorOpt, paths.OrchestratorState,
+                    paths.OrchestratorConfig, paths.StudioOpt };
         foreach (var root in roots)
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
@@ -856,6 +935,60 @@ internal static class ProductSetup
             $"No Agent Studio installation found at {string.Join(" or ", candidates)}.");
     }
 
+    private static async Task<InstallationManifest?> LocateNativeManifestAsync(string? installDirectory)
+    {
+        var paths = InstallPaths.Load();
+        var candidates = installDirectory is null
+            ? new[] { paths.OrchestratorConfig, paths.HostConfig }
+            : [Path.GetFullPath(installDirectory)];
+        foreach (var candidate in candidates)
+        {
+            var manifest = await ManifestStore.ReadAsync(candidate);
+            if (manifest?.Target == "native" && manifest.Phase != InstallationManifest.PhaseUninstalled)
+                return manifest;
+        }
+        return null;
+    }
+
+    private static async Task<int> RelaunchAsRootAsync(string[] args, string mode)
+    {
+        var executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Could not find the setup executable for elevation.");
+        Console.WriteLine("Native installation needs systemd access. Requesting sudo now.");
+        var start = new ProcessStartInfo("sudo")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add(executable);
+        foreach (var argument in args) start.ArgumentList.Add(argument);
+        start.ArgumentList.Add("--mode");
+        start.ArgumentList.Add(mode);
+        start.ArgumentList.Add("--target");
+        start.ArgumentList.Add("native");
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("Could not start sudo for native installation.");
+        await process.WaitForExitAsync();
+        return process.ExitCode;
+    }
+
+    private sealed class TemporaryJoinFile(string path) : IDisposable
+    {
+        public string Path { get; } = path;
+
+        public static TemporaryJoinFile Create(string token)
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                $"agent-studio-join-{Guid.NewGuid():N}");
+            File.WriteAllText(path, token);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            return new TemporaryJoinFile(path);
+        }
+
+        public void Dispose() => File.Delete(Path);
+    }
+
     // The Docker path runs as the user; the Windows services are machine-wide.
     private static string DefaultInstallRoot(ProductProfile profile)
         => !OperatingSystem.IsWindows()
@@ -935,12 +1068,22 @@ internal static class ProductSetup
               --token-file PATH         Owner-only token file: Studio token (connector) or
                                         management token (relocate-authority, accept)
               --answer-file PATH        JSON answers for unattended installation
+              --join-token-file PATH    Owner-only join token file for an agent host
+              --execution-user USER     Linux account that runs the provider CLI
+              --agent-cli codex|claude  Provider CLI for the native agent host
+              --git-remote URL          Project origin used to verify Git access
+              --git-access METHOD       token-file, deploy-key, or existing-ssh
+              --git-username NAME       GitHub username for token-file access
+              --git-token-file PATH     Owner-only GitHub token file
+              --git-ssh-key-file PATH   Existing SSH key or new deploy-key path
               --unattended              Use defaults without prompts
               --dry-run                 Check prerequisites and print planned operations
 
             The Docker path runs without elevation. Docker Desktop on Windows and
             macOS may require a paid subscription for larger companies; Docker
             Engine on Linux does not. Use --target native on hosts without Docker.
+            Native Linux serves Studio at http://127.0.0.1:4011/ and can guide
+            Codex or Claude login for the selected execution user.
             Re-running install keeps the installation id, principals and data.
             Secrets are read only from owner-only files, never from arguments.
             Uninstall keeps data unless --purge is given.

@@ -11,7 +11,7 @@ for each placement. It covers journey steps A7, B7 and C8.
 |---|---|---|
 | Dev/stable checkout | Loopback update service on `127.0.0.1:5039` | Checkout-only. With `Placement` set to anything else, triggers and manual rollbacks are refused. |
 | Installed Compose control plane | `deploy/release/agent-orchestrator/update-docker.sh` and `rollback-docker.sh` | Writes the installation manifest. |
-| Installed systemd Task Server | `update.sh` and `rollback.sh` | Drain-before-switch contract. It does not write a manifest yet. |
+| Installed native Linux Studio | `agent-studio-setup update` and `rollback` | Setup verifies the release, records `installation.json`, then uses the retained systemd drain and readiness scripts for the Task Server switch. |
 | Runner host | Per-host drain, runner update and canary (B7) | Never the checkout updater. |
 
 The pure decisions live in
@@ -130,8 +130,9 @@ installation guide.
 
 ## Not yet covered
 
-- The systemd target (`update.sh`/`rollback.sh`) does not write a manifest
-  yet.
+- The native Task Server scripts do not write the D6 runtime manifest;
+  `agent-studio-setup` writes the installation identity and release pin in
+  `installation.json`.
 - Runner-host tooling (B7) records host versions only through the
   authority's view (`hosts`). It has no per-host updater adapter yet.
 - The 5039 service has no installed-Compose adapter. It refuses that
