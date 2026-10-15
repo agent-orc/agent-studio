@@ -47,6 +47,47 @@ public sealed class ReviewDecisionEvidenceReaderTests
     }
 
     [Fact]
+    public void Monolith_scan_finds_old_unresolved_signal_in_oversize_log()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "[agent] [[TASK_NEEDS_INPUT: choose a path]]\n"
+                + string.Concat(Enumerable.Repeat("[agent] ordinary output\n", 13_000)));
+
+            var read = ReviewDecisionEvidenceReader.ReadForMonolith(path);
+
+            Assert.Equal("needs-input", read.Signal?.Kind);
+            Assert.Equal(1, read.Signal?.LineNumber);
+            Assert.Equal("choose a path", read.Signal?.Reason);
+            Assert.Contains("source-window-truncated", read.Omissions);
+
+            File.AppendAllText(path, "[orchestrator] decision recorded\n");
+            Assert.Null(ReviewDecisionEvidenceReader.ReadForMonolith(path).Signal);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Monolith_scan_keeps_absolute_line_after_epoch_boundary()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "[agent] [[TASK_DONE]]\n"
+                + string.Concat(Enumerable.Repeat("[agent] ordinary output\n", 13_000))
+                + "[agent] [[TASK_BLOCKED: waiting for operator]]\n");
+
+            var read = ReviewDecisionEvidenceReader.ReadForMonolith(path, 13_001);
+
+            Assert.Equal("blocked", read.Signal?.Kind);
+            Assert.Equal(13_002, read.Signal?.LineNumber);
+            Assert.Equal("waiting for operator", read.Signal?.Reason);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void Captured_source_digest_remains_stable_after_log_rotation()
     {
         var path = Path.GetTempFileName();
