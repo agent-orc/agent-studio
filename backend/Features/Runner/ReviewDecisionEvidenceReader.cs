@@ -90,6 +90,34 @@ public static class ReviewDecisionEvidenceReader
         return new(signal, prompt, sourceDigest, omissions);
     }
 
+    /// <summary>
+    /// Preserves legacy Monolith sentinel detection when a CLI log exceeds
+    /// the prompt window. The scan is linewise; the returned prompt and digest
+    /// still describe only the bounded, redacted evidence window.
+    /// </summary>
+    public static ReviewDecisionLogEvidence ReadForMonolith(string logPath,
+        int? activeEpochLineBoundary = null)
+    {
+        var evidence = Read(logPath, activeEpochLineBoundary);
+        if (!evidence.Omissions.Contains("source-window-truncated")) return evidence;
+
+        using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var scan = ReviewDecisionParsing.ScanUnresolvedLines(ReadLines(reader), activeEpochLineBoundary);
+        var signal = scan.Kind is null ? null : new ReviewDecisionSignal(scan.Kind,
+            scan.LineNumber, Bound(Redact(scan.Reason ?? string.Empty), 512));
+        var omissions = evidence.Omissions.ToList();
+        if (Credential.IsMatch(scan.Reason ?? string.Empty)) omissions.Add("secret");
+        if (SessionPath.IsMatch(scan.Reason ?? string.Empty)) omissions.Add("raw-session-path");
+        return evidence with { Signal = signal, Omissions = omissions.Distinct().ToArray() };
+    }
+
+    private static IEnumerable<string> ReadLines(StreamReader reader)
+    {
+        while (reader.ReadLine() is { } line) yield return line;
+    }
+
     public static NoOpProgressEvidence ReadRecoveryProgress(string logPath, int noopLineNumber)
     {
         if (!File.Exists(logPath)) return NoOpProgressEvidence.None;
