@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
@@ -22,6 +23,31 @@ public sealed class IntegrationResultPolicyTests
         Assert.Equal(action, decision.Action);
         Assert.Equal(lane, decision.TaskState);
         Assert.False(string.IsNullOrWhiteSpace(decision.Reason));
+    }
+
+    private const string Registered = "https://example.invalid/team/product.git";
+    private const string ResultRef = "refs/heads/agent-studio/results/run-1/1";
+    private const string ResultSha = "1111111111111111111111111111111111111111";
+
+    [Theory]
+    [InlineData(Registered, "run-1", Registered, ResultRef, ResultSha, IntegrationSource.Publishable)]
+    [InlineData(Registered, "run-1", null, ResultRef, ResultSha, IntegrationSource.Publishable)]
+    [InlineData(Registered, "run-1", "https://EXAMPLE.invalid/team/product.git/", ResultRef, ResultSha, IntegrationSource.Publishable)]
+    // Source bundle only: the run recorded a result SHA but no fenced ref.
+    [InlineData(Registered, "run-1", Registered, null, ResultSha, IntegrationSource.ResultMissing)]
+    [InlineData(Registered, "run-1", Registered, ResultRef, null, IntegrationSource.ResultMissing)]
+    [InlineData(Registered, null, Registered, ResultRef, ResultSha, IntegrationSource.ResultMissing)]
+    [InlineData(null, "run-1", Registered, ResultRef, ResultSha, IntegrationSource.ResultMissing)]
+    [InlineData(Registered, "run-1", "https://example.invalid/fork/product.git", ResultRef, ResultSha, IntegrationSource.RepositoryMismatch)]
+    [InlineData(Registered, "run-1", "http://example.invalid/team/product.git", ResultRef, ResultSha, IntegrationSource.RepositoryMismatch)]
+    // A source-bundle-only result is missing before its remote is even compared.
+    [InlineData(Registered, "run-1", "https://example.invalid/fork/product.git", null, ResultSha, IntegrationSource.ResultMissing)]
+    public void Accepted_delivery_source_is_classified_from_the_fenced_result_and_the_registered_remote(
+        string? registered, string? sourceRunId, string? runRepository, string? resultRef, string? resultSha,
+        IntegrationSource expected)
+    {
+        Assert.Equal(expected,
+            IntegrationSourcePolicy.Classify(registered, sourceRunId, runRepository, resultRef, resultSha));
     }
 
     [Theory]

@@ -367,9 +367,12 @@ production evidence must be attached before cutover:
    `orchestrator-engine.Tests/StandaloneReviewLoopCutoverTests.cs`. It runs
    the real engine service over authenticated HTTP against the Task Server,
    and asserts that every settlement applied a typed engine decision and that
-   no actor other than the hosts and the engine wrote during the loop. The
-   permit path refuses what the claim path refuses for a pinned runner or a
-   full project (`HostOrchestratorStoreTests.Permit_path_refuses_pinned_runner_and_full_project_like_the_claim_path`).
+   no actor other than the hosts and the engine wrote during the loop. Its
+   escalation scenarios pass a source-bundle-only delivery and a delivery
+   pushed to another remote; each escalates in exactly one settlement without
+   queueing an integration (`IntegrationSourcePolicy` classifies the source).
+   The permit path refuses what the claim path refuses for a pinned runner or
+   a full project (`HostOrchestratorStoreTests.Permit_path_refuses_pinned_runner_and_full_project_like_the_claim_path`).
    Production configuration needed for the loop:
    - Register the project repository with the `reviewed-publication` delivery
      policy.

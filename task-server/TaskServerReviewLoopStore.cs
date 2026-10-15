@@ -382,10 +382,7 @@ public sealed partial class TaskServerStore
 
     /// <summary>
     /// What the integration executor would publish for this run's accepted
-    /// delivery: the fenced result of the coding RunAttempt, always fetched
-    /// from and pushed to the registered project repository. A result without
-    /// a ref and SHA (source bundle only) or recorded against another remote
-    /// cannot be published; the settlement policy escalates it.
+    /// delivery; <see cref="IntegrationSourcePolicy"/> classifies the facts.
     /// </summary>
     private static async Task<IntegrationSourceFacts> ReadIntegrationSourceAsync(
         SqliteConnection connection,
@@ -396,14 +393,13 @@ public sealed partial class TaskServerStore
     {
         var repository = await ReadProjectRepositoryAsync(connection, transaction, run.ProjectId, ct);
         var sourceRunId = payload?.RunAttemptId;
-        if (repository is null || string.IsNullOrWhiteSpace(sourceRunId))
-            return new(IntegrationSource.ResultMissing, repository, sourceRunId, null, null);
         string? repositoryUrl = null, resultRef = null, resultSha = null;
-        await using (var command = Command(connection, """
-            SELECT repository_url, result_ref, result_sha FROM runs WHERE id = $run AND task_id = $task;
-            """, transaction, ("$run", sourceRunId), ("$task", run.TaskId)))
-        await using (var reader = await command.ExecuteReaderAsync(ct))
+        if (repository is not null && !string.IsNullOrWhiteSpace(sourceRunId))
         {
+            await using var command = Command(connection, """
+                SELECT repository_url, result_ref, result_sha FROM runs WHERE id = $run AND task_id = $task;
+                """, transaction, ("$run", sourceRunId), ("$task", run.TaskId));
+            await using var reader = await command.ExecuteReaderAsync(ct);
             if (await reader.ReadAsync(ct))
             {
                 repositoryUrl = reader.IsDBNull(0) ? null : reader.GetString(0);
@@ -411,25 +407,11 @@ public sealed partial class TaskServerStore
                 resultSha = reader.IsDBNull(2) ? null : reader.GetString(2);
             }
         }
-        if (string.IsNullOrWhiteSpace(resultRef) || string.IsNullOrWhiteSpace(resultSha))
-            return new(IntegrationSource.ResultMissing, repository, sourceRunId, null, null);
-        if (!string.IsNullOrWhiteSpace(repositoryUrl) && !SameRepository(repositoryUrl, repository.RepositoryUrl))
-            return new(IntegrationSource.RepositoryMismatch, repository, sourceRunId, resultRef, resultSha);
-        return new(IntegrationSource.Publishable, repository, sourceRunId, resultRef, resultSha);
-    }
-
-    private static bool SameRepository(string runRepositoryUrl, string registeredRepositoryUrl)
-    {
-        try
-        {
-            return string.Equals(ProjectRepositoryPolicy.Canonicalize(runRepositoryUrl), registeredRepositoryUrl,
-                StringComparison.Ordinal);
-        }
-        catch (ArgumentException)
-        {
-            // A remote that is not even canonical is never the registered one.
-            return false;
-        }
+        var source = IntegrationSourcePolicy.Classify(
+            repository?.RepositoryUrl, sourceRunId, repositoryUrl, resultRef, resultSha);
+        return source == IntegrationSource.ResultMissing
+            ? new(source, repository, sourceRunId, null, null)
+            : new(source, repository, sourceRunId, resultRef, resultSha);
     }
 
     private sealed record IntegrationSourceFacts(

@@ -1,5 +1,6 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -10,8 +11,7 @@ namespace AgentRunner.Tests;
 /// </summary>
 public sealed class IntegrationPublisherTests : IDisposable
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(), "agent-runner-integration-" + Guid.NewGuid().ToString("N"));
+    private readonly TempWorkspace _workspace = new("agent-runner-integration");
     private readonly List<string> _log = [];
 
     [Fact]
@@ -22,15 +22,15 @@ public sealed class IntegrationPublisherTests : IDisposable
         await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/one");
 
         var published = await IntegrationPublisher.PublishAsync(
-            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 1, Path.Combine(_root, "state"), _log.Add, default);
+            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 1, Path.Combine(_workspace.Path, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Integrated, published.Outcome);
         Assert.Equal(result, published.IntegratedSha);
         Assert.Equal(result, await RevParseAsync(origin, "refs/heads/develop"));
         var repeat = await IntegrationPublisher.PublishAsync(
-            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 2, Path.Combine(_root, "state"), _log.Add, default);
+            Command(origin, "refs/heads/develop", "refs/heads/results/one", result), 2, Path.Combine(_workspace.Path, "state"), _log.Add, default);
         Assert.Equal(IntegrationOutcomeKinds.AlreadyIntegrated, repeat.Outcome);
-        Assert.False(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "state")).Any());
+        Assert.False(Directory.EnumerateFileSystemEntries(Path.Combine(_workspace.Path, "state")).Any());
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public sealed class IntegrationPublisherTests : IDisposable
         var moved = await RevParseAsync(origin, "refs/heads/develop");
 
         var merged = await IntegrationPublisher.PublishAsync(
-            Command(origin, "develop", "refs/heads/results/two", result), 1, Path.Combine(_root, "state"), _log.Add, default);
+            Command(origin, "develop", "refs/heads/results/two", result), 1, Path.Combine(_workspace.Path, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Integrated, merged.Outcome);
         var tip = await RevParseAsync(origin, "refs/heads/develop");
@@ -58,7 +58,7 @@ public sealed class IntegrationPublisherTests : IDisposable
         var conflicting = await CommitAsync(work, "feature.txt", "conflict", "Conflicting");
         await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/three");
         var conflict = await IntegrationPublisher.PublishAsync(
-            Command(origin, "develop", "refs/heads/results/three", conflicting), 1, Path.Combine(_root, "state"), _log.Add, default);
+            Command(origin, "develop", "refs/heads/results/three", conflicting), 1, Path.Combine(_workspace.Path, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Conflict, conflict.Outcome);
         Assert.Null(conflict.IntegratedSha);
@@ -74,7 +74,7 @@ public sealed class IntegrationPublisherTests : IDisposable
 
         var refused = await IntegrationPublisher.PublishAsync(
             Command(origin, "develop", "refs/heads/results/four", new string('9', 40)),
-            1, Path.Combine(_root, "state"), _log.Add, default);
+            1, Path.Combine(_workspace.Path, "state"), _log.Add, default);
 
         Assert.Equal(IntegrationOutcomeKinds.Failed, refused.Outcome);
         Assert.NotEqual(new string('9', 40), await RevParseAsync(origin, "refs/heads/develop"));
@@ -87,8 +87,8 @@ public sealed class IntegrationPublisherTests : IDisposable
 
     private async Task<(string Origin, string Work)> RepositoryAsync()
     {
-        var origin = Path.Combine(_root, "origin.git");
-        var work = Path.Combine(_root, "work");
+        var origin = Path.Combine(_workspace.Path, "origin.git");
+        var work = Path.Combine(_workspace.Path, "work");
         Directory.CreateDirectory(origin);
         Directory.CreateDirectory(work);
         await Git(origin, "init", "-q", "--bare");
@@ -119,9 +119,5 @@ public sealed class IntegrationPublisherTests : IDisposable
     private static Task<ProcessResult> Run(string directory, params string[] args)
         => ProcessRunner.RunAsync("git", args, directory, ct: CancellationToken.None);
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_root, recursive: true); }
-        catch { /* best effort */ }
-    }
+    public void Dispose() => _workspace.Dispose();
 }

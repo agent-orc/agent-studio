@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
@@ -36,149 +37,191 @@ public sealed class StandaloneReviewLoopCutoverTests
     [Fact]
     public async Task Standalone_server_runs_coding_rejection_fix_round_pass_integration_to_human_review_with_engine_receipts()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"standalone-loop-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
+        using var workspace = new TempWorkspace("standalone-loop");
+        await using var factory = new CutoverFactory(workspace.Path);
+        using var bootstrap = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+
+        var (projectId, task) = await SetupAsync(store);
+        var loopStart = (await store.ListAuditAsync(0, default)).Max(record => record.Sequence);
+
+        using var transport = EngineTransport(factory);
+        using var engineClient = new EngineTaskServerClient(transport);
+        using var engine = Engine(engineClient);
+        await engine.StartAsync(default);
         try
         {
-            await using var factory = new CutoverFactory(directory);
-            using var bootstrap = factory.CreateClient();
-            var store = factory.Services.GetRequiredService<TaskServerStore>();
+            // 1. Coding: completion creates the review subject from the fenced result.
+            var first = await CodeAsync(store, null, FirstResultSha);
+            Assert.Null(first.Claim.ContinuationBaseRef);
+            Assert.Equal("4-auto-review", (await TaskAsync(store, projectId, task.TaskId)).State);
 
-            var (projectId, task) = await SetupAsync(store);
-            var loopStart = (await store.ListAuditAsync(0, default)).Max(record => record.Sequence);
+            // 2. Rejected review; the engine opens a fix round.
+            var rejected = await ReviewAsync(store, FirstResultSha, reject: true);
+            Assert.Equal(first.Run.RunId, rejected.SourceRunId);
+            await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "2-ready");
 
-            using var transport = EngineTransport(factory);
-            using var engineClient = new EngineTaskServerClient(transport);
-            using var engine = Engine(engineClient);
-            await engine.StartAsync(default);
-            try
-            {
-                // 1. Coding: completion creates the review subject from the fenced result.
-                var first = await CodeAsync(store, null, FirstResultSha);
-                Assert.Null(first.Claim.ContinuationBaseRef);
-                Assert.Equal("4-auto-review", (await TaskAsync(store, projectId, task.TaskId)).State);
+            // 3. Fix round on the reviewed delivery (D17) with the findings as prompt.
+            var fix = await CodeAsync(store, first.Envelope, FixResultSha);
+            Assert.Equal(first.Envelope.ImmutableRemoteRef, fix.Claim.ContinuationBaseRef);
+            Assert.Equal(FirstResultSha, fix.Claim.ContinuationBaseSha);
+            Assert.Equal(ContinuationBaseReasons.ReviewFixRound, fix.Claim.ContinuationBaseReason);
+            var followUp = Assert.IsType<FollowUpDeliveryDto>(fix.Claim.FollowUp);
+            Assert.Contains(ReviewFindingRoundPrompt.Directive, followUp.Prompt, StringComparison.Ordinal);
+            Assert.Contains("The build and test command failed on this delivery.", followUp.Prompt,
+                StringComparison.Ordinal);
+            Assert.Contains(ReviewFindingRoundPrompt.BaseSentence(true), followUp.Prompt, StringComparison.Ordinal);
 
-                // 2. Rejected review; the engine opens a fix round.
-                var rejected = await ReviewAsync(store, FirstResultSha, reject: true);
-                Assert.Equal(first.Run.RunId, rejected.SourceRunId);
-                await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "2-ready");
+            // 4. Passed review; the engine accepts the delivery for integration.
+            await ReviewAsync(store, FixResultSha, reject: false);
+            IntegrationCommandDto? command = null;
+            await WaitForAsync(async () =>
+                (command = (await store.ListIntegrationsAsync(task.TaskId, default)).SingleOrDefault()) is not null);
+            Assert.Equal("4-auto-review", (await TaskAsync(store, projectId, task.TaskId)).State);
+            Assert.Equal(FixResultSha, command!.ResultSha);
+            Assert.Equal(fix.Envelope.ImmutableRemoteRef, command.ResultRef);
+            Assert.Equal(IntegrationRef, command.IntegrationRef);
 
-                // 3. Fix round on the reviewed delivery (D17) with the findings as prompt.
-                var fix = await CodeAsync(store, first.Envelope, FixResultSha);
-                Assert.Equal(first.Envelope.ImmutableRemoteRef, fix.Claim.ContinuationBaseRef);
-                Assert.Equal(FirstResultSha, fix.Claim.ContinuationBaseSha);
-                Assert.Equal(ContinuationBaseReasons.ReviewFixRound, fix.Claim.ContinuationBaseReason);
-                var followUp = Assert.IsType<FollowUpDeliveryDto>(fix.Claim.FollowUp);
-                Assert.Contains(ReviewFindingRoundPrompt.Directive, followUp.Prompt, StringComparison.Ordinal);
-                Assert.Contains("The build and test command failed on this delivery.", followUp.Prompt,
-                    StringComparison.Ordinal);
-                Assert.Contains(ReviewFindingRoundPrompt.BaseSentence(true), followUp.Prompt, StringComparison.Ordinal);
-
-                // 4. Passed review; the engine accepts the delivery for integration.
-                await ReviewAsync(store, FixResultSha, reject: false);
-                IntegrationCommandDto? command = null;
-                await WaitForAsync(async () =>
-                    (command = (await store.ListIntegrationsAsync(task.TaskId, default)).SingleOrDefault()) is not null);
-                Assert.Equal("4-auto-review", (await TaskAsync(store, projectId, task.TaskId)).State);
-                Assert.Equal(FixResultSha, command!.ResultSha);
-                Assert.Equal(fix.Envelope.ImmutableRemoteRef, command.ResultRef);
-                Assert.Equal(IntegrationRef, command.IntegrationRef);
-
-                // 5. Integration under the publication lease, then Human Review.
-                var claim = await store.ClaimIntegrationAsync(
-                    new IntegrationClaimRequest("integration-a", "integration-instance"), "integration-a", default);
-                Assert.Equal("claimed", claim.Status);
-                Assert.Equal(command.IntegrationId, claim.Command!.IntegrationId);
-                // Always the registered project repository, never the coding host's remote.
-                Assert.Equal(RepositoryUrl, claim.Command.RepositoryUrl);
-                // A long publication renews its lease under the same fence.
-                var renewed = await store.RenewPublicationLeaseAsync(command.IntegrationId,
-                    new IntegrationLeaseRenewRequest("integration-a", "integration-instance", claim.Lease!.LeaseId,
-                        claim.Lease.Fence, 900), "integration-a", default);
-                Assert.Equal(claim.Lease.Fence, renewed.Fence);
-                Assert.True(renewed.ExpiresAt > claim.Lease.ExpiresAt);
-                var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
-                    store.RenewPublicationLeaseAsync(command.IntegrationId,
-                        new IntegrationLeaseRenewRequest("integration-a", "integration-instance", claim.Lease.LeaseId,
-                            claim.Lease.Fence + 1), "integration-a", default));
-                Assert.Equal("stale-fence", stale.Code);
-                var report = await store.ReportIntegrationAsync(command.IntegrationId,
-                    new IntegrationReportRequest("integration-a", "integration-instance", claim.Lease!.LeaseId,
-                        claim.Lease.Fence, $"integration:{claim.Lease.Fence}", IntegrationOutcomeKinds.Integrated,
-                        IntegratedSha), "integration-a", default);
-                Assert.Equal("5-human-review", report.TaskState);
-                Assert.Equal("5-human-review", (await TaskAsync(store, projectId, task.TaskId)).State);
-            }
-            finally
-            {
-                await engine.StopAsync(default);
-            }
-
-            // Engine receipts only: every settlement applied a typed engine
-            // decision, and nobody outside the hosts and the engine acted.
-            var audit = await store.ListAuditAsync(loopStart, default);
-            var settlements = audit.Where(record => record.Action == "orchestration.stage-completed").ToArray();
-            Assert.Equal(6, settlements.Length);
-            Assert.All(settlements, record =>
-                Assert.DoesNotContain("task-server-compatibility", record.DetailJson, StringComparison.Ordinal));
-            // ReviewDecision of both runs and Council of the passing run carry typed decisions.
-            Assert.Equal(3, settlements.Count(record =>
-                record.DetailJson.Contains("\"decider\":\"engine\"", StringComparison.Ordinal)));
-            Assert.All(settlements, record => Assert.Equal("bootstrap-engine", record.ActorId));
-            Assert.All(audit, record => Assert.Contains(record.ActorId,
-                new[] { "coding-a", "review-a", "integration-a", "bootstrap-engine" }));
-            Assert.Contains(audit, record => record.Action == "continuation.accepted"
-                && record.DetailJson.Contains("review-finding-round", StringComparison.Ordinal));
-            var runs = await store.ListOrchestrationRunsAsync(projectId, null, default);
-            Assert.Equal(["integrating", "reissued"], runs.Select(run => run.Status).Order().ToArray());
-            var decisions = runs.SelectMany(run => run.StageResults ?? [])
-                .Where(result => result.OutputJson.Contains("\"transition\"", StringComparison.Ordinal)).ToArray();
-            Assert.Equal(3, decisions.Length);
-            Assert.All(decisions, result =>
-                Assert.Contains("orchestration-decisions:", result.OutputJson, StringComparison.Ordinal));
+            // 5. Integration under the publication lease, then Human Review.
+            var claim = await store.ClaimIntegrationAsync(
+                new IntegrationClaimRequest("integration-a", "integration-instance"), "integration-a", default);
+            Assert.Equal("claimed", claim.Status);
+            Assert.Equal(command.IntegrationId, claim.Command!.IntegrationId);
+            // Always the registered project repository, never the coding host's remote.
+            Assert.Equal(RepositoryUrl, claim.Command.RepositoryUrl);
+            // A long publication renews its lease under the same fence.
+            var renewed = await store.RenewPublicationLeaseAsync(command.IntegrationId,
+                new IntegrationLeaseRenewRequest("integration-a", "integration-instance", claim.Lease!.LeaseId,
+                    claim.Lease.Fence, 900), "integration-a", default);
+            Assert.Equal(claim.Lease.Fence, renewed.Fence);
+            Assert.True(renewed.ExpiresAt > claim.Lease.ExpiresAt);
+            var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+                store.RenewPublicationLeaseAsync(command.IntegrationId,
+                    new IntegrationLeaseRenewRequest("integration-a", "integration-instance", claim.Lease.LeaseId,
+                        claim.Lease.Fence + 1), "integration-a", default));
+            Assert.Equal("stale-fence", stale.Code);
+            var report = await store.ReportIntegrationAsync(command.IntegrationId,
+                new IntegrationReportRequest("integration-a", "integration-instance", claim.Lease!.LeaseId,
+                    claim.Lease.Fence, $"integration:{claim.Lease.Fence}", IntegrationOutcomeKinds.Integrated,
+                    IntegratedSha), "integration-a", default);
+            Assert.Equal("5-human-review", report.TaskState);
+            Assert.Equal("5-human-review", (await TaskAsync(store, projectId, task.TaskId)).State);
         }
         finally
         {
-            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+            await engine.StopAsync(default);
         }
+
+        // Engine receipts only: every settlement applied a typed engine
+        // decision, and nobody outside the hosts and the engine acted.
+        var audit = await store.ListAuditAsync(loopStart, default);
+        var settlements = audit.Where(record => record.Action == "orchestration.stage-completed").ToArray();
+        Assert.Equal(6, settlements.Length);
+        Assert.All(settlements, record =>
+            Assert.DoesNotContain("task-server-compatibility", record.DetailJson, StringComparison.Ordinal));
+        // ReviewDecision of both runs and Council of the passing run carry typed decisions.
+        Assert.Equal(3, settlements.Count(record =>
+            record.DetailJson.Contains("\"decider\":\"engine\"", StringComparison.Ordinal)));
+        Assert.All(settlements, record => Assert.Equal("bootstrap-engine", record.ActorId));
+        Assert.All(audit, record => Assert.Contains(record.ActorId,
+            new[] { "coding-a", "review-a", "integration-a", "bootstrap-engine" }));
+        Assert.Contains(audit, record => record.Action == "continuation.accepted"
+            && record.DetailJson.Contains("review-finding-round", StringComparison.Ordinal));
+        var runs = await store.ListOrchestrationRunsAsync(projectId, null, default);
+        Assert.Equal(["integrating", "reissued"], runs.Select(run => run.Status).Order().ToArray());
+        var decisions = runs.SelectMany(run => run.StageResults ?? [])
+            .Where(result => result.OutputJson.Contains("\"transition\"", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(3, decisions.Length);
+        Assert.All(decisions, result =>
+            Assert.Contains("orchestration-decisions:", result.OutputJson, StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task A_passed_delivery_pushed_to_another_remote_escalates_instead_of_publishing()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"standalone-loop-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
+        using var workspace = new TempWorkspace("standalone-loop");
+        await using var factory = new CutoverFactory(workspace.Path);
+        using var bootstrap = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+        var (projectId, task) = await SetupAsync(store);
+        var loopStart = (await store.ListAuditAsync(0, default)).Max(record => record.Sequence);
+
+        await RunEngineAsync(factory, async () =>
+        {
+            await CodeAsync(store, null, FirstResultSha, "https://example.invalid/fork/product.git");
+            await ReviewAsync(store, FirstResultSha, reject: false);
+            await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "5e-escalated");
+        });
+
+        // The settlement escalated once instead of queueing an integration
+        // that would publish to the wrong remote or roll back forever.
+        await AssertEscalatedOnceWithoutIntegrationAsync(store, projectId, task.TaskId, loopStart,
+            "another remote than the registered project repository");
+    }
+
+    [Fact]
+    public async Task A_passed_source_bundle_only_delivery_escalates_once_without_queueing_an_integration()
+    {
+        using var workspace = new TempWorkspace("standalone-loop");
+        await using var factory = new CutoverFactory(workspace.Path);
+        using var bootstrap = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+        var (projectId, task) = await SetupAsync(store);
+        var loopStart = (await store.ListAuditAsync(0, default)).Max(record => record.Sequence);
+
+        await RunEngineAsync(factory, async () =>
+        {
+            // A valid result envelope carrying a source bundle and no fenced ref.
+            var coded = await CodeAsync(store, null, FirstResultSha, sourceBundleOnly: true);
+            Assert.Null(coded.Envelope.ImmutableRemoteRef);
+            Assert.Equal("4-auto-review", (await TaskAsync(store, projectId, task.TaskId)).State);
+            var subject = await ReviewAsync(store, FirstResultSha, reject: false);
+            Assert.Null(subject.ResultRef);
+            await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "5e-escalated");
+        });
+
+        await AssertEscalatedOnceWithoutIntegrationAsync(store, projectId, task.TaskId, loopStart,
+            "no fenced result ref and SHA to publish");
+    }
+
+    /// <summary>
+    /// The engine accepted the passed delivery, the Task Server classified it
+    /// as unpublishable and escalated it in exactly one settlement: no
+    /// integration command, no rolled-back or repeated settlement.
+    /// </summary>
+    private static async Task AssertEscalatedOnceWithoutIntegrationAsync(
+        TaskServerStore store, string projectId, string taskId, long loopStart, string reason)
+    {
+        Assert.Equal("5e-escalated", (await TaskAsync(store, projectId, taskId)).State);
+        Assert.Empty(await store.ListIntegrationsAsync(taskId, default));
+        var run = Assert.Single(await store.ListOrchestrationRunsAsync(projectId, null, default));
+        Assert.Equal("escalated", run.Status);
+        var settlements = (await store.ListAuditAsync(loopStart, default))
+            .Where(record => record.Action == "orchestration.stage-completed").ToArray();
+        var escalation = Assert.Single(settlements, record =>
+            record.DetailJson.Contains("\"nextStatus\":\"escalated\"", StringComparison.Ordinal));
+        Assert.Contains(reason, escalation.DetailJson, StringComparison.Ordinal);
+        // The later stage applies the transition the engine accepted at ReviewDecision.
+        Assert.Contains("\"decider\":\"engine-stage-action\"", escalation.DetailJson, StringComparison.Ordinal);
+        Assert.Equal("bootstrap-engine", escalation.ActorId);
+        Assert.All(settlements, record =>
+            Assert.DoesNotContain("task-server-compatibility", record.DetailJson, StringComparison.Ordinal));
+        Assert.Same(escalation, settlements[^1]);
+    }
+
+    private static async Task RunEngineAsync(CutoverFactory factory, Func<Task> loop)
+    {
+        using var transport = EngineTransport(factory);
+        using var engineClient = new EngineTaskServerClient(transport);
+        using var engine = Engine(engineClient);
+        await engine.StartAsync(default);
         try
         {
-            await using var factory = new CutoverFactory(directory);
-            using var bootstrap = factory.CreateClient();
-            var store = factory.Services.GetRequiredService<TaskServerStore>();
-            var (projectId, task) = await SetupAsync(store);
-
-            using var transport = EngineTransport(factory);
-            using var engineClient = new EngineTaskServerClient(transport);
-            using var engine = Engine(engineClient);
-            await engine.StartAsync(default);
-            try
-            {
-                await CodeAsync(store, null, FirstResultSha, "https://example.invalid/fork/product.git");
-                await ReviewAsync(store, FirstResultSha, reject: false);
-                await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "5e-escalated");
-            }
-            finally
-            {
-                await engine.StopAsync(default);
-            }
-
-            // The settlement escalated once instead of queueing an integration
-            // that would publish to the wrong remote or roll back forever.
-            Assert.Empty(await store.ListIntegrationsAsync(task.TaskId, default));
-            var run = Assert.Single(await store.ListOrchestrationRunsAsync(projectId, null, default));
-            Assert.Equal("escalated", run.Status);
+            await loop();
         }
         finally
         {
-            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+            await engine.StopAsync(default);
         }
     }
 
@@ -256,7 +299,7 @@ public sealed class StandaloneReviewLoopCutoverTests
 
     private static async Task<CodingRound> CodeAsync(
         TaskServerStore store, ImmutableResultEnvelope? continuesOn, string resultSha,
-        string repositoryUrl = RepositoryUrl)
+        string repositoryUrl = RepositoryUrl, bool sourceBundleOnly = false)
     {
         var claim = await store.ClaimAsync(new ClaimRequest("coding-a", "coding-instance"), "coding-a", default);
         Assert.Equal("claimed", claim.Status);
@@ -268,7 +311,8 @@ public sealed class StandaloneReviewLoopCutoverTests
         var envelope = new ImmutableResultEnvelope(
             RepositoryIdentityContract.FromUrl(RepositoryUrl)!, run.RunId,
             continuesOn?.ResultSha ?? new string('0', 40), resultSha,
-            FencedGitRefs.ImmutableResult(run.RunId, lease.Fence, resultSha), null, new string('a', 64),
+            sourceBundleOnly ? null : FencedGitRefs.ImmutableResult(run.RunId, lease.Fence, resultSha),
+            sourceBundleOnly ? new string('f', 64) : null, new string('a', 64),
             RepositoryUrl: repositoryUrl);
         var digest = ResultEnvelopeDigest.Compute(envelope);
         await store.AcknowledgeResultHandoffAsync(run.RunId, new ResultHandoffRequest(
