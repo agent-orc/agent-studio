@@ -138,6 +138,25 @@ public sealed class OrchestrationRolloutStore
         }
     }
 
+    /// <summary>
+    /// Counts an occurrence that cannot be compared as a break in the streak.
+    /// Like Compare, it counts each occurrence once.
+    /// </summary>
+    public void Discount(string profile, string occurrence)
+    {
+        ValidateProfile(profile);
+        lock (Gate)
+        {
+            var state = Read(_path);
+            var item = state.Profiles.GetValueOrDefault(profile) ?? Initial(profile);
+            if (!item.ComparedOccurrences.Add(occurrence)) return;
+            item.Streak = 0;
+            if (item.State == "ready") item.State = "shadow";
+            state.Profiles[profile] = item;
+            Save(state);
+        }
+    }
+
     public static OrchestrationDecisionReceipt Receipt(string occurrence, string trigger,
         string payload, string action, string reason, string decider)
         => new(occurrence, trigger,

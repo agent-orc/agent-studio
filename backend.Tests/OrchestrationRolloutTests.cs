@@ -169,6 +169,88 @@ public sealed class OrchestrationRolloutTests
     }
 
     [Fact]
+    public async Task Gate_shadow_intent_counts_only_once_the_card_reached_its_target_lane()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var shadow = await CompletedGateShadow(fixture, "gate:intent", TransitionAction.ReturnToReady);
+        fixture.Store.RecordMonolithIntent(shadow.RunId, TransitionAction.Continue.ToString(),
+            "Batch gate passed.", TaskStates.HumanReview);
+
+        // A restarted process reads the saved intent; the source lane means the move is still open.
+        var restarted = new MonolithOrchestrationStore(fixture.OccurrenceDirectory, fixture.Time,
+            fixture.Applier, fixture.Rollout);
+        restarted.ResolveShadowOutcome(shadow.RunId, TaskStates.AutoReview);
+        Assert.Null(restarted.GetOccurrence(shadow.RunId)!.MonolithReceipt);
+        Assert.Single(restarted.UnrecordedShadowOutcomes());
+
+        restarted.ResolveShadowOutcome(shadow.RunId, TaskStates.HumanReview);
+
+        Assert.Empty(restarted.UnrecordedShadowOutcomes());
+        Assert.Equal("Continue", restarted.GetOccurrence(shadow.RunId)!.MonolithReceipt!.Action);
+        var profile = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(1, profile.MismatchCount);
+        Assert.Equal("ReturnToReady", profile.LastMismatch!.Engine.Action);
+    }
+
+    [Fact]
+    public async Task Withdrawn_intent_and_an_unverifiable_outcome_reset_the_streak_without_a_match()
+    {
+        using var fixture = new Fixture(threshold: 2);
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var matched = await CompletedGateShadow(fixture, "gate:matched", TransitionAction.Continue);
+        fixture.Store.RecordMonolithDecision(matched.RunId, TransitionAction.Continue.ToString(), "passed");
+        Assert.Equal(1, fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+        var lost = await CompletedGateShadow(fixture, "gate:lost", TransitionAction.Continue);
+        fixture.Store.RecordMonolithIntent(lost.RunId, TransitionAction.Continue.ToString(),
+            "Batch gate passed.", TaskStates.HumanReview);
+        fixture.Store.WithdrawMonolithIntent(lost.RunId);
+        Assert.Null(fixture.Store.GetOccurrence(lost.RunId)!.MonolithIntent);
+
+        fixture.Store.ResolveShadowOutcome(lost.RunId, TaskStates.Ready);
+        fixture.Store.ResolveShadowOutcome(lost.RunId, TaskStates.Ready);
+        fixture.Store.RecordMonolithDecision(lost.RunId, TransitionAction.Continue.ToString(), "late");
+
+        var profile = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal(0, profile.Streak);
+        Assert.Equal("shadow", profile.State);
+        Assert.Equal(0, profile.MismatchCount);
+        Assert.Null(fixture.Store.GetOccurrence(lost.RunId)!.MonolithReceipt);
+        Assert.Equal("monolith-outcome-unverified", fixture.Store.GetOccurrence(lost.RunId)!.ShadowResolution);
+        Assert.Empty(fixture.Store.UnrecordedShadowOutcomes());
+    }
+
+    [Fact]
+    public async Task Engine_switch_waits_until_earlier_shadow_occurrences_are_resolved()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var earlier = await CompletedGateShadow(fixture, "gate:earlier", TransitionAction.ReturnToReady);
+        fixture.Store.RecordMonolithIntent(earlier.RunId, TransitionAction.Continue.ToString(),
+            "Batch gate passed.", TaskStates.HumanReview);
+        var later = await CompletedGateShadow(fixture, "gate:later", TransitionAction.Continue);
+        fixture.Store.RecordMonolithDecision(later.RunId, TransitionAction.Continue.ToString(), "passed");
+        Assert.Equal("ready", fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult").State);
+
+        var blocked = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched comparison"));
+        Assert.Equal("orchestration-profile-shadow-unresolved", blocked.Message);
+
+        fixture.Store.ResolveShadowOutcome(earlier.RunId, TaskStates.HumanReview);
+        var reset = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
+        Assert.Equal("shadow", reset.State);
+        Assert.Equal(0, reset.Streak);
+        var refused = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched comparison"));
+        Assert.Equal("orchestration-profile-switch-not-allowed", refused.Message);
+
+        var next = await CompletedGateShadow(fixture, "gate:next", TransitionAction.Continue);
+        fixture.Store.RecordMonolithDecision(next.RunId, TransitionAction.Continue.ToString(), "passed");
+        Assert.Equal("engine", fixture.Store.SwitchProfile("GateResult", "engine", "operator",
+            "matched comparison").State);
+    }
+
+    [Fact]
     public void Recovery_wait_list_excludes_unactivated_review_occurrences()
     {
         using var fixture = new Fixture();
@@ -205,6 +287,23 @@ public sealed class OrchestrationRolloutTests
         var receipts = await client.GetFromJsonAsync<OrchestrationSwitchReceipt[]>(
             "/api/orchestration/rollout/switch-receipts");
         Assert.Equal("Start comparison", Assert.Single(receipts!).Reason);
+    }
+
+    private static async Task<OrchestrationRunDto> CompletedGateShadow(Fixture fixture, string key,
+        TransitionAction engineAction)
+    {
+        var shadow = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
+            "{\"monolithGateResult\":true}", key, TaskStates.AutoReview,
+            "attempt", 1, 1, profile: "GateResult", shadow: true);
+        var claim = fixture.Store.Claim(new("engine", "first", [OrchestrationStage.GateDispatch]));
+        Assert.Equal(shadow.RunId, claim.Run!.RunId);
+        var output = JsonSerializer.Serialize(new { transition = TransitionDecisionPolicy.Create(
+            engineAction, "Engine decision.", "card", "attempt", 0, 4) });
+        await fixture.Store.CompleteAsync(shadow.RunId,
+            new("engine", "first", claim.Lease!.LeaseId, claim.Lease.Fence,
+                OrchestrationStage.GateDispatch, StageDecisionPolicy.ToStageAction(engineAction), output,
+                "complete:" + key), default);
+        return shadow;
     }
 
     private sealed class Fixture : IDisposable

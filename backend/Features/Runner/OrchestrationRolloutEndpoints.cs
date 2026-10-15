@@ -16,7 +16,7 @@ public static class OrchestrationRolloutEndpoints
         api.MapGet("/switch-receipts", (OrchestrationRolloutStore store) =>
             Results.Ok(store.SwitchReceipts()));
         api.MapPost("/profiles/{profile}/switch", (HttpContext context, string profile,
-            OrchestrationProfileSwitchRequest request, OrchestrationRolloutStore store,
+            OrchestrationProfileSwitchRequest request, MonolithOrchestrationStore store,
             IConfiguration configuration) =>
         {
             if (SecurityProfiles.IsPublicDemo(configuration)) return Results.StatusCode(403);
@@ -26,7 +26,7 @@ public static class OrchestrationRolloutEndpoints
                 return Results.StatusCode(403);
             var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? human.User.Username : "local-operator";
-            try { return Results.Ok(store.Switch(profile, request.Target, actor, request.Reason)); }
+            try { return Results.Ok(store.SwitchProfile(profile, request.Target, actor, request.Reason)); }
             catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }
             catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
         });

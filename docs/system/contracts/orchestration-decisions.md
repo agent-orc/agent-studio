@@ -113,10 +113,18 @@ report may reopen it with a corrected payload and renewed authority fence.
 Gate decisions carry infrastructure and intervention facts to the shared
 policy, which escalates those failures. Shadow comparison uses the action the
 monolith actually applied after the gate handler completes. A batch
-shadow receipt is written only after the lane move succeeded. Each comparison
-counts an occurrence once; a receipt replay and the recovery service compare
-every shadow occurrence that holds both receipts, so a comparison lost between
-saving a receipt and comparing it still resets the matching streak.
+shadow decision is saved as an intent before the lane move and becomes the
+receipt only after the move succeeded; a failed move withdraws it. Each
+comparison counts an occurrence once; a receipt replay and the recovery service
+compare every shadow occurrence that holds both receipts, so a comparison lost
+between saving a receipt and comparing it still resets the matching streak.
+The recovery service also resolves a shadow occurrence without a monolith
+receipt from the card's current lane: a card in its source lane is still
+deciding, a saved intent whose target lane the card reached is compared, and
+any other occurrence cannot be compared and resets the streak. The switch to
+Engine is refused with `orchestration-profile-shadow-unresolved` while an
+earlier shadow occurrence of the profile lacks a receipt, so Ready never
+hides an open comparison.
 
 ## Verification and architecture guard
 

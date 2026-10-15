@@ -1740,6 +1740,7 @@ public sealed class BatchGatePilotService
         var batchOccurrenceKey = $"batch-result:{manifest.BatchId}:{run.BatchRunId}:{subject.TaskKey}";
         if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, batchOccurrenceKey,
                 "Batch gate passed on a verified candidate SHA.")) return;
+        RecordBatchShadowIntent(task, pending.ReviewAttemptId, batchOccurrenceKey);
         var moved = await _transitions.MoveAsync(
             task.Id, TaskStates.HumanReview, task.WatchPath, ct,
             cause: $"batch-gate:{manifest.BatchId}",
@@ -1748,7 +1749,10 @@ public sealed class BatchGatePilotService
             transitionCause: LaneChangeCauses.ReviewVerdict,
             transitionDetail: "batch-gate-passed").ConfigureAwait(false);
         if (moved.Status != MoveJobStatus.Success)
+        {
+            WithdrawBatchShadowIntent(batchOccurrenceKey);
             throw new IOException($"Batch lane release failed: {moved.Status} {moved.Message}");
+        }
         RecordBatchShadowOutcome(task, pending.ReviewAttemptId, batchOccurrenceKey);
         _reviewJournal.RecordRemoteReviewParkVerdict(
             task.ProjectName, task.Id, moved.NewFolderPath ?? task.FolderPath,
@@ -1982,6 +1986,7 @@ public sealed class BatchGatePilotService
                 containedInSha is null
                     ? "Per-task fallback gate passed on the immutable result SHA."
                     : "The integration branch already contained the result SHA.")) return;
+        RecordBatchShadowIntent(task, pending.ReviewAttemptId, fallbackOccurrenceKey);
         var moved = await _transitions.MoveAsync(task.Id, TaskStates.HumanReview,
             task.WatchPath, ct, cause: $"batch-fallback:{pending.ReviewAttemptId}",
             suppressProductExecution: true,
@@ -2002,6 +2007,7 @@ public sealed class BatchGatePilotService
                     : $"The integration branch already contained the result SHA at {containedInSha}; "
                       + "no batch candidate and no gate ran.");
         }
+        else WithdrawBatchShadowIntent(fallbackOccurrenceKey);
     }
 
     private bool HoldForEngineBatchDecision(TaskInfo task, string reviewAttemptId,
@@ -2046,17 +2052,42 @@ public sealed class BatchGatePilotService
 
     /// <summary>
     /// The shadow comparison counts only an applied monolith outcome. The
-    /// receipt is written after MoveAsync succeeded, so a failed lane move
-    /// never matches the engine or advances the switch streak.
+    /// decision is saved as an intent before MoveAsync and becomes the receipt
+    /// after the move succeeded, so a failed lane move never matches the engine.
+    /// If the process stops after the move, the card has left AutoReview and
+    /// no replay reaches this path; recovery then reads the intent and the lane.
     /// </summary>
+    private void RecordBatchShadowIntent(TaskInfo task, string reviewAttemptId, string occurrenceKey)
+    {
+        if (BatchShadowOccurrence(occurrenceKey) is not { } shadow) return;
+        var decision = BatchShadowDecision(task, reviewAttemptId);
+        shadow.Store.RecordMonolithIntent(shadow.RunId, decision.Action.ToString(), decision.Reason,
+            TaskStates.HumanReview);
+    }
+
+    private void WithdrawBatchShadowIntent(string occurrenceKey)
+    {
+        if (BatchShadowOccurrence(occurrenceKey) is { } shadow)
+            shadow.Store.WithdrawMonolithIntent(shadow.RunId);
+    }
+
     private void RecordBatchShadowOutcome(TaskInfo task, string reviewAttemptId, string occurrenceKey)
+    {
+        if (BatchShadowOccurrence(occurrenceKey) is not { } shadow) return;
+        var decision = BatchShadowDecision(task, reviewAttemptId);
+        shadow.Store.RecordMonolithDecision(shadow.RunId, decision.Action.ToString(), decision.Reason);
+    }
+
+    private (MonolithOrchestrationStore Store, string RunId)? BatchShadowOccurrence(string occurrenceKey)
     {
         var orchestration = _services?.GetService<MonolithOrchestrationStore>();
         var run = orchestration?.GetByIdempotencyKey(occurrenceKey);
-        if (run is null || orchestration!.GetOccurrence(run.RunId) is not { Shadow: true }) return;
-        var decision = StageDecisionPolicy.GateTransition(task.Id, reviewAttemptId, 0, 0, 1).Transition!;
-        orchestration.RecordMonolithDecision(run.RunId, decision.Action.ToString(), decision.Reason);
+        return run is null || orchestration!.GetOccurrence(run.RunId) is not { Shadow: true }
+            ? null : (orchestration, run.RunId);
     }
+
+    private static TransitionDecision BatchShadowDecision(TaskInfo task, string reviewAttemptId)
+        => StageDecisionPolicy.GateTransition(task.Id, reviewAttemptId, 0, 0, 1).Transition!;
 
     /// <summary>Pending-queue resolution of a member that left as integrated (AGT-3103).</summary>
     internal const string AlreadyIntegratedResolution = "already-integrated";
