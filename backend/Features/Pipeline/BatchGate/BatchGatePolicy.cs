@@ -187,11 +187,14 @@ public static class BatchGatePolicy
     /// batch that owns it, or a per-task gate already running for it, settles
     /// it on its own path. <paramref name="containedInBase"/> is asked last,
     /// so it costs a Git call only for a member that could leave.
+    /// AGT-3139: a per-task gate the process lost has no flight left to settle
+    /// it, so <paramref name="gateInterrupted"/> lets its member leave too.
     /// </summary>
-    public static bool LeavesAsIntegrated(BatchGateSubject subject, Func<string, bool> containedInBase)
+    public static bool LeavesAsIntegrated(BatchGateSubject subject, Func<string, bool> containedInBase,
+        bool gateInterrupted = false)
         => subject.CurrentGeneration
            && subject.OwningBatchId is null
-           && !subject.ActivePerTaskGate
+           && (!subject.ActivePerTaskGate || gateInterrupted)
            && !string.IsNullOrWhiteSpace(subject.ResultSha)
            && containedInBase(subject.ResultSha);
 
