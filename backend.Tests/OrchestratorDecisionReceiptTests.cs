@@ -596,8 +596,11 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [InlineData("stop", null, null, "Monolith")]
     [InlineData("raise", 120, 7200, "Shadow")]
     [InlineData("raise", 120, 7200, "Engine")]
+    [InlineData("raise", 120, 7200, "Monolith", 5400)]
+    [InlineData("cut", 70, 4200, "Monolith", 5400)]
     public async Task Operator_action_applies_on_the_card_through_monolith_authority(
-        string action, int? minutes, int? expectedSeconds, string codingProfile)
+        string action, int? minutes, int? expectedSeconds, string codingProfile,
+        int? hostBaselineSeconds = null)
     {
         const string project = "project";
         const string card = "AGT-1";
@@ -644,11 +647,23 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false,
             "operator answer needed"));
         store.PutReceipt(receipt);
+        if (hostBaselineSeconds is { } hostBaseline)
+        {
+            factory.Services.GetRequiredService<V1ReviewExecutorRegistry>().Register("coding-runner",
+                new RegisterRunnerRequest("coding-runner", "host", "instance", "1.0.0",
+                    TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor],
+                    RunTimeoutSeconds: hostBaseline));
+            var held = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+                new AgentStudio.Shared.RunLeaseAcquireRequest(
+                    card, "coding-runner", "coding-runner", "host", 4242, "codex"));
+            Assert.True(held.Granted);
+        }
         if (action is "raise" or "cut")
         {
             var rejected = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
                 new DecisionOperatorIntentRequest(action, "Wrong limit direction",
-                    RequestedEmergencyMinutes: action == "raise" ? 30 : 120), DecisionGroundsPolicy.Json);
+                    RequestedEmergencyMinutes: action == "raise" && hostBaselineSeconds is not null
+                        ? 80 : action == "raise" ? 30 : 120), DecisionGroundsPolicy.Json);
             Assert.Equal(System.Net.HttpStatusCode.Conflict, rejected.StatusCode);
             Assert.Null(store.GetOperatorIntent(receipt.ReceiptId));
             Assert.DoesNotContain($"operator-response:{receipt.ReceiptId}", store.PendingReceipts(10));
@@ -731,13 +746,32 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             store.GetOperatorIntent(receipt.ReceiptId)!.Outcome);
         Assert.Equal(RemoteRunStopReasons.DecisionStop,
             factory.Services.GetRequiredService<RemoteRunStopRequestStore>().Peek(card)!.Reason);
+        var leases = factory.Services.GetRequiredService<RunLeaseService>();
+        var stops = factory.Services.GetRequiredService<RemoteRunStopRequestStore>();
+        Assert.Equal("Released", leases.Release(new AgentStudio.Shared.RunLeaseReleaseRequest(
+            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId,
+            lease.Lease.AttemptId, lease.Lease.AuthorityEpoch, "replace-before-stop-delivery")).Outcome);
+        var replacement = leases.TryAcquire(new AgentStudio.Shared.RunLeaseAcquireRequest(
+            card, runnerId, runnerId, "coding-host", 4242, "codex",
+            IdempotencyKey: "replacement-after-stop-request"));
+        Assert.True(replacement.Granted);
+        var oldStop = Assert.Single(stops.ListForTask(card));
+        Assert.Equal("superseded", stops.ReconcileWithLease(oldStop, leases.Peek(card)).TerminalReason);
+        Assert.Null(store.GetOperatorIntent(receipt.ReceiptId)!.AppliedAt);
+        Assert.NotEqual(TaskStates.Escalated,
+            factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
+        var retried = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
+            new DecisionOperatorIntentRequest("stop", "Stop and hold this run"), DecisionGroundsPolicy.Json);
+        Assert.True(retried.IsSuccessStatusCode, await retried.Content.ReadAsStringAsync());
+        Assert.Equal(replacement.Lease!.AttemptId, stops.Peek(card)!.AttemptId);
+        Assert.NotEqual(oldStop.CommandId, stops.Peek(card)!.CommandId);
         var renewed = await coding.RenewLeaseAsync(new RHeartbeat(
-            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, null,
-            lease.Lease.AttemptId, lease.Lease.AuthorityEpoch, "decision-stop-renew"), CancellationToken.None);
+            card, replacement.Lease.LeaseId, replacement.Lease.FencingToken, runnerId, null,
+            replacement.Lease.AttemptId, replacement.Lease.AuthorityEpoch, "decision-stop-renew"), CancellationToken.None);
         Assert.Equal(RemoteRunStopReasons.DecisionStop, renewed.StopRequest?.Reason);
         var completed = await coding.CompleteRunAsync(new RRemoteComplete(
-            card, lease.Lease!.LeaseId, lease.Lease.FencingToken, runnerId, "Stopped",
-            AttemptId: lease.Lease.AttemptId, AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            card, replacement.Lease.LeaseId, replacement.Lease.FencingToken, runnerId, "Stopped",
+            AttemptId: replacement.Lease.AttemptId, AuthorityEpoch: replacement.Lease.AuthorityEpoch,
             IdempotencyKey: "decision-stop-completion"), CancellationToken.None);
         Assert.Equal(TaskStates.Escalated, completed!.TargetState);
         Assert.Equal(TaskStates.Escalated,

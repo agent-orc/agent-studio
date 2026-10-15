@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentStudio.Bus;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Registry;
+using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
@@ -110,9 +111,10 @@ public static class OrchestratorDecisionEndpoints
             DecisionOperatorIntentRequest request, OrchestratorDecisionStore store,
             ProjectRegistry projects, TaskScannerService scanner, TaskRunnerService runner,
             RunLeaseService leases, RemoteRunStopRequestStore stops,
-            TaskTransitionService transitions, IConfiguration configuration, CancellationToken ct) =>
+            TaskTransitionService transitions, ProjectSettingsService settings,
+            V1ReviewExecutorRegistry runners, IConfiguration configuration, CancellationToken ct) =>
             await ApplyOperatorIntentAsync(context, receiptId, request, store, projects, scanner,
-                runner, leases, stops, transitions, configuration, ct))
+                runner, leases, stops, transitions, settings, runners, configuration, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         studio.MapGet("/{receiptId}/outcome", (HttpContext context, string receiptId,
             OrchestratorDecisionStore store, MonolithOrchestrationStore orchestration,
@@ -148,21 +150,34 @@ public static class OrchestratorDecisionEndpoints
         DecisionOperatorIntentRequest request, OrchestratorDecisionStore store, ProjectRegistry projects,
         TaskScannerService scanner, TaskRunnerService runner, RunLeaseService leases,
         RemoteRunStopRequestStore stops, TaskTransitionService transitions,
+        ProjectSettingsService settings, V1ReviewExecutorRegistry runners,
         IConfiguration configuration, CancellationToken ct)
     {
         var receipt = AuthorizedReceipt(context, receiptId, store, projects);
         if (receipt is null) return Results.NotFound();
+        var activeRunner = receipt.Scope.TaskId is { } taskKey
+            ? leases.Peek(taskKey).Lease?.RunnerId : null;
+        var location = receipt.Scope.ProjectId is { } projectId
+            ? ProjectExecutionPolicy.ResolveExecutionLocation(settings.Get(projectId))
+            : ExecutionLocations.Local;
+        var runnerTimeoutSeconds = runners.GetCodingRunTimeoutSeconds(activeRunner ?? location);
+        if (request.Action is "raise" or "cut" && runnerTimeoutSeconds is null
+            && (activeRunner is not null || location != ExecutionLocations.Local)
+            && (receipt.Scope.TaskId is not { } cardId
+                || store.AppliedRunLimitSeconds(cardId, receipt.Scope.ProjectId) is null))
+            return Results.Conflict(new ApiError("runner-timeout-unavailable",
+                "The coding runner must report its run timeout before this limit can be applied."));
+        var defaultRunLimitSeconds = runnerTimeoutSeconds
+            ?? configuration.GetValue("Runner:RunTimeoutSeconds", 3600);
         DecisionOperatorIntentV1 intent;
         try
         {
             var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? human.User.Username : context.User.Identity?.Name ?? "Human Operator";
-            intent = store.PutOperatorIntent(receiptId, request, actor,
-                configuration.GetValue("Runner:RunTimeoutSeconds", 3600));
+            intent = store.PutOperatorIntent(receiptId, request, actor, defaultRunLimitSeconds);
             if (intent.AppliedAt is not null) return Wire(intent);
             if (intent.Action is "raise" or "cut")
-                return Wire(store.ApplyRunLimit(receiptId,
-                    configuration.GetValue("Runner:RunTimeoutSeconds", 3600)));
+                return Wire(store.ApplyRunLimit(receiptId, defaultRunLimitSeconds));
         }
         catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-request", ex.Message)); }
         catch (InvalidOperationException ex) { return Results.Conflict(new ApiError("invalid-state", ex.Message)); }
@@ -171,30 +186,42 @@ public static class OrchestratorDecisionEndpoints
             && item.ProjectName == receipt.Scope.ProjectId);
         if (task is null) return Results.Conflict(new ApiError("card-missing", "The card is no longer available."));
         var authorityKey = TaskIdentity.AuthorityKey(task);
-        var lease = leases.Peek(authorityKey).Lease;
-        if (lease is { AttemptId: not null })
+        await LeaseEndpoints.ClaimGate.WaitAsync(ct);
+        try
         {
-            try
+            var lease = leases.Peek(authorityKey).Lease;
+            if (lease is { AttemptId: not null })
             {
-                var stop = stops.Record(authorityKey, RemoteRunStopReasons.DecisionStop, lease.AttemptId,
-                    intent.Actor, lease.FencingToken, "decision-stop:" + receiptId, lease.RunnerId);
-                stop = stops.ReconcileWithLease(stop, leases.Peek(authorityKey));
-                if (stop.TerminalAtUtc is null)
-                    return Wire(store.SetOperatorOutcome(receiptId, "recorded, not applied:stop-requested"));
+                try
+                {
+                    var stop = stops.Record(authorityKey, RemoteRunStopReasons.DecisionStop, lease.AttemptId,
+                        intent.Actor, lease.FencingToken,
+                        $"decision-stop:{receiptId}:fence:{lease.FencingToken}", lease.RunnerId);
+                    stop = stops.ReconcileWithLease(stop, leases.Peek(authorityKey));
+                    if (stop.TerminalReason == "superseded")
+                        return Results.Conflict(new ApiError("stop-superseded",
+                            "The run changed before the stop request reached its owner. Retry to stop the current run."));
+                    if (stop.TerminalAtUtc is null)
+                        return Wire(store.SetOperatorOutcome(receiptId, "recorded, not applied:stop-requested"));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Conflict(new ApiError("stop-conflict", ex.Message));
+                }
             }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Conflict(new ApiError("stop-conflict", ex.Message));
-            }
+            runner.StopJob(task.Id, task.WatchPath);
+            var move = await transitions.MoveAsync(task.Id, TaskStates.Escalated, task.WatchPath, ct,
+                cause: TimelineActors.Human(intent.Actor), reason: intent.Reason,
+                suppressProductExecution: true, transitionCause: LaneChangeCauses.RunnerRequeue,
+                transitionDetail: "decision-stop");
+            if (move.Status != MoveJobStatus.Success)
+                return Results.Conflict(new ApiError("stop-hold-refused", move.Message ?? move.Status.ToString()));
+            return Wire(store.SetOperatorOutcome(receiptId, "applied:stopped-and-held"));
         }
-        runner.StopJob(task.Id, task.WatchPath);
-        var move = await transitions.MoveAsync(task.Id, TaskStates.Escalated, task.WatchPath, ct,
-            cause: TimelineActors.Human(intent.Actor), reason: intent.Reason,
-            suppressProductExecution: true, transitionCause: LaneChangeCauses.RunnerRequeue,
-            transitionDetail: "decision-stop");
-        if (move.Status != MoveJobStatus.Success)
-            return Results.Conflict(new ApiError("stop-hold-refused", move.Message ?? move.Status.ToString()));
-        return Wire(store.SetOperatorOutcome(receiptId, "applied:stopped-and-held"));
+        finally
+        {
+            LeaseEndpoints.ClaimGate.Release();
+        }
     }
 
     private static OrchestratorDecisionReceiptV1? AuthorizedReceipt(HttpContext context, string receiptId,

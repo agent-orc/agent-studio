@@ -166,9 +166,11 @@ if claim latency proves too high.
 An explicit Human Operator answer to a card ask is separate from shadow
 dispatch. The audit entry starts as `recorded, not applied` and names its actor.
 Raise and Cut choose a card run limit in minutes. The monolith applies that
-limit to later remote run specs. Stop uses a fenced run-stop request and holds
-the card in Human Review after the active run settles. A shadow receipt never
-dispatches itself. The bus projection includes billed alternate attempts, and
+limit to later remote run specs. Their direction is checked against the coding
+runner's reported timeout, or the last applied card limit. A remote runner
+without a reported timeout cannot accept a limit change. Stop uses a fenced
+run-stop request and holds the card in Human Review after the active run settles.
+A shadow receipt never dispatches itself. The bus projection includes billed alternate attempts, and
 late billed calls emit additional usage evidence.
 
 ## Inputs and outputs
