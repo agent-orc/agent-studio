@@ -21,10 +21,10 @@ public sealed class ActiveChoiceAdmissionAdapter(
             || receipt.Mode != DecisionReceiptPolicy.ActiveMode
             || receipt.OccurrenceId != occurrence.Run.RunId
             || receipt.GroundsDigest != output.GetProperty("groundsDigest").GetString()
-            || !DecisionGroundsPolicy.IsIntact(receipt.Grounds))
+            || !MonolithTransitionAdapter.DecisionGroundsPolicyIsIntact(receipt.Grounds))
             throw new InvalidOperationException("decision-receipt-mismatch");
         if (decisions.GetInputs(occurrence.Run.RunId) is not { Mode: DecisionReceiptPolicy.ActiveMode } input
-            || DecisionGroundsPolicy.Freeze(input.Grounds).ContentDigest != receipt.GroundsDigest)
+            || MonolithTransitionAdapter.DecisionGroundsPolicyFreeze(input.Grounds).ContentDigest != receipt.GroundsDigest)
             throw new InvalidOperationException("decision-grounds-mismatch");
         var choice = output.GetProperty("activeChoice").Deserialize<DecisionChoiceV1>(DecisionGroundsPolicy.Json)
             ?? throw new InvalidOperationException("decision-choice-missing");
@@ -41,7 +41,7 @@ public sealed class ActiveChoiceAdmissionAdapter(
         {
             if (receipt.Call.CallTokenCapExceeded)
                 throw new InvalidOperationException("decision-call-cap-exceeded");
-            var parsed = DecisionReceiptPolicy.Parse(receipt.ResponseContent, receipt.Grounds);
+            var parsed = MonolithTransitionAdapter.DecisionReceiptPolicyParse(receipt.ResponseContent, receipt.Grounds);
             if (!parsed.Valid || parsed.Chosen.Count != 1
                 || parsed.Chosen[0].Action != choice.Action || parsed.Chosen[0].Target != choice.Target)
                 throw new InvalidOperationException("decision-response-mismatch");
@@ -89,7 +89,7 @@ public sealed class ActiveChoiceAdmissionAdapter(
         var expectedTransition = MonolithTransitionAdapter.ActiveCodingTransition(choice, taskKey,
             occurrence.AuthorityAttemptId);
         var expectedStageAction = expectedTransition is null ? OrchestrationAction.Continue
-            : StageDecisionPolicy.ToStageAction(expectedTransition.Action);
+            : MonolithTransitionAdapter.StageDecisionPolicyToStageAction(expectedTransition.Action);
         if (stageAction != expectedStageAction)
             throw new InvalidOperationException("decision-stage-action-mismatch");
         var actualTransition = output.TryGetProperty("transition", out var transition)

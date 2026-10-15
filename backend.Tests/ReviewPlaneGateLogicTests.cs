@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 using Xunit;
 
@@ -321,6 +322,45 @@ public sealed class ReviewPlaneGateLogicTests
         Assert.True(coordinator.TryEnqueueUnlessInFlight(
             Request("report-driven", minute: 0, "review-report"), discardCompletedReplay: true, out var replay));
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, (await replay!.WaitAsync(Bounded)).Outcome);
+    }
+
+    [Fact]
+    public async Task Queued_monolith_resume_rechecks_owner_at_dequeue_and_retries_after_rollback()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var integrated = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            async request =>
+            {
+                if (request.JobId == "blocker")
+                {
+                    entered.TrySetResult();
+                    await release.Task;
+                }
+                integrated.Add(request.JobId);
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged,
+                    mergedSha: new string('f', 40));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            configuration: configuration);
+        var blocker = coordinator.EnqueueAsync(Request("blocker", minute: 0, reviewAttemptId: null));
+        await entered.Task.WaitAsync(Bounded);
+        var request = Request("owner-switch", minute: 1, "review-owner-switch")
+            with { MonolithOwnedResume = true };
+        var pending = coordinator.EnqueueAsync(request);
+        configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        release.SetResult();
+
+        await blocker.WaitAsync(Bounded);
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, (await pending.WaitAsync(Bounded)).Outcome);
+        Assert.DoesNotContain("owner-switch", integrated);
+
+        configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged,
+            (await coordinator.EnqueueAsync(request, discardCompletedReplay: true).WaitAsync(Bounded)).Outcome);
+        Assert.Contains("owner-switch", integrated);
     }
 
     /// <summary>The order in which <c>V1ReviewPlaneEndpoints</c> normalizes a report before it settles.</summary>

@@ -107,7 +107,7 @@ public sealed class MonolithOrchestrationApplier(
             && transition.ValueKind == JsonValueKind.Object)
             decision = transition.Deserialize<TransitionDecision>(Json);
 
-        var target = TransitionDecisionPolicy.TargetLane(decision?.Action,
+        var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
             TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
         if (task.State != occurrence.ExpectedSourceState && task.State != target)
             throw new InvalidOperationException("orchestration-source-state-mismatch");

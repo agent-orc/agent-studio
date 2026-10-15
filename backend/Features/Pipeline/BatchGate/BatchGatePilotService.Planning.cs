@@ -105,7 +105,7 @@ public sealed partial class BatchGatePilotService
             if (_time.GetUtcNow() - proposed.AtUtc > EngineIntentLifetime)
                 _logger.LogWarning("batch-plan-engine-intent-expired project={Project} run={RunId}",
                     facts.Project, proposed.RunId);
-            else if (BatchPlanDecisionPolicy.Admissible(facts, proposed.Decision, out var error))
+            else if (MonolithTransitionAdapter.BatchPlanDecisionPolicyAdmissible(facts, proposed.Decision, out var error))
                 return proposed.Decision;
             else
                 _logger.LogWarning(
@@ -130,9 +130,9 @@ public sealed partial class BatchGatePilotService
     private async Task RecordShadowBatchPlanAsync(MonolithOrchestrationStore occurrences,
         ProjectSettings settings, BatchPlanFacts facts, BatchPlanDecision decision, CancellationToken ct)
     {
-        var signature = BatchPlanDecisionPolicy.Signature(decision);
+        var signature = MonolithTransitionAdapter.BatchPlanDecisionPolicySignature(decision);
         if (decision.Decision is not ("close" or "per-task") && facts.PriorDecision is { } prior
-            && BatchPlanDecisionPolicy.Signature(prior) == signature)
+            && MonolithTransitionAdapter.BatchPlanDecisionPolicySignature(prior) == signature)
             return;
         try
         {

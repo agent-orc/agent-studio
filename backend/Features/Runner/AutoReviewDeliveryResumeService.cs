@@ -341,7 +341,10 @@ public sealed class AutoReviewDeliveryResumeService
             {
                 var result = await pendingIntegration.ConfigureAwait(false);
                 if (!OwnsDelivery())
+                {
+                    AutoReviewResumeRetryStore.Clear(task.FolderPath, review.AttemptId);
                     return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+                }
                 if (!IsCurrent(review!))
                     return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
                 // A reissue during the gate: the coordinator or the publication
@@ -574,7 +577,8 @@ public sealed class AutoReviewDeliveryResumeService
                 : settlement.PipelineType,
             settlement.DeliveredAtUtc,
             settlement.ReviewAttemptId,
-            review.Subject.ExpectedResultSha);
+            review.Subject.ExpectedResultSha,
+            MonolithOwnedResume: true);
 
     /// <summary>
     /// Git-derived integration verdict for one card. Never throws: an

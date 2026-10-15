@@ -222,7 +222,7 @@ public static class RemoteReviewSettlementPolicy
         var seed = ReviewRoundBudgetStore.Read(task.FolderPath, legacy);
         ReviewRoundBudgetStore.Record(task.FolderPath, seed,
             new DeliveredReviewRound(entry.AttemptId,
-                ReviewRoundBudgetPolicy.CountedBlockingAspects(originalVerdicts),
+                MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(originalVerdicts),
                 budget.DegradedAspects,
                 SpentBy: budget.SpentBy));
         return V1ReviewPlaneEndpoints.CreateReviewBudgetFollowUpCard(

@@ -886,7 +886,7 @@ public static class V1ReviewPlaneEndpoints
                         FailureClassification = "AspectVerdictUnparseable",
                         Summary = $"Aspect verdict infrastructure failed for {string.Join(", ", exhaustedAspects)}; the aspect retry was exhausted.",
                     };
-                if (TransitionDecisionPolicy.IsDeferredAcceptance(
+                if (MonolithTransitionAdapter.TransitionDecisionPolicyIsDeferredAcceptance(
                         currentReview.Subject.Plan?.BuildTestDeferredToBatch == true, request.Outcome)
                     && !request.Verdicts.Any(verdict =>
                         string.Equals(verdict.Aspect, "build-tests", StringComparison.Ordinal)
@@ -1046,7 +1046,7 @@ public static class V1ReviewPlaneEndpoints
                     + "Inconclusive, or Cancellation."));
 
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
-            var batchDeferredAccepted = TransitionDecisionPolicy.IsDeferredAcceptance(batchDeferred, request.Outcome);
+            var batchDeferredAccepted = MonolithTransitionAdapter.TransitionDecisionPolicyIsDeferredAcceptance(batchDeferred, request.Outcome);
             // A replay restores the journaled report, which already carries the
             // deferred verdict; appending it again would change the payload hash.
             if (batchDeferredAccepted && !request.Verdicts.Any(verdict =>
@@ -1096,7 +1096,7 @@ public static class V1ReviewPlaneEndpoints
             reviewFollowUp = budgetDecision.FollowUp;
             if (shouldDegrade)
             {
-                request = ReviewRoundBudgetPolicy.ApplyRemoteReport(request, roundBudget);
+                request = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyRemoteReport(request, roundBudget);
                 if (string.Equals(request.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
                     outcome = ReviewTerminalOutcome.Pass;
             }
@@ -1274,7 +1274,7 @@ public static class V1ReviewPlaneEndpoints
                     MaximumDeliveredRounds: settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds);
                 var shadowJson = JsonSerializer.Serialize(shadowPayload, Json);
                 var shadowDecision = MonolithTransitionAdapter.Decide(
-                    StageDecisionPolicy.Facts(preparedTask.Id, 0, shadowPayload));
+                    MonolithTransitionAdapter.StageDecisionPolicyFacts(preparedTask.Id, 0, shadowPayload));
                 orchestration.Create(preparedTask.ProjectName, preparedTask.Id,
                     Contract.OrchestrationStage.ReviewDecision, shadowJson,
                     $"review-report:{attemptId}:{request.IdempotencyKey}",
@@ -1579,7 +1579,7 @@ public static class V1ReviewPlaneEndpoints
             if (breakerEnabled && settled.ReviewAttempt.Outcome != ReviewTerminalOutcome.Pass)
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
-            var retry = infrastructureFailure && TransitionDecisionPolicy.RetryInfrastructure(
+            var retry = infrastructureFailure && MonolithTransitionAdapter.TransitionDecisionPolicyRetryInfrastructure(
                 authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId),
                 aspectRetryExhausted, intervention is not null, probeFailed, !diagnosisContractUnsupported);
             var repeatDiagnosis = infrastructureFailure
@@ -1636,7 +1636,7 @@ public static class V1ReviewPlaneEndpoints
                     concernLedger?.Used ?? 0,
                     projectSettingsForFollowUp.MaxReviewConcernRounds);
                 if (shouldDegrade && outcome == ReviewTerminalOutcome.Pass)
-                    reviewFollowUp = ReviewRoundBudgetPolicy.ApplyFollowUp(reviewFollowUp, roundBudget);
+                    reviewFollowUp = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyFollowUp(reviewFollowUp, roundBudget);
                 if (concernLedger is { StillOpen: true }
                     && !string.Equals(
                         concernLedger.ReviewAttemptId,
@@ -2728,7 +2728,7 @@ public static class V1ReviewPlaneEndpoints
         TaskInfo task,
         ReviewAttemptDto review)
     {
-        var diagnosis = ReviewInfrastructureRepeatPolicy.Diagnose(
+        var diagnosis = MonolithTransitionAdapter.ReviewInfrastructureRepeatPolicyDiagnose(
             authority.ReviewInfrastructureChain(review.AttemptId),
             review.Subject.Plan?.IntegrationRef);
         if (diagnosis is null) return null;

@@ -114,7 +114,7 @@ public static class OperatorSweepTriggers
         var finished = timeline.LastOrDefault(entry => entry.Kind == TimelineEventKinds.AgentRunFinished);
         var details = finished?.Details;
         if (details is null) return null;
-        if (!RunTimeoutSalvageContinuationPolicy.IsNonTerminalOutcome(details.GetValueOrDefault("status")))
+        if (!MonolithTransitionAdapter.RunTimeoutSalvageContinuationPolicyIsNonTerminalOutcome(details.GetValueOrDefault("status")))
             return null;
         var salvage = RunSalvageReference.From(
             details.GetValueOrDefault("salvageBranch"),

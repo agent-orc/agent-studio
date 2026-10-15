@@ -23,12 +23,12 @@ public static class ReviewRoundBudgetStore
         // artifacts so deploying this policy does not grant a fresh budget.
         return new ReviewRoundBudgetLedger((legacyAttempts ?? [])
             .Where(attempt => attempt.Plane == ReviewPlane.Local
-                              || ReviewRoundBudgetPolicy.IsDeliveredOutcome(attempt.Outcome)
+                              || MonolithTransitionAdapter.ReviewRoundBudgetPolicyIsDeliveredOutcome(attempt.Outcome)
                               || (string.IsNullOrWhiteSpace(attempt.Outcome) && attempt.Aspects.Count > 0))
             .Reverse()
             .Select(attempt => new DeliveredReviewRound(
                 attempt.AttemptId,
-                ReviewRoundBudgetPolicy.CountedBlockingAspects(attempt.Aspects.Select(aspect =>
+                MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(attempt.Aspects.Select(aspect =>
                     new ReviewFollowUpFinding(aspect.Aspect, aspect.Status, aspect.Summary,
                         Classification: aspect.Classification))),
                 []))
@@ -53,9 +53,9 @@ public static class ReviewRoundBudgetStore
     public static void RecordAcceptedEngineReview(string folder, StagePayload payload)
     {
         if (payload.ReviewAttemptId is null
-            || !ReviewRoundBudgetPolicy.IsDeliveredOutcome(payload.ReviewOutcome))
+            || !MonolithTransitionAdapter.ReviewRoundBudgetPolicyIsDeliveredOutcome(payload.ReviewOutcome))
             return;
-        var blocked = ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []);
+        var blocked = MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(payload.Verdicts ?? []);
         var seed = payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty;
         var decision = MonolithTransitionAdapter.ReviewRoundBudget(seed, payload.ReviewAttemptId, blocked,
             payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,

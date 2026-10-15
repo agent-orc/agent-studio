@@ -184,7 +184,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             return (OrchestrationAction.Continue, JsonSerializer.Serialize(new
             {
                 batchPlan = plan,
-                decision = BatchPlanDecisionPolicy.Signature(plan),
+                decision = MonolithTransitionAdapter.BatchPlanDecisionPolicySignature(plan),
                 decider = $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith-rollback",
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }
@@ -215,7 +215,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             var stage = JsonSerializer.Deserialize<StagePayload>(run.PayloadJson,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-            transition = MonolithTransitionAdapter.Decide(StageDecisionPolicy.Facts(
+            transition = MonolithTransitionAdapter.Decide(MonolithTransitionAdapter.StageDecisionPolicyFacts(
                 run.TaskId, run.ReissueAttempts, stage));
         }
         else
@@ -226,7 +226,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     ? attempt.GetString() ?? run.RunId : run.RunId,
                 root.TryGetProperty("targetState", out var target) ? target.GetString() : null);
         }
-        var action = StageDecisionPolicy.ToStageAction(transition.Action);
+        var action = MonolithTransitionAdapter.StageDecisionPolicyToStageAction(transition.Action);
         return (action, JsonSerializer.Serialize(new
         {
             transition,

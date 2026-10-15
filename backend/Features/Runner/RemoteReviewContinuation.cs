@@ -50,7 +50,7 @@ public static class RemoteReviewContinuationPolicy
     /// </summary>
     public static bool OpensFindingRound(
         ReviewTerminalOutcome outcome, AgentStudio.TaskServer.Contracts.ReviewFollowUpAction followUp)
-        => AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.OpensFindingRound(outcome.ToString(), followUp);
+        => AgentStudio.Runner.MonolithTransitionAdapter.TransitionDecisionPolicyOpensFindingRound(outcome.ToString(), followUp);
 }
 
 public static class RemoteReviewContinuationProjection

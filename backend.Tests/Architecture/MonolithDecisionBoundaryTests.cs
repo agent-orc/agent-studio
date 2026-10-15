@@ -61,8 +61,8 @@ public sealed class MonolithDecisionBoundaryTests
     /// </summary>
     private static readonly IReadOnlySet<string> LibraryHelpers = new HashSet<string>(StringComparer.Ordinal)
     {
-        "GateEnvironmentRetryPolicy.OperatorReplayRefusal",
-        "GateEnvironmentRetryPolicy.ParkedReason",
+        "MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal",
+        "MonolithTransitionAdapter.GateEnvironmentRetryPolicyParkedReason",
     };
 
     private static readonly Regex WorkflowFolder = new(

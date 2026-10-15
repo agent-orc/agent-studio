@@ -53,6 +53,13 @@ without restarting the host. OrchestratorPrep, MetaCycle, and AutoIntervention
 continue to run in the monolith when other profiles select Engine; they have
 no engine occurrences yet.
 
+The review worker rechecks the current owner after long gate work and before
+each lane move. A monolith-owned resume checks again at integration dequeue,
+at the publication fence, and before its final lane move. An ownership deferral
+is not a settled archive result; rollback leaves that generation eligible for
+reconciliation. The backend policy-call boundary covers every public static
+method on decision-library policy types through `MonolithTransitionAdapter`.
+
 AGT-3060 (I18) moves the background deciders into this library. The operator
 decision of 15.10.2026 keeps the per-transition switch as the single selector
 of who decides: every profile defaults to `Monolith`, and with `Monolith`
