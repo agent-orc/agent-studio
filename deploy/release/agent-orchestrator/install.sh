@@ -107,8 +107,15 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
             umask 077
             printf '%s\n' "$studio_token" >"$studio_token_file"
             printf '%s\n' "$engine_token" >"$engine_token_file"
+            owner_bootstrap_code_file="$CONFIG_ROOT/owner_bootstrap_code"
+            if [ ! -f "$owner_bootstrap_code_file" ]; then
+                command -v openssl >/dev/null 2>&1 \
+                    || die "OpenSSL is required to generate the owner bootstrap code. Install openssl and retry."
+                openssl rand -hex 32 >"$owner_bootstrap_code_file"
+            fi
             chown "$SERVICE_USER:$SERVICE_USER" "$studio_token_file" "$engine_token_file" 2>/dev/null || true
-            chmod 0640 "$studio_token_file" "$engine_token_file"
+            chown "$SERVICE_USER:$SERVICE_USER" "$owner_bootstrap_code_file" 2>/dev/null || true
+            chmod 0640 "$studio_token_file" "$engine_token_file" "$owner_bootstrap_code_file"
             ;;
         *) die "Authentication mode must be 'none' or 'bearer'." ;;
     esac
@@ -120,6 +127,7 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         -e "s/@AUTH_MODE@/$(escape_sed "$auth_mode")/" \
         -e "s/@STUDIO_AUTH_TOKEN_FILE@/$(escape_sed "$studio_token_file")/" \
         -e "s/@ENGINE_AUTH_TOKEN_FILE@/$(escape_sed "$engine_token_file")/" \
+        -e "s/@OWNER_BOOTSTRAP_CODE_FILE@/$(escape_sed "${owner_bootstrap_code_file:-}")/" \
         "$source_dir/config/server.env.template" >"$CONFIG_ROOT/server.env"
     chmod 0640 "$CONFIG_ROOT/server.env"
 

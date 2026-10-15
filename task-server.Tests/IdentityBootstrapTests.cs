@@ -74,6 +74,7 @@ public sealed class IdentityBootstrapTests
     [InlineData("https://git.example.com:8443/org/repo", "https://git.example.com:8443/org/repo")]
     [InlineData("ssh://git@GitHub.com/org/repo.git", "ssh://git@github.com/org/repo.git")]
     [InlineData("git@github.com:org/repo.git", "ssh://git@github.com/org/repo.git")]
+    [InlineData("git://127.0.0.1:9418/scenario.git", "git://127.0.0.1:9418/scenario.git")]
     public void Canonical_repository_urls(string input, string expected)
         => Assert.Equal(expected, ProjectRepositoryPolicy.Canonicalize(input));
 
@@ -87,6 +88,8 @@ public sealed class IdentityBootstrapTests
     [InlineData("git@github.com:org/repo.git#main")]
     [InlineData("git@token@github.com:org/repo.git")]
     [InlineData("http://github.com/org/repo.git")]
+    [InlineData("git://example.org/org/repo.git")]
+    [InlineData("git://user@127.0.0.1:9418/scenario.git")]
     [InlineData("file:///srv/git/repo.git")]
     [InlineData("/srv/git/repo.git")]
     [InlineData("https://github.com/")]

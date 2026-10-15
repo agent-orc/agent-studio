@@ -31,9 +31,14 @@ bearer in-process and relays only the human session cookie.
 1. The installer creates `owner_bootstrap_code` beside the service
    credentials (`scripts/compose-secret-bootstrap.sh`, mode 600) and the Task
    Server reads it through `OWNER_BOOTSTRAP_CODE_FILE`.
+   The native Linux installer creates the same code at
+   `<orchestrator-config-root>/owner_bootstrap_code` with owner and service
+   read access, and keeps it across reinstallations.
 2. While no owner exists the server arms that code. Read it over the
    administration channel only:
    `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
+   On a native Linux host, read the file directly as the installation
+   administrator. Do not paste it into task text or logs.
 3. Sign in through the Studio edge and call
    `POST /api/v1/studio/auth/bootstrap` with `username`, `password` and
    `bootstrapCode`. The response carries the session and the owner's

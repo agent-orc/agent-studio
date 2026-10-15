@@ -302,6 +302,19 @@ public sealed class InstallationJourneyTests
         Assert.All(failed.Values, finding => Assert.False(string.IsNullOrWhiteSpace(finding.Recovery)));
     }
 
+    [Theory]
+    [InlineData("one-box")]
+    [InlineData("join-host")]
+    public void Missing_git_reports_installation_guidance(string journey)
+    {
+        var findings = PreflightPolicy.Evaluate(JourneyPolicy.Parse(journey), "native", new HostFacts(
+            false, true, null, null, null, null, 40L << 30, null, null, null,
+            null, null, null, GitInstalled: false));
+        var git = Assert.Single(findings, finding => finding.Check == "Git");
+        Assert.Equal(PreflightStatus.Fail, git.Status);
+        Assert.Contains("git --version", git.Recovery);
+    }
+
     [Fact]
     public void Joining_host_reports_network_provider_and_secret_recovery()
     {
@@ -817,8 +830,10 @@ public sealed class InstallationJourneyTests
 
         Assert.Null(facts.AuthorityReachable);
         Assert.Null(facts.AuthorityUrlKnown);
+        Assert.Null(facts.WireGuardInterface);
         Assert.DoesNotContain(PreflightPolicy.Evaluate(InstallationJourney.RelocateAuthority, "native", facts),
-            finding => finding.Check is "Connectivity" or "Authority URL" && finding.Status == PreflightStatus.Fail);
+            finding => finding.Check is "Connectivity" or "Authority URL" or "WireGuard"
+                       && finding.Status == PreflightStatus.Fail);
     }
 
     [Fact]

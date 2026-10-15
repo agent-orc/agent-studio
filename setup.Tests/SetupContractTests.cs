@@ -308,9 +308,16 @@ public sealed class SetupContractTests
     [InlineData("https://github.com/agent-orc/agent-studio.git")]
     [InlineData("ssh://git@github.com/agent-orc/agent-studio.git")]
     [InlineData("git@github.com:agent-orc/agent-studio.git")]
+    [InlineData("git://127.0.0.1:9418/scenario.git")]
     public void GitRemote_AcceptsCredentialFreeSupportedForms(string remote)
     {
         Assert.Equal(remote, SetupValidation.RequireGitRemote(remote));
+    }
+
+    [Fact]
+    public void GitRemote_RejectsNonLoopbackGitProtocol()
+    {
+        Assert.Throws<ArgumentException>(() => SetupValidation.RequireGitRemote("git://example.org/scenario.git"));
     }
 
     [Theory]
