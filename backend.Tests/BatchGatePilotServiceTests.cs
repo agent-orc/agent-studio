@@ -816,6 +816,32 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Paused_member_published_under_another_sha_leaves_as_integrated_without_a_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-PAUSE-CONTAINED", "docs/pause-contained.md");
+        _gate.Batch = _ => Infrastructure();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("Contained member ran a per-task gate.");
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
+        Assert.Equal(containedIn, HumanReviewOwnership(member.Key)?.ContainedInSha);
+        AssertLane(member.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
     public async Task Running_batch_does_not_block_next_formation_tick()
     {
         using var factory = BuildFactory();
@@ -938,6 +964,74 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(
             Path.Combine(_watchPath, TaskStates.HumanReview, member.Key)), ownership.FallbackEvidencePath!)));
         Assert.Equal(containedIn, RemoteTip());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ejected_member_published_under_another_sha_leaves_as_integrated_without_a_gate(
+        bool interruptedGate)
+    {
+        // AGT-3143: the eject handoff skips formation, so it must apply the
+        // containment check itself. A patch-equal copy on the branch counts.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-EJECT-CONTAINED", "docs/eject-contained.md");
+        var containedIn = PublishPatchEquivalent(member.ResultSha);
+        _gate.Batch = _ => throw new InvalidOperationException("Ejected member reached the batch suite.");
+        _gate.Fallback = _ => throw new InvalidOperationException("Contained member ran a per-task gate.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        if (interruptedGate)
+        {
+            var pending = Assert.Single(store.ListPending());
+            BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+                new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                    FallbackGateActive: true, FallbackGateStarts: 1));
+        }
+        Assert.True(pilot.RequestEject(ProjectName, member.Key));
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
+        Assert.False(store.HasEject(ProjectName, member.Key));
+        var ownership = HumanReviewOwnership(member.Key);
+        Assert.Equal(containedIn, ownership?.ContainedInSha);
+        Assert.True(ownership!.FallbackIntegrated);
+        Assert.False(ownership.FallbackGateActive);
+        Assert.Equal(Git(_origin, "rev-parse", containedIn + "^{tree}"),
+            Git(_origin, "rev-parse", "refs/heads/develop^{tree}"));
+    }
+
+    [Fact]
+    public async Task Member_ejected_from_a_red_base_hold_and_already_published_runs_no_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var ejected = SeedMember(factory, "DOC-HELD-CONTAINED", "docs/held-contained.md");
+        SeedMember(factory, "DOC-HELD-RETAINED", "docs/held-retained.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => request.ExpectedSha == ejected.ResultSha
+            ? throw new InvalidOperationException("Contained member ran a per-task gate.")
+            : Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+        var containedIn = PublishPatchEquivalent(ejected.ResultSha);
+
+        Assert.True(pilot.RequestEject(ProjectName, ejected.Key));
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(containedIn, HumanReviewOwnership(ejected.Key)?.ContainedInSha);
+        Assert.DoesNotContain(store.ListPending(), item => item.Subject.TaskKey == ejected.Key);
     }
 
     [Theory]
@@ -1748,10 +1842,13 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Empty(store.ListPending());
     }
 
-    [Fact]
-    public async Task Unattributable_member_of_a_publication_interrupted_by_a_restart_still_runs_its_per_task_gate()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unattributable_member_leaves_through_containment_after_batch_or_publication_recovery(
+        bool interruptedPublication)
     {
-        var factory = BuildFactory();
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var contained = SeedMember(factory, "DOC-RESTART-CONTAINED", "docs/restart-contained.md",
@@ -1772,42 +1869,47 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         string? blockedPath = null;
         _gate.Batch = request =>
         {
-            var manifest = Assert.Single(store.ListManifests());
-            blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
-            Directory.CreateDirectory(blockedPath);
+            if (interruptedPublication)
+            {
+                var manifest = Assert.Single(store.ListManifests());
+                blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
+                Directory.CreateDirectory(blockedPath);
+            }
             return Green(request.ExpectedSha);
         };
-        _gate.Fallback = request => Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("Contained member ran a per-task gate.");
 
-        // The process stops after the remote push and before it schedules
-        // the ejected member's per-task gate.
+        // With an interrupted publication, the process stops after the remote
+        // push and before it schedules the ejected member's fallback.
         await pilot.TickAsync(CancellationToken.None);
 
         var closed = Assert.Single(store.ListManifests());
         Assert.Equal(2, closed.Members.Count);
         Assert.Equal("unattributable", store.ReadReplay(closed.BatchId, contained.Key).Outcome);
-        AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
-        Assert.Equal(0, _gate.FallbackRuns);
-        Assert.False(Ownership(contained.Key)?.FallbackGateActive ?? false);
-        AssertLane(contained.Key, TaskStates.AutoReview);
+        if (interruptedPublication)
+        {
+            AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
+            Assert.Equal(0, _gate.FallbackRuns);
+            Assert.False(Ownership(contained.Key)?.FallbackGateActive ?? false);
+            AssertLane(contained.Key, TaskStates.AutoReview);
 
-        Directory.Delete(blockedPath!);
-        factory.Dispose();
-        using var restarted = BuildFactory();
-        _ = restarted.CreateClient();
-        EnableBatchGate(restarted, closeSize: 2);
-        await restarted.Services.GetRequiredService<BatchGatePilotService>()
-            .TickAsync(CancellationToken.None);
+            Directory.Delete(blockedPath!);
+            factory.Dispose();
+            using var restarted = BuildFactory();
+            _ = restarted.CreateClient();
+            EnableBatchGate(restarted, closeSize: 2);
+            await restarted.Services.GetRequiredService<BatchGatePilotService>()
+                .TickAsync(CancellationToken.None);
+        }
 
         AssertPhase(store, closed.BatchId, BatchPhase.Published);
         AssertLane(admitted.Key, TaskStates.HumanReview);
         Assert.Equal(1, _gate.BatchRuns);
-        Assert.Equal(1, _gate.FallbackRuns);
-        // The green per-task gate completes the card the batch could not attribute.
+        Assert.Equal(Assert.Single(store.ListRuns(closed.BatchId)).CandidateSha, RemoteTip());
         var completed = Path.Combine(_watchPath, TaskStates.HumanReview, contained.Key);
-        Assert.Equal(contained.ResultSha, BatchGateOwnershipStore.Read(completed)?.FallbackTestedSha);
-        Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(completed),
-            $"batch-fallback-{contained.ReviewAttemptId}.json")));
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Equal(RemoteTip(), BatchGateOwnershipStore.Read(completed)?.ContainedInSha);
+        Assert.True(BatchGateOwnershipStore.Read(completed)?.FallbackIntegrated);
         Assert.Empty(store.ListPending());
     }
 
@@ -2833,6 +2935,16 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             if (claim.Run?.RunId == runId) return claim;
         }
         throw new Xunit.Sdk.XunitException($"Shadow occurrence {runId} was not claimable.");
+    }
+
+    // A patch-equal member is not an ancestor of the branch, so the Auto
+    // Review delivery resume can still write into its old lane folder while
+    // the release moves it. That race predates AGT-3143; read the released lane.
+    private BatchGateOwnership? HumanReviewOwnership(string key)
+    {
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, key);
+        Assert.True(Directory.Exists(folder), $"{key} did not reach {TaskStates.HumanReview}. Errors: {_errors}");
+        return BatchGateOwnershipStore.Read(folder);
     }
 
     private void AssertLane(string key, string expected)

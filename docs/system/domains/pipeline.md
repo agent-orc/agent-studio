@@ -156,14 +156,17 @@ other failure (fetch, worktree, or git read errors) is infrastructure and
 pauses the batch as before. An unattributable ejection does not count toward
 the conflict cascade guard and ends a run of consecutive conflicts; its replay
 record keeps the route it failed on (`merge` for a merge-parent mismatch).
-Every ejected member, conflict or unattributable, owes a per-task gate. The
-tick schedules it after publication, and publication recovery schedules it
-again on later ticks while the member's review is still pending, so a restart between
-the remote push and the fallback's first marker does not strand the card
-(the published batch's ownership marker keeps it out of later batches). A
-member the candidate already contains still runs the full per-task gate; the
-batch gate does not shortcut it. The batch state projection marks every conflict or
-unattributable ejection as `fallback` with `reason` and `reasonDetail`, and
+Every ejected member, conflict or unattributable, returns to per-task fallback
+after publication. Before scheduling a gate, the tick checks whether the
+integration branch already contains its result by ancestry or patch equivalence.
+Published members leave through a containment record without another gate or
+per-task integration. Publication recovery repeats this check on later ticks
+while the member's review is still pending, so a restart between the remote push
+and the fallback's first marker does not strand the card (the published batch's
+ownership marker keeps it out of later batches). Paused-batch recovery checks
+the same containment before releasing members to fallback. The batch state
+projection marks every conflict or unattributable ejection as `fallback` with
+`reason` and `reasonDetail`, and
 the card badge shows it, for example "Per-task fallback · unattributable
 history".
 The D10 prerequisite estimate is

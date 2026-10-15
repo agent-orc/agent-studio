@@ -338,9 +338,7 @@ public sealed partial class BatchGatePilotService
                          _store.HasEject(item.Subject.Project, item.Subject.TaskKey)
                          && string.IsNullOrWhiteSpace(
                              BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId)).ToArray())
-            {
-                ScheduleFallback(item, ct, clearEject: true);
-            }
+                await HandOffEjectedAsync(item, fetchedBases, ct).ConfigureAwait(false);
             var waiting = _store.ListPending();
             foreach (var item in waiting)
             {
@@ -677,11 +675,10 @@ public sealed partial class BatchGatePilotService
             return _runningBatches.Values.Any(task => !task.IsCompleted);
     }
 
-    // A pause stops the batch, not its members. Every member the paused batch
-    // still owns returns to the per-task gate on its unchanged immutable
-    // subject, which either integrates the card or escalates it with the gate
-    // reason. Members are released before the terminal state is written, so an
-    // interruption in between only repeats an idempotent release.
+    // A pause stops the batch, not its members. Released members already
+    // published leave through containment; the rest return to the per-task
+    // gate on their unchanged immutable subjects. Members are released before
+    // the terminal state is written, so an interruption only repeats the release.
     private async Task ResolvePausedAsync(
         Dictionary<(string Repo, string Branch), string?> fetchedBases,
         CancellationToken ct)
@@ -739,8 +736,15 @@ public sealed partial class BatchGatePilotService
             }
             finally { _leases.Release(lease); }
             foreach (var item in released)
-                if (!ejectedOnly || _store.HasEject(item.Subject.Project, item.Subject.TaskKey))
-                    ScheduleFallback(item, ct, clearEject: ejectedOnly);
+                if (!ejectedOnly)
+                {
+                    var containedInSha = PublishedIn(Refresh(item), fetchedBases, ct,
+                        gateInterrupted: !FallbackInFlight(item.ReviewAttemptId));
+                    var handoff = ScheduleFallback(item, ct, containedInSha: containedInSha);
+                    if (containedInSha is not null) await handoff.ConfigureAwait(false);
+                }
+                else if (_store.HasEject(item.Subject.Project, item.Subject.TaskKey))
+                    await HandOffEjectedAsync(item, fetchedBases, ct).ConfigureAwait(false);
         }
     }
 
@@ -762,6 +766,30 @@ public sealed partial class BatchGatePilotService
             gateInterrupted)
             ? baseSha
             : null;
+    }
+
+    // Ejected members skip formation, so check containment before fallback.
+    private async Task HandOffEjectedAsync(BatchGatePendingRecord pending,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct)
+    {
+        var containedInSha = PublishedIn(Refresh(pending), fetchedBases, ct,
+            gateInterrupted: !FallbackInFlight(pending.ReviewAttemptId));
+        var handoff = ScheduleFallback(pending, ct, clearEject: true,
+            containedInSha: containedInSha);
+        if (containedInSha is not null) await handoff.ConfigureAwait(false);
+    }
+
+    private void HandOffPublishedEject(BatchGatePendingRecord pending,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct)
+    {
+        var current = Refresh(pending);
+        // A conflict or unattributable replay has released this member, even
+        // though its durable ownership still names the published batch.
+        current = current with { Subject = current.Subject with { OwningBatchId = null } };
+        ScheduleFallback(pending, ct, containedInSha: PublishedIn(current, fetchedBases, ct,
+            gateInterrupted: !FallbackInFlight(pending.ReviewAttemptId)));
     }
 
     private bool HeldOnRedBase(BatchGatePendingRecord pending)
@@ -834,6 +862,7 @@ public sealed partial class BatchGatePilotService
     private async Task RecoverPublishedAsync(CancellationToken ct)
     {
         var waiting = _store.ListPending();
+        var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
         foreach (var manifest in _store.ListManifests())
         {
             ct.ThrowIfCancellationRequested();
@@ -950,14 +979,13 @@ public sealed partial class BatchGatePilotService
                     && item.Subject.RunAttempt == member.RunAttempt);
                 if (pending is null) continue;
                 var replay = _store.TryReadReplay(manifest.BatchId, member.TaskKey);
-                // Every ejected member owes a per-task gate. The in-tick
-                // fallback dies with a restart between publication and its
-                // first marker, and the published batch's ownership keeps the
-                // member out of every later batch, so only this branch can
-                // still deliver it.
+                // Every ejected member needs fallback handling. A restart
+                // can lose the in-tick handoff before its first marker, while
+                // batch ownership keeps the member out of later batches.
+                // Containment may release it without another gate.
                 if (replay?.Outcome is "conflict" or "unattributable")
                 {
-                    ScheduleFallback(pending, ct);
+                    HandOffPublishedEject(pending, fetchedBases, ct);
                     continue;
                 }
                 if (replay?.Outcome != "admitted") continue;
@@ -1241,8 +1269,9 @@ public sealed partial class BatchGatePilotService
             }
             _leases.Release(lease);
             reservation?.Dispose();
+            var publishedBases = new Dictionary<(string Repo, string Branch), string?>();
             foreach (var key in fallbackKeys)
-                ScheduleFallback(pending[key], ct);
+                HandOffPublishedEject(pending[key], publishedBases, ct);
         }
 
         bool MembersCurrent() => manifest.Members.All(member =>
@@ -1835,11 +1864,11 @@ public sealed partial class BatchGatePilotService
     // One per-task gate per review generation in this process. A retried
     // settlement request, or a tick that meets a running fallback, joins it
     // instead of starting a second gate on the same immutable subject.
-    private void ScheduleFallback(BatchGatePendingRecord pending,
+    private Task ScheduleFallback(BatchGatePendingRecord pending,
         CancellationToken ct, bool clearEject = false, string? containedInSha = null)
     {
         var flight = RunPerTaskFallbackAsync(pending, ct, containedInSha: containedInSha);
-        _ = flight.ContinueWith(done =>
+        return flight.ContinueWith(done =>
         {
             if (done.IsCompletedSuccessfully && clearEject)
                 _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);
