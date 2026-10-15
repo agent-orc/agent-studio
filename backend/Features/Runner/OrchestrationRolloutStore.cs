@@ -23,7 +23,7 @@ public sealed class OrchestrationRolloutStore
 {
     public static string LibraryVersion => typeof(TransitionDecisionPolicy).Assembly.GetName()
         .Version?.ToString(3) ?? "unknown";
-    public static readonly string[] Profiles = ["CodingCompletion", "ReviewReport", "GateResult"];
+    public static readonly string[] Profiles = ["CodingCompletion", "ReviewReport", "GateResult", "BatchPlan"];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly object Gate = new();
     private readonly IConfiguration _configuration;

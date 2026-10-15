@@ -24,7 +24,34 @@ public sealed class MonolithOrchestrationApplier(
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public async Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+    public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+        CompleteOrchestrationStageRequest completion, CancellationToken ct)
+    {
+        if (occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan)
+        {
+            ApplyBatchPlan(occurrence, completion);
+            return Task.CompletedTask;
+        }
+        return ApplyTransitionAsync(occurrence, completion, ct);
+    }
+
+    /// <summary>
+    /// A batch plan is project-scoped intent. The batch tick re-checks the
+    /// authority floors against its current facts before it acts.
+    /// </summary>
+    private void ApplyBatchPlan(MonolithOrchestrationOccurrence occurrence,
+        CompleteOrchestrationStageRequest completion)
+    {
+        using var output = JsonDocument.Parse(completion.OutputJson);
+        if (!output.RootElement.TryGetProperty("batchPlan", out var plan)
+            || plan.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("The engine batch plan is missing its decision.");
+        var decision = plan.Deserialize<AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanDecision>(Json)
+            ?? throw new InvalidDataException("The engine batch plan is empty.");
+        batches.AcceptEngineBatchPlan(occurrence.Run.RunId, occurrence.Run.TaskId, decision);
+    }
+
+    private async Task ApplyTransitionAsync(MonolithOrchestrationOccurrence occurrence,
         CompleteOrchestrationStageRequest completion, CancellationToken ct)
     {
         var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>

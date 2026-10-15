@@ -18,6 +18,10 @@ public sealed class EngineOptions
     public int LeaseSeconds { get; init; } = 120;
     public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
     public bool RemotePostBuildTestEnabled { get; init; }
+    public int BatchPlanConcurrency { get; init; } = 1;
+    /// <summary>Provider credential of the batch advisor; the advisor falls back to the deterministic plan without it.</summary>
+    public string? AdvisorCredential { get; init; }
+    public string AdvisorModel { get; init; } = "claude-opus-5";
 
     public static EngineOptions FromEnvironment()
         => Parse(Environment.GetEnvironmentVariable);
@@ -51,6 +55,12 @@ public sealed class EngineOptions
         {
             credential = ReadCredentialFile(credentialFile);
         }
+        var advisorCredential = value("ADVISOR_CREDENTIAL")?.Trim();
+        var advisorCredentialFile = value("ADVISOR_CREDENTIAL_FILE")?.Trim();
+        if (!string.IsNullOrWhiteSpace(advisorCredential) && !string.IsNullOrWhiteSpace(advisorCredentialFile))
+            throw new ArgumentException("Configure only one of ADVISOR_CREDENTIAL or ADVISOR_CREDENTIAL_FILE.");
+        if (!string.IsNullOrWhiteSpace(advisorCredentialFile))
+            advisorCredential = ReadCredentialFile(advisorCredentialFile, "ADVISOR_CREDENTIAL_FILE");
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
 
@@ -70,22 +80,26 @@ public sealed class EngineOptions
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),
             HealthPort = EngineHealthProbe.ResolvePort(value),
             RemotePostBuildTestEnabled = OptIn(value("REMOTE_POST_BUILD_TEST_GATE_ENABLED")),
+            BatchPlanConcurrency = Cap(value, "BATCH_PLAN_CONCURRENCY", 1),
+            AdvisorCredential = string.IsNullOrWhiteSpace(advisorCredential) ? null : advisorCredential,
+            AdvisorModel = string.IsNullOrWhiteSpace(value("ADVISOR_MODEL"))
+                ? "claude-opus-5" : value("ADVISOR_MODEL")!.Trim(),
         };
     }
 
-    internal static string ReadCredentialFile(string path)
+    internal static string ReadCredentialFile(string path, string key = "CLIENT_CREDENTIAL_FILE")
     {
         if (!File.Exists(path))
-            throw new ArgumentException($"CLIENT_CREDENTIAL_FILE does not exist: {path}");
+            throw new ArgumentException($"{key} does not exist: {path}");
         if (!OperatingSystem.IsWindows())
         {
             var mode = File.GetUnixFileMode(path);
             if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0)
-                throw new ArgumentException("CLIENT_CREDENTIAL_FILE must be owner-readable only.");
+                throw new ArgumentException($"{key} must be owner-readable only.");
         }
         var credential = File.ReadAllText(path).Trim();
         if (credential.Length == 0)
-            throw new ArgumentException("CLIENT_CREDENTIAL_FILE is empty.");
+            throw new ArgumentException($"{key} is empty.");
         return credential;
     }
 
