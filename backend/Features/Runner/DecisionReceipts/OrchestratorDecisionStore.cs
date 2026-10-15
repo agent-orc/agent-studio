@@ -333,7 +333,7 @@ public sealed class OrchestratorDecisionStore
     }
 
     public DecisionOperatorIntentV1 PutOperatorIntent(string receiptId, DecisionOperatorIntentRequest request,
-        string actor = "Human Operator")
+        string actor = "Human Operator", int defaultRunLimitSeconds = 3600)
     {
         lock (_gate)
         {
@@ -359,6 +359,13 @@ public sealed class OrchestratorDecisionStore
             if (request.RequestedEmergencyHours is not null && request.RequestedEmergencyMinutes is not null)
                 throw new ArgumentException("Provide the limit in hours or minutes, not both.");
             if (_operatorIntents.TryGetValue(receiptId, out var existing)) return existing;
+            if (request.Action is "raise" or "cut")
+            {
+                var current = AppliedRunLimitSeconds(taskId, receipt.Scope.ProjectId) ?? defaultRunLimitSeconds;
+                var chosen = minutes!.Value * 60;
+                if (request.Action == "raise" ? chosen <= current : chosen >= current)
+                    throw new InvalidOperationException("Chosen run limit must move in the selected direction.");
+            }
             var choice = request.Action switch
             {
                 "raise" => new DecisionChoiceV1(DecisionActionKinds.Adapt,
