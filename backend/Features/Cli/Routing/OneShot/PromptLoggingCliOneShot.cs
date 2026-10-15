@@ -44,6 +44,15 @@ public sealed class PromptLoggingCliOneShot : ICliOneShot
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        var checkedPrompt = OrchestratorPromptBoundary.Check(request.StepId, request.Prompt);
+        if (checkedPrompt.Failure is { } failure)
+        {
+            var now = DateTime.UtcNow;
+            return CliOneShotResult.SpawnFailure("decision-input-incomplete:" + failure, now, now);
+        }
+        if (checkedPrompt.Prompt != request.Prompt)
+            request = request with { Prompt = checkedPrompt.Prompt };
+
         if (!string.IsNullOrWhiteSpace(request.JobFolderPath)
             && !string.IsNullOrWhiteSpace(request.StepId))
         {

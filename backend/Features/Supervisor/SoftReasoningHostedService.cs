@@ -134,7 +134,9 @@ public sealed class SoftReasoningHostedService : BackgroundService
     private string BuildPrompt(string project, SupervisorObservation o)
     {
         var samples = string.Join("\n", o.RecentAgentSamples.TakeLast(20));
-        var decisions = string.Join("\n", o.RecentDecisions.Select(d => $"{d.At:HH:mm:ss} [{d.Kind}] {d.Summary}"));
+        var decisions = string.Join("\n", o.RecentDecisions.Select(d =>
+            $"{d.At:HH:mm:ss} [{d.Kind}] {d.Summary}" +
+            (d.EvidenceRef is null ? "" : $" source={d.EvidenceRef}")));
         var values = new Dictionary<string, string?>
         {
             ["project"] = project,
@@ -142,15 +144,20 @@ public sealed class SoftReasoningHostedService : BackgroundService
             ["current_job_id"] = o.CurrentJobId ?? string.Empty,
             ["current_run_state"] = o.CurrentRunState ?? string.Empty,
             ["last_progress_at"] = o.LastProgressAt?.ToString("u") ?? "-",
-            ["error_cli"] = o.ErrorCounts.CliErrorsLastHour.ToString(),
-            ["error_orch"] = o.ErrorCounts.OrchestratorErrorsLastHour.ToString(),
-            ["error_failures"] = o.ErrorCounts.RunFailuresLastHour.ToString(),
-            ["recent_samples"] = samples,
+            ["error_cli"] = o.Omissions.Contains("errorCounts:raw-log")
+                ? "unknown (raw log omitted)" : o.ErrorCounts.CliErrorsLastHour.ToString(),
+            ["error_orch"] = o.Omissions.Contains("errorCounts:raw-log")
+                ? "unknown (raw log omitted)" : o.ErrorCounts.OrchestratorErrorsLastHour.ToString(),
+            ["error_failures"] = o.Omissions.Contains("errorCounts:raw-log")
+                ? "unknown (raw log omitted)" : o.ErrorCounts.RunFailuresLastHour.ToString(),
+            ["recent_samples"] = samples.Length == 0 ? "(omitted: raw agent stream)" : samples,
             ["recent_decisions"] = decisions,
+            ["evidence_omissions"] = string.Join(", ", o.Omissions),
         };
         try
         {
-            return _prompts.Render("supervisor-soft-reasoning.md", values);
+            return _prompts.Render("supervisor-soft-reasoning.md", values) +
+                "\nEvidence omissions: " + values["evidence_omissions"];
         }
         catch (Exception ex)
         {

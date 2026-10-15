@@ -22,7 +22,7 @@ public sealed class TransitionDecisionBoundaryTests
         "OrchestrationSettlementPolicy", "RepeatedReviewBlockPolicy", "StageDecisionPolicy",
         "CouncilDecisionPolicy", "LocalLoopDecisionPolicy", "ReviewBudgetPolicy", "TransitionDecisionPolicy",
         "RoundCounterPolicy", "ContinuationReplayPolicy", "RepeatedAspectDecisionPolicy",
-        "IntegrationResultPolicy",
+        "IntegrationResultPolicy", "LoopExhaustionPolicy",
         // AGT-3060 (I18): background deciders moved out of the monolith.
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
@@ -38,6 +38,7 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(OperatorSweepPolicy).Assembly);
         Assert.Equal(assembly, typeof(RemoteDeliveryIntegrationPolicy).Assembly);
         Assert.Equal(assembly, typeof(AiOperatorDecisionPolicy).Assembly);
+        Assert.Equal(assembly, typeof(LoopExhaustionPolicy).Assembly);
         Assert.Equal(assembly, typeof(RunLivenessPolicy).Assembly);
         Assert.Equal(assembly, typeof(GateEnvironmentRetryPolicy).Assembly);
         Assert.Equal(assembly, typeof(DeliveryChainPolicy).Assembly);

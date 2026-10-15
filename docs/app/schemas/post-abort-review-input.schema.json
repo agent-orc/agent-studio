@@ -5,7 +5,7 @@
   "description": "Typed evidence the orchestrator hands the abort-review LLM step (ADR-0032 agent zone) after a non-clean CLI run end. Written to {jobFolder}/contracts/post-abort-review-input.json. Mirrors backend/Services/Runner/PostAbortReviewStepService.cs::PostAbortReviewInputContract. Every field is pre-rendered by the runner so the step does no job-folder reading of its own.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["project", "jobId", "createdAt", "abortReason", "abortPhase", "cliOutputTail", "toolCallsLiveness", "gitState", "transcriptUsage", "taskTitle", "taskBody", "rerunBudgetRemaining", "model", "cliType"],
+  "required": ["project", "jobId", "createdAt", "abortReason", "abortPhase", "cliOutputTail", "toolCallsLiveness", "gitState", "transcriptUsage", "taskTitle", "taskBody", "rerunBudgetRemaining", "model", "cliType", "omissions"],
   "properties": {
     "project": {
       "type": "string",
@@ -32,11 +32,11 @@
     },
     "cliOutputTail": {
       "type": "string",
-      "description": "Tail of cli-output.log captured at the abort, used to judge what the agent was doing."
+      "description": "Redacted, bounded window from live CLI output captured at the abort."
     },
     "toolCallsLiveness": {
       "type": "string",
-      "description": "Human-readable liveness summary derived from logs/tool-calls.jsonl: last tool, its kind, and how long before the abort it fired. Distinguishes 'stuck inside a live long-running tool call' from 'silent with no in-flight work'."
+      "description": "Typed file metadata for tool-call evidence. Raw tool-call rows are omitted from the decision prompt."
     },
     "gitState": {
       "type": "string",
@@ -68,6 +68,11 @@
       "type": "string",
       "minLength": 1,
       "description": "CLI type used for the review pass (e.g. claude, codex)."
+    },
+    "omissions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Reasons for secret, raw-path, or oversize evidence omissions."
     }
   }
 }
