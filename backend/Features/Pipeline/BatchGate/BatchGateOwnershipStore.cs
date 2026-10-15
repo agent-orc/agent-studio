@@ -134,6 +134,28 @@ public static class BatchGateOwnershipStore
         return contained;
     }
 
+    /// <summary>
+    /// The containment record as card integration bookkeeping. A patch
+    /// equivalent publication is not an ancestor of the delivery, so the
+    /// integration status reads this epoch-bound mapping to the published SHA
+    /// that carries the delivery's full tree. The status only counts it while
+    /// that SHA stays on the published branch.
+    /// </summary>
+    public static TaskIntegrationRecord ContainmentMapping(BatchGateOwnership contained,
+        DateTimeOffset recordedAt)
+        => new()
+        {
+            Id = $"batch-contained:{contained.ReviewAttemptId}:{contained.ContainedInSha}",
+            Classification = IntegrationRecordClasses.CuratedMapping,
+            RecordedAtUtc = recordedAt.UtcDateTime,
+            IntegrationBranch = contained.Subject.IntegrationBranch,
+            SourceSha = contained.Subject.ResultSha,
+            IntegrationSha = contained.ContainedInSha,
+            DeliveryEpoch = contained.Subject.RunAttempt,
+            Evidence = $"Published {contained.ContainedInSha} contains the full tree of result "
+                + $"{contained.Subject.ResultSha}; containment record {contained.FallbackEvidencePath}.",
+        };
+
     public static bool IsCurrentGeneration(BatchGateOwnership ownership,
         AttemptAuthorityProjection projection)
         => projection.CurrentRunAttempt?.AttemptId == ownership.Subject.RunAttempt
