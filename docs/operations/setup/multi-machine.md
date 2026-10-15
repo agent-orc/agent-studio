@@ -133,7 +133,7 @@ The full repository credential and rotation contract is in
 
 ## 3. Join each Agent Host
 
-Run on the Agent Host:
+Write the token to the protected file described above, then run on the Agent Host:
 
 ```sh
 curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh \
@@ -158,7 +158,7 @@ To use an already downloaded setup executable instead:
 
 ```sh
 sudo ./agent-studio-setup \
-  --join \
+  --mode agent-host \
   --join-token-file /root/agent-studio.join
 sudo rm /root/agent-studio.join
 ```
