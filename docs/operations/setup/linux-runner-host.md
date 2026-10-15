@@ -247,13 +247,18 @@ from a checkout on the host. Compose supervises restarts, and the image health
 check probes the engine's loopback health listener. The engine uses per-occurrence
 leases, so another instance can take over after lease expiry without a leader.
 
-Leave the three transition profiles in Monolith until AGT-3135 is integrated
-on Stable. After that prerequisite, use Workspace Settings > Orchestrator to
-start shadow separately for coding completion, review reports, and gate results.
-Each profile needs 50 consecutive matching actions by default; reaching that
-streak marks it ready, and an operator switches it to Engine with a reason.
-The same control rolls it back. A pending Engine occurrence stays durable while
-the engine is unavailable; rollback returns pending work to the monolith policy.
+Since AGT-3060 the engine is a required service of every production host
+(AGT-W65 D14 A). The monolith pins coding completion, review reports, gate
+results, operator sweeps and the AI Operator deciders (run liveness, stale
+progress, steer timeout, timeout salvage, gate-environment retry) to the engine.
+Startup fails when `Orchestration:Transitions` names `Monolith` or `Shadow`. The
+Workspace Settings > Orchestrator rollout panel shows every profile as Engine
+and refuses shadow and rollback with `orchestration-monolith-decisions-retired`.
+Start the engine before or together with the upgraded monolith. While no engine
+instance holds a lease, the occurrences stay pending and durable, no card moves,
+and after one minute the operator feed shows an engine-unavailable alert. Set
+`OPERATOR_DECISION_CONCURRENCY` in the engine environment to size the AI
+Operator stage (default 2).
 
 ## Product onboarding from Execution Hosts
 

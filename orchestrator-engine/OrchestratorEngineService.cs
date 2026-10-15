@@ -40,6 +40,7 @@ public sealed class OrchestratorEngineService : BackgroundService
         Start(OrchestrationStage.GateDispatch, _options.GateDispatchConcurrency);
         Start(OrchestrationStage.CompletionJudge, _options.CompletionJudgeConcurrency);
         Start(OrchestrationStage.OperatorSweep, 1);
+        Start(OrchestrationStage.OperatorDecision, _options.OperatorDecisionConcurrency);
         await Task.WhenAll(loops);
         return;
 

@@ -8,6 +8,11 @@ public enum OrchestrationStage
     GateDispatch,
     CompletionJudge,
     OperatorSweep,
+    /// <summary>
+    /// AGT-3060 (I18): a periodic or event-triggered AI Operator decision
+    /// (AGT-W73 O1 A). The authority submits frozen facts; the engine decides.
+    /// </summary>
+    OperatorDecision,
 }
 
 public enum OrchestrationAction

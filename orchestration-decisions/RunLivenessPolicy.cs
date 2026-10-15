@@ -1,4 +1,4 @@
-namespace AgentStudio.Shared;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// Pure decision core for Run-Liveness Slice A (see
@@ -37,7 +37,7 @@ namespace AgentStudio.Shared;
 /// <para>
 /// Kept pure (no I/O, no clock) so the whole invariant is locked by
 /// fixture-based unit tests, the same discipline
-/// <see cref="StrandedRunBackstop"/> and <c>RunOutcomePolicy</c> follow. The
+/// <c>StrandedRunBackstop</c> and <c>RunOutcomePolicy</c> follow. The
 /// caller (<c>RunLivenessMonitor</c>) gathers the facts from disk and executes
 /// the verdict.
 /// </para>

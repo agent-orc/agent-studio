@@ -23,6 +23,7 @@ if (args is ["--help"] or ["-h"])
           POST_PROCESSING_CONCURRENCY
           GATE_DISPATCH_CONCURRENCY
           COMPLETION_JUDGE_CONCURRENCY
+          OPERATOR_DECISION_CONCURRENCY
           POLL_SECONDS
           LEASE_SECONDS
           HEALTH_PORT
@@ -54,6 +55,7 @@ try
     builder.Services.AddSingleton<IOrchestrationStageHandler, GateDispatchLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, CompletionJudgeLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, OperatorSweepLoop>();
+    builder.Services.AddSingleton<IOrchestrationStageHandler, AiOperatorDecisionLoop>();
     builder.Services.AddHostedService<OrchestratorEngineService>();
     builder.Services.AddHostedService<EngineHealthServer>();
     await builder.Build().RunAsync();

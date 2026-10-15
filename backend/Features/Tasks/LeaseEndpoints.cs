@@ -1489,6 +1489,7 @@ public static class LeaseEndpoints
             ProviderRejectionContinuationService providerRejectionContinuations,
             ModelRoutingPolicyRegistry modelRouting,
             MonolithOrchestrationStore orchestration,
+            AiOperatorDecisionGateway aiOperator,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -2490,9 +2491,29 @@ public static class LeaseEndpoints
                 var continuationRoundsUsed = salvage is null
                     ? 0
                     : timeoutContinuations.CountAutomaticRounds(task);
-                if (RunTimeoutSalvageContinuationPolicy.Decide(
-                        outcome, salvage is not null, continuationRoundsUsed)
-                    == RunTimeoutSalvageAction.StartContinuation)
+                // AGT-3060: the continuation-or-park choice belongs to the AI
+                // Operator. The attempt is settled; the card waits in its lane
+                // for the engine receipt, applied by RunTimeoutSalvageEffect.
+                AiOperatorDecision? timeoutDecision = null;
+                if (unverifiedDelivery is null
+                    && RunTimeoutSalvageContinuationPolicy.IsNonTerminalOutcome(outcome))
+                {
+                    var submission = aiOperator.Submit(new AiOperatorDecisionRequest(task.ProjectName, task.Id,
+                        task.State,
+                        new AiOperatorDecisionPayload(AiOperatorDeciders.TimeoutSalvage,
+                            RunTimeoutSalvageEffect.SubjectKey(attemptId, completionKey),
+                            TimeoutSalvage: new TimeoutSalvageFacts(outcome, salvage, continuationRoundsUsed,
+                                reportedReason)),
+                        Period: null, attemptId, req.FencingToken, epoch));
+                    if (submission.WaitsForEngine)
+                    {
+                        scanner.InvalidateCache();
+                        return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
+                            task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
+                    }
+                    timeoutDecision = submission.TestHostDecision;
+                }
+                if (timeoutDecision?.Effect == AiOperatorEffects.StartContinuation)
                 {
                     var continuation = await timeoutContinuations.StartAsync(
                         task, salvage!, reportedReason, attemptId, laneWrite, ct);

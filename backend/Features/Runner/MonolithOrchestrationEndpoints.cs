@@ -276,7 +276,10 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     occurrence.Run.RunId);
             }
         }
-        foreach (var occurrence in store.WaitingOccurrences())
+        // AI Operator occurrences carry no card wait marker: one marker file
+        // names one run, and a lane occurrence on the same card owns it.
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            item.Run.CurrentStage != OrchestrationStage.OperatorDecision))
         {
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
