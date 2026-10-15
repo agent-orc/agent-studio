@@ -190,6 +190,25 @@ public sealed class MonolithOrchestrationStore
 
     public static string OperatorDecisionProfile(string decider) => "AiOperator:" + decider;
 
+    /// <summary>One active bounded review decision per card and source subject.</summary>
+    public OrchestrationRunDto CreateReviewInputDecision(string projectId, string taskId,
+        string payloadJson, string subjectKey, string expectedSourceState,
+        string authorityAttemptId, long authorityFence = 0, long authorityEpoch = 0)
+    {
+        lock (_gate)
+        {
+            var active = _runs.Values.FirstOrDefault(item => item.Run.ProjectId == projectId
+                && item.Run.TaskId == taskId
+                && item.Run.CurrentStage == OrchestrationStage.ReviewInputDecision
+                && item.Run.Status is "pending" or "leased" or "applying");
+            if (active is not null) return active.Run;
+            return Create(projectId, taskId, OrchestrationStage.ReviewInputDecision,
+                payloadJson, $"review-input:{projectId}:{taskId}:{subjectKey}",
+                expectedSourceState, authorityAttemptId, authorityFence, authorityEpoch,
+                claimable: false, profile: "ReviewDecision");
+        }
+    }
+
     public OrchestrationRunDto? Get(string runId)
     {
         lock (_gate) return _runs.GetValueOrDefault(runId)?.Run;
