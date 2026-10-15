@@ -100,6 +100,92 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             Assert.Contains("Run the queued fix", File.ReadAllText(Path.Combine(folder, "pending-intent.json")));
     }
 
+    [Fact]
+    public async Task Queued_gate_timeout_after_operator_acceptance_records_old_result_without_escalation()
+    {
+        const string slug = "accepted-queue-timeout";
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        var oldSha = new string('a', 40);
+        WriteRemoteSubject(slug, oldSha, "accepted-delivery");
+        var clock = new CancellationClock();
+        var transport = new CancellationTransport(request =>
+        {
+            Assert.Equal(MoveJobStatus.Success,
+                _cancellationStateMachine!.MoveJob(slug, TaskStates.HumanReview, _watchPath).Status);
+            Assert.Equal(MoveJobStatus.Success,
+                _cancellationStateMachine.MoveJob(slug, TaskStates.Completed, _watchPath).Status);
+            return new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+                "Gate queue wait budget expired", "queue wait timeout", false, false)
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+                GateId = request.GateId,
+                FailureKind = BuildTestGateFailureKind.Timeout,
+                GateQueueWaitMs = 60_000,
+            };
+        });
+        var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 0,
+            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance),
+            clock);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var folder = Path.Combine(_watchPath, TaskStates.Completed, slug);
+        Assert.True(Directory.Exists(folder));
+        Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_workspace, Project), item => item.JobId == slug);
+        var receipt = Assert.Single(new TimelineLog(NullLogger<TimelineLog>.Instance)
+            .ReadAll(folder), item => item.Kind == "gate-result-superseded");
+        Assert.Equal(oldSha, receipt.Details!["expectedSha"]);
+        Assert.Equal("Fail", receipt.Details["verdict"]);
+        Assert.Contains(Directory.EnumerateFiles(Path.Combine(folder, "post-steps"), "build-test-gate-*.log"),
+            file => File.ReadAllText(file).Contains("Gate queue wait budget expired", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Supersession_during_failure_decision_does_not_park_active_run(bool intervention)
+    {
+        const string slug = "failure-decision-superseded";
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        WriteRemoteSubject(slug, new string('a', 40), "old");
+        var clock = new CancellationClock();
+        var transport = new CancellationTransport(request => new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, intervention ? 1 : null, 10,
+            intervention ? "dotnet test failed" : "Gate queue wait timed out",
+            intervention ? "test failure" : "queue wait timeout", true, false)
+        {
+            ExpectedSha = request.ExpectedSha,
+            TestedSha = request.ExpectedSha,
+            GateId = request.GateId,
+            FailureKind = intervention ? BuildTestGateFailureKind.Code : BuildTestGateFailureKind.Timeout,
+        });
+        async Task SupersedeAfterIntervention()
+        {
+            await Task.Yield();
+            Assert.Equal(MoveJobStatus.Success,
+                _cancellationStateMachine!.MoveJob(slug, TaskStates.Ready, _watchPath).Status);
+            Assert.Equal(MoveJobStatus.Success,
+                _cancellationStateMachine.MoveJob(slug, TaskStates.Progress, _watchPath).Status);
+        }
+        var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 0,
+            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance),
+            clock, enableFailureIntervention: intervention,
+            gateFailureDecisionCheckpoint: SupersedeAfterIntervention);
+        orchestrator.BuildTestGateRetryBackoff = _ => TimeSpan.Zero;
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        Assert.True(Directory.Exists(folder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, slug)));
+        Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_workspace, Project), item => item.JobId == slug);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var receipt = Assert.Single(timeline.ReadAll(folder), item => item.Kind == "gate-result-superseded");
+        Assert.Equal("Fail", receipt.Details!["verdict"]);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, slug)));
+    }
+
     [Theory]
     [InlineData("delivery")]
     [InlineData("lane")]

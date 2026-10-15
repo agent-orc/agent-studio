@@ -526,7 +526,9 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         int maxReissues,
         IBuildTestGateRunner? buildGate = null,
         TimeProvider? timeProvider = null,
-        Microsoft.Extensions.Logging.ILogger<TaskStateMachine>? stateLogger = null)
+        Microsoft.Extensions.Logging.ILogger<TaskStateMachine>? stateLogger = null,
+        bool enableFailureIntervention = false,
+        Func<Task>? gateFailureDecisionCheckpoint = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -560,6 +562,9 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             NullLogger<TaskMutationService>.Instance);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        if (enableFailureIntervention)
+            settings.SetPipelineStep(Project, PipelineCatalogue.FailureInterventionStepId,
+                new PipelineStepSetting { Enabled = true });
         _cancellationStateMachine = stateMachine;
         _cancellationMutations = mutations;
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
@@ -568,8 +573,15 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
 
         var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var failureInterventions = enableFailureIntervention
+            ? new FailureInterventionService(mutations, scanner, timeline,
+                new OrchestratorLog(NullLogger<OrchestratorLog>.Instance),
+                NullLogger<FailureInterventionService>.Instance, prompts,
+                time: timeProvider, projectSettings: settings, pipelineLog: pipelineLog)
+            : null;
 
-        return new ReviewDecisionOrchestrator(
+        var orchestrator = new ReviewDecisionOrchestrator(
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner,
             new AutoReviewStatusSnapshot(), config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
@@ -580,7 +592,11 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             pipelineLog: pipelineLog,
             lintScssRunner: null,
             buildTestGateRunner: buildGate,
-            timeline: new TimelineLog(NullLogger<TimelineLog>.Instance),
+            timeline: timeline,
+            projectSettings: settings,
+            failureInterventions: failureInterventions,
             timeProvider: timeProvider);
+        orchestrator.GateFailureDecisionCheckpointAsync = gateFailureDecisionCheckpoint;
+        return orchestrator;
     }
 }
