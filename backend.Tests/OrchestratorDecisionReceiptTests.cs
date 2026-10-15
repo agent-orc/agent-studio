@@ -4,6 +4,7 @@ extern alias EngineAssembly;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Bus;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.Security;
@@ -36,6 +37,71 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
     private readonly string _workspace = Path.Combine(Path.GetTempPath(),
         "orchestrator-decision-receipts-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Scoped_operator_reads_and_answers_only_receipts_in_its_project()
+    {
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["Security:Profile"] = "networked",
+                    ["AllowedHosts"] = "studio.test",
+                }));
+        });
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://studio.test"), HandleCookies = false,
+        });
+        var decisions = factory.Services.GetRequiredService<OrchestratorDecisionStore>();
+        OrchestratorDecisionReceiptV1 Add(string occurrence, string project)
+        {
+            var input = Shadow(occurrence);
+            input = input with { Grounds = input.Grounds with
+            {
+                Scope = input.Grounds.Scope with { ProjectId = project },
+            } };
+            decisions.FreezeInputs(input);
+            return decisions.PutReceipt(DecisionReceiptPolicy.Build(new(
+                DecisionGroundsPolicy.Freeze(input.Grounds),
+                DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false,
+                "decision unavailable")));
+        }
+        var own = Add("orch_scoped_own", "project-a");
+        var other = Add("orch_scoped_other", "project-b");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        security.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        var created = security.CreateUser(new CreateUserRequest("scoped.operator", "Scoped Operator",
+            StudioRoles.Operator, ["project-a"], "temporary pass phrase long enough"));
+        var login = security.Login(created.User.Username, created.TemporaryPassword, "scoped|127.0.0.1");
+        security.ChangePassword(new HumanPrincipal(login.User,
+            security.AuthenticateSession(login.SessionToken)!.Session),
+            new ChangePasswordRequest(created.TemporaryPassword, "permanent pass phrase long enough"));
+        http.DefaultRequestHeaders.Add("Cookie",
+            $"{AccessSecurityStore.SessionCookieName}={login.SessionToken}");
+        http.DefaultRequestHeaders.Add("X-CSRF-Token", login.CsrfToken);
+
+        var visible = await http.GetFromJsonAsync<OrchestratorDecisionReceiptSummary[]>(
+            "/api/orchestration/decision-receipts?limit=20");
+        Assert.Equal(own.ReceiptId, Assert.Single(visible!).ReceiptId);
+        var spend = await http.GetFromJsonAsync<OrchestratorDecisionSpendSummary>(
+            "/api/orchestration/decision-receipts/spend");
+        Assert.Equal(1, spend!.Occurrences);
+        foreach (var path in new[] { other.EvidenceRef, $"{other.EvidenceRef}/outcome",
+                     $"{other.EvidenceRef}/operator-intent" })
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, (await http.GetAsync(path)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound,
+            (await http.PostAsJsonAsync($"{other.EvidenceRef}/operator-intent",
+                new DecisionOperatorIntentRequest("stop", "Wrong project"))).StatusCode);
+        Assert.Null(decisions.GetOperatorIntent(other.ReceiptId));
+        var answer = await http.PostAsJsonAsync($"{own.EvidenceRef}/operator-intent",
+            new DecisionOperatorIntentRequest("stop", "Stop this card"));
+        Assert.True(answer.IsSuccessStatusCode, await answer.Content.ReadAsStringAsync());
+        Assert.Contains($"operator-response:{own.ReceiptId}", decisions.PendingReceipts(10));
+    }
 
     [Fact]
     public async Task Shadow_coding_completion_records_one_immutable_receipt_with_a_one_click_evidence_ref()
@@ -190,6 +256,30 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             $"/api/orchestration/decision-receipts?taskId={card}", DecisionGroundsPolicy.Json);
         var row = Assert.Single(rows!);
         Assert.Equal("prepare(review-subject)", row.ChosenAction);
+        Assert.Equal(receipt.Scope.ProjectId, row.ProjectId);
+        Assert.Equal("decision-step", row.Actor);
+        Assert.Equal(receipt.Call.Tokens.Total, row.TotalTokens);
+        Assert.Equal(receipt.Call.Tokens.UncachedInput + receipt.Call.Tokens.CachedInput
+            + receipt.Call.Tokens.CacheWrite, row.InputTokens);
+        Assert.Equal(receipt.Call.Tokens.Output, row.OutputTokens);
+        Assert.Equal(receipt.Call.Price.EstimatedUsd, row.EstimatedUsd);
+        var cardSpend = await http.GetFromJsonAsync<OrchestratorDecisionSpendSummary>(
+            $"/api/orchestration/decision-receipts/spend?taskId={card}", DecisionGroundsPolicy.Json);
+        Assert.Equal(1, cardSpend!.Occurrences);
+        Assert.Equal(row.InputTokens, cardSpend.InputTokens);
+        Assert.Equal(row.OutputTokens, cardSpend.OutputTokens);
+        Assert.Equal(row.EstimatedUsd ?? 0, cardSpend.PricedUsd);
+        Assert.Equal(row.UnknownPriceCalls, cardSpend.UnknownPriceCalls);
+        var projectSpend = await http.GetFromJsonAsync<OrchestratorDecisionSpendSummary>(
+            $"/api/orchestration/decision-receipts/spend?projectId={row.ProjectId}", DecisionGroundsPolicy.Json);
+        Assert.Equal(cardSpend, projectSpend! with { Scope = "card", ScopeId = card });
+        var busDecision = Assert.Single(new AgentMessageBusStore().Query(
+            _workspace, project, new AgentMessageQuery(Kind: "decision",
+                CorrelationId: receipt.OccurrenceId)));
+        Assert.Equal("engine-decision", busDecision.Topic);
+        Assert.Equal(receipt.OccurrenceId, busDecision.CorrelationId);
+        Assert.Equal(receipt.Call.Model, busDecision.Tokens?.Model);
+        Assert.Equal(receipt.Call.Tokens.Output, busDecision.Tokens?.Output);
         var evidence = await http.GetFromJsonAsync<OrchestratorDecisionReceiptV1>(row.EvidenceRef,
             DecisionGroundsPolicy.Json);
         Assert.Equal(receipt.ReceiptId, evidence!.ReceiptId);
@@ -285,12 +375,66 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Equal(new DecisionPriceV1(DecisionPriceStatuses.Priced, 0.052m), late.Price with { Basis = null });
         Assert.Equal(["codex:thread-late"], late.ProviderCallIds);
         Assert.Equal(timeout, store.GetReceipt(timeout.ReceiptId));
+        var intent = store.PutOperatorIntent(timeout.ReceiptId,
+            new DecisionOperatorIntentRequest("raise", "More time for the verified build", 24));
+        Assert.Equal(("raise", 24), (intent.Action, intent.RequestedEmergencyHours));
+        Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Adapt,
+            "raise-emergency-limit:24h", "operator-intent"), intent.TypedChoice);
+        Assert.Equal(intent, store.LatestOperatorIntentForTask("AGT-1"));
+        var responseOccurrence = $"operator-response:{timeout.ReceiptId}";
+        Assert.Contains(responseOccurrence, store.PendingReceipts(10));
+        var responseInput = store.GetInputs(responseOccurrence)!;
+        Assert.Equal("operator-response", responseInput.Grounds.Trigger.Kind);
+        Assert.Equal(intent.TypedChoice!.Action, responseInput.DeterministicAction);
+        Assert.Contains(responseInput.Grounds.Facts, fact => fact.Id == "operator.intent"
+            && fact.Source.Ref.EndsWith($"/{timeout.ReceiptId}/operator-intent", StringComparison.Ordinal));
+        Assert.Equal(intent, store.PutOperatorIntent(timeout.ReceiptId,
+            new DecisionOperatorIntentRequest("stop", "Later duplicate")));
         var row = Assert.Single(store.ListReceipts("AGT-1", 10));
         Assert.Equal((6_200L, DecisionPriceStatuses.Priced, (decimal?)0.052m, 1),
             (row.TotalTokens, row.PriceStatus, row.EstimatedUsd, row.LateCalls));
+        Assert.True(DecisionGroundsCollector.IsCurrentOperatorIntent(intent, At, [timeout]));
+        var nextInput = Shadow("orch_after_answer");
+        store.FreezeInputs(nextInput);
+        var nextReceipt = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(nextInput.Grounds),
+            DecisionGroundsPolicyTests.Deterministic, "settled", null, 0, false, "next decision"))
+            with { EndedAt = At.AddMinutes(1) };
+        store.PutReceipt(nextReceipt);
+        Assert.False(DecisionGroundsCollector.IsCurrentOperatorIntent(intent, At.AddMinutes(2),
+            store.ReceiptsForTask("AGT-1")));
 
         var reloaded = new OrchestratorDecisionStore(Path.Combine(_workspace, "late"), clock, new RatePricing());
         Assert.Single(reloaded.LateCalls("orch_late"));
+        Assert.Equal(intent, reloaded.GetOperatorIntent(timeout.ReceiptId));
+    }
+
+    [Fact]
+    public void Alternate_model_attempt_spend_is_included_once_in_occurrence_total()
+    {
+        var store = new OrchestratorDecisionStore((string?)null,
+            new FakeTimeProvider(new DateTimeOffset(At)), new RatePricing());
+        var input = Shadow("orch_alternate");
+        store.FreezeInputs(input);
+        var first = store.CreateJob(Request("orch_alternate", 1, "gpt-6-sol"));
+        var firstClaim = store.Claim(new("runner-one", "runner")).Work!;
+        Assert.True(store.Complete(new(firstClaim.JobId, firstClaim.ClaimToken, "runner-one", false,
+            "", "gpt-6-sol", [new("call-first", "gpt-6-sol", 1_000, 0, 0, 50, false)],
+            At, At.AddSeconds(2), "transport failed", true)));
+        var second = store.CreateJob(Request("orch_alternate", 2, "gpt-6-sol"));
+        var secondClaim = store.Claim(new("runner-one", "runner")).Work!;
+        Assert.Equal(second.JobId, secondClaim.JobId);
+        Assert.True(store.Complete(new(secondClaim.JobId, secondClaim.ClaimToken, "runner-one", true,
+            "{}", "gpt-6-sol", [new("call-second", "gpt-6-sol", 2_000, 0, 0, 100, false)],
+            At, At.AddSeconds(4), null, false)));
+        var receipt = DecisionReceiptPolicy.Build(new(DecisionGroundsPolicy.Freeze(input.Grounds),
+            DecisionGroundsPolicyTests.Deterministic, "settled", store.GetJob(second.JobId), 2, true, null));
+        store.PutReceipt(receipt);
+        var row = Assert.Single(store.ListReceipts("AGT-1", 10));
+        Assert.Equal(first.JobId, store.GetJob(first.JobId)!.JobId);
+        Assert.Equal(3_000, row.InputTokens);
+        Assert.Equal(150, row.OutputTokens);
+        Assert.Equal(row.EstimatedUsd ?? 0, store.SpendSummary("AGT-1", null).PricedUsd);
+        Assert.Equal(0, row.LateCalls);
     }
 
     [Fact]
@@ -402,6 +546,20 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         // A new UTC day opens a new budget.
         clock.Advance(TimeSpan.FromDays(1));
         Assert.Equal(DecisionJobStatuses.Pending, Create("event_next_day", "capacity-event"));
+
+        var periodic = HostShadow("periodic_visible", "periodic");
+        store.FreezeInputs(periodic);
+        var frozen = DecisionGroundsPolicy.Freeze(periodic.Grounds);
+        var receipt = DecisionReceiptPolicy.Build(new(frozen,
+            new DecisionChoiceV1(DecisionActionKinds.Observe, "host", "applied:deterministic"),
+            "periodic check", null, 0, false, "host unavailable"));
+        store.PutReceipt(receipt);
+        var hostRow = Assert.Single(store.ListReceipts(null, 10));
+        Assert.Null(hostRow.TaskId);
+        Assert.Null(hostRow.ProjectId);
+        Assert.Equal("decision-step", hostRow.Actor);
+        Assert.Equal(1, store.SpendSummary(null, null).Occurrences);
+        Assert.Equal(0, store.SpendSummary("AGT-1", null).Occurrences);
     }
 
     [Fact]

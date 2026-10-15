@@ -1,5 +1,7 @@
 using System.Text.Json;
+using AgentStudio.Bus;
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Registry;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 
@@ -37,17 +39,23 @@ public static class OrchestratorDecisionEndpoints
                 AccessSecurityStore security, OrchestratorDecisionStore store) =>
                 MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
                     : store.GetJob(jobId) is { } job ? Wire(job) : Results.NotFound());
-            engine.MapPut("/runs/{runId}/decision-receipt", (HttpContext context, string runId,
+            engine.MapPut("/runs/{runId}/decision-receipt", async (HttpContext context, string runId,
                 OrchestratorDecisionReceiptV1 receipt, AccessSecurityStore security,
-                OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Execute(() =>
+                OrchestratorDecisionStore store, AgentMessageBusBridge bus, CancellationToken ct) =>
+            {
+                var existed = store.GetReceipt(receipt.ReceiptId) is not null;
+                var result = MonolithOrchestrationEndpoints.Execute(() =>
                 {
                     if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
                         return Results.Unauthorized();
                     if (receipt.OccurrenceId != runId)
                         return Results.BadRequest(new ApiError("invalid-request", "Receipt occurrence does not match the route."));
                     return Wire(store.PutReceipt(receipt));
-                }));
+                });
+                if (!existed && store.GetReceipt(receipt.ReceiptId) is { } stored)
+                    await bus.EmitDecisionReceiptAsync(stored, ct);
+                return result;
+            });
         }
 
         app.MapPost("/api/runner/orchestrator-decisions/claim", (HttpContext context,
@@ -62,17 +70,40 @@ public static class OrchestratorDecisionEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         var studio = app.MapGroup("/api/orchestration/decision-receipts");
-        studio.MapGet("", (string? taskId, int? limit, OrchestratorDecisionStore store) =>
-            Wire(store.ListReceipts(string.IsNullOrWhiteSpace(taskId) ? null : taskId, limit ?? 20)));
-        studio.MapGet("/{receiptId}", (string receiptId, OrchestratorDecisionStore store) =>
-            store.GetReceipt(receiptId) is { } receipt ? Wire(receipt) : Results.NotFound());
-        studio.MapGet("/{receiptId}/outcome", (string receiptId, OrchestratorDecisionStore store,
-            MonolithOrchestrationStore orchestration) =>
+        studio.MapGet("", (HttpContext context, string? taskId, string? projectId, int? limit,
+            OrchestratorDecisionStore store, ProjectRegistry projects) =>
+            Wire(store.ListReceipts(string.IsNullOrWhiteSpace(taskId) ? null : taskId, limit ?? 20,
+                string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+                project => AllowsProject(context, project, projects))));
+        studio.MapGet("/spend", (HttpContext context, string? taskId, string? projectId,
+            OrchestratorDecisionStore store, ProjectRegistry projects) =>
+            Wire(store.SpendSummary(string.IsNullOrWhiteSpace(taskId) ? null : taskId,
+                string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+                project => AllowsProject(context, project, projects))));
+        studio.MapGet("/{receiptId}", (HttpContext context, string receiptId,
+            OrchestratorDecisionStore store, ProjectRegistry projects) =>
+            AuthorizedReceipt(context, receiptId, store, projects) is { } receipt
+                ? Wire(receipt) : Results.NotFound());
+        studio.MapGet("/{receiptId}/operator-intent", (HttpContext context, string receiptId,
+            OrchestratorDecisionStore store, ProjectRegistry projects) =>
+            AuthorizedReceipt(context, receiptId, store, projects) is null ? Results.NotFound()
+                : store.GetOperatorIntent(receiptId) is { } intent ? Wire(intent) : Results.NotFound());
+        studio.MapPost("/{receiptId}/operator-intent", (HttpContext context, string receiptId,
+            DecisionOperatorIntentRequest request, OrchestratorDecisionStore store,
+            ProjectRegistry projects) => MonolithOrchestrationEndpoints.Execute(() =>
+                AuthorizedReceipt(context, receiptId, store, projects) is null ? Results.NotFound()
+                    : Wire(store.PutOperatorIntent(receiptId, request))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        studio.MapGet("/{receiptId}/outcome", (HttpContext context, string receiptId,
+            OrchestratorDecisionStore store, MonolithOrchestrationStore orchestration,
+            ProjectRegistry projects) =>
         {
-            if (store.GetReceipt(receiptId) is not { } receipt) return Results.NotFound();
+            if (AuthorizedReceipt(context, receiptId, store, projects) is not { } receipt)
+                return Results.NotFound();
             var occurrence = orchestration.GetOccurrence(receipt.OccurrenceId);
             var later = receipt.Scope.TaskId is { } taskId
-                ? store.ReceiptsForTask(taskId).Where(item => item.EndedAt > receipt.EndedAt)
+                ? store.ReceiptsForTask(taskId).Where(item => item.Scope.ProjectId == receipt.Scope.ProjectId
+                        && item.EndedAt > receipt.EndedAt)
                     .Select(store.Summary).ToArray()
                 : [];
             return Wire(new
@@ -91,6 +122,17 @@ public static class OrchestratorDecisionEndpoints
     }
 
     private static IResult Wire(object value) => Results.Json(value, WireJson);
+
+    private static OrchestratorDecisionReceiptV1? AuthorizedReceipt(HttpContext context, string receiptId,
+        OrchestratorDecisionStore store, ProjectRegistry projects)
+    {
+        var receipt = store.GetReceipt(receiptId);
+        return receipt is not null && AllowsProject(context, receipt.Scope.ProjectId, projects) ? receipt : null;
+    }
+
+    private static bool AllowsProject(HttpContext context, string? projectId, ProjectRegistry projects)
+        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+            || ProjectAccessAuthorization.Allows(human.User, projectId, projects);
 
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal

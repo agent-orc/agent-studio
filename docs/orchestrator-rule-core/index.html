@@ -514,6 +514,11 @@
   <strong>AGT-3060 · AI Operator periodic deciders</strong>
   <span>Delivered: O1 A AI Operator deciders in the shared decision library for run liveness, stale progress, steer timeout, timeout salvage, gate-environment retry, delivery chain, cause breaker, intake routing and the acceptance rail, each with a receipt naming decider, effect and autonomy class (A0 and A1 act, A2 proposes, A3 asks a person). Per the operator decision of 15.10.2026 the per-transition switch stays the single selector: the OperatorDecision profile defaults to Monolith, where the monolith decides in process through the same library, and on Engine the deciders submit facts and the authority applies the engine receipt after rechecking lane and facts. No host forces engine-only decisions. OD-S6 can reuse the OperatorDecision stage as its periodic seam. Focused tests cover both switch positions, including a delivery-chain scenario that moves nothing while the engine is stopped and completes once it decides.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3067" data-delivered-at="2026-10-15" data-slice="OD-S5 decision visibility and spend">
+  <strong>AGT-3067 · OD-S5 decision visibility and spend</strong>
+  <span>Delivered: the recommended O1 A option projects engine decision receipts into the bus and card pipeline view with the deciding model, actor, input and output tokens, priced subtotal, unknown-price count, card and project totals, and a one-click grounds, response and source drill-down. The latest ask supplies the card&#39;s primary escalation statement. Receipt spend includes alternate and late calls, and periodic occurrences in workspace totals. Human Operator raise, cut and stop answers are durable grounds for the next decision. Light and dark browser evidence and focused checks cover the view.</span>
+</li>
+<!-- AGT-3067 fix round, 2026-10-15: the card's active escalation evidence remains primary; a shadow ask stays in receipt history. Scoped receipt access, public-demo admission, engine response scheduling, and live receipt refresh are covered by the delivery checks. -->
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

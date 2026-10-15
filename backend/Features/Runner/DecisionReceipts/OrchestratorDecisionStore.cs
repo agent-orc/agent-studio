@@ -26,6 +26,7 @@ public sealed class OrchestratorDecisionStore
     private readonly Dictionary<string, DecisionShadowInputV1> _inputs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRecord> _jobs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OrchestratorDecisionReceiptV1> _receipts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DecisionOperatorIntentV1> _operatorIntents = new(StringComparer.Ordinal);
 
     public OrchestratorDecisionStore(IConfiguration configuration, TimeProvider time, ITokenPricing pricing)
         : this(string.IsNullOrWhiteSpace(configuration["TaskRepository"]) ? null
@@ -41,6 +42,7 @@ public sealed class OrchestratorDecisionStore
         foreach (var input in Load<DecisionShadowInputV1>("inputs")) _inputs[input.Grounds.OccurrenceId] = input;
         foreach (var job in Load<JobRecord>("jobs")) _jobs[job.Dto.JobId] = job;
         foreach (var receipt in Load<OrchestratorDecisionReceiptV1>("receipts")) _receipts[receipt.OccurrenceId] = receipt;
+        foreach (var intent in Load<DecisionOperatorIntentV1>("operator-intents")) _operatorIntents[intent.ReceiptId] = intent;
     }
 
     public DecisionShadowInputV1 FreezeInputs(DecisionShadowInputV1 input)
@@ -229,6 +231,24 @@ public sealed class OrchestratorDecisionStore
                 item.Result.EndedAt, item.Result.Error))
             .ToArray();
 
+    private IReadOnlyList<DecisionLateCallV1> OtherBilledCallsLocked(OrchestratorDecisionReceiptV1 receipt)
+        => _jobs.Values.Where(job => job.Dto.OccurrenceId == receipt.OccurrenceId)
+            .SelectMany(job => job.ReplacedClaims.Where(claim => claim.Result is not null)
+                .Select(claim => (job.Dto.JobId, Result: claim.Result!))
+                .Concat((job.Dto.JobId != receipt.Call.JobId || job.LateAfterReceipt)
+                    && job.Dto.Result is not null ? [(job.Dto.JobId, job.Dto.Result)] : []))
+            .OrderBy(item => item.Result.EndedAt).ThenBy(item => item.JobId, StringComparer.Ordinal)
+            .Select(item => new DecisionLateCallV1(item.JobId, item.Result.HostId, item.Result.Model,
+                item.Result.Tokens, item.Result.Price, item.Result.ProviderCallIds,
+                item.Result.EndedAt, item.Result.Error))
+            .ToArray();
+
+    private OrchestratorDecisionReceiptSummary SummaryLocked(OrchestratorDecisionReceiptV1 receipt)
+    {
+        var other = OtherBilledCallsLocked(receipt);
+        return Summary(receipt, other, LateCallsLocked(receipt.OccurrenceId).Count);
+    }
+
     /// <summary>
     /// Stores the receipt once per occurrence after checking that it was built
     /// from the frozen input. A replayed or late duplicate returns the stored one.
@@ -266,29 +286,104 @@ public sealed class OrchestratorDecisionStore
         lock (_gate) return _receipts.Values.FirstOrDefault(item => item.ReceiptId == receiptId);
     }
 
+    public DecisionOperatorIntentV1? GetOperatorIntent(string receiptId)
+    {
+        lock (_gate) return _operatorIntents.GetValueOrDefault(receiptId);
+    }
+
+    public DecisionOperatorIntentV1 PutOperatorIntent(string receiptId, DecisionOperatorIntentRequest request)
+    {
+        lock (_gate)
+        {
+            var receipt = _receipts.Values.FirstOrDefault(item => item.ReceiptId == receiptId)
+                ?? throw new KeyNotFoundException("Decision receipt was not found.");
+            if (receipt.Scope.TaskId is not { } taskId
+                || !receipt.Chosen.Any(choice => choice.Action == DecisionActionKinds.Ask
+                    && !choice.Outcome.StartsWith("rejected:", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Only a card ask accepts an operator response.");
+            if (_receipts.Values.Where(item => item.Scope.TaskId == taskId
+                    && item.Scope.ProjectId == receipt.Scope.ProjectId)
+                .OrderByDescending(item => item.EndedAt).ThenByDescending(item => item.ReceiptId, StringComparer.Ordinal)
+                .First().ReceiptId != receiptId)
+                throw new InvalidOperationException("A newer decision supersedes this ask.");
+            if (request.Action is not ("raise" or "cut" or "stop"))
+                throw new ArgumentException("Operator action must be raise, cut or stop.");
+            if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
+                throw new ArgumentException("An operator reason of at most 500 characters is required.");
+            if (request.Action == "raise" ? request.RequestedEmergencyHours is not (>= 1 and <= 24)
+                : request.RequestedEmergencyHours is not null)
+                throw new ArgumentException("Raise needs an emergency limit of 1 to 24 hours; other actions have no limit.");
+            if (_operatorIntents.TryGetValue(receiptId, out var existing)) return existing;
+            var choice = request.Action switch
+            {
+                "raise" => new DecisionChoiceV1(DecisionActionKinds.Adapt,
+                    $"raise-emergency-limit:{request.RequestedEmergencyHours}h", "operator-intent"),
+                "cut" => new DecisionChoiceV1(DecisionActionKinds.Adapt, "cut-smaller", "operator-intent"),
+                _ => new DecisionChoiceV1(DecisionActionKinds.Halt, "stop", "operator-intent"),
+            };
+            var intent = new DecisionOperatorIntentV1(receiptId, taskId, request.Action,
+                request.Reason.Trim(), request.RequestedEmergencyHours, _time.GetUtcNow().UtcDateTime, choice);
+            var source = _inputs.GetValueOrDefault(receipt.OccurrenceId)
+                ?? throw new InvalidOperationException("The ask has no frozen decision grounds.");
+            var occurrenceId = $"operator-response:{receiptId}";
+            var reference = new GroundsSourceRefV1("operator-intent",
+                $"/api/orchestration/decision-receipts/{receiptId}/operator-intent");
+            var grounds = source.Grounds with
+            {
+                OccurrenceId = occurrenceId,
+                Trigger = new GroundsTriggerV1("operator-response", "OperatorResponse", intent.RecordedAt),
+                Facts = [.. source.Grounds.Facts,
+                    new GroundsFactV1("operator.intent", "authority", "Human Operator choice",
+                        $"{choice.Action}({choice.Target})", null, reference, intent.RecordedAt,
+                        "complete", "authoritative", true),
+                    new GroundsFactV1("operator.reason", "authority", "Human Operator reason",
+                        intent.Reason, null, reference, intent.RecordedAt, "complete", "authoritative")],
+                Alternatives = [new GroundsAlternativeV1(choice.Action, choice.Target,
+                    "reversible", "human-approved", true)],
+                PriorDecisions = [.. source.Grounds.PriorDecisions,
+                    new GroundsPriorDecisionV1(receipt.ReceiptId, receipt.OccurrenceId,
+                        DecisionActionKinds.Ask, receipt.Prediction, "answered", receipt.EndedAt)],
+            };
+            FreezeInputs(new DecisionShadowInputV1(grounds, choice.Action, choice.Target,
+                $"Human Operator chose {request.Action}: {intent.Reason}"));
+            Save("operator-intents", receiptId, intent);
+            _operatorIntents.Add(receiptId, intent);
+            return intent;
+        }
+    }
+
+    public DecisionOperatorIntentV1? LatestOperatorIntentForTask(string taskId)
+    {
+        lock (_gate) return _operatorIntents.Values.Where(item => item.TaskId == taskId)
+            .OrderByDescending(item => item.RecordedAt).FirstOrDefault();
+    }
+
     public IReadOnlyList<OrchestratorDecisionReceiptV1> ReceiptsForTask(string taskId)
     {
         lock (_gate) return _receipts.Values.Where(item => item.Scope.TaskId == taskId)
             .OrderBy(item => item.EndedAt).ThenBy(item => item.ReceiptId, StringComparer.Ordinal).ToArray();
     }
 
-    public IReadOnlyList<OrchestratorDecisionReceiptSummary> ListReceipts(string? taskId, int limit)
+    public IReadOnlyList<OrchestratorDecisionReceiptSummary> ListReceipts(string? taskId, int limit,
+        string? projectId = null, Func<string?, bool>? allowsProject = null)
     {
         lock (_gate) return _receipts.Values
-            .Where(item => taskId is null || item.Scope.TaskId == taskId)
+            .Where(item => (taskId is null || item.Scope.TaskId == taskId)
+                && (projectId is null || item.Scope.ProjectId == projectId)
+                && (allowsProject is null || allowsProject(item.Scope.ProjectId)))
             .OrderByDescending(item => item.EndedAt).ThenBy(item => item.ReceiptId, StringComparer.Ordinal)
             .Take(Math.Clamp(limit, 1, 100))
-            .Select(item => Summary(item, LateCallsLocked(item.OccurrenceId))).ToArray();
+            .Select(SummaryLocked).ToArray();
     }
 
     public OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt)
     {
-        lock (_gate) return Summary(receipt, LateCallsLocked(receipt.OccurrenceId));
+        lock (_gate) return SummaryLocked(receipt);
     }
 
     /// <summary>Spend columns add late calls to the immutable receipt call; unknown prices stay explicit.</summary>
     public static OrchestratorDecisionReceiptSummary Summary(OrchestratorDecisionReceiptV1 receipt,
-        IReadOnlyList<DecisionLateCallV1> lateCalls)
+        IReadOnlyList<DecisionLateCallV1> lateCalls, int? lateCount = null)
     {
         var prices = lateCalls.Select(call => call.Price).Prepend(receipt.Call.Price)
             .Where(price => price.Status != DecisionPriceStatuses.NoUsage).ToArray();
@@ -305,7 +400,30 @@ public sealed class OrchestratorDecisionStore
             receipt.DeterministicAction, receipt.MatchesDeterministic, receipt.Call.Status, receipt.Call.Model,
             receipt.Call.ThinkingLevel, receipt.Call.Custody,
             receipt.Call.Tokens.Total + lateCalls.Sum(call => call.Tokens.Total), priceStatus, usd,
-            receipt.EvidenceRef, receipt.EndedAt, lateCalls.Count);
+            receipt.EvidenceRef, receipt.EndedAt, lateCount ?? lateCalls.Count, receipt.Scope.ProjectId,
+            receipt.Trigger.Kind == "operator-response" ? "human-operator" : "decision-step",
+            receipt.Call.Tokens.UncachedInput + receipt.Call.Tokens.CachedInput + receipt.Call.Tokens.CacheWrite
+                + lateCalls.Sum(call => call.Tokens.UncachedInput + call.Tokens.CachedInput + call.Tokens.CacheWrite),
+            receipt.Call.Tokens.Output + lateCalls.Sum(call => call.Tokens.Output),
+            prices.Count(price => price.Status != DecisionPriceStatuses.Priced)
+                + (receipt.Call.Price.Status == DecisionPriceStatuses.NoUsage && receipt.Call.Tokens.Total > 0 ? 1 : 0)
+                + lateCalls.Count(call => call.Price.Status == DecisionPriceStatuses.NoUsage && call.Tokens.Total > 0));
+    }
+
+    public OrchestratorDecisionSpendSummary SpendSummary(string? taskId, string? projectId,
+        Func<string?, bool>? allowsProject = null)
+    {
+        lock (_gate)
+        {
+            var rows = _receipts.Values.Where(item => (taskId is null || item.Scope.TaskId == taskId)
+                    && (projectId is null || item.Scope.ProjectId == projectId)
+                    && (allowsProject is null || allowsProject(item.Scope.ProjectId)))
+                .Select(SummaryLocked).ToArray();
+            return new(taskId is not null ? "card" : projectId is not null ? "project" : "workspace",
+                taskId ?? projectId, rows.Length, rows.Sum(row => row.InputTokens),
+                rows.Sum(row => row.OutputTokens), rows.Sum(row => row.EstimatedUsd ?? 0),
+                rows.Sum(row => row.UnknownPriceCalls));
+        }
     }
 
     /// <summary>

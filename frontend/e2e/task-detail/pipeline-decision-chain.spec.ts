@@ -139,7 +139,7 @@ test('decision chain and cost of deciding render on the card and in project usag
       id: TASK_ID,
       title: 'Measure the cost of deciding',
       watchPath: project.path,
-      targetState: '0-backlog',
+      targetState: '5e-escalated',
       taskType: 'chore',
       mode: 'coding',
       cliType: 'codex',
@@ -169,6 +169,44 @@ test('decision chain and cost of deciding render on the card and in project usag
 
   mkdirSync(resultsDir, { recursive: true });
   await page.setViewportSize({ width: 1600, height: 1100 });
+  const receiptId = 'odr_ui_1';
+  const receiptRef = `/api/orchestration/decision-receipts/${receiptId}`;
+  let operatorIntent: Record<string, unknown> | null = null;
+  let laterDecision = false;
+  await page.route('**/api/orchestration/decision-receipts**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/operator-intent')) {
+      if (route.request().method() === 'POST') {
+        operatorIntent = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({ json: operatorIntent });
+      } else if (operatorIntent) await route.fulfill({ json: operatorIntent });
+      else await route.fulfill({ status: 404, body: '' });
+      return;
+    }
+    const body = url.pathname.endsWith('/spend')
+      ? { scope: url.searchParams.has('taskId') ? 'card' : 'project',
+          occurrences: laterDecision ? 2 : 1, inputTokens: laterDecision ? 140 : 120,
+          outputTokens: laterDecision ? 40 : 30, pricedUsd: laterDecision ? 0.0143 : 0.0123,
+          unknownPriceCalls: 1 }
+      : url.pathname.endsWith(`/${receiptId}`)
+        ? { reasoning: 'The review remains blocked by one open finding.',
+            responseContent: '{"chosenActions":[{"action":"ask","target":"operator"}]}',
+            grounds: { facts: [{ id: 'finding', name: 'Open finding', value: '1',
+              source: { kind: 'report', ref: 'review-report.md' } }] } }
+        : [...(laterDecision ? [{ receiptId: 'odr_ui_2', occurrenceId: 'orch_ui_2', taskId: TASK_ID,
+          projectId: project.name, profile: 'OperatorResponse', chosenAction: 'adapt(cut-smaller)',
+          callStatus: 'completed', model: 'gpt-6-sol', thinkingLevel: 'high', totalTokens: 30,
+          inputTokens: 20, outputTokens: 10, estimatedUsd: 0.002,
+          unknownPriceCalls: 0, priceStatus: 'priced', evidenceRef: '/api/orchestration/decision-receipts/odr_ui_2',
+          endedAt: new Date(Date.now() + 60_000).toISOString(), actor: 'human-operator' }] : []),
+        { receiptId, occurrenceId: 'orch_ui_1', taskId: TASK_ID, projectId: project.name,
+          profile: 'CodingCompletion', chosenAction: 'ask(operator)', callStatus: 'completed',
+          model: 'gpt-6-sol', thinkingLevel: 'high', totalTokens: 150,
+          inputTokens: 120, outputTokens: 30, estimatedUsd: 0.0123,
+          unknownPriceCalls: 1, priceStatus: 'partial', evidenceRef: receiptRef,
+          endedAt: new Date().toISOString(), actor: 'decision-step' }];
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  });
   await page.goto(`/?job=${TASK_ID}&watchPath=${encodeURIComponent(project.path)}`,
     { waitUntil: 'domcontentloaded', timeout: 90_000 });
   const recovery = page.getByTestId('crash-recovery-prompt-overlay');
@@ -179,6 +217,22 @@ test('decision chain and cost of deciding render on the card and in project usag
 
   const chain = page.getByTestId('overview-decision-chain');
   await expect(chain).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('escalation-summary')).toHaveCount(1);
+  await expect(page.getByTestId('escalation-title')).toHaveText('Escalation');
+  await expect(page.getByTestId('escalation-essence')).not.toContainText('one open finding');
+  const receipt = chain.getByTestId('decision-receipt-occurrence');
+  await expect(receipt).toHaveCount(1);
+  await expect(receipt.getByTestId('decision-receipt-cost')).toHaveText('$0.0123 priced + 1 unknown price');
+  await expect(chain.getByTestId('decision-receipt-rollups')).toContainText('120 in / 30 out');
+  await receipt.getByTestId('decision-receipt-evidence').click();
+  await expect(chain.getByTestId('decision-receipt-detail')).toContainText('Open finding');
+  await expect(chain.getByTestId('decision-receipt-detail')).toContainText('chosenActions');
+  const ask = chain.getByTestId('decision-operator-ask');
+  await expect(ask).toContainText('Human Operator');
+  await ask.getByRole('textbox', { name: 'Reason' }).fill('Continue only with a bounded limit');
+  await ask.getByRole('button', { name: 'Raise limit' }).click();
+  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('raise to 24 h');
+  await expect(page.getByTestId('escalation-title')).toHaveText('Escalation');
   const transitions = chain.getByTestId('overview-decision-transition');
   await expect(transitions).toHaveCount(5);
   await expect(transitions.nth(0)).toHaveAttribute('data-decided-by', 'rule');
@@ -208,9 +262,15 @@ test('decision chain and cost of deciding render on the card and in project usag
   await dismissDevErrorDialog(page);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
+    await page.getByTestId('escalation-summary').screenshot({ path: path.join(resultsDir, `escalated-blocker-${theme}.png`) });
     await chain.scrollIntoViewIfNeeded();
     await page.getByTestId('overview-pipeline').screenshot({ path: path.join(resultsDir, `overview-decision-chain-${theme}.png`) });
   }
+
+  // The open card receives a new receipt on the next pipeline poll.
+  laterDecision = true;
+  await expect(chain.getByTestId('decision-receipt-occurrence')).toHaveCount(2, { timeout: 20_000 });
+  await expect(chain.getByTestId('decision-receipt-occurrence').last()).toContainText('Human Operator');
 
   // Project usage: the orchestrator steps are in the ledger under their own kind.
   await page.goto(`/#/projects/${slugFor(project.name)}/token-usage`,

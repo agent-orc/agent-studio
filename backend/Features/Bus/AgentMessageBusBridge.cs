@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Bus;
 
@@ -176,6 +177,35 @@ public sealed class AgentMessageBusBridge
                 "model", decidedBy.Model,
                 string.IsNullOrWhiteSpace(decidedBy.ThinkingLevel) ? null : decidedBy.ThinkingLevel,
                 string.IsNullOrWhiteSpace(decidedBy.ModelSource) ? null : decidedBy.ModelSource);
+
+    /// <summary>Projects an engine decision receipt with its deciding model and measured usage.</summary>
+    public Task EmitDecisionReceiptAsync(OrchestratorDecisionReceiptV1 receipt, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(receipt.Scope.ProjectId)) return Task.CompletedTask;
+        var call = receipt.Call;
+        var tokens = call.Tokens;
+        var message = NewMessage(
+            participantId: ParticipantOrchestratorFor(receipt.Scope.ProjectId),
+            role: "actor", kind: "decision",
+            severity: receipt.Chosen.Any(choice => choice.Action == DecisionActionKinds.Ask) ? "Warn" : "Info",
+            project: receipt.Scope.ProjectId, jobId: receipt.Scope.TaskId,
+            topic: "engine-decision", summary: TruncateSummary(receipt.Reasoning ?? receipt.DispatchOutcome),
+            body: receipt.Reasoning, createdAt: receipt.EndedAt,
+            correlationId: receipt.OccurrenceId,
+            payload: new {
+                actor = "decision-step", receiptId = receipt.ReceiptId,
+                evidenceRef = receipt.EvidenceRef, callStatus = call.Status,
+                decidedBy = call.Model is null ? "model-unavailable" : "model",
+                decidedByModel = call.Model, decidedByThinkingLevel = call.ThinkingLevel,
+                priceStatus = call.Price.Status, pricedSubtotalUsd = call.Price.EstimatedUsd,
+            },
+            tokens: new AgentMessageTokens(tokens.UncachedInput, tokens.Output,
+                tokens.CachedInput, tokens.CacheWrite, call.Model,
+                call.Price.EstimatedUsd is { } usd ? (double)usd : null,
+                ThinkingLevel: call.ThinkingLevel),
+            tags: ["orchestrator-decision", "engine-receipt"]);
+        return EmitAsync(message, ct);
+    }
 
     /// <summary>
     /// Mirror a supervisor chat-log line (the <c>[supervisor]</c>-stream lines

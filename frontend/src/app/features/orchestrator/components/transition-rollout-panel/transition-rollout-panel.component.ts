@@ -29,6 +29,9 @@ interface ShadowDecision {
   totalTokens: number;
   priceStatus: string;
   estimatedUsd: number | null;
+  inputTokens?: number;
+  outputTokens?: number;
+  unknownPriceCalls?: number;
   evidenceRef: string;
   endedAt: string;
 }
@@ -42,6 +45,14 @@ interface Profile {
   lastMismatch: Mismatch | null;
 }
 
+interface SpendSummary {
+  occurrences: number;
+  inputTokens: number;
+  outputTokens: number;
+  pricedUsd: number;
+  unknownPriceCalls: number;
+}
+
 @Component({
   selector: 'app-transition-rollout-panel',
   standalone: true,
@@ -53,6 +64,7 @@ export class TransitionRolloutPanelComponent implements OnInit {
   private readonly http = inject(HttpClient);
   readonly profiles = signal<readonly Profile[]>([]);
   readonly decisions = signal<readonly ShadowDecision[]>([]);
+  readonly workspaceSpend = signal<SpendSummary | null>(null);
   readonly reason = signal('');
   readonly busy = signal<string | null>(null);
   readonly error = signal<string | null>(null);
@@ -66,6 +78,8 @@ export class TransitionRolloutPanelComponent implements OnInit {
       this.profiles.set(await firstValueFrom(
         this.http.get<Profile[]>('/api/orchestration/rollout/profiles')));
       this.decisions.set(await decisions);
+      this.workspaceSpend.set(await firstValueFrom(this.http.get<SpendSummary>(
+        '/api/orchestration/decision-receipts/spend')).catch(() => null));
       this.error.set(null);
     } catch {
       this.error.set('Could not load transition profiles.');
@@ -73,8 +87,18 @@ export class TransitionRolloutPanelComponent implements OnInit {
   }
 
   price(decision: ShadowDecision): string {
-    if (decision.estimatedUsd !== null) return `$${decision.estimatedUsd.toFixed(4)}`;
+    if (decision.estimatedUsd !== null) {
+      const amount = decision.estimatedUsd === 0 && decision.totalTokens > 0
+        ? '<$0.0001' : `$${decision.estimatedUsd.toFixed(4)}`;
+      return `${amount} priced${decision.unknownPriceCalls ? ` + ${decision.unknownPriceCalls} unknown price` : ''}`;
+    }
     return decision.priceStatus === 'no-usage' ? 'no usage data' : 'no price data';
+  }
+
+  workspacePrice(spend: SpendSummary): string {
+    if (spend.inputTokens + spend.outputTokens === 0) return 'no usage data';
+    if (spend.pricedUsd === 0 && spend.unknownPriceCalls > 0) return 'no priced subtotal';
+    return spend.pricedUsd === 0 ? '<$0.0001 priced' : `$${spend.pricedUsd.toFixed(4)} priced`;
   }
 
   async switch(profile: Profile, target: 'shadow' | 'engine' | 'rollback'): Promise<void> {
