@@ -38,22 +38,23 @@ public sealed class OrchestrationExecutionModeTests
             MonolithTransitionSwitch.For(configuration, "GateResult"));
     }
 
-    [Fact]
-    public void Engine_mode_registers_no_legacy_orchestration_hosted_loops()
+    // AGT-3055: the batch tick is the only hosted loop in Engine and Shadow
+    // mode. There it publishes batch-plan occurrences and applies the engine
+    // intent; without it no batch would close or advance.
+    [Theory]
+    [InlineData(OrchestrationExecutionMode.Engine)]
+    [InlineData(OrchestrationExecutionMode.Shadow)]
+    public void Non_monolith_mode_registers_only_the_batch_tick(OrchestrationExecutionMode mode)
     {
         var services = new ServiceCollection();
 
-        services.AddOrchestrationExecutionLoops(OrchestrationExecutionMode.Engine);
+        services.AddOrchestrationExecutionLoops(mode);
 
-        Assert.DoesNotContain(services, descriptor =>
+        var hosted = Assert.Single(services, descriptor =>
             descriptor.ServiceType == typeof(IHostedService));
+        Assert.Equal(typeof(AgentStudio.Pipeline.BatchGatePilotHostedService), hosted.ImplementationType);
     }
 
-    // AGT-2762 added a fourth legacy loop owner (RemoteReviewEvidenceProjectionWorker),
-    // AGT-2936 a fifth (RemoteReviewSettlementReconciler, the restart owner of
-    // journaled review settlements) and AGT-3052 a sixth (BatchGatePilotHostedService,
-    // the batch verification tick; it moves into the Orchestrator Engine with
-    // AGT-3055, decision D14), so the count grew from 3 to 6.
     [Fact]
     public void Monolith_mode_registers_all_six_legacy_loop_owners()
     {

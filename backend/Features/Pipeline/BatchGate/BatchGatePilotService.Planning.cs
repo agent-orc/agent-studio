@@ -52,8 +52,8 @@ public sealed partial class BatchGatePilotService
                 _logger.LogWarning("batch-plan-engine-store-unavailable project={Project}", project);
                 return null;
             }
-            return TakeEngineDecision(occurrences, settings,
-                new BatchPlanFacts(project, scopeKey, snapshot, prior, advisorMode));
+            return await TakeEngineDecisionAsync(occurrences, settings,
+                new BatchPlanFacts(project, scopeKey, snapshot, prior, advisorMode), ct).ConfigureAwait(false);
         }
         var facts = new BatchPlanFacts(project, scopeKey, snapshot, prior,
             _advisor is null ? "off" : advisorMode);
@@ -63,12 +63,12 @@ public sealed partial class BatchGatePilotService
                 .ConfigureAwait(false)
             : step.Decision;
         if (owner == OrchestrationExecutionMode.Shadow && occurrences is not null)
-            RecordShadowBatchPlan(occurrences, settings, facts, decision);
+            await RecordShadowBatchPlanAsync(occurrences, settings, facts, decision, ct).ConfigureAwait(false);
         return decision;
     }
 
-    private BatchPlanDecision? TakeEngineDecision(MonolithOrchestrationStore occurrences,
-        ProjectSettings settings, BatchPlanFacts facts)
+    private async Task<BatchPlanDecision?> TakeEngineDecisionAsync(MonolithOrchestrationStore occurrences,
+        ProjectSettings settings, BatchPlanFacts facts, CancellationToken ct)
     {
         var taskId = BatchPlanTaskId(facts.ScopeKey);
         if (_engineBatchPlans.TryRemove(taskId, out var proposed))
@@ -87,8 +87,7 @@ public sealed partial class BatchGatePilotService
                 && run.CurrentStage == OrchestrationStage.BatchPlan
                 && run.Status is "pending" or "leased" or "applying"))
             return null;
-        var payload = JsonSerializer.Serialize(new BatchPlanOccurrencePayload(facts,
-            _advisor?.EngineRequest(facts.Project, settings)), PlanJson);
+        var payload = await OccurrencePayloadAsync(settings, facts, ct).ConfigureAwait(false);
         occurrences.Create(facts.Project, taskId, OrchestrationStage.BatchPlan, payload,
             $"{taskId}:{Digest(payload)}", BatchPlanSourceState, taskId, 0, 0,
             profile: BatchPlanProfile);
@@ -99,8 +98,8 @@ public sealed partial class BatchGatePilotService
     /// Shadow receipts cover every changed decision and every effectful one;
     /// repeated identical waits would only add identical comparisons.
     /// </summary>
-    private void RecordShadowBatchPlan(MonolithOrchestrationStore occurrences,
-        ProjectSettings settings, BatchPlanFacts facts, BatchPlanDecision decision)
+    private async Task RecordShadowBatchPlanAsync(MonolithOrchestrationStore occurrences,
+        ProjectSettings settings, BatchPlanFacts facts, BatchPlanDecision decision, CancellationToken ct)
     {
         var signature = BatchPlanDecisionPolicy.Signature(decision);
         if (decision.Decision is not ("close" or "per-task") && facts.PriorDecision is { } prior
@@ -109,17 +108,25 @@ public sealed partial class BatchGatePilotService
         try
         {
             var taskId = BatchPlanTaskId(facts.ScopeKey);
-            var payload = JsonSerializer.Serialize(new BatchPlanOccurrencePayload(facts,
-                _advisor?.EngineRequest(facts.Project, settings)), PlanJson);
+            var payload = await OccurrencePayloadAsync(settings, facts, ct).ConfigureAwait(false);
             occurrences.Create(facts.Project, taskId, OrchestrationStage.BatchPlan, payload,
                 $"{taskId}:{Digest(payload)}", BatchPlanSourceState, taskId, 0, 0,
                 profile: BatchPlanProfile, shadow: true,
                 monolithAction: signature, monolithReason: decision.Reason);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.LogWarning(exception, "batch-plan-shadow-record-failed project={Project}", facts.Project);
         }
+    }
+
+    private async Task<string> OccurrencePayloadAsync(ProjectSettings settings, BatchPlanFacts facts,
+        CancellationToken ct)
+    {
+        var advisor = _advisor is null || facts.AdvisorMode == "off"
+            ? null
+            : await _advisor.EngineRequestAsync(facts.Project, settings, ct).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new BatchPlanOccurrencePayload(facts, advisor), PlanJson);
     }
 
     private static string ScopeKey<T>(T groupKey)

@@ -19,9 +19,13 @@ public sealed class EngineOptions
     public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
     public bool RemotePostBuildTestEnabled { get; init; }
     public int BatchPlanConcurrency { get; init; } = 1;
-    /// <summary>Provider credential of the batch advisor; the advisor falls back to the deterministic plan without it.</summary>
-    public string? AdvisorCredential { get; init; }
-    public string AdvisorModel { get; init; } = "claude-opus-5";
+    /// <summary>
+    /// Provider credentials of the batch advisor, one per advisor CLI type: Anthropic serves
+    /// <c>claude</c>, OpenAI serves <c>codex</c>. The occurrence names the model; without the
+    /// credential of its provider the decision keeps the deterministic plan.
+    /// </summary>
+    public string? AdvisorAnthropicCredential { get; init; }
+    public string? AdvisorOpenAiCredential { get; init; }
 
     public static EngineOptions FromEnvironment()
         => Parse(Environment.GetEnvironmentVariable);
@@ -55,12 +59,8 @@ public sealed class EngineOptions
         {
             credential = ReadCredentialFile(credentialFile);
         }
-        var advisorCredential = value("ADVISOR_CREDENTIAL")?.Trim();
-        var advisorCredentialFile = value("ADVISOR_CREDENTIAL_FILE")?.Trim();
-        if (!string.IsNullOrWhiteSpace(advisorCredential) && !string.IsNullOrWhiteSpace(advisorCredentialFile))
-            throw new ArgumentException("Configure only one of ADVISOR_CREDENTIAL or ADVISOR_CREDENTIAL_FILE.");
-        if (!string.IsNullOrWhiteSpace(advisorCredentialFile))
-            advisorCredential = ReadCredentialFile(advisorCredentialFile, "ADVISOR_CREDENTIAL_FILE");
+        var anthropicCredential = OptionalCredential(value, "ADVISOR_ANTHROPIC_CREDENTIAL");
+        var openAiCredential = OptionalCredential(value, "ADVISOR_OPENAI_CREDENTIAL");
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
 
@@ -81,10 +81,20 @@ public sealed class EngineOptions
             HealthPort = EngineHealthProbe.ResolvePort(value),
             RemotePostBuildTestEnabled = OptIn(value("REMOTE_POST_BUILD_TEST_GATE_ENABLED")),
             BatchPlanConcurrency = Cap(value, "BATCH_PLAN_CONCURRENCY", 1),
-            AdvisorCredential = string.IsNullOrWhiteSpace(advisorCredential) ? null : advisorCredential,
-            AdvisorModel = string.IsNullOrWhiteSpace(value("ADVISOR_MODEL"))
-                ? "claude-opus-5" : value("ADVISOR_MODEL")!.Trim(),
+            AdvisorAnthropicCredential = anthropicCredential,
+            AdvisorOpenAiCredential = openAiCredential,
         };
+    }
+
+    private static string? OptionalCredential(Func<string, string?> value, string key)
+    {
+        var credential = value(key)?.Trim();
+        var file = value(key + "_FILE")?.Trim();
+        if (!string.IsNullOrWhiteSpace(credential) && !string.IsNullOrWhiteSpace(file))
+            throw new ArgumentException($"Configure only one of {key} or {key}_FILE.");
+        if (!string.IsNullOrWhiteSpace(file))
+            credential = ReadCredentialFile(file, key + "_FILE");
+        return string.IsNullOrWhiteSpace(credential) ? null : credential;
     }
 
     internal static string ReadCredentialFile(string path, string key = "CLIENT_CREDENTIAL_FILE")

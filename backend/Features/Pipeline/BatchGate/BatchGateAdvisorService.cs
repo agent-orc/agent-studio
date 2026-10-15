@@ -46,18 +46,10 @@ public sealed class BatchGateAdvisorService
         var advisor = settings.BatchGate.Advisor ?? new BatchGateAdvisorOptions();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(advisor.TimeoutSeconds));
-        var model = advisor.Model
-            ?? ModelMetadataRegistry.DefaultForCli(advisor.CliType)
-            ?? PipelineStepModelDefaults.SupportModel;
+        var model = StaticModel(advisor);
         try
         {
-            if (advisor.Model is null && advisor.CliType == CliTypes.Codex)
-            {
-                var economy = await _economy.SuggestModelAsync(settings,
-                    "batch-plan-advisor", deadline.Token, forceEconomy: true)
-                    .ConfigureAwait(false);
-                model = economy?.Model ?? model;
-            }
+            model = await ResolveModelAsync(settings, deadline.Token).ConfigureAwait(false);
             var cli = _oneShots.Get(advisor.CliType)
                 ?? throw new InvalidOperationException("Batch advisor CLI unavailable.");
             var prompt = Render(project, model,
@@ -87,16 +79,37 @@ public sealed class BatchGateAdvisorService
     /// <summary>
     /// Advisor request for an engine-owned decision. The prompt keeps
     /// <see cref="BatchPlanDecisionPolicy.EngineInputMarker"/> because the engine computes the
-    /// deterministic plan that the input carries.
+    /// deterministic plan that the input carries. The request names the CLI type and the model
+    /// this authority resolved, so the engine calls the same provider and model as the monolith.
     /// </summary>
-    public BatchAdvisorRequest? EngineRequest(string project, ProjectSettings settings)
+    public async Task<BatchAdvisorRequest?> EngineRequestAsync(string project, ProjectSettings settings,
+        CancellationToken ct)
     {
         var advisor = settings.BatchGate.Advisor ?? new BatchGateAdvisorOptions();
         if (advisor.Mode == "off") return null;
-        return new BatchAdvisorRequest(Render(project, advisor.Model ?? "engine",
-            BatchPlanDecisionPolicy.EngineInputMarker),
-            advisor.CliType, advisor.Model, advisor.TimeoutSeconds);
+        var model = await ResolveModelAsync(settings, ct).ConfigureAwait(false);
+        return new BatchAdvisorRequest(Render(project, model, BatchPlanDecisionPolicy.EngineInputMarker),
+            advisor.CliType, model, advisor.TimeoutSeconds);
     }
+
+    /// <summary>Effective advisor model: the configured one, else the economy pick for Codex, else the CLI default.</summary>
+    private async Task<string> ResolveModelAsync(ProjectSettings settings, CancellationToken ct)
+    {
+        var advisor = settings.BatchGate.Advisor ?? new BatchGateAdvisorOptions();
+        var model = StaticModel(advisor);
+        if (advisor.Model is null && advisor.CliType == CliTypes.Codex)
+        {
+            var economy = await _economy.SuggestModelAsync(settings,
+                "batch-plan-advisor", ct, forceEconomy: true).ConfigureAwait(false);
+            model = economy?.Model ?? model;
+        }
+        return model;
+    }
+
+    private static string StaticModel(BatchGateAdvisorOptions advisor)
+        => advisor.Model
+           ?? ModelMetadataRegistry.DefaultForCli(advisor.CliType)
+           ?? PipelineStepModelDefaults.SupportModel;
 
     private string Render(string project, string model, string input)
         => _prompts.Render("batch-plan-advisor.md",
