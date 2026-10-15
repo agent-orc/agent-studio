@@ -13,11 +13,7 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     public static string? LostOperatorAcceptance(TaskInfo job, string branch, GitService? git)
     {
         if (job.State != TaskStates.Completed || git is null) return null;
-        var records = job.IntegrationRecords.Where(item =>
-            item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal)
-            && item.Classification == IntegrationRecordClasses.IntegratedVerified
-            && ReviewSubjectStore.IsValidResultSha(item.IntegrationSha)
-            && AgentStudio.Pipeline.IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch)).ToArray();
+        var records = CurrentOperatorAcceptances(job, branch).ToArray();
         if (records.Length == 0) return null;
         var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
         if (repo is null) return null;
@@ -27,6 +23,43 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
         if (published is not null && records.Any(record =>
                 git.IsAncestor(repo, record.IntegrationSha!, published))) return null;
         return $"The operator-accepted containing tree {records[^1].IntegrationSha} is no longer in published {branch}; publication was rewritten. The acceptance must return to Human Review.";
+    }
+
+    /// <summary>Current acceptance evidence can settle a completed card without replaying its delivery ref.</summary>
+    public static bool HasPublishedCurrentAcceptance(TaskInfo job, string branch, GitService? git)
+    {
+        if (job.State != TaskStates.Completed || git is null) return false;
+        var delivery = DeliveryRefResolver.Resolve(job.Id, job.FolderPath).ExpectedResultSha;
+        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return false;
+        var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (repo is null) return false;
+        var records = CurrentOperatorAcceptances(job, branch).ToArray();
+        var external = ExternalPublishedVerificationStore.Read(job.WatchPath)
+            .Where(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
+                && ReviewSubjectStore.IsValidResultSha(record.CandidateSha)
+                && git.IsAncestor(repo, delivery!, record.CandidateSha))
+            .ToArray();
+        if (records.Length == 0 && external.Length == 0) return false;
+        var candidate = records.Select(record => record.IntegrationSha!)
+            .Concat(external.Select(record => record.CandidateSha))
+            .First();
+        if (git.CheckPublishedDelivery(repo, branch, candidate) == PublishedDeliveryContainment.Unavailable)
+            return false;
+        var published = git.GetBranchTip(repo, $"refs/remotes/origin/{branch}");
+        return published is not null && (records.Any(record => git.IsAncestor(repo, record.IntegrationSha!, published))
+            || external.Any(record => git.IsAncestor(repo, record.CandidateSha, published)));
+    }
+
+    private static IEnumerable<TaskIntegrationRecord> CurrentOperatorAcceptances(TaskInfo job, string branch)
+    {
+        var delivery = DeliveryRefResolver.Resolve(job.Id, job.FolderPath).ExpectedResultSha;
+        if (!ReviewSubjectStore.IsValidResultSha(delivery)) return [];
+        return job.IntegrationRecords.Where(item =>
+            item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal)
+            && item.Classification == IntegrationRecordClasses.IntegratedVerified
+            && ReviewSubjectStore.IsValidResultSha(item.IntegrationSha)
+            && string.Equals(item.SourceSha, delivery, StringComparison.OrdinalIgnoreCase)
+            && IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch));
     }
 
     public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,

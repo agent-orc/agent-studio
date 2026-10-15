@@ -2804,6 +2804,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(TimelineActors.Human("operator"), record.Actor);
         Assert.Equal(reason, record.Reason);
 
+        RunGit(_repo, "push", "-q", "origin", "--delete", DeliveryRef);
+
         var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
         var worker = new AcceptedIntegrationWorker(deps.AcceptedQueue!, VerifyingRunner(deps, gate),
             deps.Scanner, deps.Mutations, deps.Provenance,
@@ -2812,14 +2814,19 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
         Assert.False(result.VerificationPending);
         Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        var freshSummary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, deps.Configuration);
+        var freshScanner = new TaskScannerService(deps.Configuration, NullLogger<TaskScannerService>.Instance, freshSummary);
+        var freshGit = new GitService(NullLogger<GitService>.Instance, freshScanner, deps.Configuration);
+        var freshStatus = new TaskIntegrationStatusService(freshGit, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance);
         var backstop = new AcceptedIntegrationBackstopHostedService(
-            deps.Scanner, deps.Settings, VerifyingRunner(deps, gate), deps.Integration,
+            freshScanner, deps.Settings, VerifyingRunner(deps, gate), freshStatus,
             deps.Mutations, deps.Configuration,
             NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
-            deps.Transitions, deps.Timeline, deps.Pipeline);
+            deps.Transitions, deps.Timeline, deps.Pipeline, git: freshGit);
         backstop.RunOnce();
         Assert.Equal(0, gate.Invocations);
-        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Equal(TaskStates.Completed, freshScanner.FindJob(Slug, _watchPath)!.State);
     }
 
     [Fact]
@@ -2833,7 +2840,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.NotEqual(deliverySha, published);
         RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
         RunGit(_repo, "checkout", "-q", "main");
-        var deps = Build(deliverySha);
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "must not run");
+        var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate);
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
         var subject = ReviewSubjectStore.Read(reviewed.FolderPath)!;
         TaskJsonFile.UpdateFieldOrThrow(reviewed.FolderPath, "integrationRecords",
@@ -2859,6 +2867,22 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             item => item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal));
         Assert.Equal(published, record.IntegrationSha);
         Assert.Equal(deliverySha, record.SourceSha);
+        RunGit(_repo, "push", "-q", "origin", "--delete", DeliveryRef);
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var worker = new AcceptedIntegrationWorker(deps.AcceptedQueue!, VerifyingRunner(deps, gate),
+            deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, result.Outcome);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, VerifyingRunner(deps, gate), deps.Integration,
+            deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions, deps.Timeline, deps.Pipeline, git: git);
+        backstop.RunOnce();
+        Assert.Equal(0, gate.Invocations);
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
 
     [Fact]
@@ -2903,6 +2927,69 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(0, gate.Invocations);
         var status = deps.Integration.BuildLookup([card])[card.TaskKey];
         Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+        RunGit(_repo, "push", "-q", "origin", "--delete", DeliveryRef);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var worker = new AcceptedIntegrationWorker(new AcceptedIntegrationQueue(), VerifyingRunner(deps, gate),
+            deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline, git);
+        var recovered = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, recovered.Outcome);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, VerifyingRunner(deps, gate), deps.Integration,
+            deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions, deps.Timeline, deps.Pipeline, git: git);
+        backstop.RunOnce();
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Equal(0, gate.Invocations);
+    }
+
+    [Fact]
+    public async Task OperatorAcceptance_ReissuedDeliveryLosesCurrentTree_DespiteOlderPublishedAcceptance()
+    {
+        var deliveryA = PublishDelivery("delivery-a.txt", "first candidate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliveryA}:refs/heads/develop");
+        var deps = Build(deliveryA, backgroundIntegration: true);
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"), reason: "First delivery accepted.", operatorOverride: true);
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var first = Assert.Single(completed.IntegrationRecords,
+            record => record.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal));
+
+        RunGit(_repo, "checkout", "-q", "-b", "reissued", deliveryA);
+        File.WriteAllText(Path.Combine(_repo, "delivery-b.txt"), "second candidate\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "second delivery");
+        var deliveryB = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "checkout", "-q", "main");
+        ReviewSubjectStore.Write(completed.FolderPath,
+            ReviewSubjectStore.Read(completed.FolderPath)! with { ResultSha = deliveryB });
+        TaskJsonFile.UpdateFieldOrThrow(completed.FolderPath, "integrationRecords",
+            new[] { first, first with
+            {
+                Id = $"operator-acceptance-{deliveryB[..12]}-{deliveryB[..12]}",
+                IntegrationSha = deliveryB,
+                SourceSha = deliveryB,
+            } });
+        deps.Scanner.InvalidateCache();
+
+        RunGit(_repo, "push", "-q", "--force", "origin", $"{deliveryA}:refs/heads/develop");
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var current = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.NotNull(AcceptedIntegrationPublishedDeliveryGuard.LostOperatorAcceptance(current, "develop", git));
+        Assert.False(AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(current, "develop", git));
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, VerifyingRunner(deps, new CountingBuildTestGateRunner()), deps.Integration,
+            deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions, deps.Timeline, deps.Pipeline, git: git);
+        backstop.RunOnce();
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
 
     [Fact]
