@@ -32,7 +32,8 @@ internal sealed record HostFacts(
     bool? ProviderCli,
     bool? ProtectedSecretFile,
     bool? AuthorityReachable = null,
-    bool? AuthorityUrlKnown = null);
+    bool? AuthorityUrlKnown = null,
+    bool? GitInstalled = null);
 
 /// <summary>Pure preflight policy: observed facts in, findings with recovery actions out.</summary>
 internal static class PreflightPolicy
@@ -91,6 +92,8 @@ internal static class PreflightPolicy
             "Mount the off-host backup destination (NFS, SMB or block device) and make it writable for the installer before retrying."));
         findings.Add(Check("Provider", journey == InstallationJourney.JoinHost ? facts.ProviderCli : null, "provider CLI installed (login is proven at host enrolment)",
             "Install Codex or Claude for the execution user and complete its login on this host; setup never copies provider credentials."));
+        findings.Add(Check("Git", journey is InstallationJourney.OneBox or InstallationJourney.JoinHost ? facts.GitInstalled : null,
+            "Git installed", "Install Git and make 'git --version' work for the installation user, then rerun setup."));
         findings.Add(Check("Secret file", journey is InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority ? facts.ProtectedSecretFile : null, "token file owner-only",
             "Restrict the token file to its owner ('chmod 600 FILE' or an owner-only ACL) and deliver it over a trusted channel, not chat or task text."));
         return findings;
@@ -165,7 +168,10 @@ internal static class PreflightProbe
             journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority) && secretFile is not null
                 ? SetupSecrets.IsProtected(secretFile) : null,
             authority.Reachable,
-            contactsAuthority ? host is not null : null);
+            contactsAuthority ? host is not null : null,
+            journey is InstallationJourney.OneBox or InstallationJourney.JoinHost
+                ? await SucceedsAsync(processes, "git", ["--version"])
+                : null);
     }
 
     private static async Task<bool?> VirtualizationAsync(bool windows, ProcessRunner processes)

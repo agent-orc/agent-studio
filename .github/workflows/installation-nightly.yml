@@ -1,0 +1,194 @@
+name: Nightly installation scenarios
+
+on:
+  schedule:
+    - cron: '18 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  linux-candidate:
+    name: Build and play Linux candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.301'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Require isolated scratch access
+        env:
+          SCENARIO_GIT_REMOTE: ${{ secrets.INSTALL_SCENARIO_GIT_REMOTE }}
+          INSTALL_SCENARIO_DEPLOY_KEY: ${{ secrets.INSTALL_SCENARIO_DEPLOY_KEY }}
+          INSTALL_SCENARIO_KNOWN_HOSTS: ${{ secrets.INSTALL_SCENARIO_KNOWN_HOSTS }}
+        run: |
+          test -n "$SCENARIO_GIT_REMOTE"
+          test -n "$INSTALL_SCENARIO_DEPLOY_KEY"
+          test -n "$INSTALL_SCENARIO_KNOWN_HOSTS"
+          case "$SCENARIO_GIT_REMOTE" in git@github.com:*|ssh://git@github.com/*) ;; *) exit 2 ;; esac
+      - name: Check installation evidence contract
+        run: python3 scripts/release/installation-scenarios.test.py
+      - name: Build release-shaped candidate assets
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          sha="$(git rev-parse HEAD)"
+          npm_version="$(node -p "require('./frontend/package.json').packageManager.replace(/^npm@/, '')")"
+          npm install -g "npm@$npm_version"
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+          common=(--configuration Release --self-contained true
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+            -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false
+            -p:Version="$version" -p:SourceRevisionId="$sha")
+          dotnet publish task-server/TaskServer.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/task-server
+          dotnet publish orchestrator-engine/OrchestratorEngine.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/orchestrator-engine
+          dotnet publish runner/AgentRunner.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/agent-host-linux-x64
+          dotnet publish runner/AgentRunner.csproj "${common[@]}" --runtime osx-arm64 --output artifacts/publish/agent-host-osx-arm64
+          dotnet publish setup/AgentOrchestratorSetup.csproj "${common[@]}" --runtime linux-x64 --output artifacts/publish/setup
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" scripts/release/package-release.sh \
+            "$version" "$sha" artifacts/publish frontend/dist/frontend/browser artifacts/release
+      - name: Upload candidate assets for clean containers
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-linux-candidate
+          path: artifacts/release/
+          if-no-files-found: error
+          retention-days: 2
+      - name: Build candidate images locally
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          sha="$(git rev-parse HEAD)"
+          declare -A dockerfiles=(
+            [agent-studio-api]=backend/Dockerfile
+            [agent-studio-web]=frontend/Dockerfile
+            [agent-task-server]=task-server/Dockerfile
+            [agent-orchestrator-engine]=orchestrator-engine/Dockerfile
+            [agent-studio-bff]=studio-bff/Dockerfile
+            [agent-host]=runner/Dockerfile
+            [agent-operations-server]=operations-server/Dockerfile
+            [agent-operations-agent]=operations-agent/Dockerfile
+          )
+          for name in "${!dockerfiles[@]}"; do
+            docker build -f "${dockerfiles[$name]}" --build-arg VERSION="$version" \
+              --build-arg SHA="$sha" -t "ghcr.io/agent-orc/$name:v$version" .
+          done
+      - name: Play installation and first use
+        env:
+          SCENARIO_GIT_REMOTE: ${{ secrets.INSTALL_SCENARIO_GIT_REMOTE }}
+          INSTALL_SCENARIO_DEPLOY_KEY: ${{ secrets.INSTALL_SCENARIO_DEPLOY_KEY }}
+          INSTALL_SCENARIO_KNOWN_HOSTS: ${{ secrets.INSTALL_SCENARIO_KNOWN_HOSTS }}
+          INSTALL_SCENARIO_OFFLINE: '1'
+        run: |
+          status=0
+          for scenario in linux-native linux-docker coding-review; do
+            python3 scripts/release/installation-scenarios.py --scenario "$scenario" \
+              --candidate-dir artifacts/release --report-dir artifacts/installation-evidence || status=1
+          done
+          exit "$status"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-installation-linux
+          path: artifacts/installation-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+  linux-containers:
+    name: Native candidate on ${{ matrix.image }}
+    needs: linux-candidate
+    if: ${{ always() && needs.linux-candidate.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:24.04', 'debian:13', 'fedora:latest']
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-linux-candidate
+          path: artifacts/release
+      - name: Play native installation as a new Linux user
+        env:
+          SCENARIO_GIT_REMOTE: ${{ secrets.INSTALL_SCENARIO_GIT_REMOTE }}
+          INSTALL_SCENARIO_DEPLOY_KEY: ${{ secrets.INSTALL_SCENARIO_DEPLOY_KEY }}
+          INSTALL_SCENARIO_KNOWN_HOSTS: ${{ secrets.INSTALL_SCENARIO_KNOWN_HOSTS }}
+        run: bash scripts/release/installation-container-probe.sh artifacts/release artifacts/installation-evidence
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-installation-native-${{ strategy.job-index }}
+          path: artifacts/installation-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+  windows-candidate:
+    name: Build and play Windows candidate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build release-shaped native candidate
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $sha = (git rev-parse HEAD).Trim()
+          $common = @('--configuration', 'Release', '--runtime', 'win-x64', '--self-contained', 'true',
+            '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
+            '-p:DebugType=None', '-p:DebugSymbols=false', "-p:Version=$version", "-p:SourceRevisionId=$sha")
+          dotnet publish task-server/TaskServer.csproj @common --output artifacts/publish/task-server
+          if ($LASTEXITCODE -ne 0) { throw 'Task Server publish failed.' }
+          dotnet publish orchestrator-engine/OrchestratorEngine.csproj @common --output artifacts/publish/orchestrator-engine
+          if ($LASTEXITCODE -ne 0) { throw 'Engine publish failed.' }
+          dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
+          if ($LASTEXITCODE -ne 0) { throw 'Studio connector publish failed.' }
+          dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
+          if ($LASTEXITCODE -ne 0) { throw 'Setup publish failed.' }
+          New-Item -ItemType Directory -Path artifacts/release -Force | Out-Null
+          Copy-Item artifacts/publish/setup/agent-studio-setup.exe artifacts/release/
+          $component = "agent-orchestrator-$version-win-x64"
+          $root = "artifacts/package/$component"
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          Copy-Item artifacts/publish/task-server/task-server.exe $root
+          Copy-Item artifacts/publish/orchestrator-engine/orchestrator-engine.exe $root
+          Copy-Item artifacts/publish/studio-bff/agent-studio-bff.exe $root
+          Copy-Item deploy/windows "$root/deploy-windows" -Recurse
+          New-Item -ItemType Directory -Path "$root/config" -Force | Out-Null
+          Copy-Item deploy/release/agent-orchestrator/config/*.template "$root/config/"
+          Set-Content -LiteralPath "$root/VERSION" -Value $version -NoNewline -Encoding ascii
+          Set-Content -LiteralPath "$root/RELEASE-SHA" -Value $sha -NoNewline -Encoding ascii
+          @('component=agent-orchestrator', "version=$version", "gitSha=$sha", 'runtimeIdentifiers=win-x64',
+            'protocolMinimum=1', 'protocolMaximum=2') | Set-Content -LiteralPath "$root/RELEASE" -Encoding ascii
+          Compress-Archive -Path $root -DestinationPath "artifacts/release/$component.zip"
+          Get-ChildItem artifacts/release -File | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content artifacts/release/SHA256SUMS -Encoding ascii
+      - name: Play Windows native install and reinstall
+        shell: pwsh
+        run: python scripts/release/installation-scenarios.py --scenario windows-native --candidate-dir artifacts/release --report-dir artifacts/installation-evidence
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-installation-windows
+          path: artifacts/installation-evidence/
+          if-no-files-found: warn
+          retention-days: 30
