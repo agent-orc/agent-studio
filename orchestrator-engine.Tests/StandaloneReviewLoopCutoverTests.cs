@@ -44,57 +44,12 @@ public sealed class StandaloneReviewLoopCutoverTests
             using var bootstrap = factory.CreateClient();
             var store = factory.Services.GetRequiredService<TaskServerStore>();
 
-            // Operator setup before the loop: project, repository, flow, review plan, hosts.
-            var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Cutover"), "setup", default);
-            var (repository, _) = await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
-                "prj-cutover", workspace.WorkspaceId, "Cutover", "CUT", RepositoryUrl, IntegrationRef),
-                "setup", default);
-            var projectId = repository.ProjectId;
-            await store.UpsertFlowDefinitionAsync(projectId, new UpsertFlowDefinitionRequest(null,
-            [
-                OrchestrationStage.ReviewDecision, OrchestrationStage.Council, OrchestrationStage.PostProcessing,
-                OrchestrationStage.GateDispatch, OrchestrationStage.CompletionJudge,
-            ]), "setup", default);
-            await store.UpsertProjectReviewPlanAsync(projectId,
-                new UpsertProjectReviewPlanRequest(null, "cutover-policy-v1", ReviewPlan()), "setup", default);
-            var task = await store.CreateTaskAsync(projectId,
-                new CreateTaskRequest("Standalone loop", "Ship the feature.", "2-ready"), "setup", default);
-            await store.RegisterRunnerAsync("coding-a", new RegisterRunnerRequest(
-                "coding-a", "coding-host", "coding-instance", "1.0.0", TaskServerProtocol.Current,
-                [ReviewCapabilities.CodingExecutor]), "setup", default);
-            await store.RecordProjectRepositoryProbeAsync(projectId, "coding-a",
-                new ProjectRepositoryProbeRequest(RepositoryUrl, RepositoryUrl, true, true, false), default);
-            await store.RegisterRunnerAsync("review-a", new RegisterRunnerRequest(
-                "review-a", "review-host", "review-instance", "1.0.0", TaskServerProtocol.Current,
-                [
-                    ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
-                    ReviewCapabilities.SemanticReview, ReviewCapabilities.BaselineComparison,
-                    ReviewCapabilities.DependencyPreparation, ReviewCapabilities.LibraryStepV1,
-                ], BootstrapMaxParallelism: 2), "setup", default);
-            await store.RegisterRunnerAsync("integration-a", new RegisterRunnerRequest(
-                "integration-a", "coding-host", "integration-instance", "1.0.0", TaskServerProtocol.Current,
-                [IntegrationCapabilities.Executor]), "setup", default);
+            var (projectId, task) = await SetupAsync(store);
             var loopStart = (await store.ListAuditAsync(0, default)).Max(record => record.Sequence);
 
-            using var transport = factory.CreateClient();
-            transport.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", CutoverFactory.EngineToken);
-            // The engine's own HTTP client names itself the same way.
-            transport.DefaultRequestHeaders.Add("X-Client-Id", "bootstrap-engine");
+            using var transport = EngineTransport(factory);
             using var engineClient = new EngineTaskServerClient(transport);
-            var engineOptions = EngineOptions.Parse(key => key switch
-            {
-                "SERVER_URL" => "http://localhost",
-                "CLIENT_ID" => "bootstrap-engine",
-                "POLL_SECONDS" => "1",
-                _ => null,
-            });
-            using var engine = new OrchestratorEngineService(engineOptions, engineClient,
-                [
-                    new ReviewDecisionOrchestratorLoop(), new CouncilLoop(), new PostProcessingLoop(),
-                    new GateDispatchLoop(), new CompletionJudgeLoop(), new OperatorSweepLoop(),
-                ],
-                NullLogger<OrchestratorEngineService>.Instance);
+            using var engine = Engine(engineClient);
             await engine.StartAsync(default);
             try
             {
@@ -134,6 +89,19 @@ public sealed class StandaloneReviewLoopCutoverTests
                     new IntegrationClaimRequest("integration-a", "integration-instance"), "integration-a", default);
                 Assert.Equal("claimed", claim.Status);
                 Assert.Equal(command.IntegrationId, claim.Command!.IntegrationId);
+                // Always the registered project repository, never the coding host's remote.
+                Assert.Equal(RepositoryUrl, claim.Command.RepositoryUrl);
+                // A long publication renews its lease under the same fence.
+                var renewed = await store.RenewPublicationLeaseAsync(command.IntegrationId,
+                    new IntegrationLeaseRenewRequest("integration-a", "integration-instance", claim.Lease!.LeaseId,
+                        claim.Lease.Fence, 900), "integration-a", default);
+                Assert.Equal(claim.Lease.Fence, renewed.Fence);
+                Assert.True(renewed.ExpiresAt > claim.Lease.ExpiresAt);
+                var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+                    store.RenewPublicationLeaseAsync(command.IntegrationId,
+                        new IntegrationLeaseRenewRequest("integration-a", "integration-instance", claim.Lease.LeaseId,
+                            claim.Lease.Fence + 1), "integration-a", default));
+                Assert.Equal("stale-fence", stale.Code);
                 var report = await store.ReportIntegrationAsync(command.IntegrationId,
                     new IntegrationReportRequest("integration-a", "integration-instance", claim.Lease!.LeaseId,
                         claim.Lease.Fence, $"integration:{claim.Lease.Fence}", IntegrationOutcomeKinds.Integrated,
@@ -175,6 +143,107 @@ public sealed class StandaloneReviewLoopCutoverTests
         }
     }
 
+    [Fact]
+    public async Task A_passed_delivery_pushed_to_another_remote_escalates_instead_of_publishing()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"standalone-loop-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await using var factory = new CutoverFactory(directory);
+            using var bootstrap = factory.CreateClient();
+            var store = factory.Services.GetRequiredService<TaskServerStore>();
+            var (projectId, task) = await SetupAsync(store);
+
+            using var transport = EngineTransport(factory);
+            using var engineClient = new EngineTaskServerClient(transport);
+            using var engine = Engine(engineClient);
+            await engine.StartAsync(default);
+            try
+            {
+                await CodeAsync(store, null, FirstResultSha, "https://example.invalid/fork/product.git");
+                await ReviewAsync(store, FirstResultSha, reject: false);
+                await WaitForAsync(async () => (await TaskAsync(store, projectId, task.TaskId)).State == "5e-escalated");
+            }
+            finally
+            {
+                await engine.StopAsync(default);
+            }
+
+            // The settlement escalated once instead of queueing an integration
+            // that would publish to the wrong remote or roll back forever.
+            Assert.Empty(await store.ListIntegrationsAsync(task.TaskId, default));
+            var run = Assert.Single(await store.ListOrchestrationRunsAsync(projectId, null, default));
+            Assert.Equal("escalated", run.Status);
+        }
+        finally
+        {
+            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>Operator setup before the loop: project, repository, flow, review plan, hosts.</summary>
+    private static async Task<(string ProjectId, TaskDto Task)> SetupAsync(TaskServerStore store)
+    {
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Cutover"), "setup", default);
+        var (repository, _) = await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
+            "prj-cutover", workspace.WorkspaceId, "Cutover", "CUT", RepositoryUrl, IntegrationRef),
+            "setup", default);
+        var projectId = repository.ProjectId;
+        await store.UpsertFlowDefinitionAsync(projectId, new UpsertFlowDefinitionRequest(null,
+        [
+            OrchestrationStage.ReviewDecision, OrchestrationStage.Council, OrchestrationStage.PostProcessing,
+            OrchestrationStage.GateDispatch, OrchestrationStage.CompletionJudge,
+        ]), "setup", default);
+        await store.UpsertProjectReviewPlanAsync(projectId,
+            new UpsertProjectReviewPlanRequest(null, "cutover-policy-v1", ReviewPlan()), "setup", default);
+        var task = await store.CreateTaskAsync(projectId,
+            new CreateTaskRequest("Standalone loop", "Ship the feature.", "2-ready"), "setup", default);
+        await store.RegisterRunnerAsync("coding-a", new RegisterRunnerRequest(
+            "coding-a", "coding-host", "coding-instance", "1.0.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.CodingExecutor]), "setup", default);
+        await store.RecordProjectRepositoryProbeAsync(projectId, "coding-a",
+            new ProjectRepositoryProbeRequest(RepositoryUrl, RepositoryUrl, true, true, false), default);
+        await store.RegisterRunnerAsync("review-a", new RegisterRunnerRequest(
+            "review-a", "review-host", "review-instance", "1.0.0", TaskServerProtocol.Current,
+            [
+                ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
+                ReviewCapabilities.SemanticReview, ReviewCapabilities.BaselineComparison,
+                ReviewCapabilities.DependencyPreparation, ReviewCapabilities.LibraryStepV1,
+            ], BootstrapMaxParallelism: 2), "setup", default);
+        await store.RegisterRunnerAsync("integration-a", new RegisterRunnerRequest(
+            "integration-a", "coding-host", "integration-instance", "1.0.0", TaskServerProtocol.Current,
+            [IntegrationCapabilities.Executor]), "setup", default);
+        return (projectId, task);
+    }
+
+    private static HttpClient EngineTransport(CutoverFactory factory)
+    {
+        var transport = factory.CreateClient();
+        transport.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", CutoverFactory.EngineToken);
+        // The engine's own HTTP client names itself the same way.
+        transport.DefaultRequestHeaders.Add("X-Client-Id", "bootstrap-engine");
+        return transport;
+    }
+
+    private static OrchestratorEngineService Engine(EngineTaskServerClient engineClient)
+    {
+        var engineOptions = EngineOptions.Parse(key => key switch
+        {
+            "SERVER_URL" => "http://localhost",
+            "CLIENT_ID" => "bootstrap-engine",
+            "POLL_SECONDS" => "1",
+            _ => null,
+        });
+        return new OrchestratorEngineService(engineOptions, engineClient,
+            [
+                new ReviewDecisionOrchestratorLoop(), new CouncilLoop(), new PostProcessingLoop(),
+                new GateDispatchLoop(), new CompletionJudgeLoop(), new OperatorSweepLoop(),
+            ],
+            NullLogger<OrchestratorEngineService>.Instance);
+    }
+
     private static ReviewPlanDto ReviewPlan()
     {
         string[] aspects = ["build-tests", "requirements"];
@@ -186,7 +255,8 @@ public sealed class StandaloneReviewLoopCutoverTests
     private sealed record CodingRound(ClaimResponse Claim, RunDto Run, ImmutableResultEnvelope Envelope);
 
     private static async Task<CodingRound> CodeAsync(
-        TaskServerStore store, ImmutableResultEnvelope? continuesOn, string resultSha)
+        TaskServerStore store, ImmutableResultEnvelope? continuesOn, string resultSha,
+        string repositoryUrl = RepositoryUrl)
     {
         var claim = await store.ClaimAsync(new ClaimRequest("coding-a", "coding-instance"), "coding-a", default);
         Assert.Equal("claimed", claim.Status);
@@ -199,7 +269,7 @@ public sealed class StandaloneReviewLoopCutoverTests
             RepositoryIdentityContract.FromUrl(RepositoryUrl)!, run.RunId,
             continuesOn?.ResultSha ?? new string('0', 40), resultSha,
             FencedGitRefs.ImmutableResult(run.RunId, lease.Fence, resultSha), null, new string('a', 64),
-            RepositoryUrl: RepositoryUrl);
+            RepositoryUrl: repositoryUrl);
         var digest = ResultEnvelopeDigest.Compute(envelope);
         await store.AcknowledgeResultHandoffAsync(run.RunId, new ResultHandoffRequest(
             "coding-a", "coding-instance", lease.LeaseId, lease.Fence, 1,

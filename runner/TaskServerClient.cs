@@ -948,6 +948,12 @@ public sealed class TaskServerClient : IDisposable
                "/api/v1/integrations/claims", request, ct)
            ?? throw new TaskServerException(500, "Empty integration claim response.");
 
+    public async Task<Contract.PublicationLeaseDto> RenewPublicationLeaseAsync(
+        string integrationId, Contract.IntegrationLeaseRenewRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.IntegrationLeaseRenewRequest, Contract.PublicationLeaseDto>(
+               $"/api/v1/integrations/{Uri.EscapeDataString(integrationId)}/lease/renew", request, ct)
+           ?? throw new TaskServerException(500, "Empty publication lease renewal response.");
+
     public async Task<Contract.IntegrationReportResponse> ReportIntegrationAsync(
         string integrationId, Contract.IntegrationReportRequest request, CancellationToken ct)
         => await PostJsonAsync<Contract.IntegrationReportRequest, Contract.IntegrationReportResponse>(

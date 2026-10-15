@@ -25,18 +25,22 @@ public sealed class IntegrationResultPolicyTests
     }
 
     [Theory]
-    [InlineData(TransitionAction.AcceptAndIntegrate, true, "integrating", null)]
-    [InlineData(TransitionAction.AcceptAndIntegrate, false, "completed", "5-human-review")]
-    [InlineData(TransitionAction.HumanReview, true, "completed", "5-human-review")]
-    [InlineData(TransitionAction.DegradeWithFollowUp, true, "completed", "5-human-review")]
+    [InlineData(TransitionAction.AcceptAndIntegrate, true, IntegrationSource.Publishable, "integrating", null)]
+    [InlineData(TransitionAction.AcceptAndIntegrate, true, IntegrationSource.ResultMissing, "escalated", "5e-escalated")]
+    [InlineData(TransitionAction.AcceptAndIntegrate, true, IntegrationSource.RepositoryMismatch, "escalated", "5e-escalated")]
+    [InlineData(TransitionAction.AcceptAndIntegrate, false, IntegrationSource.Publishable, "completed", "5-human-review")]
+    [InlineData(TransitionAction.AcceptAndIntegrate, false, IntegrationSource.ResultMissing, "completed", "5-human-review")]
+    [InlineData(TransitionAction.HumanReview, true, IntegrationSource.Publishable, "completed", "5-human-review")]
+    [InlineData(TransitionAction.HumanReview, true, IntegrationSource.ResultMissing, "completed", "5-human-review")]
+    [InlineData(TransitionAction.DegradeWithFollowUp, true, IntegrationSource.Publishable, "completed", "5-human-review")]
     public void Accepted_delivery_waits_in_auto_review_only_under_reviewed_publication(
-        TransitionAction accepted, bool reviewedPublication, string status, string? lane)
+        TransitionAction accepted, bool reviewedPublication, IntegrationSource source, string status, string? lane)
     {
         var decision = OrchestrationSettlementPolicy.Decide(
             OrchestrationAction.Continue,
             [OrchestrationStage.ReviewDecision],
             OrchestrationStage.ReviewDecision,
-            0, 2, "4-auto-review", 7, 7, null, null, accepted, reviewedPublication);
+            0, 2, "4-auto-review", 7, 7, null, null, accepted, reviewedPublication, source);
 
         Assert.True(decision.IsTerminal);
         Assert.Equal(status, decision.RunStatus);
@@ -53,7 +57,8 @@ public sealed class IntegrationResultPolicyTests
             OrchestrationAction.Reissue,
             [OrchestrationStage.ReviewDecision],
             OrchestrationStage.ReviewDecision,
-            0, 2, "4-auto-review", 7, 7, null, transition, TransitionAction.FindingRound, true);
+            0, 2, "4-auto-review", 7, 7, null, transition, TransitionAction.FindingRound, true,
+            IntegrationSource.ResultMissing);
 
         Assert.Equal("reissued", decision.RunStatus);
         Assert.Equal("2-ready", decision.TaskState);

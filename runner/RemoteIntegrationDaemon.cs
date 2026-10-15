@@ -14,12 +14,15 @@ public sealed class RemoteIntegrationDaemon
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private readonly TimeProvider _time;
 
-    public RemoteIntegrationDaemon(RunnerOptions options, TaskServerClient client, Action<string> log)
+    public RemoteIntegrationDaemon(RunnerOptions options, TaskServerClient client, Action<string> log,
+        TimeProvider? time = null)
     {
         _options = options;
         _client = client;
         _log = log;
+        _time = time ?? TimeProvider.System;
     }
 
     public async Task RunAsync(CancellationToken shutdown)
@@ -34,7 +37,14 @@ public sealed class RemoteIntegrationDaemon
                     _options.RunnerId, _client.RunnerInstanceId), shutdown);
                 if (claim is { Status: "claimed", Command: { } command, Lease: { } lease })
                 {
-                    var result = await IntegrationPublisher.PublishAsync(command, lease.Fence, root, shutdown);
+                    var result = await PublishUnderLeaseAsync(command, lease, root, shutdown);
+                    if (result is null)
+                    {
+                        // The server queues the command again once the lost lease expires.
+                        _log($"integration {command.IntegrationId} for {command.TaskId}: publication lease lost; " +
+                             "publication stopped without a report");
+                        continue;
+                    }
                     var report = await _client.ReportIntegrationAsync(command.IntegrationId,
                         new IntegrationReportRequest(lease.RunnerId, lease.InstanceId, lease.LeaseId, lease.Fence,
                             $"integration:{command.IntegrationId}:{lease.Fence}", result.Outcome,
@@ -58,6 +68,84 @@ public sealed class RemoteIntegrationDaemon
             }
         }
     }
+
+    /// <summary>
+    /// Publishes while a renewer keeps the publication lease alive. When the
+    /// server refuses a renewal, or the lease expires without one, publication
+    /// stops and nothing is reported: the fence already moved on.
+    /// </summary>
+    private async Task<IntegrationPublishResult?> PublishUnderLeaseAsync(
+        IntegrationCommandDto command, PublicationLeaseDto lease, string root, CancellationToken shutdown)
+    {
+        using var leaseLoss = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        using var renewal = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var renewer = new PublicationLeaseRenewer(
+            (ttl, ct) => _client.RenewPublicationLeaseAsync(command.IntegrationId,
+                new IntegrationLeaseRenewRequest(lease.RunnerId, lease.InstanceId, lease.LeaseId, lease.Fence, ttl), ct),
+            _time, _log).RunAsync(lease, leaseLoss, renewal.Token);
+        try
+        {
+            return await IntegrationPublisher.PublishAsync(command, lease.Fence, root, _log, leaseLoss.Token);
+        }
+        catch (OperationCanceledException) when (leaseLoss.IsCancellationRequested && !shutdown.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            renewal.Cancel();
+            await renewer;
+        }
+    }
+}
+
+/// <summary>
+/// Keeps one publication lease alive while its holder publishes. Renews at a
+/// third of the lease lifetime; cancels <c>leaseLoss</c> when the server
+/// refuses the fence or the lease ran out without a successful renewal.
+/// Never throws: it returns when <c>stop</c> is cancelled.
+/// </summary>
+public sealed class PublicationLeaseRenewer(
+    Func<int, CancellationToken, Task<PublicationLeaseDto>> renew,
+    TimeProvider time,
+    Action<string> log)
+{
+    private static readonly IReadOnlySet<string> LostLeaseCodes = new HashSet<string>(
+        ["stale-fence", "publication-lease-expired", "publication-lease-missing"], StringComparer.Ordinal);
+
+    public async Task RunAsync(PublicationLeaseDto lease, CancellationTokenSource leaseLoss, CancellationToken stop)
+    {
+        var ttlSeconds = Math.Max(1, (int)Math.Round((lease.ExpiresAt - lease.AcquiredAt).TotalSeconds));
+        var interval = TimeSpan.FromSeconds(Math.Max(1, ttlSeconds / 3));
+        var expiry = lease.ExpiresAt;
+        while (!stop.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, time, stop);
+                expiry = (await renew(ttlSeconds, stop)).ExpiresAt;
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (TaskServerException exception) when (exception.ErrorCode is { } code && LostLeaseCodes.Contains(code))
+            {
+                log($"publication lease {lease.LeaseId} lost: {code}");
+                leaseLoss.Cancel();
+                return;
+            }
+            catch (Exception exception)
+            {
+                log($"publication lease {lease.LeaseId} renewal failed: {exception.GetType().Name}: {exception.Message}");
+                if (time.GetUtcNow().UtcDateTime >= expiry)
+                {
+                    leaseLoss.Cancel();
+                    return;
+                }
+            }
+        }
+    }
 }
 
 public sealed record IntegrationPublishResult(string Outcome, string? IntegratedSha, string Detail);
@@ -74,7 +162,7 @@ public static class IntegrationPublisher
     private const string ResultRef = "refs/remotes/publication/result";
 
     public static async Task<IntegrationPublishResult> PublishAsync(
-        IntegrationCommandDto command, long fence, string root, CancellationToken ct)
+        IntegrationCommandDto command, long fence, string root, Action<string> log, CancellationToken ct)
     {
         var branch = BranchRef(command.IntegrationRef);
         var directory = Path.Combine(root, $"{SafeSegment(command.IntegrationId)}-{fence}");
@@ -127,8 +215,14 @@ public static class IntegrationPublisher
         finally
         {
             try { Directory.Delete(directory, recursive: true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            catch (IOException exception)
+            {
+                log($"integration workspace {directory} was not removed: {exception.Message}");
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                log($"integration workspace {directory} was not removed: {exception.Message}");
+            }
         }
     }
 

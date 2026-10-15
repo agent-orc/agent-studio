@@ -379,7 +379,9 @@ production evidence must be attached before cutover:
      completion seals it into the review subject.
    - Run one runner service with `RUNNER_ROLE=integration`. It claims accepted
      deliveries under the project's publication lease
-     (`POST /api/v1/integrations/claims`) and reports the published tip.
+     (`POST /api/v1/integrations/claims`), renews the lease while it
+     publishes (`POST /api/v1/integrations/{id}/lease/renew`), pushes only to
+     the registered project repository, and reports the published tip.
 
    Attach the scenario run of the release candidate to the D7 cutover card.
 

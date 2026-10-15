@@ -93,6 +93,18 @@ public sealed record IntegrationClaimResponse(
     PublicationLeaseDto? Lease = null,
     string? Message = null);
 
+/// <summary>
+/// Extends the current publication lease while its holder still fetches,
+/// merges, or pushes. Only the holder of the current fence can renew it, and
+/// only before it expires.
+/// </summary>
+public sealed record IntegrationLeaseRenewRequest(
+    string RunnerId,
+    string InstanceId,
+    string LeaseId,
+    long Fence,
+    int RequestedTtlSeconds = 600);
+
 public sealed record IntegrationReportRequest(
     string RunnerId,
     string InstanceId,

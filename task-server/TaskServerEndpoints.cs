@@ -680,6 +680,18 @@ public static class TaskServerEndpoints
             return await InvokeAsync(() => store.ClaimIntegrationAsync(request, Actor(context), ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.RunsClaim);
+        integrations.MapPost("/{integrationId}/lease/renew", async (
+            HttpContext context, string integrationId, IntegrationLeaseRenewRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.RunnerId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "Integration executor identity differs from its principal."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            return await InvokeAsync(() => store.RenewPublicationLeaseAsync(integrationId, request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         integrations.MapPost("/{integrationId}/report", async (
             HttpContext context, string integrationId, IntegrationReportRequest request,
             TaskServerStore store, CancellationToken ct) =>
