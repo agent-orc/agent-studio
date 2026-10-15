@@ -1898,21 +1898,23 @@ disk for runner state.
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty or TTL-expired index
-  starts one single-flight background refresh that inherits neither the request
-  trace nor the pin, and the read answers from the last snapshot. Only two cases
-  wait, asynchronously and cancelled with the request: a cold start, and the
-  caller's own pending write. A failed background refresh keeps the last
+  starts one single-flight background refresh after a 200 ms coalescing window.
+  It inherits neither the request trace nor the pin, and the read answers from
+  the last snapshot. Only a cold start waits, asynchronously and cancelled with
+  the request. A failed background refresh keeps the last
   snapshot, logs `task-index-background-refresh-failed`, and the next read
   retries.
-- **Read-your-writes is per client.** `ClientIdentityMiddleware` runs every
-  write request of a registered client inside `AmbientClient`. When such a
-  request invalidates the index, the required generation is recorded for that
-  `X-Client-Id` in a bounded map. A board read with that client id waits only
-  for those writes. Runner, review and post-processing writes, and other
-  clients' writes, never make it wait. A read without a registered client id
-  keeps the global read-after-write target. Every Angular tab sends
-  `local-default`, so tabs of one browser share their writes. Callers outside a
-  board read keep the global semantics.
+- **Mutation readers share the refresh.** Callers outside the board still
+  wait for their mutation generation, but simultaneous callers enter the same
+  200 ms window and one full scan instead of starting a scan per caller.
+- **Board reads keep the last complete publication during writes.** This
+  includes a read from the same client that just wrote. A follow-up read sees
+  the new publication after the refresh. Callers outside a board read keep
+  their read-after-write semantics.
+- **Run lease facts come from the authority publication.** The card's
+  execution location and runner badge use the last committed immutable run
+  lease snapshot. They do not take the attempt-authority persistence lock or
+  scan attempt history once per card while claims are being written.
 - **The client learns about the newer snapshot by push.** When a background
   refresh publishes after an invalidation, the index sends one
   `jobsBulkChanged` after a 250 ms debounce. The board answers it with a
@@ -1927,8 +1929,10 @@ disk for runner state.
   `X-Task-Switch-Trace: 1` and otherwise one read in
   `BoardReadTrace:SampleEvery` (default every read, `0` disables). Each traced
   read logs one `board-read-trace` line with the `snapshot`, `filter`,
-  `git-freshness`, `compose` and `body` stages, with the `index.lookup` and
-  `index.wait` spans nested inside `snapshot`. The timing line logs the status
+  `git-freshness`, `compose` and `body` stages, with `compose.review-queue`,
+  `compose.runtime`, `compose.runner-status` and `compose.cards` nested inside
+  `compose`. `compose.lease` sums execution-location lookup time across cards;
+  `index.lookup` and `index.wait` sit inside `snapshot`. The timing line logs the status
   the result writes, so a 304 is logged as 304.
 
 ## Project Git inventory contract
