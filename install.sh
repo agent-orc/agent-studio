@@ -27,7 +27,7 @@ if [ "$release_version" = DEV ]; then
 else
     default_release_url=https://github.com/agent-orc/agent-studio/releases/download/v$release_version
 fi
-release_url=${AGENT_STUDIO_RELEASE_URL:-${AGENT_STUDIO_INSTALL_BASE_URL:-$default_release_url}}
+release_url=${AGENT_STUDIO_RELEASE_URL:-${AGENT_STUDIO_INSTALL_BASE_URL:-${AGENT_STUDIO_RELEASE_BASE:-$default_release_url}}}
 case "$release_url" in
     https://*|http://127.0.0.1:*|http://localhost:*) ;;
     *) fail 'AGENT_STUDIO_RELEASE_URL must use HTTPS (or local HTTP for tests).' ;;

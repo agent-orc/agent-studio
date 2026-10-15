@@ -70,11 +70,12 @@ New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $ConfigRoot -Force | Out-Null
 
 $releaseDirectory = Copy-FallbackRelease -PackageRoot $packageRoot -InstallBase $InstallBase `
-    -RequiredFiles 'task-server.exe', 'orchestrator-engine.exe', 'agent-studio-bff.exe'
+    -RequiredFiles 'task-server.exe', 'orchestrator-engine.exe', 'agent-studio-bff.exe', 'wwwroot/index.html'
 
 $serverEnvPath = Join-Path $ConfigRoot 'server.env'
 $engineEnvPath = Join-Path $ConfigRoot 'engine.env'
 $connectorEnvPath = Join-Path $ConfigRoot 'studio-connector.env'
+$ownerBootstrapFile = Join-Path $ConfigRoot 'owner-bootstrap.code'
 
 if (-not (Test-Path -LiteralPath $serverEnvPath)) {
     $studioToken = ''
@@ -90,6 +91,10 @@ if (-not (Test-Path -LiteralPath $serverEnvPath)) {
         Set-Content -LiteralPath $engineTokenFile -Value $engineToken -Encoding ascii -NoNewline
         Protect-FallbackSecretFile -Path $studioTokenFile
         Protect-FallbackSecretFile -Path $engineTokenFile
+        if (-not (Test-Path -LiteralPath $ownerBootstrapFile)) {
+            Set-Content -LiteralPath $ownerBootstrapFile -Value (New-BearerToken) -Encoding ascii -NoNewline
+            Protect-FallbackSecretFile -Path $ownerBootstrapFile
+        }
         Write-FallbackLog "Generated Studio and Engine bootstrap credentials in $ConfigRoot. Capture them through the host administration channel; they are never printed again."
     }
     elseif (-not ($ListenUrl -match '^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/?$')) {
@@ -103,6 +108,7 @@ if (-not (Test-Path -LiteralPath $serverEnvPath)) {
         "AUTH=$AuthMode",
         "STUDIO_AUTH_TOKEN_FILE=$studioTokenFile",
         "ENGINE_AUTH_TOKEN_FILE=$engineTokenFile",
+        "OWNER_BOOTSTRAP_CODE_FILE=$ownerBootstrapFile",
         'TaskServer__MinimumLeaseSeconds=30',
         'TaskServer__MaximumLeaseSeconds=600',
         'TaskServer__MaximumEventPayloadBytes=262144'

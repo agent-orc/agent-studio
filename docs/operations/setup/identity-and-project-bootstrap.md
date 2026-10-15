@@ -34,8 +34,10 @@ bearer in-process and relays only the human session cookie.
    The native Linux installer creates the same code at
    `<orchestrator-config-root>/owner_bootstrap_code` with owner and service
    read access, and keeps it across reinstallations.
+   Native Windows stores `owner-bootstrap.code` in
+   `%ProgramData%\AgentOrchestrator` with restricted host permissions.
 2. While no owner exists the server arms that code. Read it over the
-   administration channel only:
+   administration channel only. For Compose, use
    `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
    On a native Linux host, read the file directly as the installation
    administrator. Do not paste it into task text or logs.

@@ -8,10 +8,15 @@ if (args is ["--version"] or ["-V"])
     return;
 }
 
-var builder = WebApplication.CreateBuilder(args);
+var bundledStudio = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    WebRootPath = Directory.Exists(bundledStudio) ? bundledStudio : null,
+});
 var taskServerUrl = builder.Configuration["TaskServer:BaseUrl"]
     ?? throw new InvalidOperationException("TaskServer:BaseUrl is required.");
-var allowedOrigins = (builder.Configuration["Studio:AllowedOrigins"] ?? "http://127.0.0.1:4011,http://localhost:4011")
+var allowedOrigins = (builder.Configuration["Studio:AllowedOrigins"] ?? "http://127.0.0.1:4011,http://localhost:4011,http://127.0.0.1:5031,http://localhost:5031")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 if (allowedOrigins.Length == 0 || allowedOrigins.Any(origin =>
         !Uri.TryCreate(origin, UriKind.Absolute, out var uri)
@@ -55,6 +60,12 @@ builder.Services.AddHttpClient("task-server", client =>
 });
 
 var app = builder.Build();
+if (Directory.Exists(bundledStudio))
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+    app.MapFallbackToFile("index.html");
+}
 app.MapGet("/healthz", () => Results.Ok(new { status = "live", role = "studio-bff" }));
 app.Use(async (context, next) =>
 {
