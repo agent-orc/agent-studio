@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.TaskServer.Contracts;
 
 // AGT-3063 (AGT-W73 OD-S1): typed decision grounds, the runner-hosted shadow
@@ -72,7 +74,8 @@ public static class GroundsReliability
     public const string Unreliable = "unreliable";
 }
 
-public sealed record GroundsTriggerV1(string Kind, string Profile, DateTime ObservedAt);
+public sealed record GroundsTriggerV1(string Kind, string Profile, DateTime ObservedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Cadence = null);
 
 /// <summary>Card scope carries card ids; a periodic host scope leaves them null.</summary>
 public sealed record GroundsScopeV1(
@@ -82,7 +85,8 @@ public sealed record GroundsScopeV1(
     string? AttemptId,
     long? Fence,
     long? Epoch,
-    string? HostId);
+    string? HostId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceId = null);
 
 public sealed record DecisionModelRouteV1(
     string Cli,
@@ -242,6 +246,14 @@ public sealed record DecisionShadowInputV1(
     string DeterministicTarget,
     string DeterministicReason,
     string Mode = "shadow");
+
+/// <summary>Engine-created host occurrence; Task Server freezes a workspace rule pin.</summary>
+public sealed record HostDecisionOccurrenceRequestV1(
+    string OccurrenceId, string WorkspaceId, string HostId, string TriggerKind,
+    string Profile, DateTime ObservedAt, IReadOnlyList<GroundsFactV1> Facts,
+    IReadOnlyList<GroundsAlternativeV1> Alternatives,
+    IReadOnlyList<GroundsOmissionV1> Omissions,
+    string? Cadence = null);
 
 public sealed record GroundsPackV1(
     int Bytes,
@@ -421,7 +433,9 @@ public sealed record OrchestratorDecisionReceiptV1(
     DateTime StartedAt,
     DateTime EndedAt,
     DecisionGroundsV1 Grounds,
-    string? ResponseContent);
+    string? ResponseContent,
+    string? Assessment = null,
+    string? Report = null);
 
 /// <summary>Compact Studio row; <see cref="EvidenceRef"/> opens the full receipt in one click.</summary>
 public sealed record OrchestratorDecisionReceiptSummary(
@@ -447,7 +461,9 @@ public sealed record OrchestratorDecisionReceiptSummary(
     string Actor = "decision-step",
     long InputTokens = 0,
     long OutputTokens = 0,
-    int UnknownPriceCalls = 0);
+    int UnknownPriceCalls = 0,
+    string? HostId = null,
+    string? WorkspaceId = null);
 
 public sealed record OrchestratorDecisionSpendSummary(
     string Scope,

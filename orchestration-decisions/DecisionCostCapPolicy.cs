@@ -38,7 +38,8 @@ public static class DecisionCostCapPolicy
 
     public static bool ChargesCard(GroundsScopeV1 scope) => scope.Kind == "card";
 
-    public static bool IsScheduled(GroundsTriggerV1 trigger) => ScheduledTriggerKinds.Contains(trigger.Kind);
+    public static bool IsScheduled(GroundsTriggerV1 trigger)
+        => ScheduledTriggerKinds.Contains(trigger.Cadence ?? trigger.Kind);
 
     /// <summary>The host-day key of a non-card occurrence: host id (or "local") and UTC date.</summary>
     public static string HostDayKey(GroundsScopeV1 scope, DateTime at)
