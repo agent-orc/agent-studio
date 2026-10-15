@@ -8,6 +8,9 @@ import {
   output,
   signal,
 } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
+import { DecisionAskStateService } from '../../services/decision-ask-state.service';
 
 import { TaskState } from '../../../../models/task.model';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
@@ -62,6 +65,7 @@ export class EscalationSummaryComponent {
   readonly answerDraft = signal('');
   readonly answering = signal(false);
   readonly answerError = signal<string | null>(null);
+  readonly latestAskReason = signal<string | null>(null);
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
@@ -71,6 +75,9 @@ export class EscalationSummaryComponent {
   );
 
   private readonly jobs = inject(TaskService);
+  private readonly http = inject(HttpClient);
+  private readonly askState = inject(DecisionAskStateService);
+  readonly askAnswer = computed(() => this.askState.choice(this.detail().info.id));
   private readonly timelinePoll = inject(TaskTimelinePollService);
   private readonly runTimelinePoll = inject(RunTimelinePollService);
 
@@ -114,6 +121,8 @@ export class EscalationSummaryComponent {
       this.fetchedJobId = info.id;
       this.codeReviews.set([]);
       this.followUpMarkdown.set(null);
+      this.latestAskReason.set(null);
+      void this.loadLatestAsk(info.id);
 
       this.jobs.listCodeReviews(info.id, info.watchPath).subscribe({
         next: (resp) => {
@@ -138,6 +147,27 @@ export class EscalationSummaryComponent {
         },
       });
     });
+  }
+
+  private async loadLatestAsk(taskId: string): Promise<void> {
+    try {
+      const rows = await firstValueFrom(this.http.get<{
+        chosenAction: string; evidenceRef: string;
+      }[]>(`/api/orchestration/decision-receipts?taskId=${encodeURIComponent(taskId)}&limit=1`));
+      const latest = rows[0];
+      if (!latest?.chosenAction.startsWith('ask(')) {
+        if (this.fetchedJobId === taskId) this.askState.clear(taskId);
+        return;
+      }
+      const receipt = await firstValueFrom(this.http.get<{ reasoning: string | null }>(latest.evidenceRef));
+      const intent = await firstValueFrom(this.http.get<{ action: string }>(
+        `${latest.evidenceRef}/operator-intent`)).catch(() => null);
+      if (this.fetchedJobId === taskId && intent) this.askState.record(taskId, intent.action);
+      if (this.fetchedJobId === taskId && !this.detail().info.parkedBlocker)
+        this.latestAskReason.set(receipt.reasoning?.trim() || 'The decision step asked for a Human Operator choice.');
+    } catch {
+      // Older servers may have no engine receipt. The existing escalation evidence remains authoritative.
+    }
   }
 
   /**
@@ -174,6 +204,8 @@ export class EscalationSummaryComponent {
   readonly headTitle = computed<string>(() =>
     this.detail().info.needsInput
       ? (this.hasQueuedAnswer() ? 'Answer queued' : 'Agent needs input')
+      : this.askAnswer() ? 'Operator answer recorded'
+      : this.latestAskReason() ? 'Operator decision required'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
 

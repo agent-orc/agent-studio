@@ -109,6 +109,7 @@ import {
   styleUrl: './overview-pane.component.scss',
 })
 export class OverviewPaneComponent {
+  readonly escalatedState = TaskState.Escalated;
   readonly stepKindLabel = stepKindLabel;
   readonly stepKindIcon = stepKindIcon;
   readonly stepStatusIcon = stepStatusIcon;

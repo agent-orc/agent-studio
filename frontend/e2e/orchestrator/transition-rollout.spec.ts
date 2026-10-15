@@ -43,6 +43,7 @@ test('transition profiles show comparison state and require an operator reason',
   await page.goto('/#/workspace/settings/orchestrator');
   const panel = page.getByTestId('transition-rollout');
   await expect(panel).toBeVisible();
+  await expect(panel.getByTestId('decision-workspace-spend')).toContainText('no usage data');
   await expect(panel.getByTestId('transition-profile-ReviewReport')).toContainText('ready');
   await expect(panel.getByTestId('transition-profile-ReviewReport')).toContainText('50 / 50');
   await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeDisabled();

@@ -1,4 +1,4 @@
-@if (transitions().length > 0 || summary()) {
+@if (transitions().length > 0 || summary() || receipts().length > 0) {
   <div class="decision-chain" data-testid="overview-decision-chain">
     <div class="decision-chain__header">
       <span class="decision-chain__title">Decisions between steps</span>
@@ -17,6 +17,67 @@
         </span>
       }
     </div>
+    @if (current() && receipts().length > 0) {
+      <div class="decision-chain__receipt-summary" data-testid="decision-receipt-rollups">
+        @if (cardSpend(); as card) { <span><strong>Card engine receipts</strong> {{ spendText(card) }}</span> }
+        @if (projectSpend(); as project) { <span><strong>Project engine receipts</strong> {{ spendText(project) }}</span> }
+      </div>
+      <ol class="decision-chain__receipts" aria-label="Engine decision occurrences">
+        @for (item of receipts(); track item.receiptId) {
+          <li class="decision-chain__receipt" data-testid="decision-receipt-occurrence">
+            <div class="decision-chain__receipt-line">
+              <span class="decision-chain__num">{{ formatClock(item.endedAt) }}</span>
+              <strong>{{ item.profile }} · {{ item.chosenAction }}</strong>
+              <span>Decision step · {{ item.model ?? 'model unavailable' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
+              <span class="decision-chain__num">{{ item.inputTokens.toLocaleString('en-US') }} in / {{ item.outputTokens.toLocaleString('en-US') }} out</span>
+              <span class="decision-chain__num" data-testid="decision-receipt-cost">{{ receiptCost(item) }}</span>
+              <button type="button" class="decision-chain__link" data-testid="decision-receipt-evidence"
+                      [attr.aria-expanded]="openReceipt() === item.receiptId"
+                      (click)="showReceipt(item)"><app-disclosure-marker [open]="openReceipt() === item.receiptId" [size]="10" /> Grounds / response / sources</button>
+            </div>
+            @if (openReceipt() === item.receiptId) {
+              <div class="decision-chain__receipt-detail" data-testid="decision-receipt-detail">
+                @if (receiptError(); as error) { <p role="alert">{{ error }}</p> }
+                @else if (receiptDetail(); as detail) {
+                  <p><strong>Grounds</strong> · {{ detail.reasoning ?? 'No reasoning recorded' }}</p>
+                  <p><strong>Response</strong></p>
+                  <pre>{{ detail.responseContent ?? 'No model response recorded' }}</pre>
+                  <ul aria-label="Source evidence">
+                    @for (fact of detail.grounds.facts; track fact.id) {
+                      <li><strong>{{ fact.name }}</strong> · {{ fact.value }} ·
+                        <code>{{ fact.source.kind }}: {{ fact.source.ref }}</code></li>
+                    }
+                  </ul>
+                  @if (askActive() && item.receiptId === receipts()[receipts().length - 1].receiptId && item.chosenAction.startsWith('ask(')) {
+                    <section class="decision-chain__operator" data-testid="decision-operator-ask" aria-label="Human Operator response">
+                      <strong>Human Operator · run limit decision</strong>
+                      @if (operatorIntent(); as intent) {
+                        <p data-testid="decision-operator-recorded">{{ intent.action }}@if (intent.requestedEmergencyHours) { to {{ intent.requestedEmergencyHours }} h } · {{ intent.reason }} · recorded for the next engine decision</p>
+                      } @else {
+                        <label>Reason <input type="text" maxlength="500" [value]="intentReason()"
+                          (input)="intentReason.set($any($event.target).value)" /></label>
+                        <label>Emergency limit, hours <input type="number" min="1" max="24" [value]="emergencyHours()"
+                          (input)="emergencyHours.set(+$any($event.target).value)" /></label>
+                        <div class="decision-chain__operator-actions">
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || emergencyHours() < 1 || emergencyHours() > 24"
+                            (click)="submitIntent(item, 'raise')">Raise limit</button>
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy()"
+                            (click)="submitIntent(item, 'cut')">Cut smaller</button>
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy()"
+                            (click)="submitIntent(item, 'stop')">Stop</button>
+                        </div>
+                        <p>Choice is recorded as grounds for the next engine decision.</p>
+                        @if (intentError(); as error) { <p role="alert">{{ error }}</p> }
+                      }
+                    </section>
+                  }
+                } @else { <p>Loading receipt…</p> }
+              </div>
+            }
+          </li>
+        }
+      </ol>
+    }
     @if (transitions().length > 0) {
       <ol class="decision-chain__list">
         @for (item of transitions(); track item.key) {
@@ -31,7 +92,7 @@
             <span class="decision-chain__verdict" data-testid="overview-decision-verdict"
                   [cacTooltip]="item.summary">{{ item.verdict ?? 'n/a' }}</span>
             <span class="decision-chain__model" data-testid="overview-decision-model"
-                  [cacTooltip]="modelTooltip(item)">{{ item.model ?? 'rule' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
+                  [cacTooltip]="modelTooltip(item)">{{ item.model ? 'AI Operator · ' : 'Decision step · ' }}{{ item.model ?? 'rule' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
             <span class="decision-chain__num decision-chain__duration">{{ formatStepDuration(item.durationMs) }}</span>
             <span class="decision-chain__num decision-chain__cost" data-testid="overview-decision-cost-cell"
                   [attr.data-cost-tone]="item.costTone" [cacTooltip]="costTooltip(item)">{{ item.costText }}</span>
