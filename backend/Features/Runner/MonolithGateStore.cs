@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using GateFailureClasses = AgentStudio.TaskServer.Contracts.GateFailureClasses;
 
 namespace AgentStudio.Runner;
 

@@ -76,18 +76,47 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   is still unpublished.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
+- AGT-3055 (D16 option A): the batch suite is claimable gate work by default.
+  The backend pushes the candidate to its fenced candidate ref and creates a
+  batch `GateSubject` that binds the membership digest. A runner host with the
+  gate role claims the attempt through `/api/v1/gates` under lease and fence.
+  A stale lease or fence cannot advance or report the attempt. A lapsed lease
+  requeues the attempt on another host after containment. The subject lives
+  where runner gate claims land: the standalone Task Server when
+  `TaskServer:BaseUrl` proxies the versioned plane, otherwise the monolith gate
+  store. In the networked profile, a runner credential reaches the monolith gate
+  routes with `runner.claim` (claim, subject read), `runner.lease` (renew),
+  `runner.events` (phase), and `runner.completion` (report, containment).
+  `BatchGate:Execution` selects the path: `claimed` (default) or `bridge`, which
+  is the rollback to the SSH bridge build/test gate runner. Any other value
+  stops the backend at startup.
+- AGT-3055 (D14 option A, D15 option A): the batch decision runs one shared
+  library (`BatchPlanDecisionPolicy`) in the monolith and in the Orchestrator
+  Engine. `MonolithTransitionSwitch` selects the owner for the `BatchPlan`
+  transition. The batch tick runs in every execution mode. In Engine mode it
+  publishes a `BatchPlan` occurrence and applies the returned intent only after
+  the authority floors. In Shadow mode it decides itself and records the engine
+  comparison. The occurrence carries the advisor CLI type and the model that
+  the authority resolved, including the Codex economy pick. The engine calls
+  exactly that model with its own provider credential:
+  `ADVISOR_ANTHROPIC_CREDENTIAL` for `claude` and `ADVISOR_OPENAI_CREDENTIAL`
+  for `codex`, each with a `_FILE` variant. Without that credential, the engine
+  records an advisor fallback with the requested model and keeps the
+  deterministic plan. It never substitutes another model.
 
 ## Open
 
-- A remote, independently claimable gate host remains a separate architecture
-  step. The backend worker currently sends the gate through the remote runner
-  transport without an independent gate-attempt claim.
+- The claimed suite needs at least one registered gate host with the plan's
+  capabilities. Without one, the attempt expires at its dispatch deadline as
+  gate infrastructure. Use `BatchGate:Execution: bridge` until a host is
+  enrolled.
 - The D10 historical proxy is not a real combined-tree pass rate. Compare the
   state and report with actual batches before increasing the size bounds.
 - The first red candidate on a new base SHA can require one separate full
   base run. Its cached verdict is reused for later comparisons with the same
   gate profile.
-- The advisor uses the registered one-shot CLI on the backend host. Its quality
+- In monolith mode, the advisor uses the registered one-shot CLI on the backend
+  host. Its quality
   and quota behavior need live pilot evidence before using `enforce` mode.
 - The command-inventory change guard lists the built-in Agent Studio project,
   .NET, and Angular inventory files. Custom build profiles need declared

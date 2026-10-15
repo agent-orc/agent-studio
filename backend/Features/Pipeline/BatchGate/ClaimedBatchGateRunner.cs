@@ -11,15 +11,31 @@ namespace AgentStudio.Pipeline;
 /// Runs the batch suite as claimable gate work (AGT-3055, D16 A) instead of
 /// the SSH bridge: the candidate is pushed to its fenced candidate ref, a
 /// batch <see cref="GateSubject"/> binds the membership digest, and a runner
-/// host with the gate role claims the attempt under lease and fence.
+/// host with the gate role claims the attempt under lease and fence. The
+/// subject lives at the authority runner gate claims reach
+/// (<see cref="IBatchGateSubjectAuthority"/>).
 /// </summary>
-public sealed class ClaimedBatchGateRunner(MonolithGateStore gates, GitService git, TimeProvider time)
+public sealed class ClaimedBatchGateRunner(IBatchGateSubjectAuthority gates, GitService git, TimeProvider time)
 {
+    public const string ExecutionKey = "BatchGate:Execution";
     public const string ExecutionMode = "claimed";
+    /// <summary>Rollback value: the batch suite runs through the build/test gate runner (SSH bridge).</summary>
+    public const string BridgeMode = "bridge";
     internal TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>Claimed gate work is the default; only <see cref="BridgeMode"/> keeps the SSH bridge.</summary>
     public static bool Enabled(IConfiguration? configuration)
-        => string.Equals(configuration?["BatchGate:Execution"], ExecutionMode, StringComparison.OrdinalIgnoreCase);
+        => Mode(configuration) == ExecutionMode;
+
+    /// <summary>Configured execution mode; an unknown value fails closed at startup.</summary>
+    public static string Mode(IConfiguration? configuration)
+    {
+        var configured = configuration?[ExecutionKey]?.Trim();
+        if (string.IsNullOrEmpty(configured)) return ExecutionMode;
+        if (string.Equals(configured, ExecutionMode, StringComparison.OrdinalIgnoreCase)) return ExecutionMode;
+        if (string.Equals(configured, BridgeMode, StringComparison.OrdinalIgnoreCase)) return BridgeMode;
+        throw new InvalidOperationException($"{ExecutionKey} must be '{ExecutionMode}' or '{BridgeMode}'.");
+    }
 
     public async Task<BuildTestGateResult> RunAsync(BatchGateManifest manifest, BatchGateRunRecord run,
         string repo, IReadOnlyList<VerifyCommand> verify, TimeSpan timeout, CancellationToken ct)
@@ -34,19 +50,30 @@ public sealed class ClaimedBatchGateRunner(MonolithGateStore gates, GitService g
             return Infrastructure(run, started, $"Batch candidate ref could not be published: {pushed.Error ?? pushed.Status}");
         var request = Subject(manifest, run, candidateRef, git.ReadOriginUrlAt(repo), verify, timeout,
             time.GetUtcNow().UtcDateTime);
-        var status = gates.Create(request);
+        GateStatus status;
+        try { status = await gates.CreateAsync(request, ct).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return Infrastructure(run, started,
+                $"Batch gate subject could not be created at the {gates.Name} authority: {exception.Message}");
+        }
         try
         {
             while (!GateStates.IsTerminal(status.Phase))
             {
                 await Task.Delay(PollInterval, time, ct).ConfigureAwait(false);
-                status = gates.GetStatus(status.Subject.SubjectId)
+                status = await gates.GetAsync(status.Subject.SubjectId, ct).ConfigureAwait(false)
                     ?? throw new InvalidDataException("Batch gate subject disappeared.");
             }
         }
         catch (OperationCanceledException)
         {
-            gates.Cancel(status.Subject.SubjectId);
+            // Best effort: an unreachable authority expires the attempt at its dispatch deadline.
+            try { await gates.CancelAsync(status.Subject.SubjectId, CancellationToken.None).ConfigureAwait(false); }
+            catch (Exception cancel) when (cancel is HttpRequestException or InvalidDataException)
+            {
+                SilentCatch.Warn(cancel, "ClaimedBatchGateRunner: cancel batch gate subject");
+            }
             throw;
         }
         return Result(run, status, started, time.GetUtcNow());

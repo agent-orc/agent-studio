@@ -2633,6 +2633,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                     ["WatchPaths:0:RootPath"] = _repo,
                     ["WatchPaths:0:RepositoryPath"] = _repo,
                     ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    // These tests drive the suite through the fake build/test gate runner.
+                    [ClaimedBatchGateRunner.ExecutionKey] = ClaimedBatchGateRunner.BridgeMode,
                 }));
             builder.ConfigureTestServices(services =>
             {

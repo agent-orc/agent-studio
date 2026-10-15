@@ -775,6 +775,17 @@ builder.Services.AddSingleton<AgentStudio.Runner.IGateExecutorDirectory>(sp =>
 builder.Services.AddSingleton(sp => new AgentStudio.Runner.MonolithGateStore(
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>()));
+// AGT-3055: the batch suite is claimable gate work by default. Its subject
+// lives where runner gate claims land: the standalone Task Server when the
+// versioned plane is proxied, else the monolith gate store.
+// BatchGate:Execution=bridge keeps the SSH bridge as a rollback.
+AgentStudio.Pipeline.ClaimedBatchGateRunner.Mode(builder.Configuration);
+builder.Services.AddSingleton<AgentStudio.Pipeline.IBatchGateSubjectAuthority>(sp =>
+    TaskServerPlaneProxy.IsConfigured(sp.GetRequiredService<IConfiguration>())
+        ? new AgentStudio.Pipeline.TaskServerBatchGateSubjectAuthority(() => sp
+            .GetRequiredService<IHttpClientFactory>().CreateClient(TaskServerPlaneProxy.ClientName))
+        : new AgentStudio.Pipeline.MonolithBatchGateSubjectAuthority(
+            sp.GetRequiredService<AgentStudio.Runner.MonolithGateStore>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
