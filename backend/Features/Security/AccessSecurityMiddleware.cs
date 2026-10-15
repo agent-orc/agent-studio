@@ -228,6 +228,26 @@ public sealed class AccessSecurityMiddleware
             && path.StartsWith("/api/runner/artifacts", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Artifacts;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/completion", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsGet(method) && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase) && path.Contains("/files/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        return GateRunnerScope(method, path);
+    }
+
+    /// <summary>
+    /// Runner routes of claimable gate work on the monolith authority (AGT-3055):
+    /// a gate host claims, renews, advances, and reports a gate attempt with the
+    /// same scopes as a coding attempt. Subject creation and cancellation stay
+    /// authority-internal and have no route here.
+    /// </summary>
+    private static string? GateRunnerScope(string method, string path)
+    {
+        if (!path.StartsWith("/api/v1/gates/", StringComparison.OrdinalIgnoreCase)) return null;
+        if (HttpMethods.IsGet(method) && path.StartsWith("/api/v1/gates/subjects/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (!HttpMethods.IsPost(method)) return null;
+        if (path.Equals("/api/v1/gates/claims", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (!path.StartsWith("/api/v1/gates/attempts/", StringComparison.OrdinalIgnoreCase)) return null;
+        if (path.EndsWith("/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+        if (path.EndsWith("/phase", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith("/containment", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         return null;
     }
 

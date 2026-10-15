@@ -631,6 +631,52 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(1, _gate.BatchRuns);
     }
 
+    // AGT-3055 fix round: behind the Task Server proxy the engine claims
+    // occurrences at the Task Server, never in the monolith store. Engine
+    // ownership of BatchPlan is refused there and the monolith keeps deciding,
+    // so queued batches still close instead of waiting on an unclaimable occurrence.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Engine_owned_batch_plan_is_refused_behind_the_task_server_proxy(bool proxied)
+    {
+        var configuration = new Dictionary<string, string?>
+        {
+            ["Orchestration:Transitions:BatchPlan"] = "Engine",
+        };
+        if (proxied) configuration["TaskServer:BaseUrl"] = "http://127.0.0.1:5071";
+        using var factory = BuildFactory(configuration: configuration);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(
+                Enabled: true, Planner: "look-ahead", MinimumSize: 2,
+                MaximumSize: 2, DeadlineMinutes: 20));
+        SeedMember(factory, "DOC-PROXY-A", "docs/proxy-a.md");
+        SeedMember(factory, "DOC-PROXY-B", "docs/proxy-b.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        var occurrences = factory.Services.GetRequiredService<MonolithOrchestrationStore>()
+            .List(ProjectName, null).Where(run => run.CurrentStage == Contract.OrchestrationStage.BatchPlan).ToArray();
+        if (proxied)
+        {
+            Assert.Empty(occurrences);
+            AssertPhase(store, Assert.Single(store.ListManifests()).BatchId, BatchPhase.Published);
+            Assert.Equal(1, _gate.BatchRuns);
+            Assert.Contains("batch-plan-engine-ownership-refused", _errors.ToString(), StringComparison.Ordinal);
+        }
+        else
+        {
+            // Without the proxy the engine claims here; the tick only publishes the occurrence.
+            Assert.Equal("pending", Assert.Single(occurrences).Status);
+            Assert.Empty(store.ListManifests());
+            Assert.Equal(0, _gate.BatchRuns);
+        }
+    }
+
     [Fact]
     public async Task Batch_gate_emits_machine_slot_waiting_and_acquired_events()
     {
@@ -2737,7 +2783,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     // The host registers the attempt authority on the wall clock. A test that
     // follows review CreatedAt into upcoming ETAs needs it on the test clock,
     // or every ETA lies outside the look-ahead window of the fixed clock.
-    private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false)
+    private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false,
+        IReadOnlyDictionary<string, string?>? configuration = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -2751,7 +2798,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                     ["WatchPaths:0:RootPath"] = _repo,
                     ["WatchPaths:0:RepositoryPath"] = _repo,
                     ["ReviewDecisionOrchestrator:Enabled"] = "false",
-                }));
+                    // These tests drive the suite through the fake build/test gate runner.
+                    [ClaimedBatchGateRunner.ExecutionKey] = ClaimedBatchGateRunner.BridgeMode,
+                }).AddInMemoryCollection(configuration ?? new Dictionary<string, string?>()));
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<BatchGateStore>();

@@ -168,6 +168,19 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
 
     private static (OrchestrationAction Action, string OutputJson) DecideRolledBack(OrchestrationRunDto run)
     {
+        if (run.CurrentStage == OrchestrationStage.BatchPlan)
+        {
+            // Rollback decides without the advisor; the monolith owns the next plan anyway.
+            var facts = JsonSerializer.Deserialize<BatchPlanOccurrencePayload>(run.PayloadJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Facts;
+            var plan = BatchPlanDecisionPolicy.Decide(facts with { AdvisorMode = "off" }).Decision;
+            return (OrchestrationAction.Continue, JsonSerializer.Serialize(new
+            {
+                batchPlan = plan,
+                decision = BatchPlanDecisionPolicy.Signature(plan),
+                decider = $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}:monolith-rollback",
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        }
         using var payload = JsonDocument.Parse(run.PayloadJson);
         TransitionDecision transition;
         if (run.CurrentStage == OrchestrationStage.GateDispatch)

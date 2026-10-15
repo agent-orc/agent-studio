@@ -3245,7 +3245,7 @@ public static class V1ReviewPlaneEndpoints
             .ToLowerInvariant()[..24];
 }
 
-public sealed class V1ReviewExecutorRegistry
+public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
 {
     public event Action<string, DateTime>? CapabilitySnapshotAdvertised;
     /// <summary>Consecutive failures that turn a suspect capability into a drained one.</summary>
@@ -3304,12 +3304,17 @@ public sealed class V1ReviewExecutorRegistry
             capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor, StringComparer.Ordinal);
         var codingExecutor =
             capabilities.Contains(Contract.ReviewCapabilities.CodingExecutor, StringComparer.Ordinal);
-        if (reviewExecutor == codingExecutor)
+        // AGT-3055: gate executors claim batch suites on the monolith authority.
+        var gateExecutor =
+            capabilities.Contains(Contract.GateCapabilities.Executor, StringComparer.Ordinal);
+        if ((reviewExecutor ? 1 : 0) + (codingExecutor ? 1 : 0) + (gateExecutor ? 1 : 0) != 1)
             throw new InvalidOperationException(
-                "A runner identity must advertise exactly one coding or review executor role.");
+                "A runner identity must advertise exactly one coding, review, or gate executor role.");
         var activeAttempts = request.ActiveAttempts ?? [];
         if (activeAttempts.Count > 256)
             throw new ArgumentException("At most 256 active attempts may be reported during registration.");
+        if (gateExecutor && activeAttempts.Count > 0)
+            throw new ArgumentException("A gate runner reports its claim through gate containment, not registration.");
         var expectedAttemptKind = reviewExecutor
             ? Contract.RunnerAttemptKinds.Review
             : Contract.RunnerAttemptKinds.Coding;
@@ -3350,7 +3355,9 @@ public sealed class V1ReviewExecutorRegistry
                 {
                     var existingReview =
                         existing.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor);
-                    if (existingReview != reviewExecutor)
+                    var existingGate =
+                        existing.Capabilities.Contains(Contract.GateCapabilities.Executor);
+                    if (existingReview != reviewExecutor || existingGate != gateExecutor)
                         throw new InvalidOperationException(
                             "A coding or review identity cannot change its executor role.");
                     if (reviewExecutor
@@ -3963,6 +3970,35 @@ public sealed class V1ReviewExecutorRegistry
 
     private static bool IsRepositoryReadKey(string key)
         => key.StartsWith(Contract.ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Gate executor identity and its admitted capabilities: the registered
+    /// role keys plus every fresh, claimable advertised capability.
+    /// </summary>
+    public bool TryGetGateExecutor(string runnerId, string instanceId,
+        out string hostId, out IReadOnlySet<string> capabilities)
+    {
+        lock (_gate)
+        {
+            hostId = "";
+            capabilities = new HashSet<string>(StringComparer.Ordinal);
+            if (!_registrations.TryGetValue(runnerId, out var registration)
+                || registration.InstanceId != instanceId
+                || !registration.Capabilities.Contains(Contract.GateCapabilities.Executor))
+                return false;
+            var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
+            if (_capabilityStates.TryGetValue(runnerId, out var state) && state.InstanceId == instanceId)
+            {
+                var now = _time.GetUtcNow().UtcDateTime;
+                admitted.UnionWith(state.Capabilities
+                    .Where(item => item.FreshUntil > now && Claimable(item.AdvertisedStatus))
+                    .Select(item => item.Key));
+            }
+            hostId = registration.HostId;
+            capabilities = admitted;
+            return true;
+        }
+    }
 
     public IReadOnlySet<string> AdmittedReviewCapabilities(string runnerId, string instanceId)
     {

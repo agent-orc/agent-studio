@@ -1,11 +1,7 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 
-namespace AgentStudio.TaskServer.Contracts.BatchGate;
-
-public sealed record BatchAdvisorAnswer(
-    string Verdict, IReadOnlyList<string> Order,
-    IReadOnlyList<string> Subset, DateTimeOffset? HoldUntil,
-    IReadOnlyList<string> Reasons);
+namespace AgentStudio.OrchestrationDecisions;
 
 public static class BatchGateAdvisorPolicy
 {

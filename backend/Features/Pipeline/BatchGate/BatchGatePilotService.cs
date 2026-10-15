@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace AgentStudio.Pipeline;
 
 /// <summary>Project-scoped route from settled review to verified batch publication.</summary>
-public sealed class BatchGatePilotService
+public sealed partial class BatchGatePilotService
 {
     private readonly BatchGateStore _store;
     private readonly BatchGateLeaseService _leases;
@@ -433,27 +433,10 @@ public sealed class BatchGatePilotService
                         _store.HasCloseNow(first.Subject.Project),
                         _load?.Current.Throttle == false
                             && !AnyBatchRunning());
-                    var priorHold = _store.LatestPlanDecision(first.Subject.Project);
-                    var vetoHold = priorHold is
-                    {
-                        Decision: "wait", Advisor.Verdict: "veto", CloseAtUtc: not null,
-                    } && !_store.HasCloseNow(first.Subject.Project);
-                    var holdExpired = vetoHold
-                        && priorHold!.CloseAtUtc!.Value <= _time.GetUtcNow();
-                    var decision = BatchGateLookAheadPlanner.Plan(holdExpired
-                        ? snapshot with { CloseNow = true } : snapshot);
-                    if (vetoHold && !holdExpired)
-                        decision = decision with
-                        {
-                            Decision = "wait", Reason = priorHold!.Reason,
-                            CloseAtUtc = priorHold.CloseAtUtc,
-                            Advisor = priorHold.Advisor,
-                        };
-                    else if (_advisor is not null && !holdExpired
-                             && !_store.HasCloseNow(first.Subject.Project))
-                        decision = await _advisor.AdviseAsync(first.Subject.Project,
-                            _settings.Get(first.Subject.Project), snapshot, decision, ct)
-                            .ConfigureAwait(false);
+                    var decision = await PlanLookAheadAsync(first.Subject.Project,
+                        ScopeKey(group.Key), snapshot, ct).ConfigureAwait(false);
+                    // An engine-owned decision is pending; the scope waits for its intent.
+                    if (decision is null) continue;
                     _store.AppendPlanDecision(first.Subject.Project, decision);
                     if (decision.Decision is "close" or "per-task")
                         _store.ClearCloseNow(first.Subject.Project);
@@ -1526,16 +1509,26 @@ public sealed class BatchGatePilotService
     private BatchGateRunRecord NewRun(BatchGateManifest manifest, string sha,
         long fence, string repo, BuildProfile? profile)
     {
+        var commands = PlanCandidateCommands(repo, sha, profile)
+            .Select(command => command.Command).ToArray();
+        return new BatchGateRunRecord(
+            Guid.NewGuid().ToString("N"), manifest.BatchId,
+            manifest.MembershipDigest, manifest.BaseSha, sha,
+            manifest.Scope.GateProfile, manifest.Scope.GateProfileDigest,
+            Environment.MachineName, fence, commands, _time.GetUtcNow(),
+            Path.Combine(_store.BatchDirectory(manifest.BatchId), "gate-evidence.jsonl"));
+    }
+
+    private IReadOnlyList<VerifyCommand> PlanCandidateCommands(string repo, string sha, BuildProfile? profile)
+    {
         var inspection = Path.Combine(Path.GetTempPath(),
             "agentstudio-batch-plan-" + Guid.NewGuid().ToString("N"));
         var added = _git.WorktreeAddDetached(repo, inspection, sha);
         if (!added.Success)
             throw new IOException(added.Error ?? "Candidate command plan could not be materialized.");
-        string[] commands;
         try
         {
-            commands = VerifyCommandPlanner.Plan(inspection, profile).Commands
-                .Select(command => command.Command).ToArray();
+            return VerifyCommandPlanner.Plan(inspection, profile).Commands;
         }
         finally
         {
@@ -1543,12 +1536,6 @@ public sealed class BatchGatePilotService
             if (!removed.Success)
                 throw new IOException(removed.Error ?? "Candidate command-plan worktree cleanup failed.");
         }
-        return new BatchGateRunRecord(
-            Guid.NewGuid().ToString("N"), manifest.BatchId,
-            manifest.MembershipDigest, manifest.BaseSha, sha,
-            manifest.Scope.GateProfile, manifest.Scope.GateProfileDigest,
-            Environment.MachineName, fence, commands, _time.GetUtcNow(),
-            Path.Combine(_store.BatchDirectory(manifest.BatchId), "gate-evidence.jsonl"));
     }
 
     private async Task<BuildTestGateResult> RunGateAsync(BatchGateRunRecord run,
@@ -1561,7 +1548,11 @@ public sealed class BatchGatePilotService
                 reuseToken: run.BatchRunId, reason: $"batch:{run.BatchId}");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var project = _store.ReadManifest(run.BatchId).Scope.Project;
-        var gateTask = _gate.RunAsync(new BuildTestGateRequest(
+        var claimed = ClaimedBatchGateRunner.Enabled(_configuration)
+            ? _services?.GetService<ClaimedBatchGateRunner>() : null;
+        var gateTask = claimed is not null
+            ? RunClaimedGateAsync(claimed, run, repo, project, gated, linked.Token)
+            : _gate.RunAsync(new BuildTestGateRequest(
                 repo, run.CandidateSha, "batch-gate")
             {
                 Project = project,
@@ -1633,6 +1624,20 @@ public sealed class BatchGatePilotService
                 outcome: result.Verdict.ToString(), reuseToken: run.BatchRunId,
                 reason: $"batch:{run.BatchId}");
         return result;
+    }
+
+    /// <summary>The batch suite as a claimed gate attempt on a runner host (D16 A).</summary>
+    private async Task<BuildTestGateResult> RunClaimedGateAsync(ClaimedBatchGateRunner claimed,
+        BatchGateRunRecord run, string repo, string project,
+        IReadOnlyList<BatchGatePendingRecord>? gated, CancellationToken ct)
+    {
+        var settings = _settings.Get(project);
+        var verify = PlanCandidateCommands(repo, run.CandidateSha, settings.BuildProfile);
+        _activeBatchGates[run.BatchRunId] = project;
+        foreach (var member in gated ?? [])
+            Lane(member, "gate-token-acquired", level: TestExecutionLevels.Full);
+        return await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
+            TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
     }
 
     private BatchGateRunVerdict RecordVerdict(BatchGateRunRecord run,
