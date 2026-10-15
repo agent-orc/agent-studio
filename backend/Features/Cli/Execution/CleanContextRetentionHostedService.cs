@@ -1,4 +1,5 @@
 using AgentStudio.CliHosting;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Cli;
 
@@ -13,6 +14,11 @@ public sealed class CleanContextRetentionHostedService : BackgroundService
 
     private readonly IConfiguration _configuration;
     private readonly ILogger<CleanContextRetentionHostedService> _logger;
+    private bool _decisionPending;
+    private string _resumeToken = string.Empty;
+    private int _failedSweeps;
+
+    internal bool DecisionPending => _decisionPending;
 
     public CleanContextRetentionHostedService(
         IConfiguration configuration,
@@ -80,14 +86,36 @@ public sealed class CleanContextRetentionHostedService : BackgroundService
         return TimeSpan.FromHours(hours);
     }
 
-    private void SweepSafely()
+    internal void SweepSafely()
     {
+        var engineMode = MonolithTransitionSwitch.For(_configuration,
+            ReviewInputDecisionGateway.Transition) == OrchestrationExecutionMode.Engine;
+        var resumeToken = _configuration["CleanContext:ResumeSignal"] ?? string.Empty;
+        if (!engineMode || !string.Equals(resumeToken, _resumeToken, StringComparison.Ordinal))
+        {
+            _decisionPending = false;
+            _failedSweeps = 0;
+            _resumeToken = resumeToken;
+        }
+        if (_decisionPending) return;
         try
         {
             RunOnce();
+            _failedSweeps = 0;
         }
         catch (Exception ex)
         {
+            if (engineMode && MonolithTransitionAdapter.LoopSignal(
+                "clean-context.retention-sweep", ++_failedSweeps, 1,
+                "per-host-sweep", resumeToken.Length == 0 ? "initial" : resumeToken,
+                ["defer next sweep", "ask"]) is { } signal)
+            {
+                _decisionPending = true;
+                _logger.LogWarning(ex,
+                    "Clean-context retention raised {Signal} and is held until operator resume token changes",
+                    signal.Name);
+                return;
+            }
             _logger.LogWarning(ex, "Clean-context retention sweep failed; the next bounded tick will retry");
         }
     }
