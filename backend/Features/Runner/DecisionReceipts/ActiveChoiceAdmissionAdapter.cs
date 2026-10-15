@@ -86,7 +86,7 @@ public sealed class ActiveChoiceAdmissionAdapter(
                     || subject.TryGetProperty("ResultSha", out subjectSha))
                 || subjectSha.GetString() != expectedSha))
             throw new InvalidOperationException("decision-review-subject-mismatch");
-        var expectedTransition = ActiveDecisionPolicy.CodingTransition(choice, taskKey,
+        var expectedTransition = MonolithTransitionAdapter.ActiveCodingTransition(choice, taskKey,
             occurrence.AuthorityAttemptId);
         var expectedStageAction = expectedTransition is null ? OrchestrationAction.Continue
             : StageDecisionPolicy.ToStageAction(expectedTransition.Action);
