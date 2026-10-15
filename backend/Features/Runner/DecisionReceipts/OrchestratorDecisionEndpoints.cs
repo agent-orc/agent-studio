@@ -157,7 +157,8 @@ public static class OrchestratorDecisionEndpoints
         {
             var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? human.User.Username : context.User.Identity?.Name ?? "Human Operator";
-            intent = store.PutOperatorIntent(receiptId, request, actor);
+            intent = store.PutOperatorIntent(receiptId, request, actor,
+                configuration.GetValue("Runner:RunTimeoutSeconds", 3600));
             if (intent.AppliedAt is not null) return Wire(intent);
             if (intent.Action is "raise" or "cut")
                 return Wire(store.ApplyRunLimit(receiptId,
