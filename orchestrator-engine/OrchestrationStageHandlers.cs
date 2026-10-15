@@ -341,3 +341,32 @@ public sealed class AiOperatorDecisionLoop : IOrchestrationStageHandler
             })));
     }
 }
+
+/// <summary>Runs the same bounded model job used by the active decision profile.</summary>
+public sealed class ReviewInputDecisionLoop(ShadowDecisionStep step) : IOrchestrationStageHandler
+{
+    public OrchestrationStage Stage => OrchestrationStage.ReviewInputDecision;
+
+    public async Task<OrchestrationStageDecision> ExecuteAsync(OrchestrationRunDto run,
+        CancellationToken ct)
+    {
+        var receipt = await step.RecordAsync(run.RunId, ct, DecisionReceiptPolicy.ActiveMode)
+            ?? throw new InvalidDataException("Review decision grounds are missing.");
+        var choice = receipt.Chosen.Last(item => !item.Outcome.StartsWith("rejected:",
+            StringComparison.Ordinal));
+        var action = choice.Action switch
+        {
+            DecisionActionKinds.Retry => OrchestrationAction.Reissue,
+            DecisionActionKinds.Ask => OrchestrationAction.Escalate,
+            _ => OrchestrationAction.Continue,
+        };
+        return new OrchestrationStageDecision(action, JsonSerializer.Serialize(new
+        {
+            component = nameof(ReviewInputDecisionLoop),
+            activeChoice = choice,
+            receiptId = receipt.ReceiptId,
+            groundsDigest = receipt.GroundsDigest,
+            decider = $"orchestration-decisions:{EngineVersion.DecisionLibraryVersion}:review-input",
+        }));
+    }
+}

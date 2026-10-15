@@ -294,7 +294,7 @@ public sealed class PostAbortReviewStepService
         }
     }
 
-    private static PostAbortReviewRequest BoundEvidence(PostAbortReviewRequest request)
+    internal static PostAbortReviewRequest BoundEvidence(PostAbortReviewRequest request)
     {
         var omitted = new List<string>(request.Omissions);
         if (request.CliOutputTail.Contains("[omitted: oversize]", StringComparison.Ordinal))

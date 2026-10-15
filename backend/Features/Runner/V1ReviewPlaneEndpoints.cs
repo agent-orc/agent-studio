@@ -734,6 +734,7 @@ public static class V1ReviewPlaneEndpoints
             IRemoteReviewEvidenceProjectionQueue evidenceQueue,
             AgentStudio.Review.ReviewProjectionService projections,
             MonolithOrchestrationStore orchestration,
+            ReviewInputDecisionGateway reviewInputDecisions,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -1954,6 +1955,31 @@ public static class V1ReviewPlaneEndpoints
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
                         integrationParkReason = RemoteDeliveryParkReason.For(integrated);
+                        if (reviewInputDecisions.EngineDecides
+                            && integrated.AutomaticRecoveryBudgetUsed is { } used
+                            && integrated.AutomaticRecoveryBudgetLimit is { } limit
+                            && MonolithTransitionAdapter.LoopSignal(
+                                "integration.attribution-agent-round", used, limit,
+                                "per-delivery-chain", attemptId,
+                                ["retry", "prepare conflict resolution", "ask"]) is { } signal)
+                        {
+                            var summary = JsonSerializer.Serialize(new
+                            {
+                                integrated.Outcome,
+                                integrated.Error,
+                                integrated.ConflictedFiles,
+                                used,
+                                limit,
+                            });
+                            var digest = "sha256:" + Convert.ToHexStringLower(
+                                SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                            var pending = reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                                "loop-exhaustion", task.ProjectName, task.Id, task.State,
+                                $"integration-attribution:{attemptId}", summary, digest, [], attemptId,
+                                request.Fence, request.AuthorityEpoch, signal));
+                            EngineDecisionWaitMarker.Write(task.FolderPath, pending.RunId);
+                            integrationParkReason = $"Waiting for engine decision {pending.RunId}.";
+                        }
                     }
                     else
                     {
@@ -1970,7 +1996,10 @@ public static class V1ReviewPlaneEndpoints
                         logger);
                 }
 
-                if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
+                    && !(EngineDecisionWaitMarker.Read(task.FolderPath) is { } waitingRunId
+                        && orchestration.GetOccurrence(waitingRunId)?.Run.CurrentStage
+                            == Contract.OrchestrationStage.ReviewInputDecision))
                 {
                     if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId
                         != attemptId)

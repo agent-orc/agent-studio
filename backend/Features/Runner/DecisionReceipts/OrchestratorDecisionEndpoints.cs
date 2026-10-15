@@ -70,6 +70,14 @@ public static class OrchestratorDecisionEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         var studio = app.MapGroup("/api/orchestration/decision-receipts");
+        app.MapGet("/api/orchestration/review-inputs/{runId}", (HttpContext context,
+            string runId, MonolithOrchestrationStore orchestration, ProjectRegistry projects) =>
+        {
+            var occurrence = orchestration.GetOccurrence(runId);
+            return occurrence is { Run.CurrentStage: OrchestrationStage.ReviewInputDecision }
+                && AllowsProject(context, occurrence.Run.ProjectId, projects)
+                ? Wire(occurrence.Run) : Results.NotFound();
+        });
         studio.MapGet("", (HttpContext context, string? taskId, string? projectId, int? limit,
             OrchestratorDecisionStore store, ProjectRegistry projects) =>
             Wire(store.ListReceipts(string.IsNullOrWhiteSpace(taskId) ? null : taskId, limit ?? 20,

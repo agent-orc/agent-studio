@@ -64,6 +64,11 @@ public sealed class MonolithOrchestrationApplier(
             await ApplyOperatorDecisionAsync(occurrence, completion, ct);
             return;
         }
+        if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
+        {
+            await ApplyReviewInputDecisionAsync(occurrence, completion, ct);
+            return;
+        }
         var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
             candidate.ProjectName == occurrence.Run.ProjectId
             && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
@@ -170,10 +175,45 @@ public sealed class MonolithOrchestrationApplier(
                 < RemoteDeliverySettlementStage.IntegrationSettled)
             {
                 var result = await integration.EnqueueAsync(request);
+                var reviewInputs = services.GetRequiredService<ReviewInputDecisionGateway>();
+                if (reviewInputs.EngineDecides
+                    && result.AutomaticRecoveryBudgetUsed is { } used
+                    && result.AutomaticRecoveryBudgetLimit is { } limit
+                    && MonolithTransitionAdapter.LoopSignal(
+                        "integration.attribution-agent-round", used, limit,
+                        "per-delivery-chain", review.AttemptId,
+                        ["retry", "prepare conflict resolution", "ask"]) is { } signal)
+                {
+                    var summary = JsonSerializer.Serialize(new
+                    {
+                        result.Outcome,
+                        result.Error,
+                        result.ConflictedFiles,
+                        used,
+                        limit,
+                    });
+                    var digest = "sha256:" + Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(summary)));
+                    var pending = reviewInputs.Submit(new ReviewInputDecisionRequest(
+                        "loop-exhaustion", task.ProjectName, task.Id, task.State,
+                        $"integration-attribution:{review.AttemptId}", summary, digest, [],
+                        review.AttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch,
+                        signal));
+                    EngineDecisionWaitMarker.Write(task.FolderPath, pending.RunId);
+                }
                 RemoteDeliverySettlementStore.Advance(task.FolderPath,
                     RemoteDeliverySettlementStage.IntegrationSettled,
                     result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
             }
+        }
+        if (EngineDecisionWaitMarker.Read(task.FolderPath) is { } waitingRunId
+            && services.GetRequiredService<MonolithOrchestrationStore>()
+                .GetOccurrence(waitingRunId)?.Run.CurrentStage
+                == OrchestrationStage.ReviewInputDecision)
+        {
+            scanner.InvalidateCache();
+            return;
         }
         if (decision?.Action == TransitionAction.DeferToBatch)
         {
@@ -440,6 +480,111 @@ public sealed class MonolithOrchestrationApplier(
             occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch), ct);
         RecordOperatorDecision(occurrence, decision, decision.Disposition == AiOperatorDisposition.Ask
             ? "AI Operator asked a person" : "AI Operator applied");
+    }
+
+    private async Task ApplyReviewInputDecisionAsync(MonolithOrchestrationOccurrence occurrence,
+        CompleteOrchestrationStageRequest completion, CancellationToken ct)
+    {
+        var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
+            candidate.ProjectName == occurrence.Run.ProjectId
+            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId))
+            ?? throw new KeyNotFoundException("Review decision card was not found.");
+        using var output = JsonDocument.Parse(completion.OutputJson);
+        var root = output.RootElement;
+        var decisions = services.GetRequiredService<OrchestratorDecisionStore>();
+        var receiptId = root.GetProperty("receiptId").GetString()!;
+        var receipt = decisions.GetReceipt(receiptId)
+            ?? throw new InvalidOperationException("review-decision-receipt-missing");
+        var input = decisions.GetInputs(occurrence.Run.RunId)
+            ?? throw new InvalidOperationException("review-decision-grounds-missing");
+        if (receipt.OccurrenceId != occurrence.Run.RunId
+            || receipt.Mode != DecisionReceiptPolicy.ActiveMode
+            || receipt.GroundsDigest != root.GetProperty("groundsDigest").GetString()
+            || DecisionGroundsPolicy.Freeze(input.Grounds).ContentDigest != receipt.GroundsDigest
+            || !DecisionGroundsPolicy.IsIntact(receipt.Grounds))
+            throw new InvalidOperationException("review-decision-receipt-mismatch");
+        var choice = root.GetProperty("activeChoice").Deserialize<DecisionChoiceV1>(Json)
+            ?? throw new InvalidDataException("Review decision choice is missing.");
+        var expectedAction = choice.Action switch
+        {
+            DecisionActionKinds.Retry => OrchestrationAction.Reissue,
+            DecisionActionKinds.Ask => OrchestrationAction.Escalate,
+            _ => OrchestrationAction.Continue,
+        };
+        if (completion.Action != expectedAction)
+            throw new InvalidOperationException("review-decision-stage-action-mismatch");
+        var recorded = receipt.Chosen.LastOrDefault(item => !item.Outcome.StartsWith("rejected:",
+            StringComparison.Ordinal));
+        if (recorded?.Action != choice.Action || recorded.Target != choice.Target
+            || receipt.Grounds.Alternatives.SingleOrDefault(item => item.Action == choice.Action
+                && item.Target == choice.Target) is not { Available: true, RequiredApproval: "A0" or "A1" })
+            throw new InvalidOperationException("review-decision-choice-not-admitted");
+        var payload = JsonSerializer.Deserialize<ReviewInputDecisionRequest>(
+            occurrence.Run.PayloadJson, Json)
+            ?? throw new InvalidDataException("Review decision input is missing.");
+        var target = choice.Action == DecisionActionKinds.Retry
+            ? TaskStates.Ready : payload.Kind == "needs-input"
+                ? TaskStates.HumanReview : TaskStates.AutoReview;
+        if (choice.Action is DecisionActionKinds.Retry or DecisionActionKinds.Continue
+            && task.State == target)
+        {
+            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+            return;
+        }
+        if (task.State != occurrence.ExpectedSourceState)
+            throw new InvalidOperationException("review-decision-source-state-mismatch");
+        if (receipt.Call.Status == DecisionCallStatuses.Completed)
+        {
+            var parsed = DecisionReceiptPolicy.Parse(receipt.ResponseContent, receipt.Grounds);
+            if (!parsed.Valid || parsed.Chosen.Count != 1
+                || parsed.Chosen[0].Action != choice.Action || parsed.Chosen[0].Target != choice.Target)
+                throw new InvalidOperationException("review-decision-response-mismatch");
+        }
+        else if (choice is not { Action: DecisionActionKinds.Ask, Target: "operator:ai" })
+            throw new InvalidOperationException("review-decision-degraded-must-ask");
+
+        if (choice.Action == DecisionActionKinds.Ask)
+        {
+            aiOperator.Enqueue(task, occurrence.Run.RunId, choice);
+            scanner.InvalidateCache();
+            return;
+        }
+        if (choice.Action == DecisionActionKinds.Observe)
+        {
+            var topic = "review-observation:" + occurrence.Run.RunId;
+            if (!operatorLog.Read(task.WatchPath).Any(entry => entry.Topic == topic))
+                operatorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                {
+                    Kind = OrchestratorLogKinds.Decision,
+                    Topic = topic,
+                    JobId = task.Id,
+                    Summary = receipt.Reasoning ?? "The engine observed the bounded review state.",
+                    Reasoning = receipt.Uncertainty,
+                });
+            EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+            return;
+        }
+        if (choice.Action == DecisionActionKinds.Retry)
+        {
+            var reason = receipt.Reasoning ?? "The engine selected another bounded attempt.";
+            var saved = mutations.SavePendingIntent(task.Id, ContinueModes.Steer,
+                "Engine review decision: " + reason,
+                reason: "engine-review-decision", activeJobId: null, watchPath: task.WatchPath);
+            if (saved is null)
+                throw new InvalidOperationException("review-decision-intent-not-saved");
+        }
+        var writeKey = $"engine-review:{occurrence.Run.RunId}:{completion.IdempotencyKey}";
+        var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
+            cause: "engine-review-decision", reason: receipt.Reasoning ?? choice.Action,
+            authorityWrite: occurrence.AuthorityFence > 0
+                ? new AttemptWriteReference(occurrence.AuthorityAttemptId,
+                    occurrence.AuthorityFence, occurrence.AuthorityEpoch, writeKey) : null,
+            suppressProductExecution: true,
+            expectedSourceState: occurrence.ExpectedSourceState);
+        if (move.Status != MoveJobStatus.Success)
+            throw new InvalidOperationException($"review-decision-move-{move.Status}");
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+        scanner.InvalidateCache();
     }
 
     private void RecordOperatorDecision(MonolithOrchestrationOccurrence occurrence,

@@ -41,6 +41,7 @@ builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
+builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
 builder.Services.AddSingleton<IAiOperatorDecisionQueue, AiOperatorDecisionQueue>();
 builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();

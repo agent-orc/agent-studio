@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Supervisor;
 
@@ -27,6 +30,8 @@ public sealed class SoftReasoningHostedService : BackgroundService
     private readonly AgentMessageBusBridge? _bus;
     private readonly AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
+    private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
+    private readonly TimeProvider _time;
 
     private readonly Queue<DateTime> _callTimestamps = new();
 
@@ -38,7 +43,9 @@ public sealed class SoftReasoningHostedService : BackgroundService
         ILogger<SoftReasoningHostedService> logger,
         AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? usage = null,
-        AgentStudio.Cli.CliOneShotRegistry? oneShotRegistry = null)
+        AgentStudio.Cli.CliOneShotRegistry? oneShotRegistry = null,
+        ReviewInputDecisionGateway? reviewInputDecisions = null,
+        TimeProvider? time = null)
     {
         _taskRunner = taskRunner;
         _observe = observe;
@@ -48,6 +55,8 @@ public sealed class SoftReasoningHostedService : BackgroundService
         _bus = bus;
         _usage = usage;
         _oneShotRegistry = oneShotRegistry;
+        _reviewInputDecisions = reviewInputDecisions;
+        _time = time ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -101,6 +110,26 @@ public sealed class SoftReasoningHostedService : BackgroundService
             {
                 var observation = await _observe.ObserveAsync(project, ct);
                 if (string.IsNullOrEmpty(observation.CurrentJobId)) continue; // nothing to reason about while idle
+                if (_reviewInputDecisions?.EngineDecides == true)
+                {
+                    var summary = JsonSerializer.Serialize(new
+                    {
+                        observation.RunnerStatus,
+                        observation.CurrentRunState,
+                        observation.LastProgressAt,
+                        observation.ErrorCounts,
+                        decisions = observation.RecentDecisions.TakeLast(8),
+                        observation.Omissions,
+                    });
+                    var digest = "sha256:" + Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                    _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                        "supervision", project, observation.CurrentJobId, TaskStates.Progress,
+                        $"{observation.CurrentJobId}:{_time.GetUtcNow():yyyyMMddHHmm}", summary, digest,
+                        observation.Omissions.Select(reason => new GroundsOmissionV1("supervision", reason)).ToArray(),
+                        observation.CurrentJobId));
+                    continue;
+                }
                 var prompt = BuildPrompt(project, observation);
                 var sw = AdHocClaudeInvoker.StartTiming();
                 var rawOutput = await InvokeCliAsync(cliBinary, model, prompt, TimeSpan.FromSeconds(120), ct);
