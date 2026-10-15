@@ -19,8 +19,9 @@ publish_root="$probe_root/publish"
 release_root="$probe_root/release"
 frontend_root="$probe_root/frontend/browser"
 version="$(tr -d '\r\n' <"$repo_root/VERSION")"
-git_sha="$(git -C "$repo_root" rev-parse HEAD)"
+git_sha="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
 port=""
+candidate_dir="${SETUP_E2E_RELEASE_DIR:-}"
 
 cleanup() {
   if [[ -d "$runtime_root" ]]; then
@@ -59,6 +60,29 @@ common=(
 )
 
 mkdir -p "$publish_root" "$frontend_root" "$runtime_root"
+if [[ -n "$candidate_dir" ]]; then
+  candidate_dir="$(realpath "$candidate_dir")"
+  [[ -f "$candidate_dir/SHA256SUMS" && -x "$candidate_dir/agent-studio-setup" ]] || {
+    echo "Candidate directory needs SHA256SUMS and executable agent-studio-setup: $candidate_dir" >&2
+    exit 2
+  }
+  (cd "$candidate_dir" && sha256sum -c SHA256SUMS >/dev/null)
+  release_root="$candidate_dir"
+  version="$($release_root/agent-studio-setup --version | awk '{print $2}')"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "Candidate setup has no valid version." >&2
+    exit 2
+  }
+  candidate_archive="$release_root/agent-orchestrator-$version-linux-x64.tar.gz"
+  [[ -f "$candidate_archive" ]] || { echo "Candidate authority archive is missing." >&2; exit 2; }
+  candidate_sha="$(tar -xOzf "$candidate_archive" "agent-orchestrator-$version-linux-x64/RELEASE-SHA" | tr -d '\r\n')"
+  [[ "$candidate_sha" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Candidate revision is invalid." >&2; exit 2; }
+  if [[ -n "${GITHUB_SHA:-}" && "$candidate_sha" != "$GITHUB_SHA" ]]; then
+    echo "Candidate revision does not match the checked-out workflow revision." >&2
+    exit 2
+  fi
+  git_sha="$candidate_sha"
+else
 dotnet publish "$repo_root/task-server/TaskServer.csproj" "${common[@]}" \
   --runtime linux-x64 --output "$publish_root/task-server"
 dotnet publish "$repo_root/orchestrator-engine/OrchestratorEngine.csproj" "${common[@]}" \
@@ -73,6 +97,7 @@ dotnet publish "$repo_root/setup/AgentOrchestratorSetup.csproj" "${common[@]}" \
 printf '<!doctype html><title>Setup E2E fixture</title>\n' >"$frontend_root/index.html"
 SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
   "$version" "$git_sha" "$publish_root" "$frontend_root" "$release_root"
+fi
 
 fake_systemctl="$probe_root/systemctl"
 cat >"$fake_systemctl" <<'SYSTEMCTL'
@@ -157,6 +182,60 @@ esac
 SYSTEMCTL
 chmod 0755 "$fake_systemctl"
 
+# The host enrollment sees a provider login owned by the execution user. CI
+# never uses a real provider session for this installation probe.
+mkdir -p "$probe_root/bin"
+cat >"$probe_root/bin/codex" <<'CODEX'
+#!/usr/bin/env sh
+case "$*" in
+  --version) printf 'codex-scenario 1.0\n' ;;
+  'login status') printf 'Scenario login active\n' ;;
+  *) exit 2 ;;
+esac
+CODEX
+chmod 0755 "$probe_root/bin/codex"
+export PATH="$probe_root/bin:$PATH"
+if [[ -z "${SCENARIO_GIT_REMOTE:-}" ]]; then
+  [[ -x "$(git --exec-path)/git-daemon" ]] || {
+    echo "Install git-daemon to run the local scratch repository scenario." >&2
+    exit 2
+  }
+  mkdir -p "$probe_root/git"
+  git init --bare --initial-branch=main "$probe_root/git/scenario.git" >/dev/null
+  git -C "$probe_root/git/scenario.git" config daemon.receivepack true
+  git -C "$probe_root/git/scenario.git" config receive.denyDeleteCurrent ignore
+  mkdir -p "$probe_root/seed"
+  git -C "$probe_root/seed" init --initial-branch=main >/dev/null
+  printf 'Scenario scratch repository\n' >"$probe_root/seed/README.md"
+  git -C "$probe_root/seed" add README.md
+  git -C "$probe_root/seed" -c user.name=Scenario -c user.email=scenario@localhost commit -qm seed
+  git -C "$probe_root/seed" remote add origin "$probe_root/git/scenario.git"
+  git -C "$probe_root/seed" push -q origin main
+  git_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  git daemon --reuseaddr --listen=127.0.0.1 --port="$git_port" \
+    --base-path="$probe_root/git" --export-all --enable=receive-pack \
+    "$probe_root/git" >"$runtime_root/git-daemon.log" 2>&1 &
+  echo "$!" >"$runtime_root/git-daemon.pid"
+  export SCENARIO_GIT_REMOTE="git://127.0.0.1:$git_port/scenario.git"
+  for attempt in $(seq 1 30); do
+    if git ls-remote "$SCENARIO_GIT_REMOTE" HEAD >/dev/null 2>&1; then break; fi
+    if [[ "$attempt" == 30 ]]; then echo "Local scratch Git daemon did not start." >&2; exit 4; fi
+    sleep 1
+  done
+fi
+if [[ -n "${INSTALL_SCENARIO_DEPLOY_KEY:-}" ]]; then
+  [[ -n "${INSTALL_SCENARIO_KNOWN_HOSTS:-}" ]] || {
+    echo "INSTALL_SCENARIO_KNOWN_HOSTS is required with a deploy key." >&2
+    exit 2
+  }
+  printf '%s\n' "$INSTALL_SCENARIO_DEPLOY_KEY" >"$probe_root/deploy-key"
+  chmod 0600 "$probe_root/deploy-key"
+  printf '%s\n' "$INSTALL_SCENARIO_KNOWN_HOSTS" >"$probe_root/known-hosts"
+  chmod 0600 "$probe_root/known-hosts"
+  export GIT_SSH_COMMAND="ssh -i $probe_root/deploy-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$probe_root/known-hosts"
+  unset INSTALL_SCENARIO_DEPLOY_KEY INSTALL_SCENARIO_KNOWN_HOSTS
+fi
+
 orchestrator_opt="$probe_root/opt/orchestrator"
 orchestrator_config="$probe_root/etc/orchestrator"
 orchestrator_state="$probe_root/var/orchestrator"
@@ -209,14 +288,34 @@ rm -f -- "$control_output"
   --execution-user "$(id -un)" \
   --agent-cli codex \
   --runner-name agent-runner-01-e2e \
-  --git-remote https://github.com/agent-orc/agent-studio.git \
+  --git-remote "$SCENARIO_GIT_REMOTE" \
   --non-interactive \
   >"$runtime_root/host-setup.log"
 rm -f -- "$join_file"
-grep -Fq 'registered as agent-runner-01-e2e (' "$runtime_root/host-setup.log"
-grep -Eq 'ready-no-workflow-scope|read-only|ready' "$runtime_root/host-setup.log"
+if ! grep -Eq 'registered as agent-runner-01-e2e \((ready|ready-no-workflow-scope)\)' "$runtime_root/host-setup.log"; then
+    python3 - "$runtime_root/host-setup.log" "$runtime_root/agent-host.log" <<'PY' >&2
+import pathlib
+import re
+import sys
+for name in sys.argv[1:]:
+    for line in pathlib.Path(name).read_text(errors="replace").splitlines():
+        if "git" not in line.lower() and "read-only" not in line.lower():
+            continue
+        line = re.sub(r"(?i)\b[0-9a-f]{64}\b", "[redacted]", line)
+        line = re.sub(r"aosj1[.][A-Za-z0-9._-]+", "[redacted]", line)
+        print(line[:300])
+PY
+  echo "The scratch repository did not provide Git write access." >&2
+  exit 4
+fi
 
 curl -fsS "$base_url/readyz" >"$runtime_root/ready.json"
+python3 "$repo_root/scripts/release/installation-first-use.py" \
+  --server-url "$base_url" \
+  --studio-token-file "$orchestrator_config/studio.token" \
+  --owner-code-file "$orchestrator_config/owner_bootstrap_code" \
+  --repository-url "$SCENARIO_GIT_REMOTE" \
+  >"$runtime_root/first-use.log"
 token="$(sed -n '1p' "$orchestrator_config/studio.token")"
 remote_hosts="$(
   curl -fsS \
@@ -247,21 +346,22 @@ cat >"$report_path" <<REPORT
 - Worktree: active task source, including current task changes
 - Release version under test: $version
 - Setup artifact: self-contained Linux x64 ELF, published as a single file
-- Release input: real Task Server, Orchestrator Engine, Agent Host, and setup publishes; static Studio fixture
+- Release input: ${candidate_dir:-local publishes with a static Studio fixture}
 
 ## Result
 
 PASS
 
-1. The release packager produced one setup executable, three archives, and one SHA256SUMS file.
+1. The release directory contained one setup executable, four archives, and one SHA256SUMS file.
 2. Every release asset passed SHA-256 verification before extraction.
 3. The setup executable installed the Control Plane into isolated native paths and /readyz reported ready.
 4. The setup executable installed the matching Studio static tree.
 5. The Control Plane emitted an aosj1 join token. The probe transferred it only through a mode-0600 temporary file and did not retain the token.
-6. The same setup executable consumed the join token, verified the host-owned Codex login and Git read access, installed agent-host, and started it through the isolated systemctl fixture.
-7. Setup waited for and explained the daemon's ready, ready-no-workflow-scope, or read-only startup capability result.
-8. The real Task Server management API reported runnerId agent-runner-01-e2e.
-9. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
+6. The same setup executable consumed the join token, verified a fake host-owned Codex login and Git read access, installed agent-host, and started it through the isolated systemctl fixture.
+7. Setup waited for the daemon's startup capability result and required Git write access to the scratch repository.
+8. The owner bootstrap API accepted the installer-generated one-time code, and the owner registered the scratch repository as a project.
+9. The real Task Server management API reported runnerId agent-runner-01-e2e.
+10. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
 
 ## Isolation
 

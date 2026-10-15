@@ -94,7 +94,12 @@ its recovery action; for example `wsl --install`, `wg-quick up wg0`, the
 private CA certificate, or `chmod 600` for a token file. Checks that the
 journey does not need report `n/a`. Docker and Compose are required only for
 `--target docker`; a Windows connector does not require Hyper-V or 20 GiB
-of repository space.
+of repository space. One-box and join-host preflight checks `git --version`
+and names the Git installation step when Git is unavailable.
+For a fresh one-box Docker install, setup checks the selected browser port
+before it changes services and suggests `--ui-port` if another process owns it.
+The [installation scenario harness](../testing/installation-scenarios.md)
+records release and nightly candidate checks and their current proof limits.
 
 Preflight probes the existing authority that the run will contact. A
 `join-host` run decodes its join token first and probes the authority URL in
@@ -152,7 +157,10 @@ After a one-box install, bootstrap the first human session, register the
 canonical Git project origin, and enrol the first runner with finite coding
 and review budgets. Until acceptance passes, a one-box `installation.json` has
 phase `awaiting-acceptance`; service health alone does not change it to
-`complete`. Then run acceptance on the authority host:
+`complete`. Native Linux setup writes the one-time owner code to
+`<orchestrator-config-root>/owner_bootstrap_code`; read it as the installation
+administrator for the first owner form. Then run acceptance on the authority
+host:
 
 ```bash
 export AGENT_ORCHESTRATOR_CANARY_COMMAND='/path/to/detached-canary'
