@@ -365,7 +365,8 @@ public sealed class BatchGatePilotService
                              && !FallbackInFlight(item.ReviewAttemptId)).ToArray())
             {
                 ct.ThrowIfCancellationRequested();
-                ScheduleFallback(item, ct);
+                ScheduleFallback(item, ct, containedInSha: PublishedIn(item, fetchedBases, ct,
+                    gateInterrupted: true));
             }
             // A newer passed review of the same task supersedes any older
             // pending record. Left in the queue, the older record would share
@@ -397,7 +398,8 @@ public sealed class BatchGatePilotService
                     _store.ClearCloseNow(first.Subject.Project);
                     foreach (var item in group)
                         if (PrepareDisabledFallback(item))
-                            ScheduleFallback(item, ct);
+                            ScheduleFallback(item, ct,
+                                containedInSha: PublishedIn(Refresh(item), fetchedBases, ct));
                     continue;
                 }
                 var scope = Scope(first.Subject);
@@ -754,6 +756,26 @@ public sealed class BatchGatePilotService
                 if (!ejectedOnly || _store.HasEject(item.Subject.Project, item.Subject.TaskKey))
                     ScheduleFallback(item, ct, clearEject: ejectedOnly);
         }
+    }
+
+    /// <summary>
+    /// AGT-3139: the branch tip that already carries the member's result, by
+    /// ancestry or as a patch equivalent publication under another SHA. A
+    /// fallback handed this SHA leaves through its containment record instead
+    /// of a gate and the per-task coordinator.
+    /// </summary>
+    private string? PublishedIn(BatchGatePendingRecord pending,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct, bool gateInterrupted = false)
+    {
+        string? baseSha = null;
+        return BatchGatePolicy.LeavesAsIntegrated(pending.Subject, resultSha =>
+                (baseSha = FetchBaseOnce(fetchedBases, pending.RepositoryPath,
+                    pending.Subject.IntegrationBranch, ct)) is not null
+                && _git.IsDeliveryPublished(pending.RepositoryPath, resultSha, baseSha),
+            gateInterrupted)
+            ? baseSha
+            : null;
     }
 
     private bool HeldOnRedBase(BatchGatePendingRecord pending)
