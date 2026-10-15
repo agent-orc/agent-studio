@@ -2,6 +2,7 @@ using Xunit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -14,10 +15,20 @@ public sealed class OrchestrationExecutionModeTests
             OrchestrationExecutionModeParser.Parse(null));
 
     [Fact]
-    public void Engine_mode_disables_monolith_loop_ownership()
+    public void Engine_profile_value_parses()
         => Assert.Equal(
             OrchestrationExecutionMode.Engine,
             OrchestrationExecutionModeParser.Parse("engine"));
+
+    [Fact]
+    public void Global_mode_does_not_select_any_transition_profile()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Orchestration:ExecutionMode"] = "Engine" }).Build();
+        Assert.All(OrchestrationRolloutStore.Profiles, profile =>
+            Assert.Equal(OrchestrationExecutionMode.Monolith,
+                MonolithTransitionSwitch.For(configuration, profile)));
+    }
 
     [Fact]
     public void Ambiguous_mode_fails_closed()
@@ -38,6 +49,26 @@ public sealed class OrchestrationExecutionModeTests
             MonolithTransitionSwitch.For(configuration, "GateResult"));
     }
 
+    [Theory]
+    [InlineData("OrchestratorPrepHostedService", "OrchestratorPrepRules.Decide(")]
+    [InlineData("MetaCycleHostedService", "MetaCycleRules.BuildReport(")]
+    [InlineData("AutoInterventionHostedService", "AutoInterventionMapping.MapAdvisory(")]
+    public void Engine_mode_keeps_supervisor_decider_on_its_monolith_path(
+        string service, string decisionCall)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Orchestration:ExecutionMode"] = "Engine" }).Build();
+        Assert.Equal(OrchestrationExecutionMode.Monolith,
+            MonolithTransitionSwitch.For(configuration, service));
+
+        var root = RepositoryRoot.Find();
+        var program = File.ReadAllText(Path.Combine(root, "backend/Host/Program.cs"));
+        var source = File.ReadAllText(Path.Combine(root, $"backend/Features/Supervisor/{service}.cs"));
+        Assert.Contains($"AddHostedService<{service}>()", program);
+        Assert.Contains(decisionCall, source);
+        Assert.DoesNotContain("MonolithTransitionSwitch.For", source);
+    }
+
     // AGT-3055 fix round: engine ownership of BatchPlan is opt-in and refused
     // behind the Task Server proxy, where the engine cannot claim its occurrences.
     [Theory]
@@ -53,7 +84,7 @@ public sealed class OrchestrationExecutionModeTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?>
             {
-                ["Orchestration:ExecutionMode"] = mode,
+                ["Orchestration:Transitions:BatchPlan"] = mode,
                 ["TaskServer:BaseUrl"] = taskServer,
             }).Build();
 
@@ -76,21 +107,24 @@ public sealed class OrchestrationExecutionModeTests
         Assert.StartsWith("orchestration-profile-batch-plan-task-server-proxy", error.Message);
     }
 
-    // AGT-3055: the batch tick is the only hosted loop in Engine and Shadow
-    // mode. There it publishes batch-plan occurrences and applies the engine
-    // intent; without it no batch would close or advance.
+    // Operator rollback changes a profile while the host is running, so all
+    // workers must already be present regardless of its startup setting.
     [Theory]
+    [InlineData(OrchestrationExecutionMode.Monolith)]
     [InlineData(OrchestrationExecutionMode.Engine)]
     [InlineData(OrchestrationExecutionMode.Shadow)]
-    public void Non_monolith_mode_registers_only_the_batch_tick(OrchestrationExecutionMode mode)
+    public void All_modes_register_review_and_delivery_workers(OrchestrationExecutionMode mode)
     {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Orchestration:Transitions:ReviewReport"] = mode.ToString() }).Build();
+        Assert.Equal(mode, MonolithTransitionSwitch.For(configuration, "ReviewReport"));
         var services = new ServiceCollection();
-
-        services.AddOrchestrationExecutionLoops(mode);
-
-        var hosted = Assert.Single(services, descriptor =>
-            descriptor.ServiceType == typeof(IHostedService));
-        Assert.Equal(typeof(AgentStudio.Pipeline.BatchGatePilotHostedService), hosted.ImplementationType);
+        services.AddOrchestrationExecutionLoops();
+        Assert.Equal(6, services.Count(descriptor => descriptor.ServiceType == typeof(IHostedService)));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(RemoteReviewSettlementReconciler));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(AgentStudio.Pipeline.BatchGatePilotHostedService));
     }
 
     [Fact]
@@ -104,7 +138,7 @@ public sealed class OrchestrationExecutionModeTests
             }).Build();
         var services = new ServiceCollection();
 
-        services.AddOrchestrationExecutionLoops(configuration);
+        services.AddOrchestrationExecutionLoops();
 
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(IHostedService)
@@ -116,7 +150,7 @@ public sealed class OrchestrationExecutionModeTests
     {
         var services = new ServiceCollection();
 
-        services.AddOrchestrationExecutionLoops(OrchestrationExecutionMode.Monolith);
+        services.AddOrchestrationExecutionLoops();
 
         Assert.Equal(6, services.Count(descriptor =>
             descriptor.ServiceType == typeof(IHostedService)));

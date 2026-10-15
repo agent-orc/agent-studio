@@ -33,6 +33,7 @@ public sealed class MetaCycleHostedService : BackgroundService
     };
 
     private readonly TaskRunnerService _taskRunner;
+    internal Func<RunnerStatus?>? StatusProviderOverride { get; set; }
     private readonly TaskScannerService _scanner;
     private readonly SupervisorInterventionService _interventions;
     private readonly ProjectSettingsService _projectSettings;
@@ -107,11 +108,7 @@ public sealed class MetaCycleHostedService : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
-        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
-                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
-            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
-            return;
-        var status = _taskRunner.GetStatus();
+        var status = (StatusProviderOverride?.Invoke() ?? _taskRunner.GetStatus());
         if (status?.Projects == null) return;
 
         var allJobs = _scanner.ScanAllAutomationJobs();
@@ -152,10 +149,6 @@ public sealed class MetaCycleHostedService : BackgroundService
         MetaCycleConfig config,
         CancellationToken ct)
     {
-        if (AgentStudio.Runner.MonolithTransitionSwitch.For(_configuration,
-                AgentStudio.Runner.AiOperatorDecisionGateway.Transition)
-            == AgentStudio.Runner.OrchestrationExecutionMode.Engine)
-            return null;
         var state = _state.GetOrAdd(project, _ => new ProjectCycleState());
 
         var closedJobs = projectJobs
@@ -490,7 +483,7 @@ public sealed class MetaCycleHostedService : BackgroundService
     {
         try
         {
-            var status = _taskRunner.GetStatus();
+            var status = (StatusProviderOverride?.Invoke() ?? _taskRunner.GetStatus());
             if (status?.Projects == null) return null;
             return status.Projects.TryGetValue(project, out var p) ? p.Mode : null;
         }
@@ -651,7 +644,7 @@ public sealed class MetaCycleHostedService : BackgroundService
         var outcome = await WaitForQuiescenceAsync(
             getActiveJobId: () =>
             {
-                var status = _taskRunner.GetStatus();
+                var status = (StatusProviderOverride?.Invoke() ?? _taskRunner.GetStatus());
                 if (status?.Projects == null) return null;
                 return status.Projects.TryGetValue(project, out var p) ? p.ActiveJobId : null;
             },

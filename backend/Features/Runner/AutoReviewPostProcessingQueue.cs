@@ -397,6 +397,13 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     /// </summary>
     internal async Task ProcessAsync(AutoReviewPostProcessingRequest request, CancellationToken ct)
     {
+        // The queue stays registered for runtime rollback, but the Engine
+        // owns coding-completion post-processing while its profile is selected. The durable
+        // auto-review lane is recovered by the recurring sweep after rollback.
+        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
+            == OrchestrationExecutionMode.Engine)
+            return;
+
         if (!_configuration.GetValue("ReviewDecisionOrchestrator:Enabled", false))
         {
             TerminalizeActiveLifecycle(

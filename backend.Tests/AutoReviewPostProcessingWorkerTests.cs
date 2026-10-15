@@ -64,6 +64,46 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_UsesCurrentCodingCompletionOwnerAcrossRuntimeRollback()
+    {
+        SeedNoOpReviewJob("rollback-task");
+        var deps = BuildDeps();
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue, deps.Orchestrator, deps.Scanner, deps.Mutations,
+            deps.Configuration, NullLogger<AutoReviewPostProcessingWorker>.Instance);
+        deps.Configuration["Orchestration:Transitions:CodingCompletion"] = "Engine";
+
+        await worker.ProcessAsync(Request("rollback-task"), CancellationToken.None);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, "rollback-task")));
+        Assert.False(File.Exists(Path.Combine(_watchPath, TaskStates.AutoReview,
+            "rollback-task", "orchestrator-follow-up.md")));
+
+        deps.Configuration["Orchestration:Transitions:CodingCompletion"] = "Monolith";
+        await worker.ProcessAsync(Request("rollback-task"), CancellationToken.None);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "rollback-task")));
+    }
+
+    [Fact]
+    public async Task OrchestratorSweep_UsesCurrentCodingCompletionOwnerAcrossRuntimeRollback()
+    {
+        SeedNoOpReviewJob("sweep-rollback-task");
+        var deps = BuildDeps();
+        deps.Configuration["Orchestration:Transitions:CodingCompletion"] = "Engine";
+
+        var engineResult = await deps.Orchestrator.ProcessCardAsync(
+            _workspace, Project, "sweep-rollback-task", _watchPath, CancellationToken.None);
+        await deps.Orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        Assert.Equal(PostProcessingCardStatus.Deferred, engineResult.Status);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, "sweep-rollback-task")));
+
+        deps.Configuration["Orchestration:Transitions:CodingCompletion"] = "Monolith";
+        var monolithResult = await deps.Orchestrator.ProcessCardAsync(
+            _workspace, Project, "sweep-rollback-task", _watchPath, CancellationToken.None);
+        Assert.Equal(PostProcessingCardStatus.Decided, monolithResult.Status);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "sweep-rollback-task")));
+    }
+
+    [Fact]
     public async Task ProcessAsync_WhenReviewDecisionOrchestratorDisabled_LeavesQueuedCardInAutoReview()
     {
         SeedNoOpReviewJob("disabled-task");

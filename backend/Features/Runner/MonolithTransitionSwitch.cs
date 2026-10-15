@@ -5,8 +5,7 @@ public static class MonolithTransitionSwitch
 {
     public static OrchestrationExecutionMode For(IConfiguration configuration, string transition)
         => OrchestrationRolloutStore.ReadMode(configuration, transition) ?? OrchestrationExecutionModeParser.Parse(
-            configuration[$"Orchestration:Transitions:{transition}"]
-            ?? configuration["Orchestration:ExecutionMode"]);
+            configuration[$"Orchestration:Transitions:{transition}"]);
 }
 
 public static class EngineDecisionWaitMarker

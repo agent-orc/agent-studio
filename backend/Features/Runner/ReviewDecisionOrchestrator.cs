@@ -448,6 +448,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
+        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
+            == OrchestrationExecutionMode.Engine)
+            return;
         await _tickGate.WaitAsync(ct);
         try
         {
@@ -709,6 +712,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task<PostProcessingCardResult> ProcessCardAsync(string workspace, string projectName, string jobId, string watchPath, CancellationToken ct)
     {
+        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
+            == OrchestrationExecutionMode.Engine)
+            return PostProcessingCardResult.Deferred("engine-owned-coding-completion");
         if (!_configuration.GetValue("ReviewDecisionOrchestrator:Enabled", false))
             return PostProcessingCardResult.Blocked("review-decision-orchestrator-disabled");
 

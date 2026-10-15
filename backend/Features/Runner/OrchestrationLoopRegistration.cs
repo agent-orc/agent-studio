@@ -1,19 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
 
 namespace AgentStudio.Runner;
 
 public static class OrchestrationLoopRegistration
 {
     public static IServiceCollection AddOrchestrationExecutionLoops(
-        this IServiceCollection services, OrchestrationExecutionMode mode)
-        => services.AddOrchestrationExecutionLoops(new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            { ["Orchestration:ExecutionMode"] = mode.ToString() }).Build());
-
-    public static IServiceCollection AddOrchestrationExecutionLoops(
-        this IServiceCollection services,
-        IConfiguration configuration)
+        this IServiceCollection services)
     {
         // AGT-3055: the batch tick runs in every mode. It owns the batch decision
         // only where BatchGatePilotService.OwnerOfBatchPlan selects Monolith; in
@@ -21,13 +13,9 @@ public static class OrchestrationLoopRegistration
         // only publishes batch-plan occurrences and applies the engine intent after
         // the authority floors. Without it nothing would advance queued batches.
         services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
-        // A global Engine setting may coexist with a Monolith transition
-        // override. Keep the legacy loop alive for that selected profile.
-        var legacyReviewSelected = new[] { "CodingCompletion", "ReviewReport", "GateResult" }
-            .Any(profile => MonolithTransitionSwitch.For(configuration, profile)
-                == OrchestrationExecutionMode.Monolith);
-        if (!legacyReviewSelected) return services;
-
+        // Keep the workers alive across operator switches. Each transition's
+        // decision entry point reads its current profile; startup mode cannot
+        // decide which workers will be needed after a runtime rollback.
         services.AddHostedService(provider =>
             provider.GetRequiredService<ReviewDecisionOrchestrator>());
         // AGT-2860: restart-safe resume of the post-review delivery sequence.
