@@ -3294,6 +3294,16 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             && registration.Capabilities.Contains(Contract.ReviewCapabilities.CodingExecutor)
             ? registration.RunTimeoutSeconds : null;
 
+    public IReadOnlyList<int> GetCodingRunTimeoutSecondsForClass(string classCapability)
+    {
+        var timeouts = ListCapabilitySnapshots()
+            .Where(snapshot => EvaluateCodingAdmission(snapshot.RunnerId, snapshot.InstanceId,
+                [Contract.CapabilityProtocol.CodingExecutor, classCapability]).Eligible)
+            .Select(snapshot => GetCodingRunTimeoutSeconds(snapshot.RunnerId))
+            .ToArray();
+        return timeouts.Any(timeout => timeout is null) ? [] : timeouts.OfType<int>().ToArray();
+    }
+
     public RunnerRegistrationResult RegisterWithRestartObservation(
         string runnerId,
         Contract.RegisterRunnerRequest request)

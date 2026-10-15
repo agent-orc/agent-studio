@@ -160,7 +160,15 @@ public static class OrchestratorDecisionEndpoints
         var location = receipt.Scope.ProjectId is { } projectId
             ? ProjectExecutionPolicy.ResolveExecutionLocation(settings.Get(projectId))
             : ExecutionLocations.Local;
-        var runnerTimeoutSeconds = runners.GetCodingRunTimeoutSeconds(activeRunner ?? location);
+        var classCapability = ExecutionLocations.RequiredClassCapability(location);
+        var classTimeouts = activeRunner is null && classCapability is not null
+            ? runners.GetCodingRunTimeoutSecondsForClass(classCapability) : [];
+        var runnerTimeoutSeconds = activeRunner is not null
+            ? runners.GetCodingRunTimeoutSeconds(activeRunner)
+            : classCapability is not null
+                ? classTimeouts.Count == 0 ? null
+                    : request.Action == "raise" ? classTimeouts.Max() : classTimeouts.Min()
+                : runners.GetCodingRunTimeoutSeconds(location);
         if (request.Action is "raise" or "cut" && runnerTimeoutSeconds is null
             && (activeRunner is not null || location != ExecutionLocations.Local)
             && (receipt.Scope.TaskId is not { } cardId

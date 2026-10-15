@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Bus;
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Projects;
 using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
@@ -598,9 +599,11 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     [InlineData("raise", 120, 7200, "Engine")]
     [InlineData("raise", 120, 7200, "Monolith", 5400)]
     [InlineData("cut", 70, 4200, "Monolith", 5400)]
+    [InlineData("raise", 120, 7200, "Monolith", 5400, true)]
+    [InlineData("cut", 70, 4200, "Monolith", 5400, true)]
     public async Task Operator_action_applies_on_the_card_through_monolith_authority(
         string action, int? minutes, int? expectedSeconds, string codingProfile,
-        int? hostBaselineSeconds = null)
+        int? hostBaselineSeconds = null, bool classAssigned = false)
     {
         const string project = "project";
         const string card = "AGT-1";
@@ -640,6 +643,9 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         });
         using var http = factory.CreateClient();
         http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        if (classAssigned)
+            factory.Services.GetRequiredService<ProjectSettingsService>().SetExecutionSettings(
+                project, null, "class:linux");
         var store = factory.Services.GetRequiredService<OrchestratorDecisionStore>();
         var input = Shadow("operator-action-" + action + codingProfile);
         store.FreezeInputs(input);
@@ -649,14 +655,24 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         store.PutReceipt(receipt);
         if (hostBaselineSeconds is { } hostBaseline)
         {
-            factory.Services.GetRequiredService<V1ReviewExecutorRegistry>().Register("coding-runner",
+            var registry = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+            registry.Register("coding-runner",
                 new RegisterRunnerRequest("coding-runner", "host", "instance", "1.0.0",
                     TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor],
                     RunTimeoutSeconds: hostBaseline));
-            var held = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
-                new AgentStudio.Shared.RunLeaseAcquireRequest(
-                    card, "coding-runner", "coding-runner", "host", 4242, "codex"));
-            Assert.True(held.Granted);
+            if (classAssigned)
+                registry.AdvertiseCapabilities("coding-runner", new CapabilityAdvertisementRequest(
+                    "coding-runner", "instance", CapabilityProtocol.CurrentSchemaVersion,
+                    factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime,
+                    180, 1, [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+                        new AdvertisedCapabilityDto("platform:linux", "platform")]));
+            else
+            {
+                var held = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+                    new AgentStudio.Shared.RunLeaseAcquireRequest(
+                        card, "coding-runner", "coding-runner", "host", 4242, "codex"));
+                Assert.True(held.Granted);
+            }
         }
         if (action is "raise" or "cut")
         {
@@ -769,14 +785,28 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             card, replacement.Lease.LeaseId, replacement.Lease.FencingToken, runnerId, null,
             replacement.Lease.AttemptId, replacement.Lease.AuthorityEpoch, "decision-stop-renew"), CancellationToken.None);
         Assert.Equal(RemoteRunStopReasons.DecisionStop, renewed.StopRequest?.Reason);
-        var completed = await coding.CompleteRunAsync(new RRemoteComplete(
+        var request = new RRemoteComplete(
             card, replacement.Lease.LeaseId, replacement.Lease.FencingToken, runnerId, "Stopped",
             AttemptId: replacement.Lease.AttemptId, AuthorityEpoch: replacement.Lease.AuthorityEpoch,
-            IdempotencyKey: "decision-stop-completion"), CancellationToken.None);
+            IdempotencyKey: "decision-stop-completion");
+        var currentFolder = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(card, projectPath)!.FolderPath;
+        var timelinePath = TaskPaths.TimelineLog(currentFolder);
+        var priorTimeline = timelinePath + ".prior";
+        File.Move(timelinePath, priorTimeline);
+        Directory.CreateDirectory(timelinePath);
+        var failed = await http.PostAsJsonAsync("/api/runner/completion", request);
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+        Assert.NotNull(stops.Peek(card));
+        Assert.Null(store.GetOperatorIntent(receipt.ReceiptId)!.AppliedAt);
+        Directory.Delete(timelinePath);
+        File.Move(priorTimeline, timelinePath);
+        var completed = await coding.CompleteRunAsync(request, CancellationToken.None);
         Assert.Equal(TaskStates.Escalated, completed!.TargetState);
         Assert.Equal(TaskStates.Escalated,
             factory.Services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!.State);
         Assert.Equal("applied:stopped-and-held", store.GetOperatorIntent(receipt.ReceiptId)!.Outcome);
+        Assert.Null(stops.Peek(card));
     }
 
     [Fact]

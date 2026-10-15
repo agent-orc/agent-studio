@@ -141,7 +141,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3055 added the claimed batch gate under /api/v1/gates: claims (Claim),
         // attempts/{attemptId}/renew and /phase (Continue), /report and /containment
         // (PostStep). Gate hosts drive suites through them, so all five are denied.
-        Assert.Equal(102, routes.Count);
+        Assert.Equal(101, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -154,7 +154,6 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         foreach (var (routePath, admissionPath) in new[]
         {
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
-            ("/api/projects/{project}/external-verifications", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue)
         })
@@ -181,7 +180,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 26,
-                [ExecutionAdmissionPath.PostStep] = 16,
+                [ExecutionAdmissionPath.PostStep] = 15,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

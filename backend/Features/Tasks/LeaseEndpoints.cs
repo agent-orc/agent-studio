@@ -1678,10 +1678,12 @@ public static class LeaseEndpoints
                     ? Results.BadRequest(response)
                     : Results.Conflict(response);
             }
-            // Settlement has already committed the attempt's terminal fact. The
-            // stop receipt must be retired even if a later projection fails.
-            var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
-            var decisionStop = settledStop?.Reason == RemoteRunStopReasons.DecisionStop;
+            // Keep a decision Stop pending until its card hold succeeds. A retry
+            // after a failed timeline write must still take the hold path.
+            var settledStop = decisionStopRequested
+                ? activeDecisionStop
+                : stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
+            var decisionStop = decisionStopRequested;
             if (decisionStop) targetState = TaskStates.Escalated;
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
@@ -2426,6 +2428,7 @@ public static class LeaseEndpoints
                     decisionReceipts.SetOperatorOutcome(receiptId,
                         operatorStopped ? "applied:stopped-and-held" : "applied:run-finished-held");
                 }
+                stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
                 return Results.Ok(new RemoteRunCompletionResponse(
                     req.TaskKey, responseOutcome, TaskStates.Escalated,
                     "The operator decision stopped the run and held the card.",
