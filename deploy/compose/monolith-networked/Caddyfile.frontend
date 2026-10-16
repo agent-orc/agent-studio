@@ -1,0 +1,19 @@
+:8080 {
+    encode zstd gzip
+
+    @health path /healthz
+    respond @health 200
+
+    @api path /api /api/* /hubs /hubs/*
+    handle @api {
+        reverse_proxy api:5031 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    handle {
+        root * /srv/studio
+        try_files {path} /index.html
+        file_server
+    }
+}

@@ -44,3 +44,6 @@ jobs:
         run: |
           bash scripts/monolith-seed-cli-auth.test.sh
           bash scripts/monolith-compose-smoke.sh
+
+      - name: Verify HTTPS website login and board
+        run: WEBSITE_REUSE_MONOLITH_IMAGE=1 bash scripts/monolith-networked-compose-smoke.sh

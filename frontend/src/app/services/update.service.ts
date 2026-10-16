@@ -4,6 +4,13 @@ import { firstValueFrom } from 'rxjs';
 import { RollbackRequest, RollbackResponse, TriggerRequest, TriggerResponse, UpdateHistoryEntry, UpdateStatus } from '../models/update-service.model';
 import { PublicDemoModeService } from './public-demo-mode.service';
 
+export function resolveUpdateServiceUrl(href: string, configured?: string): string | null {
+  if (configured) return configured;
+  const url = new URL(href);
+  if (url.protocol === 'https:') return null;
+  return `${url.protocol}//${url.hostname}:5039`;
+}
+
 /**
  * Talks to the standalone UpdateService (default port 5039). The endpoint
  * is *not* proxied through ng-serve: the whole point of the separate
@@ -23,10 +30,15 @@ export class UpdateClientService {
 
   /** Resolves the base URL for the UpdateService (host of the FE, port 5039). */
   private readonly baseUrl = (() => {
-    if (typeof window === 'undefined') return 'http://127.0.0.1:5039';
-    const url = new URL(window.location.href);
-    return `${url.protocol}//${url.hostname}:5039`;
+    if (typeof window === 'undefined') return null;
+    // A hosted HTTPS Studio does not expose the machine-local UpdateService.
+    // An operator can opt in with an explicit same-origin or HTTPS endpoint.
+    const configured = (window as Window & { __AGENT_STUDIO_UPDATE_SERVICE_URL__?: string })
+      .__AGENT_STUDIO_UPDATE_SERVICE_URL__;
+    return resolveUpdateServiceUrl(window.location.href, configured);
   })();
+
+  readonly enabled = this.baseUrl !== null;
 
   /** Last status snapshot from /update/status; null until first poll completes. */
   readonly status = signal<UpdateStatus | null>(null);
@@ -62,7 +74,7 @@ export class UpdateClientService {
 
   constructor() {
     // Start polling immediately; refresh cadence whenever phase changes.
-    this.scheduleNextPoll(0);
+    if (this.enabled) this.scheduleNextPoll(0);
     effect(() => {
       // touch isRunning so the effect re-fires on phase transitions
       void this.isRunning();
@@ -71,6 +83,7 @@ export class UpdateClientService {
 
   /** Manually trigger an update. Resolves with the trigger response. */
   async trigger(reason: string | null = null, force = false): Promise<TriggerResponse> {
+    if (!this.baseUrl) throw new Error('Update Service is not configured.');
     const body: TriggerRequest = { reason: reason ?? undefined, force };
     const resp = await firstValueFrom(
       this.http.post<TriggerResponse>(`${this.baseUrl}/update/trigger`, body)
@@ -83,12 +96,14 @@ export class UpdateClientService {
 
   /** Force an immediate status refresh (used after a trigger). */
   async refreshNow(): Promise<void> {
+    if (!this.baseUrl) return;
     await this.pollOnce();
     this.scheduleNextPoll(this.isRunning() ? 2_000 : 30_000);
   }
 
   /** Latest history entries; never auto-polled to keep traffic small. */
   async readHistory(max = 20): Promise<UpdateHistoryEntry[]> {
+    if (!this.baseUrl) return [];
     return await firstValueFrom(
       this.http.get<UpdateHistoryEntry[]>(`${this.baseUrl}/update/history?max=${max}`)
     );
@@ -99,6 +114,7 @@ export class UpdateClientService {
    * in the named run's pre-snapshot. Operator-driven; no automatic call.
    */
   async rollback(runId: string): Promise<RollbackResponse> {
+    if (!this.baseUrl) throw new Error('Update Service is not configured.');
     const body: RollbackRequest = { runId };
     const resp = await firstValueFrom(
       this.http.post<RollbackResponse>(`${this.baseUrl}/update/rollback`, body)
@@ -119,6 +135,7 @@ export class UpdateClientService {
   }
 
   private async pollOnce(): Promise<void> {
+    if (!this.baseUrl) return;
     try {
       const next = await firstValueFrom(this.http.get<UpdateStatus>(`${this.baseUrl}/update/status`));
       this.status.set(next);

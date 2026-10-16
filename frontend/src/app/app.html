@@ -481,7 +481,7 @@
             </span>
           }
           <app-auto-review-indicator />
-          <app-update-version-badge />
+          @if (updateClient.enabled) { <app-update-version-badge /> }
           <label class="client-filter" data-testid="client-filter">
             <span class="client-filter__label">Owner:</span>
             <select class="client-filter__select"
