@@ -464,8 +464,9 @@ occur. It is not a claim about tunnel transfer time.
   selects never-reviewed items, reviews older than 30 days, or any verdict.
   Sort orders each lifecycle group by Created, status, last movement, review
   age, project, key, or open decision count. Created defaults to newest first;
-  the direction button reverses the selected sort. The decision-first
-  projection remains the reset default.
+  the direction button reverses the selected sort. Duplicate Tag labels show
+  a numbered count and id so the compact control selects the intended tag.
+  The decision-first projection remains the reset default.
   Filter and sort state use one encoded route-local `dossier` query value and
   separate session entries for the global and each project scope; explicit URL
   state wins when a link is opened.
