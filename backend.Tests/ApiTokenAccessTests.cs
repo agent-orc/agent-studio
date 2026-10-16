@@ -80,6 +80,49 @@ public sealed class ApiTokenAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task All_projects_token_cannot_mutate_installation_settings()
+    {
+        var (store, configuration) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
+        var token = store.CreateApiToken(new CreateApiTokenRequest("all projects", StudioRoles.Operator,
+            ["*"], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
+        var called = 0;
+        var middleware = new AccessSecurityMiddleware(_ => { called++; return Task.CompletedTask; }, configuration, store);
+
+        var projectWrite = await Invoke(middleware, "PUT", "/api/projects/mine/settings", token.Secret);
+        Assert.Equal(200, projectWrite.Response.StatusCode);
+        var installationWrite = await Invoke(middleware, "PUT", "/api/settings/cli", token.Secret);
+        Assert.Equal(403, installationWrite.Response.StatusCode);
+        Assert.Equal(1, called);
+    }
+
+    [Fact]
+    public async Task Project_scoped_token_cannot_read_workspace_expensive_jobs()
+    {
+        var (store, configuration) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
+        var scoped = store.CreateApiToken(new CreateApiTokenRequest("one project", StudioRoles.Viewer,
+            ["mine"], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
+        var allProjects = store.CreateApiToken(new CreateApiTokenRequest("all projects", StudioRoles.Viewer,
+            ["*"], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
+        var called = 0;
+        var middleware = new AccessSecurityMiddleware(_ => { called++; return Task.CompletedTask; }, configuration, store);
+
+        foreach (var path in new[]
+        {
+            "/api/workspace/tokens/expensive-jobs",
+            "/api/workspace/tokens/expensive-jobs/cached"
+        })
+        {
+            var denied = await Invoke(middleware, "GET", path, scoped.Secret);
+            Assert.Equal(403, denied.Response.StatusCode);
+            var allowed = await Invoke(middleware, "GET", path, allProjects.Secret);
+            Assert.Equal(200, allowed.Response.StatusCode);
+        }
+        Assert.Equal(2, called);
+    }
+
+    [Fact]
     public void Invalid_role_scope_and_expiry_are_rejected()
     {
         var (store, _) = NewStore();
