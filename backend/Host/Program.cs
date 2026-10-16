@@ -378,6 +378,14 @@ builder.Services.AddHttpClient("project-url-readiness", client =>
     client.Timeout = TimeSpan.FromSeconds(3);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("AgentStudio-URLPreview/1.0");
 });
+builder.Services.AddHttpClient("project-url-preview", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    UseCookies = false,
+});
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskKeyResolver>();
 builder.Services.AddSingleton<ScreenshotIndexService>();
 // F21: per-project write mutex for the lane tree. Must be registered

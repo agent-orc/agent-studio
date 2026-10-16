@@ -95,14 +95,14 @@
         <input class="pbf__input"
                type="text"
                autocomplete="off"
-               placeholder="C:\Projects\my-repo"
+               [placeholder]="networked() ? '/srv/projects/my-repo' : 'C:\\Projects\\my-repo'"
                [attr.data-testid]="fieldTestid('repository-path')"
                [disabled]="disabled()"
                [attr.aria-invalid]="errorFor('repositoryPath') ? 'true' : null"
                [ngModel]="repositoryPath()"
                (ngModelChange)="repositoryPath.set($event)"
                (blur)="markTouched('repositoryPath')" />
-        <span class="pbf__hint">Absolute local path to the Git checkout. Network paths are not supported.</span>
+        <span class="pbf__hint">{{ networked() ? 'Absolute checkout path on the Studio server.' : 'Absolute local path to the Git checkout.' }} Network paths are not supported.</span>
         @if (errorFor('repositoryPath'); as error) {
           <span class="pbf__error" role="alert">{{ error }}</span>
         }

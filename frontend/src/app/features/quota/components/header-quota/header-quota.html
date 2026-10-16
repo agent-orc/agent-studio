@@ -2,6 +2,7 @@
   @for (card of cards(); track card.cliType) {
     <button type="button"
             class="hquota__card"
+            [disabled]="networked()"
             [attr.data-testid]="'hquota-card-' + card.cliType"
             [attr.aria-label]="card.ariaLabel"
             [class.hquota__card--error]="!!card.error"

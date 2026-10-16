@@ -1,4 +1,24 @@
 <section class="qstrip">
+  @if (networked()) {
+    <header class="qstrip__head">
+      <span>Runner provider state</span>
+      <button class="qstrip__refresh" type="button" aria-label="Refresh runner provider state"
+              (click)="refreshAll()">↻</button>
+    </header>
+    <div class="qstrip__cards" data-testid="runner-provider-quota-state">
+      @for (badge of runnerBadges(); track badge.id) {
+        <article class="qcard">
+          <div class="qcard__head">
+            <span class="qcard__cli">{{ badge.providerLabel }} · {{ badge.hostName }}</span>
+            <span class="qcard__plan">{{ badge.state }}</span>
+          </div>
+          <div class="qcard__hint">{{ badge.detail }}</div>
+        </article>
+      } @empty {
+        <p>Waiting for runner provider reports.</p>
+      }
+    </div>
+  } @else {
   <header class="qstrip__head">
     @if (lastUpdate(); as lu) {
       <span class="qstrip__updated">updated {{ lu }}</span>
@@ -66,5 +86,6 @@
       </article>
     }
   </div>
+  }
 </section>
   
