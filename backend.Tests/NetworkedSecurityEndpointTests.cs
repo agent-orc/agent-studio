@@ -44,15 +44,44 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         using var factory = BuildFactory(projectPath);
         using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        using var probe = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
-        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         var enrolled = store.EnrollRunner(store.CreateEnrollment(
             new RunnerEnrollmentRequest("existing-board-name", null, null, null)).Code);
+        var logsOnly = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("logs-only", [RunnerScopes.Logs], null, null)).Code);
         factory.Services.GetRequiredService<ClientIdentityStore>()
             .EnsureEnrolledRunner(enrolled.Runner.Id, enrolled.Runner.Name);
         factory.Services.GetRequiredService<ProjectSettingsService>()
             .SetExecutionSettings(project, "auto", enrolled.Runner.Id, true);
         using var runner = new RClient(http, enrolled.Runner.Id, authToken: enrolled.Secret);
+
+        foreach (var path in new[]
+                 {
+                     "/api/v1/projects",
+                     $"/api/v1/projects/{project}/tasks/{taskKey}",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(path, bearer: enrolled.Secret));
+            Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(path, session: owner.SessionToken));
+            Assert.Equal(HttpStatusCode.Forbidden, await ReadStatusAsync(path, bearer: logsOnly.Secret));
+            Assert.Equal(HttpStatusCode.Unauthorized, await ReadStatusAsync(path));
+        }
+        Assert.Equal(HttpStatusCode.Unauthorized, await ReadStatusAsync("/api/projects", bearer: enrolled.Secret));
+        Assert.Equal(HttpStatusCode.Unauthorized, await ReadStatusAsync($"/api/tasks/{taskKey}", bearer: enrolled.Secret));
+
+        async Task<HttpStatusCode> ReadStatusAsync(string path, string? bearer = null, string? session = null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            if (bearer is not null)
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+            if (session is not null)
+                request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
+            using var response = await probe.SendAsync(request);
+            return response.StatusCode;
+        }
 
         var lease = await runner.AcquireLeaseAsync(
             new RAcquire(taskKey, enrolled.Runner.Id, enrolled.Runner.Name, "smoke-host", 42, "codex"), CancellationToken.None);

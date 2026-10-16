@@ -153,9 +153,15 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path);
+        // Core-attach aliases are applied before this middleware. Check the
+        // original versioned route as a fallback so only those client reads
+        // gain a Runner scope, not other legacy /api/tasks/{id} reads.
+        var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
+        var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
+            ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !IsHumanSessionRead(context.Request.Method, path)))
+            && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+                || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
             if (!runner.Scopes.Contains(requiredRunnerScope)) { await Reject(context, 403, "runner-scope-denied", $"Runner credential lacks '{requiredRunnerScope}'."); return; }
