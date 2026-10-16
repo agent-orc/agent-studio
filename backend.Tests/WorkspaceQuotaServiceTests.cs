@@ -150,8 +150,14 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         });
         Assert.Single(admitted);
         Assert.Equal(1, quota.Snapshot(workspace.Id).Usage.HostingSlots);
+        Assert.Equal([projects.FindByIdOrDisplayName(admitted.Single())!.DisplayName], quota.RunningWebsiteProjects());
+        Assert.Equal(_clock.GetUtcNow(), quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        quota.MarkProjectEnvironmentDispatched(admitted.Single(), "website", _clock.GetUtcNow());
+        Assert.Equal(_clock.GetUtcNow(), quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
         quota.SetEnvironment(admitted.Single(), "website", false);
         Assert.Equal(0, quota.Snapshot(workspace.Id).Usage.HostingSlots);
+        Assert.Empty(quota.RunningWebsiteProjects());
         Assert.True(quota.ReserveProjectEnvironment(
             admitted.Single() == alpha.Id ? beta.Id : alpha.Id, "website"));
     }

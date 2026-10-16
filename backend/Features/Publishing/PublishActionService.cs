@@ -11,7 +11,12 @@ namespace AgentStudio.Publishing;
 /// existing tag- or workflow-dispatch-triggered GitHub Actions workflows. It
 /// never handles registry credentials and never publishes a package itself.
 /// </summary>
-public sealed class PublishActionService
+public interface IPublishEnvironmentReconciler
+{
+    void ReconcileRunningWebsites();
+}
+
+public sealed class PublishActionService : IPublishEnvironmentReconciler
 {
     private static readonly Regex SemVerRx = new(@"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$", RegexOptions.Compiled);
     private readonly GitService _git;
@@ -21,6 +26,7 @@ public sealed class PublishActionService
     private readonly TaskScannerService _scanner;
     private readonly ILogger<PublishActionService> _logger;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
+    private readonly TimeProvider _clock;
     private readonly object _runGate = new();
     private readonly Dictionary<string, PublishWorkflowRun> _runs = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _autoDeploying = new(StringComparer.OrdinalIgnoreCase);
@@ -32,7 +38,8 @@ public sealed class PublishActionService
         ProjectSettingsService settings,
         TaskScannerService scanner,
         ILogger<PublishActionService> logger,
-        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
+        TimeProvider? clock = null)
     {
         _git = git;
         _targets = targets;
@@ -41,6 +48,7 @@ public sealed class PublishActionService
         _scanner = scanner;
         _logger = logger;
         _workspaceQuota = workspaceQuota;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public PublishActionPanel GetPanel(string project, string targetId)
@@ -200,6 +208,7 @@ public sealed class PublishActionService
 
         // Reserve before dispatch so concurrent deploys cannot both consume the last slot.
         var reserved = _workspaceQuota?.ReserveProjectEnvironment(project, "website") ?? false;
+        var dispatchStartedAt = _clock.GetUtcNow();
         try
         {
             RunGhRequired(root, "website workflow dispatch failed", "api", "--method", "POST",
@@ -210,6 +219,7 @@ public sealed class PublishActionService
             if (reserved) _workspaceQuota?.SetProjectEnvironment(project, "website", false);
             throw;
         }
+        _workspaceQuota?.MarkProjectEnvironmentDispatched(project, "website", dispatchStartedAt);
         var run = StoreRun(new PublishWorkflowRun
         {
             Project = project,
@@ -225,6 +235,11 @@ public sealed class PublishActionService
     }
 
     public PublishWorkflowRun? RefreshRun(string project, string targetId)
+    {
+        lock (_runGate) return RefreshRunCore(project, targetId);
+    }
+
+    private PublishWorkflowRun? RefreshRunCore(string project, string targetId)
     {
         var stored = GetStoredRun(project, targetId);
         if (stored is null) return null;
@@ -262,6 +277,26 @@ public sealed class PublishActionService
         }
     }
 
+    public void ReconcileRunningWebsites()
+    {
+        if (_workspaceQuota is null) return;
+        foreach (var project in _workspaceQuota.RunningWebsiteProjects())
+        {
+            lock (_runGate)
+            {
+                try
+                {
+                    var root = RequireRepo(project);
+                    ReconcileWebsiteDeployment(root, RequireGitHubRepo(root), project);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "website-environment-reconciliation-failed project={Project}", project);
+                }
+            }
+        }
+    }
+
     private void ReconcileWebsiteDeployment(string root, string repo, string project)
     {
         if (_workspaceQuota is null || !_workspaceQuota.HasProjectEnvironment(project, "website")) return;
@@ -274,6 +309,10 @@ public sealed class PublishActionService
         foreach (var deployment in document.RootElement.EnumerateArray())
         {
             if (StringValue(deployment, "environment") != "github-pages") continue;
+            var reservedAt = _workspaceQuota.ProjectEnvironmentReservedAt(project, "website");
+            var createdAt = DateTimeOffset.TryParse(StringValue(deployment, "created_at"), out var deployedAt)
+                ? deployedAt : (DateTimeOffset?)null;
+            if (!DeploymentCanReleaseReservation(reservedAt, createdAt)) return;
             if (!deployment.TryGetProperty("id", out var id) || !id.TryGetInt64(out var value)) return;
             var statuses = Run(root, "gh", CancellationToken.None, "api",
                 $"repos/{repo}/deployments/{value}/statuses?per_page=1");
@@ -285,6 +324,9 @@ public sealed class PublishActionService
             return;
         }
     }
+
+    internal static bool DeploymentCanReleaseReservation(DateTimeOffset? reservedAt, DateTimeOffset? deployedAt)
+        => reservedAt is null || deployedAt >= reservedAt;
 
     private long? FindTriggeredRun(string root, string repo, PublishWorkflowRun stored)
     {

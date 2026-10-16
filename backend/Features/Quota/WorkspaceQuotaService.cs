@@ -121,7 +121,7 @@ public sealed class WorkspaceQuotaService
         {
             Reload();
             var key = projectId + "/" + environmentId;
-            if (running) _state.Environments[key] = projectId;
+            if (running) _state.Environments[key] = _clock.GetUtcNow().ToString("O");
             else _state.Environments.Remove(key);
             Save();
         }
@@ -140,7 +140,7 @@ public sealed class WorkspaceQuotaService
             var admission = Admit(project.Id, hosting: !existed);
             if (!admission.Allowed) throw new InvalidOperationException(admission.Message);
             if (existed) return false;
-            _state.Environments[key] = project.Id;
+            _state.Environments[key] = _clock.GetUtcNow().ToString("O");
             Save();
             return true;
         }
@@ -154,6 +154,34 @@ public sealed class WorkspaceQuotaService
         SetEnvironment(project.Id, environmentId, running);
     }
 
+    public void MarkProjectEnvironmentDispatched(string projectName, string environmentId, DateTimeOffset dispatchStartedAt)
+    {
+        var project = _projects.FindByIdOrDisplayName(projectName);
+        if (project is null) return;
+        lock (_gate)
+        {
+            Reload();
+            var key = project.Id + "/" + environmentId;
+            if (!_state.Environments.ContainsKey(key)) return;
+            _state.Environments[key] = dispatchStartedAt.ToUniversalTime().ToString("O");
+            Save();
+        }
+    }
+
+    public DateTimeOffset? ProjectEnvironmentReservedAt(string projectName, string environmentId)
+    {
+        var project = _projects.FindByIdOrDisplayName(projectName);
+        if (project is null) return null;
+        lock (_gate)
+        {
+            Reload();
+            return _state.Environments.TryGetValue(project.Id + "/" + environmentId, out var value)
+                && DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var at)
+                    ? at : null;
+        }
+    }
+
     public bool HasProjectEnvironment(string projectName, string environmentId)
     {
         var project = _projects.List().FirstOrDefault(p =>
@@ -163,6 +191,20 @@ public sealed class WorkspaceQuotaService
         {
             Reload();
             return _state.Environments.ContainsKey(project.Id + "/" + environmentId);
+        }
+    }
+
+    public IReadOnlyList<string> RunningWebsiteProjects()
+    {
+        lock (_gate)
+        {
+            Reload();
+            var ids = _state.Environments.Keys
+                .Where(key => key.EndsWith("/website", StringComparison.OrdinalIgnoreCase))
+                .Select(key => key[..^"/website".Length])
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return _projects.List().Where(project => ids.Contains(project.Id))
+                .Select(project => project.DisplayName).ToList();
         }
     }
 
@@ -283,7 +325,8 @@ public sealed class WorkspaceQuotaService
                 }
             }
         }
-        var hostingCount = environments.Values.Count(project => projects.Any(p => p.Id == project));
+        var hostingCount = environments.Keys.Count(key => projects.Any(p =>
+            key.StartsWith(p.Id + "/", StringComparison.OrdinalIgnoreCase)));
         var total = new QuotaUsage(daily.Sum(d => d.ModelTokens), daily.Sum(d => d.ModelCostUsd),
             daily.Sum(d => d.ComputeCoreHours), hostingCount);
         var remaining = new QuotaUsage(Math.Max(0, (limits?.ModelTokensPerWeek ?? 0) - total.ModelTokens), 0,
