@@ -7,6 +7,7 @@ import { FirstRunChecklistComponent } from './first-run-checklist.component';
 import { AuthService } from '../../../../services/auth.service';
 import type { AuthStatus } from '../../../../services/auth.service';
 import { TaskService } from '../../../../services/task.service';
+import type { TaskDetail } from '../../../../models/task.model';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
@@ -179,6 +180,13 @@ describe('FirstRunChecklistComponent probes', () => {
     expect(component.ownerReady()).toBe(true);
     expect(component.repositoryReady()).toBe(true);
     expect(component.gitReady()).toBe(true);
+    component.proofDetail.set({ info: { state: '4-auto-review',
+      reviewProjection: { latestOutcome: 'Pass' },
+      integration: { status: 'merged-locally', verification: {
+        state: 'integrated-verified', sha: 'verified-integration-sha',
+      } } } } as unknown as TaskDetail);
+    expect(component.proofReviewed()).toBe(true);
+    expect(component.proofIntegrated()).toBe(true);
     fixture.destroy();
   });
 
@@ -194,6 +202,8 @@ describe('FirstRunChecklistComponent probes', () => {
     }, probes: [] });
     expect(fixture.componentInstance.repositoryReady()).toBe(false);
     expect(fixture.componentInstance.gitSetupValid()).toBe(true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-git-setup"]')).not.toBeNull();
     fixture.destroy();
   });
 

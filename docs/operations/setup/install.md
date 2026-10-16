@@ -405,8 +405,9 @@ checklist to start provider device login on a runner, register the first
 repository, configure GitHub access, issue a remote Linux join token if needed,
 and create the proof card. The GitHub verification button checks both fetch
 and push on the selected host. In the local profile, the same action stores
-credentials under the backend service account and checks the configured local
-checkout. The card is complete only after coding, review,
+credentials under the backend service account, clones the registered origin
+when no checkout exists, and verifies read and write. The card is complete
+only after coding, review,
 and integration are recorded. See [identity and project bootstrap](./identity-and-project-bootstrap.md)
 for credential custody and the host receipt contract.
 

@@ -126,14 +126,14 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     !!attempt.run.finishedAt && !!attempt.run.resultSha) === true
     || (!!this.proofDetail()?.info
       && this.proofDetail()!.info.state !== '2-ready' && this.proofDetail()!.info.state !== '1-preparation'));
-  readonly proofReviewed = computed(() => {
-    const state = this.proofDetail()?.info.state;
-    return this.networkProof()?.integrations.some(command => !!command.reviewAttemptId) === true
-      || (!!state && ['6-completed', '7-archive'].includes(state));
-  });
+  readonly proofReviewed = computed(() => this.networkProof()?.integrations.some(command => !!command.reviewAttemptId) === true
+    || this.proofDetail()?.info.reviewProjection?.latestOutcome?.toLowerCase() === 'pass'
+    || ['6-completed', '7-archive'].includes(this.proofDetail()?.info.state ?? ''));
   readonly proofIntegrated = computed(() => this.networkProof()?.integrations.some(command =>
     command.status === 'integrated' && !!command.integratedSha) === true
-    || this.proofDetail()?.info.integration?.status === 'integrated');
+    || this.proofDetail()?.info.integration?.status === 'integrated'
+    || (this.proofDetail()?.info.integration?.verification?.state === 'integrated-verified'
+      && !!this.proofDetail()?.info.integration?.verification?.sha));
 
   ngOnInit(): void {
     this.reload();
