@@ -40,12 +40,11 @@ public sealed class RemoteRunStopAndLostWorkerContinuationTests
                 RemoteLeaseHeld: false)));
 
     /// <summary>
-    /// Without a local process and without a held lease there is genuinely
-    /// nothing to stop, which stays a 404. The endpoint must not answer 202 for
-    /// a card that is not running.
+    /// Without a local process and without a held lease there is nothing to
+    /// stop. The endpoint translates this decision to 409 for an existing card.
     /// </summary>
     [Fact]
-    public void A_card_that_is_not_running_anywhere_is_still_not_found()
+    public void A_card_that_is_not_running_anywhere_has_no_running_attempt()
         => Assert.Equal(
             RunStopDispatch.NoRunningAttempt,
             RemoteRunStopPolicy.Decide(new RunStopFacts(

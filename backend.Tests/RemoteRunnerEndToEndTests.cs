@@ -91,6 +91,62 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     private readonly string _workspace;
     private readonly string _watchPath;
 
+    [Fact]
+    public async Task Stop_resolves_public_key_and_card_id_to_the_held_remote_attempt()
+    {
+        const string cardKey = "AGT-3160";
+        const string cardId = "remote-stop-card-slug";
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 6, 31, 0, TimeSpan.Zero));
+        SeedTask(TaskStates.Progress, cardId, "Remote stop", "Prompt.", publicKey: cardKey);
+        SeedTask(TaskStates.Ready, "idle-card", "Idle", "Prompt.");
+        using var factory = BuildFactory(
+            authorityNow: () => clock.GetUtcNow().UtcDateTime,
+            leaseNow: () => clock.GetUtcNow().UtcDateTime,
+            clock: clock);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var leases = factory.Services.GetRequiredService<RunLeaseService>();
+        var acquired = leases.TryAcquire(new RunLeaseAcquireRequest(
+            cardKey, RunnerId, "remote runner", "remote-host", 42, "codex"));
+        Assert.True(acquired.Granted);
+        Assert.Equal("Held", leases.Peek(cardKey).Outcome);
+        Assert.NotEqual(cardKey, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(cardKey)!.TaskKey);
+
+        using var byKey = await http.PostAsync(
+            $"/api/tasks/{cardKey}/stop?project={ProjectName}&reason=user&commandId=stop-by-key", null);
+        Assert.Equal(HttpStatusCode.Accepted, byKey.StatusCode);
+        var receipt = (await byKey.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("taskKey").GetString();
+        Assert.Equal(cardKey, receipt);
+
+        using var byId = await http.PostAsync(
+            $"/api/tasks/{cardId}/stop?reason=user&commandId=stop-by-id", null);
+        Assert.Equal(HttpStatusCode.Accepted, byId.StatusCode);
+        Assert.Equal(cardKey, (await byId.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("taskKey").GetString());
+        using var byIdReceipt = await http.GetAsync($"/api/tasks/{cardId}/stop/stop-by-id");
+        Assert.Equal(HttpStatusCode.OK, byIdReceipt.StatusCode);
+
+        using var renewal = await http.PostAsJsonAsync("/api/runner/lease/renew",
+            new RunLeaseHeartbeatRequest(cardKey, acquired.Lease!.LeaseId,
+                acquired.Lease.FencingToken, RunnerId,
+                AttemptId: acquired.Lease.AttemptId,
+                AuthorityEpoch: acquired.Lease.AuthorityEpoch,
+                IdempotencyKey: "stop-renewal"));
+        Assert.Equal(HttpStatusCode.OK, renewal.StatusCode);
+        var renewed = await renewal.Content.ReadFromJsonAsync<RunLeaseResponse>();
+        Assert.True(renewed!.Granted);
+        Assert.Equal("stop-by-id", renewed.StopRequest?.CommandId);
+        Assert.Equal(cardKey, renewed.StopRequest?.TaskKey);
+
+        using var idle = await http.PostAsync("/api/tasks/idle-card/stop", null);
+        Assert.Equal(HttpStatusCode.Conflict, idle.StatusCode);
+        Assert.Contains("No running attempt", await idle.Content.ReadAsStringAsync());
+        using var missing = await http.PostAsync("/api/tasks/missing-card/stop", null);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Contains("Job not found", await missing.Content.ReadAsStringAsync());
+    }
+
     public RemoteRunnerEndToEndTests()
     {
         _workspace = Path.Combine(Path.GetTempPath(), "atp-runner-e2e-" + Guid.NewGuid().ToString("N"));
@@ -3869,7 +3925,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null,
         ICauseWaitMarkerStore? causeWaitMarkers = null,
         TimeProvider? clock = null,
-        IBuildTestGateRunner? gateRunner = null) =>
+        IBuildTestGateRunner? gateRunner = null,
+        Func<DateTime>? leaseNow = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3901,7 +3958,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     }
                     cfg.AddInMemoryCollection(values);
                 });
-                if (writer is not null || summaryOneShot is not null || authorityNow is not null
+                if (writer is not null || summaryOneShot is not null || authorityNow is not null || leaseNow is not null
                     || causeWaitReleaseFactory is not null || causeWaitMarkers is not null
                     || clock is not null || gateRunner is not null)
                 {
@@ -3933,6 +3990,16 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                                 sp.GetRequiredService<ILogger<AttemptAuthorityService>>(),
                                 authorityNow,
                                 sp.GetRequiredService<IAtomicJsonFileWriter>()));
+                        }
+                        if (leaseNow is not null)
+                        {
+                            services.RemoveAll<RunLeaseService>();
+                            services.AddSingleton(sp => new RunLeaseService(
+                                sp.GetRequiredService<ILogger<RunLeaseService>>(),
+                                sp.GetRequiredService<AttemptAuthorityService>(), leaseNow));
+                            services.RemoveAll<AgentStudio.Runner.RemoteRunStopRequestStore>();
+                            services.AddSingleton(new AgentStudio.Runner.RemoteRunStopRequestStore(
+                                _workspace, leaseNow));
                         }
                     });
                 }
@@ -4509,13 +4576,13 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string state, string key, string title, string promptBody,
         string kind = TaskKinds.Task, string? cliType = null, string? model = null,
         string? thinkingLevel = null, string? watchPath = null, int order = 1,
-        DateTime? enteredLaneAt = null)
+        DateTime? enteredLaneAt = null, string? publicKey = null)
     {
         var dir = Path.Combine(watchPath ?? _watchPath, state, key);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "task.json"), JsonSerializer.Serialize(new
         {
-            id = key, title, state, order, agent = cliType ?? "claude", kind, cliType, model, thinkingLevel,
+            id = key, key = publicKey, title, state, order, agent = cliType ?? "claude", kind, cliType, model, thinkingLevel,
             enteredLaneAt = enteredLaneAt ?? DateTime.UtcNow,
         }));
         File.WriteAllText(Path.Combine(dir, "prompt.md"), promptBody);

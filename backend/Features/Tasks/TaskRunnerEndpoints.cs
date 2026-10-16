@@ -76,40 +76,48 @@ public static class TaskRunnerEndpoints
                 _ => RunStopReason.UserStop
             };
             var info = scanner.FindJob(jobId, watchPath);
-            if (info is null) return Results.NotFound();
+            if (info is null) return Results.NotFound(new { error = "Job not found" });
             if (commandId?.Trim().Length > 128)
                 return Results.BadRequest(new { error = "Stop command id is too long." });
 
             if (!string.IsNullOrWhiteSpace(commandId) && stops.GetReceipt(commandId.Trim()) is { } replay)
             {
-                if (!string.Equals(replay.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+                if (!MatchesStopTask(info, replay.TaskKey)
                     || !string.Equals(replay.Reason, RemoteRunStopReasons.From(parsed), StringComparison.Ordinal))
                     return Results.Conflict(new { error = "Stop command id is bound to different input." });
                 if (replay.TerminalAtUtc is null)
-                    replay = stops.ReconcileWithLease(replay, leases.Peek(info.TaskKey));
+                    replay = stops.ReconcileWithLease(replay, leases.Peek(replay.TaskKey));
                 return Results.Accepted(value: StopReceipt(replay));
             }
 
+            // Remote claims use the public card key when one exists. The
+            // scanner's TaskKey is a filesystem identity (watchPath::id), so
+            // asking lease authority for that key misses an otherwise held run.
+            var remoteLease = leases.Peek(info.Key ?? info.TaskKey);
+            if (remoteLease.Outcome != "Held" && !string.Equals(info.Key, info.TaskKey, StringComparison.OrdinalIgnoreCase))
+                remoteLease = leases.Peek(info.TaskKey);
             var dispatch = RemoteRunStopPolicy.Decide(new RunStopFacts(
                 runner.StopJob(jobId, watchPath, parsed),
-                string.Equals(leases.Peek(info.TaskKey).Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
+                string.Equals(remoteLease.Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
             if (dispatch != RunStopDispatch.RemoteStopRequested)
-                return dispatch == RunStopDispatch.StoppedLocally ? Results.Ok() : Results.NotFound();
+                return dispatch == RunStopDispatch.StoppedLocally
+                    ? Results.Ok()
+                    : Results.Conflict(new { error = "No running attempt holds this task." });
 
-            var lease = leases.Peek(info.TaskKey).Lease;
+            var lease = remoteLease.Lease;
             if (lease is null || string.IsNullOrWhiteSpace(lease.AttemptId)) return Results.Conflict(new { error = "No current remote attempt holds this task." });
             RemoteRunStopRequest request;
             try
             {
                 request = stops.Record(
-                    info.TaskKey,
+                    lease.TaskKey,
                     RemoteRunStopReasons.From(parsed),
                     lease.AttemptId,
                     lease.RunnerName ?? lease.RunnerId,
                     lease.FencingToken,
                     commandId,
                     lease.RunnerId);
-                request = stops.ReconcileWithLease(request, leases.Peek(info.TaskKey));
+                request = stops.ReconcileWithLease(request, leases.Peek(lease.TaskKey));
             }
             catch (InvalidOperationException ex)
             {
@@ -144,7 +152,7 @@ public static class TaskRunnerEndpoints
             var info = scanner.FindJob(jobId, watchPath);
             if (info is null) return Results.NotFound();
             var receipt = stops.GetReceipt(commandId);
-            return receipt is not null && string.Equals(receipt.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+            return receipt is not null && MatchesStopTask(info, receipt.TaskKey)
                 ? Results.Ok(receipt)
                 : Results.NotFound();
         });
@@ -507,6 +515,11 @@ public static class TaskRunnerEndpoints
                 : Results.BadRequest(new { error = error ?? "Cannot refresh context usage" });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
+
+    private static bool MatchesStopTask(TaskInfo info, string taskKey) =>
+        string.Equals(taskKey, info.Key, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(taskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(taskKey, info.Id, StringComparison.OrdinalIgnoreCase);
 
     private static object StopReceipt(RemoteRunStopRequest request) => new
     {

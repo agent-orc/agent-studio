@@ -349,7 +349,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly setupExpandedDuringRun = signal(false);
   /** Effective collapsed state: auto-collapse while running, unless the user
    *  explicitly hit "Show setup". Always expanded when not running. */
-  readonly setupCollapsed = computed(() => this.isRunning() && !this.setupExpandedDuringRun());
+  readonly setupCollapsed = computed(() => this.effectiveRunActive() && !this.setupExpandedDuringRun());
   readonly tokenDraft = signal('');
   readonly showToken = signal(false);
   readonly tokenSaving = signal(false);
@@ -476,7 +476,7 @@ export class TaskDetailComponent implements OnDestroy {
   /** When the run ends, drop the user's "Show setup" override so the next run
    *  starts compact again. Idempotent — only writes when the flag would change. */
   private resetSetupExpandWhenIdle = effect(() => {
-    if (!this.isRunning() && this.setupExpandedDuringRun()) {
+    if (!this.effectiveRunActive() && this.setupExpandedDuringRun()) {
       this.setupExpandedDuringRun.set(false);
     }
   });
@@ -751,7 +751,7 @@ export class TaskDetailComponent implements OnDestroy {
 
   canStartJob(): boolean {
     const state = this.detail().info.state;
-    return (state === TaskState.Ready || state === TaskState.Progress) && !this.isRunning();
+    return (state === TaskState.Ready || state === TaskState.Progress) && !this.effectiveRunActive();
   }
 
   /**
@@ -1154,7 +1154,7 @@ export class TaskDetailComponent implements OnDestroy {
       case 'stop':
         this.triageActingId.set(id);
         this.stopJob();
-        // Stop is local-only; clear after the request kicks off.
+        // Clear the action latch after requesting a local or remote stop.
         queueMicrotask(() => this.triageActingId.set(null));
         return;
       case 'editPrompt':
