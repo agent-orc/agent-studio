@@ -28,6 +28,22 @@
             }
           </div>
         }
+        @if (deviceLogin(); as login) {
+          <div class="first-run__form" data-testid="first-run-device-login">
+            <p>{{ login.provider }} on {{ login.runnerId }}: {{ login.state }}</p>
+            @if (login.verificationUrl && login.state === 'pending') {
+              <a data-testid="first-run-device-url" [href]="login.verificationUrl" target="_blank" rel="noopener noreferrer">Open provider sign-in</a>
+              @if (login.userCode) {
+                <code data-testid="first-run-device-code">{{ login.userCode }}</code>
+                <button type="button" (click)="copyDeviceCode()">{{ codeCopyLabel() }}</button>
+              }
+            }
+            @if (login.state === 'failed' || login.state === 'expired') {
+              <p role="alert">Sign-in did not complete. Start it again on this host.</p>
+            }
+          </div>
+        }
+        @if (deviceLoginError()) { <p role="alert">{{ deviceLoginError() }}</p> }
         @if (!providerBadges().length) { <p>No fresh provider probe has arrived yet.</p> }
       </div>
       <strong>{{ providersReady() ? 'Verified' : 'Pending' }}</strong>
@@ -35,8 +51,50 @@
     <li data-testid="first-run-git" [attr.data-state]="gitReady() ? 'ready' : 'pending'">
       <span class="first-run__number">3</span>
       <div><h3>GitHub read and write access</h3>
-        <p>{{ gitReady() ? 'The registered repository has an admitted read and write proof from an online host.' : 'Configure a host deploy key or protected token, then run its repository probe. The status changes only after the server admits the proof.' }}</p>
-        <button type="button" (click)="openHosts()">Open host access setup</button>
+        <p>{{ gitReady() ? 'The registered repository has admitted read and write proof from each online execution host.' : 'Give each execution host access to the registered GitHub repository. Verification fetches and pushes a temporary ref.' }}</p>
+        @if (repositoryReady()) {
+          <div class="first-run__form" data-testid="first-run-git-setup">
+            @if (!localProfile()) { <label>Execution host
+              <select data-testid="first-run-git-host" [value]="gitRunnerId()"
+                (change)="gitRunnerId.set($any($event.target).value)">
+                <option value="">Choose a host</option>
+                @for (host of activeHosts(); track host.id) {
+                  <option [value]="host.clientId || host.id">{{ host.name }}</option>
+                }
+              </select>
+            </label> }
+            <label>Access method
+              <select data-testid="first-run-git-method" [value]="gitMethod()"
+                (change)="gitMethod.set($any($event.target).value)">
+                <option value="deploy-key">Generated deploy key</option>
+                <option value="token">GitHub token</option>
+              </select>
+            </label>
+            @if (gitMethod() === 'token') {
+              <label>Repository token with read and write access
+                <input data-testid="first-run-git-token" type="password" autocomplete="new-password"
+                  [value]="gitToken()" (input)="gitToken.set($any($event.target).value)" />
+              </label>
+            }
+            <button type="button" data-testid="first-run-git-start" [disabled]="!gitSetupValid() || gitStarting()"
+              (click)="startGitSetup()">{{ gitStarting() ? 'Configuring…' : 'Configure access on host' }}</button>
+            @if (gitSetup(); as setup) {
+              <p data-testid="first-run-git-state">Host setup: {{ setup.state }}</p>
+              @if (setup.publicKey) {
+                <p>Add this key in the repository's GitHub deploy keys with write access, then verify.</p>
+                <code data-testid="first-run-deploy-key">{{ setup.publicKey }}</code>
+                <button type="button" data-testid="first-run-copy-key" (click)="copyDeployKey()">{{ keyCopyLabel() }}</button>
+              }
+              @if (setup.state === 'awaiting-github' || setup.state === 'awaiting-verify' || setup.state === 'denied') {
+                <button type="button" data-testid="first-run-git-verify" (click)="verifyGitSetup()">Verify read and write</button>
+              }
+              @if (setup.state === 'denied') { <p role="alert">GitHub denied read or write access. Check the repository permission and retry.</p> }
+              @if (setup.state === 'failed') { <p role="alert">Host setup failed. Check the runner and start a new request.</p> }
+              @if (setup.state === 'expired') { <p role="alert">This setup request expired. Start a new one.</p> }
+            }
+            @if (gitSetupError()) { <p role="alert">{{ gitSetupError() }}</p> }
+          </div>
+        }
         <button type="button" data-testid="first-run-refresh-git" [disabled]="loading()" (click)="reload()">Refresh proof status</button>
       </div>
       <strong>{{ gitReady() ? 'Verified' : 'Pending' }}</strong>
@@ -71,8 +129,33 @@
       <div><h3>Execution host</h3>
         <p>{{ activeHosts().length ? activeHosts().length + ' host(s) have a fresh heartbeat.' : 'Start the local runner or join a remote Linux host. A host is ready after its heartbeat reaches the Task Server.' }}</p>
         <button type="button" (click)="openHosts()">Manage execution hosts</button>
-        <p>On a remote Linux host with a protected join-token file:</p>
-        <code>sudo ./agent-studio-setup --mode agent-host --join-token-file /secure/path/join.token</code>
+        @if (!localProfile()) {
+          <div class="first-run__form" data-testid="first-run-join-host">
+            <label>Reachable Task Server HTTPS URL
+              <input data-testid="first-run-join-url" type="url" autocomplete="off" [value]="joinServerUrl()"
+                (input)="joinServerUrl.set($any($event.target).value)" />
+            </label>
+            <label>Linux host name
+              <input data-testid="first-run-join-name" autocomplete="off" [value]="joinRunnerName()"
+                (input)="joinRunnerName.set($any($event.target).value)" />
+            </label>
+            <label>Runner role
+              <select data-testid="first-run-join-role" [value]="joinRole()"
+                (change)="joinRole.set($any($event.target).value)">
+                <option value="coding">Coding</option><option value="review">Review</option>
+              </select>
+            </label>
+            <button type="button" data-testid="first-run-generate-join" [disabled]="!joinValid() || joining()"
+              (click)="generateJoinToken()">{{ joining() ? 'Issuing…' : 'Generate one-time join token' }}</button>
+            @if (joinToken(); as issued) {
+              <p>The token expires at {{ issued.expiresAt }} and appears only here. Transfer the downloaded file to the Linux host with owner-only permissions.</p>
+              <button type="button" data-testid="first-run-download-join" (click)="downloadJoinToken()">Download join.token</button>
+              <code data-testid="first-run-join-command">{{ joinCommand() }}</code>
+              <button type="button" (click)="copyJoinCommand()">{{ joinCopyLabel() }}</button>
+            }
+            @if (joinError()) { <p role="alert">{{ joinError() }}</p> }
+          </div>
+        }
       </div>
       <strong>{{ activeHosts().length ? 'Verified' : 'Pending' }}</strong>
     </li>

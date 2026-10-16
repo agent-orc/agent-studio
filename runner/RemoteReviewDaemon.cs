@@ -64,6 +64,14 @@ public sealed class RemoteReviewDaemon
             shutdown,
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
+        using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log)
+            .PollAsync(auxiliaryStop.Token);
+        var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log)
+            .PollAsync(auxiliaryStop.Token);
+        var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
+            new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log)
+            .PollAsync(auxiliaryStop.Token);
         var state = new ReviewStateStore(_options.StateDir);
         // A drain request remains authoritative across daemon generations. It
         // is cleared only by an explicit start/replacement after the service is
@@ -739,6 +747,10 @@ public sealed class RemoteReviewDaemon
         }
 
         state.Flush();
+        auxiliaryStop.Cancel();
+        await deviceLoginPoll;
+        await gitSetupPoll;
+        await repositoryProbePoll;
         if (active.Count > 0)
             await Task.WhenAll(active.Select(slot => slot.Run));
         _log(drainedToStop

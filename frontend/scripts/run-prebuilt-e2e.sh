@@ -15,7 +15,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
   PW_E2E_PROFILE=standard
   for arg in "$@"; do
     case "${arg}" in
-      *crash-recovery-prompt.spec.ts*) PW_E2E_PROFILE=recovery ;;
+      *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
     esac
   done
