@@ -15,6 +15,7 @@ import type {
 } from '../models/remote-host.model';
 import type {
   HostReleaseDrift,
+  HostReleaseIdentity,
   HostReleaseDriftSnapshot,
   StableReleaseIdentity,
 } from '../models/host-release-drift';
@@ -22,11 +23,40 @@ import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
 
-/** Keep the newest host report and discard a drift verdict for an older heartbeat. */
+function sameRelease(left: HostReleaseIdentity | null | undefined,
+  right: HostReleaseIdentity | null | undefined): boolean {
+  return left?.releaseId === right?.releaseId && left?.version === right?.version
+    && (left?.commit ?? null) === (right?.commit ?? null);
+}
+
+/** Keep the release and its verdict together when the two requests settle out of order. */
 export function mergeReleaseReport(host: RemoteHost, drift: HostReleaseDrift): RemoteHost {
-  const hostNewer = !!host.release && Date.parse(drift.lastSeenAt) < Date.parse(host.lastHeartbeatAt ?? '');
-  return { ...host, release: hostNewer ? host.release : drift.release,
-    releaseDrift: hostNewer ? null : drift };
+  if (host.release && sameRelease(host.release, drift.release)) {
+    return { ...host, releaseDrift: drift };
+  }
+  const hostSeen = Date.parse(host.lastHeartbeatAt ?? '');
+  const driftSeen = Date.parse(drift.lastSeenAt);
+  if (host.release && Number.isFinite(hostSeen) && Number.isFinite(driftSeen)
+      && hostSeen >= driftSeen) {
+    return { ...host, releaseDrift: null };
+  }
+  return { ...host, releaseId: drift.release?.releaseId ?? host.releaseId,
+    release: drift.release, releaseDrift: drift };
+}
+
+function mergeCapabilityRelease(host: RemoteHost,
+  snapshot: TaskServerRunnerCapabilitySnapshot): Pick<RemoteHost, 'release' | 'releaseDrift' | 'releaseId'> {
+  const release = snapshot.release ?? host.release ?? null;
+  const drift = host.releaseDrift;
+  const capabilitySeen = Date.parse(snapshot.lastSeenAt);
+  const driftSeen = Date.parse(drift?.lastSeenAt ?? '');
+  if (drift && Number.isFinite(capabilitySeen) && Number.isFinite(driftSeen)
+      && capabilitySeen < driftSeen) {
+    return { release: host.release ?? drift.release, releaseDrift: drift,
+      releaseId: host.releaseId ?? drift.release?.releaseId ?? null };
+  }
+  return { release, releaseDrift: drift && sameRelease(release, drift.release) ? drift : null,
+    releaseId: snapshot.release?.releaseId ?? snapshot.runnerVersion };
 }
 
 export interface RunnerInfrastructureFailure {
@@ -289,8 +319,7 @@ export class RemoteHostsService {
               serviceRole: serviceRole(snapshot),
               status,
               lastHeartbeatAt: snapshot.lastSeenAt,
-              releaseId: snapshot.release?.releaseId ?? snapshot.runnerVersion,
-              release: snapshot.release ?? null,
+              ...mergeCapabilityRelease(current, snapshot),
               runnerInstanceId: snapshot.instanceId,
               runnerProtocolVersion: snapshot.protocolVersion,
               capabilityHealth: snapshot.capabilities,
