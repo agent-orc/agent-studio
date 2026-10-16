@@ -24,7 +24,7 @@ $forward = "${RemotePort}:127.0.0.1:${OrchestratorPort}"
 $statePath = Join-Path $StateDirectory 'state.json'
 $logPath = Join-Path $StateDirectory 'events.log'
 $sshAttemptLogPath = Join-Path $StateDirectory 'ssh-attempts.log'
-$mutexName = "Local\AgentTaskboardTunnelKeeper-$RemotePort"
+$mutexName = "Local\AgentTaskboardTunnelKeeper-$RemotePort-$SshTarget"
 $mutex = [Threading.Mutex]::new($false, $mutexName)
 $ownsMutex = $false
 
