@@ -856,6 +856,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   commit to a replacement object id, target-branch ancestry of that reviewed
   result proves integration; attributed SHAs from superseded review epochs
   remain history and do not force a permanent `partial` card state.
+  A durable operator acceptance checks the current result against the published
+  integration branch and records only attributed commits in that result's
+  `BaseSha..ResultSha` range. Older rebased rounds remain in `commits[]` for
+  history, even when they have no explicit supersession marker. The acceptance
+  record continues to verify the current result after a service restart.
 - A missing attributed commit is not automatically a hole in the delivery
   either: `ClassifyRepositories`/`ClassifyWithRepo` also recognize *implicit*
   supersession at read time, reusing the same conservative breadth heuristic
