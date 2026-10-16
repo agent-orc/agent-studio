@@ -82,6 +82,12 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Empty((await resultRefGc.RunOnceAsync()).Decisions);
 
         var routes = ExecutionRoutes(factory.Services);
+        var allRoutes = factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/studio/auth/invitations");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/studio/auth/invite/accept");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/studio/auth/users/{userId}/projects/{projectId}/production-approval");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/projects/{projectId}/tasks/{taskIdentity}/preview-comments");
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
         // AGT-3061 added the integration command plane: claims (Claim),
