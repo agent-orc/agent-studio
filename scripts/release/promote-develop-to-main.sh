@@ -26,6 +26,11 @@ Options:
                                      package (release.tar.gz, release.sha256, full-gate.log) from
                                      the gate worktree into <directory>/<candidate sha>/.
                                      Omit to skip packaging.
+  --deploy-token-file <path>        Orchestration service credential for automatic stage queueing
+                                     from the gated release package.
+  --deploy-image-ref <image>        Gate-built local image to deploy by its registry digest;
+                                     its revision label must equal the gated commit.
+  --deploy-artifact-store <dir>     Shared static artifact store mounted by the deploy host.
   --prefer-develop-conflicts        Deprecated compatibility option; exact-SHA promotion never merges.
   --remote <name>                   Git remote (default: origin).
   --project <name>                  Agent Studio project name. After a successful push, calls
@@ -37,6 +42,8 @@ Environment:
   PROMOTION_TAGGER_NAME             Annotated tagger name (default: Agent Studio Promotion).
   PROMOTION_TAGGER_EMAIL            Annotated tagger email (default: promotion@agent-studio.invalid).
   ATP_API                           Backend base URL for --project (default: http://127.0.0.1:5031).
+  DEPLOY_RELEASE_TOKEN_FILE         Default for --deploy-token-file.
+  DEPLOY_ARTIFACT_STORE             Default for --deploy-artifact-store.
   RELEASE_GATE_*                    Gate capacity window and hot-host check around the full gate;
                                      see release-gate-window.sh --help (AGT-2982).
 
@@ -51,6 +58,10 @@ required_ancestor=
 tag_name=
 evidence_dir=
 release_root=
+deploy_token_file="${DEPLOY_RELEASE_TOKEN_FILE:-}"
+deploy_image_ref=
+deploy_artifact_store="${DEPLOY_ARTIFACT_STORE:-}"
+deploy_header_file=
 prefer_develop_conflicts=0
 project=
 api="${ATP_API:-http://127.0.0.1:5031}"
@@ -87,6 +98,21 @@ while (($#)); do
       release_root=$2
       shift 2
       ;;
+    --deploy-token-file)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      deploy_token_file=$2
+      shift 2
+      ;;
+    --deploy-image-ref)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      deploy_image_ref=$2
+      shift 2
+      ;;
+    --deploy-artifact-store)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      deploy_artifact_store=$2
+      shift 2
+      ;;
     --prefer-develop-conflicts)
       prefer_develop_conflicts=1
       shift
@@ -112,6 +138,16 @@ while (($#)); do
       ;;
   esac
 done
+
+if [[ -n "$deploy_token_file" ]]; then
+  [[ -n "$project" ]] || { printf '%s\n' 'Deploy handoff requires --project.' >&2; exit 2; }
+  [[ -n "$deploy_image_ref" || -n "$release_root" ]] \
+    || { printf '%s\n' 'Deploy handoff requires --deploy-image-ref or --release-dir.' >&2; exit 2; }
+fi
+if [[ -n "$deploy_image_ref" && -z "$deploy_token_file" ]]; then
+  printf '%s\n' 'Deploy image handoff requires --deploy-token-file.' >&2
+  exit 2
+fi
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) || {
@@ -408,6 +444,9 @@ cleanup() {
   if [[ -n "$release_staging" ]]; then
     rm -rf -- "$release_staging"
   fi
+  if [[ -n "$deploy_header_file" ]]; then
+    rm -f -- "$deploy_header_file"
+  fi
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -562,6 +601,42 @@ if [[ -n "$release_target" ]]; then
     write_record promoted "$candidate_sha" passed "$conflict_text" true
     log "WARNING: release package was not written: $release_error; main and $tag_name stay promoted, deploy needs a separate package build"
   fi
+fi
+
+# The package digest is measured from the gate-built bytes above. This service
+# call both records that exact commit/digest pair and queues its stage job.
+if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$release_target" || -n "$deploy_image_ref" ) ]]; then
+  [[ -r "$deploy_token_file" ]] || { log 'deploy service credential is unreadable'; exit 9; }
+  if [[ -n "$deploy_image_ref" ]]; then
+    image_revision=$(docker image inspect "$deploy_image_ref" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') \
+      || { log 'gate-built deploy image is unavailable'; exit 9; }
+    [[ "$image_revision" == "$candidate_sha" ]] || { log 'deploy image revision differs from gated commit'; exit 9; }
+    deploy_artifact=$(docker image inspect "$deploy_image_ref" --format '{{index .RepoDigests 0}}') \
+      || { log 'deploy image has no registry digest'; exit 9; }
+  else
+    [[ -n "$deploy_artifact_store" ]] || { log 'static stage requires --deploy-artifact-store'; exit 9; }
+    deploy_digest="$(< "$release_target/release.sha256")"
+    mkdir -p "$deploy_artifact_store" || { log 'static artifact store is not writable'; exit 9; }
+    if [[ ! -f "$deploy_artifact_store/$deploy_digest" ]]; then
+      deploy_tmp="$(mktemp "$deploy_artifact_store/.${deploy_digest}.XXXXXX")"
+      cp "$release_target/release.tar.gz" "$deploy_tmp"
+      [[ "$(sha256sum "$deploy_tmp" | cut -d ' ' -f1)" == "$deploy_digest" ]] \
+        || { rm -f "$deploy_tmp"; log 'static artifact digest changed during transfer'; exit 9; }
+      mv -T "$deploy_tmp" "$deploy_artifact_store/$deploy_digest"
+    fi
+    deploy_artifact="release-package@sha256:$deploy_digest"
+  fi
+  deploy_body=$(printf '{"project":"%s","artifact":"%s","commit":"%s"}' \
+    "$(json_escape "$project")" "$deploy_artifact" "$candidate_sha")
+  deploy_header_file="$(mktemp)"
+  chmod 0600 "$deploy_header_file"
+  printf 'Authorization: Bearer %s\n' "$(< "$deploy_token_file")" > "$deploy_header_file"
+  deploy_http_code=$(curl -sS -o "$evidence_dir/deploy-queue-response.json" -w '%{http_code}' \
+    --max-time 30 -X POST -H 'Content-Type: application/json' \
+    -H "@$deploy_header_file" \
+    --data "$deploy_body" "$api/api/deploy/gate-releases") || { log 'stage queue request failed'; exit 9; }
+  [[ "$deploy_http_code" == 202 ]] || { log "stage queue request returned HTTP $deploy_http_code"; exit 9; }
+  log "stage queued for project=$project commit=$candidate_sha artifact=$deploy_artifact"
 fi
 
 # Branch reclaim (AGT-2793): task/runner/delivery/results/salvage refs whose

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using AgentStudio.Pipeline;
 
 namespace AgentStudio.Projects;
 
@@ -35,6 +34,7 @@ public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
+public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
 
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
 public sealed class ProjectEnvironmentService
@@ -141,11 +141,12 @@ public sealed class ProjectEnvironmentService
     public bool QueueRelease(string project, string artifact, string commit)
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
+        if (!HasBuiltArtifact(project, artifact, commit)) return false;
         var repo = _git.ResolveRepoRootForProject(project);
         if (repo is null || !_git.IsGitRepo(repo)) return false;
         var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
         var tip = _git.GetBranchTip(repo, branch);
-        if (tip is null || !_git.IsAncestor(repo, commit, tip) || !HasVerifiedGate(project, commit, branch))
+        if (tip is null || !_git.IsAncestor(repo, commit, tip))
             return false;
         lock (_gate)
         {
@@ -162,22 +163,37 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    private bool HasVerifiedGate(string project, string commit, string branch)
+    // The gate endpoint is service-credential only. It records the built
+    // artifact's immutable digest against the exact released commit.
+    public bool RegisterGateArtifact(string project, string artifact, string commit)
     {
-        var watch = _scanner.GetWatchPaths().FirstOrDefault(item =>
-            string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase));
-        if (watch is null || !Directory.Exists(watch.Path)) return false;
-        foreach (var file in Directory.EnumerateFiles(watch.Path,
-                     IntegrationVerificationStore.FileName, SearchOption.AllDirectories))
+        if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
+        var repo = _git.ResolveRepoRootForProject(project);
+        if (repo is null || !_git.IsGitRepo(repo)) return false;
+        var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
+        var tip = _git.GetBranchTip(repo, branch);
+        if (tip is null || !_git.IsAncestor(repo, commit, tip))
+            return false;
+        lock (_gate)
         {
-            var record = IntegrationVerificationStore.Read(Path.GetDirectoryName(file)!);
-            if (record?.State == IntegrationVerificationStates.Verified
-                && string.Equals(record.Sha, commit, StringComparison.OrdinalIgnoreCase)
-                && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch))
-                return true;
+            var path = ArtifactPath(project, commit, artifact);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            if (File.Exists(path))
+                return string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal);
+            File.WriteAllText(path, artifact + "\n");
+            return true;
         }
-        return false;
     }
+
+    private bool HasBuiltArtifact(string project, string artifact, string commit)
+    {
+        var path = ArtifactPath(project, commit, artifact);
+        return File.Exists(path) && string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal);
+    }
+
+    private string ArtifactPath(string project, string commit, string artifact)
+        => Path.Combine(StoreRoot(), "gate-artifacts", SafeProjectName(project), commit,
+            artifact[(artifact.LastIndexOf("@sha256:", StringComparison.Ordinal) + 8)..] + ".txt");
 
     public bool Decide(string project, string artifact, bool approve, string actor)
     {
@@ -230,7 +246,7 @@ public sealed class ProjectEnvironmentService
                 return null;
             foreach (var file in files)
             {
-                var project = Path.GetFileNameWithoutExtension(file);
+                var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var state = Load(project);
                 var declarations = Declarations(project);
                 if (declarations is not null) AdvanceTimedPromotions(project, declarations, state);
@@ -322,8 +338,14 @@ public sealed class ProjectEnvironmentService
         throw new InvalidOperationException("TaskRepository is required."), "deployments");
     private string FilePath(string project)
     {
-        if (!Identifier.IsMatch(project.ToLowerInvariant())) throw new ArgumentException("Invalid project.");
-        return Path.Combine(StoreRoot(), project.ToLowerInvariant() + ".json");
+        return Path.Combine(StoreRoot(), SafeProjectName(project) + ".json");
+    }
+    private static string SafeProjectName(string project)
+    {
+        if (string.IsNullOrWhiteSpace(project) || project is "." or ".." ||
+            project.IndexOfAny(['/', '\\', '\0']) >= 0)
+            throw new ArgumentException("Invalid project.", nameof(project));
+        return Uri.EscapeDataString(project.ToLowerInvariant());
     }
     private State Load(string project) => File.Exists(FilePath(project))
         ? JsonSerializer.Deserialize<State>(File.ReadAllText(FilePath(project)), _json) ?? new State() : new State();
