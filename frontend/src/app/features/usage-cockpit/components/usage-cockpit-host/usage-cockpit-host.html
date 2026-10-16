@@ -1,4 +1,10 @@
 <div class="usage-cockpit-host" data-testid="usage-cockpit-host">
+  @if (workspaceQuota(); as quota) {
+    @if (quota.status !== 'ok' && !quota.overrideActive) {
+      <span class="usage-cockpit-host__quota" role="status" data-testid="workspace-quota-status"
+            [attr.data-status]="quota.status">{{ quota.message }}</span>
+    }
+  }
   <div class="usage-cockpit-host__primary">
     <app-usage-cli-chip [cliId]="primaryCliId()" [cli]="primaryCli()" [timeZone]="snapshot()?.timeZone ?? null"
       [alarms]="primaryAlarms()" [hiddenAlarms]="hiddenAlarms()" [readFailed]="readFailed()" [compact]="phone()" (activate)="openUsage.emit()" />

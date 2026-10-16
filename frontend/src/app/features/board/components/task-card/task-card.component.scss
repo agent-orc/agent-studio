@@ -2,7 +2,6 @@
       --task-card-state-color: var(--state-color, var(--studio-card-border));
       --task-card-ring: 0 0 0 1px var(--studio-card-state-border);
       --task-card-type-color: rgba(148, 163, 184, 0.55);
-
       background: var(--studio-card-bg, var(--card-bg, #1e1e2e));
       border: 1px solid color-mix(in srgb, var(--task-card-type-color) 20%, var(--studio-card-state-border, var(--border, #333)));
       border-radius: var(--studio-card-radius);
@@ -1587,4 +1586,10 @@
     }
 .task-card__better-candidates {
   margin-block: var(--studio-spacing-1);
+}
+.task-card__quota-notice {
+  margin: var(--studio-spacing-2) 0;
+  padding: var(--studio-spacing-2);
+  background: var(--studio-error-bg, var(--studio-surface-2));
+  border-radius: var(--studio-radius-md);
 }
