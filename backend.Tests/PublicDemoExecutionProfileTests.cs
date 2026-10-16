@@ -141,7 +141,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3055 added the claimed batch gate under /api/v1/gates: claims (Claim),
         // attempts/{attemptId}/renew and /phase (Continue), /report and /containment
         // (PostStep). Gate hosts drive suites through them, so all five are denied.
-        Assert.Equal(109, routes.Count);
+        // AGT-3176 added the gate release handoff on Start. It records the
+        // artifact digest and queues stage, so public demo must deny it.
+        Assert.Equal(110, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -154,6 +156,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         foreach (var (routePath, admissionPath) in new[]
         {
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
+            ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue)
         })
@@ -175,7 +178,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 9,
-                [ExecutionAdmissionPath.Start] = 17,
+                [ExecutionAdmissionPath.Start] = 18,
                 [ExecutionAdmissionPath.Continue] = 21,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
