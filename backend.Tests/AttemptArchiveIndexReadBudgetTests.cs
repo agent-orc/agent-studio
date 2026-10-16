@@ -52,6 +52,27 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
     }
 
     [Fact]
+    public void Archived_attempt_ids_open_only_their_shard_and_reuse_a_bounded_cached_read()
+    {
+        WriteShard("01", Run("run-a", "AGT-A"), Review("review-a", "AGT-A", "run-a", 1));
+        WriteShard("02", Run("run-b", "AGT-B"));
+        var service = NewService();
+        Assert.Equal(2, service.WarmArchiveIndex());
+        _opens.Clear();
+
+        Assert.Equal("run-a", service.GetRun("run-a")!.AttemptId);
+        Assert.Equal("review-a", service.GetReview("review-a")!.AttemptId);
+        Assert.Equal("run-a", service.GetRun("RUN-A")!.AttemptId);
+        Assert.Null(service.GetReview("review-missing"));
+        Assert.Equal(new Dictionary<string, int> { [ShardName("01")] = 1 }, _opens);
+
+        var projection = service.GetTaskProjection("AGT-A", includeArchived: true);
+        Assert.Single(projection.RunAttempts);
+        Assert.Single(projection.ReviewAttempts);
+        Assert.Equal(new Dictionary<string, int> { [ShardName("01")] = 1 }, _opens);
+    }
+
+    [Fact]
     public void A_read_that_beats_the_warmup_builds_the_index_once_and_the_next_read_opens_nothing()
     {
         WriteShard("01", Run("run-a1", "AGT-A"));
@@ -103,14 +124,14 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
 
         var first = SupersededRun(service, "AGT-1");
         var firstShard = CurrentHourShard();
-        Assert.Null(service.GetRun(first));
+        Assert.Equal(first, service.GetRun(first)!.AttemptId);
         _opens.Clear();
 
         Assert.True(service.GetTaskProjection("AGT-9", includeArchived: true).LegacyTask);
         Assert.Empty(_opens);
         Assert.Contains(first,
             service.GetTaskProjection("AGT-1", includeArchived: true).RunAttempts.Select(run => run.AttemptId));
-        Assert.Equal(new Dictionary<string, int> { [firstShard] = 1 }, _opens);
+        Assert.Empty(_opens);
 
         _time.Advance(TimeSpan.FromHours(1));
         var second = SupersededRun(service, "AGT-2");
@@ -133,22 +154,77 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
     }
 
     [Fact]
-    public void A_failed_warmup_leaves_reads_failing_closed_until_the_shard_is_readable()
+    public void A_failed_shard_keeps_good_entries_and_is_retried_once_per_backoff_window()
     {
         WriteShard("01", Run("run-a1", "AGT-A"));
         var damaged = Path.Combine(Metadata, ShardName("02"));
         File.WriteAllText(damaged, "{ damaged shard");
+        WriteShard("03", Run("run-c1", "AGT-C"));
         var service = NewService();
 
-        Assert.Throws<InvalidDataException>(() => service.WarmArchiveIndex());
-        Assert.Throws<InvalidDataException>(() => service.GetTaskProjection("AGT-A", includeArchived: true));
+        Assert.Equal(2, service.WarmArchiveIndex());
+        Assert.Single(service.GetTaskProjection("AGT-A", includeArchived: true).RunAttempts);
+        Assert.Equal("run-c1", service.GetRun("run-c1")!.AttemptId);
+        for (var i = 0; i < 5; i++)
+        {
+            Assert.Null(service.GetRun("run-missing"));
+            Assert.Equal(AttemptWriteStatus.NotFound,
+                service.ClaimReview("review-missing", "executor", "host", 60, $"claim-{i}").Status);
+        }
+        Assert.Equal(1, _opens[ShardName("02")]);
+        Assert.Equal(1, _opens[ShardName("01")]);
+        Assert.Equal(1, _opens[ShardName("03")]);
 
         File.Delete(damaged);
         WriteShard("02", Run("run-b1", "AGT-B"));
-        Assert.Single(service.GetTaskProjection("AGT-A", includeArchived: true).RunAttempts);
-        _opens.Clear();
+        _time.Advance(TimeSpan.FromMinutes(4));
         Assert.Equal(2, service.WarmArchiveIndex());
+        Assert.Equal(1, _opens[ShardName("02")]);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(3, service.WarmArchiveIndex());
+        Assert.Equal("run-b1", service.GetRun("run-b1")!.AttemptId);
+        Assert.Equal(2, _opens[ShardName("02")]);
+        Assert.Equal(1, _opens[ShardName("01")]);
+        Assert.Equal(1, _opens[ShardName("03")]);
+        _opens.Clear();
+        Assert.Equal(3, service.WarmArchiveIndex());
         Assert.Empty(_opens);
+    }
+
+    [Fact]
+    public async Task Claim_and_attempt_misses_do_not_wait_for_a_running_warmup()
+    {
+        WriteShard("01", Run("run-a", "AGT-A"), Review("review-a", "AGT-A", "run-a", 1));
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var service = NewService(readArchiveText: path =>
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The warmup reader was not released.");
+            return File.ReadAllText(path);
+        });
+
+        var warmup = Task.Run(service.WarmArchiveIndex);
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+            var claim = await Task.Run(() => service.ClaimReview(
+                "review-a", "executor", "host", 60, "claim-during-warmup"))
+                .WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(AttemptWriteStatus.NotFound, claim.Status);
+            Assert.Null(await Task.Run(() => service.GetRun("run-a"))
+                .WaitAsync(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            release.Set();
+            await warmup.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        Assert.Equal(AttemptWriteStatus.Superseded,
+            service.ClaimReview("review-a", "executor", "host", 60, "claim-after-warmup").Status);
+        Assert.Equal("run-a", service.GetRun("run-a")!.AttemptId);
     }
 
     [Fact]
@@ -174,7 +250,8 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
         Assert.True(failing.ExecuteTask.IsCompletedSuccessfully);
     }
 
-    private AttemptAuthorityService NewService(int? terminalRetentionCount = null)
+    private AttemptAuthorityService NewService(
+        int? terminalRetentionCount = null, Func<string, string>? readArchiveText = null)
     {
         Directory.CreateDirectory(_root);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -187,7 +264,7 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
             NullLogger<AttemptAuthorityService>.Instance,
             () => _time.GetUtcNow().UtcDateTime,
             writer: null,
-            readArchiveText: CountingRead);
+            readArchiveText: readArchiveText ?? CountingRead);
     }
 
     private string CountingRead(string path)

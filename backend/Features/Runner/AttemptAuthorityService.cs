@@ -153,8 +153,16 @@ public sealed class AttemptAuthorityService
     /// </summary>
     private readonly object _archiveIndexBuildGate = new();
     private IReadOnlyDictionary<string, ArchiveIndexEntry>? _archiveIndexFromDisk;
+    private static readonly TimeSpan ArchiveIndexRetryDelay = TimeSpan.FromMinutes(5);
+    private readonly Dictionary<string, DateTime> _archiveIndexFailedShards = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _archiveIndexReportedShards = new(StringComparer.OrdinalIgnoreCase);
+    private long _archiveIndexNextRetryTicks = long.MaxValue;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ArchiveIndexEntry> _archiveWrites =
         new(StringComparer.OrdinalIgnoreCase);
+    private const int CachedArchiveShardLimit = 4;
+    private readonly object _archiveCacheGate = new();
+    private readonly Dictionary<string, AuthorityArchive> _archiveCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _archiveCacheOrder = new();
 
     /// <summary>
     /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
@@ -848,53 +856,71 @@ public sealed class AttemptAuthorityService
         lock (_gate)
         {
             var review = FindReview(attemptId);
-            if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId));
-            var deliveryKey = DeliveryKey("claim", idempotencyKey);
-            if (review.IdempotencyKeys.Contains(deliveryKey))
-            {
-                var replay = ClassifyReviewLeaseReplay(review, executorId, claimDeliveryKey: deliveryKey);
-                // A crash-restarted executor re-claims with the same identity and
-                // therefore the same delivery key. Once the recorded lease is dead
-                // there is no surviving authority to replay - this is a takeover
-                // request, so fall through and mint a fresh lease instead of
-                // bouncing the claim poll with LeaseExpired (which crash-looped
-                // the review daemon: claim -> run -> lease dies -> 409 -> restart).
-                if (replay.Status != AttemptWriteStatus.LeaseExpired)
-                    return replay;
-                // BUT: if the dead lease was claimed with exactly this delivery
-                // key, the claiming PROCESS is still alive (a restart changes the
-                // instance id and thus the key) and its executor may still be
-                // running - minting a fresh fence here would double-execute the
-                // review and discard the first run as StaleFence. Keep answering
-                // LeaseExpired; the daemon's in-flight dedup skips the re-claim.
-                if (Same(review.CurrentClaimDeliveryKey, deliveryKey))
-                    return replay;
-            }
-            if (!IsCurrentReview(review) || Terminal(review.State))
-                return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
-            var now = _utcNow();
-            if (review.Lease is { } live && live.ExpiresAt > now)
-                return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId, $"ReviewAttempt is leased by '{live.ExecutorId}'.", ReviewAttempt: ToDto(review));
-
-            var fence = NextFenceLocked(review.TaskKey);
-            review.LastFence = fence;
-            review.AuthorityEpoch = _state.AuthorityEpoch;
-            review.State = AttemptLifecycleState.Leased;
-            review.Lease = NewLease(
-                executorId,
-                hostId,
-                fence,
-                requestedTtlSeconds,
-                now,
-                clientId: NormalizeNull(instanceId));
-            SetReviewLeaseIsolation(review, fence);
-            review.CurrentClaimDeliveryKey = deliveryKey;
-            review.IdempotencyKeys.Add(deliveryKey);
-            SettleReviewClaimsLocked();
-            _deferrableReviewClaims[(review.AttemptId, fence)] = now;
-            PersistLocked();
-            return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
+            if (review is not null)
+                return ClaimReviewLocked(review, executorId, hostId, requestedTtlSeconds, idempotencyKey, instanceId);
         }
+        // A claim must never wait for the archive warmup. The live authority
+        // has already answered whether this attempt can be claimed.
+        var archived = FindArchivedReview(attemptId, allowBuild: false);
+        return archived is null
+            ? new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId))
+            : new AttemptWriteResult(AttemptWriteStatus.Superseded, archived.AttemptId,
+                ReviewAttempt: ToDto(archived));
+    }
+
+    private AttemptWriteResult ClaimReviewLocked(
+        ReviewAttemptRecord review,
+        string executorId,
+        string hostId,
+        int? requestedTtlSeconds,
+        string idempotencyKey,
+        string? instanceId)
+    {
+        var deliveryKey = DeliveryKey("claim", idempotencyKey);
+        if (review.IdempotencyKeys.Contains(deliveryKey))
+        {
+            var replay = ClassifyReviewLeaseReplay(review, executorId, claimDeliveryKey: deliveryKey);
+            // A crash-restarted executor re-claims with the same identity and
+            // therefore the same delivery key. Once the recorded lease is dead
+            // there is no surviving authority to replay - this is a takeover
+            // request, so fall through and mint a fresh lease instead of
+            // bouncing the claim poll with LeaseExpired (which crash-looped
+            // the review daemon: claim -> run -> lease dies -> 409 -> restart).
+            if (replay.Status != AttemptWriteStatus.LeaseExpired)
+                return replay;
+            // BUT: if the dead lease was claimed with exactly this delivery
+            // key, the claiming PROCESS is still alive (a restart changes the
+            // instance id and thus the key) and its executor may still be
+            // running - minting a fresh fence here would double-execute the
+            // review and discard the first run as StaleFence. Keep answering
+            // LeaseExpired; the daemon's in-flight dedup skips the re-claim.
+            if (Same(review.CurrentClaimDeliveryKey, deliveryKey))
+                return replay;
+        }
+        if (!IsCurrentReview(review) || Terminal(review.State))
+            return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
+        var now = _utcNow();
+        if (review.Lease is { } live && live.ExpiresAt > now)
+            return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId, $"ReviewAttempt is leased by '{live.ExecutorId}'.", ReviewAttempt: ToDto(review));
+
+        var fence = NextFenceLocked(review.TaskKey);
+        review.LastFence = fence;
+        review.AuthorityEpoch = _state.AuthorityEpoch;
+        review.State = AttemptLifecycleState.Leased;
+        review.Lease = NewLease(
+            executorId,
+            hostId,
+            fence,
+            requestedTtlSeconds,
+            now,
+            clientId: NormalizeNull(instanceId));
+        SetReviewLeaseIsolation(review, fence);
+        review.CurrentClaimDeliveryKey = deliveryKey;
+        review.IdempotencyKeys.Add(deliveryKey);
+        SettleReviewClaimsLocked();
+        _deferrableReviewClaims[(review.AttemptId, fence)] = now;
+        PersistLocked();
+        return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
     }
 
     /// <summary>
@@ -2100,7 +2126,9 @@ public sealed class AttemptAuthorityService
 
     public RunAttemptDto? GetRun(string attemptId)
     {
-        lock (_gate) return FindRun(attemptId) is { } run ? ToDto(run) : null;
+        lock (_gate)
+            if (FindRun(attemptId) is { } run) return ToDto(run);
+        return FindArchivedRun(attemptId) is { } archived ? ToDto(archived) : null;
     }
 
     private AgentStudio.TaskServer.Contracts.RunnerAttemptAdoption ReAdoptRunLocked(
@@ -2196,7 +2224,9 @@ public sealed class AttemptAuthorityService
 
     public ReviewAttemptDto? GetReview(string attemptId)
     {
-        lock (_gate) return FindReview(attemptId) is { } review ? ToDto(review) : null;
+        lock (_gate)
+            if (FindReview(attemptId) is { } review) return ToDto(review);
+        return FindArchivedReview(attemptId) is { } archived ? ToDto(archived) : null;
     }
 
     // Display-only committed state. A log receipt can persist a large authority
@@ -3086,6 +3116,7 @@ public sealed class AttemptAuthorityService
             archive.ReviewAttempts = archive.ReviewAttempts.OrderBy(review => review.CreatedAt).ToList();
             _writer.Write(archivePath, JsonSerializer.Serialize(archive, JsonOptions));
             _archiveWrites[archivePath] = IndexArchive(archive);
+            EvictArchive(archivePath);
 
             var archivedRunIds = archivedRuns
                 .Select(run => run.AttemptId)
@@ -3169,39 +3200,97 @@ public sealed class AttemptAuthorityService
             .Select(entry => entry.Key)
             .Where(File.Exists)
             .OrderBy(path => path, StringComparer.Ordinal)
-            .Select(LoadArchive)
+            .Select(LoadCachedArchive)
             .ToList();
+
+    private RunAttemptRecord? FindArchivedRun(string attemptId)
+        => ArchiveIndex("attempt-read", waitForBuild: false)
+            .Where(entry => entry.Value.RunIds.Contains(attemptId))
+            .Select(entry => entry.Key)
+            .Where(File.Exists)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .SelectMany(path => LoadCachedArchive(path).RunAttempts)
+            .FirstOrDefault(run => Same(run.AttemptId, attemptId));
+
+    private ReviewAttemptRecord? FindArchivedReview(string attemptId, bool allowBuild = true)
+        => ArchiveIndex("attempt-read", allowBuild: allowBuild, waitForBuild: false)
+            .Where(entry => entry.Value.ReviewIds.Contains(attemptId))
+            .Select(entry => entry.Key)
+            .Where(File.Exists)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .SelectMany(path => LoadCachedArchive(path).ReviewAttempts)
+            .FirstOrDefault(review => Same(review.AttemptId, attemptId));
+
+    private AuthorityArchive LoadCachedArchive(string path)
+    {
+        lock (_archiveCacheGate)
+        {
+            if (_archiveCache.TryGetValue(path, out var cached))
+            {
+                _archiveCacheOrder.Remove(path);
+                _archiveCacheOrder.AddLast(path);
+                return cached;
+            }
+            var archive = LoadArchive(path);
+            _archiveCache[path] = archive;
+            _archiveCacheOrder.AddLast(path);
+            if (_archiveCacheOrder.Count > CachedArchiveShardLimit)
+            {
+                var oldest = _archiveCacheOrder.First!.Value;
+                _archiveCacheOrder.RemoveFirst();
+                _archiveCache.Remove(oldest);
+            }
+            return archive;
+        }
+    }
+
+    private void EvictArchive(string path)
+    {
+        lock (_archiveCacheGate)
+        {
+            _archiveCache.Remove(path);
+            _archiveCacheOrder.Remove(path);
+        }
+    }
 
     /// <summary>
     /// Builds the archive index off the request path (AGT-3109). The card detail
     /// polls history every few seconds; without a warm index the first of those
     /// reads after a restart deserializes every shard while the others wait for
-    /// it. A failed build stays unbuilt, so the next history read retries it and
-    /// still fails closed. Returns the number of indexed shards.
+    /// it. Successful shards remain indexed when another shard fails. Only the
+    /// failed shards are retried after a bounded delay.
     /// </summary>
     public int WarmArchiveIndex() => ArchiveIndex("warmup").Count;
 
-    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex(string trigger = "history-read")
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex(
+        string trigger = "history-read", bool allowBuild = true, bool waitForBuild = true)
     {
         var fromDisk = Volatile.Read(ref _archiveIndexFromDisk);
-        if (fromDisk is null)
+        if (allowBuild && (fromDisk is null || _utcNow().Ticks >= Volatile.Read(ref _archiveIndexNextRetryTicks)))
         {
-            lock (_archiveIndexBuildGate)
+            var entered = waitForBuild
+                ? EnterArchiveIndexBuildGate()
+                : Monitor.TryEnter(_archiveIndexBuildGate);
+            if (entered)
             {
-                fromDisk = _archiveIndexFromDisk;
-                if (fromDisk is null)
+                try
                 {
-                    var started = System.Diagnostics.Stopwatch.GetTimestamp();
-                    fromDisk = BuildArchiveIndexFromDisk();
-                    Volatile.Write(ref _archiveIndexFromDisk, fromDisk);
-                    _logger.LogInformation(
-                        "attempt-authority-archive-index-built trigger={Trigger} shards={ShardCount} elapsedMs={ElapsedMs}",
-                        trigger,
-                        fromDisk.Count,
-                        (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    fromDisk = _archiveIndexFromDisk;
+                    if (fromDisk is null || _utcNow().Ticks >= _archiveIndexNextRetryTicks)
+                    {
+                        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                        fromDisk = BuildArchiveIndexFromDisk(fromDisk);
+                        Volatile.Write(ref _archiveIndexFromDisk, fromDisk);
+                        _logger.LogInformation(
+                            "attempt-authority-archive-index-built trigger={Trigger} shards={ShardCount} failedShards={FailedShards} elapsedMs={ElapsedMs}",
+                            trigger, fromDisk.Count, _archiveIndexFailedShards.Count,
+                            (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    }
                 }
+                finally { Monitor.Exit(_archiveIndexBuildGate); }
             }
         }
+        fromDisk ??= new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase);
         if (_archiveWrites.IsEmpty) return fromDisk;
         var merged = new Dictionary<string, ArchiveIndexEntry>(fromDisk, StringComparer.OrdinalIgnoreCase);
         foreach (var (path, entry) in _archiveWrites)
@@ -3209,18 +3298,54 @@ public sealed class AttemptAuthorityService
         return merged;
     }
 
-    private IReadOnlyDictionary<string, ArchiveIndexEntry> BuildArchiveIndexFromDisk()
+    private bool EnterArchiveIndexBuildGate()
     {
-        var index = new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        Monitor.Enter(_archiveIndexBuildGate);
+        return true;
+    }
+
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> BuildArchiveIndexFromDisk(
+        IReadOnlyDictionary<string, ArchiveIndexEntry>? previous)
+    {
+        var index = previous is null
+            ? new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, ArchiveIndexEntry>(previous, StringComparer.OrdinalIgnoreCase);
         if (_path is null)
             return index;
         var directory = Path.GetDirectoryName(_path);
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
             return index;
-        // An unreadable shard fails the read closed and is retried on the next
-        // history read instead of being cached as empty.
-        foreach (var path in Directory.EnumerateFiles(directory, ArchiveFilePattern))
-            index[path] = IndexArchive(LoadArchive(path));
+        var paths = previous is null
+            ? Directory.EnumerateFiles(directory, ArchiveFilePattern).ToArray()
+            : _archiveIndexFailedShards.Where(item => item.Value <= _utcNow())
+                .Select(item => item.Key).ToArray();
+        foreach (var path in paths)
+        {
+            if (!File.Exists(path))
+            {
+                _archiveIndexFailedShards.Remove(path);
+                index.Remove(path);
+                continue;
+            }
+            try
+            {
+                index[path] = IndexArchive(LoadArchive(path));
+                _archiveIndexFailedShards.Remove(path);
+                _archiveIndexReportedShards.Remove(path);
+            }
+            catch (InvalidDataException ex)
+            {
+                _archiveIndexFailedShards[path] = _utcNow().Add(ArchiveIndexRetryDelay);
+                if (_archiveIndexReportedShards.Add(path))
+                    _logger.LogCritical(ex,
+                        "attempt-authority-archive-index-shard-failed path={ArchivePath} error={Error}",
+                        path, ex.Message);
+            }
+        }
+        Volatile.Write(ref _archiveIndexNextRetryTicks,
+            _archiveIndexFailedShards.Count == 0
+                ? long.MaxValue
+                : _archiveIndexFailedShards.Values.Min().Ticks);
         return index;
     }
 
@@ -3229,6 +3354,8 @@ public sealed class AttemptAuthorityService
             archive.RunAttempts.Select(run => run.TaskKey)
                 .Concat(archive.ReviewAttempts.Select(review => review.TaskKey))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            archive.RunAttempts.Select(run => run.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            archive.ReviewAttempts.Select(review => review.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase),
             DeliveryRefs(archive.RunAttempts, archive.ReviewAttempts).ToList());
 
     private AuthorityArchive LoadArchive(string path)
@@ -3516,6 +3643,8 @@ public sealed class AttemptAuthorityService
 
     private sealed record ArchiveIndexEntry(
         IReadOnlySet<string> TaskKeys,
+        IReadOnlySet<string> RunIds,
+        IReadOnlySet<string> ReviewIds,
         IReadOnlyList<AttemptIndexedDeliveryRef> DeliveryRefs);
 
     private sealed record TerminalAttemptReference(
