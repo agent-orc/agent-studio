@@ -9,10 +9,52 @@
     (closeRequest)="onCancel()"
     (backdropClick)="onCancel()">
     <div class="opd__content">
+      <section class="opd__section" aria-label="Repository setup">
+        <label class="opd__field">
+          <span class="opd__label">Repository setup</span>
+          <select class="opd__input" data-testid="onboard-project-repository-mode"
+                  [disabled]="submitting()" [ngModel]="repositoryMode()"
+                  (ngModelChange)="setRepositoryMode($event)">
+            <option value="existing">Use an existing repository</option>
+            <option value="create">Create a new repository</option>
+          </select>
+        </label>
+        @if (repositoryMode() === 'create') {
+          <div class="opd__repository-grid">
+            <label class="opd__field"><span class="opd__label">GitHub owner</span>
+              <input class="opd__input" data-testid="onboard-project-repository-owner" autocomplete="off"
+                     [disabled]="submitting()" [ngModel]="repositoryOwner()"
+                     (ngModelChange)="repositoryOwner.set($event)" />
+              <span class="opd__hint">A user or organisation the Studio installation can access.</span>
+            </label>
+            <label class="opd__field"><span class="opd__label">Repository name</span>
+              <input class="opd__input" data-testid="onboard-project-repository-name" autocomplete="off"
+                     [disabled]="submitting()" [ngModel]="repositoryName()"
+                     (ngModelChange)="repositoryName.set($event)" />
+            </label>
+            <label class="opd__field"><span class="opd__label">Visibility</span>
+              <select class="opd__input" data-testid="onboard-project-repository-visibility"
+                      [disabled]="submitting()" [ngModel]="repositoryVisibility()"
+                      (ngModelChange)="repositoryVisibility.set($event)">
+                <option value="private">Private</option><option value="public">Public</option>
+              </select>
+            </label>
+            <label class="opd__field"><span class="opd__label">Template</span>
+              <select class="opd__input" data-testid="onboard-project-repository-template"
+                      [disabled]="submitting()" [ngModel]="repositoryTemplate()"
+                      (ngModelChange)="repositoryTemplate.set($event)">
+                <option value="static-web">Static web app</option>
+                <option value="container-service">Container web service</option>
+              </select>
+            </label>
+          </div>
+        }
+      </section>
       <app-project-basics-form
         mode="create"
         testidPrefix="onboard-project"
         [disabled]="submitting()"
+        [showCodeLocation]="repositoryMode() === 'existing'"
         [workspaces]="registryWorkspaces()"
         [projects]="allProjects()"
         [availableModels]="models()"

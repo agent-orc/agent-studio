@@ -172,12 +172,14 @@ public static class RegistryEndpoints
 
         // ----- F45b project mutations (ADR-0042) -----
 
-        app.MapPost("/api/projects", (RegistryCreateProjectRequest body, ProjectRegistry projects, WorkspaceRegistry workspaces,
+        app.MapPost("/api/projects", async (RegistryCreateProjectRequest body, ProjectRegistry projects, WorkspaceRegistry workspaces,
             WorkspaceManagementService workspaceManagement, TaskScannerService scanner, TaskWatcherService watcher,
             AgentStudio.Runner.TaskRunnerService runners, AgentStudio.Projects.ProjectSettingsService projectSettings,
             ClientIdentityStore clients, WikiContentCache wikiContentCache,
             AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService definitionProposals,
-            ILoggerFactory loggerFactory) =>
+            IProjectRepositoryProvisioner repositoryProvisioner,
+            AgentStudio.Runner.BuildProfileValidationService profileValidation,
+            TaskMutationService taskMutations, ILoggerFactory loggerFactory, CancellationToken cancellationToken) =>
         {
             var onboardingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (body == null)
@@ -205,6 +207,15 @@ public static class RegistryEndpoints
                 return Results.BadRequest(new { error = "shortCode must be 2-6 chars, start with A-Z, and use A-Z or 0-9" });
             if (allProjects.Any(p => string.Equals(p.ShortCode, shortCode, StringComparison.OrdinalIgnoreCase)))
                 return Results.Conflict(new { error = $"shortCode '{shortCode}' is already used." });
+
+            if (body.CreateRepository is { } createRepository)
+            {
+                var repositoryError = ProjectRepositoryTemplates.Validate(createRepository);
+                if (repositoryError is not null) return Results.BadRequest(new { error = repositoryError });
+                if (!string.IsNullOrWhiteSpace(body.RepositoryPath) || !string.IsNullOrWhiteSpace(body.RepositoryUrl)
+                    || !string.IsNullOrWhiteSpace(body.RootPath))
+                    return Results.BadRequest(new { error = "Do not supply an existing repository path or URL when creating a repository." });
+            }
 
             string? executionRunner;
             try { executionRunner = ExecutionRunnerAssignment.NormalizeAndValidate(body.ExecutionRunner, clients); }
@@ -238,6 +249,32 @@ public static class RegistryEndpoints
                 return Results.BadRequest(new { error = storage.Error });
             if (storage.Outcome == WorkspaceManagementOutcome.Conflict)
                 return Results.Conflict(new { error = storage.Error });
+
+            ProvisionedRepository? provisioned = null;
+            if (body.CreateRepository is { } newRepository)
+            {
+                try
+                {
+                    provisioned = await repositoryProvisioner.CreateAsync(newRepository, cancellationToken);
+                    repositoryUrl = provisioned.Url;
+                    repositoryPath = provisioned.CheckoutPath;
+                    rootPath = provisioned.CheckoutPath;
+                }
+                catch (RepositoryProvisioningException ex)
+                {
+                    workspaceManagement.DeleteProjectStorage(storage.Entry!.Path);
+                    return ex.Code == "name-taken"
+                        ? Results.Conflict(new { error = ex.Message, code = ex.Code })
+                        : Results.BadRequest(new { error = ex.Message, code = ex.Code });
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    workspaceManagement.DeleteProjectStorage(storage.Entry!.Path);
+                    loggerFactory.CreateLogger("ProjectCreate").LogError(ex,
+                        "Repository provisioning failed for {Owner}/{Name}", newRepository.Owner, newRepository.Name);
+                    return Results.Problem("Repository setup failed. Check the Studio host and retry.", statusCode: 500);
+                }
+            }
 
             var record = new ProjectRecord
             {
@@ -281,11 +318,15 @@ public static class RegistryEndpoints
             catch (InvalidOperationException ex)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
+                if (provisioned is not null)
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
                 return Results.Conflict(new { error = ex.Message });
             }
             catch (ArgumentException ex)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
+                if (provisioned is not null)
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
                 return Results.BadRequest(new { error = ex.Message });
             }
             catch (ProjectPersistenceException ex)
@@ -300,7 +341,32 @@ public static class RegistryEndpoints
                     projects,
                     workspaceManagement,
                     loggerFactory);
+                if (provisioned is not null)
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
                 return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            if (provisioned is not null)
+            {
+                try
+                {
+                    projectSettings.SetBuildProfile(created.DisplayName, new BuildProfile
+                    {
+                        Stack = "node", InstallCmd = "npm ci", BuildCmds = ["npm run build"],
+                        TestCmds = ["npm test"], Lockfiles = ["package-lock.json"],
+                    });
+                    var validation = await profileValidation.ValidateAsync(
+                        created.DisplayName, provisioned.CheckoutPath, cancellationToken);
+                    if (!validation.Green)
+                        throw new InvalidOperationException($"Template build failed: {validation.Summary}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    projectSettings.SetBuildProfile(created.DisplayName, null);
+                    CleanupFailedCreate(record, true, projects, workspaceManagement, loggerFactory);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
+                    return Results.Problem($"Repository setup did not finish: {ex.Message}", statusCode: 500);
+                }
             }
 
             var liveEntry = scanner.GetWatchPaths().First(entry =>
@@ -309,6 +375,24 @@ public static class RegistryEndpoints
             wikiContentCache.Preload(liveEntry.Name);
             runners.EnsureRunner(liveEntry);
             var proposalTaskId = definitionProposals.CreateCard(created.DisplayName);
+            if (provisioned is not null)
+            {
+                var firstCard = taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+                {
+                    Project = created.DisplayName,
+                    WatchPath = liveEntry.Path,
+                    Title = "Hello world change",
+                    PromptMarkdown = "Make a small visible hello world change in the generated app. Update its test and run npm test and npm run build.",
+                    TargetState = TaskStates.Preparation,
+                    Mode = TaskModes.Coding,
+                    TaskType = TaskTypes.Feature,
+                    CreationSource = TimelineActors.Orchestrator,
+                    CreatedBy = "Agent Studio",
+                });
+                if (firstCard is null)
+                    loggerFactory.CreateLogger("ProjectCreate").LogWarning(
+                        "First card could not be offered for project {Project}", created.Id);
+            }
             var onboardingDurationMs = (long)System.Diagnostics.Stopwatch
                 .GetElapsedTime(onboardingStarted).TotalMilliseconds;
             loggerFactory.CreateLogger("ProjectCreate").LogInformation(
@@ -639,6 +723,18 @@ public static class RegistryEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
 
+    private static async Task DeleteProvisionedRepositoryAsync(
+        IProjectRepositoryProvisioner provisioner, CreateRepositoryRequest request,
+        ProvisionedRepository repository, ILoggerFactory loggerFactory, CancellationToken cancellationToken)
+    {
+        try { await provisioner.DeleteAsync(request, repository.CheckoutPath, cancellationToken); }
+        catch (Exception ex)
+        {
+            loggerFactory.CreateLogger("ProjectCreate").LogCritical(ex,
+                "project-create-repository-cleanup-failed owner={Owner} name={Name}", request.Owner, request.Name);
+        }
+    }
+
     private static void CleanupFailedCreate(
         ProjectRecord record,
         bool appended,
@@ -720,6 +816,7 @@ public sealed record WorkspaceReorderRequest
 /// <summary>F46 — POST /api/projects payload.</summary>
 public sealed record RegistryCreateProjectRequest
 {
+    public CreateRepositoryRequest? CreateRepository { get; init; }
     public string? SourceType { get; init; }
     public string WorkspaceId { get; init; } = "";
     public string DisplayName { get; init; } = "";

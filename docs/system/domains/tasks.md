@@ -7,6 +7,21 @@ Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
 or commit attribution.
 
+## Project onboarding
+
+Studio's project dialog offers an existing repository and a generated GitHub
+repository. The generated mode sends owner, repository name, visibility and
+template to `POST /api/projects`. The backend reads
+`AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN` from the host environment, creates the
+repository through `IProjectRepositoryProvisioner`, installs the selected
+product template on `main` and `develop`, and checks out `develop` under
+`ProjectOnboarding:RepositoryRoot` (or the host's local application data
+directory). The token stays out of the browser, project registry, task storage
+and Git remote URL. The template's `.agent-studio/project.yml` is the
+repository-owned build and test contract. Studio validates the initial local
+build profile before offering the "Hello world change" card. Registration
+failures compensate the registry, task storage and newly created repository.
+
 ## Board read contract
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.

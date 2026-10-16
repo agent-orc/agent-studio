@@ -4,6 +4,16 @@
   width: 100%;
 }
 
+.opd__repository-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--studio-spacing-3);
+}
+
+@media (max-width: 640px) {
+  .opd__repository-grid { grid-template-columns: 1fr; }
+}
+
 .opd__section {
   display: grid;
   gap: var(--studio-spacing-3);

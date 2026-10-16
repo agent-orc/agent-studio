@@ -348,6 +348,13 @@ builder.Services.AddSingleton<CliOutputLogMaintenanceService>();
 // not yet load-bearing for the existing lane-folder code paths (F45c).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceRegistry>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectRegistry>();
+builder.Services.AddHttpClient("github-project-provisioning", client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<AgentStudio.Registry.IProvisioningCredentialSource,
+    AgentStudio.Registry.HostProvisioningCredentialSource>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectRepositoryCheckout,
+    AgentStudio.Registry.GitProjectRepositoryCheckout>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectRepositoryProvisioner,
+    AgentStudio.Registry.GitHubProjectRepositoryProvisioner>();
 builder.Services.AddSingleton<AgentStudio.Registry.ComponentRoutingService>();
 // AGT-1812: per-workspace default settings store + the two-tier orchestrator
 // resolver (project override -> workspace default -> platform constant default).
