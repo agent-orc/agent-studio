@@ -91,6 +91,8 @@ public sealed class ProjectEnvironmentService
             if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
                 throw new JsonException("Container destination must be a local proxy port.");
             var healthUrl = Optional("healthUrl");
+            if (kind is "stage" or "production" && healthUrl is null)
+                throw new JsonException("Stage and production require a health URL.");
             if (healthUrl is not null && (!Uri.TryCreate(healthUrl, UriKind.Absolute, out var uri)
                 || uri.Scheme is not ("http" or "https")))
                 throw new JsonException("Health URL must use HTTP or HTTPS.");

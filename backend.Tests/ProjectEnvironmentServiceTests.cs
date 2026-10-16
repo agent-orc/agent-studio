@@ -32,6 +32,19 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void StageDeclaration_RequiresHealthUrl()
+    {
+        var (service, repo, _) = Build();
+        var stage = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        File.WriteAllText(stage, JsonSerializer.Serialize(new
+        {
+            id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+            address = "https://stage.example", template = "container", destination = "8081",
+        }));
+        Assert.Contains("health URL", Assert.Throws<JsonException>(() => service.Declarations("demo")).Message);
+    }
+
+    [Fact]
     public void Release_Stages_ThenApprovesExactArtifact_AndCanRollBack()
     {
         var (service, repo, watch) = Build();
