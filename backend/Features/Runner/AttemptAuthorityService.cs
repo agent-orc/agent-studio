@@ -170,6 +170,10 @@ public sealed class AttemptAuthorityService
     private IReadOnlyDictionary<string, ArchiveIndexEntry>? _archiveIndexFromDisk;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ArchiveIndexEntry> _archiveWrites =
         new(StringComparer.OrdinalIgnoreCase);
+    private const int CachedArchiveShardLimit = 4;
+    private readonly object _archiveCacheGate = new();
+    private readonly Dictionary<string, AuthorityArchive> _archiveCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _archiveCacheOrder = new();
 
     /// <summary>
     /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
@@ -996,53 +1000,69 @@ public sealed class AttemptAuthorityService
         lock (_gate)
         {
             var review = FindReview(attemptId);
-            if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId));
-            var deliveryKey = DeliveryKey("claim", idempotencyKey);
-            if (review.IdempotencyKeys.Contains(deliveryKey))
-            {
-                var replay = ClassifyReviewLeaseReplay(review, executorId, claimDeliveryKey: deliveryKey);
-                // A crash-restarted executor re-claims with the same identity and
-                // therefore the same delivery key. Once the recorded lease is dead
-                // there is no surviving authority to replay - this is a takeover
-                // request, so fall through and mint a fresh lease instead of
-                // bouncing the claim poll with LeaseExpired (which crash-looped
-                // the review daemon: claim -> run -> lease dies -> 409 -> restart).
-                if (replay.Status != AttemptWriteStatus.LeaseExpired)
-                    return replay;
-                // BUT: if the dead lease was claimed with exactly this delivery
-                // key, the claiming PROCESS is still alive (a restart changes the
-                // instance id and thus the key) and its executor may still be
-                // running - minting a fresh fence here would double-execute the
-                // review and discard the first run as StaleFence. Keep answering
-                // LeaseExpired; the daemon's in-flight dedup skips the re-claim.
-                if (Same(review.CurrentClaimDeliveryKey, deliveryKey))
-                    return replay;
-            }
-            if (!IsCurrentReview(review) || Terminal(review.State))
-                return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
-            var now = _utcNow();
-            if (review.Lease is { } live && live.ExpiresAt > now)
-                return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId, $"ReviewAttempt is leased by '{live.ExecutorId}'.", ReviewAttempt: ToDto(review));
-
-            var fence = NextFenceLocked(review.TaskKey);
-            review.LastFence = fence;
-            review.AuthorityEpoch = _state.AuthorityEpoch;
-            review.State = AttemptLifecycleState.Leased;
-            review.Lease = NewLease(
-                executorId,
-                hostId,
-                fence,
-                requestedTtlSeconds,
-                now,
-                clientId: NormalizeNull(instanceId));
-            SetReviewLeaseIsolation(review, fence);
-            review.CurrentClaimDeliveryKey = deliveryKey;
-            review.IdempotencyKeys.Add(deliveryKey);
-            SettleReviewClaimsLocked();
-            _deferrableReviewClaims[(review.AttemptId, fence)] = now;
-            PersistLocked();
-            return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
+            if (review is not null)
+                return ClaimReviewLocked(review, executorId, hostId, requestedTtlSeconds, idempotencyKey, instanceId);
         }
+        var archived = FindArchivedReview(attemptId);
+        return archived is null
+            ? new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId))
+            : new AttemptWriteResult(AttemptWriteStatus.Superseded, archived.AttemptId,
+                ReviewAttempt: ToDto(archived));
+    }
+
+    private AttemptWriteResult ClaimReviewLocked(
+        ReviewAttemptRecord review,
+        string executorId,
+        string hostId,
+        int? requestedTtlSeconds,
+        string idempotencyKey,
+        string? instanceId)
+    {
+        var deliveryKey = DeliveryKey("claim", idempotencyKey);
+        if (review.IdempotencyKeys.Contains(deliveryKey))
+        {
+            var replay = ClassifyReviewLeaseReplay(review, executorId, claimDeliveryKey: deliveryKey);
+            // A crash-restarted executor re-claims with the same identity and
+            // therefore the same delivery key. Once the recorded lease is dead
+            // there is no surviving authority to replay - this is a takeover
+            // request, so fall through and mint a fresh lease instead of
+            // bouncing the claim poll with LeaseExpired (which crash-looped
+            // the review daemon: claim -> run -> lease dies -> 409 -> restart).
+            if (replay.Status != AttemptWriteStatus.LeaseExpired)
+                return replay;
+            // BUT: if the dead lease was claimed with exactly this delivery
+            // key, the claiming PROCESS is still alive (a restart changes the
+            // instance id and thus the key) and its executor may still be
+            // running - minting a fresh fence here would double-execute the
+            // review and discard the first run as StaleFence. Keep answering
+            // LeaseExpired; the daemon's in-flight dedup skips the re-claim.
+            if (Same(review.CurrentClaimDeliveryKey, deliveryKey))
+                return replay;
+        }
+        if (!IsCurrentReview(review) || Terminal(review.State))
+            return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
+        var now = _utcNow();
+        if (review.Lease is { } live && live.ExpiresAt > now)
+            return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId, $"ReviewAttempt is leased by '{live.ExecutorId}'.", ReviewAttempt: ToDto(review));
+
+        var fence = NextFenceLocked(review.TaskKey);
+        review.LastFence = fence;
+        review.AuthorityEpoch = _state.AuthorityEpoch;
+        review.State = AttemptLifecycleState.Leased;
+        review.Lease = NewLease(
+            executorId,
+            hostId,
+            fence,
+            requestedTtlSeconds,
+            now,
+            clientId: NormalizeNull(instanceId));
+        SetReviewLeaseIsolation(review, fence);
+        review.CurrentClaimDeliveryKey = deliveryKey;
+        review.IdempotencyKeys.Add(deliveryKey);
+        SettleReviewClaimsLocked();
+        _deferrableReviewClaims[(review.AttemptId, fence)] = now;
+        PersistLocked();
+        return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
     }
 
     /// <summary>
@@ -2255,7 +2275,9 @@ public sealed class AttemptAuthorityService
 
     public RunAttemptDto? GetRun(string attemptId)
     {
-        lock (_gate) return FindRun(attemptId) is { } run ? ToDto(run) : null;
+        lock (_gate)
+            if (FindRun(attemptId) is { } run) return ToDto(run);
+        return FindArchivedRun(attemptId) is { } archived ? ToDto(archived) : null;
     }
 
     private AgentStudio.TaskServer.Contracts.RunnerAttemptAdoption ReAdoptRunLocked(
@@ -2351,7 +2373,9 @@ public sealed class AttemptAuthorityService
 
     public ReviewAttemptDto? GetReview(string attemptId)
     {
-        lock (_gate) return FindReview(attemptId) is { } review ? ToDto(review) : null;
+        lock (_gate)
+            if (FindReview(attemptId) is { } review) return ToDto(review);
+        return FindArchivedReview(attemptId) is { } archived ? ToDto(archived) : null;
     }
 
     // Display-only committed state. A log receipt can persist a large authority
@@ -3539,6 +3563,7 @@ public sealed class AttemptAuthorityService
                 ExternalizeReviewPayloads(review);
             _writer.Write(archivePath, JsonSerializer.Serialize(archive, JsonOptions));
             _archiveWrites[archivePath] = IndexArchive(archive);
+            EvictArchive(archivePath);
 
             var archivedRunIds = archivedRuns
                 .Select(run => run.AttemptId)
@@ -3622,8 +3647,58 @@ public sealed class AttemptAuthorityService
             .Select(entry => entry.Key)
             .Where(File.Exists)
             .OrderBy(path => path, StringComparer.Ordinal)
-            .Select(LoadArchive)
+            .Select(LoadCachedArchive)
             .ToList();
+
+    private RunAttemptRecord? FindArchivedRun(string attemptId)
+        => ArchiveIndex()
+            .Where(entry => entry.Value.RunIds.Contains(attemptId))
+            .Select(entry => entry.Key)
+            .Where(File.Exists)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .SelectMany(path => LoadCachedArchive(path).RunAttempts)
+            .FirstOrDefault(run => Same(run.AttemptId, attemptId));
+
+    private ReviewAttemptRecord? FindArchivedReview(string attemptId)
+        => ArchiveIndex()
+            .Where(entry => entry.Value.ReviewIds.Contains(attemptId))
+            .Select(entry => entry.Key)
+            .Where(File.Exists)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .SelectMany(path => LoadCachedArchive(path).ReviewAttempts)
+            .FirstOrDefault(review => Same(review.AttemptId, attemptId));
+
+    private AuthorityArchive LoadCachedArchive(string path)
+    {
+        lock (_archiveCacheGate)
+        {
+            if (_archiveCache.TryGetValue(path, out var cached))
+            {
+                _archiveCacheOrder.Remove(path);
+                _archiveCacheOrder.AddLast(path);
+                return cached;
+            }
+            var archive = LoadArchive(path);
+            _archiveCache[path] = archive;
+            _archiveCacheOrder.AddLast(path);
+            if (_archiveCacheOrder.Count > CachedArchiveShardLimit)
+            {
+                var oldest = _archiveCacheOrder.First!.Value;
+                _archiveCacheOrder.RemoveFirst();
+                _archiveCache.Remove(oldest);
+            }
+            return archive;
+        }
+    }
+
+    private void EvictArchive(string path)
+    {
+        lock (_archiveCacheGate)
+        {
+            _archiveCache.Remove(path);
+            _archiveCacheOrder.Remove(path);
+        }
+    }
 
     /// <summary>
     /// Builds the archive index off the request path (AGT-3109). The card detail
@@ -3682,6 +3757,8 @@ public sealed class AttemptAuthorityService
             archive.RunAttempts.Select(run => run.TaskKey)
                 .Concat(archive.ReviewAttempts.Select(review => review.TaskKey))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            archive.RunAttempts.Select(run => run.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            archive.ReviewAttempts.Select(review => review.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase),
             DeliveryRefs(archive.RunAttempts, archive.ReviewAttempts).ToList());
 
     private AuthorityArchive LoadArchive(string path)
@@ -3981,6 +4058,8 @@ public sealed class AttemptAuthorityService
 
     private sealed record ArchiveIndexEntry(
         IReadOnlySet<string> TaskKeys,
+        IReadOnlySet<string> RunIds,
+        IReadOnlySet<string> ReviewIds,
         IReadOnlyList<AttemptIndexedDeliveryRef> DeliveryRefs);
 
     private sealed record TerminalAttemptReference(

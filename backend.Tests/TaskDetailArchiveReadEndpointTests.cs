@@ -15,8 +15,8 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// AGT-3109: the card detail polls <c>/runs</c>, <c>/timeline</c> and
 /// <c>/steering-feedback</c>. Each request reads the authority projection, and
-/// with it the archive shards of the card, exactly once; a card without
-/// archived attempts opens no shard at all.
+/// with it the archive shards of the card. Repeated requests reuse cached
+/// shards; a card without archived attempts opens no shard at all.
 /// </summary>
 public sealed class TaskDetailArchiveReadEndpointTests : IDisposable
 {
@@ -36,7 +36,7 @@ public sealed class TaskDetailArchiveReadEndpointTests : IDisposable
     }
 
     [Fact]
-    public async Task Each_detail_read_projects_the_authority_once_and_a_card_without_archives_opens_no_shard()
+    public async Task Detail_reads_reuse_cached_archive_and_a_card_without_archives_opens_no_shard()
     {
         await using var factory = BuildFactory();
         using var client = factory.CreateClient();
@@ -51,9 +51,12 @@ public sealed class TaskDetailArchiveReadEndpointTests : IDisposable
             using var archived = await client.GetAsync(
                 $"/api/tasks/archived-card/{surface}?project={Uri.EscapeDataString(project.Id)}");
             archived.EnsureSuccessStatusCode();
-            Assert.Equal(
-                [new KeyValuePair<string, int>("attempt-authority.archive-2026-10-12-08.json", 1)],
-                _opens.ToArray());
+            if (surface == "timeline")
+                Assert.Equal(
+                    [new KeyValuePair<string, int>("attempt-authority.archive-2026-10-12-08.json", 1)],
+                    _opens.ToArray());
+            else
+                Assert.Empty(_opens);
 
             _opens.Clear();
             using var fresh = await client.GetAsync(

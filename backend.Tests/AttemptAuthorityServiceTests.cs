@@ -1828,8 +1828,8 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Single(liveProjection.ReviewAttempts);
         Assert.Equal(2, historicalProjection.RunAttempts.Count);
         Assert.Equal(2, historicalProjection.ReviewAttempts.Count);
-        Assert.Null(restarted.GetRun(oldRun.AttemptId));
-        Assert.Null(restarted.GetReview(oldReview.AttemptId));
+        Assert.Equal(oldRun.AttemptId, restarted.GetRun(oldRun.AttemptId)!.AttemptId);
+        Assert.Equal(oldReview.AttemptId, restarted.GetReview(oldReview.AttemptId)!.AttemptId);
 
         var liveAfterMigration = File.ReadAllText(livePath);
         var archiveAfterMigration = File.ReadAllText(archivePath);
@@ -1974,8 +1974,8 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         var liveProjection = restarted.GetTaskProjection("AGT-1");
 
         Assert.Equal(run.AttemptId, liveProjection.CurrentRunAttempt!.AttemptId);
-        Assert.Null(restarted.GetRun("run-archived"));
-        Assert.Null(restarted.GetReview("review-archived"));
+        Assert.Throws<InvalidDataException>(() => restarted.GetRun("run-archived"));
+        Assert.Throws<InvalidDataException>(() => restarted.GetReview("review-archived"));
         Assert.Throws<InvalidDataException>(
             () => restarted.GetTaskProjection("AGT-1", includeArchived: true));
     }
@@ -2032,7 +2032,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         });
 
         Assert.Equal(AttemptWriteStatus.Accepted, settled.Status);
-        Assert.Null(service.GetRun(first.AttemptId));
+        Assert.Throws<InvalidDataException>(() => service.GetRun(first.AttemptId));
         Assert.Equal(second.AttemptId, service.GetRun(second.AttemptId)!.AttemptId);
         Assert.Equal("{ older archive", File.ReadAllText(legacyDailyPath));
         Assert.Equal(
@@ -2101,7 +2101,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         // More than one retention window of archivable attempts compacts early
         // and merges into the same hourly shard instead of a new file.
         var burst = SupersededRun("AGT-3");
-        Assert.Null(service.GetRun(deferred));
+        Assert.Equal(deferred, service.GetRun(deferred)!.AttemptId);
         Assert.Equal(["attempt-authority.archive-2026-07-28-10.json"], Shards());
         Assert.Equal(
             new[] { first, deferred, burst }.Order(StringComparer.Ordinal),
