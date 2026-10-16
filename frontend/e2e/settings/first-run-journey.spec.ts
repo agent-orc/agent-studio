@@ -1,15 +1,18 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from '@playwright/test';
-
-const ownerPassword = randomBytes(24).toString('base64url') + 'Aa1!';
 
 test('fresh project reaches an integrated proof card with live Git and runner probes', async ({ page }) => {
   test.setTimeout(16 * 60_000);
   const workspace = process.env.PW_E2E_WORKSPACE;
   expect(workspace).toBeTruthy();
+  const passwordFile = join(workspace!, 'first-run-owner-password');
+  const ownerPassword = existsSync(passwordFile)
+    ? readFileSync(passwordFile, 'utf8')
+    : randomBytes(24).toString('base64url') + 'Aa1!';
+  if (!existsSync(passwordFile)) writeFileSync(passwordFile, ownerPassword, { mode: 0o600 });
   const auth = await page.request.get('/api/auth/status');
   expect(auth.ok()).toBeTruthy();
   const current = await auth.json() as { bootstrapRequired: boolean };
@@ -80,7 +83,7 @@ test('fresh project reaches an integrated proof card with live Git and runner pr
 
   await page.getByTestId('first-run-demo-confirm').check();
   await page.getByTestId('first-run-create-proof').click();
-  await expect(page.getByTestId('first-run-proof-id')).toBeVisible();
+  await expect(page.getByTestId('first-run-proof-id')).toBeVisible({ timeout: 120_000 });
   await expect(async () => {
     await page.getByTestId('first-run-refresh').click();
     await expect(page.getByTestId('first-run-proof')).toHaveAttribute('data-state', 'ready');

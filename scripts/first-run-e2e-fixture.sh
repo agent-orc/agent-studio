@@ -34,13 +34,18 @@ if (( network_operation )); then
   done
   configured_origin="$(/usr/bin/git -C "${workdir}" config --get remote.origin.url 2>/dev/null || true)"
   configured_push_origin="$(/usr/bin/git -C "${workdir}" config --get remote.origin.pushurl 2>/dev/null || true)"
+  named_origin=0
   for index in "${!args[@]}"; do
     if [[ "${args[$index]}" == 'https://github.com/agent-studio/first-run-e2e.git' ]]; then
       args[$index]="${fixture_root}/first-run-origin.git"
     elif [[ "${args[$index]}" == origin && ( "${configured_origin}" == 'https://github.com/agent-studio/first-run-e2e.git' || "${configured_push_origin}" == 'https://github.com/agent-studio/first-run-e2e.git' ) ]]; then
-      args[$index]="${fixture_root}/first-run-origin.git"
+      named_origin=1
     fi
   done
+  if (( named_origin )); then
+    args=(-c "url.file://${fixture_root}/first-run-origin.git.insteadOf=https://github.com/agent-studio/first-run-e2e.git"
+      "${args[@]}")
+  fi
 fi
 exec /usr/bin/git "${args[@]}"
 GIT
