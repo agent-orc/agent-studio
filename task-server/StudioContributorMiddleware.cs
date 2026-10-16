@@ -9,7 +9,7 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
     public async Task InvokeAsync(HttpContext context)
     {
         var authPath = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
-        if (authPath is "/api/v1/studio/auth/login" or "/api/v1/studio/auth/bootstrap"
+        if (authPath is "/api/v1/studio/auth/status" or "/api/v1/studio/auth/login" or "/api/v1/studio/auth/bootstrap"
             or "/api/v1/studio/auth/invite/accept" or "/api/v1/studio/auth/recover")
         {
             await next(context);
