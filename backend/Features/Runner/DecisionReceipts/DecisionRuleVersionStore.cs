@@ -127,13 +127,15 @@ public sealed class DecisionRuleVersionStore
     public DecisionRuleVersionV1 Rollback(string workspaceId, string? projectId, string targetVersionId,
         DecisionRuleActivateRequest request)
     {
-        DecisionRuleVersionV1 target;
-        lock (_gate) target = _versions.FirstOrDefault(v => v.VersionId == targetVersionId
-            && SameScope(v, workspaceId, projectId)) ?? throw new KeyNotFoundException("Rule version not found.");
-        var version = Draft(workspaceId, projectId,
-            new(ActiveVersionId(workspaceId, projectId), request.Actor, request.Reason, target.Rules));
-        Activate(workspaceId, projectId, version.VersionId, request);
-        return version;
+        lock (_gate)
+        {
+            var target = _versions.FirstOrDefault(v => v.VersionId == targetVersionId
+                && SameScope(v, workspaceId, projectId)) ?? throw new KeyNotFoundException("Rule version not found.");
+            var version = Draft(workspaceId, projectId,
+                new(ActiveId(workspaceId, projectId), request.Actor, request.Reason, target.Rules));
+            Activate(workspaceId, projectId, version.VersionId, request);
+            return version;
+        }
     }
 
     public string? ActiveVersionId(string workspaceId, string? projectId = null)
