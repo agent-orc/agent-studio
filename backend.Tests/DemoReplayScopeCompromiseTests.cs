@@ -286,6 +286,8 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
         return credential!.Secret;
     }
 
+    private const string BootstrapCode = "demo-replay-setup-code";
+
     private static async Task<string> BootstrapOwnerAsync(HttpClient browser)
     {
         var bootstrap = await browser.PostAsJsonAsync("/api/auth/bootstrap", new
@@ -293,6 +295,9 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
             username = "demo.owner",
             password = "correct horse battery staple!",
             displayName = "Demo Owner",
+            // The in-memory test server has no client address, so the networked
+            // profile treats this first-owner request as remote (AGT-3184).
+            bootstrapCode = BootstrapCode,
         });
         bootstrap.EnsureSuccessStatusCode();
         var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
@@ -328,6 +333,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
                 ["WatchPaths:0:Path"] = _watchPath,
                 ["WatchPaths:0:RootPath"] = _watchPath,
                 ["Security:Profile"] = "networked",
+                ["Security:BootstrapCode"] = BootstrapCode,
                 ["AllowedHosts"] = "studio.test",
                 ["DemoReplay:Enabled"] = "true",
                 ["DemoReplay:TraceId"] = TraceId,
