@@ -1,14 +1,17 @@
+# AGT-3194 late gate result status
+
+- Result implementation SHA: `ad1e2481f07b2bf34ff68108af480567a515a64b`. Delivery `7cdb87d40` was replayed linearly onto `origin/develop` at `88f555f1314f0ed1a7b03eff4e1f772975def73d`; the fix follows as a second commit, with no merge commit.
+- Implemented option: completed or integrated deliveries supersede late gate results and queue budget violations. Acceptance and integration detection cancel queued remote gates, including a gate that registers after acceptance. The merge runner checks supersession before and inside the publication fence. It restores the Studio integration ref to its captured anchor when the gate is stale; rollback failure records a repair event and returns an integration error without rewriting the completed card's pipeline step.
+- Changed files in the fix commit: `backend/Features/Pipeline/MergeIntoDevelopRunner.cs`, `backend/Features/Pipeline/TaskGateCancellationRegistry.cs`, `backend.Tests/MergeIntoDevelopRunnerLateGateTests.cs`, and `backend.Tests/ReviewDecisionOrchestratorGateCancellationTests.cs`.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` and an incremental `dotnet build backend.Tests/OrchestratorApi.Tests.csproj --no-restore -m:1 -nodeReuse:false` passed. The new race and rollback filter passed 4 tests; the affected class filter passed 237 tests; `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and had no matches in the other seven .NET test projects. `npm --prefix frontend run lint` and `git diff --check` passed. The complete test logs contained no failed test entries, and no worktree test process remained.
+- The existing pipeline domain documentation already describes the completed and integrated supersession behavior; this fix only corrects its publication and rollback ordering, so no further documentation change was needed.
+
 # AGT-3191 Dossier Tag and Created controls status
 
 - Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
 - Implemented option: compact Tag suggestions retain distinct tag ids and show the duplicate label's ordinal, total, and id. The Created browser fixture supplies creation dates and checks all four presets, both Created sort directions, and URL state after reload.
 - Review captures in the task results directory: `dossier-toolbar-1440x900--mocked.png` and `dossier-toolbar-1920x1080--mocked.png`. Light and dark overview captures are also in that directory.
 - Verification: `dotnet build agent-taskboard.sln --no-restore` and `npm --prefix frontend run build` passed. Focused backend classes (`WorkbenchCatalogueTests`, `GitServiceFileContentTests`) passed 31 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 82 backend tests; runner and task-server had no matches. Focused Angular specs (`tag-filters.component.spec.ts`, `workbench-overview-view-state.service.spec.ts`) passed 11 tests. The focused Playwright Dossier sort/filter test passed. `npm --prefix frontend run lint` passed.
-
-# AGT-3194 late gate result status
-
-- Fix round from delivery `7cdb87d40`, rebased onto current `origin/develop`. Final result SHA and verification pending.
-- Implemented option: completed or integrated deliveries supersede late gate results and queue budget violations. Acceptance and integration detection cancel queued remote gates.
 
 # AGT-3153 release workflow status
 
