@@ -52,7 +52,9 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   if (results) await panel.screenshot({ path: path.join(results, 'workspace-quota.png') });
   await page.evaluate(() => localStorage.setItem('atp.studio.theme', 'dark'));
   await page.reload();
-  await page.getByTestId('studio-ab-settings').click();
+  if (!await page.getByTestId('workspace-settings-rail-workspaces').isVisible()) {
+    await page.getByTestId('studio-ab-settings').click();
+  }
   await page.getByTestId('workspace-settings-rail-workspaces').click();
   await page.getByTestId(`settings-workspace-quota-${workspaceId}`).click();
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
