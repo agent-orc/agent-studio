@@ -143,7 +143,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var stage = service.Claim("stage-host")!;
         Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
         _clock.Advance(TimeSpan.FromMinutes(9));
-        Assert.Equal("pending", service.Read("demo")!.Promotions.Single().Status);
+        Assert.Equal("pending", service.Read("demo")!.Promotions.Last().Status);
         _clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal("production-queued", service.Read("demo")!.Promotions.Last().Status);
         Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);

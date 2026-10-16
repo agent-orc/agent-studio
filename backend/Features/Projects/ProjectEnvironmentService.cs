@@ -104,7 +104,8 @@ public sealed class ProjectEnvironmentService
         }
         if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new JsonException("Environment ids must be unique within a project.");
-        return result;
+        return result.OrderBy(item => item.Kind == "stage" ? 0 : item.Kind == "production" ? 1 : 2)
+            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -119,14 +120,15 @@ public sealed class ProjectEnvironmentService
             return new(project, declarations.Select(item =>
             {
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
-                    .OrderByDescending(row => row.At).Take(30).Select(row => row.Item).ToArray();
+                    .Reverse().Take(30).Select(row => row.Item).ToArray();
                 var latest = history.FirstOrDefault();
-                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && job.Status is "queued" or "claimed");
+                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id
+                    && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
                     latest is null ? "unknown" : latest.Status == "failed" ? "failed" : "healthy",
                     pending?.Artifact, history);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
-                state.History.Where(row => row.Item.Status == "failed").OrderByDescending(row => row.At)
+                state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
                     .Take(20).Select(row => new DeploymentFailureCard(row.EnvironmentId,
                         row.Item.Artifact, row.At, row.Item.Evidence ?? "deploy-step-failed",
                         row.Item.PreviousArtifact)).ToArray());
@@ -201,8 +203,10 @@ public sealed class ProjectEnvironmentService
             var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
             if (declaration is null) return false;
             var state = Load(project);
-            var previous = state.History.Where(row => row.EnvironmentId == environmentId && row.Item.Status is "healthy" or "rolled-back")
-                .OrderByDescending(row => row.At).Skip(1).FirstOrDefault();
+            var currentArtifact = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item.Artifact;
+            var previous = state.History.LastOrDefault(row => row.EnvironmentId == environmentId
+                && (row.Item.Status is "healthy" or "rolled-back")
+                && row.Item.Artifact != currentArtifact);
             if (previous is null) return false;
             Queue(project, declaration, previous.Item.Artifact, state, rollback: true, actor: actor);
             Save(project, state);
@@ -290,7 +294,7 @@ public sealed class ProjectEnvironmentService
             var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
             if (production?.Approval != "stage-healthy-10m" ||
                 !state.History.Any(row => row.EnvironmentId == production.Id
-                    && row.Item.Status is "healthy" or "rolled-back") ||
+                    && (row.Item.Status is "healthy" or "rolled-back")) ||
                 _clock.GetUtcNow().UtcDateTime - promotion.StageHealthyAt < TimeSpan.FromMinutes(10)) continue;
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = "production-queued", Actor = "stage-health-rule" };
@@ -301,8 +305,9 @@ public sealed class ProjectEnvironmentService
     private void Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
         bool rollback = false, string? actor = null)
     {
-        var previous = state.History.Where(row => row.EnvironmentId == declaration.Id && row.Item.Status is "healthy" or "rolled-back")
-            .OrderByDescending(row => row.At).FirstOrDefault()?.Item.Artifact;
+        var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
+            && (row.Item.Status is "healthy" or "rolled-back"))
+            .LastOrDefault()?.Item.Artifact;
         state.Jobs.Add(new(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
