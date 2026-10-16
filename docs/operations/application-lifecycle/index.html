@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anwendungs-Lebenszyklus: vom neuen Projekt bis Produktion | Konzept-Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --studio: #0d6f6c; --hosting: #8c3a5a; --new: #6a4cad;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --studio: #43b3ad; --hosting: #d9799d; --new: #a68ce6;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 66ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .box.ok { background: var(--ok-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .tag.new { color: var(--new); border-color: var(--new); border-style: dashed; }
+  figure { margin: 22px 0; }
+  .figscroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 6px; }
+  figure svg { width: 100%; min-width: 860px; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  svg text { font-family: system-ui, "Segoe UI", sans-serif; fill: var(--ink-1); }
+  svg .t-layer { font-size: 22px; font-weight: 700; }
+  svg .t-spec { font: 11.5px ui-monospace, "Cascadia Mono", Consolas, monospace; fill: var(--ink-3); }
+  svg .t-pill { font-size: 13.5px; }
+  svg .t-small { font-size: 12px; fill: var(--ink-2); }
+  svg .t-step { font-size: 15px; font-weight: 700; }
+  svg .t-num { font: 11px ui-monospace, Consolas, monospace; fill: var(--ink-3); }
+  svg .t-tag { font: 11px ui-monospace, Consolas, monospace; }
+  svg .layer { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.4; }
+  svg .pl-studio { fill: color-mix(in srgb, var(--studio) 13%, var(--surface-1)); stroke: var(--studio); stroke-width: 1.3; }
+  svg .pl-platform { fill: color-mix(in srgb, var(--develop) 13%, var(--surface-1)); stroke: var(--develop); stroke-width: 1.3; }
+  svg .pl-hosting { fill: color-mix(in srgb, var(--hosting) 13%, var(--surface-1)); stroke: var(--hosting); stroke-width: 1.3; }
+  svg .step { fill: var(--surface-1); stroke-width: 2; }
+  svg .s-ok { stroke: var(--ok); } svg .s-part { stroke: var(--warn); } svg .s-new { stroke: var(--new); stroke-dasharray: 5 4; }
+  svg .tag-ok { fill: var(--ok); } svg .tag-part { fill: var(--warn); } svg .tag-new { fill: var(--new); }
+  svg .flow { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+  svg .flow-back { stroke: var(--ink-3); stroke-width: 1.4; fill: none; stroke-dasharray: 4 4; }
+  svg .arrowhead { fill: var(--ink-3); }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  @media (max-width: 640px) { main { padding: 0 16px; } .toc { columns: 1; } h1 { font-size: 28px; } }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Konzept-Dossier · Agent Orchestrator</p>
+  <h1>Anwendungs-Lebenszyklus: vom neuen Projekt bis Produktion</h1>
+  <p class="lede">Ein Projekt beginnt in der UI und endet in Produktion. Dazwischen liegen Aufgaben, Coding, Review, Gates, Stage, Freigabe und Betrieb, alles im Rahmen eines Kontingents. Das gilt für Einzelplatz, Abteilung, Unternehmen und öffentliche Installationen; wer eine Installation betreibt, trägt die Verantwortung für sie.</p>
+  <div class="meta">
+    <span><b>Stand</b> 16.10.2026</span>
+    <span><b>Anlass</b> Operator-Vorgaben 16.10.2026 zu CI, Bereitstellung, Projekt-Start, Hosting und Namen</span>
+    <span><b>Baut auf</b> Nordstern (AGT-W14), AGT-W51 D8 „CI/CD als Produktfeature“, Fluid capacity (AGT-3019), credentials-and-logins (AGT-2968)</span>
+    <span><b>Datenbasis</b> Bestandsaufnahme im Code am 16.10.2026, Betrieb der Operator-Installation</span>
+  </div>
+</header>
+
+<div class="box accent">
+  <b>Kernaussage.</b> Die erste Hälfte des Lebenszyklus läuft schon jeden Tag: Aufgaben, Coding, Review und CI über Gates. Es fehlen der Start eines Projekts aus einer Vorlage, Umgebungen mit Freigabe und Rückweg, Geheimnisse je Umgebung und ein Kontingent je Workspace. Die Hosting-Funktion gehört in die Plattform; die Verantwortung für Hosting und Zugänge liegt ausdrücklich beim Betreiber der jeweiligen Installation. Zum Erproben dienen mehrere Vanilla-Plattformen: frische, unveränderte Installationen in verschiedenen Einsatzformen.
+</div>
+
+<nav class="toc">
+  <a href="#s1">§1 Anlass und Vorgaben</a><br>
+  <a href="#s2">§2 Drei Ebenen</a><br>
+  <a href="#s3">§3 Der Lebenszyklus eines Projekts</a><br>
+  <a href="#s4">§4 Bestand und Lücken</a><br>
+  <a href="#s5">§5 Zugänge über den Lebenszyklus</a><br>
+  <a href="#s6">§6 Einsatzformen und Verantwortung</a><br>
+  <a href="#s7">§7 Vanilla-Plattformen</a><br>
+  <a href="#s8">§8 Erster Durchlauf</a><br>
+  <a href="#s9">§9 Kartenschnitt</a><br>
+  <a href="#s10">§10 Entscheidungen</a><br>
+  <a href="#quellen">§ Quellen</a>
+</nav>
+
+<h2 id="s1"><span class="no">§1</span>Anlass und Vorgaben</h2>
+<p>Die Vorgaben des Operators vom 16.10.2026, sinngemäß und in der Reihenfolge, in der sie kamen:</p>
+<ol>
+  <li><b>CI ist schon da.</b> Neben den Coding-Ebenen ist CI über die Gates integriert. So soll es auch die Website darstellen.</li>
+  <li><b>Bereitstellung gehört dazu.</b> Die Artefakte sollen in Umgebungen gehen: Stage, dann Prod. Damit wird der ganze Lebenszyklus einer Anwendung abgedeckt, und das Token-Management muss ihn so abdecken wie bei CI/CD.</li>
+  <li><b>Projekte starten in der UI.</b> Neue Projekte werden komplett in der UI angelegt und lassen sich auch hosten. Denkbar ist eine gehostete Lösung für eine Abteilung, ein Unternehmen oder öffentlich: Nutzer starten Projekte und haben den ganzen Lebenszyklus, von der Aufgabe bis zur Bereitstellung, mit einem Kontingent.</li>
+  <li><b>Namen.</b> Agent Studio ist das Werkzeug für den Blick auf das, was passiert. Die Plattform ist das größere Bild.</li>
+  <li><b>Hosting.</b> Die Funktion soll es geben; der Operator hostet selbst. Weil bei Tokens wirklich etwas auf dem Spiel steht, liegt die Hosting-Verantwortung beim jeweiligen Nutzer, ausdrücklich formuliert. Ob wir für Dritte hosten, wird später geprüft.</li>
+  <li><b>Erproben.</b> Zum Testen und Herausfinden soll es verschiedene Vanilla-Plattformen geben, die zeigen, was geht.</li>
+</ol>
+<p>Entschieden war schon am 12.09.2026 in AGT-W51 D8: Die Pipeline im Werkzeug wird die CI des Projekts, mit Deploy als Stufe. Dieses Dossier führt das bis Produktion weiter.</p>
+
+<h2 id="s2"><span class="no">§2</span>Drei Ebenen</h2>
+<p>Agent Studio ist das Werkzeug, mit dem Menschen sehen und steuern, was passiert. Agent Orchestrator ist die Plattform, die alles ausführt, Hosting eingeschlossen. Wer eine Installation betreibt, verantwortet sie. Eine eigene Organisation für Hosting entsteht erst, wenn wir für Dritte hosten.</p>
+<figure>
+  <div class="figscroll">
+  <svg viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Drei Ebenen">
+    <rect class="layer" x="20" y="20" width="960" height="104" rx="10"/>
+    <text x="38" y="52" class="t-layer">Agent Studio</text>
+    <text x="38" y="70" class="t-spec">Werkzeug · sehen, steuern, entscheiden · im Browser</text>
+    <rect class="pl-studio" x="36" y="82" width="148" height="30" rx="7"/><text x="48" y="102" class="t-pill">Board und Karten</text>
+    <rect class="pl-studio" x="192" y="82" width="148" height="30" rx="7"/><text x="204" y="102" class="t-pill">Dossiers</text>
+    <rect class="pl-studio" x="348" y="82" width="148" height="30" rx="7"/><text x="360" y="102" class="t-pill">Review, Freigabe</text>
+    <rect class="pl-studio" x="504" y="82" width="148" height="30" rx="7"/><text x="516" y="102" class="t-pill">Umgebung</text>
+    <rect class="pl-studio" x="660" y="82" width="148" height="30" rx="7"/><text x="672" y="102" class="t-pill">Zugänge</text>
+    <rect class="pl-studio" x="816" y="82" width="148" height="30" rx="7"/><text x="828" y="102" class="t-pill">Kontingente</text>
+
+    <rect class="layer" x="20" y="144" width="960" height="250" rx="10"/>
+    <text x="38" y="176" class="t-layer">Agent Orchestrator</text>
+    <text x="38" y="194" class="t-spec">Plattform · Laufzeit für den ganzen Lebenszyklus · Open Source (agent-orc)</text>
+    <rect class="pl-platform" x="36" y="208" width="148" height="30" rx="7"/><text x="48" y="228" class="t-pill">Task-Server</text>
+    <rect class="pl-platform" x="192" y="208" width="148" height="30" rx="7"/><text x="204" y="228" class="t-pill">Engine</text>
+    <rect class="pl-platform" x="348" y="208" width="148" height="30" rx="7"/><text x="360" y="228" class="t-pill">Host-Agenten</text>
+    <rect class="pl-platform" x="504" y="208" width="148" height="30" rx="7"/><text x="516" y="228" class="t-pill">CI: Gates</text>
+    <rect class="pl-platform" x="660" y="208" width="148" height="30" rx="7"/><text x="672" y="228" class="t-pill">CD: Stage, Prod</text>
+    <rect class="pl-platform" x="816" y="208" width="148" height="30" rx="7"/><text x="828" y="228" class="t-pill">Zugänge, Tokens</text>
+    <text x="38" y="268" class="t-small">Hosting als Funktion der Plattform:</text>
+    <rect class="pl-hosting" x="36" y="280" width="226" height="30" rx="7"/><text x="48" y="300" class="t-pill">Hosting der Projekte</text>
+    <rect class="pl-hosting" x="270" y="280" width="226" height="30" rx="7"/><text x="282" y="300" class="t-pill">Mandanten, Anmeldung</text>
+    <rect class="pl-hosting" x="504" y="280" width="226" height="30" rx="7"/><text x="516" y="300" class="t-pill">Kontingente</text>
+    <rect class="pl-hosting" x="738" y="280" width="226" height="30" rx="7"/><text x="750" y="300" class="t-pill">Verantwortung: Betreiber</text>
+    <text x="38" y="340" class="t-small">Läuft auf einem Rechner, in einer Abteilung, im Unternehmen oder öffentlich. Rollen und Verträge bleiben gleich.</text>
+    <text x="38" y="360" class="t-small">Wer die Installation betreibt, hält ihre Zugänge und verantwortet sie. Hosting für Dritte durch uns ist offen.</text>
+  </svg>
+  </div>
+  <figcaption>Abbildung 1. Werkzeug und Plattform. Hosting ist Teil der Plattform; die Verantwortung liegt beim Betreiber der Installation (Vorgabe 5).</figcaption>
+</figure>
+
+<h2 id="s3"><span class="no">§3</span>Der Lebenszyklus eines Projekts</h2>
+<p>Die Schritte 2 bis 5 laufen auf der Operator-Installation täglich. Die zweite Hälfte fehlt.</p>
+<figure>
+  <div class="figscroll">
+  <svg viewBox="0 0 1000 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Lebenszyklus in zehn Schritten">
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <rect class="step s-part" x="20" y="40" width="170" height="96" rx="9"/>
+    <text x="32" y="58" class="t-num">1</text><text x="32" y="78" class="t-step">Projekt anlegen</text><text x="32" y="96" class="t-tag tag-part">teilweise</text>
+    <text x="32" y="114" class="t-small">bestehendes Repo: ja</text><text x="32" y="129" class="t-small">Repo aus Vorlage: neu</text>
+    <rect class="step s-ok" x="212" y="40" width="170" height="96" rx="9"/>
+    <text x="224" y="58" class="t-num">2</text><text x="224" y="78" class="t-step">Aufgaben erfassen</text><text x="224" y="96" class="t-tag tag-ok">vorhanden</text>
+    <text x="224" y="114" class="t-small">Karten, Dossiers,</text><text x="224" y="129" class="t-small">Orchestrator-Chat</text>
+    <rect class="step s-ok" x="404" y="40" width="170" height="96" rx="9"/>
+    <text x="416" y="58" class="t-num">3</text><text x="416" y="78" class="t-step">Coding</text><text x="416" y="96" class="t-tag tag-ok">vorhanden</text>
+    <text x="416" y="114" class="t-small">Agent je Karte,</text><text x="416" y="129" class="t-small">isoliert, mit Budget</text>
+    <rect class="step s-ok" x="596" y="40" width="170" height="96" rx="9"/>
+    <text x="608" y="58" class="t-num">4</text><text x="608" y="78" class="t-step">Review</text><text x="608" y="96" class="t-tag tag-ok">vorhanden</text>
+    <text x="608" y="114" class="t-small">Aspekte und Grade,</text><text x="608" y="129" class="t-small">Fix-Runden</text>
+    <rect class="step s-ok" x="788" y="40" width="170" height="96" rx="9"/>
+    <text x="800" y="58" class="t-num">5</text><text x="800" y="78" class="t-step">CI: Gates</text><text x="800" y="96" class="t-tag tag-ok">vorhanden</text>
+    <text x="800" y="114" class="t-small">Karten-, Batch- und</text><text x="800" y="129" class="t-small">Release-Gate, Historie</text>
+    <path class="flow" d="M190,88 H210" marker-end="url(#ah)"/><path class="flow" d="M382,88 H402" marker-end="url(#ah)"/><path class="flow" d="M574,88 H594" marker-end="url(#ah)"/><path class="flow" d="M766,88 H786" marker-end="url(#ah)"/>
+    <path class="flow" d="M873,136 V198" marker-end="url(#ah)"/>
+    <rect class="step s-part" x="788" y="200" width="170" height="96" rx="9"/>
+    <text x="800" y="218" class="t-num">6</text><text x="800" y="238" class="t-step">Artefakt</text><text x="800" y="256" class="t-tag tag-part">teilweise</text>
+    <text x="800" y="274" class="t-small">Pakete, Websites: ja</text><text x="800" y="289" class="t-small">App-Images: neu</text>
+    <rect class="step s-new" x="596" y="200" width="170" height="96" rx="9"/>
+    <text x="608" y="218" class="t-num">7</text><text x="608" y="238" class="t-step">Stage</text><text x="608" y="256" class="t-tag tag-new">neu</text>
+    <text x="608" y="274" class="t-small">Umgebung als Objekt,</text><text x="608" y="289" class="t-small">Deploy als Auftrag</text>
+    <rect class="step s-new" x="404" y="200" width="170" height="96" rx="9"/>
+    <text x="416" y="218" class="t-num">8</text><text x="416" y="238" class="t-step">Freigabe</text><text x="416" y="256" class="t-tag tag-new">neu</text>
+    <text x="416" y="274" class="t-small">Mensch oder Regel,</text><text x="416" y="289" class="t-small">gibt Prod frei</text>
+    <rect class="step s-new" x="212" y="200" width="170" height="96" rx="9"/>
+    <text x="224" y="218" class="t-num">9</text><text x="224" y="238" class="t-step">Prod</text><text x="224" y="256" class="t-tag tag-new">neu</text>
+    <text x="224" y="274" class="t-small">dasselbe Artefakt,</text><text x="224" y="289" class="t-small">Rückweg möglich</text>
+    <rect class="step s-new" x="20" y="200" width="170" height="96" rx="9"/>
+    <text x="32" y="218" class="t-num">10</text><text x="32" y="238" class="t-step">Betrieb</text><text x="32" y="256" class="t-tag tag-new">neu</text>
+    <text x="32" y="274" class="t-small">Zustand, Fehler,</text><text x="32" y="289" class="t-small">Kosten je Projekt</text>
+    <path class="flow" d="M788,248 H768" marker-end="url(#ah)"/><path class="flow" d="M596,248 H576" marker-end="url(#ah)"/><path class="flow" d="M404,248 H384" marker-end="url(#ah)"/><path class="flow" d="M212,248 H192" marker-end="url(#ah)"/>
+    <path class="flow-back" d="M105,200 V168 H297 V140" marker-end="url(#ah)"/>
+    <text x="312" y="172" class="t-small">Fehler und Wünsche aus dem Betrieb werden Karten</text>
+    <text x="20" y="322" class="t-small">Über allem: ein Kontingent je Workspace und Projekt für Modell-Tokens, Rechenzeit und Hosting. Heute gibt es Budgets nur je Karte und je Gate.</text>
+  </svg>
+  </div>
+  <figcaption>Abbildung 2. Zehn Schritte. Grün: vorhanden, gelb: teilweise, violett gestrichelt: neu.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="no">§4</span>Bestand und Lücken</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Baustein</th><th>Stand</th><th>Heute im Code</th><th>Fehlt</th></tr></thead>
+  <tbody>
+    <tr><td><b>Projekt anlegen</b></td><td><span class="tag warn">teilweise</span></td><td>Dialog registriert ein bestehendes Repo<span class="d"><code>onboard-project-dialog</code>, <code>POST /api/projects</code> in <code>backend/Features/Registry/RegistryEndpoints.cs</code>; <code>github_provisioning_oauth</code> nur als Kennungsart im Register</span></td><td>Repo aus Vorlage anlegen, Build-Profil und Gate gleich mit</td></tr>
+    <tr><td><b>Aufgaben bis Integration</b></td><td><span class="tag ok">vorhanden</span></td><td>Karten, Dossiers, Coding, Review, Integration</td><td>Verteilung nach Last (Dossier AGT-3171)</td></tr>
+    <tr><td><b>CI</b></td><td><span class="tag ok">vorhanden</span></td><td>Gates je Karte, Batch-Gate, Release-Gate, Testlauf-Historie, Fehler-Triage<span class="d"><code>backend/Features/Pipeline/</code>, <code>BatchGate/</code>, <code>GateFailureTriage/</code>, <code>backend/Features/TestRuns/</code></span></td><td>auf der Website als eingebaute CI zeigen</td></tr>
+    <tr><td><b>Deploy-Ziele</b></td><td><span class="tag warn">teilweise</span></td><td><code>docs/deployments/**/deployment.json</code> im Projekt-Repo, Start als sichtbare Agenten-Aufgabe, Parameter mit <code>secret-ref</code><span class="d"><code>backend/Features/Projects/ProjectDeploymentSummaryService.cs</code>, <code>project-deployment-panel</code>; Verlauf kommt aus dem Neustart-Protokoll des Studios selbst</span></td><td>Stage und Prod als Umgebung, eigener Deploy-Auftrag, Freigabe, Rückweg, Verlauf je Umgebung</td></tr>
+    <tr><td><b>Artefakte</b></td><td><span class="tag warn">teilweise</span></td><td>Pakete und Websites über Publishing<span class="d"><code>backend/Features/Publishing/</code></span></td><td>App-Images je Vorlage, Herkunft vom Gate bis zur Umgebung</td></tr>
+    <tr><td><b>Geheimnisse</b></td><td><span class="tag warn">teilweise</span></td><td>Register nur mit Metadaten, Zugang am Host<span class="d"><code>task-server/TaskServerCredentialRegistryStore.cs</code>, Dossier credentials-and-logins</span></td><td>Geheimnisse je Umgebung, nur im Deploy-Auftrag</td></tr>
+    <tr><td><b>Kontingente</b></td><td><span class="tag warn">teilweise</span></td><td>Budget je Karte und je Gate, Token-Ansichten<span class="d">Dossier run-budget-per-card, <code>GateRunBudgetPolicy</code></span></td><td>Kontingent je Workspace und Projekt, bei der Zulassung durchgesetzt</td></tr>
+    <tr><td><b>Nutzer und Mandanten</b></td><td><span class="tag warn">teilweise</span></td><td>Rollen owner, operator, viewer mit Projektliste; Workspaces ohne Trennung; Demo-Profil nur lesend<span class="d"><code>backend/Features/Security/AccessSecurityModels.cs</code></span></td><td>Mandant mit Trennung, Anmeldung mit Firmenkonto</td></tr>
+    <tr><td><b>Hosting der Projekte</b></td><td><span class="tag new">neu</span></td><td>nur lokale Vorschau: Projekt-Adresse mit Start-Befehl<span class="d">Projekt-URL-Routen in <code>RegistryEndpoints.cs</code>, <code>project-url-preview-tab</code></span></td><td>Stage und Prod als Container mit eigener Adresse</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s5"><span class="no">§5</span>Zugänge über den Lebenszyklus</h2>
+<p>Wie bei CI/CD braucht jeder Schritt eigene Zugänge, und kein Schritt bekommt mehr als nötig. Alle erscheinen in einer Ansicht, dem Zugangs-Inventar (AGT-3170). Das Inventar wird um Umgebungs-Geheimnisse und Registry-Tokens erweitert. Die Ausgabe je Auftrag beschreibt das Dossier AGT-3171.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Schritt</th><th>braucht</th><th>heute</th><th>Ziel</th></tr></thead>
+  <tbody>
+    <tr><td><b>Coding</b></td><td>Repo schreiben, nur Task-Zweige</td><td>PAT oder Deploy-Key am Host</td><td>Token je Auftrag, eine Stunde</td></tr>
+    <tr><td><b>Review, Gate</b></td><td>Code lesen</td><td>Gate: Bundle; Review: eigener Klon</td><td>Bundle, kein Repo-Zugang</td></tr>
+    <tr><td><b>Integration, Release</b></td><td>develop und main schreiben, Paket-Registry</td><td>Login am Steuer-Rechner, PAT auf dem Runner-Host</td><td>Integrator-Identität, Registry-Token je Projekt</td></tr>
+    <tr><td><b>Stage</b></td><td>Ziel-Host, Geheimnisse der Anwendung</td><td>nicht vorhanden</td><td>Geheimnisse je Umgebung, nur im Deploy-Auftrag</td></tr>
+    <tr><td><b>Prod</b></td><td>wie Stage</td><td>nicht vorhanden</td><td>erst nach der Freigabe</td></tr>
+    <tr><td><b>Modelle</b></td><td>Provider-Konten</td><td>Login je Container oder Host</td><td>zentral in der Installation, Verbrauch gegen das Kontingent</td></tr>
+    <tr><td><b>Menschen</b></td><td>Konto, Rolle</td><td>owner, operator, viewer</td><td>je Mandant, Anmeldung mit Firmenkonto</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s6"><span class="no">§6</span>Einsatzformen und Verantwortung</h2>
+<div class="box ok">
+  <b>Entschieden am 16.10.2026 (Operator).</b> Die Hosting-Funktion gibt es in der Plattform, der Operator nutzt sie selbst. Die Verantwortung für Hosting, Zugänge und Tokens liegt beim Betreiber der jeweiligen Installation. Das wird ausdrücklich formuliert: im Installer, in den Einstellungen und auf der Website. Ob wir für Dritte hosten, wird später geprüft. Damit bleibt die Marketing-Linie „Open Source plus Beratung, keine Subscriptions“ gültig.
+</div>
+<div class="tablewrap">
+<table>
+  <thead><tr><th></th><th>Einzelplatz</th><th>Abteilung</th><th>Unternehmen</th><th>Öffentlich</th></tr></thead>
+  <tbody>
+    <tr><td><b>betreibt und verantwortet</b></td><td>der Nutzer selbst</td><td>die Abteilung</td><td>die IT des Unternehmens</td><td>wer die Installation öffentlich anbietet</td></tr>
+    <tr><td><b>Mandanten</b></td><td>einer</td><td>einer, mehrere Nutzer</td><td>mehrere, je Abteilung</td><td>viele, streng getrennt</td></tr>
+    <tr><td><b>Anmeldung</b></td><td>lokales Konto</td><td>lokale Konten</td><td>Firmenkonto</td><td>eigenes Konto</td></tr>
+    <tr><td><b>Kontingent</b></td><td>eigene Abos</td><td>je Projekt</td><td>je Abteilung und Projekt</td><td>je Konto</td></tr>
+    <tr><td><b>Hosting der Projekte</b></td><td>lokal oder eigener Server</td><td>gemeinsamer Host</td><td>eigene Hosts</td><td>Hosts des Anbieters</td></tr>
+    <tr><td><b>Isolation</b></td><td>Prozess oder Container</td><td>Container je Auftrag</td><td>Container je Auftrag</td><td>Container je Auftrag, eigenes Netz je Mandant</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s7"><span class="no">§7</span>Vanilla-Plattformen</h2>
+<p>Eine Vanilla-Plattform ist eine frische Installation über den offiziellen Weg (Installer oder Skript), ohne Handarbeit des Operators. Jede zeigt eine Einsatzform und dient als Prüfstand für die Szenarien. Die Operator-Installation bleibt davon getrennt: Sie ist über Monate gewachsen und beweist deshalb nicht, was ein neuer Nutzer erlebt.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Plattform</th><th>zeigt</th><th>Ort</th><th>Installation</th><th>Szenarien</th></tr></thead>
+  <tbody>
+    <tr><td><b>V1 Linux-Server allein</b></td><td>Studio, Task-Server, Engine und Host-Agent auf einem Linux-Rechner; hostet Stage und Prod der eigenen Projekte</td><td>neue Debian-VM auf KORI</td><td>Linux-Skript (AGT-3155)</td><td>Installation, Lebenszyklus</td></tr>
+    <tr><td><b>V2 Windows-Einzelplatz</b></td><td>Studio nativ auf Windows, Coding lokal</td><td>neue Windows-VM auf KORI</td><td>Windows-Exe (AGT-3154)</td><td>Installation, erste Karte</td></tr>
+    <tr><td><b>V3 Abteilung, gemischt</b></td><td>Windows-Studio mit einem Linux-Agent-Host, drei Nutzer mit Rollen, Kontingent je Projekt</td><td>V2 plus zweite Debian-VM</td><td>Exe und Join (AGT-3157)</td><td>Mehrere Nutzer, Kontingent, Lebenszyklus</td></tr>
+    <tr><td><b>V4 öffentlich, selbst gehostet</b></td><td>Installation mit öffentlicher Adresse und TLS; Projekte mit öffentlicher Stage und Prod</td><td>kleine Cloud-VM (Hetzner)</td><td>Linux-Skript</td><td>Lebenszyklus mit öffentlicher Adresse, Sicherheitsprüfung</td></tr>
+  </tbody>
+</table>
+</div>
+<h3>Regeln für alle Vanilla-Plattformen</h3>
+<ul>
+  <li><b>Eigene Test-Identitäten.</b> Eine eigene GitHub-Test-Organisation mit fein begrenzten Tokens nur für deren Repos. Die Provider-Logins richtet der Operator selbst ein. Keine Zugänge der Operator-Installation.</li>
+  <li><b>Zwei Schnappschüsse je VM:</b> „frisch“ vor der Installation und „eingerichtet“ nach dem ersten Lauf. Jeder Szenario-Lauf beginnt von einem der beiden.</li>
+  <li><b>Kein Eingriff von Hand.</b> Was beim Einrichten fehlt, wird eine Karte gegen Installer oder Produkt, nicht eine Korrektur auf der VM.</li>
+  <li><b>Ergebnis-Matrix:</b> Szenario × Plattform mit Dauer, Verbrauch, Bildschirmfotos und dem Ergebnis je Schritt.</li>
+</ul>
+<div class="box warn">
+  <b>Ressourcen.</b> KORI hat 64 GB RAM. Die VM kori-docker mit drei Review-Containern und dem Gate belegt davon 50 GB, frei sind etwa 9 GB. Platte ist genug da (1,3 TB frei). V1 bis V3 brauchen je etwa 8 GB. Dafür muss kori-docker kleiner werden, oder die Vanilla-Plattformen laufen nacheinander (D6). V4 verursacht laufende Kosten und braucht ein Konto beim Anbieter; das richtet der Operator ein.
+</div>
+
+<h2 id="s8"><span class="no">§8</span>Erster Durchlauf</h2>
+<p>Ein simulierter Nutzer bringt ein neues Projekt von der Anlage bis in Produktion, innerhalb eines Kontingents.</p>
+<ol>
+  <li>Anmeldung im Workspace „Abteilung Demo“ mit einem Wochen-Kontingent.</li>
+  <li>Projekt „Click Counter“ aus der Vorlage „statische Web-App“ anlegen. Studio legt das Repo an.</li>
+  <li>Wunsch im Orchestrator-Chat: „Zähler mit Reset und Verlauf der letzten zehn Werte“. Daraus entstehen Karten.</li>
+  <li>Coding, Review und Gates laufen; das Kontingent sinkt sichtbar.</li>
+  <li>Das freigegebene Artefakt geht automatisch auf Stage. Der Nutzer prüft die Stage-Adresse.</li>
+  <li>Freigabe: dasselbe Artefakt geht auf Prod.</li>
+  <li>Ein eingebauter Fehler lässt den Zustandscheck auf Prod scheitern. Darauf folgen Rückweg, Karte und Fix, danach wieder Stage und Prod.</li>
+  <li>Das Kontingent wird knapp gesetzt: Die Warnung erscheint, neue Arbeit wird nicht mehr zugelassen.</li>
+</ol>
+<p>Jeder Lauf schreibt einen Bericht mit Zeiten, Verbrauch, Bildschirmfotos und dem Ergebnis je Schritt. Der Durchlauf läuft zuerst auf der Plattform aus D3, danach auf jeder Vanilla-Plattform aus D5.</p>
+
+<h2 id="s9"><span class="no">§9</span>Kartenschnitt</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Karte</th><th>Inhalt</th><th>Stand 16.10.</th></tr></thead>
+  <tbody>
+    <tr><td>AGT-3175</td><td>Projekt aus Vorlage: Repo anlegen, zwei Vorlagen (statische Web-App, Web-Dienst im Container), Build-Profil und Gate</td><td>Ready</td></tr>
+    <tr><td>AGT-3176</td><td>Umgebungen Stage und Prod: Deploy-Auftrag, Freigabe, Rückweg, Geheimnisse je Umgebung, Verlauf</td><td>Ready</td></tr>
+    <tr><td>AGT-3177</td><td>Kontingente je Workspace und Projekt: Tokens, Kern-Stunden, Hosting; Zulassung setzt sie durch</td><td>Ready</td></tr>
+    <tr><td>AGT-3178</td><td>Szenario-Durchlauf aus §8 mit Bericht</td><td>Backlog, startet nach 3175 bis 3177</td></tr>
+    <tr><td>AGT-3170</td><td>Zugänge als eigene Ansicht; Erweiterung um Umgebungs-Geheimnisse und Registry-Tokens</td><td>Ready</td></tr>
+    <tr><td>AGT-3154, 3155, 3157, 3162</td><td>Installer Windows und Linux, gemischter Aufbau, Installations-Szenarien: Grundlage der Vanilla-Plattformen</td><td>in Arbeit</td></tr>
+    <tr><td>WEB-33, WEB-34</td><td>Website: Sicherheitsmodell, CI eingebaut</td><td>in Arbeit, Ready</td></tr>
+    <tr><td>neu (unten)</td><td>Verantwortung des Betreibers ausdrücklich formulieren; Ergebnis-Matrix der Vanilla-Plattformen</td><td>nach Entscheidung</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s10"><span class="no">§10</span>Entscheidungen</h2>
+
+<div class="decision" data-decision-id="namen" data-decision-kind="single" data-decision-label="Namen von Werkzeug und Plattform">
+  <h3>D1 · Wie heißen Werkzeug und Plattform, und wie heißt das Repo?</h3>
+  <label data-option-id="studio-orchestrator" data-option-label="A · Agent Studio = Werkzeug, Agent Orchestrator = Plattform; Repo agent-orc/agent-studio bleibt (Empfehlung)"><input type="radio" name="namen" value="studio-orchestrator"><span><b>A · Agent Studio für das Werkzeug, Agent Orchestrator für die Plattform; Repo bleibt</b><span class="d">Agent Orchestrator ist schon der Name des Dachs (agent-orc, agent-orchestrator.dev). Kein Umzug, nur Texte und Dokumentation passen sich an.</span></span></label>
+  <label data-option-id="repo-umbenennen" data-option-label="B · Wie A, Repo wird agent-orc/agent-orchestrator"><input type="radio" name="namen" value="repo-umbenennen"><span><b>B · Wie A, Repo wird umbenannt</b><span class="d">Name und Inhalt passen zusammen. GitHub leitet um, aber Runner-Konfigurationen, Deploy-Keys und Skripte müssen nachziehen.</span></span></label>
+  <label data-option-id="eigener-name" data-option-label="C · Eigener Plattformname neben Agent Orchestrator"><input type="radio" name="namen" value="eigener-name"><span><b>C · Eigener Plattformname</b><span class="d">Trennt Dach und Plattform, kostet eine weitere Marke.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="erster-host" data-decision-kind="single" data-decision-label="Ziel-Host für den ersten Durchlauf">
+  <h3>D3 · Wo laufen Stage und Prod im ersten Durchlauf?</h3>
+  <label data-option-id="v1-kori" data-option-label="A · Auf V1 (Debian-VM auf KORI), nur intern erreichbar (Empfehlung)"><input type="radio" name="erster-host" value="v1-kori"><span><b>A · Auf V1, intern</b><span class="d">Keine laufenden Kosten, keine öffentliche Angriffsfläche, frisch installiert; Adressen nur im eigenen Netz.</span></span></label>
+  <label data-option-id="web-vm" data-option-label="B · Auf der öffentlichen Web-VM (Caddy vorhanden)"><input type="radio" name="erster-host" value="web-vm"><span><b>B · Auf der Web-VM</b><span class="d">Öffentlich sofort erreichbar, aber die VM trägt die Websites; Fehler im Durchlauf treffen sie mit.</span></span></label>
+  <label data-option-id="v4-cloud" data-option-label="C · Auf einer neuen Cloud-VM (V4)"><input type="radio" name="erster-host" value="v4-cloud"><span><b>C · Auf V4</b><span class="d">Öffentlich und getrennt; braucht Konto und laufende Kosten.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="reihenfolge" data-decision-kind="single" data-decision-label="Reihenfolge Lebenszyklus und Stufe 2">
+  <h3>D4 · Kommt der Lebenszyklus vor der Verteilung nach Last (Dossier AGT-3171)?</h3>
+  <label data-option-id="lifecycle-zuerst" data-option-label="A · Lebenszyklus zuerst, Verteilung nach Last danach (Empfehlung)"><input type="radio" name="reihenfolge" value="lifecycle-zuerst"><span><b>A · Lebenszyklus zuerst</b><span class="d">Kommt ohne Container je Auftrag aus; der Durchlauf ist früh möglich und zeigt, was Nutzer erleben.</span></span></label>
+  <label data-option-id="verteilung-zuerst" data-option-label="B · Verteilung nach Last zuerst"><input type="radio" name="reihenfolge" value="verteilung-zuerst"><span><b>B · Verteilung zuerst</b><span class="d">Isolation je Auftrag steht, bevor Fremde auf öffentlichen Installationen arbeiten.</span></span></label>
+  <label data-option-id="parallel" data-option-label="C · Beides parallel"><input type="radio" name="reihenfolge" value="parallel"><span><b>C · Parallel</b><span class="d">Schneller, aber beide berühren Runner und Zugänge gleichzeitig.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="vanilla-plattformen" data-decision-kind="multi" data-decision-label="Welche Vanilla-Plattformen">
+  <h3>D5 · Welche Vanilla-Plattformen entstehen zuerst?</h3>
+  <label data-option-id="v1" data-option-label="V1 Linux-Server allein (Empfehlung)"><input type="checkbox" name="vanilla-plattformen" value="v1"><span><b>V1 Linux-Server allein</b><span class="d">Kleinster Aufbau mit Hosting; Ziel für den ersten Durchlauf.</span></span></label>
+  <label data-option-id="v2" data-option-label="V2 Windows-Einzelplatz (Empfehlung)"><input type="checkbox" name="vanilla-plattformen" value="v2"><span><b>V2 Windows-Einzelplatz</b><span class="d">Prüft die Exe auf einem frischen Windows.</span></span></label>
+  <label data-option-id="v3" data-option-label="V3 Abteilung, gemischt"><input type="checkbox" name="vanilla-plattformen" value="v3"><span><b>V3 Abteilung, gemischt</b><span class="d">Mehrere Nutzer, Join eines Linux-Hosts, Kontingent je Projekt.</span></span></label>
+  <label data-option-id="v4" data-option-label="V4 öffentlich, selbst gehostet"><input type="checkbox" name="vanilla-plattformen" value="v4"><span><b>V4 öffentlich, selbst gehostet</b><span class="d">Öffentliche Adresse und TLS; zeigt, was ein Betreiber verantwortet.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ressourcen" data-decision-kind="single" data-decision-label="Ressourcen für V1 bis V3 auf KORI">
+  <h3>D6 · Woher kommt der Speicher für V1 bis V3?</h3>
+  <label data-option-id="kori-docker-kleiner" data-option-label="A · kori-docker von 50 auf 34 GB verkleinern, V1 bis V3 je 8 GB, nur zwei gleichzeitig an (Empfehlung)"><input type="radio" name="ressourcen" value="kori-docker-kleiner"><span><b>A · kori-docker auf 34 GB, zwei Vanilla-Plattformen gleichzeitig</b><span class="d">Reviews und Gates behalten genug für zwei parallele Gates; vorher und nachher Gate-Dauer messen.</span></span></label>
+  <label data-option-id="nacheinander" data-option-label="B · kori-docker bleibt, Vanilla-Plattformen laufen nacheinander mit je 8 GB"><input type="radio" name="ressourcen" value="nacheinander"><span><b>B · Nacheinander</b><span class="d">Kein Eingriff in Reviews und Gates; V3 (zwei VMs) passt so nicht.</span></span></label>
+  <label data-option-id="cloud" data-option-label="C · Alle Vanilla-Plattformen als Cloud-VMs"><input type="radio" name="ressourcen" value="cloud"><span><b>C · Cloud-VMs</b><span class="d">KORI bleibt unberührt; laufende Kosten und ein Konto beim Anbieter.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<p class="muted">D2 (Hosting-Verantwortung) ist entschieden, siehe §6.</p>
+
+<h2 id="quellen">§ Quellen</h2>
+<ul>
+  <li>Bestandsaufnahme im Code am 16.10.2026: <code>frontend/src/app/features/shell/components/onboard-project-dialog</code>, <code>backend/Features/Registry/RegistryEndpoints.cs</code>, <code>backend/Features/Projects/ProjectDeploymentSummaryService.cs</code>, <code>backend/Features/Publishing/</code>, <code>backend/Features/Pipeline/</code>, <code>backend/Features/TestRuns/</code>, <code>task-server/TaskServerCredentialRegistryStore.cs</code>, <code>backend/Features/Security/AccessSecurityModels.cs</code>.</li>
+  <li>Dossiers: <code>docs/operations/nordstern</code>, <code>docs/operations/docker-ausfuehrungswelt-migration</code> (AGT-W51 D8), <code>docs/fluid-capacity</code>, <code>docs/credentials-and-logins</code>, <code>docs/run-budget-per-card</code>, <code>docs/operations/deployment-story</code>, <code>docs/operations/installer-story</code>.</li>
+  <li>Marketing: <code>agent-studio-marketing/02-produktname</code>, <code>04-produktfit/open-source-und-commercial-trennung.md</code>.</li>
+  <li>Betrieb: KORI-Ressourcen am 16.10.2026 (Hyper-V, eine VM kori-docker mit 12 vCPU und 50 GB).</li>
+</ul>
+</main>
+</body>
+</html>

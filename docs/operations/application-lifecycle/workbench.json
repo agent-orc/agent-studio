@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "application-lifecycle",
+  "title": "Anwendungs-Lebenszyklus: vom neuen Projekt bis Produktion",
+  "summary": "Operator-Vorgaben 16.10.2026: CI ist ueber die Gates schon integriert; Artefakte sollen in Umgebungen gehen (Stage, dann Prod); neue Projekte starten komplett in der UI und lassen sich hosten; Einsatzformen Einzelplatz, Abteilung, Unternehmen, oeffentlich mit Kontingent; Agent Studio ist das Werkzeug, Agent Orchestrator die Plattform; Hosting-Funktion gibt es, die Verantwortung fuer Hosting und Zugaenge liegt ausdruecklich beim Betreiber der Installation (entschieden 16.10.); Vanilla-Plattformen zum Erproben. Inhalt: drei Ebenen, Lebenszyklus in zehn Schritten mit Stand (2 bis 5 vorhanden, Projekt-Start und Artefakte teilweise, Stage, Freigabe, Prod und Betrieb neu), Bestand und Luecken mit Dateiverweisen, Zugaenge je Schritt, Einsatzformen, Vanilla-Plattformen V1 bis V4 mit Regeln und Ressourcen, erster Durchlauf, Kartenschnitt (AGT-3175 bis 3178, AGT-3170, WEB-33, WEB-34), Entscheidungen D1 und D3 bis D6.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "architecture",
+  "updatedAt": "2026-10-16T08:00:00Z",
+  "sourceTaskKeys": [],
+  "relatedTaskKeys": [
+    "AGT-3174",
+    "AGT-3175",
+    "AGT-3176",
+    "AGT-3177",
+    "AGT-3178",
+    "AGT-3170",
+    "AGT-3171",
+    "AGT-3154",
+    "AGT-3155",
+    "AGT-3157",
+    "AGT-3162",
+    "WEB-33",
+    "WEB-34"
+  ],
+  "implementationTasks": [
+    {
+      "id": "AL-1",
+      "title": "Operator responsibility stated explicitly: installer, Settings and documentation say who is responsible for hosting, credentials and tokens of an installation",
+      "promptMarkdown": "Source: `docs/operations/application-lifecycle/index.html` §6 (operator decision of 16.10.2026: the hosting function exists in the platform; responsibility for hosting, credentials and tokens lies with the operator of each installation, stated explicitly; hosting for third parties by the Agent Orchestrator project is not offered). Read AGENTS.md first.\n\n## Deliver\n1. Installer (Windows exe and Linux script): one screen or prompt before the owner account is created that states in plain words that the person installing operates this installation and is responsible for its provider logins, repository credentials, deployment secrets and hosted projects; the installation continues only after explicit confirmation, recorded with time and user in the installation manifest.\n2. Studio Settings: a short, always visible notice on the Credentials and Environment pages with the same statement and the name of the owner who confirmed it.\n3. Documentation: a page `docs/operations/operator-responsibility.md` (English) that lists what the operator is responsible for, what the product does to limit risk (metadata-only registry, per-environment secrets, no secret in API responses or logs) and what it does not do.\n4. Tests for the confirmation gate in both installers and for the Settings notice.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "AL-2",
+      "title": "Vanilla platform result matrix: run the installation and lifecycle scenarios against each vanilla platform from a snapshot and publish one matrix",
+      "promptMarkdown": "Source: `docs/operations/application-lifecycle/index.html` §7 and §8 and the recorded decisions D3, D5 and D6. Read AGENTS.md first.\n\n## Deliver\n1. A runner script next to the installation scenarios (AGT-3162) and the lifecycle scenario (AGT-3178) that takes a platform descriptor (name, Studio address, SSH or WinRM access for reset, snapshot names) and runs the selected scenarios after resetting the platform to its snapshot.\n2. One result file per run (scenario, platform, start, duration per step, tokens, core-hours, screenshots, pass or fail per step with evidence) and a matrix page `docs/operations/application-lifecycle/results.html` that shows scenario x platform with the latest result and links to the evidence.\n3. No manual fixes on a platform: a failed step records the gap and proposes a card against installer or product.\n4. Tests for descriptor parsing, the reset step (with a fake hypervisor client) and the matrix rendering.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    }
+  ],
+  "openDecisions": [
+    { "id": "D1", "question": "Wie heissen Werkzeug und Plattform, und wie heisst das Repo?", "recommendation": "Agent Studio = Werkzeug, Agent Orchestrator = Plattform; Repo bleibt.", "rejectedOption": "Eigener Plattformname neben Agent Orchestrator." },
+    { "id": "D3", "question": "Wo laufen Stage und Prod im ersten Durchlauf?", "recommendation": "Auf V1 (Debian-VM auf KORI), intern.", "rejectedOption": "Auf der oeffentlichen Web-VM, die die Websites traegt." },
+    { "id": "D4", "question": "Lebenszyklus vor der Verteilung nach Last?", "recommendation": "Lebenszyklus zuerst.", "rejectedOption": "Beides parallel." },
+    { "id": "D5", "question": "Welche Vanilla-Plattformen zuerst?", "recommendation": "V1 und V2.", "rejectedOption": "Alle vier gleichzeitig." },
+    { "id": "D6", "question": "Woher kommt der Speicher fuer V1 bis V3?", "recommendation": "kori-docker auf 34 GB, zwei Vanilla-Plattformen gleichzeitig.", "rejectedOption": "Alle als Cloud-VMs." }
+  ]
+}
