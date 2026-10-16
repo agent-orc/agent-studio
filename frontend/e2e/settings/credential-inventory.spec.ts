@@ -50,3 +50,26 @@ test('Credentials page shows gaps, filters and both theme screenshots', async ({
     await page.screenshot({ path: join(shots, `inventory-${theme}--mocked.png`) });
   }
 });
+
+test('an open Credentials page shows a new gap after the inventory refreshes', async ({ page }) => {
+  await page.clock.install();
+  await stub(page);
+  let missing = false;
+  await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ generatedAt: '', items: missing ? [{
+      id: 'new-gap', category: 'repository', hostId: 'review-a', kind: 'review_read_file',
+      label: 'Private repository read access', scopes: [], repository: 'github.com/team/private',
+      permission: 'read', expiresAt: null, lastUseAt: null, state: 'missing', required: true,
+      detail: 'Add a repository-scoped read credential', affectedCards: [],
+    }] : [] }),
+  }));
+  await page.goto('/#/workspace/settings/credentials', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('credential-inventory')).toBeVisible();
+  await expect(page.locator('.credentials__row')).toHaveCount(0);
+  missing = true;
+  await page.clock.fastForward(60_000);
+  await expect(page.locator('.credentials__row')).toHaveCount(1);
+  await expect(page.locator('.credentials__row')).toContainText('Private repository read access');
+});

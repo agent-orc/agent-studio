@@ -24,7 +24,7 @@ public sealed class CredentialInventoryTests
             new CredentialInventoryPolicy.Host("gate-a", new HashSet<string> { GateCapabilities.Executor },
                 new HashSet<string>()),
         };
-        var items = CredentialInventoryPolicy.Derive([], hosts, reviews, []);
+        var items = CredentialInventoryPolicy.Derive([], hosts, reviews, [], Now.UtcDateTime);
         var missing = Assert.Single(items, item => item.State == "missing");
         Assert.Equal("review-a", missing.HostId);
         Assert.Equal(["AGT-1"], missing.AffectedCards);
@@ -40,7 +40,7 @@ public sealed class CredentialInventoryTests
             "review key", [], "github.com/team/private", "write", null, null, "ok", false, "verified", []);
         var items = CredentialInventoryPolicy.Derive([observed],
             [new("review-a", new HashSet<string> { ReviewCapabilities.ReviewExecutor }, new HashSet<string>())],
-            [], [new("github.com/team/private", "develop", "main")]);
+            [], [new("github.com/team/private", "develop", "main")], Now.UtcDateTime);
         Assert.Contains(items, item => item.Id == "key" && item.State == "unexpected");
         var required = Assert.Single(items, item => item.Kind == "integrator_write");
         Assert.Equal(["develop", "main"], required.Scopes);
@@ -57,9 +57,47 @@ public sealed class CredentialInventoryTests
             "Coding key", ["coding:execution"], "github.com/team/product", "write", null, null,
             "ok", false, "Verified", []);
         var review = coding with { Id = "review", Scopes = ["review:materialization"] };
-        var items = CredentialInventoryPolicy.Derive([coding, review], [host], [], []);
+        var items = CredentialInventoryPolicy.Derive([coding, review], [host], [], [], Now.UtcDateTime);
         Assert.Contains(items, item => item.Id == "coding" && item.State == "ok");
         Assert.Contains(items, item => item.Id == "review" && item.State == "unexpected");
+    }
+
+    [Fact]
+    public void Expired_integrator_write_credential_leaves_a_required_gap()
+    {
+        var repository = new CredentialInventoryPolicy.Repository("github.com/team/product", "develop", "main");
+        var credential = new CredentialInventoryItemDto("token", "repository", "control", "github_https_token",
+            "Integrator PAT", [], repository.Canonical, "write", Now.UtcDateTime.AddMinutes(-1),
+            Now.UtcDateTime.AddDays(-1), "expiring", false, "Expired", []);
+        var items = CredentialInventoryPolicy.Derive([credential], [], [], [repository], Now.UtcDateTime);
+        Assert.Contains(items, item => item.Kind == "integrator_write" && item.State == "missing");
+
+        var renewed = credential with { ExpiresAt = Now.UtcDateTime.AddDays(1) };
+        Assert.DoesNotContain(CredentialInventoryPolicy.Derive([renewed], [], [], [repository], Now.UtcDateTime),
+            item => item.Kind == "integrator_write");
+    }
+
+    [Fact]
+    public async Task Registered_private_repository_requires_review_read_before_an_attempt_exists()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Now);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Inventory"), "owner", default);
+        await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
+            "prj-inventory", workspace.WorkspaceId, "Inventory", "INV", "https://github.com/team/private.git",
+            "develop", "main", RepositoryVisibility: "private"), "owner", default);
+        await store.RegisterRunnerAsync("review-a", new RegisterRunnerRequest("review-a", "host-review-a",
+            "review-a:1", "1.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
+                ReviewCapabilities.SemanticReview]), "review-a", default);
+
+        var inventory = await store.GetCredentialInventoryAsync(StudioUserRoles.Owner, default);
+        var gap = Assert.Single(inventory.Items, item => item.Id ==
+            "required:review:host-review-a:github.com/team/private");
+        Assert.Equal("missing", gap.State);
+        Assert.Empty(gap.AffectedCards);
     }
 
     [Fact]

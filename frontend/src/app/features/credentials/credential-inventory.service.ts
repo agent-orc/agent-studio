@@ -1,5 +1,7 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { timer } from 'rxjs';
 
 export interface CredentialInventoryItem {
   id: string;
@@ -26,14 +28,25 @@ export interface CredentialInventory {
 @Injectable({ providedIn: 'root' })
 export class CredentialInventoryService {
   private readonly http = inject(HttpClient, { optional: true });
+  private readonly destroyRef = inject(DestroyRef);
   readonly inventory = signal<CredentialInventory | null>(null);
   readonly state = signal<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
+  private polling = false;
 
   ensureLoaded(): void {
     if (this.state() === 'idle') this.load();
   }
 
   load(): void {
+    if (!this.polling) {
+      this.polling = true;
+      timer(60_000, 60_000).pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe(() => this.refresh());
+    }
+    this.refresh();
+  }
+
+  private refresh(): void {
     if (this.state() === 'loading') return;
     if (!this.http) {
       this.state.set('unavailable');

@@ -102,7 +102,8 @@ public sealed record RegisterProjectRepositoryRequest(
     string RepositoryUrl,
     string IntegrationRef,
     string? ReleaseRef = null,
-    string DeliveryPolicy = ProjectDeliveryPolicies.ReviewedPublication);
+    string DeliveryPolicy = ProjectDeliveryPolicies.ReviewedPublication,
+    string? RepositoryVisibility = null);
 
 public sealed record ProjectRepositoryDto(
     string ProjectId,
@@ -112,7 +113,8 @@ public sealed record ProjectRepositoryDto(
     string? ReleaseRef,
     string DeliveryPolicy,
     DateTime RegisteredAt,
-    string RegisteredBy);
+    string RegisteredBy,
+    string? RepositoryVisibility = null);
 
 /// <summary>
 /// What a runner host observed when it probed the registered project from
