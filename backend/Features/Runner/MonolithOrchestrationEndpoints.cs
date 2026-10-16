@@ -110,6 +110,7 @@ public static class MonolithOrchestrationEndpoints
 public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationStore store,
     TaskScannerService scanner,
     AttemptAuthorityService authority,
+    OrchestratorDecisionStore decisionInputs,
     OrchestrationRolloutStore rollout,
     IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
@@ -293,6 +294,18 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 && item.ProjectName == occurrence.Run.ProjectId);
             try
             {
+                if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
+                {
+                    if (decisionInputs.GetInputs(occurrence.Run.RunId) is not null)
+                    {
+                        store.Activate(occurrence.Run.RunId);
+                        if (card is not null && card.State == occurrence.ExpectedSourceState)
+                            EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                    }
+                    else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
+                        store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
+                    continue;
+                }
                 if (card is not null)
                     EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId);
                 var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>

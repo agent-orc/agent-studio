@@ -14,6 +14,8 @@ public enum OrchestrationStage
     /// (AGT-W73 O1 A). The authority submits frozen facts; the engine decides.
     /// </summary>
     OperatorDecision,
+    /// <summary>A bounded review, supervision, or abort decision submitted to the engine.</summary>
+    ReviewInputDecision,
 }
 
 public enum OrchestrationAction

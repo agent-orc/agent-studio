@@ -148,6 +148,36 @@ public class PostAbortReviewStepServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Secret_and_oversize_evidence_are_omitted_before_the_prompt_and_contract()
+    {
+        string? prompt = null;
+        var service = BuildService((_, _, text, _, _) =>
+        {
+            prompt = text;
+            return Task.FromResult("[[ABORT_REVIEW: legitimate=true; recommendation=human-review; confidence=0.8; reason=unclear]]");
+        });
+        var secret = "api_key=" + new string('q', 24);
+        var request = BuildRequest(1) with
+        {
+            TaskBody = new string('x', 10_000),
+            CliOutputTail = "started " + secret,
+            ToolCallsLiveness = "/private/sessions/raw.log",
+        };
+
+        await service.RunAsync(request, CancellationToken.None);
+
+        Assert.NotNull(prompt);
+        Assert.DoesNotContain(secret, prompt);
+        Assert.DoesNotContain("/private/sessions", prompt);
+        Assert.Contains("[omitted: secret]", prompt);
+        var input = ReadContract(PostAbortReviewStepService.InputContractName);
+        var omissions = input.GetProperty("omissions").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains("taskBody:oversize", omissions);
+        Assert.Contains("cliOutputTail:secret", omissions);
+        Assert.Contains("toolCallsLiveness:raw-path", omissions);
+    }
+
+    [Fact]
     public void StaticTokenMappers_AreExhaustive()
     {
         Assert.Equal("abort-review:rerun", PostAbortReviewStepService.TagFor(PostAbortAction.Rerun));

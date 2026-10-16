@@ -146,6 +146,63 @@ public sealed class OrchestratorContextDigestServiceTests
             statuses.Select(source => source.Name).ToArray());
     }
 
+    [Fact]
+    public void RenderDigest_preserves_project_named_secret_and_redacts_credential_values()
+    {
+        Assert.True(OrchestratorContextKey.TryParse("global", out var context));
+        var credential = "api_key=" + new string('r', 24);
+        var data = new OrchestratorContextDigestData(context, DateTime.UnixEpoch,
+            [new DigestProjectLanes("secret", 1, new Dictionary<string, int>(), "manual", 0, 1),
+             new DigestProjectLanes(credential, 1, new Dictionary<string, int>(), "manual", 0, 1)],
+            null, [], [], new QuotaReport(),
+            [new DigestPublishProject("secret", true, null, [])],
+            new TaskWatcherHealthSnapshot(null, 0, 0, null, null, false),
+            [new DigestDecision(DateTime.UnixEpoch, "secret", "AGT-1", "decision", credential)]);
+
+        var digest = OrchestratorContextDigestService.RenderDigest(data);
+
+        Assert.Contains("- secret: total=1", digest);
+        Assert.Contains("- secret: none derived", digest);
+        Assert.DoesNotContain(credential, digest);
+        Assert.Contains("Evidence omissions: secret", digest);
+    }
+
+    [Fact]
+    public void RenderDigest_redacts_credential_in_publish_detail_after_project_named_secret()
+    {
+        Assert.True(OrchestratorContextKey.TryParse("global", out var context));
+        var credential = "api_key=" + new string('r', 24);
+        var data = new OrchestratorContextDigestData(context, DateTime.UnixEpoch,
+            [], null, [], [], new QuotaReport(),
+            [new DigestPublishProject("secret", true, null,
+                [new PublishTarget { Label = credential, PendingCount = 0 }])],
+            new TaskWatcherHealthSnapshot(null, 0, 0, null, null, false), []);
+
+        var digest = OrchestratorContextDigestService.RenderDigest(data);
+
+        Assert.Contains("- secret: [omitted: secret] pending=0", digest);
+        Assert.DoesNotContain(credential, digest);
+        Assert.Contains("Evidence omissions: secret", digest);
+    }
+
+    [Fact]
+    public void RenderDigest_omits_secrets_and_caps_multichat_context_bytes()
+    {
+        Assert.True(OrchestratorContextKey.TryParse("project:alpha", out var context));
+        var now = new DateTime(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
+        var secret = "api_key=" + new string('r', 24);
+        var data = new OrchestratorContextDigestData(context, now, [], null, [], [],
+            new QuotaReport(), [], new TaskWatcherHealthSnapshot(null, 0, 0, null, null, false),
+            Enumerable.Range(0, 8).Select(i => new DigestDecision(now, "alpha", $"AGT-{i}",
+                "decision", new string('x', 8_000) + " " + secret, $"/api/receipts/{i}")).ToList());
+
+        var digest = OrchestratorContextDigestService.RenderDigest(data);
+
+        Assert.DoesNotContain(secret, digest);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(digest) <= OrchestratorContextDigestService.MaxDigestBytes);
+        Assert.Contains("[omitted: oversize context digest]", digest);
+    }
+
     private static TaskInfo Task(string project, string key, string id) => new()
     {
         ProjectName = project,
