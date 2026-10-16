@@ -229,7 +229,7 @@ public sealed class AccessSecurityMiddleware
                     await Reject(context, 403, "role-denied", "Viewer role is read-only.");
                     return;
                 }
-                if (!TokenWriteRouteAllowed(apiToken.User, context.Request, path))
+                if (!TokenWriteRouteAllowed(context.Request, path))
                 {
                     await Reject(context, 403, "project-scope-denied", "A project-scoped token cannot mutate installation-wide settings.");
                     return;
@@ -515,10 +515,9 @@ public sealed class AccessSecurityMiddleware
             project => ProjectAccessAuthorization.Allows(user, project, _projects));
     }
 
-    private bool TokenWriteRouteAllowed(StudioUser user, HttpRequest request, string path)
+    private bool TokenWriteRouteAllowed(HttpRequest request, string path)
     {
-        if (ProjectAccessAuthorization.HasUnrestrictedProjectAccess(user)
-            || HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)
+        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)
             || HttpMethods.IsOptions(request.Method) || IsReadOnlyPost(request.Method, path))
             return true;
         var route = ResolveRouteAddress(request, path);
@@ -536,6 +535,9 @@ public sealed class AccessSecurityMiddleware
     /// </summary>
     private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path)
     {
+        if (path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/workspace/tokens/expensive-jobs/cached", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.WorkspaceWide;
         if (path.StartsWith("/api/runner/global", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.WorkspaceWide;
         if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
