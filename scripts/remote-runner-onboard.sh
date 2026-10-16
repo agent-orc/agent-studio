@@ -301,13 +301,14 @@ REMOTE_SSHD_LIVENESS
 
 printf '[onboarding] phase=install Installing/updating the agent host tool and agent CLIs.\n'
 if ! "${ssh_base[@]}" -T "$host" bash -s -- \
-  "$package_id" "$runner_command" "$minimum_version" "$codex_cli_version" "$claude_cli_version" <<'REMOTE_INSTALL'
+  "$package_id" "$runner_command" "$minimum_version" "$codex_cli_version" "$claude_cli_version" "$role" <<'REMOTE_INSTALL'
 set -euo pipefail
 package_id="$1"
 runner_command="$2"
 minimum_version="$3"
 codex_cli_version="$4"
 claude_cli_version="$5"
+role="$6"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 
 tool_root="$HOME/.local/share/agent-host-tools"
@@ -346,18 +347,23 @@ stage_root=""
 # only after an active Review daemon acknowledges closed claim admission.
 ln -sfnT "$release_root" "$tool_root/candidate"
 
-command -v npm >/dev/null || { echo '[remote] Node.js/npm is missing. Install Node 22, then retry.' >&2; exit 33; }
-sudo -n npm install --global --prefix /usr/local \
-  "@openai/codex@$codex_cli_version" \
-  "@anthropic-ai/claude-code@$claude_cli_version"
+if [[ "$role" != "deploy" ]]; then
+  command -v npm >/dev/null || { echo '[remote] Node.js/npm is missing. Install Node 22, then retry.' >&2; exit 33; }
+  sudo -n npm install --global --prefix /usr/local \
+    "@openai/codex@$codex_cli_version" \
+    "@anthropic-ai/claude-code@$claude_cli_version"
+fi
 printf '[remote] runner-package=%s runner-version=%s\n' "$package_id" "$installed_version"
-codex --version
-claude --version
+if [[ "$role" != "deploy" ]]; then
+  codex --version
+  claude --version
+fi
 REMOTE_INSTALL
 then
   die "Runner installation failed. Verify that '$package_id' version $minimum_version or newer is published as a NuGet package with package type DotnetTool and exposes '$runner_command'. The CodingAgentRunner 0.5.0 library reference alone is not installable with 'dotnet tool'."
 fi
 
+if [[ "$role" != "deploy" ]]; then
 printf '[onboarding] phase=provider-auth Checking the Studio-provisioned provider EnvironmentFile.\n'
 "${ssh_base[@]}" -T "$host" bash -s -- "$provider_auth_file" <<'REMOTE_PROVIDER_AUTH'
 set -euo pipefail
@@ -446,6 +452,7 @@ inotify_watches="$(sysctl -n fs.inotify.max_user_watches)"
 printf '[remote] kernel-limits file=%s max_user_instances=%s max_user_watches=%s\n' \
   "$sysctl_file" "$inotify_instances" "$inotify_watches"
 REMOTE_KERNEL_LIMITS
+fi
 
 printf '[onboarding] phase=systemd Writing configuration and enabling the OS-owned service.\n'
 resource_governance_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-host-resource-governance.sh"

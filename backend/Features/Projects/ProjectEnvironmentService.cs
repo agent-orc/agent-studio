@@ -41,8 +41,8 @@ public sealed class ProjectEnvironmentService
 {
     private static readonly Regex Identifier = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex SecretIdentifier = new("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
-    private static readonly Regex Commit = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
-    private static readonly Regex Digest = new("^[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}$", RegexOptions.Compiled);
+    private static readonly Regex Commit = new(@"\A[0-9a-f]{40}\z", RegexOptions.Compiled);
+    private static readonly Regex Digest = new(@"\A[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}\z", RegexOptions.Compiled);
     private readonly object _gate = new();
     private readonly IConfiguration _configuration;
     private readonly TaskScannerService _scanner;

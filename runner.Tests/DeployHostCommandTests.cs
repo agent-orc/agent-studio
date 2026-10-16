@@ -6,8 +6,11 @@ using System.Text.Json;
 using AgentStudio.Projects;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -75,6 +78,11 @@ public sealed class DeployHostCommandTests
                         ["WatchPaths:0:RootPath"] = repo,
                         ["WatchPaths:0:RepositoryPath"] = repo,
                     }));
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton<TimeProvider>(new FakeTimeProvider());
+                });
             });
             using var client = factory.CreateClient();
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();

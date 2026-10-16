@@ -26,7 +26,7 @@ Options:
                                      package (release.tar.gz, release.sha256, full-gate.log) from
                                      the gate worktree into <directory>/<candidate sha>/.
                                      Omit to skip packaging.
-  --deploy-token-file <path>        Orchestration service credential for automatic stage queueing
+  --deploy-token-file <path>        Release service credential for automatic stage queueing
                                      from the gated release package.
   --deploy-image-ref <image>        Gate-built local image to deploy by its registry digest;
                                      its revision label must equal the gated commit.
@@ -624,6 +624,8 @@ if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$r
         || { rm -f "$deploy_tmp"; log 'static artifact digest changed during transfer'; exit 9; }
       mv -T "$deploy_tmp" "$deploy_artifact_store/$deploy_digest"
     fi
+    [[ "$(sha256sum "$deploy_artifact_store/$deploy_digest" | cut -d ' ' -f1)" == "$deploy_digest" ]] \
+      || { log 'static artifact store contains a digest mismatch'; exit 9; }
     deploy_artifact="release-package@sha256:$deploy_digest"
   fi
   deploy_body=$(printf '{"project":"%s","artifact":"%s","commit":"%s"}' \
