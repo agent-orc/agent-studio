@@ -193,11 +193,11 @@ if ($FullStudio -and -not (Test-Path -LiteralPath $backendEnvPath)) {
     ) | Set-Content -LiteralPath $backendEnvPath -Encoding ascii
 }
 if ($FullStudio) {
-    # The browser's legacy /api calls terminate on this backend. Enabling the
-    # standalone Task Server proxy here closes those routes with a 404.
-    # Clear old settings on repair as well as omitting them on fresh installs.
-    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__BaseUrl' -Value ''
-    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__AuthTokenFile' -Value ''
+    # Keep the backend on the standalone Task Server plane. Its legacy task
+    # handlers must stay closed while the browser board and Runner use v1.
+    # Set this on repair too, including installs made by earlier packages.
+    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__BaseUrl' -Value $ListenUrl
+    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__AuthTokenFile' -Value (Join-Path $ConfigRoot 'studio.token')
 }
 if ($FullStudio -and -not (Test-Path -LiteralPath $runnerEnvPath)) {
     @(

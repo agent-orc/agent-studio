@@ -347,6 +347,10 @@ jobs:
             $archive.Dispose()
           }
 
+      - name: Test Windows native setup and archive contract
+        shell: pwsh
+        run: dotnet test setup.Tests/AgentOrchestratorSetup.Tests.csproj --filter "FullyQualifiedName~WindowsNativeSetupTests" --logger "console;verbosity=minimal"
+
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v4
         with:

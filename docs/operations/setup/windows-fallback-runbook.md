@@ -74,9 +74,11 @@ one-time code), `BOOTSTRAP_RUNNER_ID`, and `BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE`;
 `studio-connector.env` gains `Studio__BrowserRoot` pointing at the packaged
 browser bundle and `Studio__BackendBaseUrl` pointing at the local backend;
 the connector serves port 4011. `studio-backend.env` sets
-`ASPNETCORE_URLS` to port 5031 and clears `TaskServer__BaseUrl` so the
-backend serves its legacy `/api` routes used by the browser. The connector
-continues to forward `/api/v1` to Task Server on port 5071.
+`ASPNETCORE_URLS` to port 5031 and sets `TaskServer__BaseUrl` and
+`TaskServer__AuthTokenFile` to the local Task Server. The backend keeps legacy
+task routes closed so they cannot write a separate workspace; the connector
+forwards `/api/v1` to Task Server on port 5071. Legacy browser actions that
+have not moved to `/api/v1` remain unavailable in this native profile.
 `runner.env` records the selected provider, protected Runner token path,
 work and state directories, and Git configuration for the selected access
 method. The setup executable records these choices without secrets in

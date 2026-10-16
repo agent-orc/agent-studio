@@ -130,12 +130,24 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
 
     private static async Task InstallNodeAsync()
     {
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        await InstallNodeAsync(client,
+            async (file, arguments) => (await new ProcessRunner(false).RunAsync(
+                file, arguments, printOutput: false)).ExitCode,
+            Environment.GetEnvironmentVariable,
+            path => Environment.SetEnvironmentVariable("PATH", path));
+    }
+
+    internal static async Task InstallNodeAsync(HttpClient client,
+        Func<string, IReadOnlyList<string>, Task<int>> runInstaller,
+        Func<string, EnvironmentVariableTarget, string?> getEnvironmentVariable,
+        Action<string> setProcessPath)
+    {
         // Match the repository's Windows release toolchain. The published setup
         // is self-contained, so the pinned version is embedded here as well.
         const string version = "22.23.1";
         var fileName = $"node-v{version}-x64.msi";
         var release = $"https://nodejs.org/download/release/v{version}/";
-        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         var checksums = await client.GetStringAsync(release + "SHASUMS256.txt");
         var checksum = checksums.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries))
@@ -155,13 +167,13 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
                 if (!actual.Equals(checksum, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Node.js installer checksum did not match its release manifest.");
             }
-            var result = await new ProcessRunner(false).RunAsync("msiexec.exe",
-                ["/i", installer, "/qn", "/norestart", "ALLUSERS=1"], printOutput: false);
-            if (result.ExitCode is not (0 or 3010))
-                throw new InvalidOperationException($"Node.js installation exited with code {result.ExitCode}.");
-            var machinePath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine);
-            var userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("PATH", string.Join(Path.PathSeparator,
+            var exitCode = await runInstaller("msiexec.exe",
+                ["/i", installer, "/qn", "/norestart", "ALLUSERS=1"]);
+            if (exitCode is not (0 or 3010))
+                throw new InvalidOperationException($"Node.js installation exited with code {exitCode}.");
+            var machinePath = getEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine);
+            var userPath = getEnvironmentVariable("PATH", EnvironmentVariableTarget.User);
+            setProcessPath(string.Join(Path.PathSeparator,
                 new[] { machinePath, userPath }.Where(path => !string.IsNullOrWhiteSpace(path))));
         }
         finally

@@ -26,8 +26,14 @@ function Assert-Healthy {
   if ($edge.status -ne 'live') { throw 'Studio connector is not live.' }
   $html = (Invoke-WebRequest -Uri 'http://127.0.0.1:4011/' -UseBasicParsing).Content
   if ($html -notmatch '<html') { throw 'Studio browser UI did not load.' }
-  $version = Invoke-RestMethod -Uri 'http://127.0.0.1:4011/api/system/version'
-  if (-not $version) { throw 'Studio backend API did not answer through the connector.' }
+  $board = Invoke-RestMethod -Uri 'http://127.0.0.1:4011/api/v1/studio/board'
+  if ($null -eq $board) { throw 'Studio board did not answer from Task Server.' }
+  try {
+    Invoke-WebRequest -Uri 'http://127.0.0.1:4011/api/tasks/grouped' -UseBasicParsing | Out-Null
+    throw 'Legacy task API is open beside the standalone Task Server.'
+  } catch {
+    if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+  }
   $code = Join-Path $env:ProgramData 'AgentOrchestrator\owner-bootstrap.code'
   if (-not (Test-Path -LiteralPath $code) -or (Get-Item -LiteralPath $code).Length -eq 0) {
     throw 'Owner bootstrap code file is missing or empty.'
