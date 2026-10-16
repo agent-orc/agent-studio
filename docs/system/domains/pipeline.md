@@ -482,6 +482,10 @@ key and noninteractive credentials. Host-key checking and batch mode are
 mandatory. The worker is invoked explicitly with
 `--remote-build-test-gate-worker <request.json>` before the API host is created;
 it starts no listener or backend background loops and refuses Windows.
+The Execution Hosts infrastructure snapshot reports gate reachability from the
+latest SSH or SCP call, including cleanup calls. Each successful call marks the
+host reachable for five minutes; each failed call marks it unreachable at once.
+Without a recent successful call, reachability is unverified.
 
 Transport creates a private bare repository and bundle from the requested
 commit, computes SHA-256, and transfers that bundle and immutable request into

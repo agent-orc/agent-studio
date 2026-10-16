@@ -700,6 +700,9 @@ occur. It is not a claim about tunnel transfer time.
   connection, capabilities, capacity, project access, host work, and system
   load; each section discloses its internals independently. Crash recovery
   pending count occupies a status-bar slot so it cannot cover host actions.
+  Release drift stays paired with the release reported for the same runner
+  generation. An older drift response cannot mark a newer capability release
+  behind Stable.
 - The System prompts destination is the prompt registry and observability
   surface. Its overview groups runtime-step, orchestrator, drift, and framing
   templates, explains application and project pipeline override precedence, and

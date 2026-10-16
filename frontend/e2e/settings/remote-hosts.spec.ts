@@ -626,6 +626,51 @@ test.describe('Execution Hosts settings section', () => {
     }
   });
 
+  for (const order of ['drift-first', 'capability-first'] as const) {
+    for (const sameRelease of [false, true]) {
+      test(`${sameRelease ? 'keeps drift for the same release' : 'does not mark a newer host release behind'} when ${order} resolves first`, async ({ page }) => {
+        await stubGroupedHostApis(page);
+        const newer = new Date().toISOString();
+        const older = new Date(Date.parse(newer) - 60_000).toISOString();
+        const oldRelease = { releaseId: 'old-build', version: '0.2.7', commit: 'old-commit' };
+        const release = sameRelease ? oldRelease : { releaseId: 'new-build', version: '0.3.0', commit: 'new-commit' };
+        let firstDone!: () => void;
+        const firstResponse = new Promise<void>(resolve => { firstDone = resolve; });
+        const fulfill = async (route: Route, body: unknown, first: boolean) => {
+          if (!first) await firstResponse;
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+          if (first) firstDone();
+        };
+
+        await page.unroute('**/api/v1/management/remote-hosts');
+        await page.route('**/api/v1/management/remote-hosts', route => fulfill(route, [{
+          runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+          instanceId: 'agent-runner-01:coding', runnerVersion: release.version, protocolVersion: 3,
+          status: 'active', registeredAt: older, lastSeenAt: newer,
+          hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+          capabilities: [], release,
+        }], order === 'capability-first'));
+        await page.unroute('**/api/v1/management/host-releases');
+        await page.route('**/api/v1/management/host-releases', route => fulfill(route, {
+          observedAt: older, stable: { version: '0.3.0' }, behindCount: 1,
+          hosts: [{ runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+            role: 'coding', release: oldRelease, state: 'behind', behindByHours: 100,
+            behindForHours: 100, alarmDue: true, reason: 'Old build', lastSeenAt: older,
+            heartbeatStale: false }],
+        }, order === 'drift-first'));
+
+        await page.goto('/#/workspace/settings/execution-hosts');
+        const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+        await expect(machine.getByTestId('remote-host-release')).toContainText(release.version);
+        await expect(machine.getByTestId('remote-host-release-drift')).toHaveCount(sameRelease ? 1 : 0);
+        await expect(page.getByTestId('remote-hosts-release-behind')).toHaveCount(sameRelease ? 1 : 0);
+        if (order === 'drift-first' && !sameRelease) {
+          await machine.screenshot({ path: join(SHOT_DIR, 'execution-hosts-new-release-no-stale-drift.png') });
+        }
+      });
+    }
+  }
+
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
     await page.setViewportSize({ width: 900, height: 820 });
