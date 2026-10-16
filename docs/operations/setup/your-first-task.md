@@ -9,9 +9,14 @@ checks pass, **Create sample card** queues a small overview-document task in
 the first registered project. Studio follows that card by its id and marks the
 proof complete only after coding, review, and integration evidence is visible.
 The browser stores the card id, project id, and task-store path for returning
-to the checklist; it stores no credential. A local project uses its existing
-checkout; a networked project uses its registered origin and the runner's
-checkout. Use
+to the checklist; it stores no credential. For a local project without a
+checkout, GitHub verification clones the registered URL into backend-managed
+storage and records that checkout on the project. Its read/write probe uses a
+fresh temporary Git repository with only the selected credential, so URL
+rewrites in the project checkout cannot make a different repository pass.
+For a new local project, the checkout also becomes its CLI working directory
+and the local runner is activated before the sample card starts.
+A networked project uses its registered origin and the runner's checkout. Use
 [onboard-a-project.md](./onboard-a-project.md) to prepare the checkout.
 
 Once a project is attached ([onboard-a-project.md](./onboard-a-project.md)) and at least one CLI is installed ([onboard-an-agent-cli.md](./onboard-an-agent-cli.md)), queue a small first task to confirm the loop works end to end. The goal is to watch a real run: pickup, CLI invocation, log streaming, lane transition, auto-commit, auto-review.
