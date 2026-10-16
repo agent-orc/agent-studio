@@ -11,6 +11,7 @@ import {
   CliPathsPanelComponent,
 } from '../../../cli';
 import { RemoteHostsPanelComponent } from '../../../remote-hosts';
+import { CredentialInventoryComponent } from '../../../credentials/credential-inventory/credential-inventory.component';
 import { TaskServerPanelComponent } from '../../../task-server';
 import { OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
@@ -77,6 +78,7 @@ interface SettingsRailItem {
     CliSessionsPanelComponent,
     CliPathsPanelComponent,
     RemoteHostsPanelComponent,
+    CredentialInventoryComponent,
     TaskServerPanelComponent,
     PromptAdminPanelComponent,
     OrchestratorLogicPanelComponent,
@@ -120,6 +122,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'updates', label: 'Updates', description: 'Keep this instance in sync with stable.', icon: 'refresh', group: 'global' },
     { key: 'workspaces', label: 'Workspaces', description: 'Manage every workspace and its projects.', icon: 'folder', group: 'global' },
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },
+    { key: 'credentials', label: 'Credentials', description: 'Required access, observed custody, expiry and gaps across the installation.', icon: 'check', group: 'global' },
     { key: 'remote-hosts', label: 'Execution Hosts', description: 'Local and remote CLI execution: heartbeat, vitals, quota, and lifecycle.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
@@ -199,6 +202,7 @@ export class WorkspaceOverlaysComponent {
       case 'updates': return 'workspace-updates-overlay';
       case 'workspaces': return 'workspace-management-overlay';
       case 'task-server': return 'workspace-task-server-overlay';
+      case 'credentials': return 'workspace-credentials-overlay';
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
       case 'working-memory': return 'workspace-working-memory-overlay';

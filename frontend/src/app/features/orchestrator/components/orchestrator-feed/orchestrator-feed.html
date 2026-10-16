@@ -25,6 +25,8 @@
     </button>
   </header>
 
+  <app-credential-alerts />
+
   @if (error()) { <div class="orch-feed__error" role="alert">{{ error() }}</div> }
 
   @if (activeView() === 'load') {

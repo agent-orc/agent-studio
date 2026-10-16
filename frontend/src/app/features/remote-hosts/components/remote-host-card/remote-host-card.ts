@@ -49,7 +49,7 @@ import {
 } from '../../models/provider-auth.model';
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
-
+import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
@@ -84,6 +84,7 @@ interface Meter {
     RemoteHostRoleRowComponent,
     RemoteHostDetailSummaryComponent,
     HostCredentialsComponent,
+    HostCredentialBadgeComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -132,7 +133,6 @@ export class RemoteHostCardComponent {
   readonly expandedChange = output<boolean>();
   readonly expandedSections = signal<readonly DetailSection[]>([]);
   readonly relativeHeartbeat = relativeHeartbeat;
-
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));

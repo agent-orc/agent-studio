@@ -30,6 +30,7 @@
             class="studio-tab-action studio-tab-action--primary"
             data-testid="studio-board-add-task" [disabled]="mutationsBlocked()"
             (click)="addTask.emit()">＋ Add task</button>
+    <app-credential-alerts [compact]="true" />
   </div>
 }
 @if (task(); as detail) {
