@@ -1990,6 +1990,18 @@ public sealed partial class BatchGatePilotService
                     TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
                         .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && !recordInStore)
+            {
+                // An emergency gate has no operator cancellation. Keep the card
+                // in Auto Review so the settled report can retry the fallback.
+                BatchGateOwnershipStore.Write(task.FolderPath,
+                    new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                        FallbackGateActive: true));
+                _logger.LogWarning(ex,
+                    "batch-emergency-fallback-cancelled task={TaskKey} attempt={AttemptId}",
+                    pending.Subject.TaskKey, pending.ReviewAttemptId);
+                return;
+            }
             catch (OperationCanceledException)
             {
                 var reason = ct.IsCancellationRequested
@@ -2004,6 +2016,23 @@ public sealed partial class BatchGatePilotService
                 // The active marker stays; the next tick resumes this gate.
                 _logger.LogWarning(ex, "batch-fallback-gate-interrupted task={TaskKey} attempt={AttemptId} start={Start}",
                     pending.Subject.TaskKey, pending.ReviewAttemptId, starts + 1);
+                return;
+            }
+            if (!recordInStore && !ct.IsCancellationRequested
+                && gate.FailureKind == BuildTestGateFailureKind.Cancellation)
+            {
+                // A reported cancellation has the same retry ownership as a
+                // thrown cancellation when the emergency gate's host is live.
+                if (!Refresh(pending).Subject.CurrentGeneration)
+                    BatchGateOwnershipStore.ClearIfReviewAttempt(task.FolderPath,
+                        pending.ReviewAttemptId);
+                else
+                    BatchGateOwnershipStore.Write(task.FolderPath,
+                        new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                            FallbackGateActive: true));
+                _logger.LogWarning(
+                    "batch-emergency-fallback-cancelled task={TaskKey} attempt={AttemptId} reason={Reason}",
+                    pending.Subject.TaskKey, pending.ReviewAttemptId, gate.Reason);
                 return;
             }
             if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)

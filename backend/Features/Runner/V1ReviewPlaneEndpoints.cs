@@ -9,6 +9,7 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Security;
 using AgentStudio.Tasks;
+using Microsoft.Extensions.Hosting;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -1362,7 +1363,8 @@ public static class V1ReviewPlaneEndpoints
                         await batchPilot.RunEmergencyFallbackAsync(task,
                             settled.ReviewAttempt, batchSource,
                             new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
-                            ct).ConfigureAwait(false);
+                            context.RequestServices.GetRequiredService<IHostApplicationLifetime>()
+                                .ApplicationStopping).ConfigureAwait(false);
                         emergencyBatchState = FindTask(scanner, task.Id)?.State;
                     }
                     catch (Exception fallbackError)

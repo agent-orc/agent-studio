@@ -58,8 +58,22 @@ public static class BatchGateOwnershipStore
     }
 
     private static FileStream Guard(string folder)
-        => new(Path.Combine(folder, "batch-gate-ownership.lock"),
-            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+    {
+        const int attempts = 41;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            try
+            {
+                return new FileStream(Path.Combine(folder, "batch-gate-ownership.lock"),
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (attempt + 1 < attempts)
+            {
+                Thread.Sleep(50);
+            }
+        }
+        throw new InvalidOperationException("The ownership lock retry loop ended unexpectedly.");
+    }
 
     public static BatchGateOwnership RecordContainment(string taskFolder,
         BatchGateOwnership ownership, string containedInSha, TimeProvider time,

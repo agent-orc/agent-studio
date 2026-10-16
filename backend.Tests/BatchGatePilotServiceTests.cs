@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
@@ -2176,6 +2177,43 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Held_ownership_lock_delays_enqueue_until_the_lock_is_released()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-LOCK-RETRY", "docs/lock-retry.md", settleReview: false);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claimed = authority.ClaimReview(member.ReviewAttemptId, "review-executor", "review-host",
+            600, "claim-" + member.Key);
+        Assert.True(claimed.Accepted, claimed.Message);
+        var passed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(member.ReviewAttemptId, claimed.ReviewAttempt!.LastFence,
+                claimed.ReviewAttempt.AuthorityEpoch, "pass-" + member.Key),
+            member.ResultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(passed.Accepted, passed.Message);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var lockPath = Path.Combine(TaskPaths.LogsDir(task.FolderPath), "batch-gate-ownership.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        Task<BatchGatePendingRecord> enqueue;
+        using (var held = new FileStream(lockPath, FileMode.OpenOrCreate,
+                   FileAccess.ReadWrite, FileShare.None))
+        {
+            enqueue = Task.Run(() => pilot.Enqueue(task, passed.ReviewAttempt!,
+                authority.GetRun(member.RunAttemptId)!, _clock));
+            await Task.Delay(150);
+            Assert.False(enqueue.IsCompleted);
+        }
+
+        var pending = await enqueue.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(member.ReviewAttemptId, pending.ReviewAttemptId);
+        Assert.Equal(member.ReviewAttemptId, Ownership(member.Key)?.ReviewAttemptId);
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
     public async Task Per_task_fallback_interrupted_by_a_restart_resumes_on_the_next_tick()
     {
         using var factory = BuildFactory();
@@ -2296,6 +2334,57 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         // The emergency per-task gate ran, so the pilot report counts it.
         Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
             .ListExecutions(ProjectName));
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_batch_enqueue_and_cancelled_emergency_gate_leave_review_retryable(
+        bool reportedCancellation)
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        // Code in a documentation-only batch causes admission to fail.
+        var member = SeedMember(factory, "CODE-CANCEL-RETRY", "backend/Cancel.cs",
+            settleReview: false);
+        _gate.FallbackAsync = (_, _) => reportedCancellation
+            ? Task.FromResult(new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+                "", "Gate cancelled: shutdown.", false, false)
+            {
+                FailureKind = BuildTestGateFailureKind.Cancellation,
+                CancellationReason = GateCancellationReasons.Shutdown,
+            })
+            : throw new TaskCanceledException("Gate transport cancelled.");
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        Assert.Equal(member.ReviewAttemptId, claim.Attempt!.AttemptId);
+        var report = PassingReport(claim, "batch-cancelled-emergency");
+
+        var failed = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report", report);
+
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Equal(0, Ownership(member.Key)?.FallbackGateStarts);
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListExecutions(ProjectName));
+
+        _gate.FallbackAsync = (request, _) => Task.FromResult(Red(request.ExpectedSha));
+        var retried = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report", report);
+
+        var body = await retried.Content.ReadAsStringAsync();
+        Assert.True(retried.IsSuccessStatusCode, body);
+        Assert.Equal(2, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.DoesNotContain("Gate cancelled: shutdown", _errors.ToString());
     }
 
     [Fact]

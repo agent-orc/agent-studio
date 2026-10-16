@@ -72,6 +72,12 @@ path. Explicit operator cancellation keeps the failed-gate parking behavior.
 Each cancelled run adds one `gate-cancelled` timeline receipt naming
 `superseded`, `shutdown`, or `operator`.
 
+Batch admission waits briefly for a card's ownership lock when another writer
+holds it. If admission still fails, the emergency per-task gate uses the host
+stopping token. A cancelled emergency gate while the host is running leaves the
+card in Auto Review and returns a retryable report error; only host shutdown
+is recorded as `Gate cancelled: shutdown`.
+
 ## Exact-SHA gate verdict cache
 
 `BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
