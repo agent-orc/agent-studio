@@ -20,14 +20,23 @@ counted once. The price catalogue supplies a separate USD estimate. Compute
 time comes from pipeline step start and end times, including earlier runs and
 archived attempts. When a step records granted cores, its duration is
 multiplied by them; legacy records without a core allocation use one core.
-If a configured scope cannot read its token meter, new work waits for the
+Archived projects and their current-week pipeline steps remain in the workspace
+total. If any token source is only partially readable, new work waits for the
 meter rather than treating missing records as zero usage.
-Hosting counts recorded running project environments. A successful website
-dispatch records its environment slot. The quota service exposes an explicit
-stop update for environment lifecycle integrations.
+Hosting counts recorded running project environments. Website dispatch reserves
+its slot before sending the workflow and releases it when dispatch fails. A
+failed workflow or an inactive GitHub Pages deployment releases its slot when
+the publish run is refreshed. The quota service also exposes an explicit stop
+update for other environment lifecycle integrations.
 
-New coding runs, review claims, and publish or website dispatches check quota
-at admission. At 80% usage, Studio displays a warning. At 100%, admission
+New coding runs, review and gate claims, and publish or website dispatches check
+quota at admission. The standalone Task Server calls the monolith's
+`GET /api/quota/admission/{project}` with the project name before coding,
+review, and gate claims. An unknown project is refused.
+`TaskServer:QuotaAdmissionBaseUrl` identifies the monolith (default
+`http://127.0.0.1:5030`); `TaskServer:QuotaAdmissionBearerToken` supplies a
+bearer token when the monolith requires one. An unavailable response refuses
+new claims. At 80% usage, Studio displays a warning. At 100%, admission
 returns a reason without interrupting active work. A weekly owner override
 allows new admissions in its scope; an override on a project does not exempt it
 from a blocked workspace limit. The board header and eligible cards show the
