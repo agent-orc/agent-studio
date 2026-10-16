@@ -154,7 +154,8 @@ public sealed class AccessSecurityMiddleware
         }
 
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path);
-        if (requiredRunnerScope is not null)
+        if (requiredRunnerScope is not null
+            && (human is null || !IsHumanSessionRead(context.Request.Method, path)))
         {
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
             if (!runner.Scopes.Contains(requiredRunnerScope)) { await Reject(context, 403, "runner-scope-denied", $"Runner credential lacks '{requiredRunnerScope}'."); return; }
@@ -311,6 +312,17 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         return GateRunnerScope(method, path);
+    }
+
+    private static bool IsHumanSessionRead(string method, string path)
+    {
+        if (!HttpMethods.IsGet(method)) return false;
+        if (path is "/api/system/about" or "/api/v1/projects") return true;
+        if (path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/v1/reviews/attempts/", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase)) return false;
+        var parts = path.Split('/');
+        return parts.Length == 7 && parts[5].Equals("tasks", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
