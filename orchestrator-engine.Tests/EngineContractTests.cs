@@ -60,6 +60,49 @@ public sealed class EngineContractTests
         Assert.Equal(0, body.RootElement.GetProperty("supportedStages")[0].GetInt32());
     }
 
+    [Fact]
+    public async Task Decision_plane_uses_studio_while_stage_claims_use_task_server()
+    {
+        var taskServerPaths = new List<string>();
+        var studioPaths = new List<string>();
+        using var taskServer = new HttpClient(new CaptureHandler(request =>
+        {
+            taskServerPaths.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("{\"status\":\"empty\"}") });
+        })) { BaseAddress = new Uri("http://task-server.test") };
+        using var studio = new HttpClient(new CaptureHandler(request =>
+        {
+            studioPaths.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("[\"capacity:host-1:sample\"]") });
+        })) { BaseAddress = new Uri("http://studio.test") };
+        using var client = new EngineTaskServerClient(taskServer, studio);
+
+        Assert.Equal(["capacity:host-1:sample"],
+            await client.GetPendingDecisionGroundsAsync(10, CancellationToken.None));
+        await client.ClaimAsync(new OrchestrationClaimRequest("engine", "instance",
+            [OrchestrationStage.ReviewDecision]), CancellationToken.None);
+        Assert.Equal(["/api/v1/orchestration/decision-grounds/pending"], studioPaths);
+        Assert.Equal(["/api/v1/orchestration/claims"], taskServerPaths);
+    }
+
+    [Fact]
+    public void Studio_decision_credential_overrides_task_server_credential_file()
+    {
+        var options = new EngineOptions
+        {
+            ServerUrl = "https://task-server.test",
+            ClientId = "engine-a",
+            ClientCredentialFile = "task-server-credential-file",
+            DecisionPlaneUrl = "https://studio.test",
+            DecisionPlaneClientCredential = "studio-engine-secret",
+        };
+        using var client = EngineTaskServerClient.CreateHttpClient(options, decisionPlane: true);
+        Assert.Equal("https://studio.test/", client.BaseAddress?.ToString());
+        Assert.Equal("studio-engine-secret", client.DefaultRequestHeaders.Authorization?.Parameter);
+    }
+
     private sealed class CaptureHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond)
         : HttpMessageHandler
     {
@@ -95,6 +138,11 @@ public sealed class EngineContractTests
         Assert.False(options.RemotePostBuildTestEnabled);
         values["REMOTE_POST_BUILD_TEST_GATE_ENABLED"] = "1";
         Assert.True(EngineOptions.Parse(key => values.GetValueOrDefault(key)).RemotePostBuildTestEnabled);
+        values["DECISION_PLANE_URL"] = "https://studio.example.test/";
+        values["DECISION_PLANE_CLIENT_CREDENTIAL"] = "studio-engine-secret";
+        var split = EngineOptions.Parse(key => values.GetValueOrDefault(key));
+        Assert.Equal("https://studio.example.test", split.DecisionPlaneUrl);
+        Assert.Equal("studio-engine-secret", split.DecisionPlaneClientCredential);
     }
 
     [Fact]

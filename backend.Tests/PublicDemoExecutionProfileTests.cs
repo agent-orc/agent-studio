@@ -142,7 +142,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // attempts/{attemptId}/renew and /phase (Continue), /report and /containment
         // (PostStep). Gate hosts drive suites through them, so all five are denied.
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start).
-        Assert.Equal(105, routes.Count);
+        Assert.Equal(107, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -160,13 +160,19 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/workspaces/{workspaceId}/decision-rules/versions", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/activate", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/rollback", ExecutionAdmissionPath.Continue),
-            ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start)
+            ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start),
+            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start)
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
             Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
+        var receiptRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/v1/orchestration/runs/{runId}/decision-receipt");
+        Assert.Equal(ExecutionAdmissionPath.Continue,
+            receiptRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Contains("PUT", receiptRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         var migrationRoute = Assert.Single(routes, route =>
             route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
         Assert.Equal(ExecutionAdmissionPath.Preview,
@@ -180,8 +186,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 8,
-                [ExecutionAdmissionPath.Start] = 16,
-                [ExecutionAdmissionPath.Continue] = 22,
+                [ExecutionAdmissionPath.Start] = 17,
+                [ExecutionAdmissionPath.Continue] = 23,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 26,

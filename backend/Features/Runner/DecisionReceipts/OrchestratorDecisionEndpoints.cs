@@ -19,56 +19,53 @@ public static class OrchestratorDecisionEndpoints
 {
     private static readonly JsonSerializerOptions WireJson = DecisionGroundsPolicy.Json;
 
-    public static void MapOrchestratorDecisionEndpoints(this WebApplication app, bool mapsEngineRoutes)
+    public static void MapOrchestratorDecisionEndpoints(this WebApplication app)
     {
-        // The Task Server owns card-scoped engine routes in the proxy profile.
-        // Host decisions share the Studio-owned receipt store in both profiles.
-        if (mapsEngineRoutes)
+        // Grounds, jobs and receipts share the Studio store with host submissions,
+        // including when Task Server owns the proxied card orchestration routes.
+        var engine = app.MapGroup("/api/v1/orchestration");
+        engine.MapGet("/runs/{runId}/grounds-input", (HttpContext context, string runId,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                : store.GetInputs(runId) is { } input ? Wire(input) : Results.NotFound());
+        engine.MapGet("/decision-grounds/pending", (HttpContext context, int? limit,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                : Wire(store.PendingReceipts(limit ?? 10)));
+        engine.MapPost("/decision-jobs", (HttpContext context, OrchestratorDecisionJobRequest request,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Execute(() =>
+                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                    : Wire(store.CreateJob(request))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+        engine.MapGet("/decision-jobs/{jobId}", (HttpContext context, string jobId,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                : store.GetJob(jobId) is { } job ? Wire(job) : Results.NotFound());
+        engine.MapPut("/runs/{runId}/decision-receipt", async (HttpContext context, string runId,
+            OrchestratorDecisionReceiptV1 receipt, AccessSecurityStore security,
+            OrchestratorDecisionStore store, AgentMessageBusBridge bus, CancellationToken ct) =>
         {
-            var engine = app.MapGroup("/api/v1/orchestration");
-            engine.MapGet("/runs/{runId}/grounds-input", (HttpContext context, string runId,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                    : store.GetInputs(runId) is { } input ? Wire(input) : Results.NotFound());
-            engine.MapGet("/decision-grounds/pending", (HttpContext context, int? limit,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                    : Wire(store.PendingReceipts(limit ?? 10)));
-            engine.MapPost("/decision-jobs", (HttpContext context, OrchestratorDecisionJobRequest request,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Execute(() =>
-                    MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                        : Wire(store.CreateJob(request))));
-            engine.MapGet("/decision-jobs/{jobId}", (HttpContext context, string jobId,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                    : store.GetJob(jobId) is { } job ? Wire(job) : Results.NotFound());
-            engine.MapPut("/runs/{runId}/decision-receipt", async (HttpContext context, string runId,
-                OrchestratorDecisionReceiptV1 receipt, AccessSecurityStore security,
-                OrchestratorDecisionStore store, AgentMessageBusBridge bus, CancellationToken ct) =>
+            OrchestratorDecisionReceiptV1? createdReceipt = null;
+            IReadOnlyList<DecisionLateCallV1> billedCalls = [];
+            var result = MonolithOrchestrationEndpoints.Execute(() =>
             {
-                OrchestratorDecisionReceiptV1? createdReceipt = null;
-                IReadOnlyList<DecisionLateCallV1> billedCalls = [];
-                var result = MonolithOrchestrationEndpoints.Execute(() =>
+                if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
+                    return Results.Unauthorized();
+                if (receipt.OccurrenceId != runId)
+                    return Results.BadRequest(new ApiError("invalid-request", "Receipt occurrence does not match the route."));
+                var projection = store.PutReceiptWithProjection(receipt);
+                if (projection.Created)
                 {
-                    if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
-                        return Results.Unauthorized();
-                    if (receipt.OccurrenceId != runId)
-                        return Results.BadRequest(new ApiError("invalid-request", "Receipt occurrence does not match the route."));
-                    var projection = store.PutReceiptWithProjection(receipt);
-                    if (projection.Created)
-                    {
-                        createdReceipt = projection.Receipt;
-                        billedCalls = projection.OtherBilledCalls;
-                    }
-                    return Wire(projection.Receipt);
-                });
-                if (createdReceipt is not null)
-                    await bus.EmitDecisionReceiptAsync(createdReceipt, ct, billedCalls);
-                return result;
+                    createdReceipt = projection.Receipt;
+                    billedCalls = projection.OtherBilledCalls;
+                }
+                return Wire(projection.Receipt);
             });
-        }
-
+            if (createdReceipt is not null)
+                await bus.EmitDecisionReceiptAsync(createdReceipt, ct, billedCalls);
+            return result;
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         var host = app.MapGroup("/api/v1/orchestration");
         host.MapPost("/host-decisions", (HttpContext context, HostDecisionOccurrenceRequestV1 request,
             AccessSecurityStore security, OrchestratorDecisionStore store,

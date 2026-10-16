@@ -159,7 +159,16 @@ with null card, attempt and fence. Studio handles this route on its receipt
 plane in both local and Task Server proxy profiles; the Task Server has no
 host-decision handler. Studio pins the workspace rules,
 resolves the configured strong model, bounds source references and freezes the
-grounds. The engine's receipt loop records zero to three offered actions with
+grounds. In a Task Server proxy deployment, set the engine's
+`DECISION_PLANE_URL` to the Studio origin and enroll an `engine_` principal there;
+use `DECISION_PLANE_CLIENT_CREDENTIAL_FILE` if its credential differs from the
+Task Server engine credential. The engine keeps stage claims on `SERVER_URL`,
+but polls pending grounds, reads frozen input, creates and reads decision jobs,
+and writes receipts through `DECISION_PLANE_URL`. Studio serves those receipt
+routes from its own store in both profiles, so a host submission can complete
+without entering the Task Server proxy. Runner hosts that execute decision jobs
+must reach Studio's `/api/runner/orchestrator-decisions` claim and completion
+routes. The engine's receipt loop records zero to three offered actions with
 assessment and report content. The receipt remains immutable; host history is
 `/api/orchestration/decision-receipts?hostId=...` and the same receipt enters
 workspace spend. A host decision action in this seam is proposed for the

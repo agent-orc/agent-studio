@@ -15,6 +15,7 @@ if (args is ["--help"] or ["-h"])
 
         Configuration is read from engine.env through the process environment:
           SERVER_URL
+          DECISION_PLANE_URL / DECISION_PLANE_CLIENT_CREDENTIAL_FILE
           CLIENT_ID
           CLIENT_CREDENTIAL
           ENGINE_ALLOW_INSECURE_HTTP
