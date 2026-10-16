@@ -1,7 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 namespace AgentStudio.Registry;
@@ -17,7 +15,6 @@ public sealed class LocalFirstRunGitSetup
     private readonly LocalFirstRunRepositoryProbe _probe;
     private readonly string _root;
     private readonly string _config;
-    private readonly string _sshConfig;
     private readonly ConcurrentDictionary<string, LocalGitSetupStatus> _setups = new(StringComparer.Ordinal);
 
     public LocalFirstRunGitSetup(ProjectRegistry projects, LocalFirstRunRepositoryProbe probe)
@@ -32,8 +29,6 @@ public sealed class LocalFirstRunGitSetup
         _probe = probe;
         _root = root;
         _config = config;
-        _sshConfig = sshConfig ?? Path.Combine(Environment.GetFolderPath(
-            Environment.SpecialFolder.UserProfile), ".ssh", "config");
     }
 
     public LocalGitSetupStatus? Get(string id) => _setups.GetValueOrDefault(id);
@@ -56,11 +51,11 @@ public sealed class LocalFirstRunGitSetup
         var id = "local-git-" + Guid.NewGuid().ToString("N");
         var root = Path.Combine(_root, id);
         Directory.CreateDirectory(root);
-        var config = _config;
-        Directory.CreateDirectory(Path.GetDirectoryName(config)!);
         LocalGitSetupStatus status;
         if (request.Method == "token")
         {
+            var config = _config;
+            Directory.CreateDirectory(Path.GetDirectoryName(config)!);
             var tokenFile = Path.Combine(root, "token");
             if (tokenFile.Contains('\'')) throw new ArgumentException("Credential path contains a quote.");
             await WriteSecretAsync(tokenFile, request.Token!, ct);
@@ -70,6 +65,8 @@ public sealed class LocalFirstRunGitSetup
             Protect(script);
             await File.AppendAllTextAsync(config,
                 $"\n[credential \"{origin}\"]\n\thelper =\n\thelper = !sh '{script.Replace('\\', '/')}'\n\tuseHttpPath = true\n", ct);
+            Protect(config);
+            _probe.SetDeployKey(project.Id, origin, null);
             status = new(id, "awaiting-verify", null, false, false);
         }
         else
@@ -82,45 +79,12 @@ public sealed class LocalFirstRunGitSetup
                 throw new InvalidOperationException("Deploy key generation failed.");
             Protect(key);
             var publicKey = (await File.ReadAllTextAsync(key + ".pub", ct)).Trim();
-            var alias = "agent-studio-first-run-" + Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(origin))).ToLowerInvariant()[..32];
-            await ConfigureSshAliasAsync(alias, key, Path.Combine(root, "known_hosts"), ct);
-            var rewrite = $"[url \"git@{alias}:{uri.AbsolutePath.TrimStart('/')}\"]\n\tinsteadOf = {origin}\n";
-            if (!File.Exists(config) || !(await File.ReadAllTextAsync(config, ct)).Contains(rewrite,
-                    StringComparison.Ordinal))
-                await File.AppendAllTextAsync(config, "\n" + rewrite, ct);
+            _probe.SetDeployKey(project.Id, origin, key);
             status = new(id, "awaiting-github", publicKey, false, false);
         }
-        Protect(config);
         _setups[id] = status;
         await File.WriteAllTextAsync(Path.Combine(root, "project"), request.ProjectId, ct);
         return status;
-    }
-
-    private async Task ConfigureSshAliasAsync(string alias, string key, string knownHosts,
-        CancellationToken ct)
-    {
-        var directory = Path.GetDirectoryName(_sshConfig)!;
-        Directory.CreateDirectory(directory);
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite |
-                UnixFileMode.UserExecute);
-        var marker = "# agent-studio-first-run " + alias;
-        var block = $"{marker}\nHost {alias}\n  HostName github.com\n  User git\n"
-            + $"  IdentityFile \"{key.Replace('\\', '/')}\"\n  IdentitiesOnly yes\n"
-            + "  IdentityAgent none\n  BatchMode yes\n  StrictHostKeyChecking accept-new\n"
-            + $"  UserKnownHostsFile \"{knownHosts.Replace('\\', '/')}\"\n"
-            + $"Host *\n{marker} end\n";
-        var existing = File.Exists(_sshConfig) ? await File.ReadAllTextAsync(_sshConfig, ct) : "";
-        var start = existing.IndexOf(marker + "\n", StringComparison.Ordinal);
-        if (start >= 0)
-        {
-            var end = existing.IndexOf(marker + " end\n", start, StringComparison.Ordinal);
-            if (end < 0) throw new InvalidOperationException("Managed SSH configuration is incomplete.");
-            existing = existing.Remove(start, end + marker.Length + " end\n".Length - start);
-        }
-        await File.WriteAllTextAsync(_sshConfig, block + existing, ct);
-        Protect(_sshConfig);
     }
 
     public async Task<LocalGitSetupStatus?> VerifyAsync(string id, CancellationToken ct)
@@ -130,7 +94,8 @@ public sealed class LocalFirstRunGitSetup
         var projectId = await File.ReadAllTextAsync(projectPath, ct);
         var project = _projects.FindById(projectId);
         if (project is null) return null;
-        var result = await _probe.ReadAsync(project, "main", ct, force: true);
+        var keyPath = existing.PublicKey is null ? null : Path.Combine(_root, id, "deploy-key");
+        var result = await _probe.ReadAsync(project, "main", ct, force: true, keyPath: keyPath);
         if (result is null) return null;
         var json = JsonSerializer.SerializeToElement(result);
         var receipt = json.GetProperty("probes")[0];
