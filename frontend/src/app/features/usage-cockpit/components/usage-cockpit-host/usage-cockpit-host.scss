@@ -18,3 +18,13 @@
   .usage-cockpit-host__secondary { display: none; }
   .usage-cockpit-host__primary { gap: var(--studio-spacing-1); }
 }
+.usage-cockpit-host__quota {
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-fg);
+  background: var(--studio-warning-bg, var(--studio-surface-2));
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border-radius: var(--studio-radius-md);
+}
+.usage-cockpit-host__quota[data-status='blocked'] {
+  background: var(--studio-error-bg, var(--studio-surface-2));
+}
