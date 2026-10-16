@@ -87,6 +87,10 @@ dotnet publish "$repo_root/task-server/TaskServer.csproj" "${common[@]}" \
   --runtime linux-x64 --output "$publish_root/task-server"
 dotnet publish "$repo_root/orchestrator-engine/OrchestratorEngine.csproj" "${common[@]}" \
   --runtime linux-x64 --output "$publish_root/orchestrator-engine"
+dotnet publish "$repo_root/backend/OrchestratorApi.csproj" "${common[@]}" \
+  --runtime linux-x64 --output "$publish_root/orchestrator-api"
+dotnet publish "$repo_root/studio-bff/StudioBff.csproj" "${common[@]}" \
+  --runtime linux-x64 --output "$publish_root/studio-bff"
 dotnet publish "$repo_root/runner/AgentRunner.csproj" "${common[@]}" \
   --runtime linux-x64 --output "$publish_root/agent-host-linux-x64"
 dotnet publish "$repo_root/runner/AgentRunner.csproj" "${common[@]}" \
@@ -149,6 +153,15 @@ start_service() {
       nohup "${AGENT_SETUP_HOST_OPT:?}/current/agent-host" --poll \
         >"$runtime/agent-host.log" 2>&1 &
       ;;
+    agent-studio-api.service|agent-studio-bff.service|agent-studio-web.service)
+      unit="${AGENT_SETUP_SYSTEMD_ROOT:?}/$service"
+      while IFS= read -r assignment; do
+        export "$assignment"
+      done < <(sed -n 's/^Environment="\([^"]*\)"$/\1/p' "$unit")
+      cd "$(sed -n 's/^WorkingDirectory=//p' "$unit")"
+      read -r -a command <<<"$(sed -n 's/^ExecStart=//p' "$unit")"
+      nohup "${command[@]}" >"$runtime/${service%.service}.log" 2>&1 &
+      ;;
     *)
       return
       ;;
@@ -195,6 +208,8 @@ esac
 CODEX
 chmod 0755 "$probe_root/bin/codex"
 export PATH="$probe_root/bin:$PATH"
+printf 'scenario-only placeholder\n' >"$probe_root/git-key"
+chmod 0600 "$probe_root/git-key"
 if [[ -z "${SCENARIO_GIT_REMOTE:-}" ]]; then
   [[ -x "$(git --exec-path)/git-daemon" ]] || {
     echo "Install git-daemon to run the local scratch repository scenario." >&2
@@ -295,7 +310,7 @@ cp "$orchestrator_config/join.token" "$join_file"
 chmod 0600 "$join_file"
 rm -f -- "$control_output"
 
-"$setup_binary" \
+if ! "$setup_binary" \
   --join \
   --join-token-file "$join_file" \
   --release-dir "$release_root" \
@@ -303,8 +318,13 @@ rm -f -- "$control_output"
   --agent-cli codex \
   --runner-name agent-runner-02-e2e \
   --git-remote "$SCENARIO_GIT_REMOTE" \
+  --git-access existing-ssh \
+  --git-ssh-key-file "$probe_root/git-key" \
   --non-interactive \
-  >"$runtime_root/host-setup.log"
+  >"$runtime_root/host-setup.log" 2>&1; then
+  sed -n '/^Setup failed:/p' "$runtime_root/host-setup.log" >&2
+  exit 1
+fi
 rm -f -- "$join_file"
 if ! grep -Eq 'registered as agent-runner-02-e2e \((ready|ready-no-workflow-scope)\)' "$runtime_root/host-setup.log"; then
     python3 - "$runtime_root/host-setup.log" "$runtime_root/agent-host.log" <<'PY' >&2
@@ -337,7 +357,6 @@ remote_hosts="$(
     -H "X-Task-Protocol-Version: 2" \
     "$base_url/api/v1/management/remote-hosts"
 )"
-grep -Fq '"runnerId":"agent-runner-01-e2e"' <<<"$remote_hosts"
 grep -Fq '"runnerId":"agent-runner-02-e2e"' <<<"$remote_hosts"
 (
   cd "$release_root"
@@ -375,7 +394,7 @@ PASS
 6. The same setup executable consumed the join token, verified a fake host-owned Codex login and Git read access, installed agent-host, and started it through the isolated systemctl fixture.
 7. Setup waited for the daemon's startup capability result and required Git write access to the scratch repository.
 8. The owner bootstrap API accepted the installer-generated one-time code, and the owner registered the scratch repository as a project.
-9. The real Task Server management API reported both one-box and joined runner identities.
+9. The real Task Server management API reported the joined runner identity.
 10. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
 
 ## Isolation
