@@ -108,6 +108,20 @@ public sealed class RunLeaseService
         if (reference is null)
             return new RunLeaseResponse("NotHeld", false, null, "No canonical RunAttempt is held for this task.");
 
+        if (string.Equals(request.Outcome, "Stopped", StringComparison.OrdinalIgnoreCase))
+        {
+            var settled = _authority.SettleRun(new SettleRunAttemptRequest
+            {
+                Write = reference with { IdempotencyKey = reference.IdempotencyKey + ":settle" },
+                Outcome = "stopped",
+                Reason = "Operator stopped the local run.",
+                ExecutorId = request.RunnerId,
+                LeaseId = request.LeaseId,
+                ExpectedTaskKey = request.TaskKey,
+                RequireResultSha = false,
+            });
+            if (!settled.Accepted) return MapMutation(settled, "Released");
+        }
         var result = _authority.ReleaseRun(reference, request.RunnerId, request.LeaseId);
         var mapped = MapMutation(result, "Released");
         return mapped with { Lease = mapped.Lease ?? ToLease(before) };

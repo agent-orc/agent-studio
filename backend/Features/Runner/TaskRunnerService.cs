@@ -90,6 +90,7 @@ public class TaskRunnerService : BackgroundService
     // test fixture builds the service directly, in which case no runner badge is
     // surfaced (the card falls back to the plain local-run presentation).
     private readonly RunLeaseService? _runLeases;
+    private readonly RemoteRunStopRequestStore? _runStops;
     private readonly RunnerIdentity? _runnerIdentity;
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly AgentStudio.Clients.ClientIdentityStore? _clients;
@@ -174,7 +175,8 @@ public class TaskRunnerService : BackgroundService
         RemoteDispatchRejectionStore? dispatchRejections = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         AttemptAuthorityService? attemptAuthority = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        RemoteRunStopRequestStore? runStops = null)
     {
         _config = config;
         _logger = logger;
@@ -221,6 +223,7 @@ public class TaskRunnerService : BackgroundService
         _projectRegistry = projectRegistry;
         _orchestratorDefaults = orchestratorDefaults;
         _runLeases = runLeases;
+        _runStops = runStops;
         _runnerIdentity = runnerIdentity;
         _clients = clients;
         _localCodingAdmission = localCodingAdmission;
@@ -419,7 +422,7 @@ public class TaskRunnerService : BackgroundService
                 pickupLock: _pickupLock,
                 pickupLockOwner: BuildPickupLockOwner(entry.Name),
                 localRunClaims: _runLeases is not null && _runnerIdentity is not null
-                    ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
+                    ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger, _runStops) : null,
                 integrationLeases: _integrationLeases,
                 timeline: _timeline,
                 pipelineLog: _pipelineLog,
@@ -1795,7 +1798,7 @@ public class TaskRunnerService : BackgroundService
             pickupLock: _pickupLock,
             pickupLockOwner: BuildPickupLockOwner(entry.Name),
             localRunClaims: _runLeases is not null && _runnerIdentity is not null
-                ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
+                ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger, _runStops) : null,
             integrationLeases: _integrationLeases,
             timeline: _timeline,
             pipelineLog: _pipelineLog,

@@ -77,39 +77,41 @@ public static class TaskRunnerEndpoints
             };
             var info = scanner.FindJob(jobId, watchPath);
             if (info is null) return Results.NotFound();
+            var authorityKey = TaskIdentity.AuthorityKey(info);
             if (commandId?.Trim().Length > 128)
                 return Results.BadRequest(new { error = "Stop command id is too long." });
 
             if (!string.IsNullOrWhiteSpace(commandId) && stops.GetReceipt(commandId.Trim()) is { } replay)
             {
-                if (!string.Equals(replay.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+                if ((!string.Equals(replay.TaskKey, authorityKey, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(replay.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase))
                     || !string.Equals(replay.Reason, RemoteRunStopReasons.From(parsed), StringComparison.Ordinal))
                     return Results.Conflict(new { error = "Stop command id is bound to different input." });
                 if (replay.TerminalAtUtc is null)
-                    replay = stops.ReconcileWithLease(replay, leases.Peek(info.TaskKey));
+                    replay = stops.ReconcileWithLease(replay, leases.Peek(authorityKey));
                 return Results.Accepted(value: StopReceipt(replay));
             }
 
             var dispatch = RemoteRunStopPolicy.Decide(new RunStopFacts(
                 runner.StopJob(jobId, watchPath, parsed),
-                string.Equals(leases.Peek(info.TaskKey).Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
+                string.Equals(leases.Peek(authorityKey).Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
             if (dispatch != RunStopDispatch.RemoteStopRequested)
                 return dispatch == RunStopDispatch.StoppedLocally ? Results.Ok() : Results.NotFound();
 
-            var lease = leases.Peek(info.TaskKey).Lease;
-            if (lease is null || string.IsNullOrWhiteSpace(lease.AttemptId)) return Results.Conflict(new { error = "No current remote attempt holds this task." });
+            var lease = leases.Peek(authorityKey).Lease;
+            if (lease is null || string.IsNullOrWhiteSpace(lease.AttemptId)) return Results.Conflict(new { error = "No current attempt holds this task." });
             RemoteRunStopRequest request;
             try
             {
                 request = stops.Record(
-                    info.TaskKey,
+                    authorityKey,
                     RemoteRunStopReasons.From(parsed),
                     lease.AttemptId,
                     lease.RunnerName ?? lease.RunnerId,
                     lease.FencingToken,
                     commandId,
                     lease.RunnerId);
-                request = stops.ReconcileWithLease(request, leases.Peek(info.TaskKey));
+                request = stops.ReconcileWithLease(request, leases.Peek(authorityKey));
             }
             catch (InvalidOperationException ex)
             {
@@ -121,7 +123,7 @@ public static class TaskRunnerEndpoints
                 info.FolderPath,
                 TimelineEventKinds.RemoteStopRequested,
                 TimelineActors.Human(string.Empty),
-                $"Stop requested for the remote run on {lease?.RunnerName ?? lease?.RunnerId ?? "the assigned host"}.",
+                $"Stop requested for the run on {lease?.RunnerName ?? lease?.RunnerId ?? "the assigned host"}.",
                 runId: lease?.AttemptId,
                 details: new Dictionary<string, string>
                 {
@@ -144,7 +146,9 @@ public static class TaskRunnerEndpoints
             var info = scanner.FindJob(jobId, watchPath);
             if (info is null) return Results.NotFound();
             var receipt = stops.GetReceipt(commandId);
-            return receipt is not null && string.Equals(receipt.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+            return receipt is not null
+                && (string.Equals(receipt.TaskKey, TaskIdentity.AuthorityKey(info), StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(receipt.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(receipt)
                 : Results.NotFound();
         });

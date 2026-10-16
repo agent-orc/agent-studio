@@ -7,6 +7,12 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+`POST /api/tasks/{jobId}/stop` targets the card's canonical authority key for
+both remote and local leases. A local lease can remain held while preparation or
+post-processing runs without a CLI process. Its owner observes a fenced stop
+before starting the next step, releases the lease with outcome `Stopped`, and
+settles the stop receipt so the card shows the stopped attempt.
+
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
 `execution-placement` hold. The picker skips it before `RunCliAsync`, records

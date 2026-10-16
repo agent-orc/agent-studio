@@ -3312,6 +3312,18 @@ public class ProjectRunner
                 // Keep the admitted session event truthful about the fallback.
                 admittedSessionReason = why;
             }
+            // Preparation can take minutes while this run still owns its lease.
+            // A stop acknowledged during that gap must win before the CLI starts.
+            if (localAuthorityTaskKey is not null
+                && _localRunClaims?.StopRequested(localAuthorityTaskKey) == true)
+            {
+                ReleaseRun(jobId);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                NotifyStatus();
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.CliUnavailable, "Run stopped before agent execution started."));
+            }
+
             var (execution, cliError) = await cli.StartAsync(
                 jobId, GetJobKey(jobId), prompt, runWorkingDir,
                 effSessionToResume, effResumeFlag, runModel, runThinkingLevel,
@@ -5883,6 +5895,12 @@ public class ProjectRunner
             if (_activeRuns.Get(jobId) is not { } run) return;
             if (run.CliType != null && !string.Equals(cliType, run.CliType, StringComparison.OrdinalIgnoreCase)) return;
 
+            // The process may have completed just before a stop arrived between
+            // local pipeline steps. Carry that stop through the normal stopped
+            // closeout so the card does not proceed to review as a success.
+            if (LocalStopRequested(jobId))
+                execution = execution with { Status = RunStatuses.Stopped, RunOutcome = "interrupted" };
+
             // Slot ownership follows process life, not lane membership. Keep the
             // ActiveRun record for finalisation, but free its execution seat as
             // soon as the CLI process exits. Integration, outcome analysis and
@@ -5988,6 +6006,7 @@ public class ProjectRunner
 
             WorktreeCommitRange? worktreeCommitRange = null;
             var worktreeTask = runInfo ?? _scanner.FindJob(jobId, Entry.Path);
+            if (LocalStopRequested(jobId)) return;
             // ADR-0052/0057: every coding worktree run commits its edits on the
             // task branch and integrates them into the work branch BEFORE the
             // post-run review reads the result; a merge conflict is left for the
@@ -5995,10 +6014,13 @@ public class ProjectRunner
             if (run.IsWorktreeRun
                 && worktreeTask != null
                 && !TaskModes.IsConcept(worktreeTask.Mode)
+                && !LocalStopRequested(jobId)
                 && agentGitDecision.Disposition != AgentGitMutationDisposition.Escalate)
             {
                 worktreeCommitRange = await IntegrateWorktreeRunAsync(run, worktreeTask);
             }
+
+            if (LocalStopRequested(jobId)) return;
 
             // Persist last token/usage summary (best-effort)
             var usage = cli.GetLastUsage(jobKey);
@@ -7472,6 +7494,10 @@ public class ProjectRunner
         ProjectPreparationExecutor.ReleaseRunRoot(released?.Preparation);
         return released;
     }
+
+    private bool LocalStopRequested(string jobId)
+        => _localAuthorityTaskKeys.TryGetValue(jobId, out var authorityTaskKey)
+           && _localRunClaims?.StopRequested(authorityTaskKey) == true;
 
     /// <summary>
     /// Way 3 (non-deterministic half): turn the output of an epic's planning /
