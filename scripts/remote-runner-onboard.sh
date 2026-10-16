@@ -39,7 +39,7 @@ Usage: remote-runner-onboard.sh \
   --client-id <optional-attribution-label> \
   --runner-id <owner-enrolled-runner-id> \
   --runner-name <runner-name> \
-  --role <coding|review> \
+  --role <coding|review|deploy> \
   --git-remote <fetch-origin-url> \
   [--git-push-remote <write-origin-url>] [options]
 
@@ -149,7 +149,7 @@ fi
 [[ "$review_slots" =~ ^[0-9]+$ ]] || die "--review-slots must be a non-negative integer."
 if [[ "$role" == "coding" ]]; then
   ((coding_slots > 0)) || die "the coding role needs at least one coding slot."
-else
+elif [[ "$role" == "review" ]]; then
   ((review_slots > 0)) || die "the review role needs at least one review slot."
 fi
 [[ -z "$host_id" || "$host_id" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "--host-id must be 1-64 characters of [A-Za-z0-9._-]."
@@ -159,15 +159,21 @@ fi
 [[ -n "$topology" ]] || die "--topology is required."
 [[ -n "$runner_name" ]] || die "--runner-name is required."
 [[ -n "$git_remote" ]] || die "--git-remote is required."
-[[ "$role" =~ ^(coding|review)$ ]] || die "--role must be coding or review."
+[[ "$role" =~ ^(coding|review|deploy)$ ]] || die "--role must be coding, review, or deploy."
+if [[ "$role" == "deploy" ]]; then
+  [[ -n "$host_id" ]] || die "--host-id is required for the deploy role."
+  [[ "$runner_id" == "$host_id" ]] || die "the deploy runner id must equal the host id."
+fi
 if [[ "$role" == "coding" ]]; then
   [[ -n "$git_push_remote" ]] || die "--git-push-remote is required for the coding role."
 fi
 if [[ -z "$auth_token_file" ]]; then
   if [[ "$role" == "coding" ]]; then
     auth_token_file="/etc/agent-runner/runner-auth-token"
-  else
+  elif [[ "$role" == "review" ]]; then
     auth_token_file="/etc/agent-runner/review-auth-token"
+  else
+    auth_token_file="/etc/agent-runner/deploy-auth-token"
   fi
 fi
 
@@ -464,6 +470,48 @@ if [[ -n "$host_record" ]]; then
   "${ssh_base[@]}" -T "$host" \
     'set -euo pipefail; record_tmp="$(mktemp)"; trap '"'"'rm -f "$record_tmp"'"'"' EXIT; cat >"$record_tmp"; sudo install -d -m 0755 /etc/agent-host; sudo install -m 0644 -o root -g root "$record_tmp" /etc/agent-host/host.json' \
     <"$host_record"
+fi
+if [[ "$role" == "deploy" ]]; then
+  deploy_unit="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/agent-host/systemd/agent-runner-deploy.service"
+  [[ -f "$deploy_unit" ]] || die "The Deploy service unit is missing: $deploy_unit"
+  "${ssh_base[@]}" -T "$host" \
+    'unit_tmp="$(mktemp)"; trap '"'"'rm -f "$unit_tmp"'"'"' EXIT; cat >"$unit_tmp"; sudo install -m 0644 "$unit_tmp" /etc/systemd/system/agent-runner-deploy.service' \
+    <"$deploy_unit"
+  "${ssh_base[@]}" -T "$host" bash -s -- \
+    "$server_url" "$runner_id" "$host_id" "$auth_token_file" "$record_owned" "$runner_command" <<'REMOTE_DEPLOY_SYSTEMD'
+set -euo pipefail
+server_url="$1"
+runner_id="$2"
+host_id="$3"
+token_file="$4"
+record_owned="$5"
+runner_command="$6"
+tool_root="$HOME/.local/share/agent-host-tools"
+candidate_release="$(readlink -f -- "$tool_root/candidate")"
+[[ -x "$candidate_release/$runner_command" ]] || { echo '[remote] Deploy runner binary missing.' >&2; exit 42; }
+sudo install -d -m 0755 /opt/agent-host /etc/agent-runner /var/lib/agent-runner-deploy
+sudo install -d -m 0700 /etc/agent-host/secrets /var/lib/agent-runner-deploy/artifacts
+sudo ln -sfnT "$candidate_release" /opt/agent-host/current
+sudo ln -sfn current/"$runner_command" /opt/agent-host/agent-host
+if [[ "$record_owned" == 1 ]]; then
+  render_dir="$(mktemp -d)"
+  trap 'rm -rf "$render_dir"' EXIT
+  "$candidate_release/$runner_command" host-record render --record /etc/agent-host/host.json --out-dir "$render_dir" >/dev/null
+  sudo install -m 0600 "$render_dir/deploy.env" /etc/agent-runner/deploy.env
+else
+  env_tmp="$(mktemp)"
+  trap 'rm -f "$env_tmp"' EXIT
+  printf 'RUNNER_SERVER_URL=%s\nRUNNER_ID=%s\nRUNNER_HOSTNAME=%s\nRUNNER_AUTH_TOKEN_FILE=%s\nDEPLOY_ARTIFACT_STORE=/var/lib/agent-runner-deploy/artifacts\nDEPLOY_SECRET_STORE=/etc/agent-host/secrets\n' \
+    "$server_url" "$runner_id" "$host_id" "$token_file" >"$env_tmp"
+  sudo install -m 0600 "$env_tmp" /etc/agent-runner/deploy.env
+fi
+sudo systemctl daemon-reload
+sudo systemctl enable agent-runner-deploy.service
+sudo systemctl restart agent-runner-deploy.service
+sudo systemctl is-active --quiet agent-runner-deploy.service
+REMOTE_DEPLOY_SYSTEMD
+  printf '[onboarding] deploy role installed and active on %s\n' "$host"
+  exit 0
 fi
 "${ssh_base[@]}" -T "$host" bash -s -- \
   "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" \

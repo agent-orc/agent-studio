@@ -62,3 +62,23 @@ grep -Fq 'cp "$rendered_env" "$env_tmp"' "$onboard"
 grep -Fq 'sudo install -m 0644 -o root -g root "$render_dir/profile.conf"' "$onboard"
 grep -Fq 'resource_mode=(--replace-drop-in-resources)' "$onboard"
 printf 'remote-runner-onboard host-record contract passed\n'
+
+python3 - "$record_dir/host.json" "$record_dir/deploy-host.json" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1]))
+record["hostId"] = "runner_build02"
+record["envelope"]["totalSlots"] = 4
+record["envelope"]["deploySlots"] = 1
+record["roles"].append({"role": "deploy", "principalId": record["hostId"],
+                        "tokenFile": "/etc/agent-runner/deploy-auth-token", "clientId": "local"})
+json.dump(record, open(sys.argv[2], "w"))
+PY
+if conflict="$(bash "$onboard" --host-record "$record_dir/deploy-host.json" --role deploy \
+    --runner-id other-host --host build-02 --topology tunnel 2>&1)"; then
+  printf 'expected deploy host identity mismatch to be refused\n' >&2
+  exit 1
+fi
+grep -Fq "disagrees with host record value 'runner_build02'" <<<"$conflict"
+grep -Fq 'host-record render --record /etc/agent-host/host.json --out-dir "$render_dir"' "$onboard"
+grep -Fq 'sudo systemctl enable agent-runner-deploy.service' "$onboard"
+printf 'remote-runner-onboard deploy role contract passed\n'

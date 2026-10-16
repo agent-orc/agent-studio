@@ -1,78 +1,114 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Projects;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AgentRunner.Tests;
 
 public sealed class DeployHostCommandTests
 {
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "MachineBound")]
-    public async Task Claims_Deploys_HealthChecks_AndReports_RealLocalContainer()
+    public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()
     {
-        Skip.IfNot(OperatingSystem.IsLinux(), "The container probe uses a Linux Docker host.");
+        Assert.True(OperatingSystem.IsLinux(), "The CI container job requires Linux.");
         var image = Docker("image", "inspect", "caddy:2-alpine", "--format", "{{index .RepoDigests 0}}").Trim();
-        Skip.If(string.IsNullOrWhiteSpace(image), "The CI container fixture caddy:2-alpine is not cached.");
+        if (string.IsNullOrWhiteSpace(image))
+        {
+            Assert.NotEmpty(Docker("pull", "caddy:2-alpine"));
+            image = Docker("image", "inspect", "caddy:2-alpine", "--format", "{{index .RepoDigests 0}}").Trim();
+        }
+        Assert.Matches("@sha256:[0-9a-f]{64}$", image);
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         var project = "probe" + Guid.NewGuid().ToString("N")[..8];
-        var name = "deploy-" + project + "-stage";
+        var containerName = "deploy-" + project + "-stage";
         var root = Path.Combine(Path.GetTempPath(), "deploy-host-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        var repo = Path.Combine(root, "repo");
+        var watch = Path.Combine(root, "workspace", "projects", project);
+        var environmentDir = Path.Combine(repo, "docs", "deployments", "environments");
+        Directory.CreateDirectory(environmentDir);
+        Directory.CreateDirectory(watch);
+        Git(repo, "init", "-b", "develop");
+        Git(repo, "config", "user.email", "test@example.com");
+        Git(repo, "config", "user.name", "Test User");
+        File.WriteAllText(Path.Combine(repo, "initial"), "initial");
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "initial");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        File.WriteAllText(Path.Combine(environmentDir, "stage.json"), JsonSerializer.Serialize(new
+        {
+            id = "stage", name = "Stage", kind = "stage", targetHostId = "test-host",
+            address = $"http://127.0.0.1:{port}/", template = "container", destination = port.ToString(),
+            healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
+        }));
+        File.WriteAllText(Path.Combine(environmentDir, "production.json"), JsonSerializer.Serialize(new
+        {
+            id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
+            address = "http://127.0.0.1:1/", template = "container", destination = "1",
+            healthUrl = "http://127.0.0.1:1/", containerPort = 80,
+        }));
         var tokenFile = Path.Combine(root, "token");
         await File.WriteAllTextAsync(tokenFile, "test-deploy-credential");
-        var reported = false;
-        var reportedHealthy = false;
-        using var client = new HttpClient(new FakeApi(request =>
-        {
-            if (request.RequestUri!.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
-                return Json(new { id = "job", project, environmentId = "stage", hostId = "test-host",
-                    artifact = image, template = "container", destination = port.ToString(), containerPort = 80,
-                    healthUrl = $"http://127.0.0.1:{port}/", secretRefs = Array.Empty<string>(),
-                    previousArtifact = (string?)null, status = "claimed", leaseToken = "lease" });
-            reported = true;
-            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
-            reportedHealthy = JsonDocument.Parse(body).RootElement.GetProperty("healthy").GetBoolean();
-            return Json(new { ok = true });
-        }));
         try
         {
+            await using var factory = new WebApplicationFactory<ProjectEnvironmentService>().WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Test");
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                    new Dictionary<string, string?>
+                    {
+                        ["TaskRepository"] = Path.Combine(root, "workspace"),
+                        ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
+                        ["Security:Profile"] = "local",
+                        ["WatchPaths:0:Name"] = project,
+                        ["WatchPaths:0:Path"] = watch,
+                        ["WatchPaths:0:RootPath"] = repo,
+                        ["WatchPaths:0:RepositoryPath"] = repo,
+                    }));
+            });
+            using var client = factory.CreateClient();
+            var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+            using var queued = await client.PostAsJsonAsync("/api/deploy/gate-releases",
+                new GateArtifactRequest(project, image, commit));
+            Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
             var result = await DeployHostCommand.RunAsync(
-                ["http://127.0.0.1:1", "test-host", tokenFile, root, root], CancellationToken.None, client);
+                [client.BaseAddress!.ToString(), "test-host", tokenFile, root, root], CancellationToken.None, client);
             Assert.Equal(0, result);
-            Assert.True(reported);
-            Assert.True(reportedHealthy);
+            var state = service.Read(project)!;
+            Assert.Equal(image, state.Environments.Single(item => item.Declaration.Id == "stage").DeployedArtifact);
+            Assert.Equal("pending", Assert.Single(state.Promotions).Status);
+            Assert.Equal("healthy", Assert.Single(state.Environments[0].History).Status);
         }
         finally
         {
-            Docker("rm", "-f", name);
+            Docker("rm", "-f", containerName);
             Directory.Delete(root, true);
         }
     }
 
-    private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)
-    { Content = JsonContent.Create(value) };
+    private static string Git(string directory, params string[] args) => Command("git", directory, args);
+    private static string Docker(params string[] args) => Command("docker", null, args);
 
-    private static string Docker(params string[] args)
+    private static string Command(string executable, string? directory, params string[] args)
     {
-        var start = new ProcessStartInfo("docker") { CreateNoWindow = true, RedirectStandardOutput = true,
-            RedirectStandardError = true };
+        var start = new ProcessStartInfo(executable) { WorkingDirectory = directory ?? Environment.CurrentDirectory,
+            CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
-        process.StandardError.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
+        if (executable == "git") Assert.True(process.ExitCode == 0, error);
         return process.ExitCode == 0 ? output : string.Empty;
-    }
-
-    private sealed class FakeApi(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
-            CancellationToken cancellationToken) => Task.FromResult(respond(request));
     }
 }
