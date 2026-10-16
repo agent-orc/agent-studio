@@ -1974,10 +1974,10 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         var liveProjection = restarted.GetTaskProjection("AGT-1");
 
         Assert.Equal(run.AttemptId, liveProjection.CurrentRunAttempt!.AttemptId);
-        Assert.Throws<InvalidDataException>(() => restarted.GetRun("run-archived"));
-        Assert.Throws<InvalidDataException>(() => restarted.GetReview("review-archived"));
-        Assert.Throws<InvalidDataException>(
-            () => restarted.GetTaskProjection("AGT-1", includeArchived: true));
+        Assert.Null(restarted.GetRun("run-archived"));
+        Assert.Null(restarted.GetReview("review-archived"));
+        Assert.Equal(run.AttemptId,
+            restarted.GetTaskProjection("AGT-1", includeArchived: true).CurrentRunAttempt!.AttemptId);
     }
 
     [Fact]
@@ -2032,7 +2032,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         });
 
         Assert.Equal(AttemptWriteStatus.Accepted, settled.Status);
-        Assert.Throws<InvalidDataException>(() => service.GetRun(first.AttemptId));
+        Assert.Equal(first.AttemptId, service.GetRun(first.AttemptId)!.AttemptId);
         Assert.Equal(second.AttemptId, service.GetRun(second.AttemptId)!.AttemptId);
         Assert.Equal("{ older archive", File.ReadAllText(legacyDailyPath));
         Assert.Equal(
