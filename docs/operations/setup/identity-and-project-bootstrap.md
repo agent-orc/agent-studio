@@ -19,12 +19,23 @@ authenticate anything and are ignored by every route on this page.
 |---|---|---|---|
 | Installation | First store start | `installationId` (`ins_*`, public) | Never; migration preserves it |
 | Owner | First login with the installer code | Password and one recovery code (`rcv_*`) | Recovery replaces both |
-| Operator / viewer | Owner (`POST /api/v1/studio/auth/users`) | Password, change on first login | Owner |
+| Operator / contributor / viewer | Owner (`POST /api/v1/studio/auth/invitations`) | One-time link, password chosen on acceptance | Owner |
 | Studio edge, engine, each runner host | One-time enrolment (`enr_*`) or Compose bootstrap file | Principal bearer (`ats_*`) in a restricted host file | `POST /api/v1/management/principals/{id}/revoke` |
 
 Every one-time secret is shown once and stored only as a SHA-256 hash.
 The browser never receives an `ats_*` bearer: the Studio BFF keeps its own
 bearer in-process and relays only the human session cookie.
+
+An owner invites a user with a role and an explicit project ID list. The
+response returns a relative `signInLink`; send that link through the chosen
+channel without putting a password in the message. The link expires after
+24 hours and is consumed when the recipient sets a password through
+`POST /api/v1/studio/auth/invite/accept`. A contributor is displayed as
+**Product** and can work only in assigned projects. To grant production
+approval for one of those projects, the owner uses
+`PUT /api/v1/studio/auth/users/{userId}/projects/{projectId}/production-approval`
+with `{ "approved": true }`; revocation uses `false`. This grant does not
+provide host, credential, merge, or promotion access.
 
 ## First owner
 

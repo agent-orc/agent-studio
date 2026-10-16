@@ -12,6 +12,21 @@ namespace AgentStudio.TaskServer;
 /// </summary>
 public sealed partial class TaskServerStore
 {
+    public async Task<object> AppendStudioPreviewCommentAsync(
+        string projectId, string taskIdentity, StudioPreviewCommentRequest request, string actorId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.PreviewId) || request.PreviewId.Length > 200
+            || string.IsNullOrWhiteSpace(request.Comment) || request.Comment.Length > 4000)
+            throw new ArgumentException("A preview id and a comment of up to 4000 characters are required.");
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var task = await ReadTaskAsync(connection, transaction, projectId, taskIdentity, ct)
+                ?? throw new KeyNotFoundException("Task was not found.");
+            await AuditAsync(connection, transaction, actorId, "task.preview-commented", "task", task.TaskId,
+                JsonSerializer.Serialize(new { previewId = request.PreviewId.Trim(), comment = request.Comment.Trim() }), ct);
+        }, ct);
+        return new { request.PreviewId, actorId };
+    }
     private static readonly IReadOnlyList<string> CodeReviewDefaultSeverityLevels = ["pass", "concerns", "block"];
     private const string CodeReviewDefaultSeverity = "concerns";
     private static readonly IReadOnlyList<string> CodeReviewDefaultScope = ["changed-files"];

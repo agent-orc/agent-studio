@@ -12,6 +12,8 @@ public static class StudioUserRoles
 {
     public const string Owner = "owner";
     public const string Operator = "operator";
+    public const string Contributor = "contributor";
+    public const string ContributorDisplayName = "Product";
     public const string Viewer = "viewer";
 }
 
@@ -23,6 +25,7 @@ public sealed record StudioBootstrapRequest(
     string Username, string Password, string? DisplayName = null, string? BootstrapCode = null);
 public sealed record StudioLoginRequest(string Username, string Password);
 public sealed record StudioChangePasswordRequest(string CurrentPassword, string NewPassword);
+public sealed record StudioPreviewCommentRequest(string PreviewId, string Comment);
 
 public sealed record StudioAuthUserDto(
     string UserId,

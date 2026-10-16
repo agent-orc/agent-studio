@@ -22,7 +22,7 @@ internal static class StudioRoleGate
             return CredentialActionPolicy.NormalizeRole(status.User.Role);
         }
         var claimed = context.Request.Headers[CredentialViewProtocol.ActingRoleHeader].FirstOrDefault();
-        if (claimed is not (StudioUserRoles.Owner or StudioUserRoles.Operator or StudioUserRoles.Viewer)) return null;
+        if (claimed is not (StudioUserRoles.Owner or StudioUserRoles.Operator or StudioUserRoles.Contributor or StudioUserRoles.Viewer)) return null;
         var principal = context.TaskServerPrincipal();
         var trustedEdge = principal?.Kind == TaskServerPrincipalKinds.Studio
             || principal is null && !bootstrap.RequiresAuthentication;
