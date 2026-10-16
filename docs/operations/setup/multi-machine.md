@@ -121,9 +121,11 @@ Issue one token per Linux host from an elevated terminal:
   --join-token-file "$env:ProgramData\AgentOrchestrator\host-01.join"
 ```
 
-The default `reverse-tunnel` route registers and starts the existing
-`AgentRunner-TunnelKeeper` scheduled task, forwarding Linux loopback port
-15031 to Windows Task Server port 5071. SSH access to the Linux host must
+The default `reverse-tunnel` route registers and starts a keeper task named
+`AgentRunner-TunnelKeeper-<host-name>` for each Linux host. Each task has its
+own state directory and forwards that host's loopback port 15031 to Windows
+Task Server port 5071. Issuing a token for another host leaves the earlier
+host's task and SSH target intact. SSH access to the Linux host must
 already work under the selected Windows account; use `--ssh-target HOST` when
 its SSH alias differs. To use a private LAN address or a public URL instead,
 pass `--route lan --server-url https://LAN-NAME:PORT` or
@@ -191,12 +193,18 @@ parallelism. It:
    probe passes;
 3. optionally stores the GitHub credential for both repository URL forms and
    runs both read checks, then exchanges the single-use code;
-4. writes the Task Server credential to a separate protected file;
+4. writes the Task Server credential and a join receipt to separate protected
+   files before it starts the service;
 5. installs and starts the role-specific systemd service;
 6. waits until the Task Server reports that exact Agent Host registration.
 
-Run `sudo rm /root/agent-studio.join` after the host registers. Reissue a fresh
-token after expiry or a failed exchange; a consumed code cannot be retried.
+Run `sudo rm /root/agent-studio.join` after the host registers. If service
+installation or registration fails after exchange, rerun with the same join
+file: setup reuses the host's protected credential. If setup failed before it
+could save that credential, issue a fresh token for the same host name from the
+Task Server and retry. Exchanging the fresh code replaces the earlier Runner
+credential; the old credential stops working. A consumed code cannot be
+exchanged again.
 
 The coding service is `agent-host.service`. A separately installed review role
 uses `agent-host-review.service`, a different identity, environment, state

@@ -12,6 +12,7 @@ param(
     [ValidateRange(1, 60)]
     [int] $IntervalMinutes = 5,
 
+    [ValidatePattern('^AgentRunner-TunnelKeeper(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$')]
     [string] $TaskName = 'AgentRunner-TunnelKeeper',
 
     [string] $KeeperPath = (Join-Path $PSScriptRoot 'tunnel-keeper.ps1')
@@ -22,6 +23,12 @@ $keeper = (Resolve-Path -LiteralPath $KeeperPath).Path
 $powerShell = (Get-Command 'powershell.exe' -ErrorAction Stop).Source
 $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $quotedKeeper = '"{0}"' -f ($keeper -replace '"', '""')
+$stateDirectory = if ($TaskName -eq 'AgentRunner-TunnelKeeper') {
+    Join-Path $env:LOCALAPPDATA 'AgentTaskboard\tunnel-keeper'
+} else {
+    Join-Path $env:LOCALAPPDATA "AgentTaskboard\tunnel-keeper\$TaskName"
+}
+$quotedStateDirectory = '"{0}"' -f ($stateDirectory -replace '"', '""')
 $arguments = @(
     '-NoProfile',
     '-NonInteractive',
@@ -29,7 +36,8 @@ $arguments = @(
     '-File', $quotedKeeper,
     '-SshTarget', $SshTarget,
     '-RemotePort', $RemotePort,
-    '-OrchestratorPort', $OrchestratorPort
+    '-OrchestratorPort', $OrchestratorPort,
+    '-StateDirectory', $quotedStateDirectory
 ) -join ' '
 
 $action = New-ScheduledTaskAction -Execute $powerShell -Argument $arguments

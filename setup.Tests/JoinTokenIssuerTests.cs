@@ -126,6 +126,49 @@ public sealed class JoinTokenIssuerTests
     }
 
     [Fact]
+    public async Task Retry_after_service_failure_reuses_host_credential_without_exchanging_again()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TestFiles();
+        var enrollment = Enrollment();
+        var payload = new JoinPayload(2, "https://tasks.example.test", enrollment.EnrolmentCode,
+            "1.2.0", IssuedAt, enrollment.InstallationId, enrollment.RunnerId, enrollment.ExpiresAt);
+        var issued = new IssuedPrincipalCredential(new PrincipalDto("runner:host-a",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.RunsClaim], "host-a", IssuedAt, null, null),
+            new string('r', 64), IssuedAt);
+        var exchanges = 0;
+        using var client = Client(_ =>
+        {
+            exchanges++;
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(new ExchangedEnrolment(enrollment.InstallationId, issued)),
+            };
+        });
+        var config = Path.GetDirectoryName(temp.Request("https", payload.ServerUrl).OutputFile)!;
+
+        var first = await SetupApplication.GetOrMintJoinCredentialAsync(payload, "host-a", "coding", config,
+            default, client);
+        // A later systemd failure leaves the protected credential available to a retry.
+        var retry = await SetupApplication.GetOrMintJoinCredentialAsync(payload, "host-a", "coding", config,
+            default, client);
+
+        Assert.Equal(issued.Credential, first);
+        Assert.Equal(first, retry);
+        Assert.Equal(1, exchanges);
+        Assert.True(SetupSecrets.IsProtected(Path.Combine(config, "runner.join")));
+        Assert.DoesNotContain(payload.Credential, await File.ReadAllTextAsync(Path.Combine(config, "runner.token")));
+    }
+
+    [Fact]
+    public void Reverse_tunnel_uses_a_distinct_keeper_task_for_each_host()
+    {
+        Assert.Equal("AgentRunner-TunnelKeeper-host-a", JoinTokenIssuer.TunnelTaskName("host-a"));
+        Assert.Equal("AgentRunner-TunnelKeeper-host-b", JoinTokenIssuer.TunnelTaskName("host-b"));
+        Assert.Throws<ArgumentException>(() => JoinTokenIssuer.TunnelTaskName("host a"));
+    }
+
+    [Fact]
     public void Host_join_rejects_legacy_management_bearer_tokens()
     {
         using var temp = new TestFiles();

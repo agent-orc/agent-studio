@@ -73,7 +73,8 @@ internal static class JoinTokenIssuer
                     "current", "deploy-windows", "agent-runner-tunnel", "register-tunnel-keeper.ps1");
                 await new ProcessRunner(false).RequireAsync("powershell.exe",
                     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scripts,
-                     "-SshTarget", request.SshTarget, "-RemotePort", "15031", "-OrchestratorPort", "5071"]);
+                     "-SshTarget", request.SshTarget, "-RemotePort", "15031", "-OrchestratorPort", "5071",
+                     "-TaskName", TunnelTaskName(hostName)]);
             }
             await IssueAsync(request);
             Console.WriteLine($"Join token written to {Path.GetFullPath(request.OutputFile)}. Transfer the protected file to the Linux host and run install.sh --join --join-token-file PATH.");
@@ -85,6 +86,9 @@ internal static class JoinTokenIssuer
             return 1;
         }
     }
+
+    internal static string TunnelTaskName(string hostName)
+        => $"AgentRunner-TunnelKeeper-{SetupValidation.RequireSimpleName(hostName, "Agent Host name")}";
 
     internal static async Task<JoinPayload> IssueAsync(Request request, HttpClient? client = null,
         TimeProvider? clock = null, CancellationToken cancellationToken = default)
