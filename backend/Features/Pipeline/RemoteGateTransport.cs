@@ -183,6 +183,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 throw new InvalidDataException("Remote gate response does not match this invocation and source bundle.");
             return response.Result with
             {
+                GrantedCores = options.ProcessorCount,
                 Executor = "ssh:" + options.Host + "/" + request.Executor,
                 Reason = response.Result.Reason + $" Source bundle {bundleBytes} bytes transferred in {transfer.Elapsed.TotalSeconds:F1}s."
             };
