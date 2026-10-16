@@ -1,3 +1,11 @@
+# AGT-3186 delivery status
+
+- Result SHA-256: `a73bc915f6a7d919cb66ac900b6fd7d893b558d531656054a1bede77bf28a471` (sorted changed-file paths and contents, excluding this status file). The base Git SHA is `fc7bc1c24fee4e63edd626f479ec6701df0513e4`; the managed pipeline assigns the result commit after delivery.
+- Implemented option: extend the existing `AccessSecurityStore` and `.security/access-state.json` for named, hashed, expiring, revocable operator/viewer API tokens. Each token has an explicit project grant, last-use metadata, and per-call audit attribution. No second credential store was added.
+- Settings > Access now manages users, API tokens, runner enrollment codes, and enrolled runners. Networked browser sign-in uses the monolith human session; local and public demo behavior retain their existing paths. The Product role remains the separate AGT-3182 deliverable; this page is owner-only.
+- The task-api scripts and networked operator probes accept a bearer from `AGENT_STUDIO_API_TOKEN` while keeping `X-Client-Id` as attribution.
+- Verification: final solution and frontend builds passed. Focused backend class-filtered tests passed (76), backend guard tests passed (82), and runner and Task Server guard filters had no matches. Focused frontend component tests passed (19); frontend lint, script checks, and the Access Playwright spec passed. Light and dark screenshots are in the task results directory.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).

@@ -38,6 +38,7 @@
 #   ATP_RESUME_BACKOFF      base seconds between retries; doubles each time
 #                           (default: 2)
 #   ATP_HEALTHZ_TIMEOUT     seconds to wait for /healthz=200 (default: 60)
+#   AGENT_STUDIO_API_TOKEN  networked-profile operator token (skips local registration)
 #
 # Exit codes:
 #   0  resume verified
@@ -60,12 +61,18 @@ fi
 
 API="${ATP_API:-http://127.0.0.1:5031}"
 CLIENT_ID="${ATP_CLIENT_ID:-}"
+API_TOKEN="${AGENT_STUDIO_API_TOKEN:-}"
 CLIENT_DISPLAY="${ATP_CLIENT_DISPLAY:-stable-restart-watcher}"
 MAX_ATTEMPTS="${ATP_RESUME_MAX_ATTEMPTS:-5}"
 BACKOFF="${ATP_RESUME_BACKOFF:-2}"
 HEALTHZ_TIMEOUT="${ATP_HEALTHZ_TIMEOUT:-60}"
 
 log() { printf '[resume-runner] %s\n' "$*" >&2; }
+
+api_curl() {
+  if [ -n "$API_TOKEN" ]; then curl -H "Authorization: Bearer $API_TOKEN" "$@"
+  else curl "$@"; fi
+}
 
 # 1. Wait for healthz. Treat connect failures, 503, and other non-200 as
 #    "still booting" until the timeout expires; only stop early on a clean
@@ -92,6 +99,7 @@ wait_for_healthz() {
 #    did not pass one. Re-registration with the same displayName is
 #    idempotent in ClientIdentityStore so this is safe to call repeatedly.
 ensure_client_id() {
+  if [ -n "$API_TOKEN" ]; then CLIENT_ID="${CLIENT_ID:-local-default}"; return 0; fi
   if [ -n "$CLIENT_ID" ]; then
     return 0
   fi
@@ -116,7 +124,7 @@ ensure_client_id() {
 #    the literal string ("auto-continuous", "paused", ...) or empty when
 #    we cannot parse / reach the API.
 read_project_mode() {
-  body="$(curl -s --max-time 5 -H "X-Client-Id: $CLIENT_ID" "$API/api/runner/status" 2>/dev/null || printf '')"
+  body="$(api_curl -s --max-time 5 -H "X-Client-Id: $CLIENT_ID" "$API/api/runner/status" 2>/dev/null || printf '')"
   [ -n "$body" ] || { printf ''; return; }
   # Cut the JSON down to the fragment for the named project, then read the
   # first "mode":"..." that appears in it. Avoids pulling in jq for what is
@@ -162,7 +170,7 @@ urlencode() {
 
 # 4. PUT the resume request and verify the mode flipped.
 put_resume() {
-  curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+  api_curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
     -X PUT \
     -H 'Content-Type: application/json' \
     -H "X-Client-Id: $CLIENT_ID" \

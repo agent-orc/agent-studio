@@ -571,7 +571,13 @@ fi
 # by the next periodic sweep instead.
 if [[ -n "$project" ]]; then
   set +e
+  api_auth_args=()
+  if [[ -n "${AGENT_STUDIO_API_TOKEN:-}" ]]; then
+    api_auth_args=(-H "Authorization: Bearer $AGENT_STUDIO_API_TOKEN")
+  fi
   reclaim_http_code=$(curl -s -o "$evidence_dir/branch-reclaim-response.json" -w '%{http_code}' \
+    -H 'X-Client-Id: local-default' \
+    "${api_auth_args[@]}" \
     --max-time 30 -X POST -G --data-urlencode "project=$project" \
     "$api/api/git/branch-reclaim/promotion" 2>>"$evidence_dir/branch-reclaim.log")
   reclaim_rc=$?
