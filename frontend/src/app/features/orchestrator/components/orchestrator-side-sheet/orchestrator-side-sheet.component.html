@@ -8,7 +8,7 @@
        (mousedown)="startResize($event)"></div>
 }
 
-<app-sidesheet title="Orchestrator chat"
+<app-sidesheet [title]="composerContext()?.surface === 'URL preview' ? 'Product chat' : 'Orchestrator chat'"
                testid="orch-side-sheet"
                (closeRequest)="hide()">
   <app-orchestrator-panel-header

@@ -139,6 +139,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
 
 ## Entry Points
 
+### Preview feedback continuation
+
+`POST /api/v1/projects/-/tasks/{id}/preview-feedback` accepts a multipart PNG, JPEG, or WebP crop, a comment, the HTTP preview address, and an optional element selector. It saves the crop through the task attachment store and submits a normal continuation on the same card. The next-round prompt names the crop path, selector, address, comment, and before and after screenshot requirement. The Human Review acceptance move attributes a networked person's display name to the existing acceptance evidence; local clients retain their client identity.
+
 ### Runner host placement (AGT-2939, D11)
 
 The standalone Task Server stores an optional, versioned project placement at

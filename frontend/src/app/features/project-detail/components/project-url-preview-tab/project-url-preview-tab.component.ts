@@ -31,6 +31,7 @@ import { ProjectUrlAddressComponent } from '../project-url-address/project-url-a
 import { ProjectUrlRecoveryService } from '../../services/project-url-recovery.service';
 import { ProjectUrlProcessConsoleComponent } from '../project-url-process-console/project-url-process-console';
 import { ProjectUrlContextHeaderComponent } from '../project-url-context-header/project-url-context-header';
+import { ProductFeedbackComponent } from '../product-feedback/product-feedback.component';
 import {
   ProjectUrlSettingsDialogComponent,
   type ProjectUrlSettingsValue,
@@ -77,6 +78,7 @@ const DIAGNOSABLE_KINDS: ReadonlySet<ProjectUrlReadiness['kind']> =
     MenuComponent,
     ProjectUrlAddressComponent,
     ProjectUrlContextHeaderComponent,
+    ProductFeedbackComponent,
     ProjectUrlProcessConsoleComponent,
     ProjectUrlSettingsDialogComponent,
   ],
@@ -106,6 +108,7 @@ export class ProjectUrlPreviewTabComponent {
 
   readonly resolveState = signal<'resolving' | 'resolved' | 'not-found' | 'error'>('resolving');
   readonly projectId = signal<string | null>(null);
+  readonly projectWatchPath = signal<string | null>(null);
   readonly urlRecord = signal<RegistryProjectUrl | null>(null);
   readonly frameState = signal<'loading' | 'loaded' | 'blocked'>('loading');
   readonly building = signal(false);
@@ -292,6 +295,7 @@ export class ProjectUrlPreviewTabComponent {
         if (name !== this.projectName() || id !== this.urlId()) return;
         if (!res) {
           this.projectId.set(null);
+          this.projectWatchPath.set(null);
           this.urlRecord.set(null);
           this.repositoryPath.set(null);
           this.rootPath.set(null);
@@ -299,6 +303,7 @@ export class ProjectUrlPreviewTabComponent {
           return;
         }
         this.projectId.set(res.projectId);
+        this.projectWatchPath.set(res.watchPath);
         this.urlRecord.set(res.url);
         this.repositoryPath.set(res.repositoryPath);
         this.rootPath.set(res.rootPath);

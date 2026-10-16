@@ -918,6 +918,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
           activeJobTitle: navigationSnapshot.jobTitle,
           activeJobState: navigationSnapshot.jobState,
           pageContext: navigationSnapshot.page,
+          observedSurface: this.composerContext()?.surface ?? null,
           now: () => capturedAt,
         })
       : null;
