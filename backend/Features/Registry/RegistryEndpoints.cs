@@ -401,7 +401,7 @@ public static class RegistryEndpoints
                 created.RepositoryPath ?? repositoryUrl ?? "(none)", executionRunner ?? "local",
                 proposalTaskId ?? "unavailable", onboardingDurationMs, 0, 0);
             return Results.Created($"/api/projects/{created.Id}", ProjectSummary.From(created));
-        });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPut(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}", (string projId, UpdateProjectRequest body,
             ProjectRegistry projects, WorkspaceRegistry workspaces,

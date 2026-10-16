@@ -1,9 +1,16 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using AgentStudio.Registry;
 using AgentStudio.ExecutionPreparation;
+using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -87,6 +94,83 @@ public sealed class ProjectRepositoryProvisioningTests
     }
 
     [Fact]
+    public async Task Checkout_collision_during_clone_preserves_existing_local_directory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "studio-provision-test-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(root, "me", "new-app");
+        var handler = new FakeGitHubHandler();
+        var client = CreateClient(handler, new CollidingCheckout(path), root);
+        try
+        {
+            var error = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+                () => client.CreateAsync(Request(), CancellationToken.None));
+
+            Assert.Equal("checkout-exists", error.Code);
+            Assert.Equal(1, handler.Deletes);
+            Assert.Equal("keep this directory", await File.ReadAllTextAsync(Path.Combine(path, "marker.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Validation_failure_after_registration_rolls_back_project_storage_and_repository()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "studio-onboard-rollback-" + Guid.NewGuid().ToString("N"));
+        var repositoryRoot = Path.Combine(root, "repositories");
+        var handler = new FakeGitHubHandler();
+        var checkout = new CreatingCheckout();
+        var provisioner = CreateClient(handler, checkout, repositoryRoot);
+        var runner = new FailingBuildRunner();
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.UseEnvironment("Test");
+                    builder.ConfigureAppConfiguration((_, config) =>
+                        config.AddInMemoryCollection(new Dictionary<string, string?>
+                        {
+                            ["TaskRepository"] = root,
+                            ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
+                        }));
+                    builder.ConfigureTestServices(services =>
+                    {
+                        services.RemoveAll<IProjectRepositoryProvisioner>();
+                        services.AddSingleton<IProjectRepositoryProvisioner>(provisioner);
+                        services.RemoveAll<IBuildCommandRunner>();
+                        services.AddSingleton<IBuildCommandRunner>(runner);
+                    });
+                });
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+
+            var response = await client.PostAsJsonAsync("/api/projects", new
+            {
+                displayName = "Rollback Project",
+                workspaceId = DefaultWorkspace.Id,
+                createRepository = Request(),
+            });
+
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+            Assert.Contains("npm ci", runner.Commands);
+            Assert.Equal(1, handler.Deletes);
+            Assert.Empty(await client.GetFromJsonAsync<List<ProjectSummary>>("/api/projects") ?? []);
+            Assert.False(Directory.Exists(checkout.Path));
+            var projectsRoot = Path.Combine(root, "projects");
+            if (Directory.Exists(projectsRoot))
+                Assert.Empty(Directory.EnumerateDirectories(projectsRoot));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Missing_host_credential_explains_next_step()
     {
         var source = new HostProvisioningCredentialSource();
@@ -99,12 +183,13 @@ public sealed class ProjectRepositoryProvisioningTests
 
     private static CreateRepositoryRequest Request() => new("me", "new-app", "private", "static-web");
 
-    private static GitHubProjectRepositoryProvisioner CreateClient(FakeGitHubHandler handler, FakeCheckout checkout)
+    private static GitHubProjectRepositoryProvisioner CreateClient(
+        FakeGitHubHandler handler, IProjectRepositoryCheckout checkout, string? repositoryRoot = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ProjectOnboarding:TemplateRoot"] = TemplateRoot,
-            ["ProjectOnboarding:RepositoryRoot"] = Path.Combine(Path.GetTempPath(),
+            ["ProjectOnboarding:RepositoryRoot"] = repositoryRoot ?? Path.Combine(Path.GetTempPath(),
                 "studio-provision-test-" + Guid.NewGuid().ToString("N")),
         }).Build();
         return new GitHubProjectRepositoryProvisioner(new FakeClientFactory(handler), config,
@@ -142,6 +227,38 @@ public sealed class ProjectRepositoryProvisioningTests
         {
             Path = path;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CollidingCheckout(string path) : IProjectRepositoryCheckout
+    {
+        public Task CloneAsync(string url, string token, string checkoutPath, CancellationToken cancellationToken)
+        {
+            Assert.Equal(path, checkoutPath);
+            Directory.CreateDirectory(path);
+            File.WriteAllText(Path.Combine(path, "marker.txt"), "keep this directory");
+            throw new RepositoryProvisioningException("checkout-exists", "The local repository path already exists.");
+        }
+    }
+
+    private sealed class CreatingCheckout : IProjectRepositoryCheckout
+    {
+        public string Path { get; private set; } = "";
+        public Task CloneAsync(string url, string token, string path, CancellationToken cancellationToken)
+        {
+            Path = path;
+            Directory.CreateDirectory(path);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FailingBuildRunner : IBuildCommandRunner
+    {
+        public List<string> Commands { get; } = [];
+        public Task<BuildCommandResult> RunAsync(string workingDir, string command, CancellationToken ct)
+        {
+            Commands.Add(command);
+            return Task.FromResult(new BuildCommandResult(1, "deliberate validation failure"));
         }
     }
 

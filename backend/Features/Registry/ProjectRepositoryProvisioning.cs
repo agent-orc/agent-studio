@@ -99,6 +99,9 @@ public sealed class GitHubProjectRepositoryProvisioner(
             ? "user/repos" : $"orgs/{request.Owner}/repos";
         var created = false;
         var checkoutPath = CheckoutPath(request);
+        if (Directory.Exists(checkoutPath) || File.Exists(checkoutPath))
+            throw new RepositoryProvisioningException("checkout-exists",
+                "The local repository path already exists. Choose another repository name.");
         try
         {
             var repository = await SendAsync(client, token, HttpMethod.Post, route,
@@ -141,7 +144,7 @@ public sealed class GitHubProjectRepositoryProvisioner(
         {
             if (created)
             {
-                try { await DeleteAsync(request, checkoutPath, cancellationToken); }
+                try { await DeleteRemoteAsync(client, token, request, cancellationToken); }
                 catch (Exception cleanupError)
                 {
                     logger.LogWarning(cleanupError, "Repository cleanup failed for {Owner}/{Name}", request.Owner, request.Name);
@@ -154,9 +157,15 @@ public sealed class GitHubProjectRepositoryProvisioner(
     public async Task DeleteAsync(CreateRepositoryRequest request, string checkoutPath, CancellationToken cancellationToken)
     {
         using var client = clients.CreateClient("github-project-provisioning");
-        await SendAsync(client, credentials.GetToken(), HttpMethod.Delete,
-            $"repos/{request.Owner}/{request.Name}", null, cancellationToken);
+        await DeleteRemoteAsync(client, credentials.GetToken(), request, cancellationToken);
         if (Directory.Exists(checkoutPath)) Directory.Delete(checkoutPath, recursive: true);
+    }
+
+    private static async Task DeleteRemoteAsync(HttpClient client, string token,
+        CreateRepositoryRequest request, CancellationToken cancellationToken)
+    {
+        await SendAsync(client, token, HttpMethod.Delete,
+            $"repos/{request.Owner}/{request.Name}", null, cancellationToken);
     }
 
     private string CheckoutPath(CreateRepositoryRequest request)
