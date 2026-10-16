@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace AgentStudio.Projects;
 
@@ -168,6 +169,7 @@ public sealed class ProjectEnvironmentService
     public bool RegisterGateArtifact(string project, string artifact, string commit)
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
+        if (!HasIndependentReleaseEvidence(project, artifact, commit)) return false;
         var repo = _git.ResolveRepoRootForProject(project);
         if (repo is null || !_git.IsGitRepo(repo)) return false;
         var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
@@ -182,6 +184,46 @@ public sealed class ProjectEnvironmentService
                 return string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal);
             File.WriteAllText(path, artifact + "\n");
             return true;
+        }
+    }
+
+    private bool HasIndependentReleaseEvidence(string project, string artifact, string commit)
+    {
+        // This directory is written by the promotion train, not by this API or
+        // its release credential. A bearer alone cannot attest a build or gate.
+        var root = _configuration["Deploy:ReleaseEvidenceRoot"];
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root)) return false;
+        var directory = Path.Combine(root, commit);
+        try
+        {
+            var archive = Path.Combine(directory, "release.tar.gz");
+            var expected = File.ReadAllText(Path.Combine(directory, "release.sha256")).Trim();
+            if (!Regex.IsMatch(expected, "^[0-9a-f]{64}$")) return false;
+            using var stream = File.OpenRead(archive);
+            var measured = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            if (measured != expected) return false;
+            if (!File.ReadLines(Path.Combine(directory, "full-gate.log"))
+                    .Any(line => line == "PROMOTION_FULL_GATE=passed")) return false;
+            using var record = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "promotion-record.json")));
+            var release = record.RootElement;
+            if (release.GetProperty("status").GetString() != "promoted"
+                || release.GetProperty("gate").GetString() != "passed"
+                || release.GetProperty("candidateSha").GetString() != commit
+                || !release.GetProperty("atomicPush").GetBoolean()
+                || release.GetProperty("releasePackage").GetProperty("status").GetString() != "written"
+                || release.GetProperty("releasePackage").GetProperty("sha256").GetString() != expected)
+                return false;
+            using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "deploy-artifact.json")));
+            var value = manifest.RootElement;
+            return value.GetProperty("project").GetString() == project
+                && value.GetProperty("commit").GetString() == commit
+                && value.GetProperty("artifact").GetString() == artifact
+                && (artifact == "release-package@sha256:" + expected
+                    || value.GetProperty("sourceSha256").GetString() == expected);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
         }
     }
 

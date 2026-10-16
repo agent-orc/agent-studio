@@ -28,8 +28,8 @@ Options:
                                      Omit to skip packaging.
   --deploy-token-file <path>        Release service credential for automatic stage queueing
                                      from the gated release package.
-  --deploy-image-ref <image>        Gate-built local image to deploy by its registry digest;
-                                     its revision label must equal the gated commit.
+  --deploy-image-ref <image>        Registry tag to build and push from the gated checkout.
+  --deploy-dockerfile <path>        Dockerfile within the gated checkout for that image.
   --deploy-artifact-store <dir>     Shared static artifact store mounted by the deploy host.
   --prefer-develop-conflicts        Deprecated compatibility option; exact-SHA promotion never merges.
   --remote <name>                   Git remote (default: origin).
@@ -60,6 +60,7 @@ evidence_dir=
 release_root=
 deploy_token_file="${DEPLOY_RELEASE_TOKEN_FILE:-}"
 deploy_image_ref=
+deploy_dockerfile=
 deploy_artifact_store="${DEPLOY_ARTIFACT_STORE:-}"
 deploy_header_file=
 prefer_develop_conflicts=0
@@ -108,6 +109,11 @@ while (($#)); do
       deploy_image_ref=$2
       shift 2
       ;;
+    --deploy-dockerfile)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      deploy_dockerfile=$2
+      shift 2
+      ;;
     --deploy-artifact-store)
       (($# >= 2)) || { usage >&2; exit 2; }
       deploy_artifact_store=$2
@@ -141,11 +147,18 @@ done
 
 if [[ -n "$deploy_token_file" ]]; then
   [[ -n "$project" ]] || { printf '%s\n' 'Deploy handoff requires --project.' >&2; exit 2; }
-  [[ -n "$deploy_image_ref" || -n "$release_root" ]] \
-    || { printf '%s\n' 'Deploy handoff requires --deploy-image-ref or --release-dir.' >&2; exit 2; }
+  [[ -n "$release_root" ]] \
+    || { printf '%s\n' 'Deploy handoff requires --release-dir.' >&2; exit 2; }
 fi
 if [[ -n "$deploy_image_ref" && -z "$deploy_token_file" ]]; then
   printf '%s\n' 'Deploy image handoff requires --deploy-token-file.' >&2
+  exit 2
+fi
+if [[ -n "$deploy_image_ref" ]]; then
+  [[ -n "$deploy_dockerfile" && "$deploy_dockerfile" != /* && "$deploy_dockerfile" != *..* ]] \
+    || { printf '%s\n' 'Image handoff requires a relative --deploy-dockerfile without traversal.' >&2; exit 2; }
+elif [[ -n "$deploy_dockerfile" ]]; then
+  printf '%s\n' '--deploy-dockerfile requires --deploy-image-ref.' >&2
   exit 2
 fi
 
@@ -603,19 +616,26 @@ if [[ -n "$release_target" ]]; then
   fi
 fi
 
-# The package digest is measured from the gate-built bytes above. This service
-# call both records that exact commit/digest pair and queues its stage job.
+# The server reads this package and promotion record from its configured
+# Deploy:ReleaseEvidenceRoot. The release credential cannot create evidence.
 if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$release_target" || -n "$deploy_image_ref" ) ]]; then
   [[ -r "$deploy_token_file" ]] || { log 'deploy service credential is unreadable'; exit 9; }
+  deploy_digest="$(< "$release_target/release.sha256")"
   if [[ -n "$deploy_image_ref" ]]; then
-    image_revision=$(docker image inspect "$deploy_image_ref" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') \
-      || { log 'gate-built deploy image is unavailable'; exit 9; }
-    [[ "$image_revision" == "$candidate_sha" ]] || { log 'deploy image revision differs from gated commit'; exit 9; }
-    deploy_artifact=$(docker image inspect "$deploy_image_ref" --format '{{index .RepoDigests 0}}') \
-      || { log 'deploy image has no registry digest'; exit 9; }
+    [[ -f "$candidate_checkout/$deploy_dockerfile" ]] \
+      || { log 'deploy Dockerfile is absent from gated checkout'; exit 9; }
+    deploy_metadata="$evidence_dir/deploy-image-metadata.json"
+    docker buildx build --push --file "$candidate_checkout/$deploy_dockerfile" \
+      --tag "$deploy_image_ref" --build-arg "SHA=$candidate_sha" \
+      --metadata-file "$deploy_metadata" "$candidate_checkout" \
+      || { log 'deploy image build or push failed'; exit 9; }
+    image_digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$deploy_metadata") \
+      || { log 'deploy image metadata has no digest'; exit 9; }
+    [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+      || { log 'deploy image metadata has an invalid digest'; exit 9; }
+    deploy_artifact="${deploy_image_ref%@*}@$image_digest"
   else
     [[ -n "$deploy_artifact_store" ]] || { log 'static stage requires --deploy-artifact-store'; exit 9; }
-    deploy_digest="$(< "$release_target/release.sha256")"
     mkdir -p "$deploy_artifact_store" || { log 'static artifact store is not writable'; exit 9; }
     if [[ ! -f "$deploy_artifact_store/$deploy_digest" ]]; then
       deploy_tmp="$(mktemp "$deploy_artifact_store/.${deploy_digest}.XXXXXX")"
@@ -628,6 +648,10 @@ if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$r
       || { log 'static artifact store contains a digest mismatch'; exit 9; }
     deploy_artifact="release-package@sha256:$deploy_digest"
   fi
+  printf '{"project":"%s","commit":"%s","artifact":"%s","sourceSha256":"%s"}\n' \
+    "$(json_escape "$project")" "$candidate_sha" "$(json_escape "$deploy_artifact")" "$deploy_digest" \
+    > "$release_target/deploy-artifact.json"
+  cp "$evidence_dir/promotion-record.json" "$release_target/promotion-record.json"
   deploy_body=$(printf '{"project":"%s","artifact":"%s","commit":"%s"}' \
     "$(json_escape "$project")" "$deploy_artifact" "$candidate_sha")
   deploy_header_file="$(mktemp)"
