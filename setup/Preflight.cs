@@ -155,7 +155,6 @@ internal static class PreflightProbe
                 ? FreeBytes(installRoot) : null,
             host is not null && !host.IsLoopback ? await ResolvesAsync(host.Host, cancellationToken) : null,
             journey == InstallationJourney.RelocateAuthority && contactsAuthority
-                || (host is not null && !host.IsLoopback && IsPrivate(host.Host))
                 ? WireGuardUp(windows)
                 : null,
             authority.Trusted,
