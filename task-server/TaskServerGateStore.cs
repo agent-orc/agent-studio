@@ -232,6 +232,7 @@ public sealed partial class TaskServerStore
                 return;
             }
             var candidates = new List<(string AttemptId, GateSubject Subject, int Number)>();
+            string? quotaReason = null;
             await using (var command = Command(connection, """
                 SELECT a.id, s.subject_json, a.attempt_number
                   FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
@@ -242,6 +243,18 @@ public sealed partial class TaskServerStore
                     candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!, reader.GetInt32(2)));
             foreach (var candidate in candidates)
             {
+                var projectName = await ScalarAsync(connection,
+                    "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id "
+                    + "WHERE t.id = $task OR t.task_key = upper($task) LIMIT 1;",
+                    ct, transaction, ("$task", candidate.Subject.TaskId)) as string;
+                var quota = projectName is null
+                    ? new WorkspaceQuotaVerdict(false, "Gate project could not be resolved for quota admission.")
+                    : await AdmitWorkspaceQuotaAsync(projectName, ct);
+                if (!quota.Allowed)
+                {
+                    quotaReason = quota.Message ?? "Workspace quota reached.";
+                    continue;
+                }
                 if (candidate.Number > 1)
                 {
                     var previousHost = await ScalarAsync(connection, """
@@ -299,7 +312,7 @@ public sealed partial class TaskServerStore
                         hostId, fence, 0, now, expiry, resourceNamespace, portBase));
                 return;
             }
-            response = new GateClaimResponse("empty", Message: "No eligible gate subject is queued.");
+            response = new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }, ct);
         return response!;
     }

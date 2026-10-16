@@ -85,6 +85,7 @@ public sealed partial class TaskServerStore
     private readonly IResultFinalizationSummaryGenerator _resultSummaries;
     private readonly ITaskServerEventPublisher? _operationalEvents;
     private readonly ILogger<TaskServerStore>? _logger;
+    private readonly IWorkspaceQuotaAdmission? _workspaceQuota;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly DateTime _startedAt;
     private static readonly JsonSerializerOptions OutcomeJson = CreateOutcomeJson();
@@ -118,13 +119,15 @@ public sealed partial class TaskServerStore
         TimeProvider clock,
         IResultFinalizationSummaryGenerator resultSummaries,
         ITaskServerEventPublisher? operationalEvents,
-        ILogger<TaskServerStore>? logger)
+        ILogger<TaskServerStore>? logger,
+        IWorkspaceQuotaAdmission? workspaceQuota = null)
     {
         _options = options.Value;
         _clock = clock;
         _resultSummaries = resultSummaries;
         _operationalEvents = operationalEvents;
         _logger = logger;
+        _workspaceQuota = workspaceQuota;
         _startedAt = UtcNow;
     }
 
@@ -135,6 +138,10 @@ public sealed partial class TaskServerStore
     public string ServerId => _serverId;
     public TaskServerMode Mode => _mode;
     private DateTime UtcNow => _clock.GetUtcNow().UtcDateTime;
+
+    private Task<WorkspaceQuotaVerdict> AdmitWorkspaceQuotaAsync(string projectName, CancellationToken ct)
+        => _workspaceQuota?.AdmitAsync(projectName, ct)
+            ?? Task.FromResult(new WorkspaceQuotaVerdict(true, null));
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
         => await InitializeCoreAsync(quarantineActiveAuthority: true, cancellationToken);
@@ -1461,6 +1468,15 @@ public sealed partial class TaskServerStore
             var hostAdmission = capabilityAdmission;
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
+                var projectName = await ScalarAsync(connection,
+                    "SELECT name FROM projects WHERE id = $project;", ct, transaction,
+                    ("$project", projectId)) as string;
+                var quota = projectName is null
+                    ? new WorkspaceQuotaVerdict(false, "Project could not be resolved for quota admission.")
+                    : await AdmitWorkspaceQuotaAsync(projectName, ct);
+                if (!quota.Allowed)
+                    return new ClaimPlacementVerdict(projectId,
+                        quota.Message ?? "Workspace quota reached.", null, null);
                 var registered = Convert.ToInt64(await ScalarAsync(connection, """
                     SELECT count(*) FROM project_repositories WHERE project_id = $project;
                     """, ct, transaction, ("$project", projectId))) > 0;

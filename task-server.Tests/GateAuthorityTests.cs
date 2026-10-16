@@ -296,6 +296,30 @@ public sealed class GateAuthorityTests
     private static TaskServerStore Store(string path, TimeProvider clock)
         => new(Options.Create(new TaskServerOptions { DataDirectory = path }), clock);
 
+    [Fact]
+    public async Task Quota_refusal_leaves_gate_queued_without_a_lease()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var subject = await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
+        await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectQuota());
+        await guarded.InitializeAsync();
+        var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal("empty", claim.Status);
+        Assert.Contains("quota", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(GateStates.Queued, (await guarded.GetGateStatusAsync(subject.Subject.SubjectId, default))!.Phase);
+    }
+
+    private sealed class RejectQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
+    }
+
     private static GateReport Report(string? failure)
         => new(failure is null ? GateStates.Passed
                 : failure == GateFailureClasses.ProductFailure ? GateStates.ProductFailed : GateStates.InfraFailed,
