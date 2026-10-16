@@ -111,7 +111,7 @@
 </header>
 
 <div class="box accent">
-  <b>Kernaussage.</b> Die Plattform hat fünf Zonen: Werkzeug, Steuerung, Vertrauen, Arbeit und Laufzeit. Arbeit und Laufzeit nutzen dieselben Bausteine: Host-Agent, Container, Budget, Image-Speicher, Logs. Sie folgen aber getrennten Regeln und laufen auf getrennten Rechnern. Die Übergabe zwischen CI und CD ist genau ein Artefakt mit Digest und Herkunft, sonst nichts. Für die Arbeit bleibt es beim eigenen Scheduler. Für das Hosting ist eine eigene, schlanke Laufzeit auf Docker und einem TLS-Proxy die Grundlage. Wer schon Kubernetes oder einen Cloud-Dienst hat, bekommt einen Adapter dorthin. Alle Geheimnisse, von Git über Server bis zu den vielen Tokens jeder App, laufen über einen Secret-Provider mit austauschbarem Speicher und ein Rechte-Modell mit Nutzern, Gruppen, Rollen je Bereich und Dienstkonten. Das Modell ist von Anfang an mehrnutzerfähig und wird auf dem Einzelplatz genauso benutzt.
+  <b>Kernaussage.</b> Die Plattform hat fünf Zonen: Werkzeug, Steuerung, Vertrauen, Arbeit und Laufzeit. Arbeit und Laufzeit nutzen dieselben Bausteine: Host-Agent, Container, Budget, Image-Speicher, Logs. Sie folgen aber getrennten Regeln und laufen auf getrennten Rechnern. Die Übergabe zwischen CI und CD ist genau ein Artefakt mit Digest und Herkunft, sonst nichts. Pipelines und Deploy-Prozesse stehen als YAML im Repo und sind im Werkzeug Bürger erster Klasse: Releases wandern über Lebenszyklen durch die Umgebungen, Hosting ist ein Schritt darin, und jede Karte zeigt, in welchen Umgebungen sie läuft. Für die Arbeit bleibt es beim eigenen Scheduler. Für das Hosting ist eine eigene, schlanke Laufzeit auf Docker und einem TLS-Proxy die Grundlage. Wer schon Kubernetes oder einen Cloud-Dienst hat, bekommt einen Adapter dorthin. Alle Geheimnisse, von Git über Server bis zu den vielen Tokens jeder App, laufen über einen Secret-Provider mit austauschbarem Speicher und ein Rechte-Modell mit Nutzern, Gruppen, Rollen je Bereich und Dienstkonten. Das Modell ist von Anfang an mehrnutzerfähig und wird auf dem Einzelplatz genauso benutzt.
 </div>
 
 <nav class="toc">
@@ -120,12 +120,13 @@
   <a href="#s3">§3 Der durchgehende Fluss</a><br>
   <a href="#s4">§4 Gleiche Bausteine, getrennte Regeln</a><br>
   <a href="#s5">§5 Sicher, aber integriert</a><br>
-  <a href="#s6">§6 Hosting: was dazukommt</a><br>
-  <a href="#s7">§7 Geheimnisse und Zugriff</a><br>
-  <a href="#s8">§8 Verhältnis zu Kubernetes</a><br>
-  <a href="#s9">§9 Bestand und Karten</a><br>
-  <a href="#s10">§10 Stufen</a><br>
-  <a href="#s11">§11 Entscheidungen</a><br>
+  <a href="#s6">§6 Pipelines, Releases und Umgebungen</a><br>
+  <a href="#s7">§7 Hosting: was dazukommt</a><br>
+  <a href="#s8">§8 Geheimnisse und Zugriff</a><br>
+  <a href="#s9">§9 Verhältnis zu Kubernetes</a><br>
+  <a href="#s10">§10 Bestand und Karten</a><br>
+  <a href="#s11">§11 Stufen</a><br>
+  <a href="#s12">§12 Entscheidungen</a><br>
   <a href="#quellen">§ Quellen</a>
 </nav>
 
@@ -260,8 +261,93 @@
 </ol>
 <p>Integriert heißt umgekehrt: Ein Fehler in Prod ist ohne Medienbruch eine Karte mit Logauszug und Digest. Eine Karte zeigt, in welcher Umgebung ihre Änderung läuft. Ein Token ist im Zugangs-Inventar mit Auftrag, Ablauf und Widerruf zu sehen. Kontingente zählen Modell-Tokens, Rechenzeit und Hosting zusammen.</p>
 
-<h2 id="s6"><span class="no">§6</span>Hosting: was dazukommt</h2>
-<p>Für die Arbeit reicht der Ausschnitt, den das Dossier Dynamic placement beschreibt: kurze Aufträge, die nur ausgehend arbeiten. Hosting bringt die Teile dazu, die dort bewusst fehlen:</p>
+<h2 id="s6"><span class="no">§6</span>Pipelines, Releases und Umgebungen</h2>
+<p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Hosting kann Docker sein, ist aber vor allem ein Prozessschritt in der Pipeline. Bei CI/CD werden Pipelines über YAML konfiguriert und sind im Tool sichtbar. Das machen wir im Prinzip auch so, nur dass Pipelines Bürger erster Klasse sind und jede Karte weiß, in welchen Umgebungen sie schon deployt ist. Also CI/CD, aber besser integriertes Deployment; Vorbild ist Octopus Deploy.</p>
+
+<h3>6.1 Heute</h3>
+<p><code>.agent-studio/project.yml</code> (Schema 1) beschreibt je Projekt den Stack, die Werkzeug-Versionen, die Befehle für prepare, build, test und lint und die Test-Suiten mit Kategorien (routine, release, machine-bound). Die Karten-Pipeline selbst ist im Code festgelegt (<code>backend/Features/Pipeline/PipelineCatalogue.cs</code>): Qualifizieren, Agent, Git, Build, Test, Aspekte, Bewertung. Entschieden ist seit 12.09.2026 (AGT-W51 D8): Die Pipeline im Werkzeug wird die CI des Projekts, mit Stufen aus <code>project.yml</code> und Deploy als Stufe. Releases, Lebenszyklen, ein Deploy-Prozess und die Zuordnung Karte zu Umgebung fehlen.</p>
+
+<h3>6.2 Begriffe nach dem Octopus-Muster</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Begriff</th><th>Bedeutung</th><th>Bei uns</th></tr></thead>
+  <tbody>
+    <tr><td><b>Pipeline</b></td><td>Stufen vom Vorbereiten bis zum Release-Gate</td><td>aus <code>project.yml</code>, im Tool als Graph mit Läufen, Dauer und Logs je Schritt</td></tr>
+    <tr><td><b>Artefakt</b></td><td>Ergebnis eines Builds</td><td>Container-Image, statisches Bundle oder Paket, mit Digest und Herkunft (§3)</td></tr>
+    <tr><td><b>Release</b></td><td>unveränderlicher Schnappschuss, der durch die Umgebungen wandert</td><td>Artefakt-Digests, Version des Deploy-Prozesses, Version der Variablen, enthaltene Karten, Versionsnummer</td></tr>
+    <tr><td><b>Lebenszyklus</b></td><td>Phasen in fester Reihenfolge mit Regeln</td><td>z. B. Vorschau → Stage → Prod; je Phase automatisch, mit Freigabe, nach Mindestzahl erfolgreicher Deploys oder Wartezeit</td></tr>
+    <tr><td><b>Kanal</b></td><td>verschiedene Lebenszyklen je Art von Release</td><td>z. B. Hotfix: Stage, dann sofort Prod mit Freigabe des Owners</td></tr>
+    <tr><td><b>Deploy-Prozess</b></td><td>Schritte, die ein Release in eine Umgebung bringen</td><td>Datenbank-Migration, Container starten (Hosting), statische Seite hochladen, Skript, manuelle Freigabe, Health-Check, Benachrichtigung; Bedingungen je Umgebung</td></tr>
+    <tr><td><b>Variablen</b></td><td>Werte je Umgebung, Ziel oder Schritt</td><td>einfache Werte im YAML, sensible Werte nur als Verweis auf den Secret-Provider (§8); Variablen-Sets für mehrere Projekte</td></tr>
+    <tr><td><b>Ziele und Worker</b></td><td>wohin deployt wird, wer den Schritt ausführt</td><td>Ziel: Laufzeit-Host mit Docker, VM per SSH, Kubernetes, Cloud (§7); Worker: Deploy-Auftrag in der Arbeitszone</td></tr>
+    <tr><td><b>Runbooks</b></td><td>Betriebsaufgaben ohne neues Release</td><td>Neustart, Sicherung, Wartungsmodus, Rotation; mit denselben Zielen, Variablen und Freigaben</td></tr>
+    <tr><td><b>Dashboard</b></td><td>Projekt × Umgebung</td><td>welches Release wo läuft, seit wann, mit welchem Status</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>6.3 YAML im Repo, sichtbar im Werkzeug</h3>
+<p>Die ganze Definition steht versioniert im Repo, als Erweiterung von <code>project.yml</code> auf Schema 2. Studio zeigt sie als Graph und führt sie aus. Änderungen aus der UI oder dem Chat werden als Karte mit Commit vorgeschlagen und nicht still gespeichert. So ist das Repo die einzige Quelle, und jede Änderung an der Pipeline durchläuft selbst Review und Gate.</p>
+<pre><code>schemaVersion: 2
+pipeline:                      # CI, wie heute commands und testSuites
+  build: [npm ci, npm run build]
+  test:  [npm test]
+artifacts:
+  - name: web
+    type: container            # oder: static, package
+    dockerfile: Dockerfile
+environments: [vorschau, stage, prod]
+lifecycles:
+  standard:
+    - phase: vorschau          # je Karte, automatisch
+      automatic: true
+    - phase: stage             # nach Integration, automatisch
+      automatic: true
+    - phase: prod
+      approval: [Owner, Maintainer]
+      requires: { stage: success, minimumAge: 30m }
+  hotfix:
+    - phase: stage
+    - phase: prod
+      approval: [Owner]
+deploy:
+  - step: migrate-database
+    run: ./scripts/migrate.sh
+    environments: [stage, prod]
+  - step: start-container      # Hosting ist ein Schritt
+    target: run-host
+    artifact: web
+    health: /healthz
+  - step: smoke-test
+    run: npm run smoke -- $APP_URL
+variables:
+  DATABASE_URL: secret://projekt/{environment}/DATABASE_URL
+  STRIPE_KEY:   secret://projekt/{environment}/STRIPE_KEY
+  LOG_LEVEL: { default: info, prod: warn }
+runbooks:
+  - name: neustart
+    steps: [restart-container]</code></pre>
+
+<h3>6.4 Jede Karte weiß, wo sie läuft</h3>
+<p>Die Kette ist durchgehend: Karte → Commit → Build → Artefakt → Release → Deploys je Umgebung.</p>
+<ul>
+  <li>Auf der Karte stehen Abzeichen, z. B. „Vorschau: läuft (Karte)“, „Stage: seit 14:02, Release 1.8.3“, „Prod: wartet auf Freigabe“.</li>
+  <li>Das Board filtert danach, z. B. „in Stage, noch nicht in Prod“ oder „in Prod seit dieser Woche“.</li>
+  <li>Die Release-Notizen entstehen aus den enthaltenen Karten, in Produktsprache.</li>
+  <li>Ein Rückweg in Prod markiert die Karten des zurückgenommenen Releases, ein Fehler in Prod wird eine Karte mit Release, Logauszug und den Karten, die zuletzt dazukamen.</li>
+</ul>
+
+<h3>6.5 Sichtbarkeit im Werkzeug</h3>
+<ul>
+  <li><b>Dashboard</b> je Workspace: Projekte × Umgebungen mit Release, Zeit und Status, Ampel bei Fehlern und offenen Freigaben.</li>
+  <li><b>Release-Seite:</b> enthaltene Karten, Artefakte mit Herkunft, Deploys je Umgebung mit Schritten und Logs, Freigaben mit Person und Zeit.</li>
+  <li><b>Pipeline-Ansicht:</b> der Graph aus dem YAML, die Läufe mit Dauer, Kosten und Fehlerhäufigkeit je Schritt (die Statistik aus AGT-W51).</li>
+  <li><b>Umgebungs-Seite:</b> aktuelles Release, Verlauf, Variablen und Geheimnisse als Metadaten, Runbooks.</li>
+</ul>
+<p>Der Hosting-Teil (§7) ist damit ein Ziel für den Schritt „start-container“ und keine eigene Welt neben der Pipeline.</p>
+
+<h2 id="s7"><span class="no">§7</span>Hosting: was dazukommt</h2>
+<p>Hosting ist ein Schritt im Deploy-Prozess (§6): „start-container“ auf einem Laufzeit-Ziel. Für die Arbeit reicht der Ausschnitt, den das Dossier Dynamic placement beschreibt: kurze Aufträge, die nur ausgehend arbeiten. Ein Laufzeit-Ziel braucht die Teile, die dort bewusst fehlen:</p>
 <ul>
   <li><b>Eingang:</b> TLS-Zertifikate, Domains je Umgebung, ein Reverse-Proxy, der neue Versionen ohne Ausfall umschaltet.</li>
   <li><b>Betrieb:</b> Health-Checks, Neustart bei Absturz, Rückweg auf die vorige Version, Logs und einfache Kennzahlen je App.</li>
@@ -281,7 +367,7 @@
 </div>
 <p><b>Empfehlung:</b> A als Grundlage, C als Adapter für Betreiber mit eigener Infrastruktur. B nur, wenn ein Betreiber Hochverfügbarkeit über mehrere Rechner braucht; dann ist B ein weiterer Adapter, kein Umbau. Für Daten (D5) zuerst nur zustandslose Anwendungen und statische Seiten, Datenbanken vom Betreiber angebunden. Eine verwaltete Datenbank mit Sicherung folgt als eigener Schnitt.</p>
 
-<h2 id="s7"><span class="no">§7</span>Geheimnisse und Zugriff</h2>
+<h2 id="s8"><span class="no">§8</span>Geheimnisse und Zugriff</h2>
 <p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Wichtig ist das Zugriffs-Management für Tokens, und es geht nicht nur um Git. Anwendungen haben eigene Tokens, jede App viele. Nötig ist ein Secret-Provider, möglichst mit Unterstützung der Industrie-Standards. Das Secret-Management in der App muss mehrnutzerfähig sein. Dazu gehören ein Berechtigungssystem und Nutzer. Das Ganze soll von Anfang an groß gedacht sein, aber sofort von einem einzelnen Nutzer verwendbar.</p>
 
 <h3>7.1 Drei Arten von Geheimnissen</h3>
@@ -346,7 +432,7 @@
 <h3>7.7 Lieferweg zur App</h3>
 <p>Der Deploy-Auftrag löst die Verweise erst auf dem Laufzeit-Host auf, nicht in der Steuerzone. Die Werte kommen als Datei im Arbeitsspeicher oder als Umgebungsvariablen in den Container, nie in Image, Registry, Logs oder Karten. Nach einer Rotation folgt ein neuer Deploy oder ein Neulade-Signal. Alternativ holt die App ihre Werte selbst beim Provider, mit ihrer Workload-Identität; dann sieht auch der Deploy-Auftrag sie nicht.</p>
 
-<h2 id="s8"><span class="no">§8</span>Verhältnis zu Kubernetes</h2>
+<h2 id="s9"><span class="no">§9</span>Verhältnis zu Kubernetes</h2>
 <div class="box ok"><b>Entschieden am 16.10.2026 (Operator).</b> Für die Arbeitszone gilt E1: eigener Scheduler, Hosts holen sich Arbeit, ein Agent je Rechner, Container je Auftrag (Dossier Dynamic placement, Empfehlung A). Kubernetes kommt nur als zusätzlicher Ausführer für Betreiber mit vorhandenem Cluster.</div>
 <p>Die Plattform übernimmt die Muster von Kubernetes, nicht das System:</p>
 <ul>
@@ -358,7 +444,7 @@
 </ul>
 <p>Nicht übernommen wird der Cluster als Pflicht. Der Grund ist die Installation auf einem Rechner oder in einer Abteilung, mit Windows-Arbeitsplätzen und ohne Betriebsteam. Wer einen Cluster hat, nutzt ihn über die Adapter in der Arbeitszone (Kubernetes-Jobs, AGT-3171) und in der Laufzeitzone (Option C).</p>
 
-<h2 id="s9"><span class="no">§9</span>Bestand und Karten</h2>
+<h2 id="s10"><span class="no">§10</span>Bestand und Karten</h2>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Teil</th><th>Wo ausgearbeitet</th><th>Karten</th></tr></thead>
@@ -369,14 +455,15 @@
     <tr><td>Vertrauenszone: Inventar, Token je Auftrag, Wurzeln</td><td>Credentials and logins, Dynamic placement, Lebenszyklus §14</td><td>AGT-3170, AGT-3197</td></tr>
     <tr><td>Artefakte und Umgebungen (CD)</td><td>Anwendungs-Lebenszyklus §12, §13</td><td>AGT-3176</td></tr>
     <tr><td>Vorschau je Karte, Produkt-Chat, Rolle Produkt</td><td>Anwendungs-Lebenszyklus §18</td><td>AGT-3180 bis AGT-3183, AGT-3196</td></tr>
-    <tr><td>Laufzeitzone: Eingang, Betrieb, Daten, Adapter</td><td>dieses Dossier, §6</td><td>Schnitte IP-1 bis IP-4 nach Entscheidung</td></tr>
-    <tr><td>Zonen und Netzwerk-Regeln</td><td>dieses Dossier, §5</td><td>Schnitt IP-5 nach Entscheidung</td></tr>
-    <tr><td>Secret-Provider, App-Geheimnisse, Rechte-Modell</td><td>dieses Dossier, §7</td><td>Schnitte IP-6 bis IP-9 nach Entscheidung; berührt AGT-3170, AGT-3176, AGT-3182, AGT-3186</td></tr>
+    <tr><td>Laufzeitzone: Eingang, Betrieb, Daten, Adapter</td><td>dieses Dossier, §7</td><td>Schnitte IP-1 bis IP-4 nach Entscheidung</td></tr>
+    <tr><td>Zonen und Netzwerk-Regeln</td><td>dieses Dossier, §5</td><td>Schnitt IP-2 nach Entscheidung</td></tr>
+    <tr><td>Pipelines als YAML, Releases, Lebenszyklen, Karten-Status je Umgebung, Runbooks</td><td>dieses Dossier, §6; AGT-W51 D8</td><td>Schnitte IP-10 bis IP-13 nach Entscheidung; AGT-3176 liefert Umgebungen und Deploy-Auftrag als Grundlage</td></tr>
+    <tr><td>Secret-Provider, App-Geheimnisse, Rechte-Modell</td><td>dieses Dossier, §8</td><td>Schnitte IP-6 bis IP-9 nach Entscheidung; berührt AGT-3170, AGT-3176, AGT-3182, AGT-3186</td></tr>
   </tbody>
 </table>
 </div>
 
-<h2 id="s10"><span class="no">§10</span>Stufen</h2>
+<h2 id="s11"><span class="no">§11</span>Stufen</h2>
 <ol>
   <li><b>S1 · Ein Rechner, alles drin.</b>
     <ul>
@@ -398,7 +485,7 @@
   <li>Daten: MemoWikis hat eine Datenbank. Nach IP-D5 A wird sie vom Betreiber angebunden, bis eine verwaltete Datenbank existiert.</li>
 </ul>
 
-<h2 id="s11"><span class="no">§11</span>Entscheidungen</h2>
+<h2 id="s12"><span class="no">§12</span>Entscheidungen</h2>
 
 <div class="decision" data-decision-id="ip-zonen-trennen" data-decision-kind="single" data-decision-label="IP-D1 Arbeit und Laufzeit trennen">
   <h3>IP-D1 · Wie streng werden Arbeits- und Laufzeitzone getrennt?</h3>
@@ -470,6 +557,29 @@
   <h3>IP-D10 · Wie weisen sich Aufträge und Apps aus?</h3>
   <label data-option-id="eigene-identitaet" data-option-label="A · Eigene signierte Identität je Auftrag und Deployment im SPIFFE-Format; OIDC-Föderation zu Cloud-Zielen statt gespeicherter Schlüssel (Empfehlung)"><input type="radio" name="ip-workload-identitaet" value="eigene-identitaet"><span><b>A · Signierte Identität, Föderation</b><span class="d">Keine dauerhaften Schlüssel in Aufträgen und Apps; Cloud-Ziele vertrauen der Plattform direkt.</span></span></label>
   <label data-option-id="gespeicherte-schluessel" data-option-label="B · Gespeicherte Schlüssel je Ziel"><input type="radio" name="ip-workload-identitaet" value="gespeicherte-schluessel"><span><b>B · Gespeicherte Schlüssel</b><span class="d">Einfach; jeder Schlüssel muss rotiert und geschützt werden.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+
+<div class="decision" data-decision-id="ip-pipeline-definition" data-decision-kind="single" data-decision-label="IP-D11 Pipeline-Definition">
+  <h3>IP-D11 · Wo ist die Pipeline definiert?</h3>
+  <label data-option-id="project-yml-v2" data-option-label="A · Im Repo als project.yml Schema 2; Studio zeigt sie und schlägt Änderungen als Karte vor (Empfehlung)"><input type="radio" name="ip-pipeline-definition" value="project-yml-v2"><span><b>A · project.yml Schema 2 im Repo</b><span class="d">Eine Quelle, versioniert, mit Review; passt zu AGT-W51 D5 und D8.</span></span></label>
+  <label data-option-id="in-studio" data-option-label="B · In Studio gespeichert und bearbeitet"><input type="radio" name="ip-pipeline-definition" value="in-studio"><span><b>B · In Studio gespeichert</b><span class="d">Schnell zu ändern; Pipeline und Commit laufen auseinander.</span></span></label>
+  <label data-option-id="actions-yaml" data-option-label="C · Vorhandenes GitHub-Actions-YAML lesen und übersetzen"><input type="radio" name="ip-pipeline-definition" value="actions-yaml"><span><b>C · GitHub-Actions-YAML übernehmen</b><span class="d">Vertraut für viele; Umgebungen, Lebenszyklen und Karten-Bezug fehlen dort.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-release-modell" data-decision-kind="single" data-decision-label="IP-D12 Release-Modell">
+  <h3>IP-D12 · Wie wandert eine Version durch die Umgebungen?</h3>
+  <label data-option-id="octopus" data-option-label="A · Octopus-Muster: unveränderliches Release, Lebenszyklen mit Phasen und Regeln, Kanäle, Runbooks (Empfehlung)"><input type="radio" name="ip-release-modell" value="octopus"><span><b>A · Release, Lebenszyklus, Kanal, Runbook</b><span class="d">Nachvollziehbar, was wo läuft; Freigaben und Regeln je Phase; Betriebsaufgaben ohne neues Release.</span></span></label>
+  <label data-option-id="kette" data-option-label="B · Einfache Kette Stage → Prod ohne eigenes Release-Objekt"><input type="radio" name="ip-release-modell" value="kette"><span><b>B · Einfache Kette</b><span class="d">Schneller gebaut; mehrere Projekte, Hotfixes und Runbooks passen nicht hinein.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-karten-umgebung" data-decision-kind="single" data-decision-label="IP-D13 Karte und Umgebung">
+  <h3>IP-D13 · Wie sichtbar ist der Stand einer Karte in den Umgebungen?</h3>
+  <label data-option-id="karte-zeigt" data-option-label="A · Jede Karte zeigt ihre Umgebungen und Releases, das Board filtert danach, Release-Notizen entstehen aus den Karten (Empfehlung)"><input type="radio" name="ip-karten-umgebung" value="karte-zeigt"><span><b>A · Auf der Karte und im Board</b><span class="d">Wer an einer Karte arbeitet oder sie abnimmt, sieht sofort, wo sie läuft.</span></span></label>
+  <label data-option-id="nur-release" data-option-label="B · Nur auf der Release-Seite"><input type="radio" name="ip-karten-umgebung" value="nur-release"><span><b>B · Nur auf der Release-Seite</b><span class="d">Weniger Aufwand; der Weg von der Karte zur Umgebung bleibt ein Umweg.</span></span></label>
   <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
 </div>
 

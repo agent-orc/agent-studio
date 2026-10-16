@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "integrierte-plattform",
   "title": "Integrierte Plattform: von der Planung bis zum Hosting",
-  "summary": "Operator-Vorgaben 16.10.2026 abends: eine voll integrierte Plattform von Planung ueber Entwicklung, CI/CD bis Hosting, sicher aber integriert; E1 (eigener Scheduler fuer die Arbeitszone) entschieden; Zugriffs-Management fuer alle Tokens, nicht nur Git; Secret-Provider mit Industrie-Standards; mehrnutzerfaehiges Secret-Management mit Nutzern und Berechtigungen; gross gedacht, sofort als Einzelner nutzbar; MemoWikis als erster echter Fall. Inhalt: fuenf Zonen (Werkzeug, Steuerung, Vertrauen, Arbeit, Laufzeit) mit erlaubten Verbindungen, durchgehender Fluss mit dem Artefakt als einziger Naht zwischen CI und CD, gleiche Bausteine mit getrennten Regeln fuer Arbeit und Laufzeit, acht feste Sicherheitsgrenzen, Hosting-Optionen (eigene Laufzeit plus Adapter empfohlen), Geheimnisse und Zugriff (drei Arten, Secret-Provider mit eingebautem Speicher und Adaptern, Bereiche und Verweise, Rechte an Geheimnissen, Nutzer, Gruppen, Rollen je Bereich, Dienstkonten, Einzelplatz im selben Modell, Lieferweg zur App), Verhaeltnis zu Kubernetes, Bestand und Karten, Stufen S1 bis S5, Entscheidungen IP-D1 bis IP-D10.",
+  "summary": "Operator-Vorgaben 16.10.2026 abends: eine voll integrierte Plattform von Planung ueber Entwicklung, CI/CD bis Hosting, sicher aber integriert; E1 (eigener Scheduler fuer die Arbeitszone) entschieden; Zugriffs-Management fuer alle Tokens, nicht nur Git; Secret-Provider mit Industrie-Standards; mehrnutzerfaehiges Secret-Management mit Nutzern und Berechtigungen; gross gedacht, sofort als Einzelner nutzbar; MemoWikis als erster echter Fall. Inhalt: fuenf Zonen (Werkzeug, Steuerung, Vertrauen, Arbeit, Laufzeit) mit erlaubten Verbindungen, durchgehender Fluss mit dem Artefakt als einziger Naht zwischen CI und CD, gleiche Bausteine mit getrennten Regeln fuer Arbeit und Laufzeit, acht feste Sicherheitsgrenzen, Hosting-Optionen (eigene Laufzeit plus Adapter empfohlen), Geheimnisse und Zugriff (drei Arten, Secret-Provider mit eingebautem Speicher und Adaptern, Bereiche und Verweise, Rechte an Geheimnissen, Nutzer, Gruppen, Rollen je Bereich, Dienstkonten, Einzelplatz im selben Modell, Lieferweg zur App), Verhaeltnis zu Kubernetes, Bestand und Karten, Stufen S1 bis S5, Entscheidungen IP-D1 bis IP-D10. Ergaenzt 16.10.: §6 Pipelines, Releases und Umgebungen nach dem Octopus-Muster (project.yml Schema 2 mit pipeline, artifacts, environments, lifecycles, deploy, variables, runbooks; Release, Lebenszyklus, Kanal, Deploy-Prozess, Runbook, Dashboard; Hosting als Schritt; jede Karte zeigt ihre Umgebungen) mit IP-D11 bis IP-D13 und IP-10 bis IP-13.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-10-16T19:30:00Z",
+  "updatedAt": "2026-10-16T20:00:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-3171",
@@ -70,6 +70,26 @@
       "id": "IP-9",
       "title": "Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in",
       "promptMarkdown": "# Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the adapters of section 7.2 and sign-in: the provider interface backed by Vault/OpenBao KV v2 and by 1Password service accounts, selected per scope; OIDC single sign-on for users with group mapping. Tests with fake servers for each adapter and the OIDC flow.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-10",
+      "title": "project.yml schema 2: pipeline, artifacts, environments, lifecycles, deploy steps, variables and runbooks; pipeline graph in Studio",
+      "promptMarkdown": "# project.yml schema 2: pipeline, artifacts, environments, lifecycles, deploy steps, variables and runbooks; pipeline graph in Studio\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nExtend .agent-studio/project.yml to schema 2 as in section 6.3 (schema 1 stays valid and maps to the pipeline part), with a validator and clear errors; the pipeline engine runs build and test stages from the file; Studio shows the pipeline as a graph with runs, duration, cost and logs per step; edits from the UI or chat create a card with a commit instead of saving silently. Tests for parsing, validation, schema 1 compatibility and the graph view.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-11",
+      "title": "Releases, lifecycles and channels: immutable releases promoted through environments with phase rules, approvals and a project by environment dashboard",
+      "promptMarkdown": "# Releases, lifecycles and channels: immutable releases promoted through environments with phase rules, approvals and a project by environment dashboard\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 6.2 and 6.5: a release is an immutable snapshot (artifact digests, deploy process version, variable version, included cards, version number); lifecycles with ordered phases and rules (automatic, approval by role, required success in the previous phase, minimum age); channels; deploys per environment through the deploy job of AGT-3176; a dashboard of projects by environments with release, time and status. Tests for promotion rules, approvals, channel selection and immutability.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-12",
+      "title": "Card status per environment and release notes from cards",
+      "promptMarkdown": "# Card status per environment and release notes from cards\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 6.4: every card shows in which environments and releases its delivery runs, the board filters by environment state, release notes are generated from the included cards in product language, a rollback marks the cards of the withdrawn release, a production failure creates a card linked to the release. Tests for the card-to-release mapping across merges and rebases, the filters and the generated notes.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-13",
+      "title": "Runbooks: operational tasks with the same targets, variables and approvals as deploys",
+      "promptMarkdown": "# Runbooks: operational tasks with the same targets, variables and approvals as deploys\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement runbooks from section 6.2: named step lists from project.yml (restart, backup, maintenance mode, rotation) run against an environment without a new release, with approvals per environment, audit and logs; visible on the environment page. Tests for execution, approval and audit.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
     }
   ],
   "key": "AGT-W81"
