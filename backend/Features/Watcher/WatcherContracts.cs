@@ -69,6 +69,11 @@ public sealed record WatcherSignalObservation
     public List<string> AffectedCards { get; init; } = [];
     public Dictionary<string, string> Details { get; init; } = [];
     public List<string> SourcePaths { get; init; } = [];
+    public string? Subject { get; init; }
+    public string? Severity { get; init; }
+    public DateTime? SinceUtc { get; init; }
+    public int BlockedCount { get; init; }
+    public string? SuggestedAction { get; init; }
 }
 
 /// <summary>
@@ -104,6 +109,11 @@ public sealed record WatcherCase
     public string? ProposalJobId { get; init; }
     public bool IsCommentOnly { get; init; }
     public string? GaveUpReason { get; init; }
+    public string? Subject { get; init; }
+    public string? Severity { get; init; }
+    public DateTime? SinceUtc { get; init; }
+    public int BlockedCount { get; init; }
+    public string? SuggestedAction { get; init; }
 }
 
 /// <summary>One bounded, size-limited evidence item collected for a case. Absent evidence is recorded explicitly (§3).</summary>

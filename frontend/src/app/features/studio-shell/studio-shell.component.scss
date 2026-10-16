@@ -1041,7 +1041,7 @@
 .studio-settings-workspace-name-error {
   grid-row: 2;
   grid-column: 2 / -1;
-  color: var(--studio-danger, #e74c3c);
+  color: var(--studio-error);
   font-size: 10px;
   margin-top: 2px;
 }
@@ -2163,4 +2163,8 @@
     background: var(--studio-bg-elevated);
     border-radius: 3px;
   }
+}
+.studio-titlebar__stall-count {
+  color: var(--studio-danger, #e74c3c);
+  font-variant-numeric: tabular-nums;
 }

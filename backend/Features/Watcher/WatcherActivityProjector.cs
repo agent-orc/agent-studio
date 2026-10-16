@@ -45,9 +45,13 @@ public sealed class WatcherActivityProjector
 
     public void ProjectFindingRaised(WatcherCase watcherCase, WatcherEvidencePack pack)
     {
-        Append(watcherCase, OrchestratorLogKinds.Alert, "watcher-finding-raised", watcherCase.LastSummary);
-        Emit("observation", "watcher-finding-raised", watcherCase, watcherCase.LastSummary, "Warn",
-            new { caseId = watcherCase.Id, watcherCase.Fingerprint, watcherCase.DetectorClass, evidenceDigest = pack.DigestSha256 });
+        Append(watcherCase, OrchestratorLogKinds.Alert, "watcher-finding-raised", watcherCase.LastSummary,
+            reasoning: OperationalReasoning(watcherCase));
+        Emit("observation", "watcher-finding-raised", watcherCase, watcherCase.LastSummary,
+            watcherCase.Severity == "critical" ? "Error" : "Warn",
+            new { caseId = watcherCase.Id, watcherCase.Fingerprint, watcherCase.DetectorClass, watcherCase.Subject,
+                watcherCase.Severity, watcherCase.SinceUtc, watcherCase.BlockedCount, watcherCase.SuggestedAction,
+                watcherCase.LastDetails, evidenceDigest = pack.DigestSha256 });
     }
 
     public void ProjectAnalysisComplete(WatcherCase watcherCase, WatcherAnalysisReceipt analysis)
@@ -87,7 +91,11 @@ public sealed class WatcherActivityProjector
             new { caseId = watcherCase.Id, reason });
     }
 
-    private void Append(WatcherCase watcherCase, string kind, string topic, string summary, string? jobId = null)
+    private static string? OperationalReasoning(WatcherCase item) => item.Subject is null ? null
+        : $"Subject: {item.Subject}. Since: {item.SinceUtc:O}. Impact: {item.BlockedCount} blocked cards. "
+          + $"Suggested action: {item.SuggestedAction} Evidence: {string.Join(", ", item.LastDetails.Select(x => $"{x.Key}={x.Value}"))}";
+
+    private void Append(WatcherCase watcherCase, string kind, string topic, string summary, string? jobId = null, string? reasoning = null)
     {
         var watchPath = ResolveWatchPath(watcherCase.Project);
         if (string.IsNullOrWhiteSpace(watchPath)) return;
@@ -97,6 +105,11 @@ public sealed class WatcherActivityProjector
             Kind = kind,
             Topic = topic,
             Summary = summary,
+            Reasoning = reasoning,
+            Stall = watcherCase.Subject is null ? null : new OperationalStallEvent(
+                watcherCase.Subject, watcherCase.Severity ?? "warning", watcherCase.SinceUtc,
+                watcherCase.BlockedCount, watcherCase.AffectedCards,
+                watcherCase.SuggestedAction, watcherCase.LastDetails),
             JobId = jobId ?? watcherCase.AffectedCards.FirstOrDefault(),
             ParticipantId = AgentMessageBusBridge.ParticipantWatcher,
         });

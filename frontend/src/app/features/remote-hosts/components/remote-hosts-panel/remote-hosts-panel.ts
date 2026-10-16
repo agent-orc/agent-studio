@@ -32,17 +32,15 @@ import { BetterCandidateLinesComponent } from '../../../../components/better-can
 import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
+import { OperationalStallsComponent } from '../operational-stalls/operational-stalls';
 
 /**
- * Execution Hosts settings page (AGT-1921).
- *
- * The single visible entry point into execution-host management: the local
+ * Execution Hosts settings page (AGT-1921). The local
  * machine and each remote runner in one sortable table so the whole fleet reads
  * as one picture. Each row carries current operator truth while secondary
  * identity, capability, connection, capacity, and deployment facts are disclosed
  * on demand ({@link RemoteHostCardComponent}).
  *
- * Host definitions and client heartbeat facts come from {@link RemoteHostsService}.
  */
 @Component({
   selector: 'app-remote-hosts-panel',
@@ -57,6 +55,7 @@ import { ExecutionInfrastructureComponent } from '../execution-infrastructure/ex
     RunnerInfrastructureFailuresComponent,
     DeploymentCheckpointsComponent,
     ExecutionInfrastructureComponent,
+    OperationalStallsComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',

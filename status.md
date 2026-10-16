@@ -1,3 +1,11 @@
+# AGT-3206 operational stall monitoring status
+
+- Result SHA: `178a0f3a07638924bb81538c5f3e4d238cd01bfe17f0ecd98cd2eda0b08a2c3d` (SHA-256 of sorted paths and contents of the 30 changed or added implementation, test, and documentation files, excluding this status file). This managed worktree is uncommitted; base commit: `2c4ec9e8c62e55f1b88763442277e426aab862a4`.
+- Implemented decision: AGT-W15 observe-first. Operational sweeps are enabled by default; each finding has a stable subject and fingerprint, severity, since time, evidence, impact, and suggested action. One typed Activity event opens the case, and a successful healthy sweep closes it. Watcher proposal drafting still requires `Watcher:Enabled`; observations do not mutate capacity, credentials, gates, or deployments.
+- The detectors cover stopped or silent hosts, sustained CPU/load and memory pressure, idle review and gate capacity, claim refusals, provider credential or rate-limit failures, stuck batch gates, long lane residence, and reported release drift. Thresholds are configurable under `Watcher`, and tests use an injected clock. The Studio header, affected board lanes, and Execution Hosts section show open cases.
+- Limit: the current release source reports versions for registered review runner roles. It does not provide image digests or compose/start errors for arbitrary containers, including the engine image from the incident. AGT-3169's separate Environment node view is not present in this checkout; the Execution Hosts section shows host and container findings now.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:1 -v:q /p:UseSharedCompilation=false` and the final backend plus test-project build passed. The focused backend class filter passed 18 tests. The `FullyQualifiedName~.Architecture.|Category=Guard` filter passed 82 backend tests and completed with no matching tests in the runner and Task Server test projects. `npm --prefix frontend run lint`, two focused Angular tests, and the focused Playwright spec passed. Light and dark screenshots are in the task results directory. No unfiltered test project or coverage run was used.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).

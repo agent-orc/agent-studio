@@ -294,7 +294,8 @@ test.describe('Execution Hosts settings section', () => {
     await page.setViewportSize({ width: 1600, height: 950 });
     // Most coverage uses the legacy modal; the scroll ownership regression
     // exercises the editor tab that owns studio-editor__main.
-    const editorLayout = testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields';
+    const editorLayout = testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields'
+      || testInfo.title.includes('shows open operational stalls');
     await page.addInitScript((value) => { try { localStorage.setItem('atp.flag.vsCodeLayout', value); } catch { /* ignore */ } }, editorLayout ? '1' : '0');
     await stubBackgroundApis(page);
     await stubOnlineJobsHub(page);
@@ -314,6 +315,29 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Execution Hosts');
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toBeVisible();
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
+  });
+
+  test('shows open operational stalls in the Studio header and Execution Hosts', async ({ page }) => {
+    await page.route('**/api/watcher/stalls', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ count: 2, cases: [
+        { id: 'WCH-1', project: '_workspace', subject: 'host:agent-runner-01', severity: 'critical', affectedCards: ['AGT-1'], blockedCount: 1,
+          lastSummary: 'Host exceeds its CPU target.', suggestedAction: 'Reduce admission or move work.', sinceUtc: '2026-10-16T19:00:00Z' },
+        { id: 'WCH-2', project: '_workspace', subject: 'container:engine-host:engine', severity: 'critical', affectedCards: [],
+          lastSummary: 'Engine image differs from the release.', suggestedAction: 'Reconcile the running image.' },
+      ] }),
+    }));
+    await page.reload();
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await expect(page.getByTestId('studio-open-stalls')).toContainText('2');
+    await expect(page.getByTestId('operational-stalls')).toContainText('agent-runner-01');
+    await expect(page.getByTestId('operational-stalls')).toContainText('engine on engine-host');
+    await expect(page.getByTestId('operational-stalls')).toContainText('Reduce admission or move work.');
+    const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(directory, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(directory, `operational-stalls-${theme}.png`), animations: 'disabled' });
+    }
   });
 
   test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {

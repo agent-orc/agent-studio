@@ -35,6 +35,7 @@ import { PostProcessingSummaryComponent } from '../post-processing-summary/post-
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
 import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
+import { OrchestratorFeedStore } from '../../../orchestrator';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -58,6 +59,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
   private readonly boardDrag = inject(BoardDragStateService);
+  private readonly stalls = inject(OrchestratorFeedStore);
   readonly title = input.required<string>();
   readonly icon = input<string>('');
   readonly state = input.required<string>();
@@ -70,15 +72,10 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly collapsed = input<boolean>(false);
   readonly compact = input<boolean>(false);
   readonly archiving = input<boolean>(false);
-  /** F2: id of a just-created card to highlight + scroll into view. */
   readonly highlightJobId = input<string | null>(null);
-  /** Project owning the In-Progress lane's auto-pickup toggle. */
   readonly autoProject = input<string | null>(null);
-  /** Project scope for project-owned lane data such as the lazy archive feed. */
   readonly projectScope = input<string | null>(null);
-  /** Current runner mode for the auto project, drives the chip's on/off look. */
   readonly autoMode = input<string>('manual');
-  /** Project runner snapshot behind the In-Progress status cluster. */
   readonly runnerStatus = input<ProjectRunnerStatus | null>(null);
   /**
    * Live wall-clock tick used so the RUNNING pill's duration string
@@ -91,6 +88,9 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly stalledCount = computed(() => this.state() === TaskState.Progress
     ? this.jobs().filter((job) => deriveStalledTaskState(job, this.nowMs() || Date.now()) !== null).length
     : this.state() === TaskState.Ready ? this.unpullableDependencyCount() : 0);
+  readonly operationalStallCount = computed(() => this.stalls.openStalls().filter(stall =>
+    (stall.project === this.projectScope() || stall.project === '_workspace')
+    && stall.affectedCards.some(card => this.jobs().some(job => job.id === card))).length);
   readonly jobClick = output<TaskInfo>();
   // `targetIndex` is the 0-based insertion slot in this column the user
   // dropped the card on. Stable across silent polls because the backend

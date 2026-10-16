@@ -2042,6 +2042,36 @@ the endpoint answers `409` with the reason while the intent stays persisted.
 The preservation half is the detector, so a run that legitimately finishes in
 under a second is never reported as lost.
 
+## Operational stall monitoring (AGT-3206)
+
+The Watcher runs an operational sweep every five minutes by default, including
+when proposal drafting is disabled. `Watcher:OperationalMonitoringEnabled` is
+the separate kill switch (default `true`). The observe-first option from the
+Watcher dossier is implemented: a finding enters Activity with evidence and a
+suggested intervention; creating a proposal card still requires
+`Watcher:Enabled`. No capacity, credential, gate, or deployment mutation is
+authorized by a detector observation alone.
+
+The sweep reads the existing host telemetry, review-host capability and slot
+advertisements, the authoritative remote gate slot tracker, pending review
+attempts, batch-gate pending records, card lane
+timestamps and claim failures, and the host release drift snapshot. Thresholds
+under `Watcher` are `HostTargetPercent` (85), `HostOverloadMinutes` (10),
+`MemoryUsedPercent` (90), `SwapBytesPerSecond` (65536), `IdleWaitMinutes` (15),
+`GatePendingHours` (2), `LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10).
+Every finding has a stable
+case fingerprint, subject, severity, since time, affected card count, evidence,
+and suggested action. A successful healthy sweep resolves an open operational
+case; a failed probe cannot close cases. `GET /api/watcher/stalls` supplies the
+open count and cases for the red Studio marker, Execution Hosts, and board lane
+headers. Activity records the opening and closing transitions once each.
+
+The live release comparison covers registered runner roles. A container with
+no reported release identity has no comparable running-version fact and is
+not labelled as drift. The policy accepts a deployment start error when one is
+provided by a release source; the current collector does not yet receive
+compose errors or image digests for arbitrary containers.
+
 ## Verification
 
 - Outcome and grammar changes need focused unit tests for analyzer, policy,
