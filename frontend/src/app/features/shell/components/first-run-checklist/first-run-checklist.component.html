@@ -102,7 +102,7 @@
     <li data-testid="first-run-project" [attr.data-state]="repositoryReady() ? 'ready' : 'pending'">
       <span class="first-run__number">4</span>
       <div><h3>First project</h3>
-        <p>{{ repositoryReady() ? firstProject()?.displayName + ' has a canonical repository registration.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project and register its credential-free repository origin. The chosen host checks it out.' }}</p>
+        <p>{{ repositoryReady() ? firstProject()?.displayName + ' has a registered checkout.' : projects().error ? 'Project registry is unavailable. Refresh after reconnecting.' : 'Create a project, register its credential-free repository origin, then configure GitHub access to clone and verify the checkout.' }}</p>
         <button type="button" (click)="openProject()">{{ firstProject() ? 'Review project setup' : 'Create project' }}</button>
         @if (firstProject() && !repository().value) {
           <div class="first-run__form">

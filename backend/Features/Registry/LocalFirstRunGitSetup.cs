@@ -7,6 +7,7 @@ namespace AgentStudio.Registry;
 public sealed record LocalGitSetupRequest(string ProjectId, string Method, string? Token);
 public sealed record LocalGitSetupStatus(string Id, string State, string? PublicKey,
     bool FetchVerified, bool PushVerified);
+public sealed record LocalGitCredential(string Origin, string Method, string Id);
 
 /// <summary>Local-profile GitHub credentials live under the backend service account.</summary>
 public sealed class LocalFirstRunGitSetup
@@ -15,6 +16,9 @@ public sealed class LocalFirstRunGitSetup
     private readonly LocalFirstRunRepositoryProbe _probe;
     private readonly string _root;
     private readonly string _config;
+    private readonly ILocalFirstRunGitCommand _git;
+    private AgentStudio.Tasks.TaskScannerService? _scanner;
+    private AgentStudio.Runner.TaskRunnerService? _runners;
     private readonly ConcurrentDictionary<string, LocalGitSetupStatus> _setups = new(StringComparer.Ordinal);
 
     public LocalFirstRunGitSetup(ProjectRegistry projects, LocalFirstRunRepositoryProbe probe)
@@ -23,15 +27,43 @@ public sealed class LocalFirstRunGitSetup
                 ".ssh", "config")) { }
 
     public LocalFirstRunGitSetup(ProjectRegistry projects, LocalFirstRunRepositoryProbe probe,
-        string root, string config, string? sshConfig = null)
+        AgentStudio.Tasks.TaskScannerService scanner, AgentStudio.Runner.TaskRunnerService runners)
+        : this(projects, probe)
+    {
+        _scanner = scanner;
+        _runners = runners;
+    }
+
+    public LocalFirstRunGitSetup(ProjectRegistry projects, LocalFirstRunRepositoryProbe probe,
+        string root, string config, string? sshConfig = null, ILocalFirstRunGitCommand? git = null)
     {
         _projects = projects;
         _probe = probe;
         _root = root;
         _config = config;
+        _git = git ?? new LocalFirstRunGitCommand();
     }
 
-    public LocalGitSetupStatus? Get(string id) => _setups.GetValueOrDefault(id);
+    public LocalGitSetupStatus? Get(string id)
+    {
+        if (_setups.TryGetValue(id, out var status)) return status;
+        if (!ValidId(id)) return null;
+        var path = Path.Combine(_root, id, "status.json");
+        if (!File.Exists(path)) return null;
+        return JsonSerializer.Deserialize<LocalGitSetupStatus>(File.ReadAllText(path));
+    }
+
+    public (string? KeyPath, string? CredentialConfig) ResolveCredential(string projectId, string origin)
+    {
+        var path = Path.Combine(_root, "active-" + projectId + ".json");
+        if (!File.Exists(path)) return (null, null);
+        var active = JsonSerializer.Deserialize<LocalGitCredential>(File.ReadAllText(path));
+        if (active is null || active.Origin != origin || !ValidId(active.Id)) return (null, null);
+        var setupRoot = Path.Combine(_root, active.Id);
+        return active.Method == "deploy-key"
+            ? (Path.Combine(setupRoot, "deploy-key"), null)
+            : (null, Path.Combine(setupRoot, "probe.gitconfig"));
+    }
 
     public async Task<LocalGitSetupStatus> StartAsync(LocalGitSetupRequest request, CancellationToken ct)
     {
@@ -63,10 +95,13 @@ public sealed class LocalFirstRunGitSetup
             await File.WriteAllTextAsync(script,
                 CredentialHelperScript(tokenFile, uri.AbsolutePath.TrimStart('/')), ct);
             Protect(script);
+            var credentialSection = $"\n[credential \"{origin}\"]\n\thelper =\n\thelper = !sh '{script.Replace('\\', '/')}'\n\tuseHttpPath = true\n";
+            var proofConfig = Path.Combine(root, "probe.gitconfig");
+            await File.WriteAllTextAsync(proofConfig, credentialSection, ct);
+            Protect(proofConfig);
             await File.AppendAllTextAsync(config,
-                $"\n[credential \"{origin}\"]\n\thelper =\n\thelper = !sh '{script.Replace('\\', '/')}'\n\tuseHttpPath = true\n", ct);
+                credentialSection, ct);
             Protect(config);
-            _probe.SetDeployKey(project.Id, origin, null);
             status = new(id, "awaiting-verify", null, false, false);
         }
         else
@@ -79,23 +114,74 @@ public sealed class LocalFirstRunGitSetup
                 throw new InvalidOperationException("Deploy key generation failed.");
             Protect(key);
             var publicKey = (await File.ReadAllTextAsync(key + ".pub", ct)).Trim();
-            _probe.SetDeployKey(project.Id, origin, key);
             status = new(id, "awaiting-github", publicKey, false, false);
         }
         _setups[id] = status;
         await File.WriteAllTextAsync(Path.Combine(root, "project"), request.ProjectId, ct);
+        await PersistStatusAsync(status, ct);
+        var activePath = Path.Combine(_root, "active-" + project.Id + ".json");
+        await File.WriteAllTextAsync(activePath,
+            JsonSerializer.Serialize(new LocalGitCredential(origin, request.Method, id)), ct);
+        Protect(activePath);
         return status;
     }
 
     public async Task<LocalGitSetupStatus?> VerifyAsync(string id, CancellationToken ct)
     {
-        if (!_setups.TryGetValue(id, out var existing)) return null;
+        var existing = Get(id);
+        if (existing is null) return null;
         var projectPath = Path.Combine(_root, id, "project");
         var projectId = await File.ReadAllTextAsync(projectPath, ct);
         var project = _projects.FindById(projectId);
         if (project is null) return null;
+        var origin = project.Urls.FirstOrDefault(url => url.Id == "repo")?.Url;
+        if (origin is null) return null;
         var keyPath = existing.PublicKey is null ? null : Path.Combine(_root, id, "deploy-key");
-        var result = await _probe.ReadAsync(project, "main", ct, force: true, keyPath: keyPath);
+        var credentialConfig = keyPath is null ? Path.Combine(_root, id, "probe.gitconfig") : null;
+        var transport = keyPath is null ? origin : "git@github.com:" + new Uri(origin).AbsolutePath.TrimStart('/');
+        var environment = LocalFirstRunRepositoryProbe.TransportEnvironment(keyPath, credentialConfig);
+        var checkout = project.RepositoryPath;
+        if (string.IsNullOrWhiteSpace(checkout))
+        {
+            checkout = Path.Combine(_root, "checkouts", project.Id);
+            Directory.CreateDirectory(Path.GetDirectoryName(checkout)!);
+            var targetAvailable = !Directory.Exists(checkout) && !File.Exists(checkout);
+            var (cloned, _) = targetAvailable
+                ? await _git.RunAsync(Path.GetDirectoryName(checkout)!,
+                    ["clone", "--", transport, checkout], environment, ct)
+                : (false, string.Empty);
+            if (!cloned)
+            {
+                if (targetAvailable && Directory.Exists(checkout))
+                    Directory.Delete(checkout, recursive: true);
+                var denied = existing with { State = "denied", FetchVerified = false, PushVerified = false };
+                _setups[id] = denied;
+                await PersistStatusAsync(denied, ct);
+                return denied;
+            }
+            project = _projects.SetRepositoryPath(project.Id, checkout);
+        }
+        if (string.IsNullOrWhiteSpace(project.RootPath))
+            project = _projects.SetRootPath(project.Id, checkout);
+        if (keyPath is not null)
+        {
+            var (remoteSet, _) = await _git.RunAsync(checkout,
+                ["config", "--local", "remote.origin.url", transport], ct);
+            var (sshSet, _) = await _git.RunAsync(checkout,
+                ["config", "--local", "core.sshCommand", LocalFirstRunRepositoryProbe.SshCommand(keyPath)], ct);
+            if (!remoteSet || !sshSet) throw new InvalidOperationException("Could not configure the checkout for its deploy key.");
+        }
+        else
+        {
+            var (remoteSet, _) = await _git.RunAsync(checkout,
+                ["config", "--local", "remote.origin.url", origin], ct);
+            var (includeSet, _) = await _git.RunAsync(checkout,
+                ["config", "--local", "include.path", credentialConfig!], ct);
+            if (!remoteSet || !includeSet)
+                throw new InvalidOperationException("Could not configure the checkout credential helper.");
+        }
+        var result = await _probe.ReadAsync(project, "main", ct, force: true,
+            keyPath: keyPath, credentialConfig: credentialConfig);
         if (result is null) return null;
         var json = JsonSerializer.SerializeToElement(result);
         var receipt = json.GetProperty("probes")[0];
@@ -104,12 +190,30 @@ public sealed class LocalFirstRunGitSetup
         var status = existing with
         {
             State = verified ? "verified" : "denied",
-            FetchVerified = verdict is not ("read-denied" or "origin-mismatch"),
+            FetchVerified = verified || verdict is "write-denied" or "probe-cleanup-required",
             PushVerified = verified,
         };
         _setups[id] = status;
+        await PersistStatusAsync(status, ct);
+        if (verified && _scanner is not null && _runners is not null)
+        {
+            var entry = _scanner.GetWatchPaths().FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, project.DisplayName, StringComparison.Ordinal));
+            if (entry is not null) _runners.EnsureRunner(entry);
+        }
         return status;
     }
+
+    private async Task PersistStatusAsync(LocalGitSetupStatus status, CancellationToken ct)
+    {
+        var path = Path.Combine(_root, status.Id, "status.json");
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(status), ct);
+        Protect(path);
+    }
+
+    private static bool ValidId(string id)
+        => id.StartsWith("local-git-", StringComparison.Ordinal)
+            && Guid.TryParseExact(id["local-git-".Length..], "N", out _);
 
     private static async Task<bool> RunAsync(string executable, string directory,
         IReadOnlyList<string> args, CancellationToken ct)

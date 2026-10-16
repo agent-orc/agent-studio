@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { test, expect } from '../fixtures/dev-backend';
 
-test.use({ recoveryRepository: true });
+test.use({ recoveryRepository: true, trace: 'off' });
 
-test('first-run checklist reflects a real local checkout read and write proof', async ({ page }) => {
+test('first-run GitHub proof rejects a checkout URL rewrite to a scratch repository', async ({ page }) => {
+  test.setTimeout(180_000);
   const workspace = process.env.PW_E2E_WORKSPACE;
   expect(workspace).toBeTruthy();
   const repositoryPath = join(workspace!, 'recovery-repository');
@@ -43,11 +44,24 @@ test('first-run checklist reflects a real local checkout read and write proof', 
   await page.goto('/#/workspace/settings/first-run');
   const checklist = page.getByTestId('first-run-checklist');
   await expect(checklist).toBeVisible();
+  await page.reload();
+  await expect(checklist).toBeVisible();
+  let registeredProjectId = project!.id;
   if (await page.getByTestId('first-run-repository-url').isVisible()) {
+    const registration = page.waitForResponse(response => response.request().method() === 'PUT'
+      && /\/api\/projects\/PROJ-\d+$/.test(new URL(response.url()).pathname), { timeout: 30_000 });
     await page.getByTestId('first-run-repository-url').fill(origin);
     await page.getByTestId('first-run-register-repository').click();
+    const saved = await registration;
+    expect(saved.ok(), `${saved.status()}: ${await saved.text()}`).toBeTruthy();
+    const updated = await saved.json() as { id: string; repositoryUrl?: string; repositoryPath?: string };
+    expect(updated.repositoryUrl).toBe(origin);
+    expect(updated.repositoryPath).toBe(repositoryPath);
+    registeredProjectId = updated.id;
   }
-  await expect(page.getByTestId('first-run-project')).toHaveAttribute('data-state', 'ready');
+  await page.reload();
+  await expect(checklist).toBeVisible();
+  await expect(page.getByTestId('first-run-project')).toHaveAttribute('data-state', 'ready', { timeout: 60_000 });
 
   const auth = await page.request.get('/api/v1/studio/auth/status');
   const owner = page.getByTestId('first-run-owner');
@@ -57,17 +71,17 @@ test('first-run checklist reflects a real local checkout read and write proof', 
       response.authenticated && !response.bootstrapRequired ? 'ready' : 'pending');
   }
 
-  const repository = await page.request.get(`/api/first-run/projects/${encodeURIComponent(project!.id)}/repository`);
+  const repository = await page.request.get(`/api/first-run/projects/${encodeURIComponent(registeredProjectId)}/repository`);
   expect(repository.ok()).toBeTruthy();
   const live = await repository.json() as { probes: { admitted: boolean }[] };
-  expect(live.probes.some(probe => probe.admitted)).toBeTruthy();
+  expect(live.probes.some(probe => probe.admitted)).toBeFalsy();
   await page.getByTestId('first-run-git-method').selectOption('token');
   await page.getByTestId('first-run-git-token').fill(['test', 'x'.repeat(36)].join('-'));
   await page.getByTestId('first-run-git-start').click();
   await expect(page.getByTestId('first-run-git-state')).toContainText('awaiting-verify');
   await page.getByTestId('first-run-git-verify').click();
-  await expect(page.getByTestId('first-run-git-state')).toContainText('verified');
-  await expect(page.getByTestId('first-run-git')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('first-run-git-state')).toContainText('denied', { timeout: 60_000 });
+  await expect(page.getByTestId('first-run-git')).toHaveAttribute('data-state', 'pending');
   await page.getByTestId('first-run-git-method').selectOption('deploy-key');
   await page.getByTestId('first-run-git-start').click();
   await expect(page.getByTestId('first-run-deploy-key')).toContainText('ssh-ed25519');
@@ -79,4 +93,50 @@ test('first-run checklist reflects a real local checkout read and write proof', 
     mkdirSync(results, { recursive: true });
     await page.screenshot({ path: join(results, 'first-run-checklist.png'), fullPage: true });
   }
+});
+
+test.describe('operator supplied first-run proof', () => {
+  const origin = process.env.PW_E2E_FIRST_RUN_GITHUB_URL;
+  const token = process.env.PW_E2E_FIRST_RUN_GITHUB_TOKEN;
+  test.skip(!origin || !token, 'Requires an operator supplied disposable GitHub repository and test token.');
+  test('clones a disposable GitHub repository and reaches integration', async ({ page }) => {
+  test.setTimeout(16 * 60_000);
+  expect(origin).toMatch(/^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.git$/);
+  const projects = await page.request.get('/api/projects');
+  expect(projects.ok()).toBeTruthy();
+  const existing = await projects.json() as { id: string; workspaceId: string; archived: boolean }[];
+  for (const project of existing.filter(entry => !entry.archived)) {
+    const archived = await page.request.put(`/api/projects/${encodeURIComponent(project.id)}`, {
+      headers: { 'X-Client-Id': 'local-default' }, data: { archived: true },
+    });
+    expect(archived.ok()).toBeTruthy();
+  }
+  const registered = await page.request.post('/api/projects', {
+    headers: { 'X-Client-Id': 'local-default' },
+    data: { workspaceId: existing[0]?.workspaceId ?? 'ws-default',
+      displayName: 'First Run Live Proof', repositoryUrl: origin },
+  });
+  expect(registered.ok(), `${registered.status()}: ${await registered.text()}`).toBeTruthy();
+
+  await page.goto('/#/workspace/settings/first-run');
+  await expect(page.getByTestId('first-run-owner')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('first-run-project')).toHaveAttribute('data-state', 'pending');
+  await page.getByTestId('first-run-git-method').selectOption('token');
+  await page.getByTestId('first-run-git-token').fill(token!);
+  await page.getByTestId('first-run-git-start').click();
+  await expect(page.getByTestId('first-run-git-state')).toContainText('awaiting-verify');
+  await page.getByTestId('first-run-git-verify').click();
+  await expect(page.getByTestId('first-run-git-state')).toContainText('verified', { timeout: 120_000 });
+  await expect(page.getByTestId('first-run-project')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('first-run-git')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('first-run-providers')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('first-run-host')).toHaveAttribute('data-state', 'ready');
+  await page.getByTestId('first-run-demo-confirm').check();
+  await page.getByTestId('first-run-create-proof').click();
+  await expect(page.getByTestId('first-run-proof-id')).toBeVisible();
+  await expect(async () => {
+    await page.getByTestId('first-run-refresh').click();
+    await expect(page.getByTestId('first-run-proof')).toHaveAttribute('data-state', 'ready');
+  }).toPass({ timeout: 15 * 60_000, intervals: [5_000] });
+  });
 });

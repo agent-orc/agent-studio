@@ -105,7 +105,8 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly selectedProvider = computed(() => this.providerBadges().find(badge =>
     (badge.provider === 'codex' || badge.provider === 'claude') && this.badgeHostOnline(badge)
     && this.badgeReady(badge)) ?? null);
-  readonly repositoryReady = computed(() => !!this.firstProject()?.id && !!this.repository().value?.registration);
+  readonly repositoryReady = computed(() => !!this.firstProject()?.id && !!this.repository().value?.registration
+    && (!this.localProfile() || !!this.firstProject()?.repositoryPath));
   readonly gitReady = computed(() => {
     const status = this.repository().value;
     if (!status) return false;
@@ -139,7 +140,6 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     if (localStorage.getItem('studio-first-run-git-setup-id')) this.refreshGitSetup();
     this.poll = setInterval(() => { this.reload(); this.refreshProof(); }, 30_000);
   }
-
   ngOnDestroy(): void {
     if (this.poll) clearInterval(this.poll);
     if (this.loginPoll) clearInterval(this.loginPoll);
@@ -223,7 +223,6 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
       },
     });
   }
-
   refreshGitSetup(): void {
     const id = this.gitSetup()?.id ?? localStorage.getItem('studio-first-run-git-setup-id');
     if (!id) return;
@@ -260,7 +259,6 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
         error: () => this.gitSetupError.set('Read and write verification could not start.'),
       });
   }
-
   async copyDeployKey(): Promise<void> {
     const key = this.gitSetup()?.publicKey;
     if (key) this.keyCopyLabel.set(await copyTextToClipboard(key) ? 'Copied' : 'Copy failed');
@@ -282,7 +280,6 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
       },
     });
   }
-
   downloadJoinToken(): void {
     const token = this.joinToken()?.joinToken;
     if (!token) return;
@@ -403,6 +400,9 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
         this.proof.set(proof);
         localStorage.setItem('studio-first-run-proof', JSON.stringify(proof));
         this.creatingProof.set(false);
+        if (watchPath) this.http.post(`/api/runner/${encodeURIComponent(project.displayName)}/start`, {}).subscribe({
+          error: () => this.proofError.set('The sample card was created, but its local runner could not start.'),
+        });
         this.refreshProof();
       },
       error: () => {

@@ -81,6 +81,6 @@ internal sealed class RunnerProviderSetupLauncher(string codexBinary, string cla
     private static void Kill(Process process)
     {
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-        catch (InvalidOperationException) { }
+        catch (InvalidOperationException) { return; }
     }
 }

@@ -20,7 +20,10 @@ public sealed class LocalFirstRunRepositoryProbeTests : IDisposable
         var git = new FakeGit();
         var probe = new LocalFirstRunRepositoryProbe(_clock, git);
         Assert.Null(await probe.ReadAsync(Project(null, _checkout), "main", default));
-        Assert.Null(await probe.ReadAsync(Project(Origin, Path.Combine(_checkout, "missing")), "main", default));
+        var missing = JsonSerializer.SerializeToElement(await probe.ReadAsync(
+            Project(Origin, Path.Combine(_checkout, "missing")), "main", default));
+        Assert.Equal(Origin, missing.GetProperty("registration").GetProperty("repositoryUrl").GetString());
+        Assert.Empty(missing.GetProperty("probes").EnumerateArray());
         Assert.Empty(git.Calls);
     }
 
@@ -42,8 +45,11 @@ public sealed class LocalFirstRunRepositoryProbeTests : IDisposable
         Assert.Equal(Origin, json.GetProperty("registration").GetProperty("repositoryUrl").GetString());
         if (failingStep == "none")
         {
+            Assert.Contains(git.Calls, args => args[0] == "clone" && args[4] == _checkout);
+            Assert.Contains(git.Calls, args => args[0] == "ls-remote" && args[2] == Origin);
             Assert.Contains(git.Calls, args => args[0] == "push" && args[2].StartsWith("HEAD:refs/heads/agent-studio-access-probe/"));
             Assert.Contains(git.Calls, args => args[0] == "push" && args[2].StartsWith(":refs/heads/agent-studio-access-probe/"));
+            Assert.All(git.NetworkDirectories, directory => Assert.NotEqual(_checkout, directory));
         }
     }
 
@@ -59,6 +65,21 @@ public sealed class LocalFirstRunRepositoryProbeTests : IDisposable
     private sealed class FakeGit(string failingStep = "none") : ILocalFirstRunGitCommand
     {
         public List<IReadOnlyList<string>> Calls { get; } = [];
+        public List<string> NetworkDirectories { get; } = [];
+
+        public Task<(bool Success, string Output)> RunAsync(string directory,
+            IReadOnlyList<string> args, IReadOnlyDictionary<string, string?> environment, CancellationToken ct)
+        {
+            if (args[0] is "ls-remote" or "push")
+            {
+                NetworkDirectories.Add(directory);
+                Assert.Equal(Origin, args[1] == "--heads" ? args[2] : args[1]);
+                Assert.Equal("0", environment["GIT_CONFIG_COUNT"]);
+                Assert.Equal(OperatingSystem.IsWindows() ? "NUL" : "/dev/null",
+                    environment["GIT_CONFIG_GLOBAL"]);
+            }
+            return RunAsync(directory, args, ct);
+        }
 
         public Task<(bool Success, string Output)> RunAsync(
             string directory, IReadOnlyList<string> args, CancellationToken ct)
