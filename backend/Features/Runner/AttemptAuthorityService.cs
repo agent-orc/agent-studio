@@ -168,6 +168,10 @@ public sealed class AttemptAuthorityService
     /// </summary>
     private readonly object _archiveIndexBuildGate = new();
     private IReadOnlyDictionary<string, ArchiveIndexEntry>? _archiveIndexFromDisk;
+    private static readonly TimeSpan ArchiveIndexRetryDelay = TimeSpan.FromMinutes(5);
+    private readonly Dictionary<string, DateTime> _archiveIndexFailedShards = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _archiveIndexReportedShards = new(StringComparer.OrdinalIgnoreCase);
+    private long _archiveIndexNextRetryTicks = long.MaxValue;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ArchiveIndexEntry> _archiveWrites =
         new(StringComparer.OrdinalIgnoreCase);
     private const int CachedArchiveShardLimit = 4;
@@ -1003,7 +1007,9 @@ public sealed class AttemptAuthorityService
             if (review is not null)
                 return ClaimReviewLocked(review, executorId, hostId, requestedTtlSeconds, idempotencyKey, instanceId);
         }
-        var archived = FindArchivedReview(attemptId);
+        // A claim must never wait for the archive warmup. The live authority
+        // has already answered whether this attempt can be claimed.
+        var archived = FindArchivedReview(attemptId, allowBuild: false);
         return archived is null
             ? new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId))
             : new AttemptWriteResult(AttemptWriteStatus.Superseded, archived.AttemptId,
@@ -3651,7 +3657,7 @@ public sealed class AttemptAuthorityService
             .ToList();
 
     private RunAttemptRecord? FindArchivedRun(string attemptId)
-        => ArchiveIndex()
+        => ArchiveIndex("attempt-read", waitForBuild: false)
             .Where(entry => entry.Value.RunIds.Contains(attemptId))
             .Select(entry => entry.Key)
             .Where(File.Exists)
@@ -3659,8 +3665,8 @@ public sealed class AttemptAuthorityService
             .SelectMany(path => LoadCachedArchive(path).RunAttempts)
             .FirstOrDefault(run => Same(run.AttemptId, attemptId));
 
-    private ReviewAttemptRecord? FindArchivedReview(string attemptId)
-        => ArchiveIndex()
+    private ReviewAttemptRecord? FindArchivedReview(string attemptId, bool allowBuild = true)
+        => ArchiveIndex("attempt-read", allowBuild: allowBuild, waitForBuild: false)
             .Where(entry => entry.Value.ReviewIds.Contains(attemptId))
             .Select(entry => entry.Key)
             .Where(File.Exists)
@@ -3704,32 +3710,40 @@ public sealed class AttemptAuthorityService
     /// Builds the archive index off the request path (AGT-3109). The card detail
     /// polls history every few seconds; without a warm index the first of those
     /// reads after a restart deserializes every shard while the others wait for
-    /// it. A failed build stays unbuilt, so the next history read retries it and
-    /// still fails closed. Returns the number of indexed shards.
+    /// it. Successful shards remain indexed when another shard fails. Only the
+    /// failed shards are retried after a bounded delay.
     /// </summary>
     public int WarmArchiveIndex() => ArchiveIndex("warmup").Count;
 
-    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex(string trigger = "history-read")
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> ArchiveIndex(
+        string trigger = "history-read", bool allowBuild = true, bool waitForBuild = true)
     {
         var fromDisk = Volatile.Read(ref _archiveIndexFromDisk);
-        if (fromDisk is null)
+        if (allowBuild && (fromDisk is null || _utcNow().Ticks >= Volatile.Read(ref _archiveIndexNextRetryTicks)))
         {
-            lock (_archiveIndexBuildGate)
+            var entered = waitForBuild
+                ? EnterArchiveIndexBuildGate()
+                : Monitor.TryEnter(_archiveIndexBuildGate);
+            if (entered)
             {
-                fromDisk = _archiveIndexFromDisk;
-                if (fromDisk is null)
+                try
                 {
-                    var started = System.Diagnostics.Stopwatch.GetTimestamp();
-                    fromDisk = BuildArchiveIndexFromDisk();
-                    Volatile.Write(ref _archiveIndexFromDisk, fromDisk);
-                    _logger.LogInformation(
-                        "attempt-authority-archive-index-built trigger={Trigger} shards={ShardCount} elapsedMs={ElapsedMs}",
-                        trigger,
-                        fromDisk.Count,
-                        (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    fromDisk = _archiveIndexFromDisk;
+                    if (fromDisk is null || _utcNow().Ticks >= _archiveIndexNextRetryTicks)
+                    {
+                        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                        fromDisk = BuildArchiveIndexFromDisk(fromDisk);
+                        Volatile.Write(ref _archiveIndexFromDisk, fromDisk);
+                        _logger.LogInformation(
+                            "attempt-authority-archive-index-built trigger={Trigger} shards={ShardCount} failedShards={FailedShards} elapsedMs={ElapsedMs}",
+                            trigger, fromDisk.Count, _archiveIndexFailedShards.Count,
+                            (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    }
                 }
+                finally { Monitor.Exit(_archiveIndexBuildGate); }
             }
         }
+        fromDisk ??= new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase);
         if (_archiveWrites.IsEmpty) return fromDisk;
         var merged = new Dictionary<string, ArchiveIndexEntry>(fromDisk, StringComparer.OrdinalIgnoreCase);
         foreach (var (path, entry) in _archiveWrites)
@@ -3737,18 +3751,54 @@ public sealed class AttemptAuthorityService
         return merged;
     }
 
-    private IReadOnlyDictionary<string, ArchiveIndexEntry> BuildArchiveIndexFromDisk()
+    private bool EnterArchiveIndexBuildGate()
     {
-        var index = new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        Monitor.Enter(_archiveIndexBuildGate);
+        return true;
+    }
+
+    private IReadOnlyDictionary<string, ArchiveIndexEntry> BuildArchiveIndexFromDisk(
+        IReadOnlyDictionary<string, ArchiveIndexEntry>? previous)
+    {
+        var index = previous is null
+            ? new Dictionary<string, ArchiveIndexEntry>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, ArchiveIndexEntry>(previous, StringComparer.OrdinalIgnoreCase);
         if (_path is null)
             return index;
         var directory = Path.GetDirectoryName(_path);
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
             return index;
-        // An unreadable shard fails the read closed and is retried on the next
-        // history read instead of being cached as empty.
-        foreach (var path in Directory.EnumerateFiles(directory, ArchiveFilePattern))
-            index[path] = IndexArchive(LoadArchive(path));
+        var paths = previous is null
+            ? Directory.EnumerateFiles(directory, ArchiveFilePattern).ToArray()
+            : _archiveIndexFailedShards.Where(item => item.Value <= _utcNow())
+                .Select(item => item.Key).ToArray();
+        foreach (var path in paths)
+        {
+            if (!File.Exists(path))
+            {
+                _archiveIndexFailedShards.Remove(path);
+                index.Remove(path);
+                continue;
+            }
+            try
+            {
+                index[path] = IndexArchive(LoadArchive(path));
+                _archiveIndexFailedShards.Remove(path);
+                _archiveIndexReportedShards.Remove(path);
+            }
+            catch (InvalidDataException ex)
+            {
+                _archiveIndexFailedShards[path] = _utcNow().Add(ArchiveIndexRetryDelay);
+                if (_archiveIndexReportedShards.Add(path))
+                    _logger.LogCritical(ex,
+                        "attempt-authority-archive-index-shard-failed path={ArchivePath} error={Error}",
+                        path, ex.Message);
+            }
+        }
+        Volatile.Write(ref _archiveIndexNextRetryTicks,
+            _archiveIndexFailedShards.Count == 0
+                ? long.MaxValue
+                : _archiveIndexFailedShards.Values.Min().Ticks);
         return index;
     }
 
