@@ -82,7 +82,8 @@ export default defineConfig({
     {
       name: 'chromium',
       ...(prebuilt ? {
-        testMatch: profile === 'recovery' || profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
+        testMatch: profile === 'recovery' ? ['**/system/crash-recovery-prompt.spec.ts', '**/settings/first-run-checklist.spec.ts']
+          : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
           ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
