@@ -1,10 +1,12 @@
 # AGT-3186 delivery status
 
-- Result SHA-256: `a73bc915f6a7d919cb66ac900b6fd7d893b558d531656054a1bede77bf28a471` (sorted changed-file paths and contents, excluding this status file). The base Git SHA is `fc7bc1c24fee4e63edd626f479ec6701df0513e4`; the managed pipeline assigns the result commit after delivery.
+- Result SHA-256: `91db44222dc137f2edcb9fa1a00af8ead1a669db2fd0205a19d96c61bafe5351` (sorted changed-file paths and contents, separated by NUL bytes, excluding this status file). Delivery `7d9eee95266c95c0cef34f88ef28a9253dd4a557` was rebased onto `acb056b20b9dccf0040432f6cf61bfdc7dc8e8f2`; the rebased delivery commit is `96399516885ea106848371529d83c5282d4442fa`. The managed pipeline assigns the final result commit after delivery.
 - Implemented option: extend the existing `AccessSecurityStore` and `.security/access-state.json` for named, hashed, expiring, revocable operator/viewer API tokens. Each token has an explicit project grant, last-use metadata, and per-call audit attribution. No second credential store was added.
 - Settings > Access now manages users, API tokens, runner enrollment codes, and enrolled runners. Networked browser sign-in uses the monolith human session; local and public demo behavior retain their existing paths. The Product role remains the separate AGT-3182 deliverable; this page is owner-only.
 - The task-api scripts and networked operator probes accept a bearer from `AGENT_STUDIO_API_TOKEN` while keeping `X-Client-Id` as attribution.
 - Verification: final solution and frontend builds passed. Focused backend class-filtered tests passed (76), backend guard tests passed (82), and runner and Task Server guard filters had no matches. Focused frontend component tests passed (19); frontend lint, script checks, and the Access Playwright spec passed. Light and dark screenshots are in the task results directory.
+- Follow-up fix: all-projects operator tokens now fail the same installation-wide write guard as project-limited tokens. Scoped tokens cannot read live or cached workspace expensive-jobs lists. Regression tests cover both bypasses.
+- Follow-up verification: `dotnet build agent-taskboard.sln --no-restore` passed; `ApiTokenAccessTests|ScopedOperatorAuthorizationTests|AccessSecurityTests|PublicDemoExecutionProfileTests` passed (95); `FullyQualifiedName~Architecture` passed in backend (103) and Task Server (5); `FullyQualifiedName~.Architecture.|Category=Guard` passed in backend (82) and found no matches in the other seven .NET test projects; `npm --prefix frontend run lint` and `git diff --check` passed.
 
 # AGT-3153 release workflow status
 
