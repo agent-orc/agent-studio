@@ -170,20 +170,15 @@ public sealed class SoftReasoningHostedService : BackgroundService
             ["current_job_id"] = o.CurrentJobId ?? string.Empty,
             ["current_run_state"] = o.CurrentRunState ?? string.Empty,
             ["last_progress_at"] = o.LastProgressAt?.ToString("u") ?? "-",
-            ["error_cli"] = o.Omissions.Contains("errorCounts:raw-log")
-                ? "unknown (raw log omitted)" : o.ErrorCounts.CliErrorsLastHour.ToString(),
-            ["error_orch"] = o.Omissions.Contains("errorCounts:raw-log")
-                ? "unknown (raw log omitted)" : o.ErrorCounts.OrchestratorErrorsLastHour.ToString(),
-            ["error_failures"] = o.Omissions.Contains("errorCounts:raw-log")
-                ? "unknown (raw log omitted)" : o.ErrorCounts.RunFailuresLastHour.ToString(),
-            ["recent_samples"] = samples.Length == 0 ? "(omitted: raw agent stream)" : samples,
+            ["error_cli"] = o.ErrorCounts.CliErrorsLastHour.ToString(),
+            ["error_orch"] = o.ErrorCounts.OrchestratorErrorsLastHour.ToString(),
+            ["error_failures"] = o.ErrorCounts.RunFailuresLastHour.ToString(),
+            ["recent_samples"] = samples,
             ["recent_decisions"] = decisions,
-            ["evidence_omissions"] = string.Join(", ", o.Omissions),
         };
         try
         {
-            return _prompts.Render("supervisor-soft-reasoning.md", values) +
-                "\nEvidence omissions: " + values["evidence_omissions"];
+            return _prompts.Render("supervisor-soft-reasoning.md", values);
         }
         catch (Exception ex)
         {

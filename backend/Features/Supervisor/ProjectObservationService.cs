@@ -21,19 +21,22 @@ public sealed class ProjectObservationService
     private readonly ILogger<ProjectObservationService> _logger;
     private readonly TimeProvider _time;
     private readonly OrchestratorDecisionStore? _decisionReceipts;
+    private readonly IConfiguration? _configuration;
 
     public ProjectObservationService(
         TaskRunnerService taskRunner,
         TaskScannerService jobScanner,
         ILogger<ProjectObservationService> logger,
         TimeProvider? time = null,
-        OrchestratorDecisionStore? decisionReceipts = null)
+        OrchestratorDecisionStore? decisionReceipts = null,
+        IConfiguration? configuration = null)
     {
         _taskRunner = taskRunner;
         _jobScanner = jobScanner;
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _decisionReceipts = decisionReceipts;
+        _configuration = configuration;
     }
 
     public Task<SupervisorObservation> ObserveAsync(string project, CancellationToken ct)
@@ -68,6 +71,11 @@ public sealed class ProjectObservationService
         }
 
         var info = SafeFindJob(activeJobId);
+        var engineDecides = _configuration is not null
+            && MonolithTransitionSwitch.For(_configuration, ReviewInputDecisionGateway.Transition)
+                == OrchestrationExecutionMode.Engine;
+        var logPath = info != null ? TaskPaths.CliOutputLog(info.FolderPath) : null;
+        var lines = ReadDecisionLines(logPath, project, engineDecides);
 
         // Cycle 2c: LastProgressAt must reflect the union of every file the
         // runner may append to during a live session, not just cli-output.log.
@@ -80,7 +88,7 @@ public sealed class ProjectObservationService
         // duplicate "stalled" warnings every 10 s. The union pattern lives in
         // StaleProgressArchiver.MeasureFolder for the same reason; this
         // mirrors it for the live observation path.
-        DateTime? lastProgressAt = null;
+        var lastProgressAt = ObservationParsing.LatestTimestamp(lines);
         if (info != null)
         {
             var folderMtime = MaxMtimeAcrossActivityFiles(info.FolderPath);
@@ -90,14 +98,16 @@ public sealed class ProjectObservationService
             }
         }
 
-        // A decision observation uses typed runner state and file metadata.
-        // Raw CLI lines are not part of the supervision model input.
-        IReadOnlyList<SupervisorRecentDecision> recentDecisions = _decisionReceipts?
-            .ListReceipts(activeJobId, 5, project)
-            .Select(receipt => new SupervisorRecentDecision(receipt.EndedAt, receipt.Profile,
-                receipt.ChosenAction, receipt.EvidenceRef)).ToArray() ?? [];
-        IReadOnlyList<string> recentSamples = [];
-        var errorCounts = new SupervisorErrorCounts(0, 0, 0);
+        IReadOnlyList<SupervisorRecentDecision> recentDecisions = engineDecides
+            ? _decisionReceipts?.ListReceipts(activeJobId, 5, project)
+                .Select(receipt => new SupervisorRecentDecision(receipt.EndedAt, receipt.Profile,
+                    receipt.ChosenAction, receipt.EvidenceRef)).ToArray() ?? []
+            : ObservationParsing.ExtractRecentDecisions(lines);
+        IReadOnlyList<string> recentSamples = engineDecides
+            ? [] : ObservationParsing.ExtractRecentAgentSamples(lines);
+        var errorCounts = engineDecides
+            ? new SupervisorErrorCounts(0, 0, 0)
+            : ObservationParsing.CountErrors(lines, capturedAt, TimeSpan.FromHours(1));
 
         return Task.FromResult(new SupervisorObservation(
             CapturedAt: capturedAt,
@@ -111,8 +121,20 @@ public sealed class ProjectObservationService
             RecentAgentSamples: recentSamples,
             ErrorCounts: errorCounts)
         {
-            Omissions = ["recentAgentSamples:raw-stream", "errorCounts:raw-log"],
+            Omissions = engineDecides
+                ? ["recentAgentSamples:raw-stream", "errorCounts:raw-log"] : [],
         });
+    }
+
+    internal IReadOnlyList<CliOutputLine> ReadDecisionLines(string? logPath, string project, bool engineDecides)
+    {
+        if (engineDecides || logPath is null || !File.Exists(logPath)) return [];
+        try { return CliOutputLogParser.ParseFile(logPath); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ProjectObservationService failed to parse {LogPath} for {Project}", logPath, project);
+            return [];
+        }
     }
 
     private TaskInfo? SafeFindJob(string jobId)

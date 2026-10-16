@@ -20,7 +20,7 @@ public sealed class OrchestratorContextDigestService
     internal const int QuotaWindowLimit = 3;
     internal const int MaxDigestBytes = 32 * 1024;
     private static readonly Regex Credential = new(
-        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?<![\w-])(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private const int TransitionCandidateLimit = 64;
 
