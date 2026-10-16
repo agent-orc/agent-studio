@@ -886,7 +886,7 @@ public static class V1ReviewPlaneEndpoints
                         FailureClassification = "AspectVerdictUnparseable",
                         Summary = $"Aspect verdict infrastructure failed for {string.Join(", ", exhaustedAspects)}; the aspect retry was exhausted.",
                     };
-                if (TransitionDecisionPolicy.IsDeferredAcceptance(
+                if (MonolithTransitionAdapter.TransitionDecisionPolicyIsDeferredAcceptance(
                         currentReview.Subject.Plan?.BuildTestDeferredToBatch == true, request.Outcome)
                     && !request.Verdicts.Any(verdict =>
                         string.Equals(verdict.Aspect, "build-tests", StringComparison.Ordinal)
@@ -1020,7 +1020,7 @@ public static class V1ReviewPlaneEndpoints
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 
-            var reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
+            var reviewFollowUp = MonolithTransitionAdapter.ReviewFollowUp(
                 request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                     verdict.Aspect,
                     verdict.Status,
@@ -1046,7 +1046,7 @@ public static class V1ReviewPlaneEndpoints
                     + "Inconclusive, or Cancellation."));
 
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
-            var batchDeferredAccepted = TransitionDecisionPolicy.IsDeferredAcceptance(batchDeferred, request.Outcome);
+            var batchDeferredAccepted = MonolithTransitionAdapter.TransitionDecisionPolicyIsDeferredAcceptance(batchDeferred, request.Outcome);
             // A replay restores the journaled report, which already carries the
             // deferred verdict; appending it again would change the payload hash.
             if (batchDeferredAccepted && !request.Verdicts.Any(verdict =>
@@ -1096,7 +1096,7 @@ public static class V1ReviewPlaneEndpoints
             reviewFollowUp = budgetDecision.FollowUp;
             if (shouldDegrade)
             {
-                request = ReviewRoundBudgetPolicy.ApplyRemoteReport(request, roundBudget);
+                request = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyRemoteReport(request, roundBudget);
                 if (string.Equals(request.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
                     outcome = ReviewTerminalOutcome.Pass;
             }
@@ -1160,7 +1160,7 @@ public static class V1ReviewPlaneEndpoints
                     ?? ToSubject(currentReview, scanner, projects, settings, remoteReviewPlans, out _, out _).Plan;
                 // The authority settles the parsed outcome; the journaled decision
                 // carries that spelling, never the raw report string.
-                var decision = RemoteDeliveryIntegrationPolicy.Decide(
+                var decision = MonolithTransitionAdapter.RemoteDeliveryIntegration(
                     HasSettledResultEnvelope(sourceRun), outcome.ToString(), plan, request.Verdicts);
                 var projectSettings = settings.Get(preparedTask.ProjectName);
                 var subject = ReviewSubjectStore.Read(preparedTask.FolderPath);
@@ -1274,7 +1274,7 @@ public static class V1ReviewPlaneEndpoints
                     MaximumDeliveredRounds: settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds);
                 var shadowJson = JsonSerializer.Serialize(shadowPayload, Json);
                 var shadowDecision = MonolithTransitionAdapter.Decide(
-                    StageDecisionPolicy.Facts(preparedTask.Id, 0, shadowPayload));
+                    MonolithTransitionAdapter.StageDecisionPolicyFacts(preparedTask.Id, 0, shadowPayload));
                 orchestration.Create(preparedTask.ProjectName, preparedTask.Id,
                     Contract.OrchestrationStage.ReviewDecision, shadowJson,
                     $"review-report:{attemptId}:{request.IdempotencyKey}",
@@ -1472,7 +1472,9 @@ public static class V1ReviewPlaneEndpoints
             {
                 var journaled = RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Entry;
                 if (journaled is null || !await RemoteReviewContinuationProjection.ApplyAsync(
-                        task, journaled, scanner, transitions, mutations, timeline, logger, ct))
+                        task, journaled, scanner, transitions, mutations, timeline, logger,
+                        () => MonolithTransitionSwitch.For(configuration, "ReviewReport")
+                            != OrchestrationExecutionMode.Engine, ct))
                 {
                     EnqueueEvidenceProjection();
                     return Results.Json(new Contract.ApiError("review-continuation-write-failed",
@@ -1579,7 +1581,7 @@ public static class V1ReviewPlaneEndpoints
             if (breakerEnabled && settled.ReviewAttempt.Outcome != ReviewTerminalOutcome.Pass)
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
-            var retry = infrastructureFailure && TransitionDecisionPolicy.RetryInfrastructure(
+            var retry = infrastructureFailure && MonolithTransitionAdapter.TransitionDecisionPolicyRetryInfrastructure(
                 authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId),
                 aspectRetryExhausted, intervention is not null, probeFailed, !diagnosisContractUnsupported);
             var repeatDiagnosis = infrastructureFailure
@@ -1625,7 +1627,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 var projectSettingsForFollowUp = settings.Get(task.ProjectName);
                 var concernLedger = ReviewConcernRoundStore.Read(task.FolderPath);
-                reviewFollowUp = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy.Decide(
+                reviewFollowUp = MonolithTransitionAdapter.ReviewFollowUp(
                     request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                         verdict.Aspect,
                         verdict.Status,
@@ -1636,7 +1638,7 @@ public static class V1ReviewPlaneEndpoints
                     concernLedger?.Used ?? 0,
                     projectSettingsForFollowUp.MaxReviewConcernRounds);
                 if (shouldDegrade && outcome == ReviewTerminalOutcome.Pass)
-                    reviewFollowUp = ReviewRoundBudgetPolicy.ApplyFollowUp(reviewFollowUp, roundBudget);
+                    reviewFollowUp = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyFollowUp(reviewFollowUp, roundBudget);
                 if (concernLedger is { StillOpen: true }
                     && !string.Equals(
                         concernLedger.ReviewAttemptId,
@@ -1881,7 +1883,7 @@ public static class V1ReviewPlaneEndpoints
                         prepared.ShouldIntegrate,
                         Enum.Parse<RemoteBuildTestGateClass>(prepared.BuildTestGate),
                         prepared.GateReason)
-                    : RemoteDeliveryIntegrationPolicy.Decide(
+                    : MonolithTransitionAdapter.RemoteDeliveryIntegration(
                         HasSettledResultEnvelope(sourceRun),
                         settled.ReviewAttempt.Outcome?.ToString(),
                         settledReviewPlan,
@@ -2728,7 +2730,7 @@ public static class V1ReviewPlaneEndpoints
         TaskInfo task,
         ReviewAttemptDto review)
     {
-        var diagnosis = ReviewInfrastructureRepeatPolicy.Diagnose(
+        var diagnosis = MonolithTransitionAdapter.ReviewInfrastructureRepeatPolicyDiagnose(
             authority.ReviewInfrastructureChain(review.AttemptId),
             review.Subject.Plan?.IntegrationRef);
         if (diagnosis is null) return null;

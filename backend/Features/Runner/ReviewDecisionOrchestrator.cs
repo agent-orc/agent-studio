@@ -452,8 +452,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task TickOnceAsync(string workspace, CancellationToken ct)
     {
-        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
-            == OrchestrationExecutionMode.Engine)
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
             return;
         await _tickGate.WaitAsync(ct);
         try
@@ -671,6 +670,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (!postProcessingGateHeld) _postProcessingGitGate.Wait();
         try
         {
+            if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
+                return new MoveJobOutcome(MoveJobStatus.Failure, "engine-owned-coding-completion");
             var result = _taskAccess.TransitionLaneAsync(new TaskTransitionRequest
                 {
                     JobId = jobId,
@@ -717,8 +718,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public async Task<PostProcessingCardResult> ProcessCardAsync(string workspace, string projectName, string jobId, string watchPath, CancellationToken ct)
     {
-        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
-            == OrchestrationExecutionMode.Engine)
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
             return PostProcessingCardResult.Deferred("engine-owned-coding-completion");
         if (!_configuration.GetValue("ReviewDecisionOrchestrator:Enabled", false))
             return PostProcessingCardResult.Blocked("review-decision-orchestrator-disabled");
@@ -1539,7 +1539,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // recoverable by another sharpened prompt. Escalate it to
         // 5-human-review so it is not picked again automatically.
         var noProgressEvidence = InspectNoOpProgressSinceLastRecovery(pending);
-        if (LocalLoopDecisionPolicy.RepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
+        if (MonolithTransitionAdapter.LocalLoopDecisionPolicyRepeatedNoProgress(prior, noProgressEvidence.SawNoOpRecoveryReissue,
             noProgressEvidence.ToolCalls, noProgressEvidence.FileChanges, noProgressEvidence.AgentSubstanceChars))
         {
             var count = prior + 1;
@@ -2426,6 +2426,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Gate);
         var buildGateResult = await RunBuildTestGatePostStepAsync(workspace, entry, current, ct);
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration)) return;
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Skipped
             && buildGateResult.CancellationReason is GateCancellationReasons.Superseded or GateCancellationReasons.Shutdown)
             return;
@@ -2669,7 +2670,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Decision);
 
-        var initialFollowUpDecision = ReviewFollowUpPolicy.Decide(
+        var initialFollowUpDecision = MonolithTransitionAdapter.ReviewFollowUp(
             report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
                 verdict.Aspect,
                 AspectVerdictParsing.StatusToken(verdict.Status),
@@ -2820,7 +2821,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // the settled verdicts determine followUpDecision before degradation.
         // Degraded findings move to the linked follow-up card below; they must
         // not start a further automatic concern round on this delivery.
-        var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
+        var followUpDecision = MonolithTransitionAdapter.ReviewRoundBudgetPolicyApplyFollowUp(initialFollowUpDecision, roundBudget);
         if (roundBudget.Degrade)
         {
             if (!CreateReviewBudgetFollowUp(current, localAttemptId, report, roundBudget)) return;
@@ -2859,7 +2860,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 current.Id,
                 OperatorReviewRequeueService.ReadEpoch(current.FolderPath),
                 ConfiguredIdenticalBlockRounds());
-            var loopBreak = ReissueLoopBreaker.Evaluate(
+            var loopBreak = MonolithTransitionAdapter.ReissueLoopBreakerEvaluate(
                 CountReissuesInCurrentChain(reviewRecords, current.Id),
                 ConfiguredMaxReissues(entry.Name),
                 emptyFollowupDiff: IsLatestRunEmptyDiff(current, entry.Path),
@@ -3588,7 +3589,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     }
 
     private static string? LocalAspectFinding(AspectVerdict verdict)
-        => ReviewFollowUpPolicy.ExtractFindingSection(verdict.Body)
+        => MonolithTransitionAdapter.ReviewFollowUpPolicyExtractFindingSection(verdict.Body)
            ?? AspectVerdictParsing.ParseVerdictField(verdict.Body, "missing");
 
     internal static AspectRunReport MarkRetryAspectAsInfrastructure(
@@ -4484,7 +4485,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var live = _scanner.FindJob(reviewed.Id, entry.Path);
         var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
-        if (GateCancellationPolicy.OwnsResult(result.ExpectedSha, liveSubject?.Sha,
+        if (MonolithTransitionAdapter.GateCancellationOwnsResult(result.ExpectedSha, liveSubject?.Sha,
                 result.AttemptChainId, liveSubject?.AttemptChainId,
                 reviewed.State, live?.State, live?.PendingIntent is not null))
             return false;
@@ -4516,7 +4517,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var live = _scanner.FindJob(reviewed.Id, entry.Path);
         var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
-        if (GateCancellationPolicy.OwnsResult(subject.Sha, liveSubject?.Sha,
+        if (MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
                 subject.AttemptChainId, liveSubject?.AttemptChainId,
                 reviewed.State, live?.State, live?.PendingIntent is not null))
             return false;
@@ -4733,7 +4734,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var liveSubject = liveSubjectTask is null
                 ? null : ResolveBuildTestGateSubject(liveSubjectTask, entry.Path);
             if (result.FailureKind != BuildTestGateFailureKind.Cancellation
-                && !GateCancellationPolicy.OwnsResult(subject.Sha, liveSubject?.Sha,
+                && !MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
                     subject.AttemptChainId, liveSubject?.AttemptChainId,
                     current.State, liveSubjectTask?.State,
                     liveSubjectTask?.PendingIntent is not null))
@@ -4764,7 +4765,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 var live = _scanner.FindJob(current.Id, entry.Path);
                 var liveSha = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path).Sha;
-                var cancellationReason = GateCancellationPolicy.Decide(subject.Sha, liveSha,
+                var cancellationReason = MonolithTransitionAdapter.GateCancellation(subject.Sha, liveSha,
                     current.State, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, result.CancellationReason);
                 result = GateCancellationResultProjector.Apply(result, cancellationReason);
@@ -5394,7 +5395,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             live =>
             {
                 var liveSubject = ResolveBuildTestGateSubject(live, entry.Path);
-                return GateCancellationPolicy.OwnsResult(
+                return MonolithTransitionAdapter.GateCancellationOwnsResult(
                     gate?.ExpectedSha ?? subject.Sha, liveSubject.Sha,
                     gate?.AttemptChainId ?? subject.AttemptChainId, liveSubject.AttemptChainId,
                     reviewed.State, live.State, live.PendingIntent is not null);
@@ -6611,7 +6612,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             var applied = await _stateMachine.ApplyIfCurrentAsync(
                 current.Id, entry.Path,
-                live => GateCancellationPolicy.OwnsResult(
+                live => MonolithTransitionAdapter.GateCancellationOwnsResult(
                     result.ExpectedSha, ResolveBuildTestGateSubject(live, entry.Path).Sha,
                     result.AttemptChainId, ResolveBuildTestGateSubject(live, entry.Path).AttemptChainId,
                     current.State, live.State, live.PendingIntent is not null),

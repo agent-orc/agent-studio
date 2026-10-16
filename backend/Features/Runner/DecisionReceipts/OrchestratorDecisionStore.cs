@@ -97,21 +97,21 @@ public sealed class OrchestratorDecisionStore
                 return existing.Dto;
             }
             var now = _time.GetUtcNow().UtcDateTime;
-            var (maxInput, maxOutput) = DecisionCostCapPolicy.Envelope(request.MaxInputTokens, request.MaxOutputTokens);
+            var (maxInput, maxOutput) = MonolithTransitionAdapter.DecisionCostCapPolicyEnvelope(request.MaxInputTokens, request.MaxOutputTokens);
             var estimatedUsd = EstimatedEnvelopePrice(request.Model, maxInput, maxOutput, now);
-            var capReason = DecisionCostCapPolicy.CallEnvelopeReason(maxInput, maxOutput);
-            if (capReason is null && DecisionCostCapPolicy.ChargesCard(input.Scope))
-                capReason = DecisionCostCapPolicy.CardReason(
+            var capReason = MonolithTransitionAdapter.DecisionCostCapPolicyCallEnvelopeReason(maxInput, maxOutput);
+            if (capReason is null && MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(input.Scope))
+                capReason = MonolithTransitionAdapter.DecisionCostCapPolicyCardReason(
                     Spend(_jobs.Values.Where(job => job.Dto.TaskId == request.TaskId)), estimatedUsd);
             else if (capReason is null)
             {
-                var day = DecisionCostCapPolicy.HostDayKey(input.Scope, now);
+                var day = MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(input.Scope, now);
                 var hostDay = _jobs.Values.Where(job => _inputs.GetValueOrDefault(job.Dto.OccurrenceId)?.Grounds is { } grounds
-                    && !DecisionCostCapPolicy.ChargesCard(grounds.Scope)
-                    && DecisionCostCapPolicy.HostDayKey(grounds.Scope, job.Dto.CreatedAt) == day).ToArray();
-                bool Scheduled(JobRecord job) => DecisionCostCapPolicy.IsScheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger);
-                capReason = DecisionCostCapPolicy.HostDayReason(Spend(hostDay.Where(Scheduled)),
-                    Spend(hostDay.Where(job => !Scheduled(job))), DecisionCostCapPolicy.IsScheduled(input.Trigger),
+                    && !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(grounds.Scope)
+                    && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(grounds.Scope, job.Dto.CreatedAt) == day).ToArray();
+                bool Scheduled(JobRecord job) => MonolithTransitionAdapter.DecisionCostCapPolicyIsScheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger);
+                capReason = MonolithTransitionAdapter.DecisionCostCapPolicyHostDayReason(Spend(hostDay.Where(Scheduled)),
+                    Spend(hostDay.Where(job => !Scheduled(job))), MonolithTransitionAdapter.DecisionCostCapPolicyIsScheduled(input.Trigger),
                     maxInput, maxOutput, estimatedUsd);
             }
             var record = new JobRecord
@@ -179,7 +179,7 @@ public sealed class OrchestratorDecisionStore
                     && claim.RunnerId == completion.RunnerId);
                 if (replaced is null) return false;
                 if (replaced.Result is not null) return true;
-                var oldUsage = CardRunLedgerPolicy.Deduplicate(completion.Usage);
+                var oldUsage = MonolithTransitionAdapter.CardRunLedgerPolicyDeduplicate(completion.Usage);
                 if (oldUsage.Tokens.Total == 0) return false;
                 var oldModel = string.IsNullOrWhiteSpace(completion.Model) ? job.Dto.Model : completion.Model.Trim();
                 replaced.Result = new(false, completion.ResponseText, job.Dto.Cli, oldModel,
@@ -193,10 +193,10 @@ public sealed class OrchestratorDecisionStore
                 && job.Dto.Result is null;
             if (DecisionJobStatuses.IsTerminal(job.Dto.Status) && !late) return true;
             if (job.Dto.Status != DecisionJobStatuses.Claimed && !late) return false;
-            var usage = CardRunLedgerPolicy.Deduplicate(completion.Usage);
+            var usage = MonolithTransitionAdapter.CardRunLedgerPolicyDeduplicate(completion.Usage);
             var model = string.IsNullOrWhiteSpace(completion.Model) ? job.Dto.Model : completion.Model.Trim();
             var (maxInput, maxOutput) = Envelope(job);
-            var overrun = DecisionCostCapPolicy.MeasuredOverrunReason(usage.Tokens, maxInput, maxOutput);
+            var overrun = MonolithTransitionAdapter.DecisionCostCapPolicyMeasuredOverrunReason(usage.Tokens, maxInput, maxOutput);
             var success = completion.Success && !string.IsNullOrWhiteSpace(completion.ResponseText) && overrun is null;
             var error = success ? null : overrun ?? completion.Error ?? "empty-response";
             job.Dto = job.Dto with
@@ -284,12 +284,12 @@ public sealed class OrchestratorDecisionStore
             if (_receipts.TryGetValue(receipt.OccurrenceId, out var stored)) return stored;
             var input = _inputs.GetValueOrDefault(receipt.OccurrenceId)?.Grounds
                 ?? throw new KeyNotFoundException("No decision grounds were frozen for this occurrence.");
-            var expected = DecisionGroundsPolicy.Freeze(input).ContentDigest;
+            var expected = MonolithTransitionAdapter.DecisionGroundsPolicyFreeze(input).ContentDigest;
             if (receipt.GroundsDigest != expected || receipt.Grounds.ContentDigest != expected
-                || !DecisionGroundsPolicy.IsIntact(receipt.Grounds))
+                || !MonolithTransitionAdapter.DecisionGroundsPolicyIsIntact(receipt.Grounds))
                 throw new InvalidOperationException("decision-receipt-grounds-mismatch");
-            if (receipt.ReceiptId != DecisionReceiptPolicy.ReceiptId(receipt.OccurrenceId, expected)
-                || receipt.EvidenceRef != DecisionReceiptPolicy.EvidenceRef(receipt.ReceiptId))
+            if (receipt.ReceiptId != MonolithTransitionAdapter.DecisionReceiptPolicyReceiptId(receipt.OccurrenceId, expected)
+                || receipt.EvidenceRef != MonolithTransitionAdapter.DecisionReceiptPolicyEvidenceRef(receipt.ReceiptId))
                 throw new InvalidOperationException("decision-receipt-identity-mismatch");
             Save("receipts", receipt.ReceiptId, receipt);
             _receipts.Add(receipt.OccurrenceId, receipt);
@@ -566,7 +566,7 @@ public sealed class OrchestratorDecisionStore
 
     /// <summary>Records written before the envelope was stored use the per-call cap.</summary>
     private static (int Input, int Output) Envelope(JobRecord job)
-        => DecisionCostCapPolicy.Envelope(job.MaxInputTokens, job.MaxOutputTokens);
+        => MonolithTransitionAdapter.DecisionCostCapPolicyEnvelope(job.MaxInputTokens, job.MaxOutputTokens);
 
     private DecisionPriceV1 Price(string model, DecisionTokenUsageV1 tokens, DateTime at)
     {

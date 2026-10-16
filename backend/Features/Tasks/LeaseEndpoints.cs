@@ -1523,7 +1523,7 @@ public static class LeaseEndpoints
                                     == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest
                 ? req.OutcomeDecision.ProviderRejection
                 : null;
-            var targetState = TransitionDecisionPolicy.CompletionLane(outcome, providerRejection is not null);
+            var targetState = MonolithTransitionAdapter.TransitionDecisionPolicyCompletionLane(outcome, providerRejection is not null);
             var operatorStopped = string.Equals(outcome, "stopped", StringComparison.Ordinal);
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
@@ -1957,7 +1957,7 @@ public static class LeaseEndpoints
             // disproved delivery. There is nothing materializable to review,
             // and minting one is how the AGT-2220 incident acquired a subject
             // pinned to a SHA that was never on its recorded ref.
-            if (TransitionDecisionPolicy.CreateReview(isEpicPlanning, outcome,
+            if (MonolithTransitionAdapter.TransitionDecisionPolicyCreateReview(isEpicPlanning, outcome,
                 unverifiedDelivery is null, TaskModes.IsReportOnly(task.Mode)))
             {
                 var requirementsPath = Path.Combine(task.FolderPath, "prompt.md");
@@ -2563,7 +2563,7 @@ public static class LeaseEndpoints
                 // a repeat in the same delivery generation parks the card with
                 // the salvage named in its reason.
                 var salvage = unverifiedDelivery is null
-                                  && RunTimeoutSalvageContinuationPolicy.IsNonTerminalOutcome(outcome)
+                                  && MonolithTransitionAdapter.RunTimeoutSalvageContinuationPolicyIsNonTerminalOutcome(outcome)
                     ? RunSalvageReference.From(
                         salvageBranch,
                         salvageCommitSha,
@@ -2578,7 +2578,7 @@ public static class LeaseEndpoints
                 // for the engine receipt, applied by RunTimeoutSalvageEffect.
                 AiOperatorDecision? timeoutDecision = null;
                 if (unverifiedDelivery is null
-                    && RunTimeoutSalvageContinuationPolicy.IsNonTerminalOutcome(outcome))
+                    && MonolithTransitionAdapter.RunTimeoutSalvageContinuationPolicyIsNonTerminalOutcome(outcome))
                 {
                     var submission = aiOperator.Submit(new AiOperatorDecisionRequest(task.ProjectName, task.Id,
                         task.State,
@@ -2731,7 +2731,7 @@ public static class LeaseEndpoints
                             DateTimeKind.Utc)),
                     },
                 });
-                var codingDecision = AgentStudio.OrchestrationDecisions.StageDecisionPolicy.Coding(
+                var codingDecision = AgentStudio.Runner.MonolithTransitionAdapter.StageCoding(
                     task.Id, attemptId, targetState);
                 var occurrence = orchestration.Create(task.ProjectName, task.Id,
                     AgentStudio.TaskServer.Contracts.OrchestrationStage.ReviewDecision,
@@ -3453,7 +3453,7 @@ public static class LeaseEndpoints
             // reading (AGT-2861).
             _ => (
                 HumanReviewEscalationCategories.RemoteOutcomeUnknown,
-                RunTimeoutSalvageContinuationPolicy.ComposeEscalationReason(
+                MonolithTransitionAdapter.RunTimeoutSalvageContinuationPolicyComposeEscalationReason(
                     reason, salvage, automaticContinuationRoundsUsed)),
         };
     }

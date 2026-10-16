@@ -34,7 +34,7 @@ public static class RemoteReviewContinuationPolicy
     public static RemoteReviewContinuationStep Decide(
         IEnumerable<TimelineEvent> ledger, string attemptId, string cause, string moveKey, string currentState)
     {
-        return AgentStudio.OrchestrationDecisions.ContinuationReplayPolicy.Decide(
+        return MonolithTransitionAdapter.ContinuationReplay(
             ledger.Select(entry => new AgentStudio.OrchestrationDecisions.RoundTimelineFact(entry.Kind, entry.Details)),
             attemptId, cause, moveKey, currentState);
 
@@ -50,12 +50,15 @@ public static class RemoteReviewContinuationPolicy
     /// </summary>
     public static bool OpensFindingRound(
         ReviewTerminalOutcome outcome, AgentStudio.TaskServer.Contracts.ReviewFollowUpAction followUp)
-        => AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.OpensFindingRound(outcome.ToString(), followUp);
+        => AgentStudio.Runner.MonolithTransitionAdapter.TransitionDecisionPolicyOpensFindingRound(outcome.ToString(), followUp);
 }
 
 public static class RemoteReviewContinuationProjection
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(StringComparer.Ordinal);
+
+    internal static SemaphoreSlim GateForAttempt(string attemptId)
+        => Gates.GetOrAdd(attemptId, _ => new SemaphoreSlim(1, 1));
 
     public static async Task<bool> ApplyAsync(
         TaskInfo task,
@@ -65,13 +68,16 @@ public static class RemoteReviewContinuationProjection
         TaskMutationService mutations,
         TimelineLog timeline,
         ILogger logger,
+        Func<bool> ownsReviewReport,
         CancellationToken ct)
     {
         if (entry.Continuation is not { } continuation) return true;
-        var gate = Gates.GetOrAdd(entry.AttemptId, _ => new SemaphoreSlim(1, 1));
+        if (!ownsReviewReport()) return false;
+        var gate = GateForAttempt(entry.AttemptId);
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (!ownsReviewReport()) return false;
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             var target = continuation.Kind == RemoteReviewContinuationKind.FindingRound
                 ? TaskStates.Ready : TaskStates.Escalated;
@@ -89,6 +95,7 @@ public static class RemoteReviewContinuationProjection
                 ? continuation.Base : null;
             if (step == RemoteReviewContinuationStep.Move)
             {
+                if (!ownsReviewReport()) return false;
                 // The base travels with the folder, so the card never sits in
                 // Ready without it and no claim can start the round elsewhere.
                 if (fixRoundBase is not null && !ContinuationBaseStore.Save(task.FolderPath, fixRoundBase))

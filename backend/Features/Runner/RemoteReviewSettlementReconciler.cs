@@ -6,7 +6,7 @@ namespace AgentStudio.Runner;
 
 public enum RemoteReviewSettlementReconcileStatus
 {
-    NoWork, PendingAuthority, PendingEvidence, Complete, Repair,
+    NoWork, PendingAuthority, PendingEvidence, Complete, Repair, DeferredOwnership,
 }
 
 /// <summary>Replays only derived work belonging to the current, settled review generation.</summary>
@@ -20,6 +20,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     private readonly TaskMutationService? _mutations;
     private readonly TaskTransitionService? _transitions;
     private readonly TimelineLog? _timeline;
+    private readonly IConfiguration? _configuration;
 
     // Keyed by task key; the value is the review generation it was observed for.
     // An archived card has no lane continuation: once its current review settled
@@ -32,6 +33,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     // rather than inside them (AGT-3091): a pass can await a whole merge gate.
     private readonly object _resumeGate = new();
     private Task _resumePass = Task.CompletedTask;
+    internal Action? BeforeReconcile { get; set; }
 
     public RemoteReviewSettlementReconciler(
         TaskScannerService scanner,
@@ -41,7 +43,8 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         ILogger<RemoteReviewSettlementReconciler> logger,
         TaskMutationService? mutations = null,
         TaskTransitionService? transitions = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -51,6 +54,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         _mutations = mutations;
         _transitions = transitions;
         _timeline = timeline;
+        _configuration = configuration;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -74,17 +78,25 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
     public async Task RunOnceAsync(CancellationToken ct = default)
     {
+        if (!OwnsReviewReport()) return;
         foreach (var task in _scanner.ScanAllJobsWithArchive().Where(task => !task.Fixture))
         {
             ct.ThrowIfCancellationRequested();
+            if (!OwnsReviewReport()) return;
             if (TaskKeyOf(task) is not { } taskKey) continue;
             var generation = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt?.AttemptId ?? string.Empty;
             var archived = string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal);
             if (archived && _settledArchive.TryGetValue(taskKey, out var settled) && settled == generation) continue;
             var status = RemoteReviewSettlementReconcileStatus.Repair;
             Exception? failure = null;
-            try { status = Reconcile(task); }
+            try
+            {
+                BeforeReconcile?.Invoke();
+                status = Reconcile(task);
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { failure = ex; }
+            if (status == RemoteReviewSettlementReconcileStatus.DeferredOwnership) return;
+            if (!OwnsReviewReport()) return;
             if (archived && failure is null && status is RemoteReviewSettlementReconcileStatus.Complete
                     or RemoteReviewSettlementReconcileStatus.NoWork or RemoteReviewSettlementReconcileStatus.Repair)
                 _settledArchive[taskKey] = generation;
@@ -102,8 +114,12 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         // AGT-3091: on 12.10.2026 the inline pass held every tick for 20.3
         // minutes behind two gates. A tick now starts a pass only when none is
         // running and never waits for it.
-        StartResumePass(ct);
+        if (OwnsReviewReport()) StartResumePass(ct);
     }
+
+    private bool OwnsReviewReport()
+        => _configuration is null || MonolithTransitionSwitch.For(_configuration, "ReviewReport")
+            != OrchestrationExecutionMode.Engine;
 
     private void StartResumePass(CancellationToken ct)
     {
@@ -129,6 +145,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
     public RemoteReviewSettlementReconcileStatus Reconcile(TaskInfo task)
     {
+        if (!OwnsReviewReport()) return RemoteReviewSettlementReconcileStatus.DeferredOwnership;
         var taskKey = TaskKeyOf(task);
         if (taskKey is null) return RemoteReviewSettlementReconcileStatus.NoWork;
         var review = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;
@@ -182,8 +199,11 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
                 return RemoteReviewSettlementReconcileStatus.Repair;
             if (!RemoteReviewContinuationProjection.ApplyAsync(
                     task, entry, _scanner, _transitions, _mutations, _timeline, _logger,
+                    OwnsReviewReport,
                     CancellationToken.None).GetAwaiter().GetResult())
-                return RemoteReviewSettlementReconcileStatus.Repair;
+                return OwnsReviewReport()
+                    ? RemoteReviewSettlementReconcileStatus.Repair
+                    : RemoteReviewSettlementReconcileStatus.DeferredOwnership;
             task = _scanner.FindJob(task.Id, task.WatchPath) ?? task;
         }
 

@@ -42,7 +42,8 @@ public sealed record RemoteDeliveryIntegrationRequest(
     string PipelineType,
     DateTimeOffset DeliveredAtUtc,
     string? ReviewAttemptId = null,
-    string? ReviewedResultSha = null);
+    string? ReviewedResultSha = null,
+    bool MonolithOwnedResume = false);
 
 /// <summary>
 /// Serializes immediately eligible fenced deliveries per project in delivery
@@ -81,7 +82,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
         AttemptAuthorityService authority,
         GitService? git = null,
-        BranchReclaimTriggerService? branchReclaim = null)
+        BranchReclaimTriggerService? branchReclaim = null,
+        IConfiguration? configuration = null)
         : this(
             request => IntegrateAndRecordAsync(
                 request,
@@ -90,7 +92,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 provenance,
                 timeline,
                 request.ReviewAttemptId is { } reviewAttemptId
-                    ? apply => authority.TryApplyForCurrentReviewedDelivery(reviewAttemptId, apply)
+                    ? apply => OwnsRequest(request, configuration)
+                        && authority.TryApplyForCurrentReviewedDelivery(reviewAttemptId, apply)
                     : null),
             logger,
             (request, failureCode, summary, detail) => RecordPreReviewFailure(
@@ -105,10 +108,15 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 || authority.GetReview(request.ReviewAttemptId) is { } review
                    && authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId
                        == request.ReviewAttemptId,
-            request => IsReviewedDeliveryAdmissible(request, scanner, authority),
+            request => OwnsRequest(request, configuration)
+                && IsReviewedDeliveryAdmissible(request, scanner, authority),
             request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim))
     {
     }
+
+    private static bool OwnsRequest(RemoteDeliveryIntegrationRequest request, IConfiguration? configuration)
+        => !request.MonolithOwnedResume || configuration is null
+            || MonolithTransitionSwitch.OwnsAutoReview(configuration);
 
     /// <summary>
     /// A review-driven delivery is still owed only while its card sits in
@@ -133,14 +141,16 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>>? startAgentRound = null,
         Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null,
         Func<RemoteDeliveryIntegrationRequest, bool>? isAdmissibleDelivery = null,
-        Action<RemoteDeliveryIntegrationRequest>? reclaimAfterIntegration = null)
+        Action<RemoteDeliveryIntegrationRequest>? reclaimAfterIntegration = null,
+        IConfiguration? configuration = null)
     {
         _integrate = integrate;
         _startAgentRound = startAgentRound ?? ((_, _) => Task.FromResult(
             new IntegrationAgentRoundStartResult(false, "No automatic agent-round boundary was configured.")));
         _recordFailure = recordFailure ?? ((_, _, _, _) => { });
         _isCurrentReview = isCurrentReview ?? (_ => true);
-        _isAdmissibleDelivery = isAdmissibleDelivery ?? (_ => true);
+        _isAdmissibleDelivery = request => OwnsRequest(request, configuration)
+            && (isAdmissibleDelivery?.Invoke(request) ?? true);
         _reclaimAfterIntegration = reclaimAfterIntegration ?? (_ => { });
         _logger = logger;
     }
@@ -331,9 +341,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     result = await _integrate(delivery.Request).ConfigureAwait(false);
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
-                // a stale repair round, which a successor refuses.
+                // a stale repair round, so recheck card and profile ownership.
                 if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
-                    && !_isCurrentReview(delivery.Request))
+                    && (!_isCurrentReview(delivery.Request) || !_isAdmissibleDelivery(delivery.Request)))
                 {
                     _logger.LogInformation(
                         "remote-delivery-integration continuation project={Project} job={JobId} started=False reason={Reason}",

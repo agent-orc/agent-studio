@@ -53,6 +53,14 @@ without restarting the host. OrchestratorPrep, MetaCycle, and AutoIntervention
 continue to run in the monolith when other profiles select Engine; they have
 no engine occurrences yet.
 
+The review worker rechecks the current owner after long gate work and before
+each lane move. A monolith-owned resume checks again at integration dequeue,
+at the publication fence, and before its final lane move. An ownership deferral
+is not a settled archive result; rollback leaves that generation eligible for
+reconciliation. The backend policy-call boundary inspects compiled calls to
+decision-library policy methods through `MonolithTransitionAdapter`, including
+calls written with a type alias or `using static`.
+
 AGT-3060 (I18) moves the background deciders into this library. The operator
 decision of 15.10.2026 keeps the per-transition switch as the single selector
 of who decides: every profile defaults to `Monolith`, and with `Monolith`
@@ -286,8 +294,12 @@ application boundaries.
 backend.Tests. It pins the owning assembly, rejects host definitions of the
 extracted policies and direct transition construction/branching patterns, and
 forbids boundary access and ambient time in the library. Mutation examples prove
-that the source guard rejects reintroduced rules. Host branches may inspect a
-returned decision to apply it or validate persistence results. Add new transition
+that the source guard rejects reintroduced rules. The policy-call guard inspects
+compiled backend calls to decision-library policy and breaker types, regardless
+of method name, return type, alias, or `using static`. It rejects calls outside
+`MonolithTransitionAdapter`.
+Host branches may inspect a returned decision to apply it or validate
+persistence results. Add new transition
 policies to the owned-policy inventory and put their facts and rules in this
 library. Broader background-service movement remains I18.
 
@@ -300,9 +312,14 @@ deciders), when an AI Operator decider calls a library rule around the switch,
 or when a backend host constructs a transition receipt. No host-defined rule
 baseline is accepted. OrchestratorPrep, MetaCycle and AutoIntervention remain
 on the monolith path while they have no engine occurrence.
-The review post-processing worker and its recurring sweep stay registered
-across profile changes. They read the current `CodingCompletion` owner before
-processing a card; after rollback the sweep recovers cards left in Auto Review.
+The review post-processing worker, startup recovery, evidence projection, and
+settlement reconciliation stay registered across profile changes. Each checks
+the current transition owner before acting on a card. Coding post-processing and recovery wait while either `CodingCompletion` or
+`ReviewReport` selects Engine; evidence projection and settlement wait while
+`ReviewReport` selects Engine. The delivery resume entry point also waits if
+either profile selects Engine. Recovery keeps waiting for a
+runtime rollback, and recurring settlement and review sweeps recover journaled
+work after ownership returns to Monolith.
 Run-liveness receipt application remeasures log activity before a demotion, so
 activity added after submission restores the card's grace period.
 

@@ -31,7 +31,7 @@ public sealed class BatchGateAdvisorService
         if (advisor.Mode == "off" || deterministic.Decision != "close") return deterministic;
         var facts = new BatchPlanFacts(project, "", snapshot, null, advisor.Mode);
         var reply = await AskAsync(project, settings, snapshot, deterministic, ct).ConfigureAwait(false);
-        var advised = BatchPlanDecisionPolicy.Advise(facts, deterministic, reply);
+        var advised = MonolithTransitionAdapter.BatchPlanDecisionPolicyAdvise(facts, deterministic, reply);
         if (reply.Failure is null && advised.Advisor is { Verdict: "fallback" } rejected)
             _logger.LogWarning("batch-plan-advisor-fallback project={Project} reason={Reason}",
                 project, string.Join("; ", rejected.Reasons));
@@ -53,7 +53,7 @@ public sealed class BatchGateAdvisorService
             var cli = _oneShots.Get(advisor.CliType)
                 ?? throw new InvalidOperationException("Batch advisor CLI unavailable.");
             var prompt = Render(project, model,
-                BatchPlanDecisionPolicy.AdvisorInput(snapshot, deterministic));
+                MonolithTransitionAdapter.BatchPlanDecisionPolicyAdvisorInput(snapshot, deterministic));
             var result = await cli.RunAsync(new CliOneShotRequest(advisor.CliType, model, prompt)
             {
                 Timeout = TimeSpan.FromSeconds(advisor.TimeoutSeconds),

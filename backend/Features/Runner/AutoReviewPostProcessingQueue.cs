@@ -400,8 +400,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         // The queue stays registered for runtime rollback, but the Engine
         // owns coding-completion post-processing while its profile is selected. The durable
         // auto-review lane is recovered by the recurring sweep after rollback.
-        if (MonolithTransitionSwitch.For(_configuration, "CodingCompletion")
-            == OrchestrationExecutionMode.Engine)
+        if (!MonolithTransitionSwitch.OwnsAutoReview(_configuration))
             return;
 
         if (!_configuration.GetValue("ReviewDecisionOrchestrator:Enabled", false))

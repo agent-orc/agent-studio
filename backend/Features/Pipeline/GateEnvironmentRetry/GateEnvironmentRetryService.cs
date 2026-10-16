@@ -188,7 +188,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
                 // raises no occurrence. The AI Operator decides the ladder.
                 if (!GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status)) continue;
                 var evaluation = Evaluate(job, status, options);
-                if (GateEnvironmentRetryPolicy.OperatorReplayRefusal(evaluation.Facts) is not null) continue;
+                if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is not null) continue;
 
                 candidates++;
                 var payload = new AiOperatorDecisionPayload(Decider,
@@ -281,7 +281,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             // The operator intent overrides the ladder's timing; the authority
             // only validates that there is something to replay, and the sweep
             // and the button must agree about that.
-            if (GateEnvironmentRetryPolicy.OperatorReplayRefusal(evaluation.Facts) is { } refusal)
+            if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is { } refusal)
             {
                 var lookupFailure = evaluation.ReviewLookup.FailureReason;
                 return new GateEnvironmentRetryResult(
@@ -321,7 +321,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         if (job is null || job.State != application.ExpectedSourceState) return;
         var status = _integrationStatus.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
         var evaluation = Evaluate(job, status, Options);
-        if (GateEnvironmentRetryPolicy.OperatorReplayRefusal(evaluation.Facts) is not null
+        if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is not null
             || application.Payload.SubjectKey
                 != $"gate-environment:{evaluation.DeliverySha}:{evaluation.Ledger.AttemptsSpent}")
             return;
@@ -396,7 +396,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             inFlight);
         // Load review archives only when every other eligibility fact holds.
         // Most cards in these lanes have no gate failure to retry.
-        var reviewLookup = GateEnvironmentRetryPolicy.OperatorReplayRefusal(withoutReview)
+        var reviewLookup = MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(withoutReview)
             == GateEnvironmentRetryReasons.NoPassedReview
             ? HasPassedReview(job.Key ?? job.TaskKey, deliverySha)
             : new GateEnvironmentReviewLookup(false, null);
@@ -584,7 +584,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         if (step is null || evaluation.DeliverySha is null) return false;
 
         var attempts = Math.Clamp(evaluation.Ledger.AttemptsSpent, 0, evaluation.Facts.Backoff.Count);
-        var reason = GateEnvironmentRetryPolicy.ParkedReason(
+        var reason = MonolithTransitionAdapter.GateEnvironmentRetryPolicyParkedReason(
             attempts,
             evaluation.IntegrationBranch,
             step.Reason) + " Gate evidence: post-steps/pre-develop-build-gate-*.log (resource measurements and slow tests).";

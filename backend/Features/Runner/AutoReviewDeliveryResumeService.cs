@@ -68,6 +68,7 @@ public sealed class AutoReviewDeliveryResumeService
     private readonly CauseBreakerService? _causeBreakers;
     private readonly AutoReviewPostProcessingQueue? _queue;
     private readonly TimeProvider _time;
+    private readonly IConfiguration? _configuration;
     // A superseded delivery is logged once per task and review generation, not
     // on every sweep.
     private readonly ConcurrentDictionary<string, string> _reportedSupersessions =
@@ -86,7 +87,8 @@ public sealed class AutoReviewDeliveryResumeService
         ILogger<AutoReviewDeliveryResumeService> logger,
         CauseBreakerService? causeBreakers = null,
         AutoReviewPostProcessingQueue? queue = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -99,7 +101,11 @@ public sealed class AutoReviewDeliveryResumeService
         _causeBreakers = causeBreakers;
         _queue = queue;
         _time = time ?? TimeProvider.System;
+        _configuration = configuration;
     }
+
+    private bool OwnsDelivery()
+        => _configuration is null || MonolithTransitionSwitch.OwnsAutoReview(_configuration);
 
     /// <summary>
     /// One pass over every card in <c>4-auto-review</c>. Runs at boot and from
@@ -109,6 +115,7 @@ public sealed class AutoReviewDeliveryResumeService
     /// </summary>
     public async Task<AutoReviewResumeReport> RunOnceAsync(string source, CancellationToken ct = default)
     {
+        if (!OwnsDelivery()) return new AutoReviewResumeReport(0, 0, 0, 0);
         var cards = _scanner.ScanAllAutomationJobs()
             .Where(task => string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal)
                            && !task.Fixture)
@@ -169,6 +176,8 @@ public sealed class AutoReviewDeliveryResumeService
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(task);
+        if (!OwnsDelivery())
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
         var gate = _resumeGates.GetOrAdd(task.ProjectName + "/" + task.Id,
             _ => new SemaphoreSlim(1, 1));
         // An existing resume may own the gate for an entire integration.
@@ -176,7 +185,12 @@ public sealed class AutoReviewDeliveryResumeService
         if (!await gate.WaitAsync(0, ct).ConfigureAwait(false))
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
                 Reasons.IntegrationInFlight, Resumed: false);
-        try { return await ResumeCoreAsync(task, source, ct).ConfigureAwait(false); }
+        try
+        {
+            if (!OwnsDelivery())
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+            return await ResumeCoreAsync(task, source, ct).ConfigureAwait(false);
+        }
         finally { gate.Release(); }
     }
 
@@ -278,6 +292,8 @@ public sealed class AutoReviewDeliveryResumeService
                 "delivery-resume-backoff", false, resumeReason);
         }
 
+        if (!OwnsDelivery())
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
         AutoReviewResumeRetryStore.Write(task.FolderPath, new AutoReviewResumeRetryRecord(
             review.AttemptId, resumeAttempts + 1,
             now + AutoReviewResumeRetryPolicy.Delay(resumeAttempts + 1),
@@ -324,6 +340,11 @@ public sealed class AutoReviewDeliveryResumeService
             if (pendingIntegration is not null)
             {
                 var result = await pendingIntegration.ConfigureAwait(false);
+                if (!OwnsDelivery())
+                {
+                    AutoReviewResumeRetryStore.Clear(task.FolderPath, review.AttemptId);
+                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
+                }
                 if (!IsCurrent(review!))
                     return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
                 // A reissue during the gate: the coordinator or the publication
@@ -471,6 +492,8 @@ public sealed class AutoReviewDeliveryResumeService
         string source,
         CancellationToken ct)
     {
+        if (!OwnsDelivery())
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "engine-owned", Resumed: false);
         var outcomeLabel = review.Outcome?.ToString() ?? "Pass";
         if (!IsCurrent(review))
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
@@ -554,7 +577,8 @@ public sealed class AutoReviewDeliveryResumeService
                 : settlement.PipelineType,
             settlement.DeliveredAtUtc,
             settlement.ReviewAttemptId,
-            review.Subject.ExpectedResultSha);
+            review.Subject.ExpectedResultSha,
+            MonolithOwnedResume: true);
 
     /// <summary>
     /// Git-derived integration verdict for one card. Never throws: an

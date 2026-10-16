@@ -303,7 +303,6 @@ fixed-date backend.Tests/Architecture/CleanContextRetentionBreakerTest.cs
 fixed-date backend.Tests/Architecture/LocalCliRepairBreakerTest.cs
 fixed-date backend.Tests/AspectRunnerTests.cs
 fixed-date backend.Tests/AutoInterventionMappingTests.cs
-fixed-date backend.Tests/AutoReviewPostProcessingRecoveryServiceTests.cs
 fixed-date backend.Tests/BetterCandidateUsageReportServiceTests.cs
 fixed-date backend.Tests/BranchReclaimTriggerWiringTests.cs
 fixed-date backend.Tests/BranchSweepPolicyTests.cs
@@ -397,7 +396,6 @@ fixed-date backend.Tests/RecoveryChatLineTests.cs
 fixed-date backend.Tests/RecurringOutputPatternServiceTests.cs
 fixed-date backend.Tests/ReissueOpenItemsPreCheckTests.cs
 fixed-date backend.Tests/RemoteCommitAttributionGuardTests.cs
-fixed-date backend.Tests/RemoteDeliveryIntegrationTests.cs
 fixed-date backend.Tests/RemoteDeliverySettlementStoreTests.cs
 fixed-date backend.Tests/RemoteDispatchRejectionStoreTests.cs
 fixed-date backend.Tests/RemotePipelineExecutionProjectionTests.cs

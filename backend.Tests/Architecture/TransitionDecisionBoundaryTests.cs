@@ -1,9 +1,13 @@
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Text.RegularExpressions;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Xunit;
+using FollowUpRule = AgentStudio.OrchestrationDecisions.ReviewFollowUpPolicy;
+using static AgentStudio.OrchestrationDecisions.ReissueLoopBreaker;
 
 namespace AgentStudio.Tests.Architecture;
 
@@ -95,7 +99,7 @@ public sealed class TransitionDecisionBoundaryTests
         var decisionFlows = new Dictionary<string, string[]>
         {
             ["backend/Features/Runner/MonolithOrchestrationEndpoints.cs"] =
-                [@"transition\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,1500}StageDecisionPolicy\.ToStageAction\(transition\.Action\)"],
+                [@"transition\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,1500}MonolithTransitionAdapter\.StageDecisionPolicyToStageAction\(transition\.Action\)"],
             ["backend/Features/Runner/V1ReviewPlaneEndpoints.cs"] =
                 [@"var\s+budgetDecision\s*=\s*MonolithTransitionAdapter\.ReviewBudget\([\s\S]{0,1800}var\s+roundBudget\s*=\s*budgetDecision\.RoundBudget",
                  @"var\s+shadowDecision\s*=\s*MonolithTransitionAdapter\.Decide\([\s\S]{0,900}monolithAction:\s*shadowDecision\.Action"],
@@ -111,30 +115,17 @@ public sealed class TransitionDecisionBoundaryTests
                 Assert.Matches(flow, source);
         }
 
-        // Discover every policy entry point that returns one of the four
-        // transition receipts. A new receipt policy is guarded automatically;
-        // a host cannot bypass the adapter by calling that policy directly.
-        var receiptTypes = new HashSet<Type>
-        {
-            typeof(TransitionDecision), typeof(ReviewBudgetDecision),
-            typeof(OperatorSweepDecision), typeof(AiOperatorDecision),
-        };
-        var entryPoints = typeof(TransitionDecisionPolicy).Assembly.GetExportedTypes()
-            .Where(type => type.IsAbstract && type.IsSealed)
-            .SelectMany(type => type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                .Where(method => receiptTypes.Contains(method.ReturnType))
-                .Select(method => Regex.Escape(type.Name) + @"\." + Regex.Escape(method.Name)))
+        // Inspect compiled calls so aliases, using static, and method names or
+        // return types outside the known receipt set cannot bypass the boundary.
+        var directCalls = typeof(MonolithTransitionAdapter).Assembly.GetTypes()
+            .Where(type => type != typeof(MonolithTransitionAdapter))
+            .SelectMany(DeclaredMethods)
+            .SelectMany(method => DecisionCalls(method)
+                .Select(call => $"{method.DeclaringType?.FullName}.{method.Name}: {call.DeclaringType?.Name}.{call.Name}"))
             .ToArray();
-        var directCallPattern = @"\b(?:" + string.Join("|", entryPoints) + @")\s*\(";
-        var directCalls = Sources(Path.Combine(root, "backend"))
-            .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal))
-            .SelectMany(path => Regex.Matches(File.ReadAllText(path), directCallPattern)
-                .Select(match => (Path: Path.GetRelativePath(root, path).Replace('\\', '/'), Call: match.Value)))
-            .Where(site => !IsLibraryStageCall(site.Path, site.Call))
-            .Select(site => $"{site.Path}: {site.Call}").ToArray();
         Assert.True(directCalls.Length == 0, string.Join(", ", directCalls));
         var batch = File.ReadAllText(Path.Combine(root, "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs"));
-        Assert.Matches(@"TransitionDecision BatchShadowDecision\([^)]*\)\s*=>\s*StageDecisionPolicy\.GateTransition\(", batch);
+        Assert.Matches(@"TransitionDecision BatchShadowDecision\([^)]*\)\s*=>\s*AgentStudio\.Runner\.MonolithTransitionAdapter\.StageGateTransition\(", batch);
     }
 
     [Theory]
@@ -161,12 +152,73 @@ public sealed class TransitionDecisionBoundaryTests
             || Regex.IsMatch(source, @"\boutcome\s+switch\s*\{[^}]*=>\s*TaskStates\.", RegexOptions.Singleline);
     }
 
-    private static bool IsLibraryStageCall(string path, string call)
-        => (path == "backend/Features/Tasks/LeaseEndpoints.cs"
-                && call.Contains("StageDecisionPolicy.Coding", StringComparison.Ordinal))
-            || (path == "backend/Features/Runner/MonolithOrchestrationEndpoints.cs"
-                && (call.Contains("StageDecisionPolicy.Coding", StringComparison.Ordinal)
-                    || call.Contains("StageDecisionPolicy.GateTransition", StringComparison.Ordinal)));
+    [Fact]
+    public void Direct_call_guard_resolves_aliases_and_using_static()
+    {
+        var calls = DeclaredMethods(typeof(DecisionCallSyntaxExamples))
+            .SelectMany(DecisionCalls)
+            .Select(call => $"{call.DeclaringType?.Name}.{call.Name}")
+            .ToArray();
+        Assert.Contains("ReviewFollowUpPolicy.Decide", calls);
+        Assert.Contains("ReissueLoopBreaker.Evaluate", calls);
+    }
+
+    private static class DecisionCallSyntaxExamples
+    {
+        public static object ViaAlias() => FollowUpRule.Decide([], 0, 1);
+        public static object ViaUsingStatic() => Evaluate(1, 2, false, true);
+    }
+
+    private static IEnumerable<MethodBase> DeclaredMethods(Type type)
+    {
+        const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static | BindingFlags.Instance;
+        return type.GetMethods(flags).Cast<MethodBase>().Concat(type.GetConstructors(flags));
+    }
+
+    private static IEnumerable<MethodBase> DecisionCalls(MethodBase caller)
+    {
+        var il = caller.GetMethodBody()?.GetILAsByteArray();
+        if (il is null) yield break;
+        var typeArguments = caller.DeclaringType?.GetGenericArguments();
+        var methodArguments = caller.IsGenericMethod ? caller.GetGenericArguments() : null;
+        for (var offset = 0; offset < il.Length;)
+        {
+            var code = il[offset++];
+            var value = code == 0xfe ? (ushort)(0xfe00 | il[offset++]) : code;
+            var opcode = IlOpCodes[value];
+            var operandOffset = offset;
+            offset += opcode.OperandType switch
+            {
+                OperandType.InlineNone => 0,
+                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                OperandType.InlineVar => 2,
+                OperandType.InlineI or OperandType.InlineBrTarget or OperandType.InlineField
+                    or OperandType.InlineMethod or OperandType.InlineSig or OperandType.InlineString
+                    or OperandType.InlineTok or OperandType.InlineType or OperandType.ShortInlineR => 4,
+                OperandType.InlineI8 or OperandType.InlineR => 8,
+                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, operandOffset),
+                _ => throw new InvalidOperationException($"Unsupported IL operand: {opcode.OperandType}"),
+            };
+            if (opcode != OpCodes.Call && opcode != OpCodes.Callvirt
+                && opcode != OpCodes.Ldftn && opcode != OpCodes.Ldvirtftn)
+                continue;
+            var token = BitConverter.ToInt32(il, operandOffset);
+            var target = caller.Module.ResolveMethod(token, typeArguments, methodArguments);
+            if (target?.DeclaringType is { } policy
+                && policy.Assembly == typeof(TransitionDecisionPolicy).Assembly
+                && policy.IsAbstract && policy.IsSealed
+                && (policy.Name.EndsWith("Policy", StringComparison.Ordinal)
+                    || policy.Name.EndsWith("Breaker", StringComparison.Ordinal)))
+                yield return target;
+        }
+    }
+
+    private static readonly IReadOnlyDictionary<ushort, OpCode> IlOpCodes = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field.FieldType == typeof(OpCode))
+        .Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(opcode => unchecked((ushort)opcode.Value));
 
     private static IEnumerable<string> Sources(string path) => Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
         .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "obj" or "bin"));
