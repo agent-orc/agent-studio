@@ -1,3 +1,11 @@
+# AGT-3169 Environment review fix
+
+- Result implementation SHA: `5bbac559b4a70e0f4fedfe67a07e8a9d61db72c2`, rebased onto current `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490`. The three task commits form a linear history with no merge commit.
+- Implemented option: attribute a repository grant to the gate only when its inventory scope names the gate role. A review grant on the same machine leaves gate access at `no access`; an unscoped grant remains `unknown`. The regression test covers all three cases, including an explicit gate write grant.
+- Resolved the `remote-hosts-panel.ts` rebase conflict by retaining develop's `ExecutionInfrastructureComponent` and refreshing it, the environment snapshot, and the credential inventory together.
+- Verification: solution build and frontend production build passed; focused frontend specs passed (5 files, 20 tests); `ManagementEnvironmentEndpointTests` and `InstallationConnectivityTests` passed (19 tests); `CredentialInventoryTests` passed (4 tests); the architecture and guard filter passed (82 tests in the backend project, no matching tests in the other seven .NET test projects); `npm --prefix frontend run lint` passed; the focused Environment Playwright spec passed and its 1280/1920 light and dark screenshots had no browser QA findings.
+- No additional product documentation update was needed for this scoped correction. Screenshots are in the task results directory.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
