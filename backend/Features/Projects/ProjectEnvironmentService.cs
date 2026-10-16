@@ -39,6 +39,7 @@ public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed class ProjectEnvironmentService
 {
     private static readonly Regex Identifier = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
+    private static readonly Regex SecretIdentifier = new("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex Commit = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
     private static readonly Regex Digest = new("^[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}$", RegexOptions.Compiled);
     private readonly object _gate = new();
@@ -82,7 +83,7 @@ public sealed class ProjectEnvironmentService
             var secrets = value.TryGetProperty("secretRefs", out var refs)
                 ? refs.EnumerateArray().Select(item => item.GetString() ?? "").ToArray() : [];
             if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
-                || template is not ("container" or "static") || secrets.Any(item => !Identifier.IsMatch(item)))
+                || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
                 throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
             var destination = Required("destination");
             if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))

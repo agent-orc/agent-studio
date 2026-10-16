@@ -144,7 +144,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3181 preview feedback queues a same-card continuation, so it is
         // denied on the Continue path before form data or attachments are read.
         // AGT-3175 adds one Start route for new projects from a template.
-        Assert.Equal(105, routes.Count);
+        Assert.Equal(112, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -183,13 +183,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 8,
-                [ExecutionAdmissionPath.Start] = 16,
-                [ExecutionAdmissionPath.Continue] = 20,
+                [ExecutionAdmissionPath.Claim] = 9,
+                [ExecutionAdmissionPath.Start] = 18,
+                [ExecutionAdmissionPath.Continue] = 22,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
-                [ExecutionAdmissionPath.PostStep] = 15,
+                [ExecutionAdmissionPath.PostStep] = 17,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
