@@ -1472,7 +1472,9 @@ public static class V1ReviewPlaneEndpoints
             {
                 var journaled = RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Entry;
                 if (journaled is null || !await RemoteReviewContinuationProjection.ApplyAsync(
-                        task, journaled, scanner, transitions, mutations, timeline, logger, ct))
+                        task, journaled, scanner, transitions, mutations, timeline, logger,
+                        () => MonolithTransitionSwitch.For(configuration, "ReviewReport")
+                            != OrchestrationExecutionMode.Engine, ct))
                 {
                     EnqueueEvidenceProjection();
                     return Results.Json(new Contract.ApiError("review-continuation-write-failed",

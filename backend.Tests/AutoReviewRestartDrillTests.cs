@@ -153,6 +153,51 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(2, checks);
     }
 
+    [Theory]
+    [InlineData(RemoteReviewContinuationKind.FindingRound, TaskStates.Ready)]
+    [InlineData(RemoteReviewContinuationKind.BudgetEscalation, TaskStates.Escalated)]
+    public async Task Continuation_waiting_on_attempt_gate_rechecks_owner_before_lane_move(
+        RemoteReviewContinuationKind kind, string target)
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "continuation-owner-race-" + kind,
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        var entry = FindingRoundEntry(card, stack);
+        if (kind == RemoteReviewContinuationKind.BudgetEscalation)
+            entry = entry with
+            {
+                Continuation = new RemoteReviewContinuation(
+                    kind, string.Empty, ["build-tests"], 1, new CardRoundBudgetState(4, 4)),
+            };
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        var gate = RemoteReviewContinuationProjection.GateForAttempt(entry.AttemptId);
+        await gate.WaitAsync();
+        try
+        {
+            bool OwnsReviewReport()
+                => MonolithTransitionSwitch.For(stack.Configuration, "ReviewReport")
+                    != OrchestrationExecutionMode.Engine;
+            var pending = RemoteReviewContinuationProjection.ApplyAsync(
+                task, entry, stack.Scanner, stack.Transitions, stack.Mutations,
+                stack.Timeline, NullLogger.Instance, OwnsReviewReport, CancellationToken.None);
+            Assert.False(pending.IsCompleted);
+            stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+            gate.Release();
+            Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(TaskStates.AutoReview, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+
+            stack.Configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+            Assert.True(await RemoteReviewContinuationProjection.ApplyAsync(
+                task, entry, stack.Scanner, stack.Transitions, stack.Mutations,
+                stack.Timeline, NullLogger.Instance, OwnsReviewReport, CancellationToken.None));
+            Assert.Equal(target, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+        }
+        finally
+        {
+            if (gate.CurrentCount == 0) gate.Release();
+        }
+    }
+
     [Fact]
     public async Task Delivery_resume_rechecks_owner_after_integration_and_rollback_retries()
     {
