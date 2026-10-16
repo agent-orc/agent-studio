@@ -179,6 +179,38 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.destroy();
   });
 
+  it('refreshes repository status after registration during an active probe', () => {
+    authStatus.set({ authenticated: true, profile: 'local', bootstrapRequired: false });
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    const project = { id: 'PROJ-1', displayName: 'Demo', shortCode: 'DM',
+      workspaceId: 'ws-a', archived: false, storageLocation: '/tmp/demo',
+      repositoryPath: '/tmp/repo' };
+    const origin = 'https://github.com/example/demo.git';
+    http.expectOne('/api/projects').flush([project]);
+    http.expectOne('/api/first-run/projects/PROJ-1/repository').flush({}, {
+      status: 404, statusText: 'Pending',
+    });
+    const component = fixture.componentInstance;
+    component.repositoryUrl.set(origin);
+    component.reload();
+    component.registerRepository();
+    http.expectOne('/api/projects/PROJ-1').flush({});
+    expect(component.repositoryReady()).toBe(false);
+    http.expectOne('/api/projects').flush([project]);
+    http.expectOne('/api/first-run/projects/PROJ-1/repository').flush({}, {
+      status: 404, statusText: 'Pending',
+    });
+    http.expectOne('/api/projects').flush([{ ...project, repositoryUrl: origin }]);
+    http.expectOne('/api/first-run/projects/PROJ-1/repository').flush({
+      registration: { projectId: 'PROJ-1', repositoryUrl: origin,
+        integrationRef: 'main', releaseRef: null, deliveryPolicy: 'reviewed-publication' },
+      probes: [],
+    });
+    expect(component.repositoryReady()).toBe(true);
+    fixture.destroy();
+  });
+
   it('hands a token to the selected runner once and verifies without rereading it', () => {
     host.set([{ id: 'runner-a', clientId: 'runner-a', name: 'Runner A', status: 'online',
       lastHeartbeatAt: new Date().toISOString() } as RemoteHost]);
