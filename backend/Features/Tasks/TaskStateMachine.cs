@@ -382,6 +382,20 @@ public class TaskStateMachine
             _attemptAuthority?.ClearReviewPriority(card.Key ?? card.TaskKey ?? card.Id);
     }
 
+    /// <summary>Apply a review side effect while holding the same lane mutex as operator moves.</summary>
+    public async Task<bool> ApplyIfCurrentAsync(
+        string jobId,
+        string watchPath,
+        Func<TaskInfo, bool> ownsResult,
+        Func<TaskInfo, Task> apply)
+    {
+        using var lane = _laneMutex.Acquire(watchPath);
+        var live = FindJobForLaneMutation(jobId, watchPath);
+        if (live is null || !ownsResult(live)) return false;
+        await apply(live);
+        return true;
+    }
+
     private TaskInfo? FindJobForLaneMutation(string jobId, string? watchPath)
     {
         if (!string.IsNullOrWhiteSpace(watchPath)

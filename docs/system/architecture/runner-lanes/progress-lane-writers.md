@@ -49,16 +49,21 @@ folders that were one ms away from a clean promote.
 
 ## Serialisation: LaneMutexRegistry
 
-`backend/Services/Jobs/LaneMutexRegistry.cs` holds a per-watch-path
+`backend/Features/Tasks/LaneMutexRegistry.cs` holds a per-watch-path
 `SemaphoreSlim(1,1)`. Every lane writer acquires the mutex around its
 structural directory mutation. Acquire / release is leaf-level on
 purpose: `JobStateMachine.MoveJob`, `MoveFolderToState`, `DeleteJob`,
 `ChangeProject`, and `TaskAccessService.DeleteLaneFolder` each take the
 mutex inside the method body. Callers higher up the stack
 (`JobTransitionService`, `CrashRecoveryService`, `StaleProgressArchiver`,
-`ProjectRunner`) **do not** acquire separately - their lane mutations
-go through one of the leaf methods, so the call chain is always
-one-acquire-deep. No re-entrancy bookkeeping is needed.
+`ProjectRunner`) normally acquire through one of the leaf methods.
+Auto-review has one guarded exception: a failure intervention holds the
+project mutex while it checks the delivery, creates the follow-up and
+moves the card. The registry recognizes nested acquisition in the same
+async flow and releases the semaphore when the outer guard ends. A grade
+report, file index, tag and pipeline result use the same mutex after the
+asynchronous grade returns, so an operator lane move cannot slip between
+their ownership check and writes.
 
 Trade-offs documented:
 
@@ -69,10 +74,11 @@ Trade-offs documented:
   across the field rewrites would extend the lock far past the
   rename window and defeat the "keep the lock tight" guideline from
   the F21 task notes.
-- **Auto-commit runs outside the mutex.** The auto-commit step in
+- **Ordinary auto-commit runs outside the mutex.** The auto-commit step in
   `JobTransitionService.MoveAsync` operates on the project's git tree,
   not the lane folder. Holding the lane mutex while the commit runs
-  would serialise commits unnecessarily.
+  would serialise commits unnecessarily. The guarded intervention path
+  holds ownership through its escalation side effects.
 - **Cross-project moves use a two-mutex ordered acquire.**
   `JobStateMachine.ChangeProject` takes both source and target mutexes
   in ordinal-lowercased ascending order so a simultaneous `A -> B`

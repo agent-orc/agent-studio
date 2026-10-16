@@ -183,30 +183,17 @@ public sealed class CodeReviewStepService
         var fileName = $"{fileNamePrefix}-{startedAt:yyyy-MM-ddTHH-mm-ss-fffZ}.md";
         var filePath = Path.Combine(request.JobFolderPath, fileName);
 
+        string? deferredMarkdown = null;
         try
         {
-            var report = RenderReport(request, status, summary, grade, rawResponse, startedAt);
-            await File.WriteAllTextAsync(filePath, report, ct);
-            _fileGenerationIndex?.Upsert(request.JobFolderPath, new FileGenerationMeta
+            var markdown = RenderReport(request, status, summary, grade, rawResponse, startedAt);
+            if (request.DeferGradeWrites)
+                deferredMarkdown = markdown;
+            else
             {
-                File = fileName,
-                Kind = request.Mode == CodeReviewMode.Grade ? "code-review-grade" : "code-review",
-                Model = callUsage?.Model ?? request.Model,
-                Cli = request.CliType,
-                TokensIn = callUsage?.InputTokens ?? 0,
-                TokensOut = callUsage?.OutputTokens ?? 0,
-                CacheReadTokens = callUsage?.CacheReadTokens ?? 0,
-                CacheCreationTokens = callUsage?.CacheCreationTokens ?? 0,
-                TokensTotal = (callUsage?.InputTokens ?? 0)
-                    + (callUsage?.OutputTokens ?? 0)
-                    + (callUsage?.CacheReadTokens ?? 0)
-                    + (callUsage?.CacheCreationTokens ?? 0),
-                StartedAt = startedAt,
-                EndedAt = startedAt.AddMilliseconds(sw.ElapsedMilliseconds),
-                DurationMs = sw.ElapsedMilliseconds,
-                StepId = UsageSource,
-                HeadShaAfter = request.Commit,
-            });
+                await File.WriteAllTextAsync(filePath, markdown, ct);
+                RecordFileGeneration(request, fileName, callUsage, startedAt, sw.ElapsedMilliseconds);
+            }
         }
         catch (Exception ex)
         {
@@ -223,7 +210,11 @@ public sealed class CodeReviewStepService
             concernTagId = executionError is null
                 ? CodeReviewGradeParsing.TagFor(grade!.Value)
                 : null;
-            if (concernTagId is not null)
+            if (request.DeferGradeWrites)
+            {
+                // The auto-review caller applies the tag under the lane ownership guard.
+            }
+            else if (concernTagId is not null)
             {
                 // Authoritative single grade tag: drop any stale
                 // code-review:grade-* so a re-graded card carries exactly one.
@@ -264,8 +255,50 @@ public sealed class CodeReviewStepService
             Grade: grade,
             ExecutionError: executionError,
             Findings: findings,
-            Usage: callUsage);
+            Usage: callUsage)
+        {
+            DeferredMarkdown = deferredMarkdown,
+        };
     }
+
+    internal void PersistDeferredGradeReport(
+        CodeReviewStepRequest request,
+        CodeReviewStepReport report,
+        string liveFolderPath)
+    {
+        if (!request.DeferGradeWrites || report.DeferredMarkdown is null)
+            throw new InvalidOperationException("The grade report was not deferred.");
+        File.WriteAllText(Path.Combine(liveFolderPath, report.FileName), report.DeferredMarkdown);
+        RecordFileGeneration(request with { JobFolderPath = liveFolderPath }, report.FileName,
+            report.Usage, report.StartedAt, report.DurationMs);
+    }
+
+    private void RecordFileGeneration(
+        CodeReviewStepRequest request,
+        string fileName,
+        OrchestratorTokenUsage? usage,
+        DateTime startedAt,
+        long durationMs)
+        => _fileGenerationIndex?.Upsert(request.JobFolderPath, new FileGenerationMeta
+        {
+            File = fileName,
+            Kind = request.Mode == CodeReviewMode.Grade ? "code-review-grade" : "code-review",
+            Model = usage?.Model ?? request.Model,
+            Cli = request.CliType,
+            TokensIn = usage?.InputTokens ?? 0,
+            TokensOut = usage?.OutputTokens ?? 0,
+            CacheReadTokens = usage?.CacheReadTokens ?? 0,
+            CacheCreationTokens = usage?.CacheCreationTokens ?? 0,
+            TokensTotal = (usage?.InputTokens ?? 0)
+                + (usage?.OutputTokens ?? 0)
+                + (usage?.CacheReadTokens ?? 0)
+                + (usage?.CacheCreationTokens ?? 0),
+            StartedAt = startedAt,
+            EndedAt = startedAt.AddMilliseconds(durationMs),
+            DurationMs = durationMs,
+            StepId = UsageSource,
+            HeadShaAfter = request.Commit,
+        });
 
     /// <summary>Tag id for the given verdict, or null when no tag should be hung.</summary>
     public static string? TagFor(AspectStatus status) => status switch
@@ -524,6 +557,9 @@ public sealed record CodeReviewStepRequest(
     /// </summary>
     public CodeReviewMode Mode { get; init; } = CodeReviewMode.Verdict;
 
+    /// <summary>The automatic review caller commits the report and grade tag under its ownership guard.</summary>
+    public bool DeferGradeWrites { get; init; }
+
     /// <summary>
     /// Inventory of the job's <c>results/</c> folder (file list + short excerpts).
     /// Completes the evidence source so the grade / verdict never reads an empty
@@ -563,4 +599,7 @@ public sealed record CodeReviewStepReport(
     CodeReviewGrade? Grade = null,
     string? ExecutionError = null,
     IReadOnlyList<string>? Findings = null,
-    OrchestratorTokenUsage? Usage = null);
+    OrchestratorTokenUsage? Usage = null)
+{
+    internal string? DeferredMarkdown { get; init; }
+}
