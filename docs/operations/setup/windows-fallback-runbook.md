@@ -42,8 +42,44 @@ fresh `C:\ProgramData\AgentOrchestrator` gets new ones. A re-run with a newer
 package stops the three tasks and their executables before it moves the
 `current` junction. Credential files are restricted to the installing account,
 SYSTEM, and Administrators. `agent-studio-setup --target native` runs this
-script with `-RestMode Normal`: the local Task Server is then the primary one,
-not a dormant fallback ([install guide](./install.md)).
+script with `-RestMode Normal -FullStudio`: the local Task Server is then the
+primary one and five boot-time tasks start: Task Server, Engine, Studio
+connector, Studio backend, and Runner. The browser UI is served by the
+connector on port 4011 ([install guide](./install.md)).
+
+The script's default remains the three-task warm fallback. For a complete
+local Studio, pass `-RestMode Normal -FullStudio`. The native setup executable
+supplies these switches and handles the guided decisions. Direct script users
+can pass the same choices:
+
+| Switch | Effect with `-FullStudio` |
+| --- | --- |
+| `-ProviderCli <choice>` | Select `codex`, `claude`, or `skip`. `skip` leaves provider login for later. |
+| `-GitAccess <choice>` | Select `gcm`, `token`, `deploy-key`, or `skip` for the Runner's GitHub credential source. |
+| `-GitTokenFile <path>` | Required for `token`; the script copies the token into a protected credential file. |
+| `-GitRemote <url>` | Select the repository. Required as a GitHub SSH URL for `deploy-key`; use a GitHub HTTPS URL for `gcm` or `token`. The setup executable verifies deploy-key access after the key is added. |
+| `-RunnerPasswordFromStdin` | Read the Runner account password from one stdin line for a boot-time task with that account's credential profile. Required by the setup executable when a provider or GitHub access is selected. |
+| `-Unattended` | Suppress the one-time owner-code console display. The code remains in its restricted file. |
+
+The script also accepts the older `-NonInteractive` switch. The owner-code
+display is controlled by `-Unattended`.
+Direct script use prints a generated deploy public key and leaves its access
+check for the caller. With the setup executable, a guided install waits for
+the user to add the key, then verifies the repository access; an unattended
+install reports the pending check for a later guided repair.
+
+The script writes `server.env`, `engine.env`, and `studio-connector.env` under
+`ConfigRoot`. Full Studio also writes `studio-backend.env` and `runner.env`.
+In full mode, `server.env` gains `OWNER_BOOTSTRAP_CODE_FILE` (the protected
+one-time code), `BOOTSTRAP_RUNNER_ID`, and `BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE`;
+`studio-connector.env` gains `Studio__BrowserRoot` pointing at the packaged
+browser bundle and `Studio__BackendBaseUrl` pointing at the local backend;
+the connector serves port 4011. `studio-backend.env` sets
+`ASPNETCORE_URLS` to port 5031 and `TaskServer__BaseUrl` to port 5071.
+`runner.env` records the selected provider, protected Runner token path,
+work and state directories, and Git configuration for the selected access
+method. The setup executable records these choices without secrets in
+`installation.json` as described in the [install guide](./install.md).
 
 Point the Studio connector back at the remote origin once the install is
 proved:

@@ -55,8 +55,17 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Any(directory => File.Exists(Path.Combine(directory.Trim('"'), name)));
 
-    public async Task PrepareProviderAsync(ConsolePrompter prompter, bool unattended)
+    internal bool RequiresRunnerPassword => ProviderCli != "skip" || GitAccess != "skip";
+
+    internal static bool InstallMissingProvider(bool unattended, ConsolePrompter prompter, string provider)
+        => unattended || prompter.Confirm($"Install {provider} CLI with npm for this Windows account", true);
+
+    public async Task PrepareProviderAsync(ConsolePrompter prompter, bool unattended,
+        Func<string, bool>? commandOnPath = null,
+        Func<string, IReadOnlyList<string>, Task>? install = null)
     {
+        commandOnPath ??= CommandOnPath;
+        install ??= (file, arguments) => new ProcessRunner(false).RequireAsync(file, arguments);
         if (ProviderCli == "skip")
         {
             Console.WriteLine("Provider login skipped. Open the local Runner host card in Studio and use its provider sign-in action before running coding tasks.");
@@ -64,12 +73,12 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
         else
         {
             var executable = ProviderCli + ".cmd";
-            if (!CommandOnPath(executable) && !CommandOnPath(ProviderCli + ".exe"))
+            if (!commandOnPath(executable) && !commandOnPath(ProviderCli + ".exe"))
             {
-                if (unattended || !prompter.Confirm($"Install {ProviderCli} CLI with npm for this Windows account", true))
+                if (!InstallMissingProvider(unattended, prompter, ProviderCli))
                     throw new InvalidOperationException($"{ProviderCli} CLI is missing. Install it for the runner account or choose ProviderCli=skip.");
                 var package = ProviderCli == "codex" ? "@openai/codex" : "@anthropic-ai/claude-code";
-                await new ProcessRunner(false).RequireAsync("cmd.exe",
+                await install("cmd.exe",
                     ["/d", "/s", "/c", $"npm install --global {package}"]);
             }
             if (!unattended && prompter.Confirm($"Run {ProviderCli} login for the runner account now", true))
@@ -107,5 +116,26 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
             if (login.ExitCode != 0)
                 throw new InvalidOperationException($"Git Credential Manager login exited with code {login.ExitCode}.");
         }
+    }
+
+    internal async Task VerifyDeployKeyAsync(ConsolePrompter prompter, string configRoot,
+        Func<IReadOnlyDictionary<string, string?>, Task<bool>> verify)
+    {
+        if (GitAccess != "deploy-key" || GitRemote is null) return;
+        var environment = File.ReadAllLines(Path.Combine(configRoot, "runner.env"))
+            .Where(line => line.StartsWith("GIT_", StringComparison.Ordinal) && line.Contains('='))
+            .Select(line => line.Split('=', 2))
+            .ToDictionary(parts => parts[0], parts => (string?)parts[1], StringComparer.Ordinal);
+        environment["GIT_TERMINAL_PROMPT"] = "0";
+        while (prompter.Confirm($"Add the public key shown above to {GitRemote}, then verify access now", true))
+        {
+            if (await verify(environment))
+            {
+                Console.WriteLine($"GitHub access verified for {GitRemote}.");
+                return;
+            }
+            Console.WriteLine("GitHub access is not ready. Check the repository deploy key and its permissions.");
+        }
+        Console.WriteLine($"GitHub access remains unverified. Add the displayed deploy key to {GitRemote}, then rerun guided setup with the same deploy-key choice to verify it.");
     }
 }
