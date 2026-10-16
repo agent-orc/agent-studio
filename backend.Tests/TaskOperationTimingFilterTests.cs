@@ -51,7 +51,10 @@ public sealed class TaskOperationTimingFilterTests
                 using (TaskSwitchTrace.Span("compose"))
                 {
                     using (TaskSwitchTrace.Span("compose.cards"))
+                    {
                         TaskSwitchTrace.RecordMeasured("compose.lease", System.Diagnostics.Stopwatch.Frequency / 1000);
+                        TaskSwitchTrace.RecordMeasured("compose.identity", System.Diagnostics.Stopwatch.Frequency / 2000);
+                    }
                 }
                 return ValueTask.FromResult<object?>(Results.StatusCode(StatusCodes.Status304NotModified));
             });
@@ -63,6 +66,7 @@ public sealed class TaskOperationTimingFilterTests
         Assert.Contains("\"compose\"", trace, StringComparison.Ordinal);
         Assert.Contains("\"compose.cards\"", trace, StringComparison.Ordinal);
         Assert.Contains("\"compose.lease\"", trace, StringComparison.Ordinal);
+        Assert.Contains("\"compose.identity\"", trace, StringComparison.Ordinal);
         Assert.Contains("\"status\":304", trace, StringComparison.Ordinal);
     }
 

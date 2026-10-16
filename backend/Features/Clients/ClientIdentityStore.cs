@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -36,9 +38,12 @@ public class ClientIdentityStore
     private readonly IAtomicJsonFileWriter _fileWriter;
     private readonly object _lock = new();
     private readonly Dictionary<string, ClientIdentity> _byId = new(StringComparer.OrdinalIgnoreCase);
+    private ImmutableDictionary<string, ClientIdentity> _published =
+        ImmutableDictionary.Create<string, ClientIdentity>(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ClientIdentityFileDiagnostic> _diagnostics = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _lastSeenPersistedAt = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
+    private readonly ConcurrentDictionary<string, byte> _pendingSeen = new(StringComparer.OrdinalIgnoreCase);
 
     public ClientIdentityStore(IConfiguration config, ILogger<ClientIdentityStore> logger)
         : this(config, logger, new AtomicJsonFileWriter())
@@ -125,7 +130,7 @@ public class ClientIdentityStore
         };
 
         WriteLocked(bootstrap);
-        _byId[bootstrap.Id] = bootstrap;
+        SetRecordLocked(bootstrap);
         _logger.LogInformation("Bootstrap identity '{Id}' ({Name}) created", bootstrap.Id, bootstrap.DisplayName);
     }
 
@@ -148,6 +153,31 @@ public class ClientIdentityStore
             if (!_byId.ContainsKey(id)) TryReloadIdentityLocked(id);
             return _byId.TryGetValue(id, out var rec) ? rec : null;
         }
+    }
+
+    /// <summary>Read the last committed identity without waiting for persistence.</summary>
+    public ClientIdentity? FindPublished(string id)
+    {
+        if (!Volatile.Read(ref _loaded)) EnsureLoaded();
+        return Volatile.Read(ref _published).GetValueOrDefault(id);
+    }
+
+    /// <summary>Coalesce board last-seen stamps so a read never waits for identity persistence.</summary>
+    public void RecordSeenDeferred(string id)
+    {
+        if (!_pendingSeen.TryAdd(id, 0)) return;
+        _ = Task.Run(() =>
+        {
+            try { RecordSeen(id); }
+            catch (Exception ex) { _logger.LogError(ex, "Failed to record board last-seen for '{Id}'", id); }
+            finally { _pendingSeen.TryRemove(id, out _); }
+        });
+    }
+
+    private void SetRecordLocked(ClientIdentity record)
+    {
+        _byId[record.Id] = record;
+        Volatile.Write(ref _published, _published.SetItem(record.Id, record));
     }
 
     public List<ClientIdentity> ListAll()
@@ -211,7 +241,7 @@ public class ClientIdentityStore
                     LastSeenAt = DateTime.UtcNow
                 };
                 WriteLocked(refreshed);
-                _byId[refreshed.Id] = refreshed;
+                SetRecordLocked(refreshed);
                 return refreshed;
             }
 
@@ -229,7 +259,7 @@ public class ClientIdentityStore
                 Notes = request.Notes
             };
             WriteLocked(record);
-            _byId[id] = record;
+            SetRecordLocked(record);
             _logger.LogInformation("Registered client identity '{Id}' ({Name}, kind={Kind})", id, record.DisplayName, record.Kind);
             return record;
         }
@@ -248,7 +278,7 @@ public class ClientIdentityStore
             if (existing.Kind == ClientIdentityKind.Retired) return false;
             var retired = existing with { Kind = ClientIdentityKind.Retired };
             WriteLocked(retired);
-            _byId[id] = retired;
+            SetRecordLocked(retired);
             _logger.LogInformation("Soft-deleted client identity '{Id}'", id);
             return true;
         }
@@ -269,7 +299,7 @@ public class ClientIdentityStore
                     ? ClientIdentityKind.Retired : existing.Kind
             };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -290,7 +320,7 @@ public class ClientIdentityStore
                 RunnerAvailableSlots = 0
             };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -304,6 +334,7 @@ public class ClientIdentityStore
             var path = Path.Combine(IdentitiesFolder, existing.Id + ".json");
             if (File.Exists(path)) File.Delete(path);
             _byId.Remove(id);
+            Volatile.Write(ref _published, _published.Remove(id));
             _diagnostics.Remove(id);
             _lastSeenPersistedAt.Remove(id);
             return true;
@@ -382,7 +413,7 @@ public class ClientIdentityStore
                     ? ClientIdentityKind.Retired : existing.Kind
             };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -428,7 +459,7 @@ public class ClientIdentityStore
                     : existing.RunnerAvailableSlots
             };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             _logger.LogInformation(
                 "runner-capacity-updated client={ClientId} ceiling={Ceiling} targetLoad={TargetLoad} ramp={Ramp}",
                 id, updated.RunnerDesiredMaxParallelism, updated.RunnerTargetLoadPercent, updated.RunnerRampStrategy);
@@ -458,7 +489,7 @@ public class ClientIdentityStore
                 DefaultThinkingLevel = clearThinkingLevel ? null : (defaultThinkingLevel ?? existing.DefaultThinkingLevel)
             };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -482,7 +513,7 @@ public class ClientIdentityStore
                     .ToList()
             };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -512,7 +543,7 @@ public class ClientIdentityStore
                 .ToList();
             var updated = existing with { RunnerProjectPreflights = next };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -531,7 +562,7 @@ public class ClientIdentityStore
                 if (next.Count == existing.RunnerProjectPreflights.Count) continue;
                 var updated = existing with { RunnerProjectPreflights = next };
                 WriteLocked(updated);
-                _byId[id] = updated;
+                SetRecordLocked(updated);
             }
         }
     }
@@ -545,7 +576,7 @@ public class ClientIdentityStore
             if (existing.RunnerProjectPreflights.Count == 0) return existing;
             var updated = existing with { RunnerProjectPreflights = [] };
             WriteLocked(updated);
-            _byId[id] = updated;
+            SetRecordLocked(updated);
             return updated;
         }
     }
@@ -563,7 +594,7 @@ public class ClientIdentityStore
             // Throttle disk writes: only flush when last-seen is older than 30s.
             // The in-memory copy always carries the freshest value.
             var stamped = existing with { LastSeenAt = DateTime.UtcNow };
-            _byId[id] = stamped;
+            SetRecordLocked(stamped);
             var lastPersistedAt = _lastSeenPersistedAt.GetValueOrDefault(id);
             if (lastPersistedAt == default
                 || (stamped.LastSeenAt!.Value - lastPersistedAt).TotalSeconds >= 30)
@@ -617,7 +648,7 @@ public class ClientIdentityStore
                     $"The identity id '{record.Id}' does not match file name '{Path.GetFileName(file)}'.");
             }
 
-            _byId[record.Id] = record;
+            SetRecordLocked(record);
             if (record.LastSeenAt is { } lastSeenAt)
                 _lastSeenPersistedAt[record.Id] = lastSeenAt;
             if (_diagnostics.Remove(identityId))
