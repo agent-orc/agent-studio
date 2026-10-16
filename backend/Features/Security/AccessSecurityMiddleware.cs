@@ -535,7 +535,9 @@ public sealed class AccessSecurityMiddleware
     /// </summary>
     private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path)
     {
-        if (path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)
+        if (path.Equals("/api/workspace/tokens/timeline", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/workspace/tokens/timeline/cached", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/expensive-jobs/cached", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.WorkspaceWide;
         if (path.StartsWith("/api/runner/global", StringComparison.OrdinalIgnoreCase))
