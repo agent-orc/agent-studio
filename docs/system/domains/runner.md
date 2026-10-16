@@ -598,6 +598,13 @@ unreported claim expires with its lease and is queued again.
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
   the base in one sentence and names no SHA.
+- If a fenced remote run finishes after the operator has returned its card to
+  Ready and queued another continuation, completion settles the old attempt
+  and records its timeline evidence, then leaves the card and pending prompt in
+  Ready. The next claim consumes that prompt. The old completion does not mint
+  a review attempt or move the card back to Auto Review. A durable timeline
+  receipt makes retries of that completion harmless after the next claim has
+  entered Progress (AGT-3151).
 - `runner/ReviewStateStore.cs`, `runner/ReviewSlotReconciler.cs`,
   `runner/DurableReviewProcess.cs`, `runner/RemoteReviewDaemon.cs`, and
   `runner/RemoteReviewExecutor.cs`: durable
