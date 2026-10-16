@@ -1887,6 +1887,10 @@ public class OrchestratorChatService
         if (!string.IsNullOrWhiteSpace(nav.PageExcerpt)) sb.AppendLf($"  pageExcerpt: {nav.PageExcerpt}");
         sb.AppendLf();
         sb.AppendLf("Use this when interpreting context-dependent questions. When pageRef is set, the operator is asking from THAT repository page; use its title, type, path, and excerpt. When currentTaskKey or currentTaskId is set, the operator is most likely asking about THAT task; answer with its title/state and refer to it by key. When neither pageRef, currentTaskKey, nor currentTaskId is set, do NOT invent one; say no specific page or task is in scope and ask what they mean. Never produce filler tokens or repeated greetings in place of a real answer.");
+        if (string.Equals(nav.ObservedSurface, "URL preview", StringComparison.OrdinalIgnoreCase))
+        {
+            sb.AppendLf("The person is viewing a product preview. Speak in plain product language. Do not mention code, diffs, or lane names unless asked. For a change request, ask for the missing scope, page location, and examples. Summarize the proposed change and give a rough quota estimate before directing the person to confirm it with Create this change in the preview. This chat turn remains read-only.");
+        }
         sb.AppendLf();
     }
 
