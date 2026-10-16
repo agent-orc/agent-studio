@@ -1,4 +1,9 @@
 using AgentStudio.Setup;
+using System.Diagnostics;
+using System.Formats.Tar;
+using System.IO.Compression;
+using System.Net;
+using System.Security.Cryptography;
 using Xunit;
 
 namespace AgentOrchestratorSetup.Tests;
@@ -85,6 +90,74 @@ public sealed class WindowsNativeSetupTests
         Assert.True(nodeInstalled);
     }
 
+    [Fact]
+    public async Task Node_install_downloads_verified_msi_runs_installer_and_refreshes_path()
+    {
+        var msi = new byte[] { 77, 83, 73, 1, 2, 3 };
+        var checksum = Convert.ToHexString(SHA256.HashData(msi));
+        using var client = new HttpClient(new NodeReleaseHandler(msi,
+            $"{checksum}  node-v22.23.1-x64.msi\n"));
+        string? refreshedPath = null;
+        var installed = false;
+        await WindowsNativeDecisions.InstallNodeAsync(client, async (file, arguments) =>
+        {
+            Assert.Equal("msiexec.exe", file);
+            Assert.Equal("/i", arguments[0]);
+            Assert.Equal(msi, await File.ReadAllBytesAsync(arguments[1]));
+            Assert.Equal(new[] { "/qn", "/norestart", "ALLUSERS=1" }, arguments.Skip(2));
+            installed = true;
+            return 3010;
+        }, (name, target) => target == EnvironmentVariableTarget.Machine
+            ? @"C:\Program Files\nodejs" : @"C:\Users\fixture\bin",
+            path => refreshedPath = path);
+
+        Assert.True(installed);
+        Assert.Equal(@"C:\Program Files\nodejs" + Path.PathSeparator + @"C:\Users\fixture\bin",
+            refreshedPath);
+    }
+
+    [Fact]
+    public async Task Node_install_rejects_mismatched_release_before_running_msi()
+    {
+        using var client = new HttpClient(new NodeReleaseHandler([1, 2, 3],
+            $"{new string('0', 64)}  node-v22.23.1-x64.msi\n"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => WindowsNativeDecisions.InstallNodeAsync(
+            client, (_, _) => throw new Xunit.Sdk.XunitException("Unverified MSI was run."),
+            (_, _) => null, _ => { }));
+    }
+
+    [Theory]
+    [InlineData("codex", "@openai/codex")]
+    [InlineData("claude", "@anthropic-ai/claude-code")]
+    public async Task Clean_unattended_machine_installs_node_then_selected_provider(
+        string provider, string package)
+    {
+        var msi = new byte[] { 77, 83, 73, 4, 5, 6 };
+        using var client = new HttpClient(new NodeReleaseHandler(msi,
+            $"{Convert.ToHexString(SHA256.HashData(msi))}  node-v22.23.1-x64.msi\n"));
+        var nodeInstalled = false;
+        var providerInstalled = false;
+        await new WindowsNativeDecisions(provider, "skip", null, null).PrepareProviderAsync(
+            new ConsolePrompter(true), unattended: true,
+            commandOnPath: name => nodeInstalled && name is "node.exe" or "npm.cmd",
+            install: (file, arguments) =>
+            {
+                Assert.True(nodeInstalled);
+                Assert.Equal("cmd.exe", file);
+                Assert.Contains(package, arguments[3]);
+                providerInstalled = true;
+                return Task.CompletedTask;
+            },
+            installNode: () => WindowsNativeDecisions.InstallNodeAsync(client,
+                async (file, arguments) =>
+                {
+                    Assert.Equal(msi, await File.ReadAllBytesAsync(arguments[1]));
+                    nodeInstalled = true;
+                    return 0;
+                }, (_, _) => "fixture-path", _ => { }));
+        Assert.True(providerInstalled);
+    }
+
     [Theory]
     [InlineData("skip", "skip", false)]
     [InlineData("codex", "skip", true)]
@@ -161,5 +234,79 @@ public sealed class WindowsNativeSetupTests
             Assert.Contains("browser/index.html", error.Message);
         }
         finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task Windows_packager_places_browser_at_the_path_required_by_native_setup()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("windows-package-contract-");
+        try
+        {
+            const string version = "0.0.0";
+            var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../"));
+            var packageScript = Path.Combine(repoRoot, "scripts/release/package-release-windows.ps1");
+            var publish = Path.Combine(root.FullName, "publish");
+            var linux = Path.Combine(root.FullName, "linux");
+            var output = Path.Combine(root.FullName, "output");
+            foreach (var relative in new[]
+            {
+                "task-server/task-server.exe", "orchestrator-engine/orchestrator-engine.exe",
+                "studio-bff/agent-studio-bff.exe", "agent-host/agent-host.exe",
+                "setup/agent-studio-setup.exe", "studio-backend/OrchestratorApi.exe",
+                "studio-backend/appsettings.json",
+            })
+            {
+                var file = Path.Combine(publish, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                await File.WriteAllTextAsync(file, "fixture");
+            }
+            Directory.CreateDirectory(linux);
+            Directory.CreateDirectory(output);
+            await using (var archive = File.Create(Path.Combine(linux, $"agent-studio-{version}.tar.gz")))
+            await using (var gzip = new GZipStream(archive, CompressionLevel.Fastest))
+            using (var tar = new TarWriter(gzip))
+            {
+                using var index = new MemoryStream("<html></html>"u8.ToArray());
+                tar.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile,
+                    $"agent-studio-{version}/browser/index.html") { DataStream = index });
+            }
+            var start = new ProcessStartInfo("powershell.exe")
+            {
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                         "-File", packageScript, "-Version", version, "-Sha", new string('a', 40),
+                         "-PublishRoot", publish, "-LinuxReleaseRoot", linux, "-OutputRoot", output })
+                start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, error);
+            using var zip = ZipFile.OpenRead(Path.Combine(output,
+                $"agent-orchestrator-{version}-win-x64.zip"));
+            var prefix = $"agent-orchestrator-{version}-win-x64/";
+            Assert.Contains(zip.Entries, entry => entry.FullName.Replace('\\', '/') == prefix + "browser/index.html");
+            Assert.Contains(zip.Entries, entry => entry.FullName.Replace('\\', '/') == prefix + "OrchestratorApi.exe");
+            Assert.Contains(zip.Entries, entry => entry.FullName.Replace('\\', '/') == prefix + "agent-host.exe");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    private sealed class NodeReleaseHandler(byte[] msi, string checksums) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal("nodejs.org", request.RequestUri!.Host);
+            Assert.StartsWith("/download/release/v22.23.1/", request.RequestUri.AbsolutePath);
+            var body = request.RequestUri.AbsolutePath.EndsWith("SHASUMS256.txt", StringComparison.Ordinal)
+                ? new ByteArrayContent(System.Text.Encoding.ASCII.GetBytes(checksums))
+                : new ByteArrayContent(msi);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = body });
+        }
     }
 }
