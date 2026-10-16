@@ -5,6 +5,7 @@ public sealed class TaskGateCancellationRegistry
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, HashSet<CancellationTokenSource>> _active = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _cancelledBeforeRegistration = new(StringComparer.OrdinalIgnoreCase);
 
     public IDisposable Register(string? project, string? jobId, CancellationTokenSource source)
     {
@@ -13,6 +14,10 @@ public sealed class TaskGateCancellationRegistry
         var key = Key(project, jobId);
         lock (_sync)
         {
+            // Acceptance may finish before the remote gate reaches Register.
+            // Consume that cancellation for the next gate; a later review round
+            // for this card is allowed to register normally.
+            if (_cancelledBeforeRegistration.Remove(key)) source.Cancel();
             if (!_active.TryGetValue(key, out var sources))
                 _active[key] = sources = [];
             sources.Add(source);
@@ -33,7 +38,9 @@ public sealed class TaskGateCancellationRegistry
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(jobId)) return;
         lock (_sync)
         {
-            if (!_active.TryGetValue(Key(project, jobId), out var sources)) return;
+            var key = Key(project, jobId);
+            _cancelledBeforeRegistration.Add(key);
+            if (!_active.TryGetValue(key, out var sources)) return;
             foreach (var source in sources) source.Cancel();
         }
     }
