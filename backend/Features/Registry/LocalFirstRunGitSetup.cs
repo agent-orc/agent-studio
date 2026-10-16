@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace AgentStudio.Registry;
@@ -15,19 +17,23 @@ public sealed class LocalFirstRunGitSetup
     private readonly LocalFirstRunRepositoryProbe _probe;
     private readonly string _root;
     private readonly string _config;
+    private readonly string _sshConfig;
     private readonly ConcurrentDictionary<string, LocalGitSetupStatus> _setups = new(StringComparer.Ordinal);
 
     public LocalFirstRunGitSetup(ProjectRegistry projects, LocalFirstRunRepositoryProbe probe)
         : this(projects, probe, Path.Combine(ApplicationDataRoot(), "AgentStudio", "first-run-git"),
-            GitConfigPath()) { }
+            GitConfigPath(), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".ssh", "config")) { }
 
     public LocalFirstRunGitSetup(ProjectRegistry projects, LocalFirstRunRepositoryProbe probe,
-        string root, string config)
+        string root, string config, string? sshConfig = null)
     {
         _projects = projects;
         _probe = probe;
         _root = root;
         _config = config;
+        _sshConfig = sshConfig ?? Path.Combine(Environment.GetFolderPath(
+            Environment.SpecialFolder.UserProfile), ".ssh", "config");
     }
 
     public LocalGitSetupStatus? Get(string id) => _setups.GetValueOrDefault(id);
@@ -69,22 +75,52 @@ public sealed class LocalFirstRunGitSetup
         else
         {
             var key = Path.Combine(root, "deploy-key");
-            if (key.Contains('\'')) throw new ArgumentException("Key path contains a quote.");
+            if (key.IndexOfAny(['\'', '"', '\r', '\n']) >= 0)
+                throw new ArgumentException("Key path contains an unsupported character.");
             if (!await RunAsync("ssh-keygen", root,
                     ["-q", "-t", "ed25519", "-N", "", "-C", "agent-studio-deploy", "-f", key], ct))
                 throw new InvalidOperationException("Deploy key generation failed.");
             Protect(key);
             var publicKey = (await File.ReadAllTextAsync(key + ".pub", ct)).Trim();
-            await File.AppendAllTextAsync(config,
-                $"\n[url \"git@github.com:{uri.AbsolutePath.TrimStart('/')}\"]\n\tinsteadOf = {origin}\n"
-                + $"[core]\n\tsshCommand = ssh -i '{key.Replace('\\', '/')}' -o IdentitiesOnly=yes -o BatchMode=yes "
-                + $"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='{Path.Combine(root, "known_hosts").Replace('\\', '/')}'\n", ct);
+            var alias = "agent-studio-first-run-" + Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(origin))).ToLowerInvariant()[..32];
+            await ConfigureSshAliasAsync(alias, key, Path.Combine(root, "known_hosts"), ct);
+            var rewrite = $"[url \"git@{alias}:{uri.AbsolutePath.TrimStart('/')}\"]\n\tinsteadOf = {origin}\n";
+            if (!File.Exists(config) || !(await File.ReadAllTextAsync(config, ct)).Contains(rewrite,
+                    StringComparison.Ordinal))
+                await File.AppendAllTextAsync(config, "\n" + rewrite, ct);
             status = new(id, "awaiting-github", publicKey, false, false);
         }
         Protect(config);
         _setups[id] = status;
         await File.WriteAllTextAsync(Path.Combine(root, "project"), request.ProjectId, ct);
         return status;
+    }
+
+    private async Task ConfigureSshAliasAsync(string alias, string key, string knownHosts,
+        CancellationToken ct)
+    {
+        var directory = Path.GetDirectoryName(_sshConfig)!;
+        Directory.CreateDirectory(directory);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                UnixFileMode.UserExecute);
+        var marker = "# agent-studio-first-run " + alias;
+        var block = $"{marker}\nHost {alias}\n  HostName github.com\n  User git\n"
+            + $"  IdentityFile \"{key.Replace('\\', '/')}\"\n  IdentitiesOnly yes\n"
+            + "  IdentityAgent none\n  BatchMode yes\n  StrictHostKeyChecking accept-new\n"
+            + $"  UserKnownHostsFile \"{knownHosts.Replace('\\', '/')}\"\n"
+            + $"Host *\n{marker} end\n";
+        var existing = File.Exists(_sshConfig) ? await File.ReadAllTextAsync(_sshConfig, ct) : "";
+        var start = existing.IndexOf(marker + "\n", StringComparison.Ordinal);
+        if (start >= 0)
+        {
+            var end = existing.IndexOf(marker + " end\n", start, StringComparison.Ordinal);
+            if (end < 0) throw new InvalidOperationException("Managed SSH configuration is incomplete.");
+            existing = existing.Remove(start, end + marker.Length + " end\n".Length - start);
+        }
+        await File.WriteAllTextAsync(_sshConfig, block + existing, ct);
+        Protect(_sshConfig);
     }
 
     public async Task<LocalGitSetupStatus?> VerifyAsync(string id, CancellationToken ct)
