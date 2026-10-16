@@ -254,6 +254,29 @@ async function mockDashboard(page: Page): Promise<{
     gateSlots: { busy: 2, total: 3 },
   }));
   await page.route('**/api/projects/*/deployment/summary', route => fulfillJson(route, deployment));
+  let promotionStatus = 'pending';
+  await page.route('**/api/projects/*/environments/promotions/*/approve', route => {
+    promotionStatus = 'production-queued';
+    return fulfillJson(route, {});
+  });
+  await page.route('**/api/projects/*/environments/promotions/*/reject', route => {
+    promotionStatus = 'rejected';
+    return fulfillJson(route, {});
+  });
+  await page.route('**/api/projects/*/environments', route => fulfillJson(route, {
+    project: PROJECT_NAME,
+    environments: [{
+      declaration: { id: 'stage', name: 'Stage', kind: 'stage', targetHostId: 'web-stage',
+        address: 'https://stage.example', template: 'container', destination: '8081',
+        healthUrl: 'https://stage.example/health', approval: 'person', secretRefs: [] },
+      deployedArtifact: 'registry.example/app@sha256:' + 'a'.repeat(64), health: 'healthy',
+      pendingArtifact: null, history: [{ at: '2026-07-11T10:00:00Z', status: 'healthy',
+        artifact: 'registry.example/app@sha256:' + 'a'.repeat(64), previousArtifact: null, evidence: 'health-ok' }],
+    }],
+    promotions: [{ artifact: 'registry.example/app@sha256:' + 'a'.repeat(64), stageId: 'stage',
+      productionId: 'production', stageHealthyAt: '2026-07-11T10:00:00Z', status: promotionStatus, actor: null }],
+    failureCards: [],
+  }));
   await page.route('**/api/projects/*/test-runs', route => fulfillJson(route, testRuns));
   await page.route('**/api/projects/*/deployment/compile', async route => {
     const request = route.request().postDataJSON() as { prompt?: string };
@@ -490,6 +513,10 @@ test.describe('Project Overview · operator dashboard', () => {
 
     await page.getByTestId('project-overview-open-deployment').click();
     await expect(page.getByTestId('project-deployment-panel')).toBeVisible();
+    await expect(page.getByTestId('environment-stage')).toContainText('healthy');
+    await expect(page.getByTestId('pending-promotion')).toBeVisible();
+    await page.getByRole('button', { name: 'Approve production' }).click();
+    await expect(page.getByTestId('pending-promotion')).toHaveCount(0);
     await expect(page.getByTestId('project-deployment-pending-count')).toHaveText('5');
     await expect(page.getByTestId('project-deployment-history').locator(':scope > li')).toHaveCount(3);
     await expect(page.getByTestId('project-deployment-targets').locator('button')).toHaveCount(2);
