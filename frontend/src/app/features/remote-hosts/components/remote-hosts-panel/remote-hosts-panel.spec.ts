@@ -75,7 +75,7 @@ describe('RemoteHostsPanelComponent', () => {
     const el: HTMLElement = fixture.nativeElement;
 
     expect(el.querySelector('[data-testid="remote-hosts-panel"]')).toBeTruthy();
-    expect(el.querySelector('h2')?.textContent).toContain('Execution Hosts');
+    expect(el.querySelector('h2')?.textContent).toContain('Environment');
     const cards = el.querySelectorAll('[data-testid="remote-host-card"]');
     expect(cards.length).toBe(fixture.componentInstance.total());
     expect(cards.length).toBeGreaterThanOrEqual(2);

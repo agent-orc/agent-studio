@@ -1,0 +1,24 @@
+<header class="rh__head">
+  <div class="rh__intro">
+    <h2 class="rh__title">Environment</h2>
+    <p class="rh__subtitle">Machines, services, connections, execution capacity, and lifecycle controls.</p>
+  </div>
+  <div class="rh__actions">
+    <div class="rh__view-switch" role="group" aria-label="Environment view">
+      <button type="button" data-testid="environment-list-toggle" [attr.aria-pressed]="view() === 'list'" (click)="viewChange.emit('list')">List</button>
+      <button type="button" data-testid="environment-map-toggle" [attr.aria-pressed]="view() === 'map'" (click)="viewChange.emit('map')">Map</button>
+    </div>
+    <button class="rh__add" type="button" data-testid="remote-hosts-add" (click)="add.emit()">
+      <span aria-hidden="true">+</span><span>Add execution host</span>
+    </button>
+    @if (retiredCount()) {
+      <button class="rh__refresh" type="button" data-testid="remote-hosts-purge-retired" (click)="purge.emit()">
+        <span>Delete retired…</span>
+      </button>
+    }
+    <button class="rh__refresh" type="button" data-testid="remote-hosts-refresh"
+            [disabled]="loading()" (click)="reload.emit()">
+      {{ loading() ? '⏳' : '↻' }} <span>Reload</span>
+    </button>
+  </div>
+</header>

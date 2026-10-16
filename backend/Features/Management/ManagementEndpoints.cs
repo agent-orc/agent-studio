@@ -31,6 +31,33 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
         });
+        group.MapGet("/environment", (
+            HttpContext context,
+            IConfiguration configuration,
+            AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
+            AgentStudio.Runner.OrchestrationEngineReadiness engine,
+            AgentStudio.Runtime.BuildIdentity build) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            InstallationConnectivityManifest? manifest = null;
+            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(path));
+            var gateHost = configuration["RemoteGate:Host"];
+            return Results.Ok(new
+            {
+                controlHost = Environment.MachineName,
+                installationId = manifest?.InstallationId,
+                mode = manifest?.Mode,
+                routes = manifest?.Runners.Select(route => new { route.RunnerId, route.Route }).ToArray(),
+                machines = manifest?.Machines,
+                gateHost = string.IsNullOrWhiteSpace(gateHost) ? null : gateHost,
+                gateSlots = string.IsNullOrWhiteSpace(gateHost) ? null : gateSlots.Snapshot(),
+                taskServer = new { build.Version, build.Commit },
+                engine = new { state = engine.State, lastContact = engine.LastContact, engineId = engine.LastEngineId },
+            });
+        });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,
             TaskScannerService scanner,
