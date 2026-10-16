@@ -1,8 +1,24 @@
+using AgentStudio.Pipeline;
+
 namespace AgentStudio.Tasks;
 
 /// <summary>Evaluates one repository's delivery history. Callers supply repository-specific Git facts.</summary>
 internal static class DeliveryGenerationPolicy
 {
+    /// <summary>
+    /// The review subject bounds the current delivery. Earlier rebased rounds
+    /// remain in commits[] for history, even when they lack supersession markers.
+    /// </summary>
+    internal static IReadOnlyList<TaskCommitInfo> CurrentDeliveryCommits(
+        IEnumerable<TaskCommitInfo> commits, string resultSha, string? baseSha,
+        Func<string, string, bool> isAncestor)
+        => commits.Where(commit => TaskCommitSupersession.IsEffectiveDelivery(commit)
+                && ReviewSubjectStore.IsValidResultSha(commit.Sha)
+                && isAncestor(commit.Sha, resultSha)
+                && (string.IsNullOrWhiteSpace(baseSha)
+                    || !isAncestor(commit.Sha, baseSha)))
+            .ToList();
+
     internal static IReadOnlyList<TaskRepositoryCommitMembership> Evaluate(
         IReadOnlyList<TaskCommitInfo> commits,
         Func<string, bool> isAncestor,

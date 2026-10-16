@@ -5,6 +5,29 @@ namespace AgentStudio.Tests;
 public sealed class DeliveryGenerationPolicyTests
 {
     [Fact]
+    public void CurrentDeliveryCommits_ExcludesRebasedRoundsAndBaseHistory()
+    {
+        var first = new string('a', 40);
+        var second = new string('b', 40);
+        var inherited = new string('c', 40);
+        var current = new string('d', 40);
+        var result = new string('e', 40);
+        var baseSha = new string('f', 40);
+        var commits = new[]
+        {
+            Commit(first), Commit(second), Commit(inherited), Commit(current),
+            Commit(result),
+        };
+        var selected = DeliveryGenerationPolicy.CurrentDeliveryCommits(
+            commits, result, baseSha,
+            (ancestor, descendant) => descendant == result
+                ? ancestor == inherited || ancestor == current || ancestor == result
+                : descendant == baseSha && ancestor == inherited);
+
+        Assert.Equal(new[] { current, result }, selected.Select(commit => commit.Sha));
+    }
+
+    [Fact]
     public void EarlierNumberedGeneration_IsSupersededWithoutContentHeuristics()
     {
         var result = DeliveryGenerationPolicy.Evaluate(

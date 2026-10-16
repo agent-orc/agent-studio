@@ -2090,10 +2090,15 @@ public sealed class TaskTransitionService
             || !ReviewSubjectStore.IsValidResultSha(delivery)
             || !_git.IsDeliveryPublished(root, delivery!, published!)) return null;
 
-        var commits = (accepted.Commits ?? [])
-            .Where(TaskCommitSupersession.IsEffectiveDelivery)
+        var subject = ReviewSubjectStore.Read(accepted.FolderPath);
+        var baseSha = subject is not null
+            && string.Equals(subject.ResultSha, delivery, StringComparison.OrdinalIgnoreCase)
+            && ReviewSubjectStore.IsValidResultSha(subject.BaseSha)
+                ? subject.BaseSha : null;
+        var commits = DeliveryGenerationPolicy.CurrentDeliveryCommits(
+                accepted.Commits ?? [], delivery!, baseSha,
+                (ancestor, descendant) => _git.IsAncestor(root, ancestor, descendant))
             .Select(commit => commit.Sha)
-            .Where(ReviewSubjectStore.IsValidResultSha)
             .ToList();
         if (commits.Any(commit => !_git.IsDeliveryPublished(root, commit, published!))) return null;
         var external = AgentStudio.Pipeline.ExternalPublishedVerificationStore.Read(accepted.WatchPath)
