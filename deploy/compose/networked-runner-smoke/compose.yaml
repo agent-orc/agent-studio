@@ -1,0 +1,35 @@
+name: ${SMOKE_PROJECT:?set SMOKE_PROJECT}
+
+services:
+  api:
+    image: mcr.microsoft.com/dotnet/aspnet:10.0
+    user: "${SMOKE_UID:?set SMOKE_UID}:${SMOKE_GID:?set SMOKE_GID}"
+    network_mode: host
+    working_dir: /app
+    command: ["dotnet", "/app/OrchestratorApi.dll"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Test
+      ASPNETCORE_URLS: http://127.0.0.1:${SMOKE_API_PORT:?set SMOKE_API_PORT}
+      TaskRepository: /workspace
+      Security__Profile: networked
+      AllowedHosts: localhost;127.0.0.1
+      WatchPaths__0__Name: networked-smoke
+      WatchPaths__0__Path: /workspace/projects/networked-smoke
+      WatchPaths__0__RootPath: /workspace/projects/networked-smoke
+      WatchPaths__0__RepositoryPath: /workspace/projects/networked-smoke
+      Supervisor__StuckResumeWindowMinutes: "0"
+    volumes:
+      - ${SMOKE_APP_DIR:?set SMOKE_APP_DIR}:/app:ro
+      - ${SMOKE_WORKSPACE:?set SMOKE_WORKSPACE}:/workspace
+
+  edge:
+    image: caddy:2.10
+    user: "${SMOKE_UID:?set SMOKE_UID}:${SMOKE_GID:?set SMOKE_GID}"
+    network_mode: host
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
+    environment:
+      XDG_CONFIG_HOME: /data/config
+    volumes:
+      - ${SMOKE_CADDYFILE:?set SMOKE_CADDYFILE}:/etc/caddy/Caddyfile:ro
+      - ${SMOKE_CADDY_DATA:?set SMOKE_CADDY_DATA}:/data
+    depends_on: [api]

@@ -22,6 +22,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 using RClient = Runner::AgentRunner.TaskServerClient;
+using ROptions = Runner::AgentRunner.RunnerOptions;
 using RLogRequest = Runner::AgentRunner.LogIngestRequest;
 using RLogLine = Runner::AgentRunner.CliOutputLine;
 
@@ -137,6 +138,32 @@ public sealed class RealTlsTransportTests : IDisposable
             var denied = await scopedHttp.PostAsJsonAsync("/api/runner/logs", new { taskKey = "AGT-TLS-3", lines = Array.Empty<object>() });
             Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         }
+
+        // A private installation may pin the presented certificate. The
+        // production client accepts the exact fingerprint and rejects a change.
+        var pin = Convert.ToHexString(SHA256.HashData(cert.RawData));
+        ROptions Options(string fingerprint) => new()
+        {
+            ServerUrl = host.HttpsBase,
+            RunnerId = enrolled.Runner.Id,
+            RunnerName = enrolled.Runner.Name,
+            Hostname = "tls-test",
+            BackendName = "test",
+            WorkDir = _workspace,
+            BaseBranch = "main",
+            AuthToken = enrolled.Secret,
+            TlsServerCertificateSha256 = fingerprint,
+        };
+        using (var pinned = new RClient(Options(pin)))
+        {
+            var response = await pinned.IngestLogsAsync(
+                new RLogRequest("AGT-TLS-PIN", [new RLogLine(DateTime.UnixEpoch, "stdout", "pinned")], RunnerId: enrolled.Runner.Id),
+                CancellationToken.None);
+            Assert.Equal(1, response!.Appended);
+        }
+        using (var wrongPin = new RClient(Options(new string('0', pin.Length))))
+            await Assert.ThrowsAsync<HttpRequestException>(() => wrongPin.IngestLogsAsync(
+                new RLogRequest("AGT-TLS-WRONG-PIN", [], RunnerId: enrolled.Runner.Id), CancellationToken.None));
     }
 
     private async Task<RunningHost> StartHttpsHostAsync(X509Certificate2 cert)

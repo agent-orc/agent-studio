@@ -1,9 +1,11 @@
-# AGT-3153 release workflow status
+# AGT-3185 networked service access status
 
-- Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
-- Implemented the operator's rollback option: stage all eight images at `sha-<commit>`, record previous `v<version>` and `latest` digests, promote those tags before creating the GitHub Release, and restore touched tags if promotion fails. The rollback test covers a failure after the fourth copy, including removal of newly created version tags.
-- Kept AGT-3158's installation scenarios and deferred-step gate in the release candidate path. Workflow dispatch uploads the complete candidate and image artifacts without publishing.
-- Operator step after publication: set each `ghcr.io/agent-orc/*` release package to **public** in GitHub Packages, then confirm anonymous `v<version>` pulls. The workflow reports anonymous visibility after release without failing a completed publication. Package visibility was not changed here.
-- No release tag, GitHub Release, image, or remote ref was published by this task.
-- GitHub API run `37255120101` confirms that v0.9.5 failed in Linux `Test .NET solution` and Windows `Publish win-x64 self-contained binaries`. The API log-download endpoint returned HTTP 403 without a token in this runner, so the detailed log text could not be inspected here.
-- Verification: `dotnet build agent-taskboard.sln --no-restore` passed; the two changed backend test classes passed (29 tests); the architecture and guard filter passed (81 tests in the backend test project, no matching tests in the other seven .NET test projects); the release script contract suite, image promotion rollback test, workflow dependency test, installation scenario driver test, YAML parse, and `npm --prefix frontend run lint` passed.
+- Result SHA (SHA-256 of the uncommitted delivery patch, excluding this report): `21d63e7c656c6a4c63585349de109334a6746d7ee9020b13889271cd6db34836`.
+- Base commit: `fc7bc1c24fee4e63edd626f479ec6701df0513e4`. The managed task platform owns the delivery commit.
+- Dossier decision used: §19 D15 option A, a dedicated Studio VM, remains the target deployment topology. For service TLS, enrollment uses the host system trust store. A private issuing CA must be installed there before enrollment.
+- Implemented: explicit scopes for the current `TaskServerClient` routes, enrolled runner ID ownership on versioned runner routes, service client registration for enrolled IDs, `agent-host --enroll`, HTTPS engine Compose configuration, host migration instructions, and an isolated HTTPS Compose smoke.
+- The probe's `/api/v1/reviews/claims` path is not a current `TaskServerClient` call. The current review claim route is `/api/v1/runners/{runnerId}/review-claims`, which is covered.
+- Verification: backend and runner test projects built with zero errors. The first solution build exposed a missing required property in the new TLS test fixture; it was corrected before the successful focused builds.
+- Focused filters: backend `FullyQualifiedName~AccessSecurityTests|FullyQualifiedName~NetworkedSecurityEndpointTests|FullyQualifiedName~RealTlsTransportTests|FullyQualifiedName~MonolithOrchestrationEndpointTests|FullyQualifiedName~StudioV1LegacyRouteAliasTests` passed 108 tests; runner `FullyQualifiedName~RunnerEnrollmentCommandTests` passed 2 tests.
+- Guard filter `FullyQualifiedName~.Architecture.|Category=Guard` ran on all eight .NET test projects. The backend project passed 82 tests; the other seven had no matching tests. Backend guards were repeated after the final test build and passed 82 tests.
+- Lint: `npm --prefix frontend run lint` passed. `bash -n` and both Compose configuration checks passed. `deploy/compose/networked-runner-smoke/run.sh` passed against the temporary networked monolith and Caddy edge, including HTTPS CA trust, enrollment, project assignment, lease acquisition, and fenced completion.
