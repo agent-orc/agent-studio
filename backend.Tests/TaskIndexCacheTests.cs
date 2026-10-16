@@ -737,7 +737,7 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task IdentifiedBoardRead_WaitsForItsOwnMutation_AndNoOtherClientDoes()
+    public async Task IdentifiedBoardRead_ServesThePublishedSnapshot_DuringItsOwnMutation()
     {
         var gate = new GatedScan();
         var cache = NewCache(gate);
@@ -752,9 +752,11 @@ public class TaskIndexCacheTests : IDisposable
             Assert.Same(published, await other);
 
             var writer = BoardRead(cache, "client-x");
-            await AssertStillWaiting(writer);
+            Assert.Same(writer, await Task.WhenAny(writer, Task.Delay(TimeSpan.FromSeconds(2))));
+            Assert.Same(published, await writer);
             gate.Release.Set();
-            Assert.Equal("job-2", Assert.Single((await writer.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+            await WaitForRefreshAsync(cache);
+            Assert.Equal("job-2", Assert.Single((await BoardRead(cache, "client-x")).Live).Id);
         }
         finally
         {
@@ -763,24 +765,26 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task AnonymousBoardRead_StillWaitsForEveryMutation()
+    public async Task AnonymousBoardRead_ServesThePublishedSnapshot_DuringMutation()
     {
         var gate = new GatedScan();
         var cache = NewCache(gate);
-        _ = await BoardRead(cache, null);
+        var published = await BoardRead(cache, null);
 
         gate.Hold();
         cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
         var anonymous = BoardRead(cache, null);
         try
         {
-            await AssertStillWaiting(anonymous);
+            Assert.Same(anonymous, await Task.WhenAny(anonymous, Task.Delay(TimeSpan.FromSeconds(2))));
+            Assert.Same(published, await anonymous);
         }
         finally
         {
             gate.Release.Set();
         }
-        Assert.Equal("job-2", Assert.Single((await anonymous.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+        await WaitForRefreshAsync(cache);
+        Assert.Equal("job-2", Assert.Single((await BoardRead(cache, null)).Live).Id);
     }
 
     [Fact]
@@ -844,7 +848,7 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task OptimisticReorder_TheWritersNextBoardReadNeverShowsTheOldOrder()
+    public async Task OptimisticReorder_BoardServesPinnedOrderUntilBackgroundPublish()
     {
         string[] disk = ["a", "b"];
         var gate = new GatedScan
@@ -869,10 +873,16 @@ public class TaskIndexCacheTests : IDisposable
         Volatile.Write(ref disk, ["b", "a"]);
         cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: "client-x");
         var writersRead = BoardRead(cache, "client-x");
-        await AssertStillWaiting(writersRead);
+        Assert.Equal(["a", "b"], OrderedIds(await writersRead.WaitAsync(TimeSpan.FromSeconds(2))));
 
         gate.Release.Set();
-        Assert.Equal(["b", "a"], OrderedIds(await writersRead.WaitAsync(TimeSpan.FromSeconds(5))));
+        await WaitForRefreshAsync(cache);
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!OrderedIds(await BoardRead(cache, "client-x")).SequenceEqual(["b", "a"]))
+        {
+            Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(5), "The post-mutation index was not published.");
+            await Task.Delay(10);
+        }
         Assert.Equal(3, gate.Scans);
 
         static string[] OrderedIds(TaskIndexPublication publication)
@@ -880,28 +890,56 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task ClientTargets_AreBounded_AndAnEvictedWriterStillReadsItsWrite()
+    public async Task AWriteBurst_CoalescesBoardRefreshes_AndDoesNotBlockReaders()
     {
         var gate = new GatedScan();
         var cache = NewCache(gate);
-        _ = await BoardRead(cache, "client-0");
+        var published = await BoardRead(cache, "client-0");
 
         gate.Hold();
-        for (var i = 0; i <= TaskIndexCache.MaxTrackedClients; i++)
+        for (var i = 0; i <= 1024; i++)
             cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: $"client-{i}");
 
-        // client-0 had the oldest entry and was evicted by the bound; it must
-        // still wait for its own write instead of reading around it.
+        // Every invalidation in this burst enters one coalescing window.
         var evicted = BoardRead(cache, "client-0");
         try
         {
-            await AssertStillWaiting(evicted);
+            Assert.Same(evicted, await Task.WhenAny(evicted, Task.Delay(TimeSpan.FromSeconds(2))));
+            Assert.Same(published, await evicted);
         }
         finally
         {
             gate.Release.Set();
         }
-        Assert.Equal("job-2", Assert.Single((await evicted.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+        await WaitForRefreshAsync(cache);
+        Assert.Equal("job-2", Assert.Single((await BoardRead(cache, "client-0")).Live).Id);
+        Assert.Equal(2, gate.Scans);
+    }
+
+    [Fact]
+    public async Task ConcurrentMutationReaders_ShareOneCoalescedFullScan()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        Assert.Equal("job-1", Assert.Single(cache.GetSnapshot()).Id);
+
+        gate.Hold();
+        for (var i = 0; i < 24; i++)
+            cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        var reads = Enumerable.Range(0, 12)
+            .Select(_ => Task.Run(cache.GetSnapshot)).ToArray();
+        try
+        {
+            Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(5)), "Coalesced scan did not start.");
+            Assert.Equal(2, gate.Scans);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        var snapshots = await Task.WhenAll(reads).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.All(snapshots, snapshot => Assert.Equal("job-2", Assert.Single(snapshot).Id));
+        Assert.Equal(2, gate.Scans);
     }
 
     [Fact]
@@ -919,7 +957,8 @@ public class TaskIndexCacheTests : IDisposable
         {
             var other = BoardRead(cache, "client-y");
             Assert.Same(other, await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(2))));
-            await AssertStillWaiting(BoardRead(cache, "client-x"));
+            var own = BoardRead(cache, "client-x");
+            Assert.Same(own, await Task.WhenAny(own, Task.Delay(TimeSpan.FromSeconds(2))));
         }
         finally
         {
@@ -1040,10 +1079,11 @@ public class TaskIndexCacheTests : IDisposable
         Assert.Equal(3, gate.Scans);
         Assert.Equal(1, pushes);
 
-        // The writer waits for its own mutation, so no stale read occurs.
-        // The background publish still announces the new generation.
+        // A writer's board read is stale too. The background publish announces
+        // the new generation after its coalesced refresh completes.
         cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: "client-x");
         _ = await BoardRead(cache, "client-x");
+        await WaitForRefreshAsync(cache);
         time.Advance(TaskIndexCache.BulkChangedDebounce);
         Assert.Equal(2, pushes);
     }

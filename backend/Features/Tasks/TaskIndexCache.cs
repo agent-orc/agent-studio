@@ -29,14 +29,10 @@ namespace AgentStudio.Tasks;
 /// every nested index read of that request (snapshot, reference graph, runner
 /// status, the validator's generation) answers from the same generation and
 /// never refreshes on the request path. A dirty or expired cache starts one
-/// background refresh instead. Only two cases wait: a cold start, and the
-/// reader's own pending mutation. A mutation belongs to a client when it runs
-/// inside that client's write request (<see cref="AmbientClient"/>); the
-/// required generation is then recorded per client in a bounded map, and a
-/// board read that names its client waits only for those writes. Runner,
-/// review and post-processing writes, and writes of other clients, never make
-/// it wait. A board read without a client identity keeps the global
-/// read-after-write target. When a background refresh publishes data that a
+/// background refresh instead. Once a snapshot exists, no board read waits
+/// for a mutation or a rebuild, including a write from the same client. The
+/// cold first read awaits the first publication. When a background refresh
+/// publishes data that a
 /// board read was served stale against, one debounced bulk-changed push tells
 /// clients to revalidate. Every other caller keeps the global semantics
 /// described above.</para>
@@ -57,9 +53,7 @@ public sealed class TaskIndexCache
 {
     /// <summary>Coalescing window for the bulk-changed push after a background publish.</summary>
     internal static readonly TimeSpan BulkChangedDebounce = TimeSpan.FromMilliseconds(250);
-
-    /// <summary>Upper bound on clients with a pending read-your-writes target.</summary>
-    internal const int MaxTrackedClients = 1024;
+    internal static readonly TimeSpan RefreshCoalesceWindow = TimeSpan.FromMilliseconds(200);
 
     private readonly TimeSpan _safetyTtl;
     private readonly TimeProvider _time;
@@ -100,14 +94,6 @@ public sealed class TaskIndexCache
     // AGT-3088 board-read pin. Set for the duration of one board request (and
     // its body build) so every nested index read answers from one generation.
     private readonly AsyncLocal<BoardReadPin?> _pin = new();
-
-    // Per-client read-your-writes targets: the newest mutation generation each
-    // client's own write requests raised. Entries are dropped once published,
-    // so the map only holds clients with a write still in flight.
-    private readonly Dictionary<string, long> _clientMutationGen = new(StringComparer.Ordinal);
-    // Highest target evicted by the size bound. An unknown client waits for
-    // it, so eviction can delay a read but never break read-your-writes.
-    private long _evictedClientFloor;
 
     // A board read was answered from a snapshot that an invalidation had
     // already made stale. The publish that catches up pushes one debounced
@@ -259,29 +245,19 @@ public sealed class TaskIndexCache
     /// The board-read entry point (AGT-3088). Returns an already published
     /// generation without running a disk walk on the caller's thread. A dirty
     /// or expired cache starts one background refresh and the caller gets the
-    /// last snapshot. Only a cold start, or a pending mutation of
-    /// <paramref name="clientId"/>'s own (any pending mutation when the read
-    /// carries no client identity), waits, and it waits asynchronously.
+    /// last snapshot. Only a cold start waits, asynchronously.
     /// Callers pin the result with <see cref="Pin"/>.
     /// </summary>
     public async ValueTask<TaskIndexPublication> AcquireBoardReadAsync(
         string? clientId, CancellationToken cancellationToken)
     {
         using var lookupTrace = TaskSwitchTrace.Span("index.lookup");
-        long targetMutationGen;
-        lock (_lock)
-        {
-            targetMutationGen = string.IsNullOrEmpty(clientId)
-                ? _requiredMutationGen
-                : Math.Max(_clientMutationGen.GetValueOrDefault(clientId), _evictedClientFloor);
-        }
-
         while (true)
         {
             Task refresh;
             lock (_lock)
             {
-                if (_hasSnapshot && _publishedMutationGen >= targetMutationGen)
+                if (_hasSnapshot)
                 {
                     Interlocked.Increment(ref Hits);
                     if (_dirty || _time.GetUtcNow() - _snapshotAt >= _safetyTtl)
@@ -596,9 +572,20 @@ public sealed class TaskIndexCache
                 }
                 else
                 {
-                    refresh = new TaskCompletionSource<bool>(
-                        TaskCreationOptions.RunContinuationsAsynchronously);
-                    _refreshCompletion = refresh;
+                    if (_hasSnapshot && _publishedMutationGen < targetMutationGen)
+                    {
+                        // Let concurrent mutation readers share the same
+                        // short coalescing window instead of each starting a
+                        // full workspace walk on its own thread.
+                        StartBackgroundRefreshLocked();
+                        coldStartRefresh = _refreshCompletion!.Task;
+                    }
+                    else
+                    {
+                        refresh = new TaskCompletionSource<bool>(
+                            TaskCreationOptions.RunContinuationsAsynchronously);
+                        _refreshCompletion = refresh;
+                    }
                 }
             }
 
@@ -713,7 +700,6 @@ public sealed class TaskIndexCache
                 _hasSnapshot = true;
                 _publishedMutationGen = Math.Max(_publishedMutationGen, mutationGenBefore);
                 _dirty = _invalidationGen != genBefore;
-                PruneClientTargetsLocked();
                 // A TTL-only rescan captures the same invalidation generation
                 // as the previous publish and never pushes.
                 var followedInvalidation = genBefore != _publishedInvalidationGen;
@@ -754,9 +740,8 @@ public sealed class TaskIndexCache
     /// and from mutation services (API-driven changes) so a write is always
     /// visible on the next read.
     /// </summary>
-    /// <param name="clientId">The client whose write request caused a
-    /// mutation, when there is one. Board reads of that client then wait for
-    /// this generation; see the class summary.</param>
+    /// <param name="clientId">The mutation's client identity, retained for
+    /// caller compatibility. Board reads do not wait for it.</param>
     public void Invalidate(
         InvalidationSource source = InvalidationSource.Mutation,
         [CallerMemberName] string callerMemberName = "",
@@ -772,8 +757,7 @@ public sealed class TaskIndexCache
         {
             if (source == InvalidationSource.Mutation)
             {
-                var required = Interlocked.Increment(ref _requiredMutationGen);
-                if (!string.IsNullOrEmpty(clientId)) RecordClientMutationLocked(clientId, required);
+                Interlocked.Increment(ref _requiredMutationGen);
             }
             Interlocked.Increment(ref _invalidationGen);
             _dirty = true;
@@ -791,45 +775,30 @@ public sealed class TaskIndexCache
             callerFilePath);
     }
 
-    private void RecordClientMutationLocked(string clientId, long required)
-    {
-        _clientMutationGen[clientId] = required;
-        if (_clientMutationGen.Count <= MaxTrackedClients) return;
-        PruneClientTargetsLocked();
-        if (_clientMutationGen.Count <= MaxTrackedClients) return;
-        var oldest = _clientMutationGen.MinBy(entry => entry.Value);
-        _clientMutationGen.Remove(oldest.Key);
-        _evictedClientFloor = Math.Max(_evictedClientFloor, oldest.Value);
-    }
-
-    private void PruneClientTargetsLocked()
-    {
-        if (_clientMutationGen.Count == 0) return;
-        foreach (var published in _clientMutationGen
-                     .Where(entry => entry.Value <= _publishedMutationGen)
-                     .Select(entry => entry.Key)
-                     .ToList())
-            _clientMutationGen.Remove(published);
-    }
-
     /// <summary>
-    /// Starts the single-flight refresh on a pool thread unless one is already
-    /// running. The walk is background ownership: it must inherit neither the
-    /// request's trace nor its board-read pin, so the execution context is not
-    /// flowed (the same rule as <see cref="QueueCoreHydration"/>).
+    /// Starts one dedicated refresh worker. Mutation-freshness readers can
+    /// occupy pool threads while waiting for this scan, so the worker must
+    /// not need a free pool thread to make progress. It also drops the
+    /// request's trace and board pin.
     /// </summary>
     private void StartBackgroundRefreshLocked()
     {
         if (_refreshCompletion != null) return;
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _refreshCompletion = completion;
-        if (ExecutionContext.IsFlowSuppressed())
+
+        void StartWorker() => _ = Task.Factory.StartNew(() =>
         {
-            _ = Task.Run(() => RunBackgroundRefresh(completion));
-            return;
+            Thread.Sleep(RefreshCoalesceWindow);
+            RunBackgroundRefresh(completion);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+            TaskScheduler.Default);
+
+        if (ExecutionContext.IsFlowSuppressed()) StartWorker();
+        else
+        {
+            using (ExecutionContext.SuppressFlow()) StartWorker();
         }
-        using (ExecutionContext.SuppressFlow())
-            _ = Task.Run(() => RunBackgroundRefresh(completion));
     }
 
     private void RunBackgroundRefresh(TaskCompletionSource<bool> completion)

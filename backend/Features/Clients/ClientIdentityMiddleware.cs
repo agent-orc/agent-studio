@@ -99,9 +99,16 @@ public class ClientIdentityMiddleware
             return;
         }
 
-        if (!_store.IsRegistered(clientId))
+        var boardRead = HttpMethods.IsGet(method)
+            && (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/tasks/grouped", StringComparison.OrdinalIgnoreCase));
+        var registered = boardRead
+            ? _store.FindPublished(clientId) is { Kind: not ClientIdentityKind.Retired }
+            : _store.IsRegistered(clientId);
+        if (!registered)
         {
-            var diagnostic = _store.FindDiagnostic(clientId);
+            var diagnostic = boardRead ? null : _store.FindDiagnostic(clientId);
             if (isWrite)
             {
                 await Reject(
@@ -118,7 +125,8 @@ public class ClientIdentityMiddleware
         }
 
         // Known identity: stamp lastSeenAt so the GET listing has fresh data.
-        _store.RecordSeen(clientId);
+        if (boardRead) _store.RecordSeenDeferred(clientId);
+        else _store.RecordSeen(clientId);
         context.Items["ClientId"] = clientId;
         if (!isWrite)
         {
