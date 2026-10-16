@@ -315,6 +315,36 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task Shared_runner_reads_accept_human_sessions_without_weakening_runner_scopes()
+    {
+        var (store, config, _) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var logsOnly = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("logs-only", [RunnerScopes.Logs], null, null)).Code);
+        var paths = new[]
+        {
+            "/api/system/about",
+            "/api/v1/projects",
+            "/api/v1/projects/project/tasks/task",
+            "/api/v1/reviews/attempts/attempt",
+            "/api/v1/failure-fingerprints"
+        };
+
+        foreach (var path in paths)
+        {
+            Assert.True((await Invoke(config, store, "GET", path, owner.SessionToken)).Called.Value, path);
+            Assert.Equal(StatusCodes.Status401Unauthorized,
+                (await Invoke(config, store, "GET", path)).Context.Response.StatusCode);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                (await Invoke(config, store, "GET", path, bearer: logsOnly.Secret)).Context.Response.StatusCode);
+        }
+
+        Assert.Equal(StatusCodes.Status401Unauthorized,
+            (await Invoke(config, store, "POST", "/api/v1/reviews/attempts/attempt/report", owner.SessionToken, owner.CsrfToken))
+                .Context.Response.StatusCode);
+    }
+
+    [Fact]
     public void Session_expiry_and_login_throttling_fail_closed()
     {
         var (store, _, clock) = NewStore(new Dictionary<string, string?>
