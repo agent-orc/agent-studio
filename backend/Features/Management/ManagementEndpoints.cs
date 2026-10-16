@@ -6,32 +6,9 @@ namespace AgentStudio.Management;
 
 public static class ManagementEndpoints
 {
-    public static void MapManagementEndpoints(this WebApplication app)
+    public static void MapEnvironmentEndpoint(this WebApplication app)
     {
-        app.MapGet("/recovery", () => Results.Content(RecoveryConsole.Html, "text/html"));
-        var group = app.MapGroup("/api/v1/management");
-        group.MapGet("/status", (HttpContext context, ManagementService service, IConfiguration configuration) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(service.Snapshot($"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}"));
-        });
-        group.MapGet("/diagnostics", (HttpContext context, ManagementService service, IConfiguration configuration) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(service.Diagnostics());
-        });
-        group.MapGet("/remote-hosts", (
-            HttpContext context,
-            AgentStudio.Runner.V1ReviewExecutorRegistry registry,
-            IConfiguration configuration) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(registry.ListCapabilitySnapshots());
-        });
-        group.MapGet("/environment", (
+        app.MapGet("/api/v1/management/environment", (
             HttpContext context,
             IConfiguration configuration,
             AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
@@ -57,6 +34,33 @@ public static class ManagementEndpoints
                 taskServer = new { build.Version, build.Commit },
                 engine = new { state = engine.State, lastContact = engine.LastContact, engineId = engine.LastEngineId },
             });
+        });
+    }
+
+    public static void MapManagementEndpoints(this WebApplication app)
+    {
+        app.MapGet("/recovery", () => Results.Content(RecoveryConsole.Html, "text/html"));
+        var group = app.MapGroup("/api/v1/management");
+        group.MapGet("/status", (HttpContext context, ManagementService service, IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(service.Snapshot($"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}"));
+        });
+        group.MapGet("/diagnostics", (HttpContext context, ManagementService service, IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(service.Diagnostics());
+        });
+        group.MapGet("/remote-hosts", (
+            HttpContext context,
+            AgentStudio.Runner.V1ReviewExecutorRegistry registry,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(registry.ListCapabilitySnapshots());
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,

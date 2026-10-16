@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-10
+Version: 2026-10-16
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -56,6 +56,21 @@ named local roots and required tools are checked again before worker creation;
 preview links are bounded result artifacts. The Connector remains the browser
 edge, and the native host manager owns installation and service lifecycle. The
 Task Server remains the sole claim, lease, and report authority.
+
+For a claimed continuation, `RemoteTaskRunner` reads attachment references from
+the claimed follow-up prompt, downloads each task attachment through the
+task-key-based `/api/v1/runner/tasks/{taskKey}/attachments/{fileName}` read (or
+the local runner API in the legacy profile), and places it under `attachments/`
+in the prepared worktree
+before starting the CLI. The runner adds exact paths to the checkout's Git
+exclude file so feedback crops remain available during the run without entering
+the result commit. A missing attachment fails preparation rather than launching
+an agent with an unreadable reference.
+
+The Environment view's `/api/v1/management/environment` read remains on the
+backend control host in both local and standalone Task Server deployments. Its
+exact route takes precedence over the standalone `/api/v1` proxy and reads the
+control host's installation, gate slots, and engine readiness.
 
 ### Scheduled coverage run
 

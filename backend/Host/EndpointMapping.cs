@@ -134,6 +134,9 @@ public static class EndpointMapping
         // inside this ownership branch. Never mount a local v1 writer beside
         // the standalone proxy.
         if (mapsLocalV1) app.MapManagementEndpoints();
+        // Environment describes this control host, so its exact read route
+        // remains local even when the rest of /api/v1 is proxied.
+        app.MapEnvironmentEndpoint();
     }
 
     internal static bool MapsLocalV1(IConfiguration configuration)

@@ -1,3 +1,9 @@
+# AGT-3210 standalone topology follow-up status
+
+- Result SHA: `3f1ca1645dec0ac3e32a990b144882f8d01099c0` (Git source tree for the implementation before this status entry; the platform owns the delivery commit).
+- Implemented option: keep the Environment read on the backend as an exact route in both topologies. Add a task-key-based Task Server runner attachment read and materialize referenced continuation attachments in the runner worktree before CLI launch. Exact Git excludes keep those downloaded files out of the result commit.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:2 -p:UseSharedCompilation=false` and the final `runner.Tests` rebuild passed. Focused filters `FullyQualifiedName~ManagementEnvironmentEndpointTests` (2), `FullyQualifiedName~TaskAttachmentMaterializerTests` (2), and `FullyQualifiedName~StudioPreviewFeedbackTests` (1) passed. `FullyQualifiedName~.Architecture.|Category=Guard` passed in all eight .NET test projects (98 backend tests; no matching tests in the other seven). `npm --prefix frontend run lint` passed, including component size budgets.
+
 # AGT-3191 Dossier Tag and Created controls status
 
 - Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.

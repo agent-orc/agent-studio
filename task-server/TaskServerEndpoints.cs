@@ -99,6 +99,22 @@ public static class TaskServerEndpoints
                 maxTotalBytes));
         });
 
+        api.MapGet("/runner/tasks/{taskKey}/attachments/{fileName}", async (
+            string taskKey, string fileName, TaskServerStore store, CancellationToken ct) =>
+        {
+            try
+            {
+                var attachment = await store.GetRunnerTaskAttachmentAsync(taskKey, fileName, ct);
+                return attachment is null
+                    ? Results.NotFound(new ApiError("not-found", "Task attachment was not found."))
+                    : Results.Bytes(attachment.Value.Content, attachment.Value.Meta.MediaType);
+            }
+            catch (Exception exception)
+            {
+                return MapError(exception);
+            }
+        });
+
         api.MapGet("/workspaces", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListWorkspacesAsync(ct)));
         api.MapPost("/workspaces", async (HttpContext context, CreateWorkspaceRequest request, TaskServerStore store, CancellationToken ct)
