@@ -118,7 +118,7 @@ public class ProjectRunner
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
-    private readonly VisualQaService? _visualQa;
+    private readonly IVisualQaService? _visualQa;
     private readonly FailureInterventionService? _failureInterventions;
     private readonly IReadOnlyList<ProjectUrlRecord> _projectUrls;
     private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
@@ -470,7 +470,7 @@ public class ProjectRunner
         AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
-        VisualQaService? visualQa = null,
+        IVisualQaService? visualQa = null,
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,
         AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null,
@@ -3342,8 +3342,27 @@ public class ProjectRunner
             }
             // Preparation can take minutes while this run still owns its lease.
             // A stop acknowledged during that gap must win before the CLI starts.
-            if (localAuthorityTaskKey is not null
-                && _localRunClaims?.StopRequested(localAuthorityTaskKey) == true)
+            var startStopGate = localAuthorityTaskKey is null
+                ? null : _localRunClaims?.StopGate(localAuthorityTaskKey);
+            if (startStopGate is not null) await startStopGate.WaitAsync(ct);
+            var stoppedBeforeStart = false;
+            (CliExecution? execution, string? cliError) startResult = default;
+            try
+            {
+                stoppedBeforeStart = localAuthorityTaskKey is not null
+                    && _localRunClaims?.StopRequested(localAuthorityTaskKey) == true;
+                if (!stoppedBeforeStart)
+                    startResult = await cli.StartAsync(
+                        jobId, GetJobKey(jobId), prompt, runWorkingDir,
+                        effSessionToResume, effResumeFlag, runModel, runThinkingLevel,
+                        jobFolderPath: info.FolderPath,
+                        permissionMode: permissionMode,
+                        contextMode: contextMode,
+                        environment: activeRunForSpawn?.Preparation?.Environment,
+                        ct: ct);
+            }
+            finally { startStopGate?.Release(); }
+            if (stoppedBeforeStart)
             {
                 ReleaseRun(jobId);
                 if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
@@ -3352,14 +3371,7 @@ public class ProjectRunner
                     RunRejectReason.CliUnavailable, "Run stopped before agent execution started."));
             }
 
-            var (execution, cliError) = await cli.StartAsync(
-                jobId, GetJobKey(jobId), prompt, runWorkingDir,
-                effSessionToResume, effResumeFlag, runModel, runThinkingLevel,
-                jobFolderPath: info.FolderPath,
-                permissionMode: permissionMode,
-                contextMode: contextMode,
-                environment: activeRunForSpawn?.Preparation?.Environment,
-                ct: ct);
+            var (execution, cliError) = startResult;
 
             if (execution == null)
             {
@@ -7447,6 +7459,8 @@ public class ProjectRunner
                 .ApplyTo(visualVerdictRow)
             : visualVerdictRow with { Model = null, ThinkingLevel = null });
 
+        if (LocalStopRequested(jobId)) return;
+
         if (visualQa.Decision.Action == VisualQaAction.RetryWithSteer)
         {
             var steer = visualQa.Decision.SteerPrompt!;
@@ -7499,73 +7513,95 @@ public class ProjectRunner
             return;
         }
 
-        var contract = new UiIterationReviewContract
+        // Visual QA can outlive a stop request. Keep the accepted-stop check,
+        // review markers, move, and lease release under the same gate as the
+        // endpoint, so the card cannot enter Human Review after a 202.
+        var uiStopGate = _localAuthorityTaskKeys.TryGetValue(jobId, out var uiAuthorityKey)
+            ? _localRunClaims?.StopGate(uiAuthorityKey) : null;
+        if (uiStopGate is not null) await uiStopGate.WaitAsync();
+        try
         {
-            Iteration = iteration,
-            MaxIterations = maxIterations,
-            CapReached = decision.CapReached,
-            ArtifactPaths = decision.ArtifactPaths.Concat(visualQa.EvidenceScreenshotPaths).Distinct().ToArray(),
-            ChangeDescriptionPath = decision.ChangeDescriptionPath!,
-            VisualQaStatus = visualQa.Applicable ? visualQa.Verdict.Status switch
+            if (LocalStopRequested(jobId)) return;
+            var contract = new UiIterationReviewContract
             {
-                VisualQaVerdictStatus.Acceptable => "acceptable",
-                VisualQaVerdictStatus.ClearDefect => "clear-defect",
-                _ => "unavailable",
-            } : "not-applicable",
-            VisualQaVerdictPath = visualQa.VerdictPath,
-            VisualQaDefects = visualQa.Verdict.Defects,
-            VisualQaAutoRetryUsed = visualQa.PriorAutomaticRetries > 0,
-        };
-        SteerPendingMarker.Write(info.FolderPath, new SteerPendingRecord
-        {
-            WaitStartedAt = DateTime.UtcNow,
-            Kind = SteerPendingKinds.UiIterationReview,
-            Question = visualQa.Decision.Action == VisualQaAction.EscalateToHumanReview
-                ? $"Visual QA requires human review: {visualQa.Decision.Reason} Inspect the attached screenshots before deciding."
-                : decision.CapReached
-                ? "Final configured UI iteration. Finish this task or escalate; another feedback iteration is not allowed."
-                : "Review the visual result and choose finish or provide feedback for the next iteration.",
-            CliType = info.CliType,
-            UiIterationReview = contract,
-        }, _logger);
-        _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
-        _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
-        {
-            StepId = AgentStudio.Pipeline.PipelineCatalogue.UiHumanReviewGateStepId,
-            Kind = StepKind.Orchestrator,
-            Status = PipelineStepStatus.Running,
-            StartedAt = DateTime.UtcNow,
-            Verdict = "awaiting-human-review",
-            VerdictSummary = $"Iteration {iteration}/{maxIterations} is ready for visual review.",
-        });
-        CompletionMarker.Write(info.FolderPath, new CompletionMarker
-        {
-            TargetState = TaskStates.HumanReview,
-            ExecutionStatus = execution.Status,
-            AgentOutcome = $"ui-iteration-{iteration:D3}-awaiting-review",
-        }, _logger);
+                Iteration = iteration,
+                MaxIterations = maxIterations,
+                CapReached = decision.CapReached,
+                ArtifactPaths = decision.ArtifactPaths.Concat(visualQa.EvidenceScreenshotPaths).Distinct().ToArray(),
+                ChangeDescriptionPath = decision.ChangeDescriptionPath!,
+                VisualQaStatus = visualQa.Applicable ? visualQa.Verdict.Status switch
+                {
+                    VisualQaVerdictStatus.Acceptable => "acceptable",
+                    VisualQaVerdictStatus.ClearDefect => "clear-defect",
+                    _ => "unavailable",
+                } : "not-applicable",
+                VisualQaVerdictPath = visualQa.VerdictPath,
+                VisualQaDefects = visualQa.Verdict.Defects,
+                VisualQaAutoRetryUsed = visualQa.PriorAutomaticRetries > 0,
+            };
+            SteerPendingMarker.Write(info.FolderPath, new SteerPendingRecord
+            {
+                WaitStartedAt = DateTime.UtcNow,
+                Kind = SteerPendingKinds.UiIterationReview,
+                Question = visualQa.Decision.Action == VisualQaAction.EscalateToHumanReview
+                    ? $"Visual QA requires human review: {visualQa.Decision.Reason} Inspect the attached screenshots before deciding."
+                    : decision.CapReached
+                    ? "Final configured UI iteration. Finish this task or escalate; another feedback iteration is not allowed."
+                    : "Review the visual result and choose finish or provide feedback for the next iteration.",
+                CliType = info.CliType,
+                UiIterationReview = contract,
+            }, _logger);
+            _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
+            _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
+            {
+                StepId = AgentStudio.Pipeline.PipelineCatalogue.UiHumanReviewGateStepId,
+                Kind = StepKind.Orchestrator,
+                Status = PipelineStepStatus.Running,
+                StartedAt = DateTime.UtcNow,
+                Verdict = "awaiting-human-review",
+                VerdictSummary = $"Iteration {iteration}/{maxIterations} is ready for visual review.",
+            });
+            CompletionMarker.Write(info.FolderPath, new CompletionMarker
+            {
+                TargetState = TaskStates.HumanReview,
+                ExecutionStatus = execution.Status,
+                AgentOutcome = $"ui-iteration-{iteration:D3}-awaiting-review",
+            }, _logger);
 
-        var move = await _transitions.MoveAsync(
-            jobId, TaskStates.HumanReview, Entry.Path, CancellationToken.None,
-            transitionCause: LaneChangeCauses.Delivered,
-            transitionDetail: $"ui-iteration-{iteration}/{maxIterations}");
-        if (move.Status == MoveJobStatus.Success)
-        {
-            TeardownWorktreeForJob(jobId);
-            var movedFolder = move.NewFolderPath ?? info.FolderPath;
-            CompletionMarker.Clear(movedFolder, _logger);
-            _mutations.SetJobPhase(movedFolder, null);
-            _logger.LogInformation(
-                "ui_pipeline_review_pending project={Project} job={JobId} pipeline={PipelineId} iteration={Iteration}/{MaxIterations} artifacts={ArtifactCount} marker={Marker}",
-                ProjectName, jobId, AgentStudio.Pipeline.PipelineCatalogue.UiPipelineId,
-                iteration, maxIterations, decision.ArtifactPaths.Count,
-                SteerPendingMarker.PathFor(movedFolder));
+            var move = await _transitions.MoveAsync(
+                jobId, TaskStates.HumanReview, Entry.Path, CancellationToken.None,
+                transitionCause: LaneChangeCauses.Delivered,
+                transitionDetail: $"ui-iteration-{iteration}/{maxIterations}");
+            if (move.Status == MoveJobStatus.Success)
+            {
+                TeardownWorktreeForJob(jobId);
+                var movedFolder = move.NewFolderPath ?? info.FolderPath;
+                CompletionMarker.Clear(movedFolder, _logger);
+                _mutations.SetJobPhase(movedFolder, null);
+                _logger.LogInformation(
+                    "ui_pipeline_review_pending project={Project} job={JobId} pipeline={PipelineId} iteration={Iteration}/{MaxIterations} artifacts={ArtifactCount} marker={Marker}",
+                    ProjectName, jobId, AgentStudio.Pipeline.PipelineCatalogue.UiPipelineId,
+                    iteration, maxIterations, decision.ArtifactPaths.Count,
+                    SteerPendingMarker.PathFor(movedFolder));
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "UI iteration {Iteration}/{MaxIterations} for {JobId} is evidenced but could not move to human review: {Status} {Message}",
+                    iteration, maxIterations, jobId, move.Status, move.Message);
+            }
         }
-        else
+        finally
         {
-            _logger.LogWarning(
-                "UI iteration {Iteration}/{MaxIterations} for {JobId} is evidenced but could not move to human review: {Status} {Message}",
-                iteration, maxIterations, jobId, move.Status, move.Message);
+            if (uiStopGate is not null)
+            {
+                try
+                {
+                    if (_localAuthorityTaskKeys.TryRemove(jobId, out var authorityTaskKey))
+                        _localRunClaims?.ReleaseWhileStopGateHeld(authorityTaskKey);
+                }
+                finally { uiStopGate.Release(); }
+            }
         }
     }
 
