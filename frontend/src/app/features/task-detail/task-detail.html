@@ -84,7 +84,7 @@
     [thinkingLevelDraft]="thinkingLevelDraft()"
     [betterCandidates]="detail().info.betterCandidates ?? null"
     [availableModels]="availableModels()"
-    [isRunning]="isRunning()"
+    [isRunning]="effectiveRunActive()"
     [canStart]="canStartJob()"
     [startDisabledReason]="startDisabledReason()"
     [starting]="starting()"

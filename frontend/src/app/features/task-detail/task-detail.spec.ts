@@ -97,6 +97,34 @@ describe('TaskDetailComponent pending follow-up line', () => {
   });
 });
 
+describe('TaskDetailComponent remote stop path', () => {
+  it('treats a connected remote owner as running when no local CLI is active', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskDetailComponent);
+    fixture.componentRef.setInput('detail', {
+      info: {
+        id: 'remote-card-slug', taskKey: 'AGT-3160', watchPath: '/workspace',
+        state: '3-progress',
+        executionLocation: { state: 'remote-running', connectionState: 'connected' },
+        runActivity: { kind: 'no-active-run' },
+      },
+    });
+    const component = fixture.componentInstance;
+    (component.isRunning as unknown as { set(value: boolean): void }).set(false);
+    expect(component.effectiveRunActive()).toBe(true);
+    expect(component.canStartJob()).toBe(false);
+    expect(component.setupCollapsed()).toBe(true);
+  });
+});
+
 describe('TaskDetailComponent Activity send flow', () => {
   function continueHarness(response = of({ status: 'queued' as const })) {
     const continueJob = vi.fn(() => response);

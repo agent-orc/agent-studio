@@ -1391,13 +1391,9 @@ export class App implements OnInit, OnDestroy {
       case 'start':
         this.onTriageStart(info, { actionId: id });
         return;
-      case 'stop':
+      case 'stop': this.jobDetailRef?.stopJob(); return;
       case 'editPrompt':
       case 'showActivity':
-        // Pane-local intents (stop a running job, jump to the prompt editor,
-        // switch the inspector to activity) only make sense inside the
-        // detail panel. The kanban detail-header still surfaces them; the
-        // studio slim header skips them to keep the row short.
         return;
     }
   }
