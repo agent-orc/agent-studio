@@ -125,6 +125,8 @@
   <a href="#s15">§15 Kontingente</a><br>
   <a href="#s16">§16 Mandanten und Betrieb</a><br>
   <a href="#s17">§17 Umsetzungsschnitte</a><br>
+  <a href="#s18">§18 Szenario: Designer, Manager und PMs entwickeln weiter</a><br>
+  <a href="#s19">§19 Studio ohne Installation</a><br>
   <a href="#quellen">§ Quellen</a>
 </nav>
 
@@ -464,6 +466,87 @@
   <tr><td>Mandanten und Hosting</td><td>V1 hostet Stage und Prod intern; ein zweiter Mandant kann weder deren API-Daten noch Claims oder Geheimnisse lesen. Öffentliche Form folgt erst nach Review.</td><td>AL-4, AL-5</td></tr>
 </tbody></table></div>
 <p>Für den ersten Durchlauf gilt D3: V1 auf KORI, intern. Die öffentliche Web-VM und V4 bleiben spätere, getrennte Prüfstände. Jeder Szenario-Lauf legt Zeiten, Verbrauch, Digest, Freigabe, Health, Rückweg und Karten-ID im Ergebnisbericht ab.</p>
+
+<h2 id="s18"><span class="no">§18</span>Szenario: Designer, Manager und PMs entwickeln weiter</h2>
+<p>Operator-Vorgabe vom 16.10.2026: Designer, Manager und PMs sollen die Software weiterentwickeln können. Wichtig sind eine Vorschau und gute Chats. Bei Websites hängt die Vorschau an der Bereitstellung.</p>
+<figure>
+  <div class="figscroll">
+  <svg viewBox="0 0 1000 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Ablauf für Nicht-Entwickler">
+    <defs><marker id="ah18" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <rect class="step s-part" x="20" y="40" width="170" height="96" rx="9"/>
+    <text x="32" y="62" class="t-step">Wunsch im Chat</text><text x="32" y="82" class="t-tag tag-part">teilweise</text>
+    <text x="32" y="102" class="t-small">Rückfragen, Vorschlag,</text><text x="32" y="118" class="t-small">Kontingent-Schätzung</text>
+    <rect class="step s-ok" x="212" y="40" width="170" height="96" rx="9"/>
+    <text x="224" y="62" class="t-step">Karte, Coding</text><text x="224" y="82" class="t-tag tag-ok">vorhanden</text>
+    <text x="224" y="102" class="t-small">Review und Gates</text><text x="224" y="118" class="t-small">wie in §3</text>
+    <rect class="step s-new" x="404" y="40" width="170" height="96" rx="9"/>
+    <text x="416" y="62" class="t-step">Vorschau je Karte</text><text x="416" y="82" class="t-tag tag-new">neu</text>
+    <text x="416" y="102" class="t-small">eigene Adresse,</text><text x="416" y="118" class="t-small">vorher und nachher</text>
+    <rect class="step s-new" x="596" y="40" width="170" height="96" rx="9"/>
+    <text x="608" y="62" class="t-step">Feedback</text><text x="608" y="82" class="t-tag tag-new">neu</text>
+    <text x="608" y="102" class="t-small">auf die Vorschau zeigen,</text><text x="608" y="118" class="t-small">nächste Runde</text>
+    <rect class="step s-part" x="788" y="40" width="170" height="96" rx="9"/>
+    <text x="800" y="62" class="t-step">Abnahme</text><text x="800" y="82" class="t-tag tag-part">teilweise</text>
+    <text x="800" y="102" class="t-small">PM nimmt ab, Freigabe</text><text x="800" y="118" class="t-small">für Prod nach Recht</text>
+    <path class="flow" d="M190,88 H210" marker-end="url(#ah18)"/><path class="flow" d="M382,88 H402" marker-end="url(#ah18)"/><path class="flow" d="M574,88 H594" marker-end="url(#ah18)"/><path class="flow" d="M766,88 H786" marker-end="url(#ah18)"/>
+    <path class="flow-back" d="M681,136 V170 H489 V140" marker-end="url(#ah18)"/>
+    <text x="500" y="190" class="t-small">Jede Feedback-Runde baut die Vorschau derselben Karte neu.</text>
+    <text x="20" y="232" class="t-small">Danach weiter wie in §3: Integration, Stage, Freigabe, Prod. Wer nicht programmiert, sieht nie Code, Diffs oder Lane-Namen.</text>
+  </svg>
+  </div>
+  <figcaption>Abbildung 4. Weiterentwicklung ohne Code. Grün: vorhanden, gelb: teilweise, violett gestrichelt: neu.</figcaption>
+</figure>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Baustein</th><th>Heute</th><th>Neu</th><th>Karte</th></tr></thead>
+  <tbody>
+    <tr><td><b>Vorschau je Karte</b></td><td>Lokale Projekt-Vorschau mit Adresszeile (<code>docs/concepts/project-urls</code>); sie zeigt den Checkout, keine Lieferung</td><td>Dritte Umgebungsart „Vorschau“ neben Stage und Prod: je Karte und Lieferung, eigene Adresse, bei jeder Fix-Runde neu, nach Integration oder 7 Tagen entfernt. Keine Stage- oder Prod-Geheimnisse, zählt aufs Hosting-Kontingent</td><td>AGT-3180</td></tr>
+    <tr><td><b>Produkt-Chat</b></td><td>Projekt- und Karten-Chats mit festem Kontext (AGT-W9); Design-Oberfläche mit Screenshot-Kritik, Design-Rat und „nächste Version“ (<code>DesignSurfaceEndpoints.cs</code>)</td><td>Chat neben der Vorschau in Produktsprache: Rückfragen, Vorschlag mit Kontingent-Schätzung, Karte erst nach Bestätigung, Vorher/Nachher-Bilder, Status in Klartext, Abnahme</td><td>AGT-3181</td></tr>
+    <tr><td><b>Feedback auf der Vorschau</b></td><td>nicht vorhanden</td><td>Element anklicken oder auf einem Bild markieren und kommentieren; Ausschnitt, Selektor und Adresse gehen in die nächste Fix-Runde derselben Karte</td><td>AGT-3181</td></tr>
+    <tr><td><b>Rolle „Produkt“</b></td><td>owner, operator, viewer</td><td>Wünsche, Chats, Feedback und Abnahme; kein Zugriff auf Zugänge, Hosts, Einstellungen, Merges und Releases. Die Freigabe für Prod vergibt der Owner einzeln je Projekt. Einladung über einen einmaligen Anmelde-Link</td><td>AGT-3182</td></tr>
+    <tr><td><b>Szenario</b></td><td>–</td><td>PM, Designerin und Manager entwickeln „Click Counter“ weiter, mit Bericht je Schritt</td><td>AGT-3183, nach 3180 bis 3182</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Für Projekte ohne Weboberfläche ersetzen Bildschirmfotos, Testberichte und eine kurze Zusammenfassung die Vorschau.</p>
+
+<div class="decision" data-decision-id="produkt-rolle" data-decision-kind="single" data-decision-label="D13 Rechte der Rolle Produkt">
+  <h3>D13 · Was darf die Rolle „Produkt“ freigeben?</h3>
+  <label data-option-id="abnahme-ohne-prod" data-option-label="A · Abnahme der Vorschau ja, Prod-Freigabe nur mit einzeln vergebenem Recht je Projekt (Empfehlung)"><input type="radio" name="produkt-rolle" value="abnahme-ohne-prod"><span><b>A · Abnahme ja, Prod nur mit Einzelrecht</b><span class="d">PMs nehmen Lieferungen ab; wer Prod freigibt, bestimmt der Owner je Projekt.</span></span></label>
+  <label data-option-id="alles" data-option-label="B · Abnahme und Prod-Freigabe für alle mit der Rolle"><input type="radio" name="produkt-rolle" value="alles"><span><b>B · Abnahme und Prod-Freigabe</b><span class="d">Schneller, aber jede Person mit der Rolle kann live schalten.</span></span></label>
+  <label data-option-id="nur-kommentar" data-option-label="C · Nur Wünsche und Kommentare, Abnahme bleibt beim Operator"><input type="radio" name="produkt-rolle" value="nur-kommentar"><span><b>C · Nur Wünsche und Kommentare</b><span class="d">Sicher, aber der Operator bleibt der Engpass.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="vorschau-adresse" data-decision-kind="single" data-decision-label="D14 Wo laufen die Vorschauen">
+  <h3>D14 · Wo laufen die Vorschauen und unter welcher Adresse?</h3>
+  <label data-option-id="wie-stage" data-option-label="A · Auf demselben Host wie Stage, interne Adressen je Karte (Empfehlung)"><input type="radio" name="vorschau-adresse" value="wie-stage"><span><b>A · Neben Stage, intern</b><span class="d">Ein Host, ein Proxy; erreichbar, wo Studio erreichbar ist.</span></span></label>
+  <label data-option-id="oeffentlich" data-option-label="B · Öffentliche Adressen je Karte unter einer eigenen Domain"><input type="radio" name="vorschau-adresse" value="oeffentlich"><span><b>B · Öffentlich</b><span class="d">Teilen mit Außenstehenden möglich; jede Vorschau ist dann eine öffentliche Angriffsfläche.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s19"><span class="no">§19</span>Studio ohne Installation</h2>
+<p>Operator-Frage vom 16.10.2026: Ab wann ist Studio eine Webseite ohne Installation, bei der man von jedem Rechner mit Adresse und Passwort alles sieht?</p>
+<p><b>Was es dafür schon gibt.</b> Das Sicherheitsprofil <code>networked</code> verlangt HTTPS und eine Anmeldung: eine Sitzung für Menschen, ein Zugangs-Token für Runner (<code>backend/Features/Security/AccessSecurityMiddleware.cs</code>). Seit Deploy 13 am 16.10. gibt es wieder ein Owner-Konto. <code>deploy/compose/monolith</code> betreibt den Monolithen in Docker, <code>deploy/compose/Caddyfile.edge</code> stellt die HTTPS-Edge. Der Umzug des Task-Servers wurde am 25. und 26.09. auf agent-runner-01 geprobt (AGT-2737). Für eine Webseite muss der Task-Server nicht aufgespalten werden; die 50 offenen Routen der Aufspaltung (<code>docs/operations/remote-task-server-local-studio.md</code>, „Current cutover gates“) betreffen diesen Weg nicht.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Schritt</th><th>Inhalt</th><th>Wer</th></tr></thead>
+  <tbody>
+    <tr><td>1. Probe auf V1</td><td>Monolith mit Profil <code>networked</code> auf einer frischen VM: Login, alle Ansichten, ein Runner mit Token; Liste der Lücken</td><td>Operator</td></tr>
+    <tr><td>2. Runner und Reviewer anmelden</td><td>agent-runner-01 (Coding, Review) und die drei KORI-Reviewer bekommen eigene Zugangs-Tokens statt <code>X-Client-Id</code>; die Betriebsskripte des Operators einen Service-Zugang</td><td>Operator, der Owner erzeugt die Codes</td></tr>
+    <tr><td>3. Umzug</td><td>Workspace-Daten und Monolith auf den Server (D15), Caddy mit Domain und öffentlichem TLS, KORI-Verbindungen auf den Server umstellen; Studio etwa eine Stunde nicht verfügbar</td><td>Operator, Zeitfenster vom Owner</td></tr>
+    <tr><td>4. Nachprüfung</td><td>Anmeldung von einem fremden Rechner, alle Ansichten, eine Karte von Ready bis Integration, Rückweg zum alten Stand geprobt</td><td>Operator und Owner</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Im Browser-Studio fehlen dann Funktionen, die den Rechner des Operators brauchen, etwa der lokale Dev-Checkout und die lokale Projekt-Vorschau. Die Vorschau übernimmt die Vorschau je Karte (§18).</p>
+<div class="decision" data-decision-id="studio-web-host" data-decision-kind="single" data-decision-label="D15 Server für Studio als Webseite">
+  <h3>D15 · Auf welchem Server läuft Studio als Webseite?</h3>
+  <label data-option-id="eigene-vm" data-option-label="A · Eigene kleine Cloud-VM nur für Studio und Task-Server (Empfehlung)"><input type="radio" name="studio-web-host" value="eigene-vm"><span><b>A · Eigene VM</b><span class="d">Last der Coding-Slots bremst Studio nicht; ein Ausfall des Runners trifft Studio nicht. Laufende Kosten; das Konto richtet der Owner ein.</span></span></label>
+  <label data-option-id="runner-01" data-option-label="B · Auf agent-runner-01 neben den Runnern (geprobt)"><input type="radio" name="studio-web-host" value="runner-01"><span><b>B · agent-runner-01</b><span class="d">Sofort möglich und geprobt; Lastspitzen der Runner (heute bis 15) verlangsamen Studio.</span></span></label>
+  <label data-option-id="tufi2" data-option-label="C · Bleibt auf dem Arbeitsplatz, nur über die Web-VM erreichbar gemacht"><input type="radio" name="studio-web-host" value="tufi2"><span><b>C · Arbeitsplatz plus Web-VM als Zugang</b><span class="d">Schnellster Weg ohne Umzug; der Arbeitsplatz muss laufen und darf nicht schlafen.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
 
 <h2 id="quellen">§ Quellen</h2>
 <ul>
