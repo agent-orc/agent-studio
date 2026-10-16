@@ -103,11 +103,11 @@
 <header class="page">
   <p class="kicker">North star &middot; Agent Studio &middot; entry point</p>
   <h1>Agent Studio: target picture and delivery</h1>
-  <p class="lede">The one starting point. It states the target picture as decided on 11 October 2026: five runtime roles, how a card moves through them, the deployment forms, the decision register, the few points still open, and the path from today's installation. Arguments stay in the owning Dossiers.</p>
+  <p class="lede">The one starting point. It states the target picture as decided on 11 October 2026: five runtime roles, how a card moves through them, the deployment forms, the decision register, the few points still open, and the path from today's installation. The next horizon extends that foundation across the application lifecycle. Arguments stay in the owning Dossiers.</p>
   <div class="meta">
     <span><b>Status</b> Active, standing map</span>
     <span><b>Phase</b> Informational</span>
-    <span><b>Updated</b> 11 October 2026</span>
+    <span><b>Updated</b> 16 October 2026</span>
     <span><b>Key</b> AGT-W14</span>
     <span><b>Card</b> AGT-2798, programme AGT-2797</span>
   </div>
@@ -125,6 +125,7 @@
     <a href="#register">&sect;6 Decision register</a><br>
     <a href="#still-open">&sect;7 What is still open</a><br>
     <a href="#path">&sect;8 From today to the target</a><br>
+    <a href="#lifecycle">Next horizon: application lifecycle</a><br>
     <a href="#s5">&sect;9 Map of current Dossiers</a><br>
     <a href="#s6">&sect;10 History: what this Dossier absorbed</a><br>
     <a href="#s7">&sect;11 Alternatives</a><br>
@@ -452,8 +453,21 @@
 </div>
 <p>ADR-0078 and the canonical target architecture record these decisions (AGT-3062, completed by AGT-3071).</p>
 
+<h2 id="lifecycle">Next horizon: application lifecycle</h2>
+<p>The five runtime roles and the decided card flow above remain the target foundation. The next horizon extends their work from a new project through tasks, coding, review and CI gates to a release artifact, stage, approval, production and operation. <a href="../application-lifecycle/index.html">Application lifecycle</a> owns the options, evidence and pending decisions for this extension.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Layer</th><th>Scope in the next horizon</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><b>Agent Studio</b></td><td>The human tool for project creation, progress, environments, approvals, credentials inventory and quota visibility.</td><td>Project registration and parts of the views exist; the complete journey is planned.</td></tr>
+    <tr><td><b>Agent Orchestrator</b></td><td>The platform: Task Server, engine, runner hosts, CI gates, claimable deployment, artifact provenance, credential boundaries and admission limits.</td><td>CI gates exist; lifecycle delivery is planned. The repository <code>agent-orc/agent-studio</code> keeps its current name under the Dossier recommendation.</td></tr>
+    <tr><td><b>Hosting operation</b></td><td>Project hosting is a platform function operated by each installation owner, who is responsible for hosting, credentials and tokens.</td><td>Operator decision of 16 October 2026. A service hosted by us for third parties is outside the current offer.</td></tr>
+  </tbody>
+</table></div>
+<p>The first planned proof is a simulated user who creates a static web project in Studio, passes its gates, promotes the same artifact from stage to production on an internal V1 host, and remains within a visible quota. A later slice adds the container service and tenant isolation. The Dossier records the specific release, environment, secret, quota and tenancy decisions.</p>
+
 <h2 id="s5"><span class="no">&sect;9</span>Map of current Dossiers</h2>
 <div class="map">
+  <a class="card" href="../application-lifecycle/index.html"><h4>Application lifecycle</h4><div class="path">operations/application-lifecycle/ &middot; AGT-W79 &middot; Source AGT-3174</div><p>The next horizon from project start to production: Studio, platform and operator-owned hosting; release artifacts, stage and production, credential scope, quotas and tenancy. D2 is decided; D7 to D12 are recommendations pending a decision.</p></a>
   <a class="card" href="../operations-server-backchannel/index.html"><h4>Operations Server beside the Task Server</h4><div class="path">operations/operations-server-backchannel/ &middot; AGT-W49</div><p>Authority boundary, security model, deployment forms, and the programme from the transitional Compose baseline to the standard one box profile.</p></a>
   <a class="card" href="../deployment-story/index.html"><h4>Deployment story</h4><div class="path">operations/deployment-story/ &middot; AGT-W63 &middot; Source AGT-2906</div><p>Operator and administrator journeys from one-box installation to additional runner hosts and remote authority, with availability, gaps and acceptance checkpoints. Authority and bus decisions remain in AGT-W49 and AGT-2905.</p></a>
   <a class="card" href="../../task-server-bus/index.html"><h4>Task Server bus</h4><div class="path">task-server-bus/ &middot; AGT-W65 &middot; Source AGT-2905</div><p>Steering boundary between engine and runner hosts, pipeline control as it runs on 11 October 2026, decisions D14 to D21 on decision placement, engine and Operations Server process form, fix-round base and round budget.</p></a>
