@@ -119,6 +119,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             turns.Enqueue("global", new OrchestratorTurnRequest("forged chat")));
 
         var routes = ExecutionRoutes(factory.Services);
+        var allRoutes = factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/auth/invitations");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/auth/invite/accept");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/tasks/{jobId}/preview-comments");
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
         // AGT-2817 added POST /api/projects/{projectId}/delivery-claims/reconcile

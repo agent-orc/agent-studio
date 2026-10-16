@@ -175,7 +175,10 @@ public sealed class AccessSecurityStore
     public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request)
     {
         ValidateUsername(request.Username);
-        if (!StudioRoles.IsValid(request.Role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, or viewer.");
+        if (!StudioRoles.IsValid(request.Role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
+        if (request.Role == StudioRoles.Contributor && (request.Projects is null || request.Projects.Count == 0
+            || request.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
+            throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
         var temporary = string.IsNullOrWhiteSpace(request.TemporaryPassword) ? GenerateTemporaryPassword() : request.TemporaryPassword;
         ValidatePassword(temporary, request.Username);
         lock (_gate)
@@ -197,6 +200,69 @@ public sealed class AccessSecurityStore
         }
     }
 
+    public (StudioUser User, string Token, DateTime ExpiresAt) InviteUser(InviteUserRequest request)
+    {
+        ValidateUsername(request.Username);
+        if (!StudioRoles.IsValid(request.Role))
+            throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
+        if (request.Role == StudioRoles.Contributor && (request.Projects is null || request.Projects.Count == 0
+            || request.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
+            throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var username = NormalizeUsername(request.Username);
+            if (state.Users.Any(x => x.Username == username))
+                throw new SecurityOperationException(409, "username-exists", "Username already exists.");
+            var now = Now;
+            var user = new StudioUser
+            {
+                Id = "usr_" + Guid.NewGuid().ToString("N"), Username = username,
+                DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim(),
+                Role = request.Role, Projects = NormalizeProjects(request.Projects),
+                PasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken()),
+                MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
+            };
+            var id = Guid.NewGuid().ToString("N");
+            var token = $"inv.{id}.{PasswordSecretHasher.RandomToken()}";
+            var expiresAt = now.AddHours(24);
+            state.Users.Add(user);
+            state.Invitations.Add(new StudioInvitation
+            {
+                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
+            });
+            SaveLocked(state);
+            return (user, token, expiresAt);
+        }
+    }
+
+    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request)
+    {
+        if (!TryTokenParts(request.Token, "inv", out var id))
+            throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var invitation = state.Invitations.FirstOrDefault(x => x.Id == id);
+            if (invitation is null || invitation.UsedAt is not null || invitation.ExpiresAt <= Now
+                || !PasswordSecretHasher.VerifySecret(request.Token, invitation.TokenHash))
+                throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var user = state.Users.FirstOrDefault(x => x.Id == invitation.UserId && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            ValidatePassword(request.NewPassword, user.Username);
+            var updated = user with
+            {
+                PasswordHash = PasswordSecretHasher.HashPassword(request.NewPassword),
+                MustChangePassword = false, PasswordChangedAt = Now
+            };
+            state.Users[state.Users.IndexOf(user)] = updated;
+            state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
+            var session = CreateSessionLocked(state, updated);
+            SaveLocked(state);
+            return (updated, session.Token, session.Csrf);
+        }
+    }
+
     public StudioUser UpdateUser(string id, UpdateUserRequest request, string actingUserId)
     {
         lock (_gate)
@@ -205,17 +271,28 @@ public sealed class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == id)
                 ?? throw new SecurityOperationException(404, "user-not-found", "User not found.");
             var role = request.Role ?? user.Role;
-            if (!StudioRoles.IsValid(role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, or viewer.");
+            if (!StudioRoles.IsValid(role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
             var disabled = request.Disabled ?? user.Disabled;
             if (id == actingUserId && (disabled || role != StudioRoles.Owner))
                 throw new SecurityOperationException(409, "last-owner-protection", "An owner cannot disable or demote their current account.");
             if (user.Role == StudioRoles.Owner && (disabled || role != StudioRoles.Owner)
                 && state.Users.Count(x => x.Role == StudioRoles.Owner && !x.Disabled && x.Id != id) == 0)
                 throw new SecurityOperationException(409, "last-owner-protection", "At least one active owner is required.");
+            var memberships = request.Projects is null ? user.Projects : NormalizeProjects(request.Projects);
+            if (role == StudioRoles.Contributor && (memberships.Count == 0
+                || memberships.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
+                throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
+            var approvalProjects = role == StudioRoles.Contributor
+                ? (request.ProductionApprovalProjects is null ? user.ProductionApprovalProjects : NormalizeProjects(request.ProductionApprovalProjects))
+                : [];
+            if (approvalProjects.Any(project => project == ProjectAccessAuthorization.AllProjectsGrant
+                || !memberships.Contains(project, StringComparer.OrdinalIgnoreCase)))
+                throw new SecurityOperationException(400, "invalid-production-approval", "Production approval must name an assigned project.");
             var updated = user with
             {
                 DisplayName = request.DisplayName is null ? user.DisplayName : request.DisplayName.Trim(),
-                Role = role, Projects = request.Projects is null ? user.Projects : NormalizeProjects(request.Projects), Disabled = disabled
+                Role = role, Projects = memberships, Disabled = disabled,
+                ProductionApprovalProjects = approvalProjects
             };
             state.Users[state.Users.IndexOf(user)] = updated;
             if (disabled) state.Sessions.RemoveAll(x => x.UserId == id);

@@ -22,6 +22,31 @@ public static class TaskReviewEvidenceEndpoints
 {
     public static void MapTaskReviewEvidenceEndpoints(this RouteGroupBuilder group)
     {
+        group.MapPost("/{jobId}/preview-comments",
+            (string jobId, string? project, string? watchPath, PreviewCommentRequest body,
+                HttpContext context, TaskScannerService scanner, TimelineLog timeline,
+                TimeProvider clock, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info is null) return Results.NotFound();
+            if (string.IsNullOrWhiteSpace(body.Comment) || body.Comment.Length > 4000
+                || string.IsNullOrWhiteSpace(body.PreviewId) || body.PreviewId.Length > 200)
+                return Results.BadRequest(new { error = "A preview id and a comment of up to 4000 characters are required." });
+            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                ? TimelineActors.Human(human.User.Id)
+                : TimelineActors.Human(context.Items["ClientId"] as string ?? string.Empty);
+            var recorded = timeline.Append(info.FolderPath, new TimelineEvent
+            {
+                Ts = clock.GetUtcNow().UtcDateTime,
+                Kind = "preview-comment",
+                Actor = actor,
+                Summary = body.Comment.Trim(),
+                PayloadRef = body.PreviewId.Trim()
+            });
+            return recorded ? Results.Ok(new { previewId = body.PreviewId, actor }) : Results.StatusCode(500);
+        });
+
         // POST /api/tasks/{jobId}/review-evidence/{evidenceId}/acknowledge
         // Body: { "acknowledged": true|false } — defaults to true.
         group.MapPost("/{jobId}/review-evidence/{evidenceId}/acknowledge",
@@ -108,6 +133,8 @@ public static class TaskReviewEvidenceEndpoints
             });
         });
     }
+
+    public sealed record PreviewCommentRequest(string PreviewId, string Comment);
 
     private static string BuildFollowupPrompt(string sourceJobId, string sourceTitle, ReviewEvidenceEntry entry)
     {
