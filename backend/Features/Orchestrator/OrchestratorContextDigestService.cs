@@ -416,6 +416,19 @@ public sealed class OrchestratorContextDigestService
     internal static string RenderDigest(OrchestratorContextDigestData data)
     {
         var sb = new StringBuilder(2_048);
+        var projectLabels = new List<(int Start, int End)>();
+        var projectNameRedacted = false;
+
+        void AppendProjectLine(string name, string detail)
+        {
+            var safeName = Credential.Replace(name, "[omitted: secret]");
+            projectNameRedacted |= safeName != name;
+            sb.Append("- ");
+            var start = sb.Length;
+            sb.Append(safeName);
+            projectLabels.Add((start, sb.Length));
+            sb.AppendLf($": {detail}");
+        }
         sb.AppendLf("=== APPLICATION READ DIGEST ===");
         sb.AppendLf($"context: {data.Context.Value}");
         sb.AppendLf($"capturedAtUtc: {Iso(data.CapturedAt)}");
@@ -442,7 +455,7 @@ public sealed class OrchestratorContextDigestService
                 var runner = string.IsNullOrWhiteSpace(project.RunnerMode)
                     ? "runner=unavailable"
                     : $"runner={project.RunnerMode}, slots={project.OccupiedSlots}/{project.MaxParallelism}";
-                sb.AppendLf($"- {project.Project}: total={project.Total}; {counts}; {runner}");
+                AppendProjectLine(project.Project, $"total={project.Total}; {counts}; {runner}");
             }
         }
 
@@ -499,12 +512,12 @@ public sealed class OrchestratorContextDigestService
         {
             if (!project.IsRepo)
             {
-                sb.AppendLf($"- {project.Project}: unavailable ({Compact(project.Error, 100)})");
+                AppendProjectLine(project.Project, $"unavailable ({Compact(project.Error, 100)})");
                 continue;
             }
             if (project.Targets.Count == 0)
             {
-                sb.AppendLf($"- {project.Project}: none derived");
+                AppendProjectLine(project.Project, "none derived");
                 continue;
             }
             var targets = project.Targets.Select(target =>
@@ -515,7 +528,7 @@ public sealed class OrchestratorContextDigestService
                 var version = string.IsNullOrWhiteSpace(target.CurrentVersion) ? "" : $" v{target.CurrentVersion}";
                 return $"{target.Label}{version} {pending}";
             });
-            sb.AppendLf($"- {project.Project}: {string.Join("; ", targets)}");
+            AppendProjectLine(project.Project, string.Join("; ", targets));
         }
 
         var health = data.Watcher;
@@ -533,8 +546,11 @@ public sealed class OrchestratorContextDigestService
         sb.AppendLf("Use this digest as current read-only application state. Ask for a refresh when cached quota may be stale. Do not infer operational authority from this context.");
         sb.Append("=== END APPLICATION READ DIGEST ===");
         var unredacted = sb.ToString();
-        var digest = Credential.Replace(unredacted, "[omitted: secret]");
-        if (digest != unredacted)
+        var digest = Credential.Replace(unredacted, match =>
+            projectLabels.Any(label => match.Index >= label.Start && match.Index < label.End)
+                ? match.Value
+                : "[omitted: secret]");
+        if (projectNameRedacted || digest != unredacted)
             digest += "\nEvidence omissions: secret";
         if (Encoding.UTF8.GetByteCount(digest) <= MaxDigestBytes) return digest;
         const string marker = "\n[omitted: oversize context digest]";
