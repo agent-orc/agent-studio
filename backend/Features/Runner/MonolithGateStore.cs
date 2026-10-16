@@ -170,8 +170,12 @@ public sealed class MonolithGateStore
                 if (_workspaceQuota is not null)
                 {
                     var project = _scanner?.ScanAllJobsRaw().FirstOrDefault(task =>
-                        task.Id == record.Subject.TaskId || task.TaskKey == record.Subject.TaskId)?.ProjectName
-                        ?? record.Subject.RepositoryId;
+                        task.Id == record.Subject.TaskId || task.TaskKey == record.Subject.TaskId)?.ProjectName;
+                    if (project is null)
+                    {
+                        quotaReason = "Gate project could not be resolved for quota admission.";
+                        continue;
+                    }
                     var admission = _workspaceQuota.Admit(project);
                     if (!admission.Allowed) { quotaReason = admission.Message; continue; }
                 }
