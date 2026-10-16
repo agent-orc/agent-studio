@@ -7,18 +7,21 @@ export type WorkbenchSortKey =
   | 'default'
   | 'status'
   | 'updatedAt'
+  | 'createdAt'
   | 'project'
   | 'key'
   | 'openDecisions'
   | 'reviewAge';
 export type WorkbenchSortDirection = 'asc' | 'desc';
 export type WorkbenchReviewFilter = 'all' | 'never-reviewed' | 'older-30' | 'current' | 'partially-superseded' | 'superseded' | 'historical';
+export type WorkbenchCreatedFilter = 'all' | '24h' | '7d' | '30d';
 
 export interface WorkbenchOverviewViewState {
   query: string;
   sortKey: WorkbenchSortKey;
   direction: WorkbenchSortDirection;
   reviewFilter: WorkbenchReviewFilter;
+  createdFilter: WorkbenchCreatedFilter;
 }
 
 export const WORKBENCH_SORT_OPTIONS: readonly {
@@ -27,6 +30,7 @@ export const WORKBENCH_SORT_OPTIONS: readonly {
 }[] = [
   { key: 'status', label: 'Status' },
   { key: 'updatedAt', label: 'Last movement' },
+  { key: 'createdAt', label: 'Created' },
   { key: 'project', label: 'Project' },
   { key: 'key', label: 'Key' },
   { key: 'openDecisions', label: 'Open decisions' },
@@ -39,10 +43,12 @@ const DEFAULT_STATE: WorkbenchOverviewViewState = {
   sortKey: 'default',
   direction: 'desc',
   reviewFilter: 'all',
+  createdFilter: 'all',
 };
 const DEFAULT_DIRECTIONS: Record<Exclude<WorkbenchSortKey, 'default'>, WorkbenchSortDirection> = {
   status: 'asc',
   updatedAt: 'desc',
+  createdAt: 'desc',
   project: 'asc',
   key: 'asc',
   openDecisions: 'desc',
@@ -60,6 +66,7 @@ export class WorkbenchOverviewViewStateService {
   readonly sortKey = signal<WorkbenchSortKey>('default');
   readonly direction = signal<WorkbenchSortDirection>('desc');
   readonly reviewFilter = signal<WorkbenchReviewFilter>('all');
+  readonly createdFilter = signal<WorkbenchCreatedFilter>('all');
 
   constructor() {
     const onHashChange = () => this.hydrate();
@@ -82,6 +89,11 @@ export class WorkbenchOverviewViewStateService {
     this.commit();
   }
 
+  setCreatedFilter(value: WorkbenchCreatedFilter): void {
+    this.createdFilter.set(value);
+    this.commit();
+  }
+
   selectSort(key: Exclude<WorkbenchSortKey, 'default'>): void {
     if (this.sortKey() === key) {
       this.direction.update(value => value === 'asc' ? 'desc' : 'asc');
@@ -92,13 +104,25 @@ export class WorkbenchOverviewViewStateService {
     this.commit();
   }
 
+  setSort(key: WorkbenchSortKey): void {
+    this.sortKey.set(key);
+    this.direction.set(key === 'default' ? 'desc' : DEFAULT_DIRECTIONS[key]);
+    this.commit();
+  }
+
+  toggleDirection(): void {
+    this.direction.update(value => value === 'asc' ? 'desc' : 'asc');
+    this.commit();
+  }
+
   reset(): void {
     this.apply(DEFAULT_STATE);
     this.commit();
   }
 
   hasActiveState(): boolean {
-    return this.query().trim().length > 0 || this.sortKey() !== 'default' || this.reviewFilter() !== 'all';
+    return this.query().trim().length > 0 || this.sortKey() !== 'default'
+      || this.reviewFilter() !== 'all' || this.createdFilter() !== 'all';
   }
 
   filter(items: readonly WorkbenchOverviewItem[], statusLabel: (item: WorkbenchOverviewItem) => string): WorkbenchOverviewItem[] {
@@ -111,6 +135,12 @@ export class WorkbenchOverviewViewStateService {
         || reviewFilter === 'older-30' && Boolean(review && Date.parse(review.reviewedAt) < this.now() - 30 * 86_400_000)
         || review?.verdict === reviewFilter;
       if (!matchesReview) return false;
+      const createdFilter = this.createdFilter();
+      if (createdFilter !== 'all') {
+        const created = Date.parse(item.workbench.createdAtUtc ?? '');
+        const windowMs = { '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 }[createdFilter];
+        if (!Number.isFinite(created) || created < this.now() - windowMs || created > this.now()) return false;
+      }
       if (!query) return true;
       return [
       item.workbench.key ?? item.workbench.id,
@@ -127,7 +157,16 @@ export class WorkbenchOverviewViewStateService {
     const key = this.sortKey();
     if (key === 'default') return [...items];
     const factor = this.direction() === 'asc' ? 1 : -1;
-    return [...items].sort((left, right) => factor * this.compare(left, right, key, statusLabel));
+    return [...items].sort((left, right) => {
+      if (key === 'createdAt') {
+        const a = Date.parse(left.workbench.createdAtUtc ?? '');
+        const b = Date.parse(right.workbench.createdAtUtc ?? '');
+        if (!Number.isFinite(a)) return Number.isFinite(b) ? 1 : 0;
+        if (!Number.isFinite(b)) return -1;
+        return factor * (a - b);
+      }
+      return factor * this.compare(left, right, key, statusLabel);
+    });
   }
 
   private compare(
@@ -139,13 +178,14 @@ export class WorkbenchOverviewViewStateService {
     if (key === 'updatedAt') {
       return Date.parse(left.workbench.updatedAtUtc) - Date.parse(right.workbench.updatedAtUtc);
     }
+    if (key === 'createdAt') return 0;
     if (key === 'openDecisions') {
       return openDecisionCount(left) - openDecisionCount(right);
     }
     if (key === 'reviewAge') {
       return reviewAge(left, this.now()) - reviewAge(right, this.now());
     }
-    const values: Record<Exclude<WorkbenchSortKey, 'default' | 'updatedAt' | 'openDecisions' | 'reviewAge'>, [string, string]> = {
+    const values: Record<Exclude<WorkbenchSortKey, 'default' | 'updatedAt' | 'createdAt' | 'openDecisions' | 'reviewAge'>, [string, string]> = {
       status: [statusLabel(left), statusLabel(right)],
       project: [left.projectName, right.projectName],
       key: [left.workbench.key ?? left.workbench.id, right.workbench.key ?? right.workbench.id],
@@ -169,7 +209,7 @@ export class WorkbenchOverviewViewStateService {
   }
 
   private currentState(): WorkbenchOverviewViewState {
-    return { query: this.query(), sortKey: this.sortKey(), direction: this.direction(), reviewFilter: this.reviewFilter() };
+    return { query: this.query(), sortKey: this.sortKey(), direction: this.direction(), reviewFilter: this.reviewFilter(), createdFilter: this.createdFilter() };
   }
 
   private apply(state: WorkbenchOverviewViewState): void {
@@ -177,6 +217,7 @@ export class WorkbenchOverviewViewStateService {
     this.sortKey.set(state.sortKey);
     this.direction.set(state.direction);
     this.reviewFilter.set(state.reviewFilter);
+    this.createdFilter.set(state.createdFilter);
   }
 
   private readStoredState(): WorkbenchOverviewViewState | null {
@@ -211,6 +252,7 @@ export class WorkbenchOverviewViewStateService {
     const query = new URLSearchParams();
     if (state.query.trim()) query.set('q', state.query.trim());
     if (state.reviewFilter !== 'all') query.set('review', state.reviewFilter);
+    if (state.createdFilter !== 'all') query.set('created', state.createdFilter);
     if (state.sortKey !== 'default') {
       query.set('sort', state.sortKey);
       query.set('dir', state.direction);
@@ -245,14 +287,21 @@ function readRouteState(hash: string): { present: boolean; state: WorkbenchOverv
     ? view.get('dir') as WorkbenchSortDirection
     : sortKey === 'default' ? 'desc' : DEFAULT_DIRECTIONS[sortKey];
   const reviewFilter = isReviewFilter(view.get('review')) ? view.get('review') as WorkbenchReviewFilter : 'all';
-  return { present, state: { query: view.get('q') ?? '', sortKey, direction, reviewFilter } };
+  const createdFilter = isCreatedFilter(view.get('created')) ? view.get('created') as WorkbenchCreatedFilter : 'all';
+  return { present, state: { query: view.get('q') ?? '', sortKey, direction, reviewFilter, createdFilter } };
 }
 
 function validatedState(value: unknown): WorkbenchOverviewViewState | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<WorkbenchOverviewViewState>;
   if (typeof candidate.query !== 'string' || !isSortKey(candidate.sortKey) || !isDirection(candidate.direction)) return null;
-  return { query: candidate.query, sortKey: candidate.sortKey, direction: candidate.direction, reviewFilter: isReviewFilter(candidate.reviewFilter) ? candidate.reviewFilter : 'all' };
+  return { query: candidate.query, sortKey: candidate.sortKey, direction: candidate.direction,
+    reviewFilter: isReviewFilter(candidate.reviewFilter) ? candidate.reviewFilter : 'all',
+    createdFilter: isCreatedFilter(candidate.createdFilter) ? candidate.createdFilter : 'all' };
+}
+
+function isCreatedFilter(value: unknown): value is WorkbenchCreatedFilter {
+  return value === 'all' || value === '24h' || value === '7d' || value === '30d';
 }
 
 function isReviewFilter(value: unknown): value is WorkbenchReviewFilter {

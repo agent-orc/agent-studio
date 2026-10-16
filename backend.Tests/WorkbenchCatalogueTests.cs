@@ -45,6 +45,70 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_CreatedDateUsesFirstDescriptorCommitAndExplicitDateWins()
+    {
+        WriteWorkbench("dated", "Dated", "active", "2026-07-10T10:00:00Z");
+        Assert.Null(Assert.Single(Service().List("Project")!.Items).CreatedAtUtc);
+
+        RunGit("init", "-b", "develop");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "add descriptor");
+        var first = DateTime.Parse(RunGit("log", "-1", "--format=%aI").Trim(),
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal);
+        var path = Path.Combine(_root, "docs", "workbenches", "dated", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        descriptor["summary"] = "Edited after creation";
+        File.WriteAllText(path, descriptor.ToJsonString());
+        RunGit("add", ".");
+        RunGit("commit", "-m", "edit descriptor");
+        Assert.Equal(first, Assert.Single(Service().List("Project")!.Items).CreatedAtUtc);
+
+        descriptor["createdAt"] = "2025-01-02T03:04:05Z";
+        File.WriteAllText(path, descriptor.ToJsonString());
+        Assert.Equal(new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+            Assert.Single(Service().List("Project")!.Items).CreatedAtUtc);
+    }
+
+    [Fact]
+    public void FirstFileAdditionIndexKeepsOldestAdditionForEachDescriptor()
+    {
+        var additions = GitService.ParseFirstFileAdditions(
+            "\u001e2026-09-01T00:00:00Z\n\ndocs/a/workbench.json\n"
+            + "\u001e2026-08-01T00:00:00Z\n\ndocs/a/workbench.json\ndocs/b/workbench.json\n");
+        Assert.Equal(new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), additions["docs/a/workbench.json"]);
+        Assert.Equal(additions["docs/a/workbench.json"], additions["docs/b/workbench.json"]);
+    }
+
+    [Fact]
+    public void ListFromSource_UsesPinnedCommitForWikiSnapshotCreationDate()
+    {
+        WriteWorkbench("dated", "Dated", "active", "2026-07-10T10:00:00Z");
+        RunGit("init", "-b", "develop");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "add descriptor");
+        var firstSha = RunGit("rev-parse", "HEAD").Trim();
+        var firstDate = DateTime.Parse(RunGit("log", "-1", "--format=%aI").Trim(),
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal);
+
+        var snapshotDir = Path.Combine(_outside, "docs", "workbenches", "dated");
+        Directory.CreateDirectory(snapshotDir);
+        File.Copy(Path.Combine(_root, "docs", "workbenches", "dated", "workbench.json"),
+            Path.Combine(snapshotDir, "workbench.json"));
+        File.Copy(Path.Combine(_root, "docs", "workbenches", "dated", "index.html"),
+            Path.Combine(snapshotDir, "index.html"));
+        var source = new WikiSourceContext(_outside,
+            new WikiSourceInfo("branch", "wiki", firstSha, firstSha[..8], false, null));
+        Assert.Equal(firstDate,
+            Assert.Single(Service().ListFromSource("Project", source).Items).CreatedAtUtc);
+    }
+
+    [Fact]
     public void List_AcceptsInformationalSnapshotDossiers()
     {
         WriteWorkbench("lagebild", "Lagebild", "active", "2026-08-03T04:00:00Z");
@@ -725,6 +789,7 @@ public sealed class WorkbenchCatalogueTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
@@ -753,6 +818,7 @@ public sealed class WorkbenchCatalogueTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in new[] { "/c", "mklink", "/J", link, target })
             start.ArgumentList.Add(arg);

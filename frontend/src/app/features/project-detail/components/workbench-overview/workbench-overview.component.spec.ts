@@ -138,7 +138,13 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('Dossiers');
-    expect(fixture.nativeElement.querySelectorAll('[data-testid^="workbench-overview-sort-"]').length).toBe(6);
+    const toolbar = fixture.nativeElement.querySelector('[data-testid="workbench-overview-controls"]') as HTMLElement;
+    expect(toolbar.querySelector('[data-testid="workbench-overview-created-filter"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-testid="shared-area-filter"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-testid="shared-facet-filter"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-testid="workbench-overview-sort-select"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-testid="workbench-overview-sort-direction"]')).not.toBeNull();
+    expect(toolbar.querySelectorAll('.overview-controls__segments').length).toBe(0);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-current-count"]')?.textContent)
       .toContain('3 current');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-history-count"]')?.textContent)

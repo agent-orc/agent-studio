@@ -7963,6 +7963,44 @@ public class GitService
             () => GetRecentEditsUnderPath(root, pathspec, int.MaxValue, int.MaxValue));
     }
 
+    /// <summary>First additions below a path, collected in one history walk and cached by revision.</summary>
+    public IReadOnlyDictionary<string, DateTime> GetFirstFileAdditionsUnderPathCached(
+        string repoRoot, string repoRelDir, string? revision = null)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot)) return new Dictionary<string, DateTime>();
+        if (revision != null && (revision.Length != 40 || !revision.All(Uri.IsHexDigit)))
+            return new Dictionary<string, DateTime>();
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        var pathspec = string.IsNullOrWhiteSpace(repoRelDir) ? "." : repoRelDir.Replace('\\', '/');
+        var key = string.Join(CacheKeySep, "wiki-file-additions", root, revision ?? "HEAD", pathspec);
+        return MemoizeByHead(root, key, () =>
+        {
+            var (output, _, code) = RunGitArgs(root, "log", revision ?? "HEAD", "--no-renames", "--diff-filter=A", "--name-only",
+                "--pretty=format:%x1e%aI", "--", pathspec);
+            return code == 0 ? ParseFirstFileAdditions(output) : new Dictionary<string, DateTime>();
+        });
+    }
+
+    internal static Dictionary<string, DateTime> ParseFirstFileAdditions(string output)
+    {
+        var dates = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in output.Replace("\r\n", "\n").Split('\x1e', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var lines = record.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            if (lines.Length < 2 || !DateTime.TryParse(lines[0].Trim(),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var date)) continue;
+            foreach (var path in lines.Skip(1))
+            {
+                var normalized = path.Trim();
+                if (normalized.EndsWith("/workbench.json", StringComparison.OrdinalIgnoreCase))
+                    dates[normalized] = DateTime.SpecifyKind(date, DateTimeKind.Utc);
+            }
+        }
+        return dates;
+    }
+
     /// <summary>
     /// Author dates (UTC, newest first) of up to <paramref name="maxCommits"/>
     /// non-merge commits that touched any of <paramref name="repoRelPaths"/>.

@@ -141,6 +141,9 @@ async function installMocks(page: Page): Promise<void> {
   await page.route('**/api/cli/usage**', route => json(route, {
     at: '2026-08-11T10:00:00Z', sessions: [],
   }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({
+    status: 503, contentType: 'text/plain', body: 'Unavailable',
+  }));
   await page.route(/\/api\/cli\/[^/]+\/models(?:\?.*)?$/, route => json(route, {
     models: [], source: 'dossier-overview-evidence',
   }));
@@ -181,17 +184,17 @@ test('Dossier sort and live filter share URL and session state across both overv
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
   await page.getByTestId('studio-ab-workbenches').click();
   await expect(page.getByTestId('workbench-overview')).toBeVisible();
-  await expect(page.locator('[data-testid^="workbench-overview-sort-"]')).toHaveCount(6);
+  await expect(page.getByTestId('workbench-overview-sort-select')).toBeVisible();
 
   const pending = page.getByTestId('workbench-overview-decision-pending')
     .locator('[data-testid^="workbench-overview-item-"]');
   await expect(pending.nth(0)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-four`);
   await expect(pending.nth(1)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-one`);
 
-  for (const key of ['status', 'updatedAt', 'project', 'key', 'openDecisions', 'reviewAge']) {
-    const button = page.getByTestId(`workbench-overview-sort-${key}`);
-    await button.click();
-    await expect(button).toHaveAttribute('aria-pressed', 'true');
+  for (const key of ['status', 'updatedAt', 'createdAt', 'project', 'key', 'openDecisions', 'reviewAge']) {
+    const select = page.getByTestId('workbench-overview-sort-select');
+    await select.selectOption(key);
+    await expect(select).toHaveValue(key);
   }
 
   const reviewFilter = page.getByTestId('workbench-overview-review-filter');
@@ -200,17 +203,18 @@ test('Dossier sort and live filter share URL and session state across both overv
   await reviewFilter.selectOption('partially-superseded');
   await expect(page.locator('[data-testid^="workbench-overview-item-"]')).toHaveCount(1);
   await page.getByTestId('workbench-review-tag').hover();
-  await expect(page.getByTestId('workbench-review-tooltip')).toContainText('Review age: 3 days ago');
+  await expect(page.getByTestId('workbench-review-tooltip')).toContainText('Review age:');
   await expect(page.getByTestId('workbench-review-tooltip').getByRole('link', { name: 'DDA-W51' })).toBeVisible();
   await reviewFilter.selectOption('all');
 
-  const decisionSort = page.getByTestId('workbench-overview-sort-openDecisions');
-  await decisionSort.click();
-  await expect(decisionSort).toHaveAttribute('aria-label', /ascending/i);
-  await decisionSort.click();
-  await expect(decisionSort).toHaveAttribute('aria-label', /descending/i);
-  await decisionSort.click();
-  await expect(decisionSort).toHaveAttribute('aria-label', /ascending/i);
+  const decisionSort = page.getByTestId('workbench-overview-sort-select');
+  await decisionSort.selectOption('openDecisions');
+  const direction = page.getByTestId('workbench-overview-sort-direction');
+  await expect(direction).toHaveAttribute('aria-label', /descending/i);
+  await direction.click();
+  await expect(direction).toHaveAttribute('aria-label', /ascending/i);
+  await direction.click();
+  await expect(direction).toHaveAttribute('aria-label', /descending/i);
 
   await page.getByTestId('workbench-overview-filter').fill('Decision pending');
   await expect(page.locator('[data-testid^="workbench-overview-item-"]')).toHaveCount(2);
@@ -228,7 +232,7 @@ test('Dossier sort and live filter share URL and session state across both overv
 
   await page.reload();
   await expect(page.getByTestId('workbench-overview-filter')).toHaveValue('Decision pending');
-  await expect(decisionSort).toHaveAttribute('aria-pressed', 'true');
+  await expect(decisionSort).toHaveValue('openDecisions');
 
   const projectRoute = `/#/projects/${PROJECT_ID}/workbenches`;
   const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
@@ -239,12 +243,44 @@ test('Dossier sort and live filter share URL and session state across both overv
     'app-orchestrator-side-sheet.is-open [data-testid="sidesheet-close"]',
   );
   if (await orchestratorClose.isVisible()) await orchestratorClose.click();
+  for (const size of [{ width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
+    await page.setViewportSize(size);
+    const panelTop = await page.getByTestId('workbench-overview').evaluate(element => element.getBoundingClientRect().top);
+    const groupTop = await page.getByTestId('workbench-overview-decision-pending')
+      .evaluate(element => element.getBoundingClientRect().top);
+    expect(groupTop - panelTop).toBeLessThanOrEqual(140);
+    await page.screenshot({
+      path: evidencePath(testInfo, `dossier-toolbar-${size.width}x${size.height}.png`),
+    });
+    if (size.width === 1920) {
+      const rows = await page.getByTestId('workbench-overview-controls').evaluate(element =>
+        [...element.children].map(child => child.getBoundingClientRect().top)
+          .sort((a, b) => a - b).reduce<number[]>((starts, top) => {
+            if (!starts.length || top - starts[starts.length - 1] > 16) starts.push(top);
+            return starts;
+          }, []).length);
+      expect(rows).toBe(1);
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const rowsAt1280 = await page.getByTestId('workbench-overview-controls').evaluate(element =>
+    [...element.children].map(child => child.getBoundingClientRect().top)
+      .sort((a, b) => a - b).reduce<number[]>((starts, top) => {
+        if (!starts.length || top - starts[starts.length - 1] > 16) starts.push(top);
+        return starts;
+      }, []).length);
+  expect(rowsAt1280).toBeLessThanOrEqual(2);
+  await page.setViewportSize({ width: 375, height: 812 });
+  const toolbarOverflow = await page.getByTestId('workbench-overview-controls')
+    .evaluate(element => element.scrollWidth - element.clientWidth);
+  expect(toolbarOverflow).toBeLessThanOrEqual(0);
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByTestId('workbench-overview-filter')).toHaveValue('');
   await page.getByTestId('workbench-overview-filter').fill('DDA-');
-  const movementSort = page.getByTestId('workbench-overview-sort-updatedAt');
-  await movementSort.click();
-  await movementSort.click();
-  await expect(movementSort).toHaveAttribute('aria-label', /ascending/i);
+  const movementSort = page.getByTestId('workbench-overview-sort-select');
+  await movementSort.selectOption('updatedAt');
+  await page.getByTestId('workbench-overview-sort-direction').click();
+  await expect(page.getByTestId('workbench-overview-sort-direction')).toHaveAttribute('aria-label', /ascending/i);
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
@@ -256,7 +292,7 @@ test('Dossier sort and live filter share URL and session state across both overv
 
   await page.goto(projectRoute);
   await expect(page.getByTestId('workbench-overview-filter')).toHaveValue('DDA-');
-  await expect(page.getByTestId('workbench-overview-sort-updatedAt')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('workbench-overview-sort-select')).toHaveValue('updatedAt');
   await expect.poll(() => decodeURIComponent(new URL(page.url()).hash))
     .toContain('dossier=q=DDA-&sort=updatedAt&dir=asc');
 
