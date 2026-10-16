@@ -6,9 +6,10 @@
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-10-16T07:32:09Z",
+  "updatedAt": "2026-10-16T19:39:44Z",
   "sourceTaskKeys": [
-    "AGT-3171"
+    "AGT-3171",
+    "AGT-3192"
   ],
   "relatedTo": [
     "AGT-3019",
@@ -78,6 +79,15 @@
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
         "slice": "Optional Kubernetes Job executor for existing clusters"
+      }
+    },
+    {
+      "id": "DP-S8",
+      "title": "Claim post work through the host agent",
+      "promptMarkdown": "# Claim post work through the host agent\n\nSource: `docs/dynamic-placement/index.html` (AGT-3171, AGT-3192). Read AGENTS.md, the runner, pipeline and tasks domain maps, and the post-work section before editing. Use D1 option A and D2 option A unless a recorded operator decision selects another option; record the selected options. Preserve Task Server attempt authority, platform-owned git operations and the existing auto-review decision semantics.\n\n## Deliver\nRepresent each eligible auto-review card and lane entry as one durable post-work subject with stable idempotency key, source run, required capabilities, artifact references and policy digest. Add Task Server claim, renewal and fenced report operations backed by the shared AGT-3019 host grant. Add a post adapter to the host agent that claims eligible work, executes bounded review steps in the appropriate Linux container or Windows process executor, and returns evidence and a proposed outcome. Keep lifecycle transitions, reissue and human-review routing, delivery resume and publication server owned. Preserve deferred reasons and retry time.\n\nMigrate in shadow mode first: materialize subjects from the existing transition and backfill unfinished `4-auto-review` cards, then compare eligibility and outcomes without a second executor. For a bounded cohort, stop new backend queue admissions, drain active backend passes, reconcile outcomes and only then allow host claims. Retain the old queue and recovery sweep for unconverted cards and rollback. Reconcile subjects with lane and outcome records on restart or rollback before re-enqueue or reclaim.\n\n## Acceptance\nA concurrent backend pass and host claim cannot process the same card. One hundred simultaneous claims produce at most one authority holder per subject. Lease loss prevents late outcome application; restart and rollback leave no missed card, duplicate decision or duplicate publication. Deferred work retains its reason and retry time, and a recovered completed decision is not rerun. Show a cohort canary and rollback record before retiring the in-memory queue path.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Claim post work through the host agent"
       }
     }
   ],
