@@ -20,6 +20,76 @@ public sealed class LinuxInstallerTests
         => Assert.Null(NativeWebHost.UpstreamFor("/projects", "api", "bff"));
 
     [Fact]
+    public void Join_token_file_is_owner_only_when_created()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var path = Path.Combine(Path.GetTempPath(), $"studio-token-{Guid.NewGuid():N}");
+        try
+        {
+            SetupSecrets.WriteOwnerOnly(path, "fixture-token");
+            Assert.Equal("fixture-token", File.ReadAllText(path));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                File.GetUnixFileMode(path));
+            Assert.Throws<IOException>(() => SetupSecrets.WriteOwnerOnly(path, "replacement"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Refused_review_replacement_restores_the_active_host_release()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), $"studio-host-switch-{Guid.NewGuid():N}");
+        try
+        {
+            var oldRelease = Path.Combine(root, "old");
+            var newRelease = Path.Combine(root, "new");
+            Directory.CreateDirectory(oldRelease);
+            Directory.CreateDirectory(newRelease);
+            var current = Path.Combine(root, "current");
+            var previous = Path.Combine(root, "previous");
+            Directory.CreateSymbolicLink(current, oldRelease);
+            Directory.CreateSymbolicLink(previous, oldRelease);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                NativeLifecycle.ActivateHostReleaseAsync(new ProcessRunner(false), current,
+                    oldRelease, newRelease, () =>
+                    {
+                        Assert.Equal(newRelease, Directory.ResolveLinkTarget(current, true)!.FullName);
+                        throw new InvalidOperationException("Review restart guard refused");
+                    }));
+            Assert.Equal(oldRelease, Directory.ResolveLinkTarget(current, true)!.FullName);
+            Assert.Equal(oldRelease, Directory.ResolveLinkTarget(previous, true)!.FullName);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Networked_studio_origin_is_allowed_and_preserved_for_updates()
+    {
+        var origin = "https://studio.example.test";
+        var allowed = NativeInstaller.BuildStudioAllowedOrigins(origin + "/");
+        Assert.Equal("http://127.0.0.1:4011,http://localhost:4011," + origin, allowed);
+        var path = Path.Combine(Path.GetTempPath(), $"studio-bff-unit-{Guid.NewGuid():N}");
+        try
+        {
+            File.WriteAllText(path, $"[Service]\nEnvironment=\"Studio__AllowedOrigins={allowed}\"\n");
+            Assert.Equal(origin, NativeInstaller.ReadInstalledPublicStudioOrigin(path));
+            Assert.Equal(allowed, NativeInstaller.BuildStudioAllowedOrigins(
+                NativeInstaller.ReadInstalledPublicStudioOrigin(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Native_studio_unit_is_loopback_and_owned_by_service_user()
     {
         var unit = NativeInstaller.BuildStudioUnit("Agent Studio API", "/opt/api",

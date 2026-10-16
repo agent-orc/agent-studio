@@ -264,6 +264,23 @@ internal static class PreflightProbe
 
 internal static class SetupSecrets
 {
+    public static void WriteOwnerOnly(string path, string content)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(path, content);
+            return;
+        }
+        using var stream = new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        });
+        using var writer = new StreamWriter(stream);
+        writer.Write(content);
+    }
+
     /// <summary>A secret file must exist, be non-empty and readable only by its owner.</summary>
     public static bool IsProtected(string path)
     {
