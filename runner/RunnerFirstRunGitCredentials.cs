@@ -27,6 +27,11 @@ internal static class RunnerFirstRunGitCredentials
             .Select(folder => Path.Combine(folder, "deploy-key"))
             .FirstOrDefault(File.Exists);
 
+    public static string? Helper(string stateDir, string origin)
+        => Folders(stateDir, origin)
+            .Select(folder => Path.Combine(folder, "git-helper.sh"))
+            .FirstOrDefault(File.Exists);
+
     private static IEnumerable<string> Folders(string stateDir, string origin)
     {
         var root = Path.Combine(stateDir, "first-run-git");
