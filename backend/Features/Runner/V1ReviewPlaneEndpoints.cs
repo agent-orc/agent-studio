@@ -343,6 +343,7 @@ public static class V1ReviewPlaneEndpoints
             ILoggerFactory loggerFactory,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            AgentStudio.Quota.WorkspaceQuotaService workspaceQuota,
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
             CancellationToken ct) =>
@@ -570,6 +571,11 @@ public static class V1ReviewPlaneEndpoints
                     out quotaDeferredReason);
             else
                 quotaDeferredReason = null;
+            if (string.IsNullOrWhiteSpace(quotaDeferredReason) && subjectTask is not null)
+            {
+                var workspaceDecision = workspaceQuota.Admit(subjectTask.ProjectName);
+                if (!workspaceDecision.Allowed) quotaDeferredReason = workspaceDecision.Message;
+            }
             if (!string.IsNullOrWhiteSpace(quotaDeferredReason))
             {
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
