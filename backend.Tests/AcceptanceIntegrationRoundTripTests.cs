@@ -2610,6 +2610,41 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(localDevelop, Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    public async Task Late_merge_gate_failure_after_completion_is_superseded(bool queueTimeout)
+    {
+        var deliverySha = PublishDelivery("late-gate.txt", "delivery\n");
+        var gate = new BlockingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, queueTimeout ? null : 1, 20,
+            queueTimeout ? "machine gate queue budget exceeded" : "dotnet test failed",
+            queueTimeout ? "queue timeout" : "test failure", false, false)
+        {
+            FailureKind = queueTimeout ? BuildTestGateFailureKind.Timeout : BuildTestGateFailureKind.Code,
+        });
+        var deps = Build(deliverySha, gateRunner: gate, initialState: TaskStates.AutoReview);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var clock = new FakeTimeProvider(new DateTimeOffset(VerificationFixtureAtUtc));
+        var running = VerifyingRunner(deps, gate, clock).RunAsync(Project, Slug, card.FolderPath, _watchPath,
+            "develop", CancellationToken.None);
+        await gate.Entered.WaitAsync(AsyncTestDeadline);
+
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.HumanReview, _watchPath).Status);
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+        gate.Release();
+        var result = await running.WaitAsync(AsyncTestDeadline);
+
+        Assert.True(result.FailureCode == AcceptedIntegrationFailureCodes.StaleAttempt,
+            $"Outcome={result.Outcome}; FailureCode={result.FailureCode ?? "none"}; Error={result.Error}");
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        var receipt = Assert.Single(deps.Timeline.ReadAll(completed.FolderPath),
+            item => item.Kind == "gate-result-superseded");
+        Assert.Equal("Fail", receipt.Details!["verdict"]);
+    }
+
     /// <summary>
     /// AGT-3002 - replay of the 2026-09-28 incident. An operator script pushed
     /// develop carrying a delivery whose only gate had failed, and the lane
@@ -3404,7 +3439,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     /// <summary>The harness runner plus the task scanner and timeline the verification reads and writes.</summary>
-    private static MergeIntoDevelopRunner VerifyingRunner(Deps deps, IBuildTestGateRunner gate)
+    private static MergeIntoDevelopRunner VerifyingRunner(Deps deps, IBuildTestGateRunner gate,
+        TimeProvider? timeProvider = null)
         => new(
             new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration),
             deps.Pipeline,
@@ -3414,7 +3450,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             preDevelopTimeout: TimeSpan.FromSeconds(30),
             attemptAuthority: deps.Authority,
             taskScanner: deps.Scanner,
-            timeline: deps.Timeline);
+            timeline: deps.Timeline,
+            timeProvider: timeProvider);
 
     private string PublishDelivery(string relativePath, string content)
     {
