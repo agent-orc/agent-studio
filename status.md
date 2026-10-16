@@ -1,6 +1,7 @@
-# AGT-3155 Linux installer review fix
+# AGT-3186 delivery status
 
-- Result SHA: `765bcc1566c8e575795b763b0805cd4433af8906` (duplicate-script removal, rebased onto `86878facd38f190124627338d2bcc986c3b36852`).
-- Removed the unreferenced `scripts/release/install.sh`. Release packaging continues to use the verified root `install.sh`.
-- Verification passed: `dotnet build agent-taskboard.sln --no-restore`; `sh scripts/release/linux-install-script.test.sh`; `sh scripts/release/release-scripts.test.sh`; setup tests filtered to `LinuxInstallerTests|InstallationJourneyTests` (86 passed); architecture and guard filter on all eight .NET test projects (82 matching backend tests passed); `FullyQualifiedName~Architecture` in backend (103 passed) and Task Server (5 passed); `npm --prefix frontend run lint`; `git diff --check`.
-- No release tag or GitHub Release was created, and package visibility was not changed. Publishing a release and setting package visibility remain operator steps.
+- Result SHA-256: `a73bc915f6a7d919cb66ac900b6fd7d893b558d531656054a1bede77bf28a471` (sorted changed-file paths and contents, excluding this status file). The base Git SHA is `fc7bc1c24fee4e63edd626f479ec6701df0513e4`; the managed pipeline assigns the result commit after delivery.
+- Implemented option: extend the existing `AccessSecurityStore` and `.security/access-state.json` for named, hashed, expiring, revocable operator/viewer API tokens. Each token has an explicit project grant, last-use metadata, and per-call audit attribution. No second credential store was added.
+- Settings > Access now manages users, API tokens, runner enrollment codes, and enrolled runners. Networked browser sign-in uses the monolith human session; local and public demo behavior retain their existing paths. The Product role remains the separate AGT-3182 deliverable; this page is owner-only.
+- The task-api scripts and networked operator probes accept a bearer from `AGENT_STUDIO_API_TOKEN` while keeping `X-Client-Id` as attribution.
+- Verification: final solution and frontend builds passed. Focused backend class-filtered tests passed (76), backend guard tests passed (82), and runner and Task Server guard filters had no matches. Focused frontend component tests passed (19); frontend lint, script checks, and the Access Playwright spec passed. Light and dark screenshots are in the task results directory.

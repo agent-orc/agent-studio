@@ -101,6 +101,7 @@ export class AuthSessionState {
 export class AuthService {
   private readonly http = inject(HttpClient);
   private readonly session = inject(AuthSessionState);
+  private authRoot = '/api/v1/studio/auth';
   readonly status = this.session.status;
   readonly loading = this.session.loading;
   readonly studioAllowed = this.session.studioAllowed;
@@ -111,19 +112,32 @@ export class AuthService {
 
   initialize(): void {
     this.loading.set(true);
+    this.http.get<AuthStatus>('/api/auth/status').subscribe({
+      next: status => {
+        if (status.profile === 'networked') {
+          this.authRoot = '/api/auth';
+          this.status.set(normalizeStatus(status));
+          this.loading.set(false);
+        } else this.loadStandaloneStatus(status);
+      },
+      error: () => this.loadStandaloneStatus(null),
+    });
+  }
+
+  private loadStandaloneStatus(localStatus: AuthStatus | null): void {
     this.http.get<AuthStatus | StandaloneAuthStatus>('/api/v1/studio/auth/status').subscribe({
-      next: (status) => { this.status.set(normalizeStatus(status)); this.loading.set(false); },
-      error: () => { this.status.set(null); this.loading.set(false); },
+      next: status => { this.status.set(normalizeStatus(status)); this.loading.set(false); },
+      error: () => { this.status.set(localStatus); this.loading.set(false); },
     });
   }
 
   login(username: string, password: string): Observable<AuthStatus> {
-    return this.http.post<AuthStatus | StandaloneAuthSession>('/api/v1/studio/auth/login', { username, password })
+    return this.http.post<AuthStatus | StandaloneAuthSession>(`${this.authRoot}/login`, { username, password })
       .pipe(map(normalizeSession), tap((status) => this.status.set(status)));
   }
 
   bootstrap(username: string, password: string, displayName: string, bootstrapCode?: string): Observable<AuthStatus> {
-    return this.http.post<AuthStatus | StandaloneAuthSession>('/api/v1/studio/auth/bootstrap',
+    return this.http.post<AuthStatus | StandaloneAuthSession>(`${this.authRoot}/bootstrap`,
       { username, password, displayName, ...(bootstrapCode ? { bootstrapCode } : {}) })
       .pipe(tap(response => {
         if ('recoveryCode' in response && response.recoveryCode)
@@ -132,7 +146,7 @@ export class AuthService {
   }
 
   changePassword(currentPassword: string, newPassword: string): Observable<AuthUser> {
-    return this.http.post<AuthUser | StandaloneAuthUser>('/api/v1/studio/auth/change-password', { currentPassword, newPassword })
+    return this.http.post<AuthUser | StandaloneAuthUser>(`${this.authRoot}/change-password`, { currentPassword, newPassword })
       .pipe(map(user => 'userId' in user ? {
         id: user.userId, username: user.username, displayName: user.displayName,
         role: user.role, projects: user.projectIds ?? [], disabled: user.disabled,
@@ -144,7 +158,7 @@ export class AuthService {
   }
 
   logout(): Observable<void> {
-    return this.http.post<void>('/api/v1/studio/auth/logout', {})
+    return this.http.post<void>(`${this.authRoot}/logout`, {})
       .pipe(tap(() => this.session.expireNetworkedSession()));
   }
 }

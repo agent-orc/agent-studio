@@ -9,7 +9,7 @@
 // Returns 200 with `{ id }` on success. A 409 usually means the slug already
 // exists or the watchPath was not resolved from GET /api/watch-paths.
 
-import http from 'node:http';
+import { taskApiRequest } from './access.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.TASKBOARD_PORT ?? 5031); // stable; use 5030 for dev
@@ -39,7 +39,7 @@ const task = {
 function request(method, path, bodyObj = null) {
   return new Promise(resolve => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
-    const req = http.request({
+    const req = taskApiRequest({
       hostname: HOST,
       port: PORT,
       path,

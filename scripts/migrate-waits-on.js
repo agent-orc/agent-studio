@@ -22,7 +22,7 @@
 // be run from a task worktree (the dev backend is offline by default - see
 // AGENTS.md "Runtime And Stable").
 
-import http from 'node:http';
+import { taskApiRequest } from '../.agents/skills/task-api/scripts/access.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.TASKBOARD_PORT ?? 5031);
@@ -47,7 +47,7 @@ const EDGES = [
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : null;
-    const req = http.request(
+    const req = taskApiRequest(
       {
         hostname: HOST,
         port: PORT,

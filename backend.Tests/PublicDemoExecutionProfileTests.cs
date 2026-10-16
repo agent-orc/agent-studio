@@ -88,6 +88,33 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     }
 
     [Fact]
+    public async Task Access_administration_routes_are_registered_and_denied_in_public_demo()
+    {
+        var endpoints = shared.Factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToList();
+        using var client = shared.Factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+        });
+        foreach (var (method, path, requestPath) in new[]
+        {
+            ("GET", "/api/auth/api-tokens", "/api/auth/api-tokens"),
+            ("POST", "/api/auth/api-tokens", "/api/auth/api-tokens"),
+            ("DELETE", "/api/auth/api-tokens/{id}", "/api/auth/api-tokens/token"),
+            ("GET", "/api/auth/runner-enrollments", "/api/auth/runner-enrollments"),
+            ("DELETE", "/api/auth/runner-enrollments/{id}", "/api/auth/runner-enrollments/code"),
+        })
+        {
+            Assert.Single(endpoints, endpoint => endpoint.RoutePattern.RawText == path
+                && endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(method) == true);
+            using var request = new HttpRequestMessage(new HttpMethod(method), requestPath);
+            if (method == "POST") request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
         output.WriteLine($"PublicDemoExecutionProfile fixture initialization: {shared.InitializationDuration.TotalSeconds:F3} s");
