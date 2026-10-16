@@ -37,6 +37,54 @@ export interface ProjectDeploymentSummary {
   defaultEvidenceRun: DeploymentTestRunReference | null;
 }
 
+export interface ProjectEnvironmentDeclaration {
+  id: string;
+  name: string;
+  kind: 'stage' | 'production' | 'other';
+  targetHostId: string;
+  address: string;
+  template: 'container' | 'static';
+  destination: string;
+  containerPort: number;
+  healthUrl: string | null;
+  approval: 'person' | 'stage-healthy-10m';
+  secretRefs: string[];
+}
+
+export interface ProjectEnvironmentHistory {
+  at: string;
+  status: string;
+  artifact: string;
+  previousArtifact: string | null;
+  evidence: string | null;
+}
+
+export interface ProjectEnvironments {
+  project: string;
+  environments: {
+    declaration: ProjectEnvironmentDeclaration;
+    deployedArtifact: string | null;
+    health: string;
+    pendingArtifact: string | null;
+    history: ProjectEnvironmentHistory[];
+  }[];
+  promotions: {
+    artifact: string;
+    stageId: string;
+    productionId: string;
+    stageHealthyAt: string;
+    status: string;
+    actor: string | null;
+  }[];
+  failureCards: {
+    environmentId: string;
+    artifact: string;
+    at: string;
+    evidence: string;
+    rollbackArtifact: string | null;
+  }[];
+}
+
 export interface TestRunScope {
   level: string;
   testSet: string;
