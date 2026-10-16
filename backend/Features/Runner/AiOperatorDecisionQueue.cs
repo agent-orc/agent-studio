@@ -15,13 +15,13 @@ public interface IAiOperatorDecisionQueue
 
 public interface IAiOperatorTurnDispatcher
 {
-    OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request);
+    OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request, string turnId);
 }
 
 public sealed class AiOperatorTurnDispatcher(OrchestratorTurnService turns) : IAiOperatorTurnDispatcher
 {
-    public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request)
-        => turns.Enqueue(contextKey, request);
+    public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request, string turnId)
+        => turns.Enqueue(contextKey, request, turnId);
 }
 
 /// <summary>Persists each held decision before requesting an AI Operator turn.</summary>
@@ -114,16 +114,25 @@ public sealed class AiOperatorDecisionQueue(
             }
             if (time.GetUtcNow().UtcDateTime < ask.RetryAt) return;
         }
-        else if (ask.BootId == _bootId) return;
+        else if (ask.BootId == _bootId && ask.Status != "dispatch-pending") return;
+        // Save the identity before any turn can start. Recovery reuses it if dispatch
+        // succeeds but its history write fails before Enqueue returns.
+        var turnId = latest?.Status is OrchestratorTurnService.StatusFailed
+            or OrchestratorTurnService.StatusParked
+            ? Guid.NewGuid().ToString("N")
+            : ask.TurnId ?? Guid.NewGuid().ToString("N");
+        ask = ask with { BootId = _bootId, TurnId = turnId,
+            Status = "dispatch-pending", Attempts = ask.Attempts + (turnId == ask.TurnId ? 0 : 1),
+            RetryAt = null };
+        Save(path, ask);
         var response = turns.Enqueue(ask.ContextKey, new OrchestratorTurnRequest(
             $"Decision occurrence {ask.OccurrenceId} needs an AI Operator answer. "
             + $"The decision step chose {ask.Action} ({ask.Target}). "
             + $"Reason: {ask.Reason ?? "model requested an ask"}. "
             + "Review the receipt and card, then decide the next permitted action. "
             + "Ask the human operator for any A2 or A3 mutation. "
-            + "Do not mutate the card without the required authority."));
-        Save(path, ask with { BootId = _bootId, TurnId = response.TurnId, Status = response.Status,
-            Attempts = ask.Attempts + 1, RetryAt = null });
+            + "Do not mutate the card without the required authority."), turnId);
+        Save(path, ask with { Status = response.Status });
     }
 
     private void Escalate(string path, PendingAsk ask, string reason)

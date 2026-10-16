@@ -57,6 +57,7 @@ public sealed class OrchestratorTurnService
     private readonly Queue<OrchestratorTurnWorkItem> _queued = new();
     private readonly Dictionary<string, CancellationTokenSource> _active = new(StringComparer.Ordinal);
     private readonly HashSet<string> _parked = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OrchestratorTurnResponse> _askTurns = new(StringComparer.Ordinal);
 
     public OrchestratorTurnService(
         OrchestratorSessionRegistry registry,
@@ -76,7 +77,8 @@ public sealed class OrchestratorTurnService
         _workbenchPromptContext = workbenchPromptContext;
     }
 
-    public OrchestratorTurnResponse Enqueue(string rawContextKey, OrchestratorTurnRequest request)
+    public OrchestratorTurnResponse Enqueue(string rawContextKey, OrchestratorTurnRequest request,
+        string? askTurnId = null)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Chat);
         if (!OrchestratorContextKey.TryParse(rawContextKey, out var key))
@@ -85,11 +87,13 @@ public sealed class OrchestratorTurnService
             throw new ArgumentException("Prompt is required.", nameof(request));
         if (!string.IsNullOrWhiteSpace(request.CliType) && !CliTypes.IsValid(request.CliType))
             throw new ArgumentException("CLI type is invalid.", nameof(request));
+        if (askTurnId is not null && !Guid.TryParseExact(askTurnId, "N", out _))
+            throw new ArgumentException("Invalid ask turn id.", nameof(askTurnId));
 
         var item = new OrchestratorTurnWorkItem
         {
             ContextKey = key.Value,
-            TurnId = Guid.NewGuid().ToString("N"),
+            TurnId = askTurnId ?? Guid.NewGuid().ToString("N"),
             Prompt = request.Prompt,
             Model = request.Model,
             CliType = request.CliType,
@@ -101,19 +105,26 @@ public sealed class OrchestratorTurnService
 
         lock (_gate)
         {
+            var askKey = askTurnId is null ? null : key.Value + "|" + askTurnId;
+            if (askKey is not null && _askTurns.TryGetValue(askKey, out var accepted))
+                return accepted;
             _parked.Remove(key.Value);
             var limit = ActiveLimit;
             if (_active.Count < limit)
             {
                 StartLocked(item);
+                var response = new OrchestratorTurnResponse(key.Value, item.TurnId, StatusActive, null, _active.Count, limit);
+                if (askKey is not null) _askTurns.Add(askKey, response);
                 _registry.AppendHistory(key.Value, History(item, StatusActive, queuePosition: null));
-                return new OrchestratorTurnResponse(key.Value, item.TurnId, StatusActive, null, _active.Count, limit);
+                return response;
             }
 
             _queued.Enqueue(item);
             var position = QueuePositionLocked(item.TurnId);
+            var queued = new OrchestratorTurnResponse(key.Value, item.TurnId, StatusQueued, position, _active.Count, limit);
+            if (askKey is not null) _askTurns.Add(askKey, queued);
             _registry.AppendHistory(key.Value, History(item, StatusQueued, queuePosition: position));
-            return new OrchestratorTurnResponse(key.Value, item.TurnId, StatusQueued, position, _active.Count, limit);
+            return queued;
         }
     }
 

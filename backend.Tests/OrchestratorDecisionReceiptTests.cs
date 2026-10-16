@@ -47,6 +47,78 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(),
         "orchestrator-decision-receipts-" + Guid.NewGuid().ToString("N"));
 
+    [Fact]
+    public void Ask_history_failure_after_turn_starts_keeps_turn_identity_through_recovery()
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-AI-ASK";
+        const string occurrence = "orch_ai_ask";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        var folder = Path.Combine(projectPath, TaskStates.Progress, card);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Held active decision", state = TaskStates.Progress,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Review the held decision.");
+        File.WriteAllText(Path.Combine(folder, "status.md"), "Result: pending.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(At));
+        var dispatcher = new RecordingTurnDispatcher { FailAfterDispatch = true };
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAiOperatorTurnDispatcher>();
+                services.AddSingleton<IAiOperatorTurnDispatcher>(dispatcher);
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        using var http = factory.CreateClient();
+        var services = factory.Services;
+        var registry = services.GetRequiredService<OrchestratorSessionRegistry>();
+        dispatcher.Registry = registry;
+        dispatcher.Time = clock;
+        var task = services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!;
+        services.GetRequiredService<IAiOperatorDecisionQueue>().Enqueue(task, occurrence,
+            new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai", "history-write-failed"));
+
+        var turnId = Assert.Single(dispatcher.TurnIds);
+        var pendingPath = Path.Combine(_workspace, ".orchestration-ai-asks", occurrence + ".json");
+        using (var pending = JsonDocument.Parse(File.ReadAllText(pendingPath)))
+        {
+            Assert.Equal(turnId, pending.RootElement.GetProperty("turnId").GetString());
+            Assert.Equal("dispatch-pending", pending.RootElement.GetProperty("status").GetString());
+        }
+
+        // A fresh queue instance recovers while the dispatcher still knows the
+        // running turn. Repeating the same id must keep that one turn.
+        dispatcher.FailAfterDispatch = false;
+        var recovered = new AiOperatorDecisionQueue(dispatcher, registry,
+            services.GetRequiredService<IConfiguration>(),
+            NullLogger<AiOperatorDecisionQueue>.Instance, clock,
+            services.GetRequiredService<TimelineLog>(),
+            services.GetRequiredService<OrchestratorLog>(),
+            services.GetRequiredService<TaskScannerService>());
+        recovered.RecoverPending();
+        Assert.Single(dispatcher.TurnIds);
+        Assert.Equal(new[] { turnId, turnId }, dispatcher.DispatchIds);
+        using var afterRecovery = JsonDocument.Parse(File.ReadAllText(pendingPath));
+        Assert.Equal(turnId, afterRecovery.RootElement.GetProperty("turnId").GetString());
+    }
+
     [Theory]
     [InlineData(OrchestratorTurnService.StatusFailed)]
     [InlineData(OrchestratorTurnService.StatusParked)]
@@ -348,7 +420,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             var pendingPath = Path.Combine(_workspace, ".orchestration-ai-asks",
                 occurrence.RunId + ".json");
             using var pending = JsonDocument.Parse(File.ReadAllText(pendingPath));
-            Assert.Equal("pending", pending.RootElement.GetProperty("status").GetString());
+            Assert.Equal("dispatch-pending", pending.RootElement.GetProperty("status").GetString());
             Assert.Equal("rejected:decision-choice-mismatch",
                 pending.RootElement.GetProperty("reason").GetString());
             Assert.Empty(dispatcher.TurnIds);
@@ -1194,18 +1266,25 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     private sealed class RecordingTurnDispatcher : IAiOperatorTurnDispatcher
     {
         public bool FailBeforeDispatch { get; set; }
+        public bool FailAfterDispatch { get; set; }
         public List<string> TurnIds { get; } = [];
+        public List<string> DispatchIds { get; } = [];
         public List<string> Prompts { get; } = [];
         public OrchestratorSessionRegistry? Registry { get; set; }
         public TimeProvider? Time { get; set; }
 
-        public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request)
+        public OrchestratorTurnResponse Enqueue(string contextKey, OrchestratorTurnRequest request, string turnId)
         {
+            DispatchIds.Add(turnId);
             if (FailBeforeDispatch)
                 throw new IOException("The session history could not be written.");
-            var turnId = Guid.NewGuid().ToString("N");
+            if (TurnIds.Contains(turnId))
+                return new OrchestratorTurnResponse(contextKey, turnId,
+                    OrchestratorTurnService.StatusQueued, 1, 0, 1);
             TurnIds.Add(turnId);
             Prompts.Add(request.Prompt);
+            if (FailAfterDispatch)
+                throw new IOException("The session history could not be written after the turn started.");
             Registry!.AppendHistory(contextKey, new OrchestratorSessionHistoryEntry(
                 Time!.GetUtcNow().UtcDateTime, "turn", turnId, OrchestratorTurnService.StatusQueued,
                 request.Prompt, null, null, null, null, 1));
