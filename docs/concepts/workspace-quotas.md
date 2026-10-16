@@ -25,18 +25,23 @@ total. If any token source is only partially readable, new work waits for the
 meter rather than treating missing records as zero usage.
 Hosting counts recorded running project environments. Website dispatch reserves
 its slot before sending the workflow and releases it when dispatch fails. A
-failed workflow or an inactive GitHub Pages deployment releases its slot when
-the publish run is refreshed. The quota service also exposes an explicit stop
+failed workflow releases its slot when the publish run is refreshed. An inactive
+GitHub Pages deployment is also found by the minute reconciliation service,
+without a publish panel refresh. Refresh and dispatch use the same lock so an
+older run cannot release a newer reservation. The quota service exposes an explicit stop
 update for other environment lifecycle integrations.
 
 New coding runs, review and gate claims, and publish or website dispatches check
 quota at admission. The standalone Task Server calls the monolith's
 `GET /api/quota/admission/{project}` with the project name before coding,
 review, and gate claims. An unknown project is refused.
-`TaskServer:QuotaAdmissionBaseUrl` identifies the monolith (default
-`http://127.0.0.1:5030`); `TaskServer:QuotaAdmissionBearerToken` supplies a
-bearer token when the monolith requires one. An unavailable response refuses
-new claims. At 80% usage, Studio displays a warning. At 100%, admission
+`TaskServer:QuotaAdmissionBaseUrl` is the explicitly configured backend origin;
+there is no implicit development port. The Task Server bearer must carry the
+Runner claim scope in the backend, or `TaskServer:QuotaAdmissionBearerToken`
+must match the backend's service credential setting. The admission route accepts
+that credential without a human session and grants no access to other quota
+routes. If a configured meter is unreachable, claims proceed with a card event,
+claim message, and operator event describing the outage. At 80% usage, Studio displays a warning. At 100%, admission
 returns a reason without interrupting active work. A weekly owner override
 allows new admissions in its scope; an override on a project does not exempt it
 from a blocked workspace limit. The board header and eligible cards show the
