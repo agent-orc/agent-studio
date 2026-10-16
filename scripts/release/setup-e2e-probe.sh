@@ -16,7 +16,7 @@ report_path="$(realpath -m "$report_path")"
 probe_root="$(mktemp -d)"
 runtime_root="$probe_root/runtime"
 publish_root="$probe_root/publish"
-release_root="$probe_root/release"
+release_root="${SETUP_E2E_RELEASE_DIR:-$probe_root/release}"
 frontend_root="$probe_root/frontend/browser"
 version="$(tr -d '\r\n' <"$repo_root/VERSION")"
 git_sha="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
@@ -271,6 +271,18 @@ umask 077
   --server-url "$base_url" \
   --non-interactive \
   >"$control_output"
+
+if [[ "${SETUP_E2E_CONTROL_ONLY:-0}" == 1 ]]; then
+  rm -f -- "$control_output"
+  curl -fsS "$base_url/readyz" >"$runtime_root/ready.json"
+  (cd "$release_root" && sha256sum -c SHA256SUMS >/dev/null)
+  [[ -f "$studio_opt/current/browser/index.html" ]]
+  kill -0 "$(cat "$runtime_root/task-server.pid")"
+  kill -0 "$(cat "$runtime_root/engine.pid")"
+  mkdir -p "$(dirname "$report_path")"
+  printf '# Linux native install smoke\n\nPASS: setup, Task Server, Engine, Studio UI, checksums, and readyz for %s (%s).\n' "$version" "$git_sha" >"$report_path"
+  exit 0
+fi
 
 join_token="$(awk '$1 ~ /^aosj1[.]/ { print $1 }' "$control_output" | tail -n 1)"
 [[ "$join_token" == aosj1.* ]] || {
