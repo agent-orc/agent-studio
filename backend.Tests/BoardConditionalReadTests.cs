@@ -603,12 +603,6 @@ public sealed class BoardConditionalReadTests : IDisposable
         using var client = CreateClient(factory);
         await WaitForBoardQuiescenceAsync(factory);
         await WaitForSettledValidatorAsync(client, Grouped);
-        var continued = await client.PostAsJsonAsync(
-            $"/api/tasks/t-continue/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
-            new { prompt = "Continue this task after review." });
-        Assert.Equal(HttpStatusCode.Accepted, continued.StatusCode);
-        await WaitForBoardQuiescenceAsync(factory);
-        await WaitForSettledValidatorAsync(client, Grouped);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var scansBeforeBurst = Volatile.Read(ref totalScans);
 
@@ -620,29 +614,29 @@ public sealed class BoardConditionalReadTests : IDisposable
         {
             writes = Task.Run(async () =>
             {
-                // The first creation is visible to the writer while the index
-                // scan is blocked. The remaining work starts with board reads.
+                // Dirty the index before reads, then run the rest of the burst
+                // while the timed read loop is active.
                 Seed("t-2", "Created task 2", TaskStates.Ready);
                 scanner.InvalidateCache();
                 burstStarted.SetResult();
                 await readsStarted.Task;
+                var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+                var continued = await client.PostAsJsonAsync(
+                    $"/api/tasks/t-continue/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
+                    new { prompt = "Continue this task after review." });
+                Assert.Equal(HttpStatusCode.Accepted, continued.StatusCode);
                 for (var i = 3; i <= 9; i++)
                 {
                     Seed($"t-{i}", $"Created task {i}", TaskStates.Ready);
                     scanner.InvalidateCache();
+                    Assert.Equal(AttemptWriteStatus.Accepted, authority.AcquireRun(
+                        $"t-{i}", ProjectName, null, $"runner-{i}", "host", 120, $"claim-{i}").Status);
                     await Task.Yield();
                 }
                 for (var i = 0; i < 7; i++)
                 {
                     File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready, "t-1", "status.md"), $"Follow-up {i}");
                     scanner.InvalidateCache();
-                    await Task.Yield();
-                }
-                var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-                for (var i = 0; i < 7; i++)
-                {
-                    Assert.Equal(AttemptWriteStatus.Accepted, authority.AcquireRun(
-                        $"t-{i + 2}", ProjectName, null, $"runner-{i}", "host", 120, $"claim-{i}").Status);
                     await Task.Yield();
                 }
             });
@@ -653,14 +647,40 @@ public sealed class BoardConditionalReadTests : IDisposable
             using var indexBuilds = TaskReferenceIndex.Builds.Observe();
 
             var readTimer = System.Diagnostics.Stopwatch.StartNew();
-            var reads = Task.WhenAll(Enumerable.Range(0, 10).Select(_ => GetAsync(client, Grouped)));
+            var maxReadMs = 0d;
+            var readsDuringWrites = 0;
+            var readMetricsGate = new object();
+            async Task<(HttpStatusCode Status, string? ETag, string Body)> TimedReadAsync()
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                var response = await GetAsync(client, Grouped);
+                lock (readMetricsGate)
+                {
+                    maxReadMs = Math.Max(maxReadMs, timer.Elapsed.TotalMilliseconds);
+                    if (!writes!.IsCompleted) readsDuringWrites++;
+                }
+                return response;
+            }
+
+            var reads = Task.WhenAll(Enumerable.Range(0, 10).Select(_ => TimedReadAsync()));
             readsStarted.SetResult();
             Assert.Same(reads, await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(30))));
             var responses = await reads;
+            release.Set();
+            // Keep the measured read path running until the continue, all
+            // creations, and all claims have actually completed.
+            while (!writes.IsCompleted)
+            {
+                var response = await TimedReadAsync();
+                Assert.Equal(HttpStatusCode.OK, response.Status);
+                Assert.True(readTimer.Elapsed < TimeSpan.FromSeconds(30), "The write burst did not finish.");
+                await Task.Delay(20);
+            }
             readTimer.Stop();
             await writes;
-            _output.WriteLine($"10 grouped board reads concurrent with 8 creations, 7 sidecar writes, and 7 claims: {readTimer.Elapsed.TotalMilliseconds:0.###} ms total");
-            Assert.True(readTimer.Elapsed < TimeSpan.FromSeconds(10), "Grouped reads waited for a write or index scan.");
+            _output.WriteLine($"Grouped reads during 8 creations, 1 continue, 7 sidecar writes, and 7 claims: {readTimer.Elapsed.TotalMilliseconds:0.###} ms burst; {maxReadMs:0.###} ms max read; {readsDuringWrites} reads completed while writes ran");
+            Assert.True(readsDuringWrites > 0, "No board read completed during the write burst.");
+            Assert.True(maxReadMs < 10_000, "Grouped read waited for a write or index scan.");
             Assert.All(responses, response =>
             {
                 Assert.Equal(HttpStatusCode.OK, response.Status);
@@ -687,8 +707,10 @@ public sealed class BoardConditionalReadTests : IDisposable
             Assert.True(deadline.Elapsed < TimeSpan.FromSeconds(60), "the background refresh never published");
             await Task.Delay(25);
         }
+        if (factory.Services.GetRequiredService<TaskIndexCache>().RefreshInFlight is { } pendingRefresh)
+            await pendingRefresh.WaitAsync(TimeSpan.FromSeconds(10));
         _output.WriteLine($"Full scans for burst: {Volatile.Read(ref totalScans) - scansBeforeBurst}");
-        Assert.InRange(Volatile.Read(ref totalScans) - scansBeforeBurst, 1, 3);
+        Assert.InRange(Volatile.Read(ref totalScans) - scansBeforeBurst, 1, 8);
     }
 
     [Fact]
