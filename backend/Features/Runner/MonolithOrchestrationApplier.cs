@@ -520,8 +520,8 @@ public sealed class MonolithOrchestrationApplier(
         if (receipt.OccurrenceId != occurrence.Run.RunId
             || receipt.Mode != DecisionReceiptPolicy.ActiveMode
             || receipt.GroundsDigest != root.GetProperty("groundsDigest").GetString()
-            || DecisionGroundsPolicy.Freeze(input.Grounds).ContentDigest != receipt.GroundsDigest
-            || !DecisionGroundsPolicy.IsIntact(receipt.Grounds))
+            || MonolithTransitionAdapter.DecisionGroundsPolicyFreeze(input.Grounds).ContentDigest != receipt.GroundsDigest
+            || !MonolithTransitionAdapter.DecisionGroundsPolicyIsIntact(receipt.Grounds))
             throw new InvalidOperationException("review-decision-receipt-mismatch");
         var choice = root.GetProperty("activeChoice").Deserialize<DecisionChoiceV1>(Json)
             ?? throw new InvalidDataException("Review decision choice is missing.");
@@ -555,7 +555,7 @@ public sealed class MonolithOrchestrationApplier(
             throw new InvalidOperationException("review-decision-source-state-mismatch");
         if (receipt.Call.Status == DecisionCallStatuses.Completed)
         {
-            var parsed = DecisionReceiptPolicy.Parse(receipt.ResponseContent, receipt.Grounds);
+            var parsed = MonolithTransitionAdapter.DecisionReceiptPolicyParse(receipt.ResponseContent, receipt.Grounds);
             if (!parsed.Valid || parsed.Chosen.Count != 1
                 || parsed.Chosen[0].Action != choice.Action || parsed.Chosen[0].Target != choice.Target)
                 throw new InvalidOperationException("review-decision-response-mismatch");

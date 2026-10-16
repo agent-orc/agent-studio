@@ -168,6 +168,24 @@ public sealed class OrchestratorContextDigestServiceTests
     }
 
     [Fact]
+    public void RenderDigest_redacts_credential_in_publish_detail_after_project_named_secret()
+    {
+        Assert.True(OrchestratorContextKey.TryParse("global", out var context));
+        var credential = "api_key=" + new string('r', 24);
+        var data = new OrchestratorContextDigestData(context, DateTime.UnixEpoch,
+            [], null, [], [], new QuotaReport(),
+            [new DigestPublishProject("secret", true, null,
+                [new PublishTarget { Label = credential, PendingCount = 0 }])],
+            new TaskWatcherHealthSnapshot(null, 0, 0, null, null, false), []);
+
+        var digest = OrchestratorContextDigestService.RenderDigest(data);
+
+        Assert.Contains("- secret: [omitted: secret] pending=0", digest);
+        Assert.DoesNotContain(credential, digest);
+        Assert.Contains("Evidence omissions: secret", digest);
+    }
+
+    [Fact]
     public void RenderDigest_omits_secrets_and_caps_multichat_context_bytes()
     {
         Assert.True(OrchestratorContextKey.TryParse("project:alpha", out var context));

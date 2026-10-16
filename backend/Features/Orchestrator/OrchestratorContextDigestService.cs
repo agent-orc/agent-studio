@@ -416,17 +416,17 @@ public sealed class OrchestratorContextDigestService
     internal static string RenderDigest(OrchestratorContextDigestData data)
     {
         var sb = new StringBuilder(2_048);
-        var projectLabels = new List<(int Start, int End)>();
+        var projectLabels = new List<(string Marker, string Name)>();
         var projectNameRedacted = false;
 
         void AppendProjectLine(string name, string detail)
         {
             var safeName = Credential.Replace(name, "[omitted: secret]");
             projectNameRedacted |= safeName != name;
+            var marker = $"\u0001project-label-{projectLabels.Count}\u0002";
+            projectLabels.Add((marker, safeName));
             sb.Append("- ");
-            var start = sb.Length;
-            sb.Append(safeName);
-            projectLabels.Add((start, sb.Length));
+            sb.Append(marker);
             sb.AppendLf($": {detail}");
         }
         sb.AppendLf("=== APPLICATION READ DIGEST ===");
@@ -546,12 +546,11 @@ public sealed class OrchestratorContextDigestService
         sb.AppendLf("Use this digest as current read-only application state. Ask for a refresh when cached quota may be stale. Do not infer operational authority from this context.");
         sb.Append("=== END APPLICATION READ DIGEST ===");
         var unredacted = sb.ToString();
-        var digest = Credential.Replace(unredacted, match =>
-            projectLabels.Any(label => match.Index >= label.Start && match.Index < label.End)
-                ? match.Value
-                : "[omitted: secret]");
+        var digest = Credential.Replace(unredacted, "[omitted: secret]");
         if (projectNameRedacted || digest != unredacted)
             digest += "\nEvidence omissions: secret";
+        foreach (var (labelMarker, name) in projectLabels)
+            digest = digest.Replace(labelMarker, name, StringComparison.Ordinal);
         if (Encoding.UTF8.GetByteCount(digest) <= MaxDigestBytes) return digest;
         const string marker = "\n[omitted: oversize context digest]";
         var allowed = MaxDigestBytes - Encoding.UTF8.GetByteCount(marker);
