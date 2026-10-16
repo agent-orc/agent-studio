@@ -728,9 +728,7 @@ internal static class SetupApplication
         {
             Directory.CreateDirectory(configRoot);
             var temporary = tokenPath + $".{Guid.NewGuid():N}";
-            File.WriteAllText(temporary, token + Environment.NewLine);
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            SetupSecrets.WriteOwnerOnly(temporary, token + Environment.NewLine);
             File.Move(temporary, tokenPath, overwrite: true);
         }
         Console.WriteLine();
