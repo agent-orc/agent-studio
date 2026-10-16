@@ -51,6 +51,7 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/tasks', json([]));
   await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/management/credential-inventory', json({ generatedAt: new Date().toISOString(), items: [] }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
@@ -319,6 +320,13 @@ test.describe('Execution Hosts settings section', () => {
   test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
+        { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
+          label: 'Coding key', scopes: ['coding:execution'], repository: 'github.com/team/repo', permission: 'write',
+          expiresAt: null, lastUseAt: null, state: 'ok', required: true, detail: '', affectedCards: [] },
+      ] }),
+    }));
     await page.route('**/api/v1/management/environment', route => route.fulfill({
       contentType: 'application/json', body: JSON.stringify({
         controlHost: 'TUFI2', installationId: 'studio', mode: 'reverse-ssh-transition',
@@ -353,6 +361,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
     await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('Review container 3');
     await expect(map.getByTestId('environment-machine').filter({ hasText: 'website-vm' })).toBeVisible();
+    await expect(map.getByTestId('environment-repository-access').filter({ hasText: 'writes' })).toBeVisible();
     await expect(map.getByTestId('environment-connection').filter({ hasText: 'reverse tunnel' })).toBeVisible();
     await expect(map.getByTestId('environment-connection').filter({ hasText: 'SSH gate transport' })).toBeVisible();
     for (const width of [1280, 1920]) {

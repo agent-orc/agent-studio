@@ -37,6 +37,7 @@ import { AuthSessionState } from '../../../../services/auth.service';
 import { EnvironmentMapComponent } from '../environment-map/environment-map';
 import { EnvironmentHeaderComponent } from '../environment-header/environment-header';
 import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
+import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -75,6 +76,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly reviewQueue = inject(ReviewQueueService);
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
+  private readonly credentials = inject(CredentialInventoryService);
   private readonly tableState = new RemoteHostTableState();
 
   readonly hosts = this.service.hosts;
@@ -90,7 +92,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly view = signal<'list' | 'map'>('list');
   readonly environment = signal<EnvironmentSnapshot | null>(null);
   readonly environmentMap = computed(() => buildEnvironmentMap(
-    this.hostGroups(), this.environment(), host => this.boardSlots(host)));
+    this.hostGroups(), this.environment(), host => this.boardSlots(host), this.credentials.inventory()));
   readonly setupHost = signal<RemoteHost | null>(null);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
   readonly confirmationTitle = computed(() => {
@@ -151,6 +153,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     try { this.view.set(localStorage.getItem(this.viewStorageKey()) === 'map' ? 'map' : 'list'); }
     catch { this.view.set('list'); }
     this.service.ensureLoaded();
+    this.credentials.ensureLoaded();
     this.loadEnvironment();
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
@@ -166,6 +169,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.service.reload();
     this.infrastructureReload.update(value => value + 1);
     this.loadEnvironment();
+    this.credentials.load();
   }
   private loadEnvironment(): void {
     this.http.get<EnvironmentSnapshot>('/api/v1/management/environment').subscribe({
