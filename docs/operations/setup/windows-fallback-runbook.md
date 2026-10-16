@@ -10,13 +10,17 @@ in [Task Server deployment and recovery](task-server.md#windows-install-and-supe
 
 ## What is pre-installed
 
-One release package, `agent-orchestrator-<version>-win-x64`, published by the
-`publish-windows` job in `.github/workflows/release.yml` next to the
+One release package, `agent-orchestrator-<version>-win-x64`, built by the
+`publish-windows` job in `.github/workflows/release.yml` and published after
+all install smoke jobs next to the
 `linux-x64` archives with the same `VERSION`/`RELEASE-SHA` identity contract.
 It contains `task-server.exe`, `orchestrator-engine.exe`,
-`agent-studio-bff.exe`, and a copy of `deploy/windows/` (`deploy-windows/`
+`agent-studio-bff.exe`, `agent-host.exe`, `agent-studio-setup.exe`, the Studio
+browser tree, and a copy of `deploy/windows/` (`deploy-windows/`
 inside the package) so the target machine needs neither a repository
 checkout nor a .NET install.
+The current fallback script still registers only the three tasks below; the
+runner and Studio browser payload are staged for the Windows installer card.
 
 ```powershell
 Expand-Archive agent-orchestrator-<version>-win-x64.zip -DestinationPath C:\Downloads
@@ -134,6 +138,6 @@ slice B6 operator drill, run against the actual Hetzner VM,
 - both drill scripts run end to end in `-WhatIf` mode and produce a report.
 
 Release CI's `.github/workflows/release.yml` `publish-windows` job separately
-proves the three win-x64 binaries publish, each reports the release
+proves the five win-x64 binaries publish, each service and runner reports the release
 `VERSION`/`RELEASE-SHA` through `--version`, and the packaged archive lands
 next to the Linux ones with one combined `SHA256SUMS`.
