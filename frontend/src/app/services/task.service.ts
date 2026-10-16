@@ -2816,7 +2816,7 @@ export class TaskService {
 
   decideProjectPromotion(projectName: string, artifact: string, approve: boolean) {
     const action = approve ? 'approve' : 'reject';
-    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${encodeURIComponent(artifact)}/${action}`, {});
+    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
   }
 
   rollbackProjectEnvironment(projectName: string, environmentId: string) {

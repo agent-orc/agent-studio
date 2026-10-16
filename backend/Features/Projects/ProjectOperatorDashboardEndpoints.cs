@@ -17,17 +17,17 @@ public static class ProjectOperatorDashboardEndpoints
                 ? Results.Accepted() : Results.BadRequest(new { error = "Artifact, commit, or stage and production declarations are invalid." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        app.MapPost("/api/projects/{projectName}/environments/promotions/{artifact}/approve", (
-            HttpContext context, string projectName, string artifact, ProjectEnvironmentService environments) =>
-            environments.Decide(projectName, artifact, true,
+        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
+            HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments) =>
+            environments.Decide(projectName, request.Artifact, true,
                 context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                     ? human.User.Id : "local-operator")
                 ? Results.Ok() : Results.Conflict(new { error = "Promotion is not pending." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
-        app.MapPost("/api/projects/{projectName}/environments/promotions/{artifact}/reject", (
-            HttpContext context, string projectName, string artifact, ProjectEnvironmentService environments) =>
-            environments.Decide(projectName, artifact, false,
+        app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
+            HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments) =>
+            environments.Decide(projectName, request.Artifact, false,
                 context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                     ? human.User.Id : "local-operator")
                 ? Results.Ok() : Results.Conflict(new { error = "Promotion is not pending." }))
