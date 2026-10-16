@@ -499,6 +499,7 @@ builder.Services.AddSingleton<PublishTargetService>();
 builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
+builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<ProjectDeploymentCompiler>();
 builder.Services.AddSingleton<TestRunStore>();
 builder.Services.AddSingleton<TestRunService>();
