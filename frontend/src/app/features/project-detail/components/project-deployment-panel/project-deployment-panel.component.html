@@ -16,7 +16,7 @@
       @if (state.environments.length === 0) { <p>No environments are declared in this project's repository.</p> }
       <div class="deployment__target-grid">
         @for (environment of state.environments; track environment.declaration.id) {
-          <article class="deployment__target-choice" [attr.data-testid]="'environment-' + environment.declaration.id">
+          <article class="deployment__environment" [attr.data-testid]="'environment-' + environment.declaration.id">
             <strong>{{ environment.declaration.name }}</strong>
             <small>{{ environment.declaration.kind }} · {{ environment.declaration.address }} · {{ environment.declaration.targetHostId }}</small>
             <p>Version: <code>{{ environment.deployedArtifact || 'Not deployed' }}</code></p>
