@@ -1,3 +1,10 @@
+# AGT-3193 Execution Hosts status corrections
+
+- Result implementation SHA: `01ae03b4b34c5d1d0f7b2cf532adc6e9c83b1510`, rebased from delivery `a233dae19` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with linear history.
+- Implemented option: keep a server drift verdict when a newer capability heartbeat reports the same release; discard it when the capability reports a newer release. Every gate SSH and SCP call records success or failure, so a later failure marks the gate unreachable immediately.
+- Verification passed: solution build and final backend test-project build; frontend production build; backend class filter `FullyQualifiedName~RemoteGateTransportReachabilityTests|FullyQualifiedName~RemoteGateTransportCleanupTests|FullyQualifiedName~RemoteBuildTestGateRunnerTests` (52 passed); `FullyQualifiedName~.Architecture.|Category=Guard` on all eight .NET test projects (82 backend passed, no matches in the other seven); focused `remote-hosts.service.spec.ts` (24 passed); focused Playwright response-order cases (4 passed); `npm --prefix frontend run lint`; `git diff --check`.
+- Playwright screenshot: `execution-hosts-new-release-no-stale-drift.png` in the task result directory.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
