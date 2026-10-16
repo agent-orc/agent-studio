@@ -12,6 +12,10 @@ if (args is ["--version"])
     return 0;
 }
 
+if (args is ["--enroll", var installationUrl, var enrollmentCode])
+    return await RunnerEnrollmentCommand.RunAsync(
+        installationUrl, enrollmentCode, Console.Out, Console.Error, CancellationToken.None);
+
 // AGT-3005: every process this host starts, daemon or detached worker, inherits
 // the build-server fence, so no dotnet invocation it spawns can leave a reusable
 // MSBuild node or MSBuild server behind after its run.
@@ -360,6 +364,7 @@ static void PrintUsage()
           agent-host <TASK-KEY> [options]
           agent-host --task <TASK-KEY> [options]
           agent-host --poll [options]
+          agent-host --enroll <installation-url> <one-time-code>
           agent-host --health-check [--server <url>]
           agent-host --drain --role review [--drain-timeout-seconds <n>]
           agent-host --restart-guard --role review [--hold-admission] [--force]

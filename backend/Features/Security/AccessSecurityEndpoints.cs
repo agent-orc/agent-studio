@@ -112,10 +112,12 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new OneTimeEnrollmentResponse(created.Code, created.Enrollment.Name, created.Enrollment.Scopes, created.Enrollment.ExpiresAt));
             }));
 
-        auth.MapPost("/runner-enroll", (RunnerEnrollRequest request, AccessSecurityStore store) =>
+        auth.MapPost("/runner-enroll", (RunnerEnrollRequest request, AccessSecurityStore store,
+            AgentStudio.Clients.ClientIdentityStore clients) =>
             Execute(() =>
             {
                 var enrolled = store.EnrollRunner(request.Code);
+                clients.EnsureEnrolledRunner(enrolled.Runner.Id, enrolled.Runner.Name);
                 return Results.Ok(new OneTimeSecretResponse(enrolled.Runner.Id, enrolled.Runner.Name, enrolled.Credential.Id,
                     enrolled.Secret, enrolled.Credential.Scopes, enrolled.Credential.ExpiresAt));
             }));
