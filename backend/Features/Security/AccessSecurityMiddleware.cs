@@ -2,7 +2,7 @@ using Microsoft.Extensions.Primitives;
 
 namespace AgentStudio.Security;
 
-/// <summary>Fail-closed authentication and the intentionally small owner/operator/viewer authorization model.</summary>
+/// <summary>Fail-closed authentication and project-scoped human authorization.</summary>
 public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
@@ -15,6 +15,8 @@ public sealed class AccessSecurityMiddleware
     private readonly TaskScannerService? _scanner;
     private readonly RunLeaseService? _leases;
     private readonly AgentStudio.Registry.ProjectRegistry? _projects;
+    private readonly TimelineLog? _timeline;
+    private readonly TimeProvider _clock;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -22,7 +24,9 @@ public sealed class AccessSecurityMiddleware
         AccessSecurityStore store,
         TaskScannerService? scanner = null,
         RunLeaseService? leases = null,
-        AgentStudio.Registry.ProjectRegistry? projects = null)
+        AgentStudio.Registry.ProjectRegistry? projects = null,
+        TimelineLog? timeline = null,
+        TimeProvider? clock = null)
     {
         _next = next;
         _configuration = configuration;
@@ -30,6 +34,8 @@ public sealed class AccessSecurityMiddleware
         _scanner = scanner;
         _leases = leases;
         _projects = projects;
+        _timeline = timeline;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -182,6 +188,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         if (path.StartsWith("/api/auth/users", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/invitations", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/runners", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/runner-enrollments", StringComparison.OrdinalIgnoreCase))
         {
@@ -203,6 +210,23 @@ public sealed class AccessSecurityMiddleware
             }
         }
 
+        if (human.User.Role == StudioRoles.Contributor)
+        {
+            var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+                ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
+                : null;
+            var productionApproval = card is not null
+                && human.User.ProductionApprovalProjects.Any(project =>
+                    string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
+                    || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
+                        && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)));
+            if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval))
+            {
+                await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
+                return;
+            }
+        }
+
         if (!ProjectAllowed(human.User, context.Request, path))
         {
             await Reject(context, 403, "project-scope-denied", "This account is not a member of the requested project.");
@@ -210,6 +234,22 @@ public sealed class AccessSecurityMiddleware
         }
 
         await _next(context);
+        if (human.User.Role == StudioRoles.Contributor
+            && !safeMethod && context.Response.StatusCode is >= 200 and < 400
+            && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+            && _timeline is not null)
+        {
+            var taskId = Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]);
+            var updated = _scanner?.FindJob(taskId);
+            if (updated is not null)
+                _timeline.Append(updated.FolderPath, new TimelineEvent
+                {
+                    Ts = _clock.GetUtcNow().UtcDateTime,
+                    Kind = "contributor-action",
+                    Actor = TimelineActors.Human(human.User.Id),
+                    Summary = $"{context.Request.Method} {path}"
+                });
+        }
     }
 
     private static string? RequiredRunnerScope(string method, string path)
@@ -264,6 +304,7 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRunnerTaskFileRead(string method, string path)

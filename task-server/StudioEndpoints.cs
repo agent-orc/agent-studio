@@ -23,8 +23,21 @@ public static class StudioEndpoints
         MapAuthEndpoints(studio);
         MapOrchestratorEndpoints(studio);
         MapRunnerEndpoints(studio);
-        studio.MapGet("/board", async (TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(() => store.GetStudioBoardAsync(ct)));
+        studio.MapGet("/board", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                var board = await store.GetStudioBoardAsync(ct);
+                var status = await store.GetStudioAuthStatusAsync(StudioSessionToken(context), ct);
+                if (status.User?.Role != StudioUserRoles.Contributor) return board;
+                var projects = status.User.ProjectIds.ToHashSet(StringComparer.Ordinal);
+                IReadOnlyList<TaskDto> Scoped(IReadOnlyList<TaskDto> tasks) => tasks.Where(task => projects.Contains(task.ProjectId)).ToArray();
+                return board with
+                {
+                    Backlog = Scoped(board.Backlog), Ready = Scoped(board.Ready), Progress = Scoped(board.Progress),
+                    AutoReview = Scoped(board.AutoReview), HumanReview = Scoped(board.HumanReview),
+                    Escalated = Scoped(board.Escalated), Completed = Scoped(board.Completed), Archive = Scoped(board.Archive)
+                };
+            }));
 
         MapTaskLifecycleEndpoints(app);
     }

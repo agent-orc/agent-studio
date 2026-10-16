@@ -109,7 +109,7 @@ public static class StudioRolePolicy
         => string.Equals(role, StudioUserRoles.Owner, StringComparison.Ordinal);
 
     public static bool IsAssignableRole(string role)
-        => role is StudioUserRoles.Operator or StudioUserRoles.Viewer;
+        => role is StudioUserRoles.Operator or StudioUserRoles.Contributor or StudioUserRoles.Viewer;
 }
 
 /// <summary>
