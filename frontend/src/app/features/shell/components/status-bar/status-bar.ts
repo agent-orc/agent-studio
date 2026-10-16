@@ -312,7 +312,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   navigateToExecutionHosts(): void {
     window.location.hash = withRouteSegment(
       window.location.hash,
-      '/workspace/settings/execution-hosts',
+      '/workspace/settings/environment',
     );
   }
 

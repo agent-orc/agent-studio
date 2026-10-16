@@ -142,4 +142,40 @@ public sealed class InstallationConnectivityTests
             File.ReadAllText(Path.Combine(directory!, "deploy", "connectivity", name)));
         Assert.Empty(ConnectivityPolicy.Validate(manifest));
     }
+
+    [Fact]
+    public void Manifest_CanDeclareMachineComponentsWithoutClaimingHealth()
+    {
+        const string json = """
+            {
+              "schemaVersion": 1, "installationId": "studio", "revision": 1,
+              "mode": "one-box", "package": "legacy-backend",
+              "serverOrigin": "http://127.0.0.1:5031", "browserOrigin": "http://127.0.0.1:4011",
+              "enabledListeners": ["legacy-api", "browser"], "runners": [],
+              "machines": [{ "id": "kori", "name": "KORI", "components": [
+                { "id": "review-1", "name": "Review container 1", "role": "review", "kind": "container" }
+              ] }]
+            }
+            """;
+
+        var manifest = InstallationConnectivityManifest.Parse(json);
+
+        Assert.Equal("KORI", Assert.Single(manifest.Machines!).Name);
+        Assert.Equal("review", Assert.Single(manifest.Machines![0].Components).Role);
+        Assert.Empty(ConnectivityPolicy.Validate(manifest));
+    }
+
+    [Fact]
+    public void Manifest_RejectsDuplicateMachineIdentity()
+    {
+        var manifest = Transition() with
+        {
+            Machines = [
+                new("kori", "KORI", []),
+                new("kori", "another machine", []),
+            ],
+        };
+
+        Assert.Contains(ConnectivityPolicy.Validate(manifest), finding => finding.Code == "machine-identity");
+    }
 }
