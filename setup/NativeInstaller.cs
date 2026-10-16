@@ -77,7 +77,8 @@ internal sealed class NativeInstaller(
             environment,
             cancellationToken: cancellationToken);
         await InstallStudioAsync(studioRelease, version, cancellationToken);
-        await InstallStudioServicesAsync(listenUrl, cancellationToken);
+        await InstallStudioServicesAsync(listenUrl, cancellationToken,
+            publicStudioUrl: hostVisibleServerUrl);
 
         Console.WriteLine($"  [ok] Task Server and Orchestrator Engine: {listenUrl}");
         Console.WriteLine($"  [ok] Agent Studio UI: http://127.0.0.1:4011/");
@@ -421,7 +422,7 @@ internal sealed class NativeInstaller(
     }
 
     internal async Task InstallStudioServicesAsync(string taskServerUrl, CancellationToken cancellationToken,
-        bool restartExisting = false)
+        bool restartExisting = false, string? publicStudioUrl = null)
     {
         var current = Path.Combine(paths.OrchestratorOpt, "current");
         var api = Path.Combine(current, "api", "OrchestratorApi");
@@ -437,6 +438,8 @@ internal sealed class NativeInstaller(
             await processes.RequireAsync("chown", ["-R", "agent-orchestrator:agent-orchestrator",
                 workspace, home], cancellationToken: cancellationToken);
         var studioToken = Path.Combine(paths.OrchestratorConfig, "studio.token");
+        var allowedOrigins = BuildStudioAllowedOrigins(publicStudioUrl
+            ?? ReadInstalledPublicStudioOrigin(Path.Combine(paths.Systemd, "agent-studio-bff.service")));
         var units = new Dictionary<string, string>
         {
             ["agent-studio-api.service"] = BuildStudioUnit("Agent Studio API", api,
@@ -451,7 +454,7 @@ internal sealed class NativeInstaller(
                 ["ASPNETCORE_URLS=http://127.0.0.1:5072",
                  $"TaskServer__BaseUrl={taskServerUrl}",
                  $"TaskServer__AuthTokenFile={studioToken}",
-                 "Studio__AllowedOrigins=http://127.0.0.1:4011,http://localhost:4011"],
+                 $"Studio__AllowedOrigins={allowedOrigins}"],
                 paths.OrchestratorState),
             ["agent-studio-web.service"] = BuildStudioUnit("Agent Studio UI", web,
                 Path.Combine(paths.StudioOpt, "current"),
@@ -501,6 +504,27 @@ internal sealed class NativeInstaller(
             if (!healthy)
                 throw new InvalidOperationException($"Native Studio service did not become healthy at {url}.");
         }
+    }
+
+    internal static string BuildStudioAllowedOrigins(string? publicStudioUrl)
+    {
+        const string local = "http://127.0.0.1:4011,http://localhost:4011";
+        if (publicStudioUrl is null) return local;
+        var uri = SetupValidation.RequireServerUrl(publicStudioUrl, allowLoopbackHttp: true);
+        return uri.Scheme == Uri.UriSchemeHttps
+            ? local + "," + uri.GetLeftPart(UriPartial.Authority)
+            : local;
+    }
+
+    internal static string? ReadInstalledPublicStudioOrigin(string unitPath)
+    {
+        if (!File.Exists(unitPath)) return null;
+        const string prefix = "Environment=\"Studio__AllowedOrigins=";
+        var line = File.ReadLines(unitPath).FirstOrDefault(value =>
+            value.StartsWith(prefix, StringComparison.Ordinal));
+        if (line is null || !line.EndsWith('"')) return null;
+        return line[prefix.Length..^1].Split(',').FirstOrDefault(value =>
+            value.StartsWith("https://", StringComparison.Ordinal));
     }
 
     internal static string BuildStudioUnit(string description, string executable,
