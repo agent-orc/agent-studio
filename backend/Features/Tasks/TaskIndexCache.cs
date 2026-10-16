@@ -776,31 +776,29 @@ public sealed class TaskIndexCache
     }
 
     /// <summary>
-    /// Starts the single-flight refresh on a pool thread unless one is already
-    /// running. The walk is background ownership: it must inherit neither the
-    /// request's trace nor its board-read pin, so the execution context is not
-    /// flowed (the same rule as <see cref="QueueCoreHydration"/>).
+    /// Starts one dedicated refresh worker. Mutation-freshness readers can
+    /// occupy pool threads while waiting for this scan, so the worker must
+    /// not need a free pool thread to make progress. It also drops the
+    /// request's trace and board pin.
     /// </summary>
     private void StartBackgroundRefreshLocked()
     {
         if (_refreshCompletion != null) return;
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _refreshCompletion = completion;
-        if (ExecutionContext.IsFlowSuppressed())
+
+        void StartWorker() => _ = Task.Factory.StartNew(() =>
         {
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(RefreshCoalesceWindow).ConfigureAwait(false);
-                RunBackgroundRefresh(completion);
-            });
-            return;
+            Thread.Sleep(RefreshCoalesceWindow);
+            RunBackgroundRefresh(completion);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+            TaskScheduler.Default);
+
+        if (ExecutionContext.IsFlowSuppressed()) StartWorker();
+        else
+        {
+            using (ExecutionContext.SuppressFlow()) StartWorker();
         }
-        using (ExecutionContext.SuppressFlow())
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(RefreshCoalesceWindow).ConfigureAwait(false);
-                RunBackgroundRefresh(completion);
-            });
     }
 
     private void RunBackgroundRefresh(TaskCompletionSource<bool> completion)
