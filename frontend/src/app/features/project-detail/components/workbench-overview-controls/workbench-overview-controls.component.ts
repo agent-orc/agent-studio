@@ -4,6 +4,7 @@ import {
   type WorkbenchSortDirection,
   type WorkbenchSortKey,
   type WorkbenchReviewFilter,
+  type WorkbenchCreatedFilter,
 } from '../workbench-overview/workbench-overview-view-state.service';
 
 @Component({
@@ -19,10 +20,13 @@ export class WorkbenchOverviewControlsComponent {
   readonly direction = input.required<WorkbenchSortDirection>();
   readonly active = input.required<boolean>();
   readonly reviewFilter = input.required<WorkbenchReviewFilter>();
+  readonly createdFilter = input.required<WorkbenchCreatedFilter>();
   readonly queryChange = output<string>();
-  readonly sortChange = output<Exclude<WorkbenchSortKey, 'default'>>();
+  readonly sortSelectionChange = output<WorkbenchSortKey>();
+  readonly directionToggle = output<void>();
   readonly resetView = output<void>();
   readonly reviewFilterChange = output<WorkbenchReviewFilter>();
+  readonly createdFilterChange = output<WorkbenchCreatedFilter>();
   readonly sortOptions = WORKBENCH_SORT_OPTIONS;
 
   onQueryInput(event: Event): void {
@@ -33,9 +37,12 @@ export class WorkbenchOverviewControlsComponent {
     this.reviewFilterChange.emit((event.target as HTMLSelectElement).value as WorkbenchReviewFilter);
   }
 
-  sortAriaLabel(key: Exclude<WorkbenchSortKey, 'default'>, label: string): string {
-    if (this.sortKey() !== key) return `Sort by ${label}`;
-    const nextDirection = this.direction() === 'asc' ? 'descending' : 'ascending';
-    return `Sorted by ${label}, ${this.direction() === 'asc' ? 'ascending' : 'descending'}. Sort ${nextDirection}`;
+  onCreatedFilter(event: Event): void {
+    this.createdFilterChange.emit((event.target as HTMLSelectElement).value as WorkbenchCreatedFilter);
   }
+
+  onSortSelection(event: Event): void {
+    this.sortSelectionChange.emit((event.target as HTMLSelectElement).value as WorkbenchSortKey);
+  }
+
 }

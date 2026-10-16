@@ -350,6 +350,7 @@ export interface WorkbenchListItem {
   status: WorkbenchStatus;
   phase: 'shaping' | 'testing' | 'decision-ready' | null;
   updatedAtUtc: string;
+  createdAtUtc?: string | null;
   entryPath: string;
   valid: boolean;
   error: string | null;

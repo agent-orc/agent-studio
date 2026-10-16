@@ -32,6 +32,45 @@ describe('shared area and tag filters', () => {
     expect([...TestBed.inject(BoardFiltersService).activeTagFilter()]).toEqual(['decision']);
   });
 
+  it('lets compact Dossier tags be found by typing their label', () => {
+    const fixture = TestBed.createComponent(TagFiltersComponent);
+    fixture.componentRef.setInput('compact', true);
+    fixture.detectChanges();
+    const input = fixture.nativeElement.querySelector('[data-testid="shared-facet-filter"]') as HTMLInputElement;
+    expect(input.tagName).toBe('INPUT');
+    expect(fixture.nativeElement.querySelector('datalist option[value="Decision"]')).not.toBeNull();
+    input.value = 'Decision';
+    input.dispatchEvent(new Event('input'));
+    expect([...TestBed.inject(BoardFiltersService).activeTagFilter()]).toEqual(['decision']);
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    expect(TestBed.inject(BoardFiltersService).activeTagFilter().size).toBe(0);
+  });
+
+  it('selects duplicate compact tags by id through distinct suggestions', () => {
+    const registry = TestBed.inject(TagRegistryStore);
+    registry.set([
+      { id: 'decision-a', label: 'Decision', color: '#888', description: '', kind: 'facet' },
+      { id: 'decision-b', label: 'Decision', color: '#777', description: '', kind: 'facet' },
+    ]);
+    const fixture = TestBed.createComponent(TagFiltersComponent);
+    fixture.componentRef.setInput('compact', true);
+    fixture.detectChanges();
+    const input = fixture.nativeElement.querySelector('[data-testid="shared-facet-filter"]') as HTMLInputElement;
+    const options = [...fixture.nativeElement.querySelectorAll('datalist option')] as HTMLOptionElement[];
+    expect(options.map(option => option.value)).toEqual([
+      'Decision (1 of 2, decision-a)', 'Decision (2 of 2, decision-b)',
+    ]);
+    input.value = 'Decision';
+    input.dispatchEvent(new Event('input'));
+    expect(TestBed.inject(BoardFiltersService).activeTagFilter().size).toBe(0);
+    input.value = options[1].value;
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect([...TestBed.inject(BoardFiltersService).activeTagFilter()]).toEqual(['decision-b']);
+    expect(input.value).toBe(options[1].value);
+  });
+
   it('replaces project-specific options and removes an invalid selection on project change', () => {
     const fixture = TestBed.createComponent(TagFiltersComponent);
     const http = TestBed.inject(HttpTestingController);

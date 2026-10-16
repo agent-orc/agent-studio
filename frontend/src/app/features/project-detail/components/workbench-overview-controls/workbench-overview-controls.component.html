@@ -1,55 +1,42 @@
 <div class="overview-controls" data-testid="workbench-overview-controls">
-  <label class="overview-controls__filter">
-    <span>Filter</span>
-    <input
-      type="search"
-      autocomplete="off"
-      data-testid="workbench-overview-filter"
-      placeholder="Key, title, project or status"
-      [value]="query()"
-      (input)="onQueryInput($event)" />
-  </label>
+  <input class="overview-controls__search" type="search" autocomplete="off"
+    aria-label="Search Dossiers" data-testid="workbench-overview-filter"
+    placeholder="Search Dossiers" [value]="query()" (input)="onQueryInput($event)" />
 
-  <label class="overview-controls__filter">
-    <span>Review</span>
-    <select data-testid="workbench-overview-review-filter" [value]="reviewFilter()" (change)="onReviewFilter($event)">
-      <option value="all">All reviews</option>
-      <option value="never-reviewed">Never reviewed</option>
-      <option value="older-30">Older than 30 days</option>
-      <option value="current">Current</option>
-      <option value="partially-superseded">Partially superseded</option>
-      <option value="superseded">Superseded</option>
-      <option value="historical">Historical</option>
-    </select>
-  </label>
+  <select aria-label="Created" data-testid="workbench-overview-created-filter"
+    [value]="createdFilter()" (change)="onCreatedFilter($event)">
+    <option value="all">Created: all</option>
+    <option value="24h">Created: last 24 hours</option>
+    <option value="7d">Created: last 7 days</option>
+    <option value="30d">Created: last 30 days</option>
+  </select>
+
+  <select aria-label="Review" data-testid="workbench-overview-review-filter"
+    [value]="reviewFilter()" (change)="onReviewFilter($event)">
+    <option value="all">Review: all</option>
+    <option value="never-reviewed">Never reviewed</option>
+    <option value="older-30">Older than 30 days</option>
+    <option value="current">Current</option>
+    <option value="partially-superseded">Partially superseded</option>
+    <option value="superseded">Superseded</option>
+    <option value="historical">Historical</option>
+  </select>
+
+  <ng-content />
 
   <div class="overview-controls__sort" role="group" aria-label="Sort Dossiers">
-    <span>Sort by</span>
-    <div class="overview-controls__segments">
+    <select aria-label="Sort Dossiers" data-testid="workbench-overview-sort-select"
+      [value]="sortKey()" (change)="onSortSelection($event)">
+      <option value="default" [selected]="sortKey() === 'default'">Sort: default</option>
       @for (option of sortOptions; track option.key) {
-        <button
-          type="button"
-          [class.overview-controls__sort-button--active]="sortKey() === option.key"
-          [attr.aria-pressed]="sortKey() === option.key"
-          [attr.aria-label]="sortAriaLabel(option.key, option.label)"
-          [attr.data-testid]="'workbench-overview-sort-' + option.key"
-          (click)="sortChange.emit(option.key)">
-          <span>{{ option.label }}</span>
-          @if (sortKey() === option.key) {
-            <i aria-hidden="true">{{ direction() === 'asc' ? '↑' : '↓' }}</i>
-          }
-        </button>
+        <option [value]="option.key" [selected]="sortKey() === option.key">Sort: {{ option.label }}</option>
       }
-    </div>
+    </select>
+    <button type="button" data-testid="workbench-overview-sort-direction"
+      [disabled]="sortKey() === 'default'" [attr.aria-label]="direction() === 'asc' ? 'Sort ascending' : 'Sort descending'"
+      (click)="directionToggle.emit()">{{ direction() === 'asc' ? '↑' : '↓' }}</button>
   </div>
 
-  @if (active()) {
-    <button
-      type="button"
-      class="overview-controls__reset"
-      data-testid="workbench-overview-reset"
-      (click)="resetView.emit()">
-      Reset view
-    </button>
-  }
+  <button type="button" class="overview-controls__reset" data-testid="workbench-overview-reset"
+    [disabled]="!active()" (click)="resetView.emit()">Reset</button>
 </div>

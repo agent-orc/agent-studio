@@ -1,7 +1,7 @@
 <section class="workbench-overview" data-testid="workbench-overview">
   <header class="workbench-overview__header">
     <div class="workbench-overview__heading">
-      <div>
+      <div class="workbench-overview__title-line">
         <h1>Dossiers</h1>
         <p class="workbench-overview__subtitle">
           @if (projectName(); as project) {
@@ -17,19 +17,22 @@
           }
         </p>
       </div>
-      <p class="workbench-overview__context">Decisions come first. Current delivery and quiet history retain their lifecycle context.</p>
     </div>
     <app-workbench-overview-controls
       [query]="viewState.query()"
       [sortKey]="viewState.sortKey()"
       [direction]="viewState.direction()"
-      [active]="viewState.hasActiveState()"
+      [active]="hasActiveFilters()"
       [reviewFilter]="viewState.reviewFilter()"
+      [createdFilter]="viewState.createdFilter()"
       (queryChange)="viewState.setQuery($event)"
-      (sortChange)="viewState.selectSort($event)"
+      (sortSelectionChange)="viewState.setSort($event)"
+      (directionToggle)="viewState.toggleDirection()"
       (reviewFilterChange)="viewState.setReviewFilter($event)"
-      (resetView)="viewState.reset()" />
-    <app-tag-filters [projectName]="projectName()" />
+      (createdFilterChange)="viewState.setCreatedFilter($event)"
+      (resetView)="resetView()">
+      <app-tag-filters [projectName]="projectName()" [compact]="true" />
+    </app-workbench-overview-controls>
   </header>
   @if (loading() && !overview()) {
     <app-loading-surface kind="list" label="Loading Dossiers…" />

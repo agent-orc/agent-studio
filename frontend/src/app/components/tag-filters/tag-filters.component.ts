@@ -14,10 +14,27 @@ import { TagRegistryStore } from '../../services/tag-registry.store';
 })
 export class TagFiltersComponent {
   readonly projectName = input<string | null>(null);
+  readonly compact = input(false);
   private readonly registry = inject(TagRegistryStore);
   readonly filters = inject(BoardFiltersService);
   readonly areas = computed(() => this.registry.tags().filter(tag => tag.kind === 'area'));
   readonly facets = computed(() => this.registry.tags().filter(tag => tag.kind !== 'area'));
+  readonly facetOptions = computed(() => {
+    const facets = this.facets();
+    const counts = new Map<string, number>();
+    for (const tag of facets) {
+      const label = tag.label.toLocaleLowerCase();
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const positions = new Map<string, number>();
+    return facets.map(tag => {
+      const label = tag.label.toLocaleLowerCase();
+      const count = counts.get(label) ?? 1;
+      const position = (positions.get(label) ?? 0) + 1;
+      positions.set(label, position);
+      return { id: tag.id, display: count > 1 ? `${tag.label} (${position} of ${count}, ${tag.id})` : tag.label };
+    });
+  });
   readonly area = computed(() => this.areas().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
   readonly facet = computed(() => this.facets().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
   /** Every active selection must remain visible, even before its registry loads. */
@@ -40,6 +57,10 @@ export class TagFiltersComponent {
 
   select(kind: 'area' | 'facet', event: Event): void {
     const id = (event.target as HTMLSelectElement).value;
+    this.selectId(kind, id);
+  }
+
+  private selectId(kind: 'area' | 'facet', id: string): void {
     const choices = kind === 'area' ? this.areas() : this.facets();
     const selected = new Set(this.filters.activeTagFilter());
     for (const choice of choices) selected.delete(choice.id);
@@ -51,5 +72,16 @@ export class TagFiltersComponent {
     const selected = new Set(this.filters.activeTagFilter());
     selected.delete(id);
     this.filters.setTagSelection(selected);
+  }
+
+  selectFacetByLabel(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const choice = this.facetOptions().find(option => option.display.toLocaleLowerCase() === input.value.toLocaleLowerCase());
+    if (!input.value) this.selectId('facet', '');
+    else if (choice) this.selectId('facet', choice.id);
+  }
+
+  facetLabel(): string {
+    return this.facetOptions().find(option => option.id === this.facet())?.display ?? '';
   }
 }

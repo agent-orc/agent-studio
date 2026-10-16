@@ -75,6 +75,8 @@ export class WorkbenchOverviewComponent {
     item => this.statusLabel(item),
   ));
   readonly filteredCount = computed(() => this.filteredItems().length);
+  readonly hasActiveFilters = computed(() => this.viewState.hasActiveState()
+    || this.tagFilters.activeTagFilter().size > 0);
   readonly decisionPending = computed(() => this.sortedItemsWithStatus('decision-pending'));
   readonly current = computed(() => this.viewState.sort([
     ...this.filteredItemsWithStatus('active'),
@@ -127,6 +129,10 @@ export class WorkbenchOverviewComponent {
 
   open(item: WorkbenchOverviewItem): void {
     if (item.workbench.valid) this.openWorkbench.emit(item);
+  }
+  resetView(): void {
+    this.viewState.reset();
+    this.tagFilters.setTagSelection(new Set());
   }
   toggleInlineDecision(item: WorkbenchOverviewItem): void {
     const key = this.itemKey(item);
