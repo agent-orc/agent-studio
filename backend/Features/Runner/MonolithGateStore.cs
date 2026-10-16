@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 using GateFailureClasses = AgentStudio.TaskServer.Contracts.GateFailureClasses;
 
 namespace AgentStudio.Runner;
@@ -49,19 +50,26 @@ public sealed class MonolithGateStore
     private readonly string? _directory;
     private readonly TimeProvider _time;
     private readonly IGateExecutorDirectory _executors;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
+    private readonly TaskScannerService? _scanner;
     private readonly Dictionary<string, MonolithGateRecord> _subjects = new(StringComparer.Ordinal);
     private int _portCursor = 23992;
 
-    public MonolithGateStore(IConfiguration configuration, TimeProvider time, IGateExecutorDirectory executors)
+    public MonolithGateStore(IConfiguration configuration, TimeProvider time, IGateExecutorDirectory executors,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null, TaskScannerService? scanner = null)
         : this(string.IsNullOrWhiteSpace(configuration["TaskRepository"])
             ? null
-            : Path.Combine(configuration["TaskRepository"]!, ".gate-subjects"), time, executors) { }
+            : Path.Combine(configuration["TaskRepository"]!, ".gate-subjects"), time, executors,
+            workspaceQuota, scanner) { }
 
-    public MonolithGateStore(string? directory, TimeProvider time, IGateExecutorDirectory executors)
+    public MonolithGateStore(string? directory, TimeProvider time, IGateExecutorDirectory executors,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null, TaskScannerService? scanner = null)
     {
         _directory = directory;
         _time = time;
         _executors = executors;
+        _workspaceQuota = workspaceQuota;
+        _scanner = scanner;
         if (directory is null) return;
         Directory.CreateDirectory(directory);
         foreach (var file in Directory.EnumerateFiles(directory, "gsub_*.json"))
@@ -153,11 +161,20 @@ public sealed class MonolithGateStore
             if (_subjects.Values.SelectMany(item => item.Attempts).Any(item =>
                     item.Attempt.HostId == hostId && IsActive(item.Attempt.State)))
                 return new GateClaimResponse("empty", Message: "Gate host slot is occupied.");
+            string? quotaReason = null;
             foreach (var (record, candidate) in _subjects.Values
                          .SelectMany(record => record.Attempts.Select(attempt => (record, attempt)))
                          .Where(item => item.attempt.Attempt.State == GateStates.Queued)
                          .OrderBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
             {
+                if (_workspaceQuota is not null)
+                {
+                    var project = _scanner?.ScanAllJobsRaw().FirstOrDefault(task =>
+                        task.Id == record.Subject.TaskId || task.TaskKey == record.Subject.TaskId)?.ProjectName
+                        ?? record.Subject.RepositoryId;
+                    var admission = _workspaceQuota.Admit(project);
+                    if (!admission.Allowed) { quotaReason = admission.Message; continue; }
+                }
                 var number = candidate.Attempt.AttemptNumber;
                 // A same-SHA infrastructure retry needs a different healthy host.
                 if (number > 1 && record.Attempts.FirstOrDefault(item =>
@@ -192,7 +209,7 @@ public sealed class MonolithGateStore
                 Save(updated);
                 return new GateClaimResponse("claimed", updated.Subject, claimed.Attempt, Lease(claimed));
             }
-            return new GateClaimResponse("empty", Message: "No eligible gate subject is queued.");
+            return new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }
     }
 

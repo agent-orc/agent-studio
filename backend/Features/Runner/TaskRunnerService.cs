@@ -32,6 +32,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly CliQuotaFallbackService? _quotaFallback;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
     private readonly OrchestratorRunner _orchestratorRunner;
@@ -176,7 +177,8 @@ public class TaskRunnerService : BackgroundService
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         AttemptAuthorityService? attemptAuthority = null,
         TimeProvider? time = null,
-        ReviewInputDecisionGateway? reviewInputDecisions = null)
+        ReviewInputDecisionGateway? reviewInputDecisions = null,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
     {
         _config = config;
         _logger = logger;
@@ -194,6 +196,7 @@ public class TaskRunnerService : BackgroundService
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _workspaceQuota = workspaceQuota;
         _loadThrottle = loadThrottle;
         _chatLog = chatLog;
         _orchestratorLog = orchestratorLog;
@@ -447,7 +450,8 @@ public class TaskRunnerService : BackgroundService
                 projectUrlPortInspector: _projectUrlPortInspector,
                 dispatchRejections: _dispatchRejections,
                 localCodingAdmission: _localCodingAdmission,
-                reviewInputDecisions: _reviewInputDecisions);
+                reviewInputDecisions: _reviewInputDecisions,
+                workspaceQuota: _workspaceQuota);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1822,7 +1826,8 @@ public class TaskRunnerService : BackgroundService
             projectUrlPortInspector: _projectUrlPortInspector,
             dispatchRejections: _dispatchRejections,
             localCodingAdmission: _localCodingAdmission,
-            reviewInputDecisions: _reviewInputDecisions);
+            reviewInputDecisions: _reviewInputDecisions,
+            workspaceQuota: _workspaceQuota);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

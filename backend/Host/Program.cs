@@ -373,6 +373,7 @@ builder.Services.AddSingleton<AgentStudio.Registry.ComponentRoutingService>();
 // AGT-1812: per-workspace default settings store + the two-tier orchestrator
 // resolver (project override -> workspace default -> platform constant default).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceSettingsService>();
+builder.Services.AddSingleton<AgentStudio.Quota.WorkspaceQuotaService>();
 builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>();
 // Project URLs: read-only repo scan for suggestions + minimal dev-server spawn.
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
