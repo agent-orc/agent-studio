@@ -6,6 +6,12 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 using Serilog.Events;
 
+if (args is ["--downgrade-attempt-authority-schema6", var taskRepository])
+{
+    AgentStudio.Runner.AttemptAuthorityService.DowngradeToSchema6(taskRepository);
+    return;
+}
+
 if (args is ["--remote-build-test-gate-worker", var remoteGateRequest])
 {
     Environment.ExitCode = await AgentStudio.Pipeline.RemoteGateWorker.RunAsync(remoteGateRequest);

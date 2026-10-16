@@ -20,6 +20,11 @@ canonical layout:
   .metadata/
     projects.json
     workspaces.json
+    attempt-authority.json
+    attempt-authority.json.journal
+    attempt-authority.subjects/<SHA-256>.json
+    attempt-authority.receipts/<SHA-256>.json
+    attempt-authority.archive-<UTC-hour>.json
     migrations/
       superseded-commits-v1.json
       historical-integration-verification-v1.json
@@ -47,6 +52,18 @@ central task store into a product checkout. Move a legacy store only through a
 controlled migration that updates its registry record.
 
 `RootPath` is the implementation working directory for CLI runs and pointer lookup. A watch entry may also set `RepositoryPath` when Git operations should run from a different directory, such as a parent repository that contains the app folder. If `RepositoryPath` is omitted, Git operations fall back to `RootPath` and resolve the Git work-tree top-level from there.
+
+The attempt authority snapshot is schema version 7 and new archive shards are
+schema version 2. Review attempts
+and `currentSubjectByTask` store only a digest reference to an immutable subject
+file. Review reclaim receipts use the same pattern in `attempt-authority.receipts/`.
+Startup migrates inline payloads before checkpointing and rotates the last-good
+snapshot backup to the compact shape. An archive record retains its digest
+reference; subject and receipt files stay available for historical reads.
+Before the first schema-7 write, startup also preserves a complete, immutable
+`attempt-authority.schema6-backup.json` with inline subjects. The offline
+`--downgrade-attempt-authority-schema6` command restores inline subjects in the
+live snapshot and archive shards for a rollback to a schema-6 build.
 
 ### Integration worktree (AGT-2832)
 

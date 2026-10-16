@@ -8,6 +8,26 @@ For deeper context, the structural references are:
 - [../../.agents/skills/task-api/references/known-pitfalls.md](../../../.agents/skills/task-api/references/known-pitfalls.md) - operator-side pitfalls when scripting via the API.
 - [../cli-skills/](../../system/cli/skills) - per-CLI quirks and known incidents.
 
+## Roll back attempt authority from schema 7 to schema 6
+
+Stop the Studio backend so no process can mutate the workspace. Keep a copy of
+the entire `.metadata` directory, including the immutable
+`attempt-authority.schema6-backup.json` written before the first schema-7
+snapshot. Run the **new** backend build against the same TaskRepository root:
+
+```sh
+dotnet OrchestratorApi.dll --downgrade-attempt-authority-schema6 <TaskRepository>
+```
+
+The command replays pending journal entries, restores inline subjects and
+reclaim receipts in the live snapshot and archive shards, copies archived
+current attempts back into the live snapshot, writes schema 6, and
+moves the schema-7 journals aside with a `.schema7-backup` suffix. Verify that
+`attempt-authority.json` has `schemaVersion: 6` and inline `subjectId` values
+in both `reviewAttempts` and `currentSubjectByTask`. Start the old build only
+after the command exits successfully. Keep the subject, receipt, and backup
+files until the rollback is no longer needed.
+
 ## "The agent only emits sandbox errors"
 
 Symptom: every shell command the agent tries to run fails with `windows sandbox: runner error: CreateProcessAsUserW failed: 1312`. The Activity Log fills with the same error and the run produces no edits.
