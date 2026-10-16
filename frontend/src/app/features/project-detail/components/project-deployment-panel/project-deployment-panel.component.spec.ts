@@ -50,7 +50,9 @@ describe('ProjectDeploymentPanelComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Head is 2 commits ahead');
     expect(fixture.nativeElement.textContent).toContain('Promotion pending');
     fixture.nativeElement.querySelector('[data-testid="pending-promotion"] button').click();
-    http.expectOne('/api/projects/Demo%20Project/environments/promotions/app%40sha256%3A' + 'a'.repeat(64) + '/approve').flush({});
+    const approval = http.expectOne('/api/projects/Demo%20Project/environments/promotions/approve');
+    expect(approval.request.body).toEqual({ artifact: 'app@sha256:' + 'a'.repeat(64) });
+    approval.flush({});
     http.expectOne('/api/projects/Demo%20Project/environments').flush({ project: 'Demo Project', environments: [], promotions: [], failureCards: [] });
 
     fixture.nativeElement.querySelector('[data-testid="deployment-visible-task"]').click();
