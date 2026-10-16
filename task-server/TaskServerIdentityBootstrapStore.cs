@@ -51,7 +51,8 @@ public sealed partial class TaskServerStore
                 release_ref TEXT,
                 delivery_policy TEXT NOT NULL,
                 registered_at TEXT NOT NULL,
-                registered_by TEXT NOT NULL
+                registered_by TEXT NOT NULL,
+                repository_visibility TEXT
             );
             CREATE TABLE IF NOT EXISTS project_repository_probes(
                 project_id TEXT NOT NULL REFERENCES projects(id),
@@ -63,6 +64,7 @@ public sealed partial class TaskServerStore
                 PRIMARY KEY(project_id, runner_id)
             );
             """, ct);
+        await AddColumnIfMissingAsync(connection, "project_repositories", "repository_visibility", "TEXT", ct);
         if (await ReadMetaAsync(connection, null, InstallationIdKey, ct) is null)
         {
             await SetMetaAsync(connection, null, InstallationIdKey,
@@ -387,6 +389,9 @@ public sealed partial class TaskServerStore
         var policy = (request.DeliveryPolicy ?? string.Empty).Trim();
         if (!ProjectDeliveryPolicies.All.Contains(policy))
             throw new ArgumentException("Delivery policy must be reviewed-publication or manual-publication.");
+        var visibility = ReviewRepositoryAccessPolicy.NormalizeVisibility(request.RepositoryVisibility);
+        if (request.RepositoryVisibility is not null && visibility is null)
+            throw new ArgumentException("Repository visibility must be public or private.");
 
         var now = UtcNow;
         ProjectRepositoryDto? existing = null;
@@ -416,7 +421,8 @@ public sealed partial class TaskServerStore
             if (existing is not null)
             {
                 if (projectMatches && existing.RepositoryUrl == url && existing.IntegrationRef == integrationRef
-                    && existing.ReleaseRef == releaseRef && existing.DeliveryPolicy == policy)
+                    && existing.ReleaseRef == releaseRef && existing.DeliveryPolicy == policy
+                    && existing.RepositoryVisibility == visibility)
                     return;
                 throw new TaskServerConflictException(
                     "project-repository-registered",
@@ -435,17 +441,18 @@ public sealed partial class TaskServerStore
             await ExecuteAsync(connection, """
                 INSERT INTO project_repositories(
                     project_id, repository_id, repository_url, integration_ref, release_ref,
-                    delivery_policy, registered_at, registered_by)
-                VALUES ($project, $repository, $url, $integration, $release, $policy, $now, $actor);
+                    delivery_policy, registered_at, registered_by, repository_visibility)
+                VALUES ($project, $repository, $url, $integration, $release, $policy, $now, $actor, $visibility);
                 """, ct, transaction,
                 ("$project", projectId), ("$repository", repositoryId), ("$url", url),
                 ("$integration", integrationRef), ("$release", releaseRef), ("$policy", policy),
-                ("$now", Iso(now)), ("$actor", actorId));
+                ("$now", Iso(now)), ("$actor", actorId), ("$visibility", visibility));
             await AuditAsync(connection, transaction, actorId, "project.repository-registered", "project", projectId,
-                JsonSerializer.Serialize(new { repositoryId, url, integrationRef, releaseRef, policy }), ct);
+                JsonSerializer.Serialize(new { repositoryId, url, integrationRef, releaseRef, policy, visibility }), ct);
         }, ct);
         if (existing is not null) return (existing, false);
-        return (new ProjectRepositoryDto(projectId, repositoryId, url, integrationRef, releaseRef, policy, now, actorId), true);
+        return (new ProjectRepositoryDto(projectId, repositoryId, url, integrationRef, releaseRef, policy, now, actorId,
+            visibility), true);
     }
 
     public async Task<ProjectRepositoryDto?> GetProjectRepositoryAsync(string projectId, CancellationToken ct)
@@ -459,7 +466,7 @@ public sealed partial class TaskServerStore
     {
         await using var command = Command(connection, """
             SELECT project_id, repository_id, repository_url, integration_ref, release_ref,
-                   delivery_policy, registered_at, registered_by
+                   delivery_policy, registered_at, registered_by, repository_visibility
               FROM project_repositories WHERE project_id = $project;
             """, transaction, ("$project", projectId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -467,7 +474,7 @@ public sealed partial class TaskServerStore
             ? new ProjectRepositoryDto(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(5),
-                Parse(reader.GetString(6)), reader.GetString(7))
+                Parse(reader.GetString(6)), reader.GetString(7), reader.IsDBNull(8) ? null : reader.GetString(8))
             : null;
     }
 

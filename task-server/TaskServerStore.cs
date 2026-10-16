@@ -53,7 +53,7 @@ public sealed partial class TaskServerStore
     // and rotation reminders (I8), preserving the downgrade guard.
     // 35 adds project review plans, integration commands, publication leases
     // and the continuation base reason of the standalone review loop (I11).
-    public const int CurrentSchemaVersion = 35;
+    public const int CurrentSchemaVersion = 36;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
