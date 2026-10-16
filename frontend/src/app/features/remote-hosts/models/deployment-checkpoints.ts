@@ -19,6 +19,8 @@ export interface ProjectRegistryEntry {
   workspaceId: string;
   archived: boolean;
   storageLocation?: string;
+  repositoryUrl?: string | null;
+  repositoryPath?: string | null;
 }
 
 /** The standalone authority uses resource names; the local registry uses UI names. */

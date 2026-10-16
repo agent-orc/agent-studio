@@ -11,6 +11,35 @@ namespace AgentOrchestratorSetup.Tests;
 public sealed class SetupContractTests
 {
     [Fact]
+    public async Task Single_use_join_token_exchanges_a_runner_enrolment_without_a_management_bearer()
+    {
+        var enrolmentCode = "enr_" + new string('a', 64);
+        var runnerCredential = "ats_" + new string('b', 64);
+        HttpRequestMessage? captured = null;
+        var handler = new StubHandler(request =>
+        {
+            captured = request;
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(new ExchangedEnrolment("ins_demo",
+                    new IssuedPrincipalCredential(new PrincipalDto("runner:runner-one",
+                        TaskServerPrincipalKinds.Runner, [TaskServerScopes.RunsWrite],
+                        "runner-one", DateTime.UnixEpoch, null, null),
+                        runnerCredential, DateTime.UnixEpoch))),
+            };
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://tasks.example.test") };
+        var payload = new JoinPayload(2, "https://tasks.example.test", "", "0.4.0",
+            DateTime.UnixEpoch, enrolmentCode, "ins_demo", "runner-one");
+
+        Assert.Equal(payload, JoinTokenCodec.Decode(JoinTokenCodec.Encode(payload)));
+        Assert.Equal(runnerCredential,
+            await SetupApplication.MintRunnerCredentialAsync(payload, "runner-one", default, client));
+        Assert.Equal("/api/v1/enrolments/exchange", captured!.RequestUri!.AbsolutePath);
+        Assert.Null(captured.Headers.Authorization);
+    }
+
+    [Fact]
     public async Task Agent_host_join_mints_a_bound_runner_credential()
     {
         var joinCredential = new string('j', 64);
