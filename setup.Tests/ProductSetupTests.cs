@@ -1,4 +1,6 @@
 using System.IO.Compression;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using AgentStudio.Setup;
@@ -8,6 +10,17 @@ namespace AgentOrchestratorSetup.Tests;
 
 public sealed class ProductSetupTests
 {
+    [Fact]
+    public void Occupied_studio_port_reports_recovery_action()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var error = Assert.Throws<InvalidOperationException>(() => ProductSetup.RequireFreePort(port));
+        Assert.Contains($"Studio port {port} is in use", error.Message);
+        Assert.Contains("--ui-port", error.Message);
+    }
+
     [Theory]
     [InlineData(true, "--mode", "control-plane")]
     [InlineData(true, "--mode", "control-plane", "--target", "native")]

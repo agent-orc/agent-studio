@@ -32,10 +32,11 @@ internal static partial class SetupValidation
         if (ScpGitRemote().IsMatch(trimmed))
             return trimmed;
         if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
-            || uri.Scheme is not ("https" or "ssh")
+            || (uri.Scheme is not ("https" or "ssh")
+                && !(uri.Scheme == "git" && uri.IsLoopback))
             || !string.IsNullOrEmpty(uri.UserInfo) && uri.Scheme == "https")
             throw new ArgumentException(
-                "Git remote must be a credential-free HTTPS or ssh:// URL.");
+                "Git remote must be a credential-free HTTPS or ssh:// URL, or a loopback git:// URL for a local repository.");
         return trimmed;
     }
 

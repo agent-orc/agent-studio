@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -284,6 +285,8 @@ internal static class ProductSetup
             : int.Parse(portText);
         if (port is < 1 or > 65535)
             throw new ArgumentException("UI port must be between 1 and 65535.");
+        if (command == "install" && state is null && !dryRun)
+            RequireFreePort(port);
         if (command == "update" && version == state!.Version
             && manifest?.Phase != InstallationManifest.PhaseUpdating)
             throw new InvalidOperationException("This version is already installed.");
@@ -626,6 +629,24 @@ internal static class ProductSetup
         => profile == ProductProfile.ConnectorWindows && command == "install"
             ? "authority-reachable"
             : "services-healthy";
+
+    internal static void RequireFreePort(int port)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, port);
+        try
+        {
+            listener.Start();
+        }
+        catch (SocketException)
+        {
+            throw new InvalidOperationException(
+                $"Studio port {port} is in use. Stop the service using it or choose a free port with --ui-port, then rerun setup.");
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
 
     internal static string? PreviousVersionFor(InstalledState? state, string requestedVersion, string command)
         => command == "rollback" ? state?.Version

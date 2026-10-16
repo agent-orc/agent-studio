@@ -144,13 +144,17 @@ public static class ProjectRepositoryPolicy
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
             throw new ArgumentException("Repository URL is not a valid absolute URL.");
         var scheme = uri.Scheme.ToLowerInvariant();
-        if (scheme is not ("https" or "ssh"))
-            throw new ArgumentException("Repository URL must use https or ssh; local and cleartext origins are not canonical.");
+        if (scheme is not ("https" or "ssh")
+            && !(scheme == "git" && uri.IsLoopback))
+            throw new ArgumentException(
+                "Repository URL must use https or ssh; only loopback git:// is allowed for a local scenario.");
         if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             throw new ArgumentException("Repository URL must not carry a query or fragment.");
         var userInfo = uri.UserInfo;
         if (scheme == "https" && userInfo.Length > 0)
             throw new ArgumentException("Repository URL must not embed credentials.");
+        if (scheme == "git" && userInfo.Length > 0)
+            throw new ArgumentException("Loopback Git URL must not embed credentials.");
         if (scheme == "ssh" && (userInfo.Contains(':') || userInfo.Length > 0 && userInfo != "git"))
             throw new ArgumentException("SSH repository URL may name only the 'git' user and no password.");
         var path = uri.AbsolutePath.TrimEnd('/');
