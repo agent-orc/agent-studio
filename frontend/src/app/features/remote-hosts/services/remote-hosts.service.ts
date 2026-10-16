@@ -36,7 +36,7 @@ export function mergeReleaseReport(host: RemoteHost, drift: HostReleaseDrift): R
   }
   const hostSeen = Date.parse(host.lastHeartbeatAt ?? '');
   const driftSeen = Date.parse(drift.lastSeenAt);
-  if (host.release && Number.isFinite(hostSeen) && Number.isFinite(driftSeen)
+  if (Number.isFinite(hostSeen) && Number.isFinite(driftSeen)
       && hostSeen >= driftSeen) {
     return { ...host, releaseDrift: null };
   }
@@ -46,7 +46,7 @@ export function mergeReleaseReport(host: RemoteHost, drift: HostReleaseDrift): R
 
 function mergeCapabilityRelease(host: RemoteHost,
   snapshot: TaskServerRunnerCapabilitySnapshot): Pick<RemoteHost, 'release' | 'releaseDrift' | 'releaseId'> {
-  const release = snapshot.release ?? host.release ?? null;
+  const release = snapshot.release ?? null;
   const drift = host.releaseDrift;
   const capabilitySeen = Date.parse(snapshot.lastSeenAt);
   const driftSeen = Date.parse(drift?.lastSeenAt ?? '');

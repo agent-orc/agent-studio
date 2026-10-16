@@ -694,13 +694,14 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   for (const order of ['drift-first', 'capability-first'] as const) {
-    for (const sameRelease of [false, true]) {
-      test(`${sameRelease ? 'keeps drift for the same release' : 'does not mark a newer host release behind'} when ${order} resolves first`, async ({ page }) => {
+    for (const releaseCase of ['new', 'same', 'missing'] as const) {
+      test(`${releaseCase === 'same' ? 'keeps drift for the same release' : 'does not mark a newer host release behind'} when ${order} resolves first (${releaseCase})`, async ({ page }) => {
         await stubGroupedHostApis(page);
         const newer = new Date().toISOString();
         const older = new Date(Date.parse(newer) - 60_000).toISOString();
         const oldRelease = { releaseId: 'old-build', version: '0.2.7', commit: 'old-commit' };
-        const release = sameRelease ? oldRelease : { releaseId: 'new-build', version: '0.3.0', commit: 'new-commit' };
+        const release = releaseCase === 'missing' ? null : releaseCase === 'same'
+          ? oldRelease : { releaseId: 'new-build', version: '0.3.0', commit: 'new-commit' };
         let firstDone!: () => void;
         const firstResponse = new Promise<void>(resolve => { firstDone = resolve; });
         const fulfill = async (route: Route, body: unknown, first: boolean) => {
@@ -712,7 +713,7 @@ test.describe('Execution Hosts settings section', () => {
         await page.unroute('**/api/v1/management/remote-hosts');
         await page.route('**/api/v1/management/remote-hosts', route => fulfill(route, [{
           runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
-          instanceId: 'agent-runner-01:coding', runnerVersion: release.version, protocolVersion: 3,
+          instanceId: 'agent-runner-01:coding', runnerVersion: release?.version ?? '0.3.0', protocolVersion: 3,
           status: 'active', registeredAt: older, lastSeenAt: newer,
           hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
           capabilities: [], release,
@@ -728,11 +729,14 @@ test.describe('Execution Hosts settings section', () => {
 
         await page.goto('/#/workspace/settings/execution-hosts');
         const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
-        await expect(machine.getByTestId('remote-host-release')).toContainText(release.version);
-        await expect(machine.getByTestId('remote-host-release-drift')).toHaveCount(sameRelease ? 1 : 0);
-        await expect(page.getByTestId('remote-hosts-release-behind')).toHaveCount(sameRelease ? 1 : 0);
-        if (order === 'drift-first' && !sameRelease) {
-          await machine.screenshot({ path: join(SHOT_DIR, 'execution-hosts-new-release-no-stale-drift.png') });
+        await expect(machine.getByTestId('remote-host-release')).toContainText(release?.version ?? '0.3.0');
+        await expect(machine.getByTestId('remote-host-release-drift')).toHaveCount(releaseCase === 'same' ? 1 : 0);
+        await expect(page.getByTestId('remote-hosts-release-behind')).toHaveCount(releaseCase === 'same' ? 1 : 0);
+        if (releaseCase === 'missing') {
+          await expect(machine.getByTestId('remote-host-release-id')).toHaveCount(0);
+        }
+        if (order === 'drift-first' && releaseCase !== 'same') {
+          await machine.screenshot({ path: join(SHOT_DIR, `execution-hosts-${releaseCase}-release-no-stale-drift.png`) });
         }
       });
     }

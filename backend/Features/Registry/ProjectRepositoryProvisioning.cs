@@ -144,7 +144,8 @@ public sealed class GitHubProjectRepositoryProvisioner(
         {
             if (created)
             {
-                try { await DeleteRemoteAsync(client, token, request, cancellationToken); }
+                using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                try { await DeleteRemoteAsync(client, token, request, cleanupTimeout.Token); }
                 catch (Exception cleanupError)
                 {
                     logger.LogWarning(cleanupError, "Repository cleanup failed for {Owner}/{Name}", request.Owner, request.Name);
