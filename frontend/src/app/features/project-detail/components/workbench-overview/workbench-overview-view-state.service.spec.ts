@@ -1,7 +1,8 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { WorkbenchOverviewItem, WorkbenchStatus } from '../../../../models/project-docs.model';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
+import { NowTickService } from '../../../../services/now-tick.service';
 
 function item(
   id: string,
@@ -121,5 +122,29 @@ describe('WorkbenchOverviewViewStateService', () => {
     state.setReviewFilter('all');
     state.selectSort('reviewAge');
     expect(state.sort(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['never', 'old', 'current']);
+  });
+
+  it('round trips the Created preset and sort and places unknown dates last', () => {
+    const now = Date.parse('2026-10-16T12:00:00Z');
+    TestBed.overrideProvider(NowTickService, { useValue: { now: signal(now) } });
+    const state = TestBed.inject(WorkbenchOverviewViewStateService);
+    state.setScope(null);
+    const recent = item('recent', 'Demo', 'active', '2026-10-16T10:00:00Z');
+    recent.workbench.createdAtUtc = '2026-10-16T10:00:00Z';
+    const old = item('old', 'Demo', 'active', '2026-09-01T10:00:00Z');
+    old.workbench.createdAtUtc = '2026-09-01T10:00:00Z';
+    const unknown = item('unknown', 'Demo', 'active', '2026-10-16T11:00:00Z');
+    const items = [unknown, old, recent];
+
+    state.setCreatedFilter('24h');
+    state.setSort('createdAt');
+    expect(state.filter(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['recent']);
+    expect(state.sort(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['recent', 'old', 'unknown']);
+    expect(decodeURIComponent(location.hash)).toContain('created=24h&sort=createdAt&dir=desc');
+    state.setScope(null);
+    expect(state.createdFilter()).toBe('24h');
+    expect(state.sortKey()).toBe('createdAt');
+    state.toggleDirection();
+    expect(state.sort(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['old', 'recent', 'unknown']);
   });
 });

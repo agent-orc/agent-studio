@@ -29,6 +29,9 @@ public sealed class WorkbenchCatalogueService
     private readonly IAtomicJsonFileWriter _fileWriter;
     private readonly ConcurrentDictionary<string, DecisionCountSnapshot> _decisionCounts =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CreatedDateSnapshot> _createdDates =
+        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly object _createdDateGate = new();
 
     private static readonly ConcurrentDictionary<string, object> KeyAssignmentGates =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -47,6 +50,7 @@ public sealed class WorkbenchCatalogueService
         string Id, string Title, string Summary, string RepoRelPath, string Phase,
         string[] SourceTaskKeys);
     private sealed record DecisionCountSnapshot(long Length, DateTime LastWriteUtc, int Count);
+    private sealed record CreatedDateSnapshot(string HeadStamp, IReadOnlyDictionary<string, DateTime> Dates);
 
     private static readonly LegacyWorkbench[] LegacyPilot =
     [
@@ -101,7 +105,7 @@ public sealed class WorkbenchCatalogueService
         var project = ResolveProject(projectName);
         if (project != null && source.Info.Writable) EnsureCanonicalKeys(root, project);
 
-        var items = DiscoverCanonical(root, project, requireKey: source.Info.Writable);
+        var items = DiscoverCanonical(root, project, source.Info.Writable, projectName, source.Info);
         foreach (var duplicate in items
                      .Where(item => item.Valid)
                      .GroupBy(item => item.Id, StringComparer.Ordinal)
@@ -460,11 +464,14 @@ public sealed class WorkbenchCatalogueService
     private List<WorkbenchListItem> DiscoverCanonical(
         string root,
         ProjectRecord? project,
-        bool requireKey)
+        bool requireKey,
+        string projectName,
+        WikiSourceInfo sourceInfo)
     {
         var result = new List<WorkbenchListItem>();
         var docsRoot = ContainedPath(root, "docs");
         if (docsRoot == null || !Directory.Exists(docsRoot)) return result;
+        var additions = CreatedDates(root, projectName, sourceInfo);
         foreach (var found in EnumerateWorkbenchDescriptors(docsRoot))
         {
             var dir = Path.GetDirectoryName(found)!;
@@ -500,6 +507,16 @@ public sealed class WorkbenchCatalogueService
                 if (schema >= 2 && !AllowedLifecycleStates.Contains(lifecycleState!))
                     throw new InvalidDataException($"Unsupported lifecycleState '{lifecycleState}'.");
                 var updatedText = schema >= 2 ? RequiredString(obj, "editedAt") : RequiredString(obj, "updatedAt");
+                var createdText = OptionalString(obj, "createdAt");
+                DateTime? created = null;
+                if (createdText != null)
+                {
+                    if (!IsUtcLifecycleTimestamp(createdText, out var explicitCreated))
+                        throw new InvalidDataException("createdAt must be an ISO UTC timestamp ending in Z.");
+                    created = explicitCreated.UtcDateTime;
+                }
+                else if (additions.TryGetValue(descriptorRel, out var firstAdded))
+                    created = firstAdded;
                 var editedBy = schema >= 2 ? RequiredString(obj, "editedBy") : OptionalString(obj, "editedBy");
                 var lifecycleHistory = schema >= 2
                     ? RequiredLifecycleHistory(obj, lifecycleState!, editedBy!, updatedText)
@@ -539,6 +556,7 @@ public sealed class WorkbenchCatalogueService
                     updated.UtcDateTime, repoRel, true, null, DescriptorTaskKeys(obj))
                 {
                     Key = key,
+                    CreatedAtUtc = created,
                     Pattern = ArticlePatterns.Normalize(OptionalString(obj, "pattern")),
                     Tags = ReadTags(obj),
                     TaggingStatus = OptionalString(obj, "taggingStatus") switch
@@ -562,6 +580,66 @@ public sealed class WorkbenchCatalogueService
             }
         }
         return result;
+    }
+
+    private IReadOnlyDictionary<string, DateTime> CreatedDates(
+        string root, string projectName, WikiSourceInfo sourceInfo)
+    {
+        var stamp = sourceInfo.Writable ? ReadHeadStamp(root) : sourceInfo.Commit;
+        if (stamp == null) return new Dictionary<string, DateTime>();
+        if (_createdDates.TryGetValue(root, out var cached) && cached.HeadStamp == stamp)
+            return cached.Dates;
+        lock (_createdDateGate)
+        {
+            if (_createdDates.TryGetValue(root, out cached) && cached.HeadStamp == stamp)
+                return cached.Dates;
+            var repoRoot = sourceInfo.Writable ? root : _git.ResolveRepoRootForProject(projectName);
+            var dates = repoRoot == null
+                ? new Dictionary<string, DateTime>()
+                : _git.GetFirstFileAdditionsUnderPathCached(repoRoot, "docs",
+                    sourceInfo.Writable ? null : sourceInfo.Commit);
+            _createdDates[root] = new CreatedDateSnapshot(stamp, dates);
+            return dates;
+        }
+    }
+
+    private static string? ReadHeadStamp(string root)
+    {
+        try
+        {
+            var gitPath = Path.Combine(root, ".git");
+            var gitDir = Directory.Exists(gitPath) ? gitPath : null;
+            if (gitDir == null && File.Exists(gitPath))
+            {
+                var pointer = File.ReadAllText(gitPath).Trim();
+                if (pointer.StartsWith("gitdir: ", StringComparison.Ordinal))
+                    gitDir = Path.GetFullPath(Path.Combine(root, pointer[8..]));
+            }
+            if (gitDir == null) return null;
+            var head = File.ReadAllText(Path.Combine(gitDir, "HEAD")).Trim();
+            if (!head.StartsWith("ref: ", StringComparison.Ordinal)) return head;
+            var reference = head[5..];
+            var refPath = Path.Combine(gitDir, reference.Replace('/', Path.DirectorySeparatorChar));
+            var packedRoot = gitDir;
+            if (!File.Exists(refPath))
+            {
+                var commonDirPath = Path.Combine(gitDir, "commondir");
+                if (File.Exists(commonDirPath))
+                {
+                    var commonDir = Path.GetFullPath(Path.Combine(gitDir, File.ReadAllText(commonDirPath).Trim()));
+                    refPath = Path.Combine(commonDir, reference.Replace('/', Path.DirectorySeparatorChar));
+                    packedRoot = commonDir;
+                }
+            }
+            if (File.Exists(refPath)) return head + ":" + File.ReadAllText(refPath).Trim();
+            var packed = Path.Combine(packedRoot, "packed-refs");
+            return File.Exists(packed) ? head + ":" + File.GetLastWriteTimeUtc(packed).Ticks : head;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            SilentCatch.Note(ex, "Dossier creation-date HEAD marker unavailable.");
+            return null;
+        }
     }
 
     /// <summary>
@@ -1269,6 +1347,7 @@ public record WorkbenchCatalogue(string ProjectName, bool IncludesHistory, int C
 public record WorkbenchListItem(string Id, string Title, string Summary, string Status, string? Phase,
     DateTime UpdatedAtUtc, string EntryPath, bool Valid, string? Error, string[] SourceTaskKeys)
 {
+    public DateTime? CreatedAtUtc { get; init; }
     public string? Key { get; init; }
     public string Pattern { get; init; } = ArticlePatterns.Concept;
     /// <summary>

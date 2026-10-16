@@ -14,6 +14,7 @@ import { TagRegistryStore } from '../../services/tag-registry.store';
 })
 export class TagFiltersComponent {
   readonly projectName = input<string | null>(null);
+  readonly compact = input(false);
   private readonly registry = inject(TagRegistryStore);
   readonly filters = inject(BoardFiltersService);
   readonly areas = computed(() => this.registry.tags().filter(tag => tag.kind === 'area'));
@@ -40,6 +41,10 @@ export class TagFiltersComponent {
 
   select(kind: 'area' | 'facet', event: Event): void {
     const id = (event.target as HTMLSelectElement).value;
+    this.selectId(kind, id);
+  }
+
+  private selectId(kind: 'area' | 'facet', id: string): void {
     const choices = kind === 'area' ? this.areas() : this.facets();
     const selected = new Set(this.filters.activeTagFilter());
     for (const choice of choices) selected.delete(choice.id);
@@ -51,5 +56,16 @@ export class TagFiltersComponent {
     const selected = new Set(this.filters.activeTagFilter());
     selected.delete(id);
     this.filters.setTagSelection(selected);
+  }
+
+  selectFacetByLabel(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const choice = this.facets().find(tag => tag.label.toLocaleLowerCase() === input.value.toLocaleLowerCase());
+    if (!input.value) this.selectId('facet', '');
+    else if (choice) this.selectId('facet', choice.id);
+  }
+
+  facetLabel(): string {
+    return this.facets().find(tag => tag.id === this.facet())?.label ?? '';
   }
 }

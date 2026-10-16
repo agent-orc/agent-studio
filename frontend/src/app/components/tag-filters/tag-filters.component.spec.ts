@@ -32,6 +32,21 @@ describe('shared area and tag filters', () => {
     expect([...TestBed.inject(BoardFiltersService).activeTagFilter()]).toEqual(['decision']);
   });
 
+  it('lets compact Dossier tags be found by typing their label', () => {
+    const fixture = TestBed.createComponent(TagFiltersComponent);
+    fixture.componentRef.setInput('compact', true);
+    fixture.detectChanges();
+    const input = fixture.nativeElement.querySelector('[data-testid="shared-facet-filter"]') as HTMLInputElement;
+    expect(input.tagName).toBe('INPUT');
+    expect(fixture.nativeElement.querySelector('datalist option[value="Decision"]')).not.toBeNull();
+    input.value = 'Decision';
+    input.dispatchEvent(new Event('input'));
+    expect([...TestBed.inject(BoardFiltersService).activeTagFilter()]).toEqual(['decision']);
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    expect(TestBed.inject(BoardFiltersService).activeTagFilter().size).toBe(0);
+  });
+
   it('replaces project-specific options and removes an invalid selection on project change', () => {
     const fixture = TestBed.createComponent(TagFiltersComponent);
     const http = TestBed.inject(HttpTestingController);

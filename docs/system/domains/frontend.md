@@ -453,12 +453,19 @@ occur. It is not a claim about tunnel transfer time.
   project-scoped `#/projects/<project>/workbenches` overview share one ordered
   projection: decision-pending items sort by open gate count, active items sort
   by latest movement, and discarded and completed history remain separate.
-  One live text field filters the visible key, title, project, status, and
-  relevance verdict values. A review filter selects never-reviewed items,
-  reviews older than 30 days, or any individual verdict. A compact shared sort
-  row orders each lifecycle group by status, last movement, review age,
-  project, key, or open decision count and toggles direction on a
-  repeated selection. The decision-first projection remains the reset default.
+  The compact toolbar keeps search, Created, Review, Area, searchable Tag,
+  sort, direction and Reset together. Search filters the visible key, title,
+  project, status, and relevance verdict values. Created presets cover the last
+  24 hours, 7 days, 30 days, and all dates. The catalogue exposes nullable
+  `createdAtUtc` from the first commit adding `workbench.json` through a cached
+  repository index, pinned to the published Wiki commit for snapshot sources;
+  optional descriptor `createdAt` takes precedence. Missing
+  history stays unknown and sorts last in either direction. A review filter
+  selects never-reviewed items, reviews older than 30 days, or any verdict.
+  Sort orders each lifecycle group by Created, status, last movement, review
+  age, project, key, or open decision count. Created defaults to newest first;
+  the direction button reverses the selected sort. The decision-first
+  projection remains the reset default.
   Filter and sort state use one encoded route-local `dossier` query value and
   separate session entries for the global and each project scope; explicit URL
   state wins when a link is opened.
