@@ -79,13 +79,13 @@ internal static class PreflightPolicy
                     "Free at least 20 GiB for repositories, run worktrees and backups, or choose --install-dir on a larger volume."));
 
         findings.Add(Check("Authority URL", remote ? facts.AuthorityUrlKnown : null, "existing authority URL known",
-            "Pass --server-url with the authority's https URL; a join-host run reads it from the join token issued by that authority."));
+            "Pass --server-url with the authority's HTTPS URL; a join-host run reads its selected route from the join token, including loopback HTTP for a reverse tunnel."));
         findings.Add(Check("DNS", remote ? facts.DnsResolves : null, "authority name resolves",
-            "Add the private Task Server name to the WireGuard DNS resolver or /etc/hosts (C:\\Windows\\System32\\drivers\\etc\\hosts), then retry."));
-        findings.Add(Check("WireGuard", remote ? facts.WireGuardInterface : null, "WireGuard interface up",
+            "Resolve the selected Task Server name through DNS or the host's hosts file, then retry."));
+        findings.Add(Check("WireGuard", journey == InstallationJourney.RelocateAuthority ? facts.WireGuardInterface : null, "WireGuard interface up",
             "Install WireGuard, import this peer's configuration from the control-plane administrator and bring the tunnel up ('wg-quick up wg0')."));
         findings.Add(Check("Connectivity", remote ? facts.AuthorityReachable : null, "authority reachable",
-            "Check the private URL, listener, firewall and WireGuard route from this host, then retry."));
+            "Check the selected URL, listener, firewall and tunnel or LAN route from this host, then retry."));
         findings.Add(Check("TLS", remote ? facts.TlsTrusted : null, "authority certificate trusted",
             "Install the private CA certificate or pin the published certificate fingerprint; never disable certificate validation."));
         findings.Add(Check("Backup mount", authority ? facts.BackupMountWritable : null, "off-host backup mount writable",
@@ -133,7 +133,8 @@ internal static class PreflightProbe
         string? backupPath,
         string? secretFile,
         string installRoot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? executionUser = null)
     {
         var windows = OperatingSystem.IsWindows();
         var docker = target == "docker" && journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority);
@@ -160,10 +161,12 @@ internal static class PreflightProbe
             authority.Trusted,
             journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority) && backupPath is not null
                 ? Writable(backupPath) : null,
-            // The execution user is selected after preflight. Checking root's
-            // PATH here rejects a valid CLI installed in that user's home.
-            // ConfigureAndInstallHostAsync checks version and login as that user.
-            null,
+            // Check the selected user's PATH when known. Guided setup selects
+            // the user later and checks version and login before enrolment.
+            journey == InstallationJourney.JoinHost && !string.IsNullOrWhiteSpace(executionUser)
+                ? await processes.FindCommandAsync("codex", executionUser) is not null
+                  || await processes.FindCommandAsync("claude", executionUser) is not null
+                : null,
             journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority) && secretFile is not null
                 ? SetupSecrets.IsProtected(secretFile) : null,
             authority.Reachable,
