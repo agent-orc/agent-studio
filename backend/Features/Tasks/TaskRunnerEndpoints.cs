@@ -1,5 +1,6 @@
 
 
+using AgentStudio.TaskServer.Contracts;
 using static AgentStudio.Tasks.TaskEndpointHelpers;
 
 namespace AgentStudio.Tasks;

@@ -74,7 +74,7 @@
                   (click)="selectShot(shot.url)">{{ shot.caption }}</button>
         }
       </div>
-      @if (feedbackShotUrl()) {
+      @if (feedbackShotUrls()) {
         <button type="button" data-testid="product-check-update" (click)="refreshScreenshots()">Check for updated preview</button>
       }
       @if (currentShot(); as shot) {
@@ -108,7 +108,7 @@
     } @else {
       <p class="product__hint" data-testid="product-no-screenshot">A delivery screenshot will appear here when the change is ready to review.</p>
     }
-    @if (card.state === '5-human-review' && !feedbackShotUrl()) {
+    @if (card.state === '5-human-review' && !feedbackShotUrls()) {
       <button type="button" data-testid="product-accept" [disabled]="busy()"
               (click)="accept()">Accept this preview</button>
     }

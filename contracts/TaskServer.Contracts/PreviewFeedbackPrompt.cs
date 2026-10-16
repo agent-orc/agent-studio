@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace AgentStudio.Tasks;
+namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>Builds the next-round instruction from a marked preview image.</summary>
 public static class PreviewFeedbackPrompt

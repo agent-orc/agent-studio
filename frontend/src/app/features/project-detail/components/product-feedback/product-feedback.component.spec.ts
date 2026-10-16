@@ -87,6 +87,10 @@ describe('ProductFeedbackComponent', () => {
     const { fixture, tasks } = mount();
     const component = fixture.componentInstance;
     component.selectCard(card.id);
+    const olderShot = { ...shot, url: '/api/tasks/change-1/older.png' };
+    tasks.getJobScreenshots.mockReturnValue(of({ jobId: card.id, screenshots: [olderShot, shot] }));
+    component.refreshScreenshots();
+    component.selectShot(olderShot.url);
     component.comment.set('Increase the title contrast.');
     component.selector.set('main h1');
     component.box.set({ x: .1, y: .2, width: .4, height: .3 });
@@ -109,8 +113,11 @@ describe('ProductFeedbackComponent', () => {
     expect(data.get('crop')).toBeInstanceOf(Blob);
     fixture.detectChanges();
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="product-accept"]')).toBeNull();
+    component.refreshScreenshots();
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="product-accept"]')).toBeNull();
     tasks.getJobScreenshots.mockReturnValue(of({
-      jobId: card.id, screenshots: [shot, { ...shot, url: '/api/tasks/change-1/new-after.png' }],
+      jobId: card.id, screenshots: [olderShot, shot, { ...shot, url: '/api/tasks/change-1/new-after.png' }],
     }));
     component.refreshScreenshots();
     fixture.detectChanges();

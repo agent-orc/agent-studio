@@ -13,6 +13,7 @@ test('creates a confirmed change, marks delivery feedback, and accepts at phone 
   void devBackend;
   let createdPrompt = '';
   let feedbackBody = '';
+  let updatedPreview = false;
   let accepted = false;
   const url = { id: 'stage', label: 'Stage', url: stageAddress, sortOrder: 0, startRule: null };
   const project = {
@@ -70,7 +71,7 @@ test('creates a confirmed change, marks delivery feedback, and accepts at phone 
       isDirty: false, error: null,
     });
     if (pathname.endsWith(`/${taskId}/screenshots`)) {
-      const version = feedbackBody ? 2 : 1;
+      const version = updatedPreview ? 2 : 1;
       return json({ jobId: taskId, screenshots: [{
       jobId: taskId, jobTitle: card.title, projectName, watchPath: card.watchPath,
       fileName: `after-${version}.svg`, relativePath: `results/after-${version}.svg`,
@@ -137,6 +138,9 @@ test('creates a confirmed change, marks delivery feedback, and accepts at phone 
   expect(feedbackBody).toContain('main h1');
   expect(feedbackBody).toContain(stageAddress);
   await expect(page.getByTestId('product-accept')).toHaveCount(0);
+  await page.getByTestId('product-check-update').click();
+  await expect(page.getByTestId('product-accept')).toHaveCount(0);
+  updatedPreview = true;
   await page.getByTestId('product-check-update').click();
   await expect(page.getByTestId('product-accept')).toBeVisible();
   const resultDir = process.env.JOB_RESULTS_DIR;

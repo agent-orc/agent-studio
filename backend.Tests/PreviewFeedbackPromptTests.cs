@@ -1,4 +1,4 @@
-using AgentStudio.Tasks;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;

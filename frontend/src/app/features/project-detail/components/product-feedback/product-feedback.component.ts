@@ -44,7 +44,7 @@ export class ProductFeedbackComponent {
   readonly selector = signal('');
   readonly message = signal<string | null>(null);
   readonly busy = signal(false);
-  readonly feedbackShotUrl = signal<string | null>(null);
+  readonly feedbackShotUrls = signal<string[] | null>(null);
   readonly draftStep = signal<'closed' | 'wish' | 'location' | 'example' | 'confirm'>('closed');
   readonly wish = signal('');
   readonly location = signal('');
@@ -111,7 +111,7 @@ export class ProductFeedbackComponent {
   }
 
   selectCard(id: string): void {
-    if (id !== this.selectedId()) this.feedbackShotUrl.set(null);
+    if (id !== this.selectedId()) this.feedbackShotUrls.set(null);
     this.selectedId.set(id || null);
     this.screenshots.set([]);
     this.currentShot.set(null);
@@ -133,7 +133,9 @@ export class ProductFeedbackComponent {
         const shots = result.screenshots ?? [];
         this.screenshots.set(shots);
         this.currentShot.set(shots.at(-1) ?? null);
-        if (shots.at(-1)?.url !== this.feedbackShotUrl()) this.feedbackShotUrl.set(null);
+        const previous = this.feedbackShotUrls();
+        if (previous && shots.some(shot => !previous.includes(shot.url)))
+          this.feedbackShotUrls.set(null);
       },
       error: () => this.message.set('Screenshots could not be loaded. Try again later.'),
     });
@@ -206,7 +208,7 @@ export class ProductFeedbackComponent {
       this.tasks.sendPreviewFeedback(card.id, card.watchPath, data).subscribe({
         next: () => {
           this.busy.set(false);
-          this.feedbackShotUrl.set(this.currentShot()?.url ?? null);
+          this.feedbackShotUrls.set(this.screenshots().map(shot => shot.url));
           this.comment.set('');
           this.message.set('Feedback sent. Studio will update this change.');
         },
@@ -223,7 +225,7 @@ export class ProductFeedbackComponent {
 
   accept(): void {
     const card = this.selected();
-    if (!card || card.state !== TaskState.HumanReview || this.busy() || this.feedbackShotUrl()) return;
+    if (!card || card.state !== TaskState.HumanReview || this.busy() || this.feedbackShotUrls()) return;
     this.busy.set(true);
     this.tasks.moveJob(card.id, TaskState.Completed, card.watchPath).subscribe({
       next: () => {

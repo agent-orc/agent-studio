@@ -216,6 +216,55 @@ public static class StudioEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
+        tasks.MapPost("/preview-feedback", async (
+            string projectId, string taskIdentity, HttpContext context,
+            TaskServerStore store, StudioLifecycleCoordinator coordinator, CancellationToken ct) =>
+        {
+            if (!context.Request.HasFormContentType)
+                return Results.BadRequest(new ApiError("invalid-request", "A screenshot crop and comment are required."));
+
+            var form = await context.Request.ReadFormAsync(ct);
+            var comment = form["comment"].ToString();
+            var address = form["previewAddress"].ToString();
+            var selector = form["selector"].ToString();
+            var error = PreviewFeedbackPrompt.Validate(comment, address, selector);
+            if (error is not null)
+                return Results.BadRequest(new ApiError("invalid-request", error));
+
+            var crop = form.Files["crop"];
+            if (crop is null || crop.Length is <= 0 or > 8_000_000
+                || crop.ContentType is not ("image/png" or "image/jpeg" or "image/webp"))
+                return Results.BadRequest(new ApiError("invalid-request", "A PNG, JPEG, or WebP crop under 8 MB is required."));
+
+            try
+            {
+                await using var stream = crop.OpenReadStream();
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer, ct);
+                var extension = crop.ContentType switch
+                {
+                    "image/jpeg" => ".jpg",
+                    "image/webp" => ".webp",
+                    _ => ".png",
+                };
+                var fileName = $"preview-feedback-{Guid.NewGuid():N}{extension}";
+                var actor = TaskServerEndpoints.Actor(context);
+                var saved = await store.SaveTaskAttachmentAsync(
+                    projectId, taskIdentity, fileName, buffer.ToArray(), crop.ContentType, actor, ct);
+                var prompt = PreviewFeedbackPrompt.Build(comment, address, selector,
+                    $"attachments/{saved.FileName}");
+                var response = await coordinator.ContinueTaskAsync(projectId, taskIdentity,
+                    new ContinueTaskRequest(prompt, Reason: "preview-feedback"), actor, ct);
+                return Results.Accepted(value: response);
+            }
+            catch (Exception exception)
+            {
+                return TaskServerEndpoints.MapError(exception);
+            }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+          .RequireTaskServerScope(TaskServerScopes.TasksWrite)
+          .DisableAntiforgery();
+
         tasks.MapPost("/move", async (
             string projectId, string taskIdentity, HttpContext context, MoveTaskRequest request,
             StudioLifecycleCoordinator coordinator, CancellationToken ct)

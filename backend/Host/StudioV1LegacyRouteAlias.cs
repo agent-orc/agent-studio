@@ -28,7 +28,7 @@ public static class StudioV1LegacyRouteAlias
     public const string UnscopedProjectToken = "-";
 
     private static readonly string[] AuthPostVerbs = ["bootstrap", "login", "logout", "change-password"];
-    private static readonly string[] TaskPostVerbs = ["continue", "move", "move-to-top", "start", "stop"];
+    private static readonly string[] TaskPostVerbs = ["continue", "move", "move-to-top", "preview-feedback", "start", "stop"];
 
     public readonly record struct LegacyTarget(string Path, string? Project);
 
