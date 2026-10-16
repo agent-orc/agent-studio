@@ -29,6 +29,7 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
 {
+    private TaskMutationService? _gradeMutations;
     private readonly string _workspace;
     private readonly string _watchPath;
     private const string Project = "demo";
@@ -135,6 +136,35 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         // The per-deployment override is honored over the Codex flagship default, so a
         // deployment can dial the grade model without code changes.
         Assert.Equal("claude-opus-4-7", gradeModel);
+    }
+
+    [Fact]
+    public async Task GradeStep_ContinuationQueuedDuringCliDoesNotTagLiveCard()
+    {
+        const string slug = "grade-queued-continuation";
+        SeedReviewJobWithDone(slug, CleanStatus, taskType: TaskTypes.Chore, withScreenshot: true);
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var complete = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var orchestrator = BuildOrchestrator(
+            aspectStub: (_, _) => PassVerdict,
+            gradeCli: _ => throw new InvalidOperationException("Async grade stub expected."),
+            maxReissues: 3,
+            gradeCliAsync: _ =>
+            {
+                entered.SetResult(true);
+                return complete.Task;
+            });
+
+        var tick = orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        await entered.Task;
+        Assert.NotNull(_gradeMutations!.SavePendingIntent(
+            slug, ContinueModes.Continue, "Run the queued continuation", "operator", null, _watchPath));
+        complete.SetResult("[[CODE_REVIEW_GRADE: grade=A; summary=old delivery]]\n[[TASK_DONE]]");
+        await tick;
+
+        var live = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        Assert.DoesNotContain(ReadTags(live), tag => tag.StartsWith("code-review:grade-", StringComparison.Ordinal));
+        Assert.Empty(Directory.GetFiles(live, "code-review-grade-*.md"));
     }
 
     [Fact]
@@ -747,7 +777,8 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         bool wireGradeService = true,
         Action<string>? gradePromptObserver = null,
         bool wireGit = false,
-        ILintScssRunner? lintScssRunner = null)
+        ILintScssRunner? lintScssRunner = null,
+        Func<string, Task<string>>? gradeCliAsync = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -783,6 +814,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance);
+        _gradeMutations = mutations;
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
@@ -801,7 +833,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
             codeReviewStep.CliRunner = (_, model, prompt, _, _) =>
             {
                 gradePromptObserver?.Invoke(prompt);
-                return Task.FromResult(gradeCli(model));
+                return gradeCliAsync is null ? Task.FromResult(gradeCli(model)) : gradeCliAsync(model);
             };
         }
 

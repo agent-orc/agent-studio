@@ -23,10 +23,10 @@ namespace AgentStudio.Tasks;
 /// <para>This registry hands out a per-project (per watch-path)
 /// <see cref="SemaphoreSlim"/> with concurrency 1. All writers acquire it
 /// at the leaf level (the <c>Directory.Move</c> / <c>Directory.Delete</c>
-/// call site itself), so higher-level wrappers compose without nesting -
-/// the call chain stays one-acquire-deep and never has to reason about
-/// re-entrancy. Readers go through <see cref="TaskScannerService"/>'s
-/// cache and do not take the mutex.</para>
+/// call site itself). A guarded review side effect may hold the same mutex
+/// through its lane move; nested acquisition in that async flow retains the
+/// outer lock. Readers go through <see cref="TaskScannerService"/>'s cache
+/// and do not take the mutex.</para>
 ///
 /// <para>The architecture document at
 /// <c>docs/system/architecture/runner-lanes/progress-lane-writers.md</c> lists every writer
@@ -37,6 +37,7 @@ public sealed class LaneMutexRegistry
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutexes =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly AsyncLocal<Dictionary<string, int>?> _heldByFlow = new();
     private readonly ILogger<LaneMutexRegistry> _logger;
     private readonly TimeSpan _defaultTimeout;
 
@@ -78,6 +79,15 @@ public sealed class LaneMutexRegistry
         }
 
         var key = Normalise(watchPath);
+        var held = _heldByFlow.Value;
+        if (held is not null && held.TryGetValue(key, out var depth))
+        {
+            _heldByFlow.Value = new Dictionary<string, int>(held, StringComparer.OrdinalIgnoreCase)
+            {
+                [key] = depth + 1,
+            };
+            return new NestedRelease(this, held);
+        }
         var sem = _mutexes.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         var effectiveTimeout = timeout ?? _defaultTimeout;
         var waitStarted = System.Diagnostics.Stopwatch.StartNew();
@@ -94,7 +104,12 @@ public sealed class LaneMutexRegistry
 
         waitStarted.Stop();
         BatchMoveOperationTelemetry.RecordLaneLockWait(waitStarted.Elapsed);
-        return new Release(sem);
+        var next = held is null
+            ? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, int>(held, StringComparer.OrdinalIgnoreCase);
+        next[key] = 1;
+        _heldByFlow.Value = next;
+        return new Release(sem, this, held);
     }
 
     private static string Normalise(string watchPath)
@@ -108,15 +123,34 @@ public sealed class LaneMutexRegistry
     private sealed class Release : IDisposable
     {
         private SemaphoreSlim? _sem;
+        private readonly LaneMutexRegistry _owner;
+        private readonly Dictionary<string, int>? _previous;
         private readonly long _acquiredAt = System.Diagnostics.Stopwatch.GetTimestamp();
-        public Release(SemaphoreSlim sem) { _sem = sem; }
+        public Release(SemaphoreSlim sem, LaneMutexRegistry owner, Dictionary<string, int>? previous)
+        { _sem = sem; _owner = owner; _previous = previous; }
         public void Dispose()
         {
             var sem = Interlocked.Exchange(ref _sem, null);
             if (sem is null) return;
+            _owner._heldByFlow.Value = _previous;
             BatchMoveOperationTelemetry.RecordLaneLockHeld(
                 System.Diagnostics.Stopwatch.GetElapsedTime(_acquiredAt));
             sem.Release();
+        }
+    }
+
+    private sealed class NestedRelease : IDisposable
+    {
+        private readonly LaneMutexRegistry _owner;
+        private readonly Dictionary<string, int> _previous;
+        private bool _disposed;
+        public NestedRelease(LaneMutexRegistry owner, Dictionary<string, int> previous)
+        { _owner = owner; _previous = previous; }
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _owner._heldByFlow.Value = _previous;
         }
     }
 

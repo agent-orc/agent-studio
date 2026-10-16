@@ -18,6 +18,22 @@ using AgentStudio.TaskServer.Contracts;
 /// </summary>
 public sealed class RemoteTaskRunner
 {
+    internal static RunSpecDto ResolveEpicPlanningRunSpec(
+        RunSpecDto? claimed,
+        RemoteEpicPlanningPromptResponse planning)
+        => (claimed ?? new RunSpecDto()) with
+        {
+            CliType = claimed?.CliType ?? planning.CliType,
+            Model = claimed?.Model ?? planning.Model,
+            ThinkingLevel = claimed?.ThinkingLevel ?? planning.ThinkingLevel,
+        };
+
+    internal static int? EffectiveRunTimeoutSeconds(RunSpecDto? runSpec, bool mechanicalResume)
+        => mechanicalResume
+            ? Math.Min(runSpec?.RunTimeoutSeconds ?? int.MaxValue,
+                MechanicalSessionResumePolicy.DurationCeilingSeconds)
+            : runSpec?.RunTimeoutSeconds;
+
     internal const int MaxEnvironmentPreparationAttempts = 3;
     private const int MaxArtifactTransferAttempts = 3;
 
@@ -1323,12 +1339,7 @@ public sealed class RemoteTaskRunner
             // the reasoning rung against the model, so it wins where it speaks;
             // the planning response fills whatever it leaves open, which is what a
             // server without T0b sends.
-            runSpec = new RunSpecDto(
-                runSpec?.CliType ?? planning.CliType,
-                runSpec?.Model ?? planning.Model,
-                runSpec?.ThinkingLevel ?? planning.ThinkingLevel,
-                runSpec?.PermissionMode,
-                runSpec?.ContextMode);
+            runSpec = ResolveEpicPlanningRunSpec(runSpec, planning);
         }
         else
         {
@@ -1439,8 +1450,7 @@ public sealed class RemoteTaskRunner
                 resumeSessionId: slot.InputSessionId,
                 cleanContextKey: taskKey,
                 tokenCeiling: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.TokenCeiling,
-                timeoutSeconds: slot.InputSessionId is null
-                    ? runSpec?.RunTimeoutSeconds : MechanicalSessionResumePolicy.DurationCeilingSeconds,
+                timeoutSeconds: EffectiveRunTimeoutSeconds(runSpec, slot.InputSessionId is not null),
                 tokenBaseline: slot.InputSessionId is null ? null : slot.PreviousSession?.TotalTokens,
                 // The agent runs this repository's own build, test and lint
                 // commands. Without the preparation's cache binding its first

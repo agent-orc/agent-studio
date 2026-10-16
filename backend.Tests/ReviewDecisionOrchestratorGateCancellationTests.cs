@@ -172,7 +172,9 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 0,
             new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance),
             clock, enableFailureIntervention: intervention,
-            gateFailureDecisionCheckpoint: SupersedeAfterIntervention);
+            gateFailureDecisionCheckpoint: intervention ? null : SupersedeAfterIntervention);
+        if (intervention)
+            orchestrator.GateInterventionApplyCheckpointAsync = SupersedeAfterIntervention;
         orchestrator.BuildTestGateRetryBackoff = _ => TimeSpan.Zero;
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);

@@ -180,6 +180,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     internal Func<int, TimeSpan> BuildTestGateRetryBackoff { get; set; }
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
     internal Func<Task>? GateFailureDecisionCheckpointAsync { get; set; }
+    internal Func<Task>? GateInterventionApplyCheckpointAsync { get; set; }
 
     private readonly AgentStudio.AdHoc.AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
@@ -216,6 +217,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     // many stand-alone test constructors that wire the orchestrator without it
     // keep compiling; production DI always supplies the registered singleton.
     private readonly AgentStudio.Review.CodeReviewStepService? _codeReviewStep;
+    private readonly TaskStateMachine _stateMachine;
     // The system-escalation funnel. Used here only for the boot-time repair of
     // legacy 5-human-review cards that carry no verdict (RecordVerdictAndStatus,
     // no move). Optional so test fixtures that do not exercise the backfill keep
@@ -285,6 +287,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TimeProvider? timeProvider = null)
     {
         _scanner = scanner;
+        _stateMachine = stateMachine;
         _taskAccess = taskAccess;
         _chatLog = chatLog;
         _prompts = prompts;
@@ -662,9 +665,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string? cause = null,
         string? transitionCause = null,
         string? transitionDetail = null,
-        string? reason = null)
+        string? reason = null,
+        bool postProcessingGateHeld = false)
     {
-        _postProcessingGitGate.Wait();
+        if (!postProcessingGateHeld) _postProcessingGitGate.Wait();
         try
         {
             var result = _taskAccess.TransitionLaneAsync(new TaskTransitionRequest
@@ -696,7 +700,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     result.Message),
             };
         }
-        finally { _postProcessingGitGate.Release(); }
+        finally { if (!postProcessingGateHeld) _postProcessingGitGate.Release(); }
     }
 
     /// <summary>
@@ -2432,8 +2436,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
             && GateResultWasSuperseded(current, entry, buildGateResult))
             return;
-        var gateIntervention = buildGateResult?.Verdict == BuildTestGateVerdict.Fail
-            ? await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct) : null;
+        var gateInterventionEnabled = buildGateResult?.Verdict == BuildTestGateVerdict.Fail
+            && BuildGateInterventionEnabled(current, entry);
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail
             && GateResultWasSuperseded(current, entry, buildGateResult))
             return;
@@ -2459,7 +2463,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 maximumCardRounds = gateRoundBudget.Allowed,
                 gateReason = buildGateResult.Reason,
                 infrastructureFailure = buildGateResult.IsInfrastructureFailure,
-                interventionRequired = gateIntervention is not null,
+                interventionRequired = gateInterventionEnabled,
                 gates = new[] { new
                 {
                     status = buildGateResult.Verdict == BuildTestGateVerdict.Fail ? "failed" : "passed",
@@ -2488,9 +2492,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
-            if (gateIntervention is not null)
+            if (gateInterventionEnabled)
             {
-                await HandleFailureInterventionAsync(workspace, entry, current, buildGateResult, gateIntervention, ct);
+                await RaiseAndHandleBuildGateInterventionIfCurrentAsync(
+                    workspace, entry, current, buildGateResult, ct);
                 RecordGateShadowOutcome();
                 return;
             }
@@ -5170,22 +5175,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         CancellationToken ct)
     {
         var stepId = PipelineCatalogue.CodeReviewGradeStepId;
+        var gradeSubject = ResolveBuildTestGateSubject(job, entry.Path);
         if (_codeReviewStep == null)
         {
-            RecordCodeReviewGradeTerminal(
-                job.FolderPath,
-                PipelineStepStatus.Skipped,
-                "Quality-grade service is unavailable in this runtime.");
+            await ApplyGradeTagIfCurrentAsync(entry, job, buildGateResult, gradeSubject, null,
+                live => RecordCodeReviewGradeTerminal(
+                    live.FolderPath, PipelineStepStatus.Skipped,
+                    "Quality-grade service is unavailable in this runtime."));
             return null;
         }
 
         // Opt-out switch; default on so every pipelined task carries a grade.
         if (!_configuration.GetValue("CodeReviewStep:AutoGrade", true))
         {
-            RecordCodeReviewGradeTerminal(
-                job.FolderPath,
-                PipelineStepStatus.Skipped,
-                "Quality grade disabled by CodeReviewStep:AutoGrade=false.");
+            await ApplyGradeTagIfCurrentAsync(entry, job, buildGateResult, gradeSubject, null,
+                live => RecordCodeReviewGradeTerminal(
+                    live.FolderPath, PipelineStepStatus.Skipped,
+                    "Quality grade disabled by CodeReviewStep:AutoGrade=false."));
             return null;
         }
 
@@ -5204,10 +5210,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 Tags = job.Tags,
             }))
         {
-            RecordCodeReviewGradeTerminal(
-                job.FolderPath,
-                PipelineStepStatus.Skipped,
-                "Quality-grade pipeline condition did not match this task.");
+            await ApplyGradeTagIfCurrentAsync(entry, job, buildGateResult, gradeSubject, null,
+                live => RecordCodeReviewGradeTerminal(
+                    live.FolderPath, PipelineStepStatus.Skipped,
+                    "Quality-grade pipeline condition did not match this task."));
             return null;
         }
 
@@ -5249,6 +5255,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 Model: model!)
             {
                 Mode = AgentStudio.Review.CodeReviewMode.Grade,
+                DeferGradeWrites = true,
                 Commit = commitLabel,
                 ThinkingLevel = thinkingLevel,
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
@@ -5292,16 +5299,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 _logger.LogWarning(
                     "code-review-grade: reviewer failed for {Project}/{JobId}: {Error}",
                     entry.Name, job.Id, report.ExecutionError);
-                RecordCodeReviewGradeTerminal(
-                    job.FolderPath,
-                    PipelineStepStatus.Failed,
-                    "Quality-grade step error: " + report.ExecutionError,
-                    startedAt,
-                    report.Model,
-                    report.ThinkingLevel,
-                    selectedModelSource,
-                    report.Usage,
-                    report.FileName);
+                await ApplyGradeTagIfCurrentAsync(
+                    entry, job, buildGateResult, gradeSubject, null,
+                    live => RecordCodeReviewGradeTerminal(
+                        live.FolderPath,
+                        PipelineStepStatus.Failed,
+                        "Quality-grade step error: " + report.ExecutionError,
+                        startedAt,
+                        report.Model,
+                        report.ThinkingLevel,
+                        selectedModelSource,
+                        report.Usage,
+                        report.FileName),
+                    beforeTag: live => _codeReviewStep.PersistDeferredGradeReport(request, report, live.FolderPath));
                 return report;
             }
 
@@ -5314,28 +5324,34 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? PipelineStepStatus.Failed
                 : PipelineStepStatus.Passed;
 
-            _pipelineLog?.RecordStep(job.FolderPath, StepModelUsage
-                .From(report.Usage, report.Model, report.ThinkingLevel, selectedModelSource)
-                .ApplyTo(new PipelineStepExecution
+            var gradeOwned = await ApplyGradeTagIfCurrentAsync(
+                entry, job, buildGateResult, gradeSubject, report.ConcernTagId,
+                live =>
                 {
-                    StepId = stepId,
-                    Kind = StepKind.Orchestrator,
-                    Status = status,
-                    StartedAt = startedAt,
-                    CompletedAt = DateTime.UtcNow,
-                    DurationMs = report.DurationMs,
-                    Model = report.Model,
-                    ThinkingLevel = report.ThinkingLevel,
-                    Verdict = gradeToken,
-                    VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
-                    EvidenceRef = report.FileName,
-                }));
-
-            WritePostProcessingOutcome(job, PostProcessingOutcomes.FindingsAdded,
-                summary: $"Quality grade {gradeToken}: {report.Summary}",
-                performerCliType: cli,
-                stepId: stepId,
-                evidenceRef: report.FileName);
+                    _pipelineLog?.RecordStep(live.FolderPath, StepModelUsage
+                        .From(report.Usage, report.Model, report.ThinkingLevel, selectedModelSource)
+                        .ApplyTo(new PipelineStepExecution
+                        {
+                            StepId = stepId,
+                            Kind = StepKind.Orchestrator,
+                            Status = status,
+                            StartedAt = startedAt,
+                            CompletedAt = DateTime.UtcNow,
+                            DurationMs = report.DurationMs,
+                            Model = report.Model,
+                            ThinkingLevel = report.ThinkingLevel,
+                            Verdict = gradeToken,
+                            VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
+                            EvidenceRef = report.FileName,
+                        }));
+                    WritePostProcessingOutcome(live, PostProcessingOutcomes.FindingsAdded,
+                        summary: $"Quality grade {gradeToken}: {report.Summary}",
+                        performerCliType: cli,
+                        stepId: stepId,
+                        evidenceRef: report.FileName);
+                },
+                beforeTag: live => _codeReviewStep.PersistDeferredGradeReport(request, report, live.FolderPath));
+            if (!gradeOwned) return report;
 
             _logger.LogInformation(
                 "code-review-grade: project={Project} job={JobId} grade={Grade} model={Model} file={File}",
@@ -5344,14 +5360,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            RecordCodeReviewGradeTerminal(
-                job.FolderPath,
-                PipelineStepStatus.Failed,
-                "Quality-grade step was cancelled before completion.",
-                startedAt,
-                selectedModel,
-                selectedThinkingLevel,
-                selectedModelSource);
+            await ApplyGradeTagIfCurrentAsync(entry, job, buildGateResult, gradeSubject, null,
+                live => RecordCodeReviewGradeTerminal(
+                    live.FolderPath, PipelineStepStatus.Failed,
+                    "Quality-grade step was cancelled before completion.",
+                    startedAt, selectedModel, selectedThinkingLevel, selectedModelSource));
             throw;
         }
         catch (Exception ex)
@@ -5359,17 +5372,43 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _logger.LogWarning(ex,
                 "code-review-grade: post-step failed for {Project}/{JobId}; recording a failed row",
                 entry.Name, job.Id);
-            RecordCodeReviewGradeTerminal(
-                job.FolderPath,
-                PipelineStepStatus.Failed,
-                "Quality-grade step error: " + ex.Message,
-                startedAt,
-                selectedModel,
-                selectedThinkingLevel,
-                selectedModelSource);
+            await ApplyGradeTagIfCurrentAsync(entry, job, buildGateResult, gradeSubject, null,
+                live => RecordCodeReviewGradeTerminal(
+                    live.FolderPath, PipelineStepStatus.Failed,
+                    "Quality-grade step error: " + ex.Message,
+                    startedAt, selectedModel, selectedThinkingLevel, selectedModelSource));
             return null;
         }
     }
+
+    private Task<bool> ApplyGradeTagIfCurrentAsync(
+        WatchPathEntry entry,
+        TaskInfo reviewed,
+        BuildTestGateResult? gate,
+        BuildTestGateSubject subject,
+        string? tag,
+        Action<TaskInfo>? onOwned = null,
+        Action<TaskInfo>? beforeTag = null)
+        => _stateMachine.ApplyIfCurrentAsync(
+            reviewed.Id, entry.Path,
+            live =>
+            {
+                var liveSubject = ResolveBuildTestGateSubject(live, entry.Path);
+                return GateCancellationPolicy.OwnsResult(
+                    gate?.ExpectedSha ?? subject.Sha, liveSubject.Sha,
+                    gate?.AttemptChainId ?? subject.AttemptChainId, liveSubject.AttemptChainId,
+                    reviewed.State, live.State, live.PendingIntent is not null);
+            },
+            live =>
+            {
+                beforeTag?.Invoke(live);
+                if (tag is null)
+                    ConcernTagWriter.ClearCodeReviewGradeTags(live.FolderPath, _logger);
+                else
+                    ConcernTagWriter.ReplaceCodeReviewGradeTag(live.FolderPath, tag, _logger);
+                onOwned?.Invoke(live);
+                return Task.CompletedTask;
+            });
 
     private AgentStudio.Review.CodeReviewStepReport? TryReuseCodeReviewGrade(
         string jobFolderPath,
@@ -5407,10 +5446,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         OrchestratorTokenUsage? usage = null,
         string? evidenceRef = null)
     {
-        if (status is PipelineStepStatus.Failed or PipelineStepStatus.Skipped)
-        {
-            ConcernTagWriter.ClearCodeReviewGradeTags(jobFolderPath, _logger);
-        }
         if (_pipelineLog == null) return;
         var completedAt = DateTime.UtcNow;
         var started = startedAt ?? completedAt;
@@ -6535,20 +6570,25 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return Task.CompletedTask;
     }
 
-    private async Task<FailureInterventionResult?> TryRaiseBuildGateInterventionAsync(
-        TaskInfo current,
+    private bool BuildGateInterventionEnabled(TaskInfo current, WatchPathEntry entry)
+    {
+        if (_failureInterventions is null || _projectSettings is null) return false;
+        var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(entry.Name), current);
+        var step = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+        return PipelineStepConfigResolver.IsEnabled(settings, step);
+    }
+
+    private async Task RaiseAndHandleBuildGateInterventionIfCurrentAsync(
+        string workspace,
         WatchPathEntry entry,
+        TaskInfo current,
         BuildTestGateResult result,
         CancellationToken ct)
     {
-        if (_failureInterventions is null || _projectSettings is null) return null;
-        var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(entry.Name), current);
-        var step = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
-        if (!PipelineStepConfigResolver.IsEnabled(settings, step)) return null;
         var failureCode = result.FailureKind == BuildTestGateFailureKind.MissingSource
             ? "MissingSource"
             : "build-gate-failed";
-        return await _failureInterventions.RaiseAsync(current, new FailureCommandEvidence(
+        var evidence = new FailureCommandEvidence(
             failureCode,
             "GateFailure",
             result.ExitCode,
@@ -6557,7 +6597,35 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             result.Reason,
             PipelineCatalogue.BuildTestGateStepId,
             ["post-steps/build-test-gate-*.log"],
-            result.GateStartedAtUtc?.UtcDateTime), ct);
+            result.GateStartedAtUtc?.UtcDateTime);
+        var classification = FailureInterventionPolicy.Classify(evidence)
+            ?? throw new InvalidOperationException("Build gate failure classification is unavailable.");
+
+        if (GateInterventionApplyCheckpointAsync is { } checkpoint)
+            await checkpoint();
+
+        // Match the lane move's lock order: checkout gate, then the project lane
+        // mutex. The ownership read, follow-up creation and lane move are one unit.
+        await _postProcessingGitGate.WaitAsync(ct);
+        try
+        {
+            var applied = await _stateMachine.ApplyIfCurrentAsync(
+                current.Id, entry.Path,
+                live => GateCancellationPolicy.OwnsResult(
+                    result.ExpectedSha, ResolveBuildTestGateSubject(live, entry.Path).Sha,
+                    result.AttemptChainId, ResolveBuildTestGateSubject(live, entry.Path).AttemptChainId,
+                    current.State, live.State, live.PendingIntent is not null),
+                async live =>
+                {
+                    var intervention = _failureInterventions!.RaiseCause(
+                        live, evidence, classification);
+                    await HandleFailureInterventionAsync(
+                        workspace, entry, live, result, intervention, ct,
+                        postProcessingGateHeld: true);
+                });
+            if (!applied) GateResultWasSuperseded(current, entry, result);
+        }
+        finally { _postProcessingGitGate.Release(); }
     }
 
     private async Task HandleFailureInterventionAsync(
@@ -6566,7 +6634,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TaskInfo current,
         BuildTestGateResult result,
         FailureInterventionResult intervention,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool postProcessingGateHeld = false)
     {
         var move = _humanReviewEscalation is not null
             ? await _humanReviewEscalation.EscalateAsync(
@@ -6578,7 +6647,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ct)
             : GuardedMoveJob(current.Id, TaskStates.Escalated, entry.Path,
                 transitionCause: LaneChangeCauses.Escalated,
-                transitionDetail: HumanReviewEscalationCategories.FailureIntervention);
+                transitionDetail: HumanReviewEscalationCategories.FailureIntervention,
+                postProcessingGateHeld: postProcessingGateHeld);
         var movedFolder = move.NewFolderPath ?? current.FolderPath;
         RecordOrchestratorDecisionStep(movedFolder, PipelineStepStatus.Failed,
             DecisionVerdictEscalate,

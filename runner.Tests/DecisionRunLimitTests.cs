@@ -5,30 +5,60 @@ namespace AgentRunner.Tests;
 
 public sealed class DecisionRunLimitTests
 {
-    [Fact]
-    public void Applied_card_limit_reaches_detached_worker_and_mechanical_ceiling_wins()
+    [Theory]
+    [InlineData(60)]
+    [InlineData(7200)]
+    public void Applied_card_limit_reaches_normal_worker(int cardSeconds)
     {
-        var options = new RunnerOptions
-        {
-            ServerUrl = "http://localhost",
-            RunnerId = "runner-test",
-            RunnerName = "runner-test",
-            Hostname = "host-test",
-            BackendName = "test",
-            WorkDir = Path.GetTempPath(),
-            BaseBranch = "main",
-            CliType = "codex",
-            CodexCliBin = "codex",
-            RunTimeoutSeconds = 3600,
-        };
-        var runSpec = new RunSpecDto(RunTimeoutSeconds: 7200);
+        var runSpec = new RunSpecDto(RunTimeoutSeconds: cardSeconds);
 
-        var normal = DurableAgentProcess.BuildSpec(options, Path.GetTempPath(), "prompt",
-            Path.GetTempPath(), runSpec);
-        var mechanical = DurableAgentProcess.BuildSpec(options, Path.GetTempPath(), "prompt",
-            Path.GetTempPath(), runSpec, timeoutSeconds: 300);
-
-        Assert.Equal(7200, normal.TimeoutSeconds);
-        Assert.Equal(300, mechanical.TimeoutSeconds);
+        var normal = DurableAgentProcess.BuildSpec(Options(), Path.GetTempPath(), "prompt",
+            Path.GetTempPath(), runSpec,
+            timeoutSeconds: RemoteTaskRunner.EffectiveRunTimeoutSeconds(runSpec, mechanicalResume: false));
+        Assert.Equal(cardSeconds, normal.TimeoutSeconds);
     }
+
+    [Theory]
+    [InlineData(60, 60)]
+    [InlineData(7200, 300)]
+    public void Mechanical_resume_honors_cut_below_safety_ceiling(int cardSeconds, int expectedSeconds)
+    {
+        var spec = new RunSpecDto(RunTimeoutSeconds: cardSeconds);
+        var mechanical = DurableAgentProcess.BuildSpec(Options(), Path.GetTempPath(), "prompt",
+            Path.GetTempPath(), spec,
+            timeoutSeconds: RemoteTaskRunner.EffectiveRunTimeoutSeconds(spec, mechanicalResume: true));
+        Assert.Equal(expectedSeconds, mechanical.TimeoutSeconds);
+    }
+
+    [Theory]
+    [InlineData(60)]
+    [InlineData(7200)]
+    public void Epic_planning_keeps_claimed_limit_when_it_refines_provider_selection(int cardSeconds)
+    {
+        var claim = new RunSpecDto(CliType: "codex", RunTimeoutSeconds: cardSeconds);
+        var planning = new RemoteEpicPlanningPromptResponse("prompt", "claude", "model", "high");
+
+        var effective = RemoteTaskRunner.ResolveEpicPlanningRunSpec(claim, planning);
+
+        Assert.Equal(cardSeconds, effective.RunTimeoutSeconds);
+        Assert.Equal("codex", effective.CliType);
+        var planningWorker = DurableAgentProcess.BuildSpec(Options(), Path.GetTempPath(), "prompt",
+            Path.GetTempPath(), effective,
+            timeoutSeconds: RemoteTaskRunner.EffectiveRunTimeoutSeconds(effective, mechanicalResume: false));
+        Assert.Equal(cardSeconds, planningWorker.TimeoutSeconds);
+    }
+
+    private static RunnerOptions Options() => new()
+    {
+        ServerUrl = "http://localhost",
+        RunnerId = "runner-test",
+        RunnerName = "runner-test",
+        Hostname = "host-test",
+        BackendName = "test",
+        WorkDir = Path.GetTempPath(),
+        BaseBranch = "main",
+        CliType = "codex",
+        CodexCliBin = "codex",
+        RunTimeoutSeconds = 3600,
+    };
 }
