@@ -102,7 +102,6 @@
             [canNavigateForward]="studioTabState.canNavigateDocumentForward()"
             [documentHistoryLength]="studioTabState.activeDocumentHistoryLength()"
             [boardActionsVisible]="studioTabState.activeTab()?.kind === 'board'"
-            [groupByEpic]="groupByEpic()"
             [mutationsBlocked]="updateClient.mutationsBlocked()"
             [task]="studioTabActionsTask()"
             [runActivity]="studioRunActivityBadge()"
@@ -111,7 +110,6 @@
             [laneOptions]="studioLaneOptions"
             [triage]="studioTabActionsTriage()"
             (navigateDocumentHistory)="projectHubUrls.navigateDocumentHistory($event)"
-            (toggleGroupByEpic)="toggleGroupByEpic()"
             (addTask)="openCreate()"
             (togglePane)="onShellTogglePane($event)"
             (previousTask)="onStudioPagerPrev()"
@@ -134,16 +132,6 @@
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
               <app-active-board-filters [resultCount]="filteredTaskCount()" /><app-tag-filters [projectName]="boardProjectScope()" />
-              @if (groupByEpic()) {
-                <main class="dashboard dashboard--studio dashboard--epic-board"
-                      data-testid="studio-board">
-                  <app-epic-group-board
-                    [tasks]="epicBoardTasks()"
-                    [compact]="effectiveCompactCards()"
-                    [highlightJobId]="justCreatedJobId()"
-                    (jobClick)="openDetail($event)" />
-                </main>
-              } @else {
               <main class="dashboard dashboard--studio" data-testid="studio-board" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*')"
                     [class.dashboard--has-focus]="focusedContainer() !== null">
                 @for (g of laneGroups(); track g.id) {
@@ -189,7 +177,6 @@
                   </section>
                 }
               </main>
-              }
               }
             }
             @case ('task') {
@@ -307,9 +294,10 @@
             @case ('epics') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'epics') {
-                  <app-epic-overview-screen
-                    [scopedProject]="activeEpicScopedProject()" [mutationsBlocked]="updateClient.mutationsBlocked()"
-                    (openTask)="onEpicOverviewOpenTask($event)" />
+                  <app-workbench-tab-host mode="overview"
+                    [projectName]="tab.projectName"
+                    [projectId]="tab.projectName ? projectHubUrls.projectIdForName(tab.projectName) : null"
+                    (openWorkbench)="onWorkbenchOverviewOpen($event)" />
                 }
               }
             }

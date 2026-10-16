@@ -76,20 +76,15 @@ test.describe('Header toolbar polish', () => {
     }
 
     // Board cluster wrapper present with its controls inside it. (AGT-2035
-    // removed the Full/Compact toggle along with the abolished card density,
-    // leaving the Lanes/Epics toggle + Add task.)
+    // removed the Full/Compact toggle along with the abolished card density.)
     const cluster = page.getByTestId('studio-board-actions');
     await expect(cluster).toBeVisible();
-    const epicToggle = page.getByTestId('studio-board-epic-toggle');
     const addTask = page.getByTestId('studio-board-add-task');
-    await expect(epicToggle).toBeVisible();
     await expect(addTask).toBeVisible();
     await expect(cluster.getByTestId('studio-board-compact-toggle')).toHaveCount(0);
-    await expect(cluster.getByTestId('studio-board-epic-toggle')).toHaveCount(1);
+    await expect(cluster.getByTestId('studio-board-epic-toggle')).toHaveCount(0);
     await expect(cluster.getByTestId('studio-board-add-task')).toHaveCount(1);
 
-    // The Lanes/Epics toggle exposes a pressed state so it reads as a switch.
-    await expect(epicToggle).toHaveAttribute('aria-pressed', /true|false/);
 
     // Titlebar action trio is grouped together.
     const titleActions = page.getByTestId('studio-titlebar-actions');

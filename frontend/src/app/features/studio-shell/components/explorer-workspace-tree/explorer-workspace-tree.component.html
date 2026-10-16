@@ -168,8 +168,7 @@
               </app-tree-row>
             }
             @if (isExpanded(p.name)) {
-              <!-- Project destinations use `level="child"` below the project
-                   row; per-lane children stay retired (AGT-2057). -->
+              <!-- Project destinations stay nested below the project row. -->
               <div class="studio-tree-children">
                 <app-tree-row level="child" glyph="grid"
                               label="Board"
@@ -182,14 +181,25 @@
                     [counts]="laneCountsFor(p)" [view]="metricView()"
                     [projectName]="p.name" />
                 </app-tree-row>
-                <app-tree-row level="child" glyph="deck"
-                              [attr.data-testid]="'studio-explorer-project-deck-' + p.name"
-                              label="Deck"
-                              [active]="p.isActive && activeProjectSurface() === 'hub'"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'hub' ? 'page' : null"
-                              [ariaLabel]="'Deck, ' + p.displayLabel"
-                              [testid]="'studio-explorer-project-hub-' + p.name"
-                              (selectRequest)="openHubRequest.emit(p.name)" />
+                <app-explorer-workbench-list
+                  [projectName]="p.name"
+                  [projectId]="p.projectId"
+                  [activeWorkbenchId]="activeWorkbenchIdFor(p.name)"
+                  [overviewActive]="p.isActive && activeProjectSurface() === 'workbenches'"
+                  (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })"
+                  (openOverview)="openWorkbenchesRequest.emit(p.name)" (openWiki)="openWikiRequest.emit(p.name)" />
+                <app-tree-row level="child" glyph="activity"
+                              label="Deploy"
+                              [active]="p.isActive && activeProjectSurface() === 'deploy'"
+                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'deploy' ? 'page' : null"
+                              [testid]="'studio-explorer-project-deploy-' + p.name"
+                              (selectRequest)="openDeployRequest.emit(p.name)" />
+                <app-tree-row level="child" glyph="activity"
+                              label="Operations"
+                              [active]="p.isActive && activeProjectSurface() === 'operations'"
+                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'operations' ? 'page' : null"
+                              [testid]="'studio-explorer-project-operations-' + p.name"
+                              (selectRequest)="openOperationsRequest.emit(p.name)" />
                 <app-tree-row level="child" glyph="book"
                               label="Wiki"
                               [tooltip]="'Wiki\n' + p.displayLabel + ' project documentation'"
@@ -198,24 +208,14 @@
                               [ariaCurrent]="p.isActive && activeProjectSurface() === 'wiki' ? 'page' : null"
                               [testid]="'studio-explorer-project-wiki-' + p.name"
                               (selectRequest)="openWikiRequest.emit(p.name)" />
-                <app-explorer-workbench-list
-                  [projectName]="p.name"
-                  [projectId]="p.projectId"
-                  [activeWorkbenchId]="activeWorkbenchIdFor(p.name)"
-                  [overviewActive]="p.isActive && activeProjectSurface() === 'workbenches'"
-                  (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })"
-                  (openOverview)="openWorkbenchesRequest.emit(p.name)" (openWiki)="openWikiRequest.emit(p.name)" />
-                <app-tree-row level="child" glyph="book"
-                              label="Epics"
-                              [active]="p.isActive && activeProjectSurface() === 'epics'"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'epics' ? 'page' : null"
-                              [testid]="'studio-explorer-project-epics-' + p.name"
-                              (selectRequest)="openEpicsRequest.emit(p.name)" />
-                <!-- Project URLs: 0..N rows appended after fixed rows. A link glyph and a
-                     running/offline status dot instead of a count badge.
-                     AGT-2067: primary click now opens the URL EMBEDDED in a
-                     sandboxed iframe as its own tab (openUrlPreviewRequest);
-                     a hover-revealed icon keeps the browser-jump fallback. -->
+                <app-tree-row level="child" glyph="deck"
+                              [attr.data-testid]="'studio-explorer-project-deck-' + p.name"
+                              label="Deck"
+                              [active]="p.isActive && activeProjectSurface() === 'hub'"
+                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'hub' ? 'page' : null"
+                              [ariaLabel]="'Deck, ' + p.displayLabel"
+                              [testid]="'studio-explorer-project-hub-' + p.name"
+                              (selectRequest)="openHubRequest.emit(p.name)" />
                 @for (u of p.urls; track u.id) {
                   <app-tree-row level="child" glyph="link"
                                 [label]="u.label"

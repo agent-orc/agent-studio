@@ -1,3 +1,22 @@
+@if (activeRail() === 'deploy') {
+  <div class="project-area" data-testid="project-deploy-area">
+    <app-project-environment-overview [projectName]="projectName()" area="deploy" />
+    <nav class="project-area__tabs" aria-label="Deploy views">
+      <button type="button" data-testid="project-deploy-deployment-tab" [attr.aria-current]="deployView() === 'deployment' ? 'page' : null" (click)="deployView.set('deployment')">Deployment</button>
+      <button type="button" data-testid="project-deploy-pipeline-tab" [attr.aria-current]="deployView() === 'pipeline' ? 'page' : null" (click)="deployView.set('pipeline')">Pipeline</button>
+    </nav>
+    @if (deployView() === 'deployment') {
+      <app-project-deployment-panel [projectName]="projectName()" />
+    } @else {
+      <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')" />
+    }
+  </div>
+} @else if (activeRail() === 'operations') {
+  <div class="project-area" data-testid="project-operations-area">
+    <app-project-environment-overview [projectName]="projectName()" area="operations" (openDeploy)="setRail('deploy')" />
+    <app-project-product-runtime-panel [projectName]="projectName()" />
+  </div>
+} @else {
 <app-project-shell class="hub-shell"
   [projectName]="projectName()"
   [activeRail]="activeRail()"
@@ -19,11 +38,6 @@
       <app-project-urls-panel
         [projectName]="projectName()"
         (openEmbeddedPreview)="openUrlPreview($event)" />
-    }
-  }
-  @defer (when activeRail() === 'deployment') {
-    @if (activeRail() === 'deployment') {
-      <app-project-deployment-panel [projectName]="projectName()" />
     }
   }
   @defer (when activeRail() === 'git') {
@@ -104,15 +118,6 @@
         (openTask)="openTask.emit($event)" />
     }
   }
-  @defer (when activeRail() === 'observability') {
-    @if (activeRail() === 'observability') {
-      <app-project-observability-panel [projectName]="projectName()" />
-      <app-project-detail
-        [projectName]="projectName()"
-        view="observability"
-        (openReport)="openReport($event)" />
-    }
-  }
   @defer (when activeRail() === 'steering') {
     @if (activeRail() === 'steering') {
       <app-project-steering-docs-section [projectName]="projectName()" />
@@ -127,14 +132,6 @@
         [openInternalTargetsInTabs]="true"
         (openWikiTarget)="openWikiTarget($event)"
         (openWorkbench)="openWorkbench($event)" />
-    }
-  }
-  @defer (when activeRail() === 'pipeline') {
-    @if (activeRail() === 'pipeline') {
-      <app-project-pipeline-panel
-        [projectName]="projectName()"
-        [focusStepId]="pipelineStepId()"
-        (openPrompts)="setRail('prompts')" />
     }
   }
   @defer (when activeRail() === 'workflow') {
@@ -171,3 +168,5 @@
     }
   }
 </app-project-shell>
+
+}

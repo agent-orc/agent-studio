@@ -102,10 +102,8 @@ describe('StudioActivityBarComponent settings destination', () => {
    * that two items can never light up together — assert it on the DOM.
    */
   it('marks at most one button active for any active key', () => {
-    for (const key of ['explorer', 'filters', 'chats', 'epics', 'settings', null]) {
+    for (const key of ['explorer', 'filters', 'chats', 'workbenches', 'settings', null]) {
       const fixture = mount(key);
-      fixture.componentRef.setInput('hasEpics', true);
-      fixture.detectChanges();
       const host = fixture.nativeElement as HTMLElement;
       const active = host.querySelectorAll('.studio-ab__btn--active');
       expect(active.length, `activeKey=${key}`).toBeLessThanOrEqual(1);
@@ -127,7 +125,7 @@ describe('resolveActiveActivityKey', () => {
       activeTabKind: 'epics',
       activePanel: 'explorer',
       sidebarVisible: true,
-    })).toBe('epics');
+    })).toBe('workbenches');
   });
 
   it('maps the workspace-settings tab to the settings item', () => {
@@ -146,12 +144,12 @@ describe('resolveActiveActivityKey', () => {
     })).toBe('activity');
   });
 
-  it('maps the epics tab to the epics item', () => {
+  it('maps a legacy epics tab to Dossiers', () => {
     expect(resolveActiveActivityKey({
       activeTabKind: 'epics',
       activePanel: 'explorer',
       sidebarVisible: true,
-    })).toBe('epics');
+    })).toBe('workbenches');
   });
 
   it('marks the Chats rail button while the sidebar Chats panel is open', () => {
@@ -183,6 +181,6 @@ describe('resolveActiveActivityKey', () => {
       activeTabKind: 'epics',
       activePanel: 'explorer',
       sidebarVisible: false,
-    })).toBe('epics');
+    })).toBe('workbenches');
   });
 });

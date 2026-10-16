@@ -16,17 +16,6 @@
 @if (boardActionsVisible()) {
   <div class="studio-board-actions" data-testid="studio-board-actions">
     <button type="button"
-            class="studio-tab-action studio-tab-action--toggle"
-            [class.studio-tab-action--active]="groupByEpic()"
-            [attr.aria-pressed]="groupByEpic()"
-            data-testid="studio-board-epic-toggle"
-            [cacTooltip]="groupByEpic() ? 'Show lane columns' : 'Group tasks by epic'"
-            (click)="toggleGroupByEpic.emit()">
-      <app-studio-icon [name]="groupByEpic() ? 'epic' : 'grid'" [size]="14"></app-studio-icon>
-      <span>{{ groupByEpic() ? 'Epics' : 'Lanes' }}</span>
-    </button>
-    <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-    <button type="button"
             class="studio-tab-action studio-tab-action--primary"
             data-testid="studio-board-add-task" [disabled]="mutationsBlocked()"
             (click)="addTask.emit()">＋ Add task</button>

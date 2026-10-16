@@ -1,0 +1,41 @@
+<section class="project-environments" [attr.data-testid]="'project-' + area() + '-environments'">
+  <header class="project-environments__head">
+    <h1>{{ area() === 'deploy' ? 'Deploy' : 'Operations' }}</h1>
+    <p>{{ area() === 'deploy'
+      ? 'Deployment targets and pipeline configuration for this project.'
+      : 'Application health by environment and project activity.' }}</p>
+  </header>
+  @if (loading()) {
+    <p role="status">Loading environments…</p>
+  } @else if (failed()) {
+    <p role="alert">Environment inventory could not be loaded. Try opening this view again.</p>
+  } @else if (environments().length === 0) {
+    <div class="project-environments__empty" data-testid="project-environments-empty">
+      <h2>No environments configured</h2>
+      <p>Set up an environment to see deployment and health status here.</p>
+      @if (area() === 'operations') {
+        <button type="button" class="studio-button studio-button--primary" (click)="openDeploy.emit()">Set up environments in Deploy</button>
+      } @else {
+        <p>Use the deployment setup below to add a target.</p>
+      }
+    </div>
+  } @else {
+    <section aria-label="Environments">
+      <h2>Environments</h2>
+      <div class="project-environments__grid">
+        @for (environment of environments(); track environment.id) {
+          <article class="project-environments__card" [attr.data-testid]="'project-environment-' + environment.id">
+            <h3>{{ environment.title }}</h3>
+            @if (area() === 'operations') {
+              <span class="project-environments__state">Health unknown</span>
+              <p>Application monitoring is not configured for this environment.</p>
+            } @else {
+              <span class="project-environments__state">{{ environment.runnable ? 'Deployment ready' : 'Setup required' }}</span>
+              <p>{{ environment.summary }}</p>
+            }
+          </article>
+        }
+      </div>
+    </section>
+  }
+</section>

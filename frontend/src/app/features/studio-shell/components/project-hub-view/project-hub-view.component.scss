@@ -13,3 +13,31 @@
   height: 100%;
   min-height: 0;
 }
+
+.project-area {
+  height: 100%;
+  overflow: auto;
+  color: var(--studio-fg);
+  background: var(--studio-bg-surface);
+}
+
+.project-area__tabs {
+  display: flex;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3) var(--studio-spacing-5);
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.project-area__tabs button {
+  color: var(--studio-fg);
+  background: var(--studio-bg-hover);
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  cursor: pointer;
+}
+
+.project-area__tabs button[aria-current='page'] {
+  color: var(--studio-nav-active-fg);
+  background: var(--studio-nav-active-bg);
+}

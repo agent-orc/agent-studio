@@ -1,3 +1,10 @@
+# AGT-3203 project navigation status
+
+- Result SHA-256: `35602cba8ba8eddb3e45561a22e2300946e76f08d6afb8d54e5e3b3ebe8d8063` (contents of 47 changed implementation paths, excluding this status entry; base HEAD `2c4ec9e8c62e55f1b88763442277e426aab862a4`). The platform owns the delivery commit.
+- Implemented NV-D1 option A: Board, Dossiers, Deploy, Operations, Wiki, Deck. Deployment and Pipeline now open in Deploy; application Product Runtime observability and truthful per-environment health state open in Operations. The Deck no longer lists Deployment, Pipeline, or Observability. The Epic navigation, Epic board grouping action, and Epic overview surface are removed from the UI.
+- Deploy uses the existing Deployment and Pipeline panels until BD-3 provides its views. Projects without environments receive setup guidance in Deploy and a setup action in Operations. Legacy panel routes lead to the corresponding new area.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` passed; focused Angular component and route filters passed (109 and 14 tests); the `FullyQualifiedName~.Architecture.|Category=Guard` filter passed across all eight .NET test projects (82 matching backend tests); `npm --prefix frontend run lint` passed, including component-size checks. The focused Explorer and Operations Playwright assertions passed. Browser screenshots in both themes are in the task results directory. An initial combined browser run lost its prebuilt backend between tests; the isolated Explorer rerun passed with exit code 0.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).

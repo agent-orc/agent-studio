@@ -171,20 +171,8 @@ test.describe('Board hides epics (tasks-only lanes)', () => {
     }
   });
 
-  test('epics remain reachable via the Group-by-epic view', async ({ page }) => {
+  test('the retired epic grouping control stays absent', async ({ page }) => {
     await gotoBoard(page);
-
-    // Switch the board to the epic grouping (epic navigation surface).
-    await page.getByTestId('studio-board-epic-toggle').click();
-
-    const epicBoard = page.getByTestId('epic-group-board');
-    await expect(epicBoard).toBeVisible({ timeout: 10_000 });
-
-    // Each epic now surfaces as a group header (reachable, just not a lane card).
-    for (const epic of EPICS) {
-      const group = page.getByTestId(`epic-group-${epic.id}`);
-      await expect(group, `epic group ${epic.id}`).toHaveCount(1);
-      await expect(group).toContainText(epic.title);
-    }
+    await expect(page.getByTestId('studio-board-epic-toggle')).toHaveCount(0);
   });
 });

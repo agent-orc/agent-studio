@@ -110,13 +110,13 @@ test('gate economics renders the real 28/29 September receipts in both themes', 
   });
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await expect(page.getByTestId('studio-sidebar')).toBeVisible({ timeout: 30_000 });
-  const hubRow = page.getByTestId(`studio-explorer-project-hub-${project}`);
+  const hubRow = page.getByTestId(`studio-explorer-project-deploy-${project}`);
   if (!(await hubRow.count()) || !(await hubRow.isVisible())) {
     await page.getByTestId(`studio-explorer-project-${project}`).first().click();
   }
   await hubRow.click();
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId('project-shell-rail-pipeline').click();
+  await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('project-deploy-pipeline-tab').click();
 
   const economics = page.getByTestId('gate-economics');
   await expect(economics).toBeVisible({ timeout: 30_000 });

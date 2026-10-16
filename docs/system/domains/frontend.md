@@ -98,7 +98,7 @@ responses hide the feature and back off to a five-minute retry while visible.
 
 The active Studio surface is described by one canonical hash path. Board and
 project scope, Hub rail, Wiki page or folder, Dossier id, public task key and
-active detail tabs, Epics scope, and Settings section restore from that route.
+active detail tabs, Deploy and Operations, and Settings section restore from that route.
 The top-level query string is no longer an application routing surface. Legacy
 `task`, `job`, and `watchPath` query parameters remain read-only migration
 inputs and canonicalize after resolution.
@@ -300,24 +300,15 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
-- `frontend/src/app/features/board/components/epic-overview-screen/`: the
-  read-only Epics overview (`#/epics`, studio tab `epics:<project|__all__>`).
-  Its main list is the active list, without a redundant Active section header.
-  Completed history is collapsed by default and shows the lightweight
-  `GET /api/epics/completed/count` result in its header; full completed rollups
-  are fetched from `GET /api/epics?status=completed` only on first expansion.
-  A rollup counts as Completed only when `subTaskTotal > 0` and every child is
-  done. Archived zero-member cleanup epics are hidden, while completed epics
-  with historical children stay visible as quiet, dated history. Each card
-  shows an `x / y done` count, a done/in-progress/open progress bar, and expands
-  (`epic-overview-expand`) to child rows carrying lane status and a project
-  colour dot (`epic-overview-open-sub` / `epic-overview-sub-project`). The
-  screen only navigates (it emits `openTask`); epic assignment stays on the
-  board (create dialog + card context menu).
-  `EpicCreateDialogComponent` requires a title and goal description before it
-  posts. Contract locked by `e2e/board/epic-overview-history.spec.ts` (mocked
-  routes, both themes) and `e2e/board/epic-overview-screen.spec.ts` (real
-  backend seed + navigate).
+- Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
+  Deck (NV-D1 option A). Deploy contains the existing Deployment and Pipeline
+  panels until BD-3 supplies release views. Operations presents configured
+  deployment targets with health explicitly unknown until application
+  monitoring exists, plus the existing Product Runtime observability panel. Both
+  areas invite setup when the environment inventory is empty. The Deck rail
+  excludes Deployment, Pipeline, and Observability. The Epic overview and
+  board grouping controls are retired from navigation; legacy Epic data and
+  API behavior remain until the separate data-removal card.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints
@@ -842,12 +833,6 @@ header chip, and Result header agree on word and resolved colour, both themes).
 - Before adding visual variants, check the style guide and update it if a new
   pattern is truly needed.
 - Use stable `data-testid` hooks for Playwright selectors.
-- The Epics overview keeps completed and archived epics visible as history
-  instead of dropping them once finished; history renders quietly with no acute
-  status signals (R4), and each epic's progress counts are the sum of that
-  epic's visible children (R3). The only rollups withheld from the overview are
-  empty archived cleanup epics (zero members). See the epic domain contract in
-  [docs/system/domains/tasks.md](./tasks.md#epic-lifecycle).
 - Workspace-level CLI administration is not a separate sheet. Model and
   environment management, completion contracts, sessions, usage caps, and
   token spend belong to Workspace Settings under CLI Management.

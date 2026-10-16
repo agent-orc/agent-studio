@@ -4,10 +4,11 @@ import {
   ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
   ProjectDeploymentPanelComponent,
+  ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
   SecurityPanelComponent,
   UxuiPanelComponent,
-  ProjectObservabilityPanelComponent,
+  ProjectProductRuntimePanelComponent,
   ProjectPipelinePanelComponent,
   ProjectSteeringDocsSectionComponent,
   ProjectWikiSectionComponent,
@@ -37,7 +38,6 @@ import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 /** Rails whose content panel is real (not the project-shell placeholder). */
 const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRailKey>([
   'overview',
-  'deployment',
   'project-urls',
   'git',
   'integration',
@@ -51,13 +51,11 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   'test-quality',
   'token-usage',
   'cycle-time',
-  'observability',
   'steering',
   'wiki',
   // Nav-rebuild step 2 (T5b): Pipeline / Workflow host real content moved
   // out of Project Settings, and Prompts keeps the application-wide
   // prompt-admin surface from the Context segment.
-  'pipeline',
   'workflow',
   'prompts',
   'settings',
@@ -84,6 +82,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   standalone: true,
   imports: [
     ProjectShellComponent,
+    ProjectEnvironmentOverviewComponent,
     ProjectDetailComponent,
     ProjectOverviewDashboardComponent,
     ProjectDeploymentPanelComponent,
@@ -92,7 +91,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
     ProjectCycleTimePanelComponent,
-    ProjectObservabilityPanelComponent,
+    ProjectProductRuntimePanelComponent,
     ProjectPipelinePanelComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,
@@ -129,11 +128,15 @@ export class ProjectHubViewComponent {
   readonly openTask = output<{ jobId: string; watchPath: string }>();
 
   readonly activeRail = signal<ProjectRailKey>(DEFAULT_PROJECT_RAIL_KEY);
+  readonly deployView = signal<'deployment' | 'pipeline'>('deployment');
 
   constructor() {
     effect(() => {
       const raw = this.initialSection();
-      this.activeRail.set(isProjectRailKey(raw) ? raw : DEFAULT_PROJECT_RAIL_KEY);
+      this.deployView.set(raw === 'pipeline' ? 'pipeline' : 'deployment');
+      const section = raw === 'deployment' || raw === 'pipeline' ? 'deploy'
+        : raw === 'observability' ? 'operations' : raw;
+      this.activeRail.set(isProjectRailKey(section) ? section : DEFAULT_PROJECT_RAIL_KEY);
     });
   }
 
@@ -149,6 +152,12 @@ export class ProjectHubViewComponent {
 
   setRail(rail: ProjectRailKey): void {
     const projectName = this.projectName();
+    if (rail === 'deployment' || rail === 'pipeline') {
+      this.deployView.set(rail);
+      rail = 'deploy';
+    } else if (rail === 'observability') {
+      rail = 'operations';
+    }
     this.activeRail.set(rail);
     this.tabState.open({
       kind: 'hub',

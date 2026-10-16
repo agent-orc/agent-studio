@@ -287,6 +287,7 @@
         "src/app/features/studio-shell/components/explorer-workbench-history/explorer-workbench-history.component.scss",
         "src/app/features/studio-shell/components/studio-empty-state/studio-empty-state.component.scss",
         "src/app/features/studio-shell/components/explorer-workbench-list/explorer-workbench-list.component.scss",
+        "src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.scss",
         "src/app/features/studio-shell/components/studio-welcome/studio-welcome.component.scss",
         "src/app/features/task-detail/components/prompt-pane/files-pane/document-details-menu/document-details-menu.component.scss",
         "src/app/features/task-detail/components/detail-load-error/detail-load-error.component.scss",
