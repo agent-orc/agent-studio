@@ -67,6 +67,26 @@ public static class SystemEndpoints
         app.MapGet("/api/system/version", () => Results.Ok(About()));
         app.MapGet("/api/system/about", () => Results.Ok(About()));
 
+        app.MapGet("/api/system/execution-infrastructure", (IConfiguration config,
+            AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
+            AgentStudio.Runner.OrchestrationEngineReadiness engine) =>
+        {
+            var host = config["RemoteGate:SshHost"]?.Trim();
+            var slots = gateSlots.Snapshot();
+            var reached = gateSlots.LastReachedAt;
+            var failed = gateSlots.LastFailureAt;
+            var reachability = string.IsNullOrWhiteSpace(host) ? "not-configured" : gateSlots.Reachability;
+            return Results.Ok(new
+            {
+                gate = new { host, slots.Busy, slots.Total, reachability,
+                    lastReachedAt = reached, lastFailureAt = failed },
+                taskServer = string.IsNullOrWhiteSpace(config["TaskServer:BaseUrl"])
+                    ? "local monolith" : "remote Task Server",
+                engine = new { engine.State, engine.Required, engine.LastContact, engine.LastEngineId },
+                workstation = Environment.MachineName,
+            });
+        });
+
         // Lists the centrally-managed agent-rule files that are appended as a
         // system-prompt overlay to every Claude job. Used by the Job Detail
         // header to show "Active rules" so the user can verify what's in scope.

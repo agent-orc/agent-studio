@@ -60,6 +60,7 @@ code { font: inherit; font-variant-numeric: tabular-nums; overflow-wrap: anywher
 .deployment__problems summary:focus-visible { outline: 2px solid var(--studio-accent); }
 .deployment__project [data-proof-connected='true'] { color: var(--studio-fg); }
 .deployment__action { color: var(--severity-warn); }
+.deployment__error { color: var(--severity-high); }
 .deployment__limit { color: var(--studio-fg-dim); }
 
 @media (max-width: 800px) {

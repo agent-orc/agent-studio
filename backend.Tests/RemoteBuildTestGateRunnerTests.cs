@@ -3,6 +3,7 @@ using System.Text.Json;
 using AgentStudio.Pipeline;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -10,6 +11,27 @@ namespace AgentStudio.Tests;
 public sealed class RemoteBuildTestGateRunnerTests
 {
     private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    [Fact]
+    public void Gate_slot_report_uses_the_configured_budget_and_observed_SSH_reachability()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 8, 0, 0, TimeSpan.Zero));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:GateSlots"] = "3",
+        }).Build();
+        var tracker = new GateSlotUsageTracker(configuration, clock);
+        Assert.Equal(new GateSlotUsage(0, 3), tracker.Snapshot());
+        Assert.Equal("unverified", tracker.Reachability);
+        tracker.Reached();
+        Assert.Equal("reachable", tracker.Reachability);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Equal("unverified", tracker.Reachability);
+        tracker.Failed();
+        Assert.Equal("unreachable", tracker.Reachability);
+        tracker.Reached();
+        Assert.Equal("reachable", tracker.Reachability);
+    }
 
     [Theory]
     [InlineData(120, 198L * 1024 * 1024, 198)]

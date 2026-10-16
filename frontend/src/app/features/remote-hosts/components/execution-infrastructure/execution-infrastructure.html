@@ -1,0 +1,26 @@
+<section class="infrastructure" data-testid="execution-infrastructure" aria-label="Installation infrastructure">
+  <h3>Installation infrastructure</h3>
+  @if (infrastructure(); as infrastructure) {
+    <div class="infrastructure__grid">
+      <p><strong>Workstation</strong><span>Local execution role in the table below. API process: {{ infrastructure.workstation }}</span></p>
+      <p><strong>Task Server</strong><span>{{ infrastructure.taskServer }} · {{ infrastructure.taskServer === 'local monolith' ? 'this API is responding' : 'check installation checkpoints for route health' }}</span></p>
+      <p><strong>Engine</strong><span>{{ infrastructure.taskServer === 'remote Task Server' ? 'observed by Task Server' : infrastructure.engine.state }}
+        @if (infrastructure.engine.lastEngineId) { · {{ infrastructure.engine.lastEngineId }} }
+        @if (infrastructure.engine.state === 'engine-not-live') { · restore Engine contact and check orchestration rollout settings }
+        @if (infrastructure.engine.state === 'not-required' && infrastructure.taskServer === 'local monolith') { · no transition currently requires Engine contact }
+      </span></p>
+      @if (infrastructure.gate.host) {
+        <p data-testid="remote-gate-host"><strong>Gate · {{ infrastructure.gate.host }}</strong>
+          <span>{{ infrastructure.gate.busy }} / {{ infrastructure.gate.total }} slots · {{ infrastructure.gate.reachability }}
+            @if (infrastructure.gate.reachability === 'unverified') { · no recent SSH gate probe }
+            @if (infrastructure.gate.reachability === 'unreachable') { · check SSH access and the remote gate worker }
+          </span>
+        </p>
+      } @else {
+        <p><strong>Gate</strong><span>RemoteGate:SshHost is not configured. Configure it to run remote build and test gates.</span></p>
+      }
+    </div>
+  } @else if (error()) {
+    <p class="infrastructure__error">Infrastructure status could not be read. Check the local API route and reload this page.</p>
+  } @else { <p>Reading infrastructure status…</p> }
+</section>

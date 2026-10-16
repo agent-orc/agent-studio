@@ -22,6 +22,7 @@ export class HostReleaseIdentityComponent {
   readonly host = input.required<RemoteHost>();
   readonly stableRelease = input<StableReleaseIdentity | null>(null);
   readonly showIdentity = input(false);
+  readonly now = input(Date.now());
   readonly testIdPrefix = input.required<string>();
 
   readonly releaseLabel = computed(() =>
@@ -41,4 +42,12 @@ export class HostReleaseIdentityComponent {
     ?? null);
   readonly tooltipTestId = computed(() => `${this.testIdPrefix()}-tooltip`);
   readonly driftTestId = computed(() => `${this.testIdPrefix()}-drift`);
+  readonly reportAge = computed(() => {
+    const observed = this.host().releaseDrift?.lastSeenAt ?? this.host().lastHeartbeatAt;
+    const age = observed ? this.now() - Date.parse(observed) : Number.NaN;
+    if (!Number.isFinite(age) || age <= 90_000) return null;
+    return age < 3_600_000 ? `${Math.floor(age / 60_000)}m`
+      : age < 86_400_000 ? `${Math.floor(age / 3_600_000)}h`
+        : `${Math.floor(age / 86_400_000)}d`;
+  });
 }

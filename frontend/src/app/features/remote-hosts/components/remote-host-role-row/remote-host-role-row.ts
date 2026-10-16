@@ -42,6 +42,16 @@ export class RemoteHostRoleRowComponent {
   readonly statusLabel = computed(() => this.liveLoading()
     ? 'Loading live status'
     : hostStatusLabel(this.host().status));
+  readonly statusReason = computed(() => {
+    const host = this.host();
+    if (host.status !== 'degraded') return null;
+    const capability = host.capabilityHealth?.find(item =>
+      !(host.serviceRole === 'review' && (item.key === 'git:push' || item.key === 'git:workflow-push'))
+      && (!item.isFresh || item.healthState !== 'healthy' || item.advertisedStatus !== 'ready'));
+    if (capability) return `${capability.key}: ${capability.reason || capability.detail || 'Capability is not ready'}. Open Capabilities for the repair detail.`;
+    if (host.runnerLink?.lastError) return `${host.runnerLink.lastError} Reconnect the runner link.`;
+    return 'The runner heartbeat or telemetry is late. Refresh the host and inspect Connection.';
+  });
   readonly roleLabel = computed(() => runnerServiceRoleLabel(this.host().serviceRole));
   readonly slotTotal = computed(() => roleSlotTotal(this.host()));
   readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
@@ -76,12 +86,13 @@ function runnerLinkLabel(host: RemoteHost, now: number): string | null {
     : age < 60_000 ? `${Math.floor(age / 1000)}s ago`
       : age < 3_600_000 ? `${Math.floor(age / 60_000)}m ago`
         : `${Math.floor(age / 3_600_000)}h ago`;
-  return `${link.state} · ${ageLabel}`;
+  return `${link.state[0].toUpperCase()}${link.state.slice(1)} · ${ageLabel}`;
 }
 
 function runnerLinkTooltip(host: RemoteHost): string | null {
   const link = host.runnerLink;
-  if (!link) return null;
+  if (!link) return host.role === 'local' ? 'The local process needs no runner link.'
+    : 'No managed runner link was reported. Expand this machine, open Connection, and select Set up agent host.';
   return `Runner link ${link.state} since ${link.since}. Last heartbeat: ${link.lastHeartbeatAt ?? 'never'}. ${link.lastError ?? 'No error reported.'}`;
 }
 

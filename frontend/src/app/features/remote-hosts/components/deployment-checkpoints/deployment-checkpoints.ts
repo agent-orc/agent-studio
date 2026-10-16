@@ -1,6 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { catchError, finalize, forkJoin, map, of, switchMap } from 'rxjs';
 import { AuthSessionState } from '../../../../services/auth.service';
 import type { RemoteHost } from '../../models/remote-host.model';
@@ -20,7 +20,7 @@ import {
   styleUrl: './deployment-checkpoints.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class DeploymentCheckpointsComponent implements OnInit {
+export class DeploymentCheckpointsComponent {
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AuthSessionState);
   readonly hosts = input<readonly RemoteHost[]>([]);
@@ -34,15 +34,25 @@ export class DeploymentCheckpointsComponent implements OnInit {
   readonly backupsError = signal<string | null>(null);
   readonly loading = signal(false);
   readonly user = this.auth.status;
+  readonly localProfile = computed(() => this.user()?.profile === 'local');
+  private readonly profileRead = effect(() => { if (this.user()) this.reload(); });
   readonly origin = typeof window === 'undefined' ? 'Unknown browser origin' : window.location.origin;
   readonly latestBackup = computed(() => [...this.backups()]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null);
   readonly missingRepositories = computed(() => this.projects().filter(row => !row.status && row.error?.startsWith('No canonical repository')));
   readonly visibleProjects = computed(() => this.projects().filter(row => !this.missingRepositories().includes(row)));
 
-  ngOnInit(): void { this.reload(); }
-
   reload(): void {
+    if (this.localProfile()) {
+      this.identity.set(null);
+      this.projects.set([]);
+      this.backups.set([]);
+      this.identityError.set(null);
+      this.projectsError.set(null);
+      this.backupsError.set(null);
+      this.loading.set(false);
+      return;
+    }
     this.loading.set(true);
     const identityRead = this.http.get<InstallationIdentity>('/api/v1/installation').pipe(
       map(identity => { this.identityError.set(null); return identity; }),

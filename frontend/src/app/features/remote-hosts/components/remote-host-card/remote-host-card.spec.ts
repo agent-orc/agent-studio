@@ -83,6 +83,7 @@ describe('RemoteHostCardComponent', () => {
     const el: HTMLElement = mount(HOST, false).nativeElement;
     expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeNull();
     expect(el.querySelector('[data-testid="remote-host-slots-summary"]')?.textContent).toContain('0 / 20');
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 20');
     expect(el.querySelector('[data-testid="remote-host-load"]')?.textContent).toContain('54%');
     expect(el.querySelector('[data-testid="remote-host-release"]')?.textContent)
       .toContain('release-20260811.1');

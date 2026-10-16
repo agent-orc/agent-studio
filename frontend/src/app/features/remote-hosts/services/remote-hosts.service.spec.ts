@@ -2,7 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { RemoteHostsService } from './remote-hosts.service';
+import { RemoteHostsService, mergeReleaseReport } from './remote-hosts.service';
+import { seedRemoteHosts } from './remote-hosts.seed';
+
+it('keeps a newer capability release report over an older drift snapshot', () => {
+  const current = { ...seedRemoteHosts(0)[0], lastHeartbeatAt: '2026-10-16T08:00:00Z',
+    release: { releaseId: 'current', version: '0.9.6' } };
+  const merged = mergeReleaseReport(current, {
+    runnerId: current.clientId, name: current.name, hostId: current.id, role: 'coding',
+    release: { releaseId: 'old', version: '0.9.5' }, state: 'behind',
+    behindByHours: 72, behindForHours: 72, alarmDue: true, reason: 'old report',
+    lastSeenAt: '2026-10-13T08:00:00Z', heartbeatStale: true,
+  });
+  expect(merged.release?.version).toBe('0.9.6');
+  expect(merged.releaseDrift).toBeNull();
+});
 
 function flushRunnerInfrastructureFailures(http: HttpTestingController): void {
   for (const request of http.match('/api/v1/management/runner-infrastructure-failures')) request.flush([]);

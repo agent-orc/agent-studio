@@ -28,7 +28,8 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
     action: 'Inspect the drain or admission reason before resuming claims.',
   };
   const role = host.serviceRole === 'review' ? 'review' : 'coding';
-  const needed = [`executor:${role}`, 'git:push'];
+  // Review executors read candidate code; only coding executors publish task branches.
+  const needed = role === 'review' ? ['executor:review'] : ['executor:coding', 'git:push'];
   const capabilities = host.capabilityHealth ?? [];
   for (const key of needed) {
     const capability = capabilities.find(item => item.key === key);
@@ -37,7 +38,9 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
       reason: capability && !capability.isFresh
         ? `${key} advertisement is stale.`
         : capability?.reason || capability?.detail || `${key} is missing.`,
-      action: `Refresh ${key} on this host and inspect its capability detail.`,
+      action: key === 'git:push'
+        ? 'Restore push access to task branches on this coding host, then refresh its capability detail.'
+        : `Refresh ${key} on this host and inspect its capability detail.`,
     };
   }
   const provider = capabilities.filter(item => item.key.startsWith('provider-auth:'));
@@ -50,7 +53,9 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
     action: 'Set a measured coding or review budget and restart the role daemon.',
   };
   return {
-    state: 'capability-ready', reason: 'Fresh role, Git and provider capabilities with an open budget.',
+    state: 'capability-ready', reason: role === 'review'
+      ? 'Fresh review and provider capabilities with an open budget.'
+      : 'Fresh coding, task-branch push and provider capabilities with an open budget.',
     action: 'Check the registered project origin proof before assigning work.',
   };
 }

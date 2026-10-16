@@ -98,10 +98,19 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 sourcePackKiB * 1024, "fetch", ct);
             await Git(local, ["-C", repository, "update-ref", "refs/heads/gate-subject", request.ExpectedSha!], infra, ct);
             var knownTips = new List<string>();
-            await Ssh(options, local, "umask 077; mkdir -p -- " + Quote(options.Root + "/cache")
-                + "; git init --bare --quiet -- " + Quote(cache)
-                + "; git -C " + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
-                infra, ct, line => { if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line); });
+            try
+            {
+                await Ssh(options, local, "umask 077; mkdir -p -- " + Quote(options.Root + "/cache")
+                    + "; git init --bare --quiet -- " + Quote(cache)
+                    + "; git -C " + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
+                    infra, ct, line => { if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line); });
+                _slotUsage.Reached();
+            }
+            catch (Exception exception) when (exception is IOException or TimeoutException)
+            {
+                _slotUsage.Failed();
+                throw;
+            }
             var includedTips = new List<string>();
             // Only exclude cache tips that are ancestors of this exact subject.
             foreach (var tip in knownTips)

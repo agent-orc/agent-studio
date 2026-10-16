@@ -14,13 +14,13 @@
     <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span><app-host-credential-badge [host]="h" />
   </td>
   <td>
-    <span class="host__status" data-testid="remote-host-status">
+    <span class="host__status" data-testid="remote-host-status" [attr.title]="statusReason()">
       <span class="host__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
       <span>{{ statusLabel() }}</span>
     </span>
   </td>
-  <td class="host__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">{{ linkLabel() }}</td>
-  <td><span class="host__placeholder" title="Shown per runner role">–</span></td>
+  <td class="host__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">@if (!h.runnerLink && h.role === 'remote') { Not configured <button class="host__btn" type="button" (click)="requestSetup()">Set up</button> } @else { {{ linkLabel() }} }</td>
+  <td class="host__number" data-testid="remote-host-machine-slots">{{ totalActiveSlots() }} / {{ roleSlotCapacity() ?? 'n/a' }}</td>
   <td class="host__load" data-testid="remote-host-load">
     @if (loadPct() !== null) {
       <span class="host__load-track" aria-hidden="true">
@@ -37,10 +37,10 @@
   </td>
   <td class="host__release" data-testid="remote-host-release">
     @if (rolesShareRelease()) {
-      <app-host-release-identity [host]="h" [stableRelease]="stableRelease()" testIdPrefix="remote-host-release" [showIdentity]="true" />
+      <app-host-release-identity [host]="h" [stableRelease]="stableRelease()" [now]="now()" testIdPrefix="remote-host-release" [showIdentity]="true" />
     } @else { <span class="host__placeholder" title="Releases differ by role">Per role</span> }
   </td>
-  <td class="host__actions"><span class="host__placeholder" title="Actions are per runner role">–</span></td>
+  <td class="host__actions"><span class="host__placeholder" title="Actions are per runner role">Per role</span></td>
 </tr>
 @for (role of roles(); track role.id) {
   <tr appRemoteHostRoleRow [host]="role" [activeSlots]="activeSlotsFor(role)" [now]="now()"
@@ -143,7 +143,7 @@
               }
             </div>
           }
-          @if (h.role === 'remote') {
+          @if (h.role === 'remote' && h.serviceRole !== 'review') {
             <div class="detail__badges">
               <app-git-token-capability mode="badges" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" />
             </div>
@@ -203,7 +203,7 @@
               }
             </ul>
           }
-          <app-git-token-capability mode="warning" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" />
+          @if (h.serviceRole !== 'review') { <app-git-token-capability mode="warning" [status]="h.gitPushStatus" [detail]="h.gitPushDetail" /> }
           <app-capability-health [host]="h" />
           }
         </section>

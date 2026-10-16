@@ -20,6 +20,9 @@
             [attr.data-tone]="driftTone()"
             [attr.data-testid]="driftTestId()">{{ drift }}</span>
     }
+    @if (reportAge(); as age) {
+      <span class="release__stale" [attr.data-testid]="testIdPrefix() + '-stale'">Report stale · {{ age }} ago</span>
+    }
   } @else {
     <span class="release__placeholder" title="Not reported">–</span>
   }
