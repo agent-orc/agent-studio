@@ -52,6 +52,27 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
     }
 
     [Fact]
+    public void Archived_attempt_ids_open_only_their_shard_and_reuse_a_bounded_cached_read()
+    {
+        WriteShard("01", Run("run-a", "AGT-A"), Review("review-a", "AGT-A", "run-a", 1));
+        WriteShard("02", Run("run-b", "AGT-B"));
+        var service = NewService();
+        Assert.Equal(2, service.WarmArchiveIndex());
+        _opens.Clear();
+
+        Assert.Equal("run-a", service.GetRun("run-a")!.AttemptId);
+        Assert.Equal("review-a", service.GetReview("review-a")!.AttemptId);
+        Assert.Equal("run-a", service.GetRun("RUN-A")!.AttemptId);
+        Assert.Null(service.GetReview("review-missing"));
+        Assert.Equal(new Dictionary<string, int> { [ShardName("01")] = 1 }, _opens);
+
+        var projection = service.GetTaskProjection("AGT-A", includeArchived: true);
+        Assert.Single(projection.RunAttempts);
+        Assert.Single(projection.ReviewAttempts);
+        Assert.Equal(new Dictionary<string, int> { [ShardName("01")] = 1 }, _opens);
+    }
+
+    [Fact]
     public void A_read_that_beats_the_warmup_builds_the_index_once_and_the_next_read_opens_nothing()
     {
         WriteShard("01", Run("run-a1", "AGT-A"));
@@ -103,14 +124,14 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
 
         var first = SupersededRun(service, "AGT-1");
         var firstShard = CurrentHourShard();
-        Assert.Null(service.GetRun(first));
+        Assert.Equal(first, service.GetRun(first)!.AttemptId);
         _opens.Clear();
 
         Assert.True(service.GetTaskProjection("AGT-9", includeArchived: true).LegacyTask);
         Assert.Empty(_opens);
         Assert.Contains(first,
             service.GetTaskProjection("AGT-1", includeArchived: true).RunAttempts.Select(run => run.AttemptId));
-        Assert.Equal(new Dictionary<string, int> { [firstShard] = 1 }, _opens);
+        Assert.Empty(_opens);
 
         _time.Advance(TimeSpan.FromHours(1));
         var second = SupersededRun(service, "AGT-2");
