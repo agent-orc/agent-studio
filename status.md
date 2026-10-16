@@ -85,6 +85,11 @@
 - Review captures in the task results directory: `dossier-toolbar-1440x900--mocked.png` and `dossier-toolbar-1920x1080--mocked.png`. Light and dark overview captures are also in that directory.
 - Verification: `dotnet build agent-taskboard.sln --no-restore` and `npm --prefix frontend run build` passed. Focused backend classes (`WorkbenchCatalogueTests`, `GitServiceFileContentTests`) passed 31 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 82 backend tests; runner and task-server had no matches. Focused Angular specs (`tag-filters.component.spec.ts`, `workbench-overview-view-state.service.spec.ts`) passed 11 tests. The focused Playwright Dossier sort/filter test passed. `npm --prefix frontend run lint` passed.
 
+# AGT-3194 late gate result status
+
+- Fix round from delivery `7cdb87d40`, rebased onto current `origin/develop`. Final result SHA and verification pending.
+- Implemented option: completed or integrated deliveries supersede late gate results and queue budget violations. Acceptance and integration detection cancel queued remote gates.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).

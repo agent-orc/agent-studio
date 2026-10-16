@@ -637,6 +637,42 @@ public sealed partial class MergeIntoDevelopRunner
                         AcceptedIntegrationFailureCodes.GateInterrupted, cancelledGate.Reason);
                 }
             }
+            var returnedGate = preMainResult ?? preDevelopResult;
+            if (returnedGate is not null && !supersededCancellation)
+            {
+                var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
+                var published = _git.CheckPublishedDelivery(developerRoot, branch, delivery.ExpectedResultSha ?? "");
+                if (live.Lane is TaskStates.Completed or TaskStates.Archive
+                    && (cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
+                        || returnedGate.Verdict == BuildTestGateVerdict.Fail)
+                    || cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
+                        && published == PublishedDeliveryContainment.Contained)
+                {
+                    if (result.Outcome.IsFreshMerge()
+                        && !string.IsNullOrWhiteSpace(result.MergedSha)
+                        && string.Equals(_git.GetBranchTip(repoRoot, branch), result.MergedSha,
+                            StringComparison.OrdinalIgnoreCase)
+                        && _git.CheckPublishedDelivery(developerRoot, branch, result.MergedSha)
+                            != PublishedDeliveryContainment.Contained)
+                        _git.ResetIntegrationBranch(repoRoot, branch,
+                            fenceAnchors.GetValueOrDefault(branch) ?? result.PreviousIntegrationSha ?? result.MergedSha);
+                    _timeline?.Append(live.Folder, new TimelineEvent
+                    {
+                        Ts = _gateTime.GetUtcNow().UtcDateTime,
+                        Kind = "gate-result-superseded", Actor = TimelineActors.System,
+                        Summary = "Merge gate result belongs to a completed or integrated delivery.",
+                        Details = new Dictionary<string, string>
+                        {
+                            ["expectedSha"] = delivery.ExpectedResultSha ?? "",
+                            ["gateId"] = returnedGate.GateId,
+                            ["verdict"] = returnedGate.Verdict.ToString(),
+                        },
+                    });
+                    return MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.StaleAttempt,
+                        "The gate result was superseded by completion or published integration.");
+                }
+            }
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
@@ -1155,11 +1191,12 @@ public sealed partial class MergeIntoDevelopRunner
                 reuse.Reused).ConfigureAwait(false);
         }
         Volatile.Write(ref _integrationGateHolder, null);
+        var gateEvidenceFolder = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder;
         if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
             IntegrationGateReceipts.Record(
-                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse,
+                gateEvidenceFolder, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse,
                 _mergeLockWaitMs.Value);
-        IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+        IntegrationLaneEvents.Append(gateEvidenceFolder, project, jobId, "gate-finished",
             level: reuse.Reused ? "exact" : "full", durationMs: gate.DurationMs,
             queueWaitMs: gate.GateQueueWaitMs, outcome: gate.Verdict.ToString(),
             reuseToken: reuse.Token, reason: reuse.Reason,
@@ -1169,11 +1206,7 @@ public sealed partial class MergeIntoDevelopRunner
         // only thing standing between the branch and an un-gated merge.
         // A cancelled gate may return after a lane move; the live folder can then
         // hold a newer attempt's journal, which must survive.
-        if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
-            IntegrationGateJournal.ClearOwned(
-                CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder, journalOwner);
-        else
-            IntegrationGateJournal.Clear(jobFolderPath);
+        IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
 
         if (PreDevelopBuildGate.IsGreen(gate))
         {
