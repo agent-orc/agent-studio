@@ -1,4 +1,6 @@
 using AgentStudio.TaskServer.Contracts;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace AgentRunner;
 
@@ -100,14 +102,14 @@ public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient 
             proof.FetchVerified, proof.PushVerified, ct);
     }
 
-    private static async Task ConfigureGitAsync(string origin, string? tokenFile,
-        string? keyPath, CancellationToken ct)
+    internal static async Task ConfigureGitAsync(string origin, string? tokenFile,
+        string? keyPath, CancellationToken ct, string? configPath = null, string? sshConfigPath = null)
     {
         var configured = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
-        var config = string.IsNullOrWhiteSpace(configured)
+        var config = configPath ?? (string.IsNullOrWhiteSpace(configured)
             || configured is "/dev/null" or "NUL"
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gitconfig")
-            : configured;
+            : configured);
         Directory.CreateDirectory(Path.GetDirectoryName(config)!);
         var lines = new List<string>();
         if (File.Exists(config)) lines.Add(await File.ReadAllTextAsync(config, ct));
@@ -122,14 +124,45 @@ public sealed class RunnerGitSetupAgent(RunnerOptions options, TaskServerClient 
         }
         if (keyPath is not null)
         {
-            if (keyPath.Contains('\'')) throw new ArgumentException("Key path contains a quote.");
+            if (keyPath.IndexOfAny(['\'', '"', '\r', '\n']) >= 0)
+                throw new ArgumentException("Key path contains an unsupported character.");
             var path = origin.StartsWith("git@github.com:", StringComparison.Ordinal)
                 ? origin["git@github.com:".Length..] : new Uri(origin).AbsolutePath.TrimStart('/');
-            lines.Add($"[url \"git@github.com:{path}\"]\n\tinsteadOf = {origin}\n");
-            lines.Add($"[core]\n\tsshCommand = ssh -i '{keyPath.Replace('\\', '/')}' -o IdentitiesOnly=yes -o BatchMode=yes "
-                + $"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='{Path.Combine(Path.GetDirectoryName(keyPath)!, "known_hosts").Replace('\\', '/')}'\n");
+            var alias = "agent-studio-first-run-" + Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(origin))).ToLowerInvariant()[..32];
+            await ConfigureSshAliasAsync(sshConfigPath ?? Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.UserProfile), ".ssh", "config"), alias, keyPath, ct);
+            var rewrite = $"[url \"git@{alias}:{path}\"]\n\tinsteadOf = {origin}\n";
+            if (!lines.Any(line => line.Contains(rewrite, StringComparison.Ordinal)))
+                lines.Add(rewrite);
         }
         await File.WriteAllTextAsync(config, string.Join("\n", lines), ct);
+        Protect(config);
+    }
+
+    private static async Task ConfigureSshAliasAsync(string config, string alias, string keyPath,
+        CancellationToken ct)
+    {
+        var directory = Path.GetDirectoryName(config)!;
+        Directory.CreateDirectory(directory);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                UnixFileMode.UserExecute);
+        var marker = "# agent-studio-first-run " + alias;
+        var block = $"{marker}\nHost {alias}\n  HostName github.com\n  User git\n"
+            + $"  IdentityFile \"{keyPath.Replace('\\', '/')}\"\n  IdentitiesOnly yes\n"
+            + "  IdentityAgent none\n  BatchMode yes\n  StrictHostKeyChecking accept-new\n"
+            + $"  UserKnownHostsFile \"{Path.Combine(Path.GetDirectoryName(keyPath)!, "known_hosts").Replace('\\', '/')}\"\n"
+            + $"Host *\n{marker} end\n";
+        var existing = File.Exists(config) ? await File.ReadAllTextAsync(config, ct) : "";
+        var start = existing.IndexOf(marker + "\n", StringComparison.Ordinal);
+        if (start >= 0)
+        {
+            var end = existing.IndexOf(marker + " end\n", start, StringComparison.Ordinal);
+            if (end < 0) throw new InvalidOperationException("Managed SSH configuration is incomplete.");
+            existing = existing.Remove(start, end + marker.Length + " end\n".Length - start);
+        }
+        await File.WriteAllTextAsync(config, block + existing, ct);
         Protect(config);
     }
 

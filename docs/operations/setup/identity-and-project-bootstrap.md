@@ -154,7 +154,9 @@ only the read/write verdict. The runner also reports a project receipt to the
 Task Server. Tokens are kept in owner-only host files and supplied through a
 repository-scoped Git helper, so clone URLs and status responses remain
 credential-free. Private keys also stay on the execution host; Studio receives
-neither secret after setup. Device login for Codex or Claude runs inside the selected
+neither secret after setup. Deploy keys use a repository URL rewrite and a dedicated
+SSH host alias, so the selected key does not change SSH access for other repositories.
+Device login for Codex or Claude runs inside the selected
 runner process, including Compose containers, and Studio shows only the
 provider's verification URL and a code when the provider supplies one.
 
