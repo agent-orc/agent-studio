@@ -65,6 +65,17 @@ describe('offlineGuardInterceptor', () => {
     expect(ok).toBe(true);
   });
 
+  it.each(['bootstrap', 'login', 'change-password', 'logout'])(
+    'lets %s through while the live-update socket is offline', (action) => {
+      const { http, httpMock } = configure(true);
+      const url = `/api/v1/studio/auth/${action}`;
+      let ok = false;
+      http.post(url, {}).subscribe({ next: () => (ok = true) });
+      httpMock.expectOne(url).flush({});
+      expect(ok).toBe(true);
+    },
+  );
+
   it('lets the read-only TokenEconomy price lookup through while offline', () => {
     const { http, httpMock } = configure(true);
     let ok = false;

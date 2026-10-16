@@ -139,9 +139,9 @@ public sealed record SecurityState
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
 public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);
 
-public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null);
+public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false);
 public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword);
-public sealed record BootstrapRequest(string Username, string Password, string? DisplayName);
+public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, string? TemporaryPassword);

@@ -62,6 +62,13 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     options.ForwardLimit = 1;
+    foreach (var raw in (builder.Configuration["Security:TrustedProxyAddresses"] ?? "")
+                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!System.Net.IPAddress.TryParse(raw, out var address))
+            throw new InvalidOperationException($"Invalid Security:TrustedProxyAddresses entry: {raw}");
+        options.KnownProxies.Add(address);
+    }
 });
 var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
 var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
