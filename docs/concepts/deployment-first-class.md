@@ -21,12 +21,12 @@ The declaration names its kind, host, address, container or static template,
 destination, health URL, promotion rule, and host-held secret references.
 For a container, `destination` is the local port behind the existing reverse
 proxy. For a static site, it is the served release directory; the proxy serves
-its `current` symlink. Static artifacts are tar files in the deploy host's
-artifact store, named by their SHA-256 digest.
+its `current` symlink. Static artifacts are tar or tar.gz files in the deploy
+host's artifact store, named by their SHA-256 digest.
 
 After the full gate passes and the release is pushed, the promotion script can
 submit the measured package digest or the gate-built image's registry digest
-to `POST /api/deploy/gate-releases`. This route requires an orchestration
+to `POST /api/deploy/gate-releases`. This route requires a release-only
 service credential. The script checks that a container image carries the exact
 gated commit as its OCI revision label. Studio records the immutable
 commit/digest pair before queueing stage. The operator release route accepts

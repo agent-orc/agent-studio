@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
@@ -8,7 +9,10 @@ using AgentStudio.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -54,6 +58,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var (service, repo, _) = Build();
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
         Assert.False(service.QueueRelease("demo", _artifact, commit));
+        Assert.False(service.RegisterGateArtifact("demo", _artifact + "\n", commit));
         Assert.True(service.RegisterGateArtifact("demo", _artifact, commit));
         Assert.False(service.QueueRelease("demo", "registry.example/other@sha256:" + new string('b', 64), commit));
         Assert.True(service.QueueRelease("demo", _artifact, commit));
@@ -92,6 +97,43 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Contains("Promotion is not pending", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task GateReleaseRoute_RequiresDedicatedReleaseScope()
+    {
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = Path.Combine(_root, "network-workspace"),
+                    ["Security:Profile"] = "networked",
+                    ["AllowedHosts"] = "studio.test",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test") });
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var body = new GateArtifactRequest("demo", _artifact, new string('a', 40));
+        var engineEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("engine",
+            [RunnerScopes.Orchestration], null, null));
+        var engine = security.EnrollRunner(engineEnrollment.Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
+        var releaseEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("release-gate",
+            [RunnerScopes.Release], null, null));
+        var release = security.EnrollRunner(releaseEnrollment.Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
     }
 
     [Fact]
