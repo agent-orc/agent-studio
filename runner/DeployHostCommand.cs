@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace AgentRunner;
@@ -115,9 +116,11 @@ public static class DeployHostCommand
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
-        var name = "deploy-" + job.Project + "-" + job.EnvironmentId;
-        if (name.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')))
-            throw new InvalidOperationException("Invalid container name.");
+        var projectName = job.Project.Length <= 64
+            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
+            ? job.Project
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
+        var name = "deploy-" + projectName + "-" + job.EnvironmentId;
         var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
         try
         {

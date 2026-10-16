@@ -26,9 +26,9 @@ host's artifact store, named by their SHA-256 digest.
 
 After the full gate passes and the release is pushed, the promotion script can
 submit the measured package digest or the gate-built image's registry digest
-to `POST /api/deploy/gate-releases`. This route requires a release-only
-service credential. The script checks that a container image carries the exact
-gated commit as its OCI revision label. Studio records the immutable
+to `POST /api/deploy/gate-releases`. This route requires a service credential
+with only `runner.release`. The script checks that a container image carries
+the exact gated commit as its OCI revision label. Studio records the immutable
 commit/digest pair before queueing stage. The operator release route accepts
 only an artifact already recorded for that exact commit. For a static package,
 `DEPLOY_ARTIFACT_STORE` must name a store shared with the deploy host; the

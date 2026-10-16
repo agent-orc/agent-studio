@@ -2,8 +2,12 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using AgentStudio.Projects;
+using AgentStudio.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -33,8 +37,9 @@ public sealed class DeployHostCommandTests
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
-        var project = "probe" + Guid.NewGuid().ToString("N")[..8];
-        var containerName = "deploy-" + project + "-stage";
+        var project = "Operator Demo " + Guid.NewGuid().ToString("N")[..8];
+        var projectHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(project)))[..16].ToLowerInvariant();
+        var containerName = "deploy-" + projectHash + "-stage";
         var root = Path.Combine(Path.GetTempPath(), "deploy-host-test-" + Guid.NewGuid().ToString("N"));
         var repo = Path.Combine(root, "repo");
         var watch = Path.Combine(root, "workspace", "projects", project);
@@ -48,12 +53,6 @@ public sealed class DeployHostCommandTests
         Git(repo, "add", ".");
         Git(repo, "commit", "-m", "initial");
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
-        File.WriteAllText(Path.Combine(environmentDir, "stage.json"), JsonSerializer.Serialize(new
-        {
-            id = "stage", name = "Stage", kind = "stage", targetHostId = "test-host",
-            address = $"http://127.0.0.1:{port}/", template = "container", destination = port.ToString(),
-            healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
-        }));
         File.WriteAllText(Path.Combine(environmentDir, "production.json"), JsonSerializer.Serialize(new
         {
             id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
@@ -61,7 +60,6 @@ public sealed class DeployHostCommandTests
             healthUrl = "http://127.0.0.1:1/", containerPort = 80,
         }));
         var tokenFile = Path.Combine(root, "token");
-        await File.WriteAllTextAsync(tokenFile, "test-deploy-credential");
         try
         {
             await using var factory = new WebApplicationFactory<ProjectEnvironmentService>().WithWebHostBuilder(builder =>
@@ -72,7 +70,8 @@ public sealed class DeployHostCommandTests
                     {
                         ["TaskRepository"] = Path.Combine(root, "workspace"),
                         ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
-                        ["Security:Profile"] = "local",
+                        ["Security:Profile"] = "networked",
+                        ["AllowedHosts"] = "studio.test",
                         ["WatchPaths:0:Name"] = project,
                         ["WatchPaths:0:Path"] = watch,
                         ["WatchPaths:0:RootPath"] = repo,
@@ -84,13 +83,29 @@ public sealed class DeployHostCommandTests
                     services.AddSingleton<TimeProvider>(new FakeTimeProvider());
                 });
             });
-            using var client = factory.CreateClient();
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+            { BaseAddress = new Uri("https://studio.test") });
+            var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+            var releaseEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("gate",
+                [RunnerScopes.Release], null, null));
+            var release = security.EnrollRunner(releaseEnrollment.Code);
+            var deployEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("deploy",
+                [RunnerScopes.Deploy], null, null));
+            var deploy = security.EnrollRunner(deployEnrollment.Code);
+            await File.WriteAllTextAsync(tokenFile, deploy.Secret);
+            File.WriteAllText(Path.Combine(environmentDir, "stage.json"), JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = deploy.Runner.Id,
+                address = $"http://127.0.0.1:{port}/", template = "container", destination = port.ToString(),
+                healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
+            }));
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
             using var queued = await client.PostAsJsonAsync("/api/deploy/gate-releases",
                 new GateArtifactRequest(project, image, commit));
             Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
             var result = await DeployHostCommand.RunAsync(
-                [client.BaseAddress!.ToString(), "test-host", tokenFile, root, root], CancellationToken.None, client);
+                [client.BaseAddress!.ToString(), deploy.Runner.Id, tokenFile, root, root], CancellationToken.None, client);
             Assert.Equal(0, result);
             var state = service.Read(project)!;
             Assert.Equal(image, state.Environments.Single(item => item.Declaration.Id == "stage").DeployedArtifact);
