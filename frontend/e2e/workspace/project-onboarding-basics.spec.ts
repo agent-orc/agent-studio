@@ -285,6 +285,43 @@ test.describe('project onboarding and editable project basics', () => {
     }
   });
 
+  test('new repository mode submits owner, visibility and template without local paths', async ({ page }) => {
+    test.setTimeout(120_000);
+    let submitted: Record<string, unknown> | null = null;
+    await page.route('**/api/v1/projects', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      submitted = route.request().postDataJSON() as Record<string, unknown>;
+      await fulfillJson(route, { ...existingProject(), id: 'PROJ-024', displayName: 'Fresh Site' }, 201);
+    });
+    await page.goto('/');
+    await dismissDevErrorDialog(page);
+    await expect(page.getByTestId('studio-workspace-ws-default-add-project')).toBeVisible();
+    await page.getByTestId('studio-workspace-ws-default-add-project').dispatchEvent('click');
+    const dialog = page.getByTestId('onboard-project-dialog');
+    await expect(dialog).toBeVisible({ timeout: 30_000 });
+    await dialog.getByTestId('onboard-project-repository-mode').selectOption('create');
+    await expect(dialog.getByTestId('onboard-project-repository-path')).toHaveCount(0);
+    await dialog.getByTestId('onboard-project-display-name').fill('Fresh Site');
+    await dialog.getByTestId('onboard-project-repository-owner').fill('my-org');
+    await dialog.getByTestId('onboard-project-repository-name').fill('fresh-site');
+    await dialog.getByTestId('onboard-project-repository-visibility').selectOption('public');
+    await dialog.getByTestId('onboard-project-repository-template').selectOption('container-service');
+    await expect(dialog.getByTestId('onboard-project-submit')).toBeEnabled();
+    for (const theme of ['dark', 'light'] satisfies Theme[]) {
+      await setTheme(page, theme);
+      await dialog.screenshot({ path: join(results, `onboarding-new-repository-${theme}--mocked.png`) });
+    }
+    await dialog.getByTestId('onboard-project-submit').click();
+    await expect.poll(() => submitted).not.toBeNull();
+    expect(submitted).toMatchObject({
+      createRepository: {
+        owner: 'my-org', name: 'fresh-site', visibility: 'public', template: 'container-service',
+      },
+    });
+    expect(submitted).not.toHaveProperty('repositoryPath');
+    expect(submitted).not.toHaveProperty('repositoryUrl');
+  });
+
   test('invalid short code, local paths, and repository URL show field errors', async ({ page }) => {
     const dialog = await openOnboarding(page);
     await dialog.getByTestId('onboard-project-display-name').fill('Quality Studio');
