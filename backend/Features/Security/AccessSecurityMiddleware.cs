@@ -214,6 +214,8 @@ public sealed class AccessSecurityMiddleware
 
     private static string? RequiredRunnerScope(string method, string path)
     {
+        if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
         // The replay ingest sits above the general runner routes because its

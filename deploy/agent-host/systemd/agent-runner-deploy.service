@@ -1,0 +1,16 @@
+[Unit]
+Description=Agent Studio deploy host
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/agent-runner/deploy.env
+ExecStart=/opt/agent-host/agent-host deploy-loop ${RUNNER_SERVER_URL} ${RUNNER_HOSTNAME} ${RUNNER_AUTH_TOKEN_FILE} ${DEPLOY_ARTIFACT_STORE} ${DEPLOY_SECRET_STORE}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

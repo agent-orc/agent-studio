@@ -47,6 +47,7 @@ public static class RunnerScopes
     public const string Events = "runner.events";
     public const string Artifacts = "runner.artifacts";
     public const string Completion = "runner.completion";
+    public const string Deploy = "runner.deploy";
 
     /// <summary>
     /// The public-demo replay scope. It admits nothing but pre-signed simulated
@@ -57,10 +58,10 @@ public static class RunnerScopes
     public const string DemoReplay = "demo.replay";
 
     public static readonly string[] Minimum = [Claim, Lease, Logs, Events, Artifacts, Completion];
-    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration], StringComparer.Ordinal);
+    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy], StringComparer.Ordinal);
 
     /// <summary>A replay credential is never also an execution credential.</summary>
-    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration;
+    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy;
 }
 
 public sealed record StudioUser
