@@ -32,6 +32,14 @@ internal static class StudioTaskReviewEndpoints
         var tasks = app.MapGroup("/api/v1/projects/{projectId}/tasks/{taskIdentity}")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
 
+        tasks.MapPost("/preview-comments", async (
+            string projectId, string taskIdentity, HttpContext context,
+            StudioPreviewCommentRequest request, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(
+                () => store.AppendStudioPreviewCommentAsync(projectId, taskIdentity, request,
+                    TaskServerEndpoints.Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
         tasks.MapPost("/code-review", async (
             string projectId,
             string taskIdentity,

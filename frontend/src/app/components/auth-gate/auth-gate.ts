@@ -14,6 +14,7 @@ export { AuthService } from '../../services/auth.service';
 })
 export class AuthGateComponent {
   readonly auth = inject(AuthService);
+  readonly inviteToken = new URLSearchParams(window.location.search).get('invite');
   username = '';
   displayName = '';
   password = '';
@@ -26,13 +27,18 @@ export class AuthGateComponent {
     const status = this.auth.status();
     this.submitting.set(true);
     this.error.set('');
-    const request: Observable<unknown> = status?.bootstrapRequired
+    const request: Observable<unknown> = this.inviteToken
+      ? this.auth.acceptInvitation(this.inviteToken, this.newPassword)
+      : status?.bootstrapRequired
       ? this.auth.bootstrap(this.username, this.password, this.displayName, this.bootstrapCode)
       : status?.user?.mustChangePassword
         ? this.auth.changePassword(this.password, this.newPassword)
         : this.auth.login(this.username, this.password);
     request.subscribe({
-      next: () => { this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.submitting.set(false); },
+      next: () => {
+        if (this.inviteToken) window.history.replaceState(null, '', window.location.pathname);
+        this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.submitting.set(false);
+      },
       error: (error: HttpErrorResponse) => {
         this.error.set(error?.error?.message ?? 'Sign-in failed.');
         this.submitting.set(false);
