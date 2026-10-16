@@ -112,6 +112,20 @@ describe('buildEnvironmentMap', () => {
     expect(ambiguous.map(node => node.repositoryAccess)).toEqual(['unknown', 'unknown']);
   });
 
+  it('does not assign a review credential on the gate machine to gate slots', () => {
+    const gateInventory: CredentialInventory = { ...inventory, items: [
+      { ...repositoryItem('KORI', 'read'), scopes: ['review:repository-read:github.com/team/repo'] },
+    ] };
+    const gateAccess = (items: CredentialInventory['items']) => buildEnvironmentMap(
+      groups, snapshot, () => 0, { ...gateInventory, items },
+    ).machines.find(machine => machine.name === 'KORI')?.nodes.find(node => node.id === 'gate')?.repositoryAccess;
+    expect(gateAccess(gateInventory.items)).toBe('no access');
+    expect(gateAccess([...gateInventory.items,
+      { ...repositoryItem('KORI', 'write'), id: 'gate-write', scopes: ['gate:bundles'] },
+    ])).toBe('writes');
+    expect(gateAccess([repositoryItem('KORI', 'read')])).toBe('unknown');
+  });
+
   it('requires configured or observed claim evidence and uses observed health', () => {
     const withoutEvidence = buildEnvironmentMap(groups, null, () => 0);
     expect(withoutEvidence.connections.some(connection => connection.type === 'outbound claim link')).toBe(false);

@@ -132,7 +132,7 @@ export function buildEnvironmentMap(
     const gateNode: EnvironmentNode = { id: 'gate', label: 'Gate slots', role: 'gate', health: unknown,
       capacity: snapshot.gateSlots ? `${snapshot.gateSlots.busy}/${snapshot.gateSlots.total} slots` : unknown,
       version: unknown, drift: unknown, lastContact: unknown,
-      repositoryAccess: access([snapshot.gateHost], inventory), hostId: null };
+      repositoryAccess: access([snapshot.gateHost], inventory, 'gate', snapshot.gateHost), hostId: null };
     if (existing) machines.splice(machines.indexOf(existing), 1, { ...existing, nodes: [...existing.nodes, gateNode] });
     else machines.push({ id: `gate:${snapshot.gateHost}`, name: snapshot.gateHost, nodes: [gateNode] });
     connections.push({ id: 'gate-transport', from: controlId, to: existing?.id ?? `gate:${snapshot.gateHost}`,
