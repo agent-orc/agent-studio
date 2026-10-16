@@ -18,6 +18,12 @@ if (args is ["--remote-build-test-gate-worker", var remoteGateRequest])
     return;
 }
 
+if (args is ["--pull-build-test-gate-worker", var serverUrl])
+{
+    Environment.ExitCode = await AgentStudio.Pipeline.PullGateDaemon.RunAsync(serverUrl);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -431,6 +437,10 @@ builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<ProjectCycleTimeService>();
 builder.Services.AddSingleton<ProjectVisualEvidenceService>();
 builder.Services.AddSingleton<ProjectGraphDiscoveryService>();
@@ -855,7 +865,9 @@ builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
         client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ConventionalGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();

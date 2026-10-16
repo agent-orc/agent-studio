@@ -464,7 +464,28 @@ fences, or publish a new source ref. The existing backend merge, rollback and
 publication owner remains in place; only verification executes remotely. The
 Task Server gate protocol remains the target for admission of these subjects.
 
-Operator configuration uses `RemoteGate:SshHost` and an absolute
+The outbound pull worker uses an exclusively scoped `gate.execute` Runner
+credential and starts the release-pinned backend binary with
+`--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
+on that host. The worker registers, claims from `/api/pull-gates`, downloads
+the exact source bundle, heartbeats its lease, streams progress through those
+heartbeats, and uploads the result and files from its `artifacts/` run folder.
+The server refuses uploads after lease expiry or replacement. Completed
+artifacts are listed at `/api/gate-artifacts/{runId}` and fetched from
+`/api/gate-artifacts/{runId}/{name}` on Studio; the gate result carries
+`serverArtifactRunId`. Verify commands can write files to the
+`AGENTSTUDIO_GATE_ARTIFACT_DIR` environment variable.
+Deploy and launcher automation can use `scripts/fetch-gate-artifact.sh`
+with a `runner.artifacts` credential to download a named artifact through
+Studio; it never addresses the gate host.
+The server's `RemoteGate:HostCapacity:{runnerId}:Slots` and
+`ProcessorCount` values control each host, falling back to
+`RemoteGate:GateSlots` and `RemoteGate:ProcessorCount`. A healthy registered
+worker is selected by convention; SSH remains as the transition fallback
+until the pull path passes a soak, then a follow-up removes SSH.
+No transport-selection setting is required.
+
+The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
 the remote host. Environment variables use double underscores, for example
 `RemoteGate__SshHost` and `RemoteGate__WorkerPath`. Optional

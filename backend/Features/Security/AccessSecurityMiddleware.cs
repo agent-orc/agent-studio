@@ -239,6 +239,11 @@ public sealed class AccessSecurityMiddleware
 
     private static string? RequiredRunnerScope(string method, string path)
     {
+        if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Gate;
+        if (HttpMethods.IsGet(method)
+            && path.StartsWith("/api/gate-artifacts/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Artifacts;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
         // Keep the versioned client surface explicit. A service credential must

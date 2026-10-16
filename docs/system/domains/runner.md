@@ -69,6 +69,15 @@ Setup: [Scheduled coverage run](../../operations/setup/linux-runner-host.md#sche
 
 ### Claimable gate host and Task API
 
+The build/test integration gate also has an outbound pull worker in the
+backend release binary. It is separate from the review gate subject daemon
+below. Enroll a Runner credential with only `gate.execute`, set
+`GATE_WORKER_TOKEN`, and start
+`dotnet OrchestratorApi.dll --pull-build-test-gate-worker https://studio.example`.
+The worker needs only outbound HTTPS to Studio. The server owns per-host
+capacity and keeps bundles, results, and uploaded release files in its
+instance-scoped artifact store.
+
 `RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
 Use a stable `RUNNER_ID`, a unique runner instance, the normal Task Server URL
 and runner credential with `tasks:read`, `runs:write`, `reviews:claim`, and
