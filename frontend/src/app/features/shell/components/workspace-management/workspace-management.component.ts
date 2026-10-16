@@ -21,16 +21,14 @@ import { SectionHeaderComponent } from '../../../../components/section-header/se
 import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
-
+import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
 interface WorkspaceProjectDragData {
   projectId: string;
   sourceWorkspaceId: string | null;
 }
-
 interface WorkspaceManagementRow extends RegistryWorkspaceListItem {
   synthetic?: 'unassigned';
 }
-
 /**
  * AGT-2035 — Workspace management, extracted from the studio-shell sidebar
  * "Settings" panel into a standalone section of the consolidated
@@ -47,17 +45,17 @@ interface WorkspaceManagementRow extends RegistryWorkspaceListItem {
 @Component({
   selector: 'app-workspace-management',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, FormsModule, TooltipDirective, SectionHeaderComponent, MenuComponent, WorkspaceQuotaComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-management.component.html',
   styleUrl: './workspace-management.component.scss',
 })
 export class WorkspaceManagementComponent implements OnInit {
+  readonly activeQuotaWorkspaceId = signal<string | null>(null);
   private readonly jobService = inject(TaskService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly projectLookup = inject(ProjectLookupService);
   readonly wsSettings = inject(WorkspaceSettingsService);
-
   readonly registryWorkspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
   readonly registryProjects = signal<readonly RegistryProjectSummary[]>([]);
   readonly registryWorkspacesLoading = signal(false);
@@ -69,7 +67,6 @@ export class WorkspaceManagementComponent implements OnInit {
   readonly projectMoveMenuAnchor = signal<HTMLElement | null>(null);
   /** Toggle whether archived projects are shown. Off by default. */
   readonly showArchivedProjects = signal(false);
-
   readonly workspaceRows = computed<readonly WorkspaceManagementRow[]>(() => {
     const workspaces = this.registryWorkspaces();
     const assignedIds = new Set(workspaces.flatMap(workspace => workspace.projects.map(project => project.id)));
@@ -89,7 +86,6 @@ export class WorkspaceManagementComponent implements OnInit {
       },
     ];
   });
-
   readonly workspaceEnterPredicate = (
     drag: CdkDrag<WorkspaceProjectDragData>,
     drop: CdkDropList<WorkspaceManagementRow>,

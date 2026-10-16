@@ -1,0 +1,53 @@
+<section class="workspace-quota" data-testid="workspace-quota" [attr.data-status]="snapshot()?.status">
+  <header class="workspace-quota__header">
+    <h3>{{ projectId() ? 'Project quota' : 'Workspace quota' }}</h3>
+    @if (snapshot(); as quota) {
+      <span class="workspace-quota__state">{{ quota.overrideActive ? 'Owner override active' : quota.status }}</span>
+    }
+  </header>
+  @if (error(); as problem) { <p role="alert">{{ problem }}</p> }
+  @if (snapshot(); as quota) {
+    <p>Current UTC week ends {{ quota.weekEndUtc | slice:0:10 }}. {{ quota.message }}</p>
+    @if (!quota.meterComplete) { <p role="status">Some usage records are unavailable. Admission waits for the meter.</p> }
+    <div class="workspace-quota__metrics">
+      <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used
+        @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) { / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
+        <small>{{ quota.usage.modelCostUsd | currency:'USD' }} at catalogue prices</small></div>
+      <div><strong>{{ quota.usage.computeCoreHours | number:'1.0-2' }}</strong> core hours used
+        @if (quota.limits?.computeCoreHoursPerWeek !== null && quota.limits?.computeCoreHoursPerWeek !== undefined) { / {{ quota.limits?.computeCoreHoursPerWeek }} limit, {{ quota.remaining.computeCoreHours | number:'1.0-2' }} left }</div>
+      <div><strong>{{ quota.usage.hostingSlots }}</strong> running environments
+        @if (quota.limits?.hostingSlots !== null && quota.limits?.hostingSlots !== undefined) { / {{ quota.limits?.hostingSlots }} slots, {{ quota.remaining.hostingSlots }} left }</div>
+    </div>
+    <details>
+      <summary>Daily trend and biggest consumers</summary>
+      <div class="workspace-quota__trend">
+        @for (day of quota.dailyTrend; track $index) {
+          <span>Day {{ $index + 1 }}: {{ day.modelTokens | number }} tokens, {{ day.computeCoreHours | number:'1.0-2' }} core hours</span>
+        }
+      </div>
+      <ul>
+        @for (project of quota.biggestProjects; track project.projectId) {
+          <li>{{ project.project }}: {{ project.modelTokens | number }} tokens, {{ project.computeCoreHours | number:'1.0-2' }} core hours</li>
+        }
+        @for (consumer of quota.biggestConsumers; track consumer.projectId + '/' + consumer.cardId) {
+          <li>{{ consumer.project }} @if (consumer.cardId) { · {{ consumer.cardId }} }:
+            {{ consumer.modelTokens | number }} tokens, {{ consumer.computeCoreHours | number:'1.0-2' }} core hours</li>
+        }
+      </ul>
+    </details>
+  }
+  @if (canEdit()) {
+    <div class="workspace-quota__editor">
+      <label>Tokens per week <input type="number" min="0" [ngModel]="limits().modelTokensPerWeek" (ngModelChange)="update('modelTokensPerWeek', $event)" /></label>
+      <label>Core hours per week <input type="number" min="0" step="0.01" [ngModel]="limits().computeCoreHoursPerWeek" (ngModelChange)="update('computeCoreHoursPerWeek', $event)" /></label>
+      <label>Hosting slots <input type="number" min="0" [ngModel]="limits().hostingSlots" (ngModelChange)="update('hostingSlots', $event)" /></label>
+      <button type="button" [disabled]="saving()" (click)="save()">Save quota</button>
+    </div>
+    @if (snapshot()?.status === 'blocked' && !snapshot()?.overrideActive) {
+      <div class="workspace-quota__override">
+        <label>Override reason <input [ngModel]="overrideReason()" (ngModelChange)="overrideReason.set($event)" /></label>
+        <button type="button" [disabled]="saving() || !overrideReason().trim()" (click)="override()">Override until week end</button>
+      </div>
+    }
+  }
+</section>

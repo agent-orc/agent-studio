@@ -85,6 +85,9 @@
     }
   </h3>
   <app-task-live-status [task]="job()" [dense]="compact()" /> @if (job().betterCandidates; as note) { <app-better-candidate-lines class="task-card__better-candidates" [note]="note" prefix="" /> }
+  @if (showWorkspaceQuotaMessage() && workspaceQuotaMessage(); as quotaMessage) {
+    <p class="task-card__quota-notice" role="status" data-testid="task-card-workspace-quota">{{ quotaMessage }}</p>
+  }
   @if (job().state === '2-ready' && job().needsInput; as needsInput) {
     <section class="task-card__needs-input" data-testid="ready-needs-input" aria-label="Queued agent question">
       <strong>Waiting to steer</strong>

@@ -36,18 +36,16 @@ import { ProjectBuildProfileContradictionNoticeComponent } from '../project-buil
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 import { BatchSettingsComponent } from '../../../batch-gate/batch-settings/batch-settings';
-
+import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
 const STORAGE_DEFAULT_THINKING_PREFIX = 'defaultThinkingLevel:';
-
 interface CapSummaryRow {
   cliType: CliType;
   label: string;
   icon: string;
   windows: { windowLabel: string; capPct: number }[];
 }
-
 /** ADR-0026 autonomy stops, shared with the per-project slider labels. */
 const AUTONOMY_STOPS: readonly { level: number; name: string }[] = [
   { level: 0, name: 'Manual' },
@@ -56,14 +54,12 @@ const AUTONOMY_STOPS: readonly { level: number; name: string }[] = [
   { level: 3, name: 'Confident' },
   { level: 4, name: 'Fully auto' },
 ];
-
 interface ProjectSummaryLite {
   id: string;
   displayName: string;
   workspaceId: string;
   wikiSourceBranch?: string | null;
 }
-
 interface WorkspaceListItemLite {
   id: string;
   displayName: string;
@@ -105,6 +101,7 @@ interface WorkspaceListItemLite {
     RetentionRulesTableComponent,
     ProjectExecutionDefinitionComponent,
     BatchSettingsComponent,
+    WorkspaceQuotaComponent,
   ],
   templateUrl: './project-settings-panel.component.html',
   styleUrl: './project-settings-panel.component.scss',
