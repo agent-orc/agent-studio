@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamic placement: work containers by load | Concept Dossier</title>
+<style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .label { fill: var(--article-ink); font-size: 16px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 13px; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision p { margin-bottom: 8px; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; background: var(--article-link-soft); color: var(--article-link); font: 700 0.7rem/1.5 var(--article-sans); }
+</style></head>
+<body><main class="article">
+<header class="page"><p class="kicker">Concept Dossier · AGT-3171 · 16 October 2026</p>
+<h1>Dynamic placement: work containers by load</h1>
+<p class="lede">One host agent admits eligible coding, review, gate and post work against one host budget. Each Linux work item can get a fresh bounded container; Windows keeps an isolated process executor. Claim authority and fenced publication remain with the Task Server.</p>
+<div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Scope</b> Placement, execution and attempt credentials</span></div></header>
+<nav class="contents" aria-label="Contents"><a href="#context">Context</a> · <a href="#placement">Placement</a> · <a href="#execution">Execution</a> · <a href="#post-work">Post work</a> · <a href="#credentials">Credentials</a> · <a href="#visibility">Visibility</a> · <a href="#comparison">Comparison</a> · <a href="#slices">Slices</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a></nav>
+<section id="context"><h2>Context</h2>
+<p>Robert asked on 16 October for coding slots, review containers and gates to move where load leaves room, with containers created for work. The current code already gives coding and review separate pulling daemons. It also contains a pulling gate daemon, but the batch gate defaults to the SSH bridge; the claimed path is opt in and rejects a configured remote Task Server because batch member IDs belong to the monolith. Thus “gates are pushed” accurately describes the default batch path, not every implemented path. The operator brief reports one coding runner and a review service on agent-runner-01, three long lived review containers on KORI, and kori-gate. That exact deployment count is operator supplied and is not derivable from source code. <a href="#evidence">Source evidence</a> separates the code facts.</p>
+<figure class="media-breakout"><svg class="diagram" viewBox="0 0 1120 395" role="img" aria-labelledby="today-title today-desc"><title id="today-title">Current mixed placement, reported deployment and verified code paths</title><desc id="today-desc">The monolith has separate coding and review pull paths. The batch gate defaults to an SSH push bridge, while an opt-in gate daemon can pull a claim. Operator reported agent-runner-01 and KORI units are shown as reported rather than proven deployment inventory.</desc><defs><marker id="today-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="var(--article-link)"/></marker></defs>
+<rect class="focus" x="20" y="45" width="270" height="240" rx="10"/><text class="label" x="38" y="76">Monolith / Task Server</text><text class="sub" x="38" y="105">Coding and review claims</text><text class="sub" x="38" y="130">Batch gate default: SSH bridge</text><text class="sub" x="38" y="155">Claimed gate: opt in</text><text class="sub" x="38" y="180">Lease, fence, attempt authority</text>
+<rect class="node" x="405" y="30" width="295" height="155" rx="10"/><text class="label" x="423" y="61">agent-runner-01</text><text class="sub" x="423" y="88">Coding daemon → detached workers</text><text class="sub" x="423" y="111">Review daemon → review workers</text><text class="sub" x="423" y="134">Per-worker cgroups</text><text class="sub" x="423" y="158">Deployment: operator report</text>
+<rect class="node" x="405" y="220" width="295" height="130" rx="10"/><text class="label" x="423" y="251">KORI VM</text><text class="sub" x="423" y="278">Three long lived review containers</text><text class="sub" x="423" y="301">Own login and home per container</text><text class="sub" x="423" y="325">Deployment: operator report</text>
+<rect class="node" x="815" y="130" width="280" height="140" rx="10"/><text class="label" x="833" y="161">kori-gate</text><text class="sub" x="833" y="189">SSH bundle + checksum</text><text class="sub" x="833" y="213">Fixed RemoteGate:GateSlots</text><text class="sub" x="833" y="237">Deployment: operator report</text>
+<path class="edge" d="M290 92 H397 M290 260 H398 M290 178 C520 200 680 122 808 181" marker-end="url(#today-arrow)"/><text class="sub" x="316" y="72">pull</text><text class="sub" x="310" y="243">pull</text><text class="sub" x="715" y="143">push</text></svg><figcaption>Current code paths and operator reported placement, as of 16 October 2026. The diagram does not certify the live machine inventory.</figcaption></figure></section>
+<section id="placement"><h2>Placement</h2>
+<p><b>Proposed.</b> A host advertises role, OS and architecture, executor support, toolchain digest, provider account binding and tested repository access. A claim is eligible only when all hard requirements match, the host has a fresh budget version and a free grant, and the authority can atomically lease the item. Warm repository mirrors are a soft preference: an eligible warm host may claim within a short bounded preference window, after which a cold eligible host may take the item. Queue age prevents cache affinity from starving work. The response records the matched capabilities, grant, host, lease, fence and authority epoch. A stale or mismatched acknowledgement denies a new claim; existing work keeps its grant.</p>
+<p>One supervised host agent owns role advertisements, admission and executor lifecycle on each machine. It multiplexes coding, review, gate and post claims while each claimed attempt retains its own state, heartbeat and fenced report. It is a new host component; today the code has role-specific daemons. Migration starts by adding a host inventory identity and a shadow admission view, then moves one role at a time. A role daemon stops taking new claims and drains its running attempts before the host agent enables that role. Its persisted attempt state is reconciled with authority before removal; an active attempt is never silently handed to a second executor.</p>
+<figure class="media-breakout"><svg class="diagram" viewBox="0 0 1120 405" role="img" aria-labelledby="target-title target-desc"><title id="target-title">Proposed pull placement with one host agent per machine</title><desc id="target-desc">Task Server owns queues, attempt authority, credential broker and one versioned host budget. Linux and Windows host agents pull eligible work. Linux creates a short lived work container per claim, while Windows starts an isolated process in a worktree. Both report fenced results and return grants.</desc><defs><marker id="target-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="var(--article-link)"/></marker></defs>
+<rect class="focus" x="20" y="58" width="315" height="258" rx="10"/><text class="label" x="38" y="88">Task Server authority</text><text class="sub" x="38" y="115">Coding · Review · Gate · Post queues</text><text class="sub" x="38" y="140">Lease + fence + attempt identity</text><text class="sub" x="38" y="165">Versioned host budget</text><text class="sub" x="38" y="190">Attempt credential broker</text><text class="sub" x="38" y="215">Bundle/artifact endpoint</text><text class="sub" x="38" y="247">Publication stays server owned</text>
+<rect class="node" x="450" y="25" width="300" height="172" rx="10"/><text class="label" x="468" y="55">Linux host agent</text><text class="sub" x="468" y="82">Probe + pull + reserve grant</text><text class="sub" x="468" y="107">Fresh container per attempt</text><text class="sub" x="468" y="132">Role image + bounded CPU/memory</text><text class="sub" x="468" y="157">Tmpfs secrets + cache volumes</text><text class="sub" x="468" y="180">Clean up after fenced report</text>
+<rect class="node" x="450" y="226" width="300" height="145" rx="10"/><text class="label" x="468" y="256">Windows host agent</text><text class="sub" x="468" y="283">Probe + pull + reserve grant</text><text class="sub" x="468" y="308">Process in isolated worktree</text><text class="sub" x="468" y="333">Job Object limits; file ACLs</text>
+<rect class="node" x="845" y="119" width="250" height="160" rx="10"/><text class="label" x="863" y="149">Attempt evidence</text><text class="sub" x="863" y="177">Exact SHA and digest</text><text class="sub" x="863" y="202">Logs, result and cleanup</text><text class="sub" x="863" y="227">Fenced completion</text><text class="sub" x="863" y="252">Grant released</text>
+<path class="edge" d="M450 105 H343 M450 298 H343 M750 120 H838 M750 296 C805 296 810 246 838 246" marker-end="url(#target-arrow)"/><text class="sub" x="363" y="87">claim</text><text class="sub" x="363" y="278">claim</text></svg><figcaption>Proposed architecture. Arrows from agents to authority are pull claims. The Windows process path preserves Docker as optional.</figcaption></figure></section>
+<section id="execution"><h2>Execution</h2>
+<p><b>Linux executor.</b> Prefer a fresh rootless Podman or Docker container per work item behind one host agent. Pin signed role image digests for coding, review and gate workloads; build and publish through the existing release pipeline and retain the previous digest for rollback. Start as a non-root user with a read-only base filesystem, no host Docker socket, a writable attempt volume, CPU and memory limits no larger than the reserved host grant, and a process count limit. Mount versioned npm and NuGet caches and repository mirrors separately from the writable worktree. Caches are performance data: verify the exact fetched SHA and clear or quarantine corrupt entries. Never mount a host provider home or central secret into a work container. Persist logs and evidence before removing the container and its tmpfs secret mount. Reconcile orphaned containers by attempt ID and fence after a host restart.</p>
+<p>The existing <a href="../fluid-capacity/index.html">AGT-3019 allocator</a> is the proposed admission core. Containers replace the per-worker cgroup as the Linux enforcement unit, but do not create a second capacity store. The host agent reserves half-core grants atomically across roles, applies CPU quota and memory floors at launch, and reports observed limits and throttling. The allocator's pending decision remains a dependency; its 6 October gate timings are a baseline, not evidence of container overhead. Measure p50 and p90 time from grant to first command, image pull, cache hit, cold repository materialization, CPU time and gate wall time against the current process executor. The canary may keep process execution if container start cost or tool compatibility fails its recorded threshold.</p>
+<p><b>Windows executor.</b> Keep process execution in a per-attempt worktree with an isolated process tree, Job Object limits and an ACL protected attempt credential directory. It advertises Windows toolchains and never claims Linux-only work. Docker is optional per the 12 September decision. Windows has no Linux tmpfs guarantee; the host adapter writes the shortest-lived files under an ACL protected encrypted volume and deletes them after use. This is a platform-specific exception to the Linux tmpfs requirement, visible in the credential inventory.</p>
+<p><b>Gate conversion.</b> Extend the existing gate claim protocol to every merge, promotion and batch verification gate. The gate subject carries exact SHA, policy digest, bundle digest and immutable bundle artifact locator. The host downloads the bundle from the Task Server, verifies size and checksum, then verifies HEAD before execution. Claim slots become host grant reservations backed by the same allocator; per-branch merge/rollback and ordered publication stay in the existing authority. During migration, SSH transport remains a compatibility mode only for work already dispatched or installations without an enrolled gate agent. The API-side <code>GateSlotUsageTracker</code> remains a compatibility projection until all gate paths report claimed occupancy; it does not become a second scheduler. Batch gate's current <code>BatchGate:Execution=claimed</code> cannot use a remote Task Server in its present form, so that identity boundary must be resolved before the bridge default can be retired.</p></section>
+<section id="post-work"><h2>Post work</h2>
+<p><b>Current path, as of 16 October 2026.</b> On the progress-to-auto-review transition, <a href="../../backend/Features/Tasks/TaskTransitionService.cs"><code>TaskTransitionService.EnqueueAutoReviewPostProcessing</code></a> writes a request into the backend's <a href="../../backend/Features/Runner/AutoReviewPostProcessingQueue.cs"><code>AutoReviewPostProcessingQueue</code></a>. The queue is an in-memory channel; <code>AutoReviewPostProcessingWorker</code> drains it under a local concurrency semaphore and calls <a href="../../backend/Features/Runner/ReviewDecisionOrchestrator.cs"><code>ReviewDecisionOrchestrator.ProcessCardAsync</code></a>. That orchestrator runs the card's ordered post steps, reads local task and repository evidence, and applies review and lane decisions. The durable card remains in <code>4-auto-review</code>, but the queue entry is not a durable claim. <a href="../../backend/Features/Runner/AutoReviewPostProcessingRecoveryService.cs"><code>AutoReviewPostProcessingRecoveryService</code></a> scans that lane after restart and re-enqueues unfinished cards. This is backend-local work and capacity, even when earlier coding or review ran on a remote host.</p>
+<p><b>Claimable target.</b> The Task Server persists a versioned post-work plan for each card and exposes ready host-capable steps as claimable items. Each item names its project, card, run or review subject, step ID, predecessor results, exact result SHA or immutable input bundle, artifact hashes, policy and model plan digests, required capabilities, resource class and deadline. The host agent uses the same eligibility, versioned host grant, lease, fence and authority epoch as coding, review and gates. It materializes an isolated checkout or checked bundle, executes only the claimed step, and reports typed output, artifact hashes, usage and cleanup proof under the fence. The Task Server records completion idempotently, releases the grant, and makes a successor ready only after the required result is accepted. Queue age and the shared host budget govern admission.</p>
+<p>Step execution and decision authority remain separate. Checkout-bound model, build, lint, aspect and analysis work can move to host executors using the existing Review and Gate subject contracts where they fit. Completeness policy, retry budgets, lane transitions, task creation and publication remain Task Server decisions or commands. Workspace-wide drift and repository-writing post steps need the snapshot and fenced repository-write contracts described in <a href="../operations/remote-task-server-local-studio.md">the post-step dependency map</a> before they can move; they must not gain a remote claim merely because the card has a post-work plan. A plan can therefore contain host claims and server-owned steps without granting the host task-state authority.</p>
+<p><b>Migration.</b> First persist the plan and step outcomes alongside the legacy queue path, using the current <code>4-auto-review</code> card and pipeline log as reconciliation inputs. Shadow the proposed ready set and host eligibility without admitting claims. Then enable one host-capable step kind per project: stop new legacy dispatch for that kind, let in-flight backend calls finish or reconcile their outcome under one item key, and only then expose pending items to host claims. On restart, rebuild readiness from durable plan and outcome records rather than channel entries; the legacy recovery sweep remains only for unmigrated kinds. Compare verdict, artifact and lane outcomes across both paths. Retain a scoped rollback switch until the canary proves no duplicate step execution, no stale-fence report, and bounded recovery after host or backend loss.</p></section>
+<section id="credentials"><h2>Credentials</h2>
+<p><b>Proposed identity.</b> Mint a short-lived work identity bound to host, role, task or subject, attempt ID, lease ID, fence and authority epoch. Renew only after a successful lease renewal; revoke and stop secret delivery on lease loss. The host agent receives a one-use exchange capability, obtains a role-scoped material set and writes it as mode-restricted files into a Linux tmpfs mount. The work container receives file paths, never secret values in environment variables or command arguments. Git reads through an isolated credential helper that reads the file only for the clone, fetch or approved write command. Logs, traces, artifacts and crash dumps redact or exclude the files. A teardown revokes tokens where the issuer supports revocation, deletes the mount and records a receipt. Expiry remains a backstop if immediate revocation fails.</p>
+<p>Root secrets stay outside work containers. For a single-user installation, recommend one encrypted Task Server store protected by a local wrapping key and backed up with the installation recovery set; for a team or an installation with an existing vault, use an adapter to Vault, 1Password or Azure Key Vault. Store only root material and issuance metadata there. For reading roles, prefer checksummed server-supplied source and evidence bundles as the 16 October operator draft proposes; when a repository fetch is required, mint a read-only GitHub App installation token for that repository. Issue write permission only to the server-owned publication step. GitHub documents repository and permission narrowing, one-hour expiry and revocation. Reissue a token while its attempt lease remains valid; do not let an expired token silently turn a gate into an infrastructure failure. A server-side publication token never enters the work container.</p>
+<p>Borrow the Kubernetes pattern of projected, rotating workload identity, not its Secret object as an implicit security boundary. Kubernetes recommends encryption at rest and least-privilege RBAC; Linux Secret volumes are memory backed, while Windows Secret data reaches node storage. The proposed broker must enforce these controls itself on non-Kubernetes hosts.</p>
+<p><b>Provider accounts.</b> The current dossier chooses host custody and native CLI refresh, and the setup guide warns that copied Codex credential files may share refresh-token lineage and lose validity after another login. Concurrent container safety for one Claude setup-token or one Codex login file is <strong>unproved</strong>. Before sharing either account, run two concurrent isolated containers through a refresh boundary and a third canary after refresh, with a redacted token-generation log and no copied operator login. If either provider invalidates peers, use one login holder per account that serializes refresh and lends attempt-scoped access where its terms and CLI allow; otherwise provision separate accounts or approved API keys per concurrent slot. Never copy a writable login file into multiple containers as an assumed solution. This decision is a rollout gate, not a request for a secret in this concept task.</p></section>
+<section id="visibility"><h2>Visibility</h2><p><b>Planned for AGT-3169.</b> The Environment view groups all active attempt containers and Windows process executors below one physical host. Each row shows role, project or subject, attempt ID and fence, image or process profile, admitted CPU and memory, cache state, start age, lease status, cleanup state and the reason a queued item cannot claim. The host row shows one grant total and per-role occupancy; a finished container leaves active occupancy but keeps its receipt in attempt history. A stale lease, failed cleanup or orphaned container is an acute finding rather than a permanent host row.</p><p><b>Planned for AGT-3170.</b> Credential inventory shows a root credential or provider account as a protected binding and each attempt credential as a short-lived child: issuer, role, repository scope, host, attempt, expiry, refresh state, storage mode and revocation receipt. Values, token prefixes and file contents are never returned. The view distinguishes a shared provider account from the number of concurrent attempts using it and flags a failed concurrency proof. Both projections read the same attempt, grant and secret-issuance events, so a container cannot disappear from one view while its live credential appears healthy in the other.</p></section>
+<section id="comparison"><h2>Comparison</h2>
+<p>These are architecture comparisons, not measured install costs. Operational cost is stated as components and duties because no installation benchmark or price sheet was supplied.</p>
+<table><thead><tr><th>Model</th><th>Single-user installation</th><th>Team installation</th><th>Lease, fence and Windows fit</th></tr></thead><tbody>
+<tr><td>Host agent, pull, local executor <span class="tag">Recommended</span></td><td>One agent per machine plus existing Task Server; install container runtime only on Linux hosts that opt in.</td><td>Add hosts, image registry and secret adapter; one authority still owns attempts and budget versions.</td><td>Existing lease/fence contract remains direct. Native Windows process executor.</td></tr>
+<tr><td>k3s / Kubernetes Jobs</td><td>Add cluster control plane, CNI, storage, ingress, image registry access, upgrades and recovery for a small fleet.</td><td>Useful if a team already operates a cluster; namespace, quota and Jobs provide lifecycle and placement primitives.</td><td>Job UID/Pod UID are execution IDs, not attempt authority. Put attempt/fence in labels and report checks; terminate stale Jobs. Windows node support must be validated for the chosen k3s distribution and cannot provide Linux tmpfs semantics.</td></tr>
+<tr><td>Nomad</td><td>Add Nomad server and clients, ACL/TLS, backups and driver operations.</td><td>Constraint scheduling, allocations and Docker/exec drivers fit a mixed fleet; team operates server quorum and client upgrades.</td><td>Allocation ID maps to attempt executor, while Task Server lease/fence still gates report and publication. Windows raw exec is available but provides no filesystem isolation.</td></tr>
+<tr><td>GitLab Runner</td><td>Add GitLab Runner manager and CI job translation; autoscaler also needs cloud instance group and plugin.</td><td>Strong CI queue and Docker/Kubernetes executors, but application-specific attempt and publication semantics need an adapter.</td><td>GitLab job ID cannot replace the Task Server fence. Windows autoscaler examples exist; platform image and shell need validation.</td></tr>
+<tr><td>Buildkite</td><td>Add Buildkite service account, agent configuration and hosted service dependency; AWS elastic stack adds ASG, Lambda and CloudWatch.</td><td>Queues and agent tags route work; warm-cache-aware routing is documented.</td><td>Buildkite job lifecycle still needs an attempt adapter. Linux and Windows agent infrastructure are supported.</td></tr>
+<tr><td>GitHub Actions</td><td>Add workflow translation and GitHub dependency; ephemeral self-hosted runners need provisioning and log export.</td><td>ARC can autoscale in an existing Kubernetes team; scale set client permits custom infrastructure.</td><td>Workflow job assignment is outside Task Server attempt authority. Windows self-hosted runners are supported, but ARC's Kubernetes path is an additional platform.</td></tr>
+</tbody></table>
+<p><b>Later option.</b> If a team already has Kubernetes, let the host agent create a Job in that cluster for a claimed attempt, with request/limit from the same grant, labels for attempt and fence, a projected credential source, and TTL cleanup. The Task Server remains the only claimant and publication authority; a pending or rescheduled Pod does not mint another attempt. This is an executor adapter, not a replacement scheduler. Kubernetes Jobs and projected service-account tokens provide the lifecycle pieces; cluster operations remain the team's responsibility.</p></section>
+<section id="slices"><h2>Slices</h2>
+<table><thead><tr><th>Slice</th><th>Delivery</th><th>Measurable acceptance</th></tr></thead><tbody>
+<tr><td>S1 · Host identity and shadow placement</td><td>One physical-host record, role/OS/toolchain/provider/repo capabilities, eligibility reasons and warm-cache hint.</td><td>Mixed Linux/Windows fixtures reject every hard mismatch; warm preference expires within a configured bound; 100 concurrent claim attempts never admit two holders for one item.</td></tr>
+<tr><td>S2 · One host agent</td><td>Supervise coding and review role adapters, drain old daemons, recover persisted attempts.</td><td>Restart during one coding and one review attempt yields one authority holder each, no duplicate side effects, and both finish or are fenced with evidence. Idle role daemons can be removed.</td></tr>
+<tr><td>S3 · Linux container executor</td><td>Digest-pinned role images, grant limits, attempt volumes, caches, teardown and orphan reconciliation.</td><td>100 attempts leave zero live containers or secret mounts after cleanup; over-budget launch is denied; p50/p90 launch and gate duration are measured against the process baseline with a documented go/no-go threshold.</td></tr>
+<tr><td>S4 · Pull all gates</td><td>Bundle artifact endpoint and claimed merge, promotion and batch gate paths; retire default SSH bridge after canary.</td><td>Exact SHA and checksum failures fail before commands; lease loss stops work; two eligible hosts can claim distinct gates without duplicate publication; remote Task Server batch identity is proven.</td></tr>
+<tr><td>S5 · Attempt credentials</td><td>Work identity, broker, encrypted root store adapter, repo-scoped GitHub App tokens, tmpfs injection and revocation receipts.</td><td>No secret value in environment, argv, logs or worktree; a stale fence cannot renew; token scope test denies another repository and write from a read role; teardown and expiry paths are audited.</td></tr>
+<tr><td>S6 · Attempt visibility</td><td>Environment and credential inventory projections from the same attempt and secret issuance records.</td><td>Live rows show host, role, executor, grant, age, lease and cleanup; inventory shows kind, scope, expiry and binding without value; light and dark captures prove the states.</td></tr>
+<tr><td>S7 · Optional cluster executor</td><td>If an existing cluster is available, create Kubernetes Jobs behind the same claim and grant contract.</td><td>A Pod retry or reschedule cannot mint a second attempt or publish with an old fence; Job and secret cleanup are proved after 100 attempts.</td></tr>
+<tr><td>S8 · Claimable post work</td><td>Persist post-work plans and outcomes, expose ready host-capable steps through the host claim contract, and migrate one step kind at a time from the backend queue.</td><td>Restart and lease-loss replay admit one fenced holder per step; accepted reports unblock successors once; legacy and host outcomes agree for the canary, while backend-bound steps remain local until their input and write contracts exist.</td></tr>
+</tbody></table></section>
+<section id="alternatives" data-concept-section="alternatives"><h2>Alternatives</h2><div class="variant-grid">
+<article class="variant"><h3>A · Host pull and local executors</h3><p>Each host claims only eligible work when its shared grant is free. It keeps the current attempt authority and supports Linux containers and Windows processes. A bounded warm-cache preference reduces cold starts without reserving a host forever.</p></article>
+<article class="variant"><h3>B · Central placement scheduler</h3><p>The Task Server chooses a host before a claim. It can optimize the whole fleet, but it must maintain live host capacity, reservation expiry and failure recovery in addition to current lease authority.</p></article>
+<article class="variant"><h3>C · External scheduler</h3><p>k3s, Nomad or a CI runner manages placement and executor lifecycle. This supplies mature primitives at the cost of an installation dependency and an adapter that must still enforce Task Server fences.</p></article>
+</div></section>
+<section id="recommendation" data-concept-section="recommendation"><h2>Recommendation</h2><div class="callout" data-tone="accent"><h3>Adopt A in eight bounded slices</h3><p>Keep host pull, make one agent per machine the local admission and executor owner, use AGT-3019 as the single host budget, and introduce fresh Linux containers after process-baseline measurement. Extend the existing claimed gate contract to all gate work and retire the SSH bridge after a fenced canary. Make host-capable post steps durable claims through S8, with Task Server decisions and unmigrated steps retained at their current authority. Bind credentials to attempts through an issuer and a file mount. Keep Windows on a bounded process executor. Offer Kubernetes Jobs later when a team already runs a cluster.</p></div></section>
+<section id="evidence" data-concept-section="evidence"><h2>Evidence</h2>
+<p>The dossier makes no assertion about the current appearance of a product screen. Environment view and credential inventory below are planned projections, so no product screenshot is offered as proof of an unimplemented surface. The diagrams are architecture figures based on source and the operator brief.</p>
+<div class="evidence-list">
+<a class="evidence" href="../../runner/RemoteRunnerDaemon.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Coding pull and fenced leases</b><small>RemoteRunnerDaemon.cs claim loop around lines 680–870; LeaseHeartbeat.cs renews lease ID, fence, attempt and authority epoch.</small></span></a>
+<a class="evidence" href="../../runner/RemoteReviewDaemon.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Review pull and current role split</b><small>RemoteReviewDaemon.cs claim loop around lines 560–660; Runner Program.cs selects role-specific daemons.</small></span></a>
+<a class="evidence" href="../../runner/WorkerResourceEnvelope.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Current process envelope</b><small>WorkerResourceEnvelope.cs and WorkerCgroup.cs derive and enforce per-worker cgroup limits; the resource-governance document records AIMD and role units.</small></span></a>
+<a class="evidence" href="../../backend/Features/Pipeline/RemoteGateTransport.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Default SSH gate bridge</b><small>RemoteGateTransport.cs builds a SHA-256 checked bundle, copies it with scp, invokes a fixed SSH host, and reads RemoteGate:GateSlots.</small></span></a>
+<a class="evidence" href="../../backend/Features/Pipeline/BatchGate/ClaimedBatchGateRunner.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Opt-in claimed batch gate</b><small>ClaimedBatchGateRunner.cs defaults to bridge and rejects claimed mode with TaskServer:BaseUrl; RemoteGateDaemon.cs and TaskServerGateStore.cs contain pull, lease and fence paths.</small></span></a>
+<a class="evidence" href="../../backend/Features/Runner/AutoReviewPostProcessingQueue.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Backend post queue and worker</b><small>AutoReviewPostProcessingQueue.cs holds an in-memory channel and pending list; AutoReviewPostProcessingWorker applies a local semaphore and calls ReviewDecisionOrchestrator.ProcessCardAsync.</small></span></a>
+<a class="evidence" href="../../backend/Features/Runner/AutoReviewPostProcessingRecoveryService.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Post-work trigger and recovery</b><small>TaskTransitionService.EnqueueAutoReviewPostProcessing adds the transition request; AutoReviewPostProcessingRecoveryService re-enqueues unfinished 4-auto-review cards after restart.</small></span></a>
+<a class="evidence" href="../operations/remote-task-server-local-studio.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Post-step placement boundary</b><small>The dependency map classifies checkout-bound steps, Task Server decisions and workspace-bound producers, including the contracts each kind needs for migration.</small></span></a>
+<a class="evidence" href="../fluid-capacity/index.html"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Shared allocator dependency</b><small>AGT-3019 is decision pending. Its half-core grants, AIMD admission and measurement baseline are proposed, not deployed facts.</small></span></a>
+<a class="evidence" href="../credentials-and-logins/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Credential custody decision</b><small>AGT-2968 recommends host custody and native CLI refresh; linux-runner-host.md warns about copied Codex login lineage.</small></span></a>
+<a class="evidence" href="../operations/operations-server-backchannel/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Windows boundary</b><small>The 12 September decision keeps Docker optional; the workstation runner profile documents native host management.</small></span></a>
+</div>
+<h3>External design references</h3><p><a href="https://kubernetes.io/docs/concepts/workloads/controllers/job/">Kubernetes Jobs and cleanup</a>; <a href="https://kubernetes.io/docs/concepts/security/service-accounts/">projected service-account tokens</a>; <a href="https://kubernetes.io/docs/concepts/configuration/secret/">Secret precautions</a>; <a href="https://kubernetes.io/docs/concepts/security/windows-security/">Windows Secret storage</a>; <a href="https://developer.hashicorp.com/nomad/docs/architecture">Nomad architecture</a> and <a href="https://developer.hashicorp.com/nomad/docs/deploy/task-driver/raw_exec">raw exec</a>; <a href="https://docs.gitlab.com/runner/executors/docker_autoscaler/">GitLab Docker Autoscaler</a>; <a href="https://buildkite.com/docs/agent">Buildkite agent and routing</a>; <a href="https://docs.github.com/en/actions/reference/runners/self-hosted-runners">GitHub self-hosted runners</a>; <a href="https://docs.github.com/en/rest/apps/apps">GitHub App installation tokens</a>. Accessed 16 October 2026. Install effort and latency in this dossier are design estimates pending local measurement.</p></section>
+<section id="open-decisions" data-concept-section="open-decisions"><h2>Open decisions</h2><p>Each block recommends a working option for implementation cards. The decision remains pending sight review and operator acceptance.</p>
+<div class="decision" data-decision-id="DP-D1"><h3>D1 · Placement authority</h3><p><b>Options:</b> A host pull with hard eligibility and bounded warm affinity; B central scheduler assignment. <b>Recommend A.</b> <b>Reject B for the first delivery:</b> it adds a second reservation path before host telemetry and grants are proven.</p></div>
+<div class="decision" data-decision-id="DP-D2"><h3>D2 · Host lifecycle</h3><p><b>Options:</b> A one agent per machine with role adapters and drain migration; B preserve role-pinned daemons and long lived containers. <b>Recommend A.</b> <b>Reject B:</b> separate role owners cannot spend one budget consistently without more coordination.</p></div>
+<div class="decision" data-decision-id="DP-D3"><h3>D3 · Executor</h3><p><b>Options:</b> A fresh Linux container per item plus Windows process executor; B process and cgroup on every host; C Kubernetes Job for every installation. <b>Recommend A after the S3 measurement gate.</b> <b>Reject B as target:</b> process limits alone do not supply a fresh filesystem and role image per item. <b>Reject C as default:</b> cluster operation is excessive for one machine. Retain B as a canary rollback.</p></div>
+<div class="decision" data-decision-id="DP-D4"><h3>D4 · Gate transport</h3><p><b>Options:</b> A extend claimable gates and pull checked bundles; B keep SSH push. <b>Recommend A.</b> <b>Reject B as target:</b> one configured SSH host and fixed slots prevent host choice. Resolve batch identity before switching the default.</p></div>
+<div class="decision" data-decision-id="DP-D5"><h3>D5 · Capacity source</h3><p><b>Options:</b> A adopt AGT-3019 one versioned half-core host allocator; B per-role container counts; C external scheduler quota. <b>Recommend A as the working decision.</b> <b>Reject B and C as authority:</b> either can admit a container without the shared host grant.</p></div>
+<div class="decision" data-decision-id="DP-D6"><h3>D6 · Scheduler product</h3><p><b>Options:</b> A local host agent now, optional Kubernetes Job adapter later; B k3s default; C Nomad default; D GitLab, Buildkite or GitHub Actions as the application scheduler. <b>Recommend A.</b> <b>Reject B, C and D as defaults:</b> their lifecycle and operations do not replace this product's attempt fence or publication contract.</p></div>
+<div class="decision" data-decision-id="DP-D7"><h3>D7 · Credential custody and provider concurrency</h3><p><b>Options:</b> A attempt identity, tmpfs files and brokered short-lived tokens with encrypted root store or external adapter; B mount a shared host login home; C inject credentials as environment variables. <b>Recommend A.</b> <b>Reject B and C:</b> shared refresh is unproved and environment values escape through process diagnostics. Select login holder, separate accounts or API keys only after the S5 concurrent refresh probe.</p></div>
+<div class="decision" data-decision-id="DP-D8"><h3>D8 · Visibility</h3><p><b>Options:</b> A show short-lived attempts as child rows of a physical host, with redacted credential bindings; B count each container as a host; C omit finished containers. <b>Recommend A.</b> <b>Reject B and C:</b> they obscure host budget and cleanup evidence. AGT-3169 and AGT-3170 should consume the same attempt and receipt records.</p></div>
+<div class="decision" data-decision-id="DP-D9"><h3>D9 · Post-work placement</h3><p><b>Options:</b> A persist a plan and claim each ready host-capable step under the shared lease and grant contract, while the Task Server applies decisions; B move the whole backend post-processing worker to a host unchanged. <b>Recommend A.</b> B carries local task-folder dependencies and lane mutations into the host, and its in-memory queue cannot serve as claim authority.</p></div></section>
+<!-- agent-studio:implementation-section:start --><section id="implementation" data-document-section="implementation"><h2>Implementation cards</h2><p>The eight independent slices above are defined in <a href="workbench.json">workbench.json</a>. No product code is changed by this dossier.</p><ol class="implementation-log"><!-- agent-studio:implementation-log:start --><!-- agent-studio:implementation-log:end --></ol></section><!-- agent-studio:implementation-section:end -->
+</main></body></html>
