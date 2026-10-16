@@ -754,7 +754,11 @@ unreported claim expires with its lease and is queued again.
   Completed and archived lane transitions supersede orphaned attempts and move
   terminal records into the hourly archive; current projections resolve archived
   records on demand. A completed run with a result envelope stays live during
-  the existing 30-day handoff window.
+  the existing 30-day handoff window. Archive index warmup retains entries from
+  readable shards when another shard fails, reports the failing path and error
+  once, and retries that shard after five minutes. Review claims consult live
+  authority immediately during warmup; archived attempts become visible for
+  claims and reads once their shard is indexed.
   It performs no
   checkout, build, test, provider CLI, vision, or semantic review work.
   Remote claim and completion lane facts carry the same attempt, fence, epoch,

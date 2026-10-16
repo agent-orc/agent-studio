@@ -213,6 +213,10 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
                 "review-a", "executor", "host", 60, "claim-during-warmup"))
                 .WaitAsync(TimeSpan.FromSeconds(1));
             Assert.Equal(AttemptWriteStatus.NotFound, claim.Status);
+            var renew = await Task.Run(() => service.RenewRun(
+                new AttemptWriteReference("run-missing", 1, 1, "renew-during-warmup"),
+                "executor", 60)).WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(AttemptWriteStatus.NotFound, renew.Status);
             Assert.Null(await Task.Run(() => service.GetRun("run-a"))
                 .WaitAsync(TimeSpan.FromSeconds(1)));
         }
