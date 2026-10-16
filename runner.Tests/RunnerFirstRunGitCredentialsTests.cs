@@ -91,6 +91,32 @@ public sealed class RunnerFirstRunGitCredentialsTests : IDisposable
         Assert.DoesNotContain(token, sibling.StdOut);
     }
 
+    [Fact]
+    public void Project_git_uses_the_key_only_for_its_registered_remote()
+    {
+        var folder = Path.Combine(_root, "first-run-git", "setup-key");
+        Directory.CreateDirectory(folder);
+        var origin = "https://github.com/example/demo.git";
+        File.WriteAllText(Path.Combine(folder, "origin"), origin);
+        File.WriteAllText(Path.Combine(folder, "deploy-key"), "test-key");
+
+        var (clone, environment) = RunnerFirstRunGitCredentials.ForProjectGit(_root, origin,
+            ["clone", origin, "/tmp/checkout"]);
+        Assert.Equal("git@github.com:example/demo.git", clone[1]);
+        Assert.Contains("deploy-key", environment!["GIT_SSH_COMMAND"]);
+        var (fetch, _) = RunnerFirstRunGitCredentials.ForProjectGit(_root, origin,
+            ["fetch", "origin", "--prune"]);
+        Assert.Equal(["fetch", "--prune", "git@github.com:example/demo.git",
+            "+refs/heads/*:refs/remotes/origin/*"], fetch);
+        var (push, _) = RunnerFirstRunGitCredentials.ForProjectGit(_root, origin,
+            ["push", "origin", "HEAD:refs/heads/probe"]);
+        Assert.Equal("git@github.com:example/demo.git", push[1]);
+        var (sibling, siblingEnvironment) = RunnerFirstRunGitCredentials.ForProjectGit(_root, origin,
+            ["ls-remote", "https://github.com/example/demo-tools.git"]);
+        Assert.Equal("https://github.com/example/demo-tools.git", sibling[1]);
+        Assert.Null(siblingEnvironment);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);

@@ -71,6 +71,9 @@ public sealed class LocalFirstRunGitSetupTests : IDisposable
             && args[2] == "git@github.com:example/demo.git");
         Assert.Contains(git.Environments, env => env.TryGetValue("GIT_SSH_COMMAND", out var command)
             && command!.Contains(Path.Combine(_root, "secrets", keySetup.Id, "deploy-key")));
+        var previousTransportCalls = git.Environments.Count;
+        await probe.ReadAsync(projects.FindById(project.Id)!, "main", default, force: true);
+        Assert.True(git.Environments.Count > previousTransportCalls);
 
         var secondKey = await setup.StartAsync(new(project.Id, "deploy-key", null), default);
         Assert.Equal("https://github.com/example/demo.git",

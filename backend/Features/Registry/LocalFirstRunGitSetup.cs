@@ -66,6 +66,7 @@ public sealed class LocalFirstRunGitSetup
             await File.AppendAllTextAsync(config,
                 $"\n[credential \"{origin}\"]\n\thelper =\n\thelper = !sh '{script.Replace('\\', '/')}'\n\tuseHttpPath = true\n", ct);
             Protect(config);
+            _probe.SetDeployKey(project.Id, origin, null);
             status = new(id, "awaiting-verify", null, false, false);
         }
         else
@@ -78,6 +79,7 @@ public sealed class LocalFirstRunGitSetup
                 throw new InvalidOperationException("Deploy key generation failed.");
             Protect(key);
             var publicKey = (await File.ReadAllTextAsync(key + ".pub", ct)).Trim();
+            _probe.SetDeployKey(project.Id, origin, key);
             status = new(id, "awaiting-github", publicKey, false, false);
         }
         _setups[id] = status;

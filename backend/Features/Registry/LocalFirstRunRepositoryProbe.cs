@@ -18,6 +18,17 @@ public sealed class LocalFirstRunRepositoryProbe(TimeProvider clock, ILocalFirst
 {
     private readonly ILocalFirstRunGitCommand _git = git ?? new LocalFirstRunGitCommand();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _verified = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _deployKeys = new(StringComparer.Ordinal);
+
+    public void SetDeployKey(string projectId, string origin, string? keyPath)
+    {
+        var identity = projectId + "\n" + origin;
+        if (keyPath is null) _deployKeys.TryRemove(identity, out _);
+        else _deployKeys[identity] = keyPath;
+        foreach (var cacheKey in _verified.Keys.Where(value => value.StartsWith(identity + "\n",
+            StringComparison.Ordinal)))
+            _verified.TryRemove(cacheKey, out _);
+    }
 
     public async Task<object?> ReadAsync(ProjectRecord project, string integrationRef,
         CancellationToken ct, bool force = false, string? keyPath = null)
@@ -27,6 +38,8 @@ public sealed class LocalFirstRunRepositoryProbe(TimeProvider clock, ILocalFirst
         var path = project.RepositoryPath;
         if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(path)
             || !Directory.Exists(path)) return null;
+
+        keyPath ??= _deployKeys.GetValueOrDefault(project.Id + "\n" + origin);
 
         var cacheKey = string.Join('\n', project.Id, origin, path, integrationRef, keyPath);
         var now = clock.GetUtcNow();
