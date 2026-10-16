@@ -55,7 +55,7 @@ public class TaskRunnerService : BackgroundService
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
-    private readonly VisualQaService? _visualQa;
+    private readonly IVisualQaService? _visualQa;
     // Forwarded to each ProjectRunner. DI injects the registered singleton; a
     // project can disable the default-on step through its pipeline convention.
     // Null only when a test fixture builds the service directly.
@@ -167,7 +167,7 @@ public class TaskRunnerService : BackgroundService
         AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
-        VisualQaService? visualQa = null,
+        IVisualQaService? visualQa = null,
         StartupExecutionAdmission? executionAdmission = null,
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,

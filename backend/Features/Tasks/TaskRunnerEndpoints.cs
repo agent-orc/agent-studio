@@ -92,14 +92,14 @@ public static class TaskRunnerEndpoints
                 return Results.Accepted(value: StopReceipt(replay));
             }
 
-            var localProcessStopped = runner.StopJob(jobId, watchPath, parsed);
-            // The local holder uses this gate during release. Keep the lease
-            // inspection and durable record in one critical section so a 202
-            // cannot race past its final stop observation.
+            // The local holder uses this gate during launch and release. Keep
+            // process signalling, lease inspection, and the durable record in
+            // one critical section so a stop cannot pass a pending launch.
             var stopGate = leases.LocalStopGate(authorityKey);
             stopGate.Wait();
             try
             {
+                var localProcessStopped = runner.StopJob(jobId, watchPath, parsed);
                 var heldLease = leases.Peek(authorityKey);
                 if (heldLease.Outcome != "Held" && !string.Equals(authorityKey, info.TaskKey, StringComparison.OrdinalIgnoreCase))
                     heldLease = leases.Peek(info.TaskKey);
