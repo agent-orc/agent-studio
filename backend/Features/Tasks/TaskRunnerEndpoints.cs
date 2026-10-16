@@ -42,10 +42,9 @@ public static class TaskRunnerEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        // Stop works for both execution locations. A local run is signalled
-        // directly; a run owned by a remote host cannot be signalled from here,
-        // so the request is recorded for its attempt and the owning runner picks
-        // it up on its next lease renewal, terminates the worker's process tree,
+        // Stop works for both execution locations. An active local CLI is
+        // signalled directly. Without a local process, the request is recorded
+        // for the held attempt; its owner observes it at the next boundary,
         // salvages, and hands back with outcome 'Stopped' (AGT-2870). Before
         // this, a remote run answered 404 and the only way to stop it was to
         // kill the process on the host by hand.
@@ -77,12 +76,14 @@ public static class TaskRunnerEndpoints
             };
             var info = scanner.FindJob(jobId, watchPath);
             if (info is null) return Results.NotFound(new { error = "Job not found" });
+            var authorityKey = TaskIdentity.AuthorityKey(info);
             if (commandId?.Trim().Length > 128)
                 return Results.BadRequest(new { error = "Stop command id is too long." });
 
             if (!string.IsNullOrWhiteSpace(commandId) && stops.GetReceipt(commandId.Trim()) is { } replay)
             {
-                if (!MatchesStopTask(info, replay.TaskKey)
+                if ((!string.Equals(replay.TaskKey, authorityKey, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(replay.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase))
                     || !string.Equals(replay.Reason, RemoteRunStopReasons.From(parsed), StringComparison.Ordinal))
                     return Results.Conflict(new { error = "Stop command id is bound to different input." });
                 if (replay.TerminalAtUtc is null)
@@ -90,53 +91,60 @@ public static class TaskRunnerEndpoints
                 return Results.Accepted(value: StopReceipt(replay));
             }
 
-            // Remote claims use the public card key when one exists. The
-            // scanner's TaskKey is a filesystem identity (watchPath::id), so
-            // asking lease authority for that key misses an otherwise held run.
-            var remoteLease = leases.Peek(info.Key ?? info.TaskKey);
-            if (remoteLease.Outcome != "Held" && !string.Equals(info.Key, info.TaskKey, StringComparison.OrdinalIgnoreCase))
-                remoteLease = leases.Peek(info.TaskKey);
-            var dispatch = RemoteRunStopPolicy.Decide(new RunStopFacts(
-                runner.StopJob(jobId, watchPath, parsed),
-                string.Equals(remoteLease.Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
-            if (dispatch != RunStopDispatch.RemoteStopRequested)
-                return dispatch == RunStopDispatch.StoppedLocally
-                    ? Results.Ok()
-                    : Results.Conflict(new { error = "No running attempt holds this task." });
-
-            var lease = remoteLease.Lease;
-            if (lease is null || string.IsNullOrWhiteSpace(lease.AttemptId)) return Results.Conflict(new { error = "No current remote attempt holds this task." });
-            RemoteRunStopRequest request;
+            var localProcessStopped = runner.StopJob(jobId, watchPath, parsed);
+            // The local holder uses this gate during release. Keep the lease
+            // inspection and durable record in one critical section so a 202
+            // cannot race past its final stop observation.
+            var stopGate = leases.LocalStopGate(authorityKey);
+            stopGate.Wait();
             try
             {
-                request = stops.Record(
-                    lease.TaskKey,
-                    RemoteRunStopReasons.From(parsed),
-                    lease.AttemptId,
-                    lease.RunnerName ?? lease.RunnerId,
-                    lease.FencingToken,
-                    commandId,
-                    lease.RunnerId);
-                request = stops.ReconcileWithLease(request, leases.Peek(lease.TaskKey));
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.Conflict(new { error = ex.Message });
-            }
-            if (request.TerminalAtUtc is not null)
-                return Results.Conflict(StopReceipt(request));
-            timeline.Append(
-                info.FolderPath,
-                TimelineEventKinds.RemoteStopRequested,
-                TimelineActors.Human(string.Empty),
-                $"Stop requested for the remote run on {lease?.RunnerName ?? lease?.RunnerId ?? "the assigned host"}.",
-                runId: lease?.AttemptId,
-                details: new Dictionary<string, string>
+                var heldLease = leases.Peek(authorityKey);
+                if (heldLease.Outcome != "Held" && !string.Equals(authorityKey, info.TaskKey, StringComparison.OrdinalIgnoreCase))
+                    heldLease = leases.Peek(info.TaskKey);
+                var dispatch = RemoteRunStopPolicy.Decide(new RunStopFacts(
+                    localProcessStopped,
+                    string.Equals(heldLease.Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
+                if (dispatch != RunStopDispatch.RemoteStopRequested)
+                    return dispatch == RunStopDispatch.StoppedLocally
+                        ? Results.Ok()
+                        : Results.Conflict(new { error = "No running attempt holds this task." });
+
+                var lease = heldLease.Lease;
+                if (lease is null || string.IsNullOrWhiteSpace(lease.AttemptId)) return Results.Conflict(new { error = "No current attempt holds this task." });
+                RemoteRunStopRequest request;
+                try
                 {
-                    ["reason"] = request.Reason,
-                    ["runnerId"] = lease?.RunnerId ?? string.Empty,
-                });
-            return Results.Accepted(value: StopReceipt(request));
+                    request = stops.Record(
+                        lease.TaskKey,
+                        RemoteRunStopReasons.From(parsed),
+                        lease.AttemptId,
+                        lease.RunnerName ?? lease.RunnerId,
+                        lease.FencingToken,
+                        commandId,
+                        lease.RunnerId);
+                    request = stops.ReconcileWithLease(request, leases.Peek(lease.TaskKey));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Conflict(new { error = ex.Message });
+                }
+                if (request.TerminalAtUtc is not null)
+                    return Results.Conflict(StopReceipt(request));
+                timeline.Append(
+                    info.FolderPath,
+                    TimelineEventKinds.RemoteStopRequested,
+                    TimelineActors.Human(string.Empty),
+                    $"Stop requested for the run on {lease?.RunnerName ?? lease?.RunnerId ?? "the assigned host"}.",
+                    runId: lease?.AttemptId,
+                    details: new Dictionary<string, string>
+                    {
+                        ["reason"] = request.Reason,
+                        ["runnerId"] = lease?.RunnerId ?? string.Empty,
+                    });
+                return Results.Accepted(value: StopReceipt(request));
+            }
+            finally { stopGate.Release(); }
         });
 
         group.MapGet("/{jobId}/stop/{commandId}", (
@@ -152,7 +160,9 @@ public static class TaskRunnerEndpoints
             var info = scanner.FindJob(jobId, watchPath);
             if (info is null) return Results.NotFound();
             var receipt = stops.GetReceipt(commandId);
-            return receipt is not null && MatchesStopTask(info, receipt.TaskKey)
+            return receipt is not null
+                && (string.Equals(receipt.TaskKey, TaskIdentity.AuthorityKey(info), StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(receipt.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(receipt)
                 : Results.NotFound();
         });
@@ -537,7 +547,7 @@ public static class TaskRunnerEndpoints
         attemptId = request.AttemptId,
         fencingToken = request.FencingToken,
         message = request.TerminalAtUtc is null
-            ? "The owning runner stops the attempt on its next lease renewal."
+            ? "The owning runner stops the attempt at its next lease renewal or pipeline boundary."
             : "This stop command is terminal and will not be delivered again.",
     };
 }

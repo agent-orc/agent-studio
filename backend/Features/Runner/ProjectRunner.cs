@@ -3312,6 +3312,18 @@ public class ProjectRunner
                 // Keep the admitted session event truthful about the fallback.
                 admittedSessionReason = why;
             }
+            // Preparation can take minutes while this run still owns its lease.
+            // A stop acknowledged during that gap must win before the CLI starts.
+            if (localAuthorityTaskKey is not null
+                && _localRunClaims?.StopRequested(localAuthorityTaskKey) == true)
+            {
+                ReleaseRun(jobId);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                NotifyStatus();
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.CliUnavailable, "Run stopped before agent execution started."));
+            }
+
             var (execution, cliError) = await cli.StartAsync(
                 jobId, GetJobKey(jobId), prompt, runWorkingDir,
                 effSessionToResume, effResumeFlag, runModel, runThinkingLevel,
@@ -5883,6 +5895,12 @@ public class ProjectRunner
             if (_activeRuns.Get(jobId) is not { } run) return;
             if (run.CliType != null && !string.Equals(cliType, run.CliType, StringComparison.OrdinalIgnoreCase)) return;
 
+            // The process may have completed just before a stop arrived between
+            // local pipeline steps. Carry that stop through the normal stopped
+            // closeout so the card does not proceed to review as a success.
+            if (LocalStopRequested(jobId))
+                execution = execution with { Status = RunStatuses.Stopped, RunOutcome = "interrupted" };
+
             // Slot ownership follows process life, not lane membership. Keep the
             // ActiveRun record for finalisation, but free its execution seat as
             // soon as the CLI process exits. Integration, outcome analysis and
@@ -5988,6 +6006,7 @@ public class ProjectRunner
 
             WorktreeCommitRange? worktreeCommitRange = null;
             var worktreeTask = runInfo ?? _scanner.FindJob(jobId, Entry.Path);
+            if (LocalStopRequested(jobId)) return;
             // ADR-0052/0057: every coding worktree run commits its edits on the
             // task branch and integrates them into the work branch BEFORE the
             // post-run review reads the result; a merge conflict is left for the
@@ -5995,10 +6014,13 @@ public class ProjectRunner
             if (run.IsWorktreeRun
                 && worktreeTask != null
                 && !TaskModes.IsConcept(worktreeTask.Mode)
+                && !LocalStopRequested(jobId)
                 && agentGitDecision.Disposition != AgentGitMutationDisposition.Escalate)
             {
                 worktreeCommitRange = await IntegrateWorktreeRunAsync(run, worktreeTask);
             }
+
+            if (LocalStopRequested(jobId)) return;
 
             // Persist last token/usage summary (best-effort)
             var usage = cli.GetLastUsage(jobKey);
@@ -6104,6 +6126,7 @@ public class ProjectRunner
             // Best-effort; the record is observability, never a state-machine
             // input.
             await RecordCoreRunFinish(jobId, execution, coreUsage);
+            if (LocalStopRequested(jobId)) return;
 
             // Capture the post-run HEAD SHA so the run's commit set can be
             // derived deterministically via git rev-list HeadShaBefore..After.
@@ -6212,6 +6235,7 @@ public class ProjectRunner
             // post-run policy may re-issue another run on top before we let
             // the regular review/summary pipeline proceed.
             var liveOutputSnapshot = earlyOutputSnapshot;
+            if (LocalStopRequested(jobId)) return;
 
             // Strict-iteration progress-first pickup bookkeeping: only
             // autopickup runs feed the per-slug silent-attempt counter.
@@ -6475,6 +6499,7 @@ public class ProjectRunner
             }
 
             FailureInterventionResult? runIntervention = null;
+            if (LocalStopRequested(jobId)) return;
             if (action is { Kind: not OutcomeActionKind.NotifyUserAndAccept }
                 && activeInfo is not null
                 && !WasDeliberatelyStopped(execution.Status)
@@ -6631,6 +6656,7 @@ public class ProjectRunner
                 }
                 _lastMetaSignature = signature;
 
+                if (LocalStopRequested(jobId)) return;
                 if (action.Kind == OutcomeActionKind.ReissueWithStrongerFraming
                     && !string.IsNullOrWhiteSpace(action.FollowupRetryPrompt))
                 {
@@ -6711,6 +6737,7 @@ public class ProjectRunner
                         AgentStudio.Pipeline.PipelineCatalogue.AbortReviewStep,
                         abortConditionContext))
                 {
+                    if (LocalStopRequested(jobId)) return;
                     var handled = await TryRunAbortReviewAsync(
                         activeInfo, jobId, jobKey, cliType, execution, action,
                         liveOutputSnapshot, commitsDuringRun, headShaAfter, usage,
@@ -6761,6 +6788,7 @@ public class ProjectRunner
                     // Release the active-job latch so the re-issue can claim
                     // it, then schedule on the thread pool so OnCliFinished
                     // returns promptly (mirrors the abort-review rerun path).
+                    if (LocalStopRequested(jobId)) return;
                     ReleaseRun(jobId);
                     NotifyStatus();
                     var retryPrompt = BuildCompletionRetriggerPrompt(activeInfo);
@@ -6807,6 +6835,7 @@ public class ProjectRunner
                     _consecutiveFailNoProgress.TryRemove(jobId, out _);
                     // Terminal: tear down the coding worktree+branch (kept only
                     // if its work is unmerged, so a human can still resolve it).
+                    if (LocalStopRequested(jobId)) return;
                     TeardownWorktreeForJob(jobId);
                     var move = await _humanReviewEscalation.EscalateAsync(
                         jobId, activeInfo.WatchPath, ProjectName,
@@ -6831,6 +6860,7 @@ public class ProjectRunner
             // the orchestrator to decide on the user's behalf and feed the
             // decision back as a Continue follow-up. Manual mode keeps
             // today's path: the question stays in the chat for the user.
+            if (LocalStopRequested(jobId)) return;
             if (ShouldHandleNeedsInputUnattended(outcome.Kind, capturedIntent, _mode, activeInfo))
             {
                 _ = Task.Run(() => RunOrchestratorDecisionAsync(activeInfo!, jobId, outcome));
@@ -6856,6 +6886,7 @@ public class ProjectRunner
                 && TaskModes.IsConcept(activeInfo.Mode))
             {
                 var movedConcept = _scanner.FindJob(jobId, Entry.Path) ?? activeInfo;
+                if (LocalStopRequested(jobId)) return;
                 await PublishConceptWorkbenchAsync(movedConcept, run);
             }
 
@@ -6867,6 +6898,7 @@ public class ProjectRunner
                 && activeInfo != null
                 && snapRun is { IsUiIterationPipeline: true })
             {
+                if (LocalStopRequested(jobId)) return;
                 await HandleUiIterationCompletionAsync(
                     activeInfo, snapRun, jobId, execution,
                     snapRun.UiIteration, snapRun.UiMaxIterations,
@@ -6887,6 +6919,7 @@ public class ProjectRunner
                 && activeInfo != null
                 && EpicRunPolicy.IsPlanningRun(activeInfo.Kind, intentSnapshot))
             {
+                if (LocalStopRequested(jobId)) return;
                 var finalized = DecomposeEpicAndCreateSubTasks(
                     activeInfo,
                     liveOutputSnapshot.Select(l => l.Text).ToList(),
@@ -6896,6 +6929,7 @@ public class ProjectRunner
 
             if (movedToReview)
             {
+                if (LocalStopRequested(jobId)) return;
                 var completionLane = epicPlanningLane ?? TaskStates.AutoReview;
                 if (activeInfo != null)
                 {
@@ -6908,6 +6942,7 @@ public class ProjectRunner
                         terminalOutcome,
                         CancellationToken.None);
                 }
+                if (LocalStopRequested(jobId)) return;
                 // Drop a completion marker BEFORE the move so a crash between
                 // here and the folder-rename leaves enough state on disk for
                 // CrashRecoveryService to finish the transition on next boot.
@@ -6926,10 +6961,37 @@ public class ProjectRunner
                     }, _logger);
                 }
 
-                var moveOutcome = await _transitions.MoveAsync(
-                    jobId, completionLane, Entry.Path, CancellationToken.None,
-                    transitionCause: CompletionLaneChangeCause(completionLane),
-                    transitionDetail: epicPlanningLane is null ? outcome.Kind.ToString() : "epic-planning");
+                // Hold the stop gate through the review move and lease release.
+                // A stop accepted before this boundary prevents the move; once
+                // the move begins, a new request sees the released lease.
+                var localStopGate = _localAuthorityTaskKeys.TryGetValue(jobId, out var finalizationKey)
+                    ? _localRunClaims?.StopGate(finalizationKey) : null;
+                if (localStopGate is not null) await localStopGate.WaitAsync();
+                MoveJobOutcome moveOutcome;
+                try
+                {
+                    if (LocalStopRequested(jobId))
+                    {
+                        if (activeInfo != null) CompletionMarker.Clear(activeInfo.FolderPath, _logger);
+                        return;
+                    }
+                    moveOutcome = await _transitions.MoveAsync(
+                        jobId, completionLane, Entry.Path, CancellationToken.None,
+                        transitionCause: CompletionLaneChangeCause(completionLane),
+                        transitionDetail: epicPlanningLane is null ? outcome.Kind.ToString() : "epic-planning");
+                }
+                finally
+                {
+                    if (localStopGate is not null)
+                    {
+                        try
+                        {
+                            if (_localAuthorityTaskKeys.TryRemove(jobId, out var authorityTaskKey))
+                                _localRunClaims?.ReleaseWhileStopGateHeld(authorityTaskKey);
+                        }
+                        finally { localStopGate.Release(); }
+                    }
+                }
                 if (moveOutcome.Status == MoveJobStatus.Success)
                 {
                     // The job made it out of the run loop; forget any spent
@@ -7472,6 +7534,10 @@ public class ProjectRunner
         ProjectPreparationExecutor.ReleaseRunRoot(released?.Preparation);
         return released;
     }
+
+    private bool LocalStopRequested(string jobId)
+        => _localAuthorityTaskKeys.TryGetValue(jobId, out var authorityTaskKey)
+           && _localRunClaims?.StopRequested(authorityTaskKey) == true;
 
     /// <summary>
     /// Way 3 (non-deterministic half): turn the output of an epic's planning /
