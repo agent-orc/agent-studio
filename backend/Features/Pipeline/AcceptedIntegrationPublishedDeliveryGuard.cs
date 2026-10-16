@@ -65,9 +65,11 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     private static string? CurrentDeliverySha(TaskInfo job)
     {
         var resolved = DeliveryRefResolver.Resolve(job.Id, job.FolderPath).ExpectedResultSha;
-        return ReviewSubjectStore.IsValidResultSha(resolved)
-            ? resolved
-            : ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
+        if (ReviewSubjectStore.IsValidResultSha(resolved)) return resolved;
+        var subject = ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
+        return ReviewSubjectStore.IsValidResultSha(subject)
+            ? subject
+            : job.CompletionClaim?.ResultSha;
     }
 
     public static bool KeepCompleted(TaskInfo job, string branch, string? failureCode, GitService? git,
@@ -75,13 +77,23 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
     {
         if (job.State != TaskStates.Completed || git is null ||
             failureCode is not (AcceptedIntegrationFailureCodes.BranchSyncFailed or
-                AcceptedIntegrationFailureCodes.WorktreeUnavailable)) return false;
+                AcceptedIntegrationFailureCodes.WorktreeUnavailable or
+                AcceptedIntegrationFailureCodes.NoTaskBranch)) return false;
         var repo = git.ResolveRepoRootForWatchPath(job.WatchPath);
         var delivery = DeliveryRefResolver.Resolve(job.Id, job.FolderPath);
         var deliverySha = delivery.ExpectedResultSha;
+        if (!ReviewSubjectStore.IsValidResultSha(deliverySha))
+            deliverySha = job.CompletionClaim?.ResultSha;
         if (!ReviewSubjectStore.IsValidResultSha(deliverySha) && !delivery.IsRemote && repo is not null)
             deliverySha = git.GetBranchTip(repo, delivery.Ref);
         if (!ReviewSubjectStore.IsValidResultSha(deliverySha)) return false;
+        if (failureCode == AcceptedIntegrationFailureCodes.NoTaskBranch &&
+            !job.IntegrationRecords.Any(item =>
+                item.Id.StartsWith("operator-acceptance-", StringComparison.Ordinal)
+                && item.Classification == IntegrationRecordClasses.IntegratedVerified
+                && AgentStudio.Pipeline.IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch)
+                && (string.Equals(item.SourceSha, deliverySha, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(item.IntegrationSha, deliverySha, StringComparison.OrdinalIgnoreCase)))) return false;
         var containment = repo is null
             ? PublishedDeliveryContainment.Unavailable
             : git.CheckPublishedDelivery(repo, branch, deliverySha!);

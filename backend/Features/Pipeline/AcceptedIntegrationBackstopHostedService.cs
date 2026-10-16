@@ -152,7 +152,7 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                             ? MergeIntoDevelopRunner.IntegrationUnverifiedFailureCode
                             : result.Outcome.ToString(),
                         result.Error,
-                        result.FailureCode);
+                        AcceptedIntegrationFailureCodes.For(result));
                 }
             }
             catch (Exception ex)

@@ -229,7 +229,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         if (job.State == TaskStates.Completed && _transitions != null)
         {
             if (AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(
-                    job, request.IntegrationBranch, result.FailureCode, _git, _bus, _logger)) return;
+                    job, request.IntegrationBranch, AcceptedIntegrationFailureCodes.For(result),
+                    _git, _bus, _logger)) return;
             var moveReason = $"Acceptance integration ended with {outcome}: "
                              + (result.Error ?? "The delivery was not integrated.");
             var moved = await _transitions.MoveAsync(
