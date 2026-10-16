@@ -3,9 +3,9 @@
 Use this guide when the Control Plane and one or more Agent Hosts run on
 different Linux x64 machines. The same guided
 `agent-studio-setup` executable is used on every machine. The Control
-Plane machine needs no Agent CLI. Each Agent Host needs Git and an authenticated
-Codex or Claude CLI. No .NET SDK or runtime is required because all shipped
-binaries are self-contained.
+Plane machine needs no Agent CLI. Each Agent Host needs Git and an installed
+Codex or Claude CLI; Studio guides authentication after join. No .NET SDK or
+runtime is required because all shipped binaries are self-contained.
 
 ## Topology
 
@@ -84,6 +84,16 @@ curl -fsS https://tasks.example.com/healthz
 
 ### Join token handling
 
+For new hosts, the owner can issue `aosj2.*` from Studio Settings > First-run
+checklist. The downloaded `join.token` contains a single-use runner enrolment
+code, the installation id, and the selected runner id. It contains no
+management bearer. Transfer the file to the Linux host, set mode 0600, and
+run the one-line command shown in Studio. The installer exchanges the code
+for a bound runner credential before starting the host. An expired or spent
+code requires a fresh file.
+
+The older control-plane console path still prints `aosj1.*`:
+
 The `aosj1.*` value contains the Task Server URL, release version, and current
 Task Server bearer credential. It is base64url encoded, not encrypted. The
 checksum detects copy errors; it is not an authentication signature.
@@ -114,11 +124,13 @@ claude --version
 claude auth status --text
 ```
 
-Run the login on that host. Do not copy another machine's Codex or Claude
-credential files. The setup guide checks the CLI as the selected execution
-user before it writes or starts a service.
+Do not copy another machine's Codex or Claude credential files. The installer
+checks the selected CLI version as the execution user and allows an unsigned-in
+host to join. Studio then starts sign-in in that runner process.
 
-For GitHub HTTPS access, prepare a token before the credential-storage step:
+For GitHub HTTPS access, Studio can send a token once to the selected runner
+or ask it to generate a deploy key. If using a token, prepare it before the
+GitHub access step:
 
 - Prefer a fine-grained PAT owned by the organization or account that owns the
   repository. Limit it to assigned repositories and grant **Contents: Read and
@@ -145,8 +157,7 @@ run without that option, it asks for the token at a hidden prompt. It then
 asks for the execution user, host name, CLI, service role, Git probe origin,
 and maximum parallelism. It:
 
-1. verifies Linux x64, Git, systemd, the selected CLI version, and that CLI's
-   host-owned authentication;
+1. verifies Linux x64, Git, systemd, and the selected CLI version;
 2. downloads and verifies the matching `agent-host` archive;
 3. asks for a GitHub token file, a per-project deploy key, or an existing SSH
    key, then verifies read access before starting the host;

@@ -75,6 +75,11 @@ public static class EndpointMapping
         app.MapDemoReplayEndpoints();
         app.MapArtifactIngestionEndpoints();
         app.MapRegistryEndpoints();
+        if (mapsLocalV1)
+        {
+            app.MapLocalFirstRunRepositoryEndpoints();
+            app.MapLocalFirstRunGitSetupEndpoints();
+        }
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
         app.MapProjectSettingsEndpoints();

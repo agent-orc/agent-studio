@@ -412,6 +412,27 @@ internal static class SetupApplication
         };
         try
         {
+            if (payload.SchemaVersion == 2)
+            {
+                using var exchange = await client.PostAsJsonAsync(
+                    "/api/v1/enrolments/exchange",
+                    new ExchangeEnrolmentRequest(payload.EnrolmentCode!, payload.InstallationId!),
+                    cancellationToken);
+                if (!exchange.IsSuccessStatusCode)
+                    throw new InvalidOperationException(
+                        $"Task Server rejected the one-time host enrolment ({(int)exchange.StatusCode}). Request a new join token in Studio.");
+                var exchanged = await exchange.Content.ReadFromJsonAsync<ExchangedEnrolment>(
+                    cancellationToken: cancellationToken)
+                    ?? throw new InvalidOperationException("Task Server returned no host enrolment.");
+                if (exchanged.InstallationId != payload.InstallationId
+                    || exchanged.Issued.Principal.RunnerId != runnerId
+                    || payload.RunnerId != runnerId
+                    || exchanged.Issued.Principal.Kind != TaskServerPrincipalKinds.Runner)
+                    throw new InvalidOperationException(
+                        "The one-time host enrolment is bound to another runner. Request a new join token in Studio.");
+                return exchanged.Issued.Credential
+                    ?? throw new InvalidOperationException("Task Server returned no Runner credential.");
+            }
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", payload.Credential);
             if (!client.DefaultRequestHeaders.Contains(TaskServerProtocol.HeaderName))
