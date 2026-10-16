@@ -1,3 +1,9 @@
+# AGT-3194 late gate result status
+
+- Result SHA-256 (uncommitted working-tree implementation): `7da1eb2f684051b1e839caa47e6a1e6916b3890e41ce364b204368fbe1bd39d7`. Base commit: `9d355d1c63a422f1ee76dfb1a2a6c63814e17490`. The digest covers the tracked implementation diff and the new gate cancellation registry, excluding this status file; the platform owns the delivery commit.
+- Implemented option: completed or integrated delivery supersedes late gate results and queue budget violations. Acceptance and integration detection cancel queued remote gates. The physical card lane and expected source state fence prevent stale gate decisions from moving an accepted card. Superseded results are recorded on the card timeline.
+- Verification: solution build passed, followed by the changed backend and backend test project build. Focused class-filter runs passed 67 acceptance integration tests and 98 gate, transition, and delivery tests. The architecture/guard filter passed 82 tests in the backend test project and found no matching tests in the other seven .NET test projects. `npm --prefix frontend run lint` and `git diff --check` passed.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
