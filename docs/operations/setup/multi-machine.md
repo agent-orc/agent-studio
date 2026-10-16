@@ -120,11 +120,13 @@ token per Linux host from an elevated terminal:
   --join-token-file "$env:ProgramData\AgentOrchestrator\host-01.join"
 ```
 
-The default `reverse-tunnel` route registers and starts a per-host tunnel
-keeper task, forwarding Linux loopback port 15031 to Windows Task Server port
-5071. SSH access to the Linux host must already work under the selected
-Windows account; use `--ssh-target HOST` when its SSH alias differs. For a
-private LAN address or public URL, pass
+The default `reverse-tunnel` route registers and starts a keeper task named
+`AgentRunner-TunnelKeeper-<host-name>` for each Linux host. Each task has its
+own state directory and forwards that host's loopback port 15031 to Windows
+Task Server port 5071. Issuing a token for another host leaves the earlier
+host's task and SSH target intact. SSH access to the Linux host must already
+work under the selected Windows account; use `--ssh-target HOST` when its SSH
+alias differs. For a private LAN address or public URL, pass
 `--route lan --server-url https://LAN-NAME:PORT` or
 `--route https --server-url https://PUBLIC-NAME`. Those routes require a
 certificate trusted by the Linux host. The host installer probes the selected
@@ -189,16 +191,21 @@ CLI, Git probe origin, and maximum parallelism. It:
    authentication, then probes Task Server reachability and TLS;
 2. downloads and verifies the matching `agent-host` archive only after the
    route probe passes;
-3. optionally stores the GitHub credential for repository URL forms and runs
-   the read checks, then exchanges the single-use code;
-4. writes the Task Server credential to a separate protected file;
-5. installs the setup command and starts the role-specific systemd service;
+3. optionally stores the GitHub credential for both repository URL forms and
+   runs both read checks, then exchanges the single-use code;
+4. writes the Task Server credential and a join receipt to separate protected
+   files before it starts the service;
+5. installs and starts the role-specific systemd service;
 6. waits until the Task Server reports that exact Agent Host registration.
 
 An already downloaded `agent-studio-setup` executable accepts the same join
-options. Remove `/root/agent-studio.join` after the host registers. A failed
-install after exchange can reuse the saved local credential and receipt; an
-expired or failed exchange needs a newly issued token.
+options. Remove `/root/agent-studio.join` after the host registers. If service
+installation or registration fails after exchange, rerun with the same join
+file: setup reuses the host's protected credential. If setup failed before it
+could save that credential, issue a fresh token for the same host name from the
+Task Server and retry. Exchanging the fresh code replaces the earlier Runner
+credential; the old credential stops working. A consumed code cannot be
+exchanged again.
 
 The coding service is `agent-host.service`. A separately installed review role
 uses `agent-host-review.service`, a different identity, environment, state

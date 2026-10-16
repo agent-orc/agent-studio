@@ -396,7 +396,10 @@ internal static class SetupApplication
         if (!options.DryRun)
             configuration = configuration with
             {
-                Credential = await MintRunnerCredentialAsync(payload, runnerId, cancellationToken),
+                Credential = payload.SchemaVersion == 2
+                    ? await GetOrMintJoinCredentialAsync(payload, runnerId, options.Role,
+                        paths.HostConfig, cancellationToken)
+                    : await MintRunnerCredentialAsync(payload, runnerId, cancellationToken),
             };
         await native.InstallAgentHostAsync(
             hostRelease,
@@ -404,6 +407,65 @@ internal static class SetupApplication
             cancellationToken);
         if (standaloneHost)
             await native.LinkHostSetupCommandAsync(cancellationToken);
+    }
+
+    internal static async Task<string> GetOrMintJoinCredentialAsync(
+        JoinPayload payload, string runnerId, string role, string configRoot,
+        CancellationToken cancellationToken, HttpClient? client = null)
+    {
+        var name = role == "coding" ? "runner" : "review";
+        var credentialPath = Path.Combine(configRoot, $"{name}.token");
+        var receiptPath = Path.Combine(configRoot, $"{name}.join");
+        var receipt = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            $"{payload.Credential}\n{payload.InstallationId}\n{payload.ServerUrl}\n{runnerId}")));
+        if (File.Exists(receiptPath) && File.Exists(credentialPath)
+            && SetupSecrets.IsProtected(receiptPath)
+            && ProtectedHostCredential(credentialPath)
+            && string.Equals(File.ReadAllText(receiptPath).Trim(), receipt, StringComparison.Ordinal))
+        {
+            var saved = File.ReadAllText(credentialPath).Trim();
+            if (saved.Length >= 32)
+                return saved;
+        }
+
+        var credential = await MintRunnerCredentialAsync(payload, runnerId, cancellationToken, client);
+        Directory.CreateDirectory(configRoot);
+        WriteJoinSecret(credentialPath, credential);
+        WriteJoinSecret(receiptPath, receipt);
+        return credential;
+    }
+
+    private static bool ProtectedHostCredential(string path)
+    {
+        if (!OperatingSystem.IsLinux()) return false;
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false;
+        var mode = File.GetUnixFileMode(path);
+        return (mode & (UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                        | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) == 0;
+    }
+
+    private static void WriteJoinSecret(string path, string content)
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Agent Host join credentials require Linux.");
+        var temporary = $"{path}.{Guid.NewGuid():N}";
+        try
+        {
+            using (var file = new FileStream(temporary, new FileStreamOptions
+                   {
+                       Mode = FileMode.CreateNew,
+                       Access = FileAccess.Write,
+                       Share = FileShare.None,
+                       UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                   }))
+            using (var writer = new StreamWriter(file))
+                writer.WriteLine(content);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
     }
 
     internal static async Task<string> MintRunnerCredentialAsync(
