@@ -74,7 +74,9 @@ and writes an owner-only join-token file in the Control Plane configuration
 directory. The owner bootstrap code is stored at
 `/etc/agent-orchestrator/owner-bootstrap.code`; use it in the first-owner
 screen at the local UI. Configure the public origin to proxy Studio routes to
-the local UI over HTTPS. Confirm from an Agent Host network:
+the local UI over HTTPS. Native setup includes that HTTPS origin in the BFF's
+allowed browser origins and retains it during update and rollback. Confirm from
+an Agent Host network:
 
 ```sh
 curl -fsS https://tasks.example.com/healthz

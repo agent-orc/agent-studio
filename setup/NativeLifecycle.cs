@@ -101,33 +101,28 @@ internal static class NativeLifecycle
                     cancellationToken: cancellationToken);
             }
             var targetToActivate = Path.Combine(paths.HostOpt, version);
-            if (!string.Equals(oldTarget, targetToActivate, StringComparison.Ordinal))
-            {
-                if (oldTarget is not null)
-                    await process.RequireAsync("ln", ["-sfnT", oldTarget,
-                        Path.Combine(paths.HostOpt, "previous")], cancellationToken: cancellationToken);
-                await process.RequireAsync("ln", ["-sfnT", targetToActivate, currentLink],
-                    cancellationToken: cancellationToken);
-            }
-            if (plan.Mode == "agent-host")
-                await native.LinkHostSetupCommandAsync(cancellationToken);
-            if (Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_SYSTEMD") != "1")
-            {
-                var systemctl = Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") ?? "systemctl";
-                foreach (var name in new[] { "agent-host.service", "agent-host-review.service" })
+            await ActivateHostReleaseAsync(process, currentLink, oldTarget, targetToActivate,
+                async () =>
                 {
-                    if (!File.Exists(Path.Combine(paths.Systemd, name))) continue;
-                    if (name == "agent-host-review.service" && !dryRun)
-                        await native.ReplaceReviewServiceAsync(systemctl, name,
-                            Path.Combine(paths.HostOpt, "current", "agent-host"),
-                            Path.Combine(paths.HostState, "review-state"), cancellationToken);
-                    else
-                        await process.RequireAsync(systemctl, ["restart", name],
+                    if (plan.Mode == "agent-host")
+                        await native.LinkHostSetupCommandAsync(cancellationToken);
+                    if (Environment.GetEnvironmentVariable("AGENT_SETUP_SKIP_SYSTEMD") == "1") return;
+                    var systemctl = Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") ?? "systemctl";
+                    // Refuse an active Review replacement before restarting the coding unit.
+                    foreach (var name in new[] { "agent-host-review.service", "agent-host.service" })
+                    {
+                        if (!File.Exists(Path.Combine(paths.Systemd, name))) continue;
+                        if (name == "agent-host-review.service" && !dryRun)
+                            await native.ReplaceReviewServiceAsync(systemctl, name,
+                                Path.Combine(paths.HostOpt, "current", "agent-host"),
+                                Path.Combine(paths.HostState, "review-state"), cancellationToken);
+                        else
+                            await process.RequireAsync(systemctl, ["restart", name],
+                                cancellationToken: cancellationToken);
+                        await process.RequireAsync(systemctl, ["is-active", "--quiet", name],
                             cancellationToken: cancellationToken);
-                    await process.RequireAsync(systemctl, ["is-active", "--quiet", name],
-                        cancellationToken: cancellationToken);
-                }
-            }
+                    }
+                }, cancellationToken);
         }
         await ProductSetup.FinishManifestAsync(
             plan.Mode == "agent-host" ? paths.HostConfig : paths.OrchestratorConfig,
@@ -136,5 +131,30 @@ internal static class NativeLifecycle
             plan.Mode == "agent-host" ? "host-enrolled" : "services-healthy",
             releaseVerifiedThisRun: command != "rollback");
         Console.WriteLine($"Native {plan.Mode} {command} is complete at release {version}.");
+    }
+
+    internal static async Task ActivateHostReleaseAsync(ProcessRunner process, string currentLink,
+        string? oldTarget, string targetToActivate, Func<Task> restartServices,
+        CancellationToken cancellationToken = default)
+    {
+        var changed = !string.Equals(oldTarget, targetToActivate, StringComparison.Ordinal);
+        if (changed)
+            await process.RequireAsync("ln", ["-sfnT", targetToActivate, currentLink],
+                cancellationToken: cancellationToken);
+        try
+        {
+            await restartServices();
+            if (changed && oldTarget is not null)
+                await process.RequireAsync("ln", ["-sfnT", oldTarget,
+                    Path.Combine(Path.GetDirectoryName(currentLink)!, "previous")],
+                    cancellationToken: cancellationToken);
+        }
+        catch
+        {
+            if (changed && oldTarget is not null)
+                await process.RequireAsync("ln", ["-sfnT", oldTarget, currentLink],
+                    cancellationToken: CancellationToken.None);
+            throw;
+        }
     }
 }

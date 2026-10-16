@@ -980,9 +980,7 @@ internal static class ProductSetup
         {
             var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
                 $"agent-studio-join-{Guid.NewGuid():N}");
-            File.WriteAllText(path, token);
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            SetupSecrets.WriteOwnerOnly(path, token);
             return new TemporaryJoinFile(path);
         }
 
