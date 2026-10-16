@@ -216,6 +216,8 @@
         "src/app/features/credentials/credential-alerts/credential-alerts.component.scss",
         "src/app/features/credentials/credential-inventory/credential-inventory.component.scss",
         "src/app/features/credentials/host-credential-badge/host-credential-badge.component.scss",
+        "src/app/features/remote-hosts/components/environment-header/environment-header.scss",
+        "src/app/features/remote-hosts/components/environment-map/environment-map.scss",
         "src/app/features/batch-gate/batch-panel/batch-panel.scss",
         "src/app/features/batch-gate/batch-settings/batch-settings.scss",
         "src/app/features/batch-gate/batch-member/batch-member.scss",

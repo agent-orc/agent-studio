@@ -51,6 +51,7 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/tasks', json([]));
   await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/management/credential-inventory', json({ generatedAt: new Date().toISOString(), items: [] }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
@@ -311,9 +312,75 @@ test.describe('Execution Hosts settings section', () => {
     await page.getByTestId('status-bar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Execution Hosts');
+    await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Environment');
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
+    await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Environment');
+  });
+
+  test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
+        { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
+          label: 'Coding key', scopes: ['coding:execution'], repository: 'github.com/team/repo', permission: 'write',
+          expiresAt: null, lastUseAt: null, state: 'ok', required: true, detail: '', affectedCards: [] },
+      ] }),
+    }));
+    await page.route('**/api/v1/management/environment', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({
+        controlHost: 'TUFI2', installationId: 'studio', mode: 'reverse-ssh-transition',
+        routes: [{ runnerId: 'agent-runner-01', route: 'reverse-ssh' }],
+        machines: [
+          { id: 'control', name: 'TUFI2', components: [
+            { id: 'studio', name: 'Studio', role: 'control', kind: 'service' },
+          ] },
+          { id: 'agent-runner-01', name: 'agent-runner-01', components: [
+            { id: 'integrator', name: 'Integrator', role: 'integration', kind: 'service' },
+            { id: 'engine', name: 'Engine', role: 'control', kind: 'container' },
+            { id: 'link', name: 'Tunnel service', role: 'link', kind: 'service' },
+          ] },
+          { id: 'kori', name: 'KORI', components: [1, 2, 3].map(index => ({
+            id: `review-${index}`, name: `Review container ${index}`, role: 'review', kind: 'container',
+          })) },
+          { id: 'website-vm', name: 'website-vm', components: [
+            { id: 'website', name: 'Website service', role: 'control', kind: 'service' },
+          ] },
+        ],
+        gateHost: 'KORI', gateSlots: { busy: 1, total: 3 },
+        taskServer: { version: '0.3.0', commit: null },
+        engine: { state: 'ready', lastContact: new Date().toISOString(), engineId: 'engine-1' },
+      }),
+    }));
+    await page.goto('/#/workspace/settings/environment');
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('environment-map-toggle').click();
+    const map = page.getByTestId('environment-map');
+    await expect(map).toBeVisible();
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'TUFI2' })).toBeVisible();
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('Review container 3');
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'website-vm' })).toBeVisible();
+    await expect(map.getByTestId('environment-repository-access').filter({ hasText: 'writes' })).toBeVisible();
+    await expect(map.getByTestId('environment-connection').filter({ hasText: 'reverse tunnel' })).toBeVisible();
+    await expect(map.getByTestId('environment-connection').filter({ hasText: 'SSH gate transport' })).toBeVisible();
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: 950 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(map).toBeVisible();
+        await page.screenshot({ path: join(SHOT_DIR, `environment-map-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      }
+    }
+    await page.reload();
+    await expect(page.getByTestId('environment-map')).toBeVisible();
+    await map.getByRole('button', { name: 'Open agent-runner-01 details' }).click();
+    await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.getByTestId('environment-map-toggle').evaluate((button: HTMLElement) => button.click());
+    await expect(map).toBeHidden();
+    await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
+    expect(errors).toEqual([]);
   });
 
   test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {
@@ -2109,6 +2176,6 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
-      .toHaveText('Execution Hosts');
+      .toHaveText('Environment');
   });
 });
