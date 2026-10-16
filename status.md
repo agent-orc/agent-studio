@@ -1,7 +1,8 @@
 # AGT-3184 Studio website status
 
-- Result SHA: pending browser-smoke fix.
+- Result SHA: `063632e7e20dca6c8220f8bcd088688be531acf4` (browser-smoke fix). Delivery `d4c18bc84` was replayed onto `origin/develop` at `acb056b20` as `3d2fd5402` before this fix.
 - Implemented application lifecycle D15 option A: a dedicated VM with one Compose stack for the networked monolith, static frontend, and HTTPS Caddy edge. Public ACME and private internal TLS configurations are included.
 - Remote owner creation requires the installer code printed by `setup.sh`; loopback bootstrap remains available. Only the named frontend container can supply forwarded HTTPS to the API. The API health check uses the configured hostname.
 - The browser sends authentication POSTs while the live-update hub is offline. An HTTPS Studio without an explicit Update Service endpoint does not poll port 5039.
-- Verification: pending focused checks for this fix round.
+- The Compose smoke now signs in through Chromium after the offline grace window, observes a successful live board response, and asserts that the board is visible. CI installs Chromium for this smoke. The live HTTPS Compose smoke passed; its board screenshot is `website-board.png` in the task results directory.
+- Verification passed: `dotnet build agent-taskboard.sln --no-restore`; `npm --prefix frontend run build`; backend `NetworkedSecurityEndpointTests|PublicDemoExecutionProfileTests` (9 passed); backend `FullyQualifiedName~Architecture|Category=Guard` (103 passed); `FullyQualifiedName~.Architecture.|Category=Guard` on all three .NET test projects (82 backend passed, no matches in Runner or Task Server); `FullyQualifiedName~Architecture` on Runner and Task Server (5 Task Server passed, no Runner matches); focused frontend unit specs for the offline guard and Update Service (14 passed); `e2e/security/networked-login.spec.ts` (2 passed); `npm --prefix frontend run lint`; workflow YAML, shell and JavaScript syntax, and `git diff --check`.
