@@ -530,7 +530,7 @@ internal static class ProductSetup
         if (decisions is not null && !dryRun)
             await decisions.PrepareProviderAsync(prompter, parsed.Unattended);
         string? runnerPassword = null;
-        if (decisions is { ProviderCli: not "skip" } && !dryRun)
+        if (decisions is { RequiresRunnerPassword: true } && !dryRun)
         {
             if (runnerPasswordFile is not null)
             {
@@ -541,7 +541,7 @@ internal static class ProductSetup
                 runnerPassword = prompter.Secret("Windows password for the Runner account (stored by Task Scheduler)");
             else
                 throw new InvalidOperationException(
-                    "Unattended provider setup requires RunnerPasswordFile in the answer file, with an owner-only ACL.");
+                    "Unattended provider or GitHub access requires RunnerPasswordFile in the answer file, with an owner-only ACL.");
             if (string.IsNullOrEmpty(runnerPassword) || runnerPassword.Contains('\n') || runnerPassword.Contains('\r'))
                 throw new ArgumentException("Runner account password must be one nonempty line.");
         }
@@ -621,6 +621,20 @@ internal static class ProductSetup
                 }
                 throw;
             }
+        }
+
+        if (decisions is { GitAccess: "deploy-key", GitRemote: not null } && !dryRun)
+        {
+            if (parsed.Unattended)
+                Console.WriteLine($"Add the displayed deploy key to {decisions.GitRemote}, then rerun guided setup with the same answer file to verify GitHub access.");
+            else
+                await decisions.VerifyDeployKeyAsync(prompter, layout.ConfigRoot, async environment =>
+                {
+                    var result = await process.RunAsync("git.exe",
+                        ["ls-remote", decisions.GitRemote, "HEAD"], environment,
+                        printOutput: false);
+                    return result.ExitCode == 0;
+                });
         }
 
         if (!dryRun)

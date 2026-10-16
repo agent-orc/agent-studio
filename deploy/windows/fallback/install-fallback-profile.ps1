@@ -318,7 +318,8 @@ if ($FullStudio) {
             $alias = "github.com-$($record.BaseName)"
             $repo = $recordRemote.Substring('git@github.com:'.Length)
             $configLines += @("Host $alias", '  HostName github.com', '  User git',
-                "  IdentityFile `"$recordKey`"", '  IdentitiesOnly yes', '  BatchMode yes')
+                "  IdentityFile `"$recordKey`"", '  IdentitiesOnly yes', '  BatchMode yes',
+                '  StrictHostKeyChecking accept-new')
             Set-EnvFileValue -Path $runnerEnvPath -Key "GIT_CONFIG_KEY_$index" -Value "url.git@${alias}:${repo}.insteadOf"
             Set-EnvFileValue -Path $runnerEnvPath -Key "GIT_CONFIG_VALUE_$index" -Value $recordRemote
             $index++
@@ -329,13 +330,18 @@ if ($FullStudio) {
     }
     if ($GitRemote) {
         Set-EnvFileValue -Path $runnerEnvPath -Key 'RUNNER_GIT_REMOTE' -Value $GitRemote
-        foreach ($line in Get-Content -LiteralPath $runnerEnvPath) {
-            if ($line -match '^(GIT_[A-Z0-9_]+)=(.*)$') {
-                [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
-            }
+        if ($GitAccess -eq 'deploy-key') {
+            Write-Host 'Deploy-key access will be verified after you add the displayed public key to the repository.'
         }
-        & git.exe ls-remote $GitRemote HEAD | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "GitHub access could not be verified for $GitRemote. Grant access and rerun setup." }
+        else {
+            foreach ($line in Get-Content -LiteralPath $runnerEnvPath) {
+                if ($line -match '^(GIT_[A-Z0-9_]+)=(.*)$') {
+                    [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+                }
+            }
+            & git.exe ls-remote $GitRemote HEAD | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "GitHub access could not be verified for $GitRemote. Grant access and rerun setup." }
+        }
     }
 }
 $current = Set-FallbackCurrentRelease -InstallBase $InstallBase -ReleaseDirectory $releaseDirectory `
