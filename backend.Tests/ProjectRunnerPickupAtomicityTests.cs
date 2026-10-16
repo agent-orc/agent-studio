@@ -222,6 +222,53 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     }
 
     [Fact]
+    public async Task Stop_after_core_process_exits_skips_review_finalization()
+    {
+        WriteJob(TaskStates.Ready, "job-stop-between-steps");
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+            new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
+        Func<DateTime> now = () => clock.GetUtcNow().UtcDateTime;
+        var authority = new AttemptAuthorityService(
+            NullLogger<AttemptAuthorityService>.Instance, now);
+        var leases = new RunLeaseService(NullLogger<RunLeaseService>.Instance, authority, now);
+        var stops = new RemoteRunStopRequestStore(now);
+        var local = new LocalRunClaimAdapter(leases,
+            new RunnerIdentity("local-runner", "local", "host", "backend", "token", "1"),
+            NullLogger.Instance, stops);
+        TaskScannerService? scanner = null;
+        string? authorityKey = null;
+        var stopRecorded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cli = new ImmediateFinishCliService(
+            finishedStatus: RunStatuses.Completed,
+            now: now,
+            onUsage: () =>
+            {
+                var lease = leases.Peek(authorityKey!).Lease!;
+                stops.Record(lease.TaskKey, RemoteRunStopReasons.User,
+                    lease.AttemptId, "operator", lease.FencingToken, "post-core-stop");
+                stopRecorded.TrySetResult();
+            });
+        var runner = BuildRunner(cli, localRunClaims: local,
+            scannerObserver: observed => scanner = observed);
+        authorityKey = TaskIdentity.AuthorityKey(scanner!.FindJob("job-stop-between-steps")!);
+
+        var start = runner.StartJobManualAsync("job-stop-between-steps", CancellationToken.None);
+        await cli.FinishRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cli.AllowStartReturn.TrySetResult();
+        await start.WaitAsync(TimeSpan.FromSeconds(10));
+        await stopRecorded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => leases.Peek(authorityKey).Outcome == "Free");
+
+        Assert.Equal("stopped", authority.GetTaskProjection(authorityKey)
+            .CurrentRunAttempt?.TerminalOutcome);
+        Assert.Equal("settled", stops.GetReceipt("post-core-stop")?.TerminalReason);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "job-stop-between-steps")));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, "job-stop-between-steps")));
+        Assert.False(File.Exists(Path.Combine(_watchPath, TaskStates.Progress,
+            "job-stop-between-steps", CompletionMarker.FileName)));
+    }
+
+    [Fact]
     public async Task LocalConfirmedStart_ReportsFailedFollowUpAcknowledgement_AndKeepsRecoverableStash()
     {
         const string slug = "follow-up-ack-failure";
@@ -420,7 +467,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         IReadOnlyList<IQuotaProbe>? quotaProbes = null,
         Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null,
         bool allowLocalCoding = true,
-        Action<TaskScannerService>? scannerObserver = null)
+        Action<TaskScannerService>? scannerObserver = null,
+        LocalRunClaimAdapter? localRunClaims = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -506,7 +554,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             timeline: timeline,
             providerLimits: providerLimits,
             dispatchRejections: dispatchRejections,
-            localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null);
+            localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null,
+            localRunClaims: localRunClaims);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
@@ -602,7 +651,17 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     private sealed class ImmediateFinishCliService : ICliExecutionService
     {
         private readonly bool _finishImmediately;
-        public ImmediateFinishCliService(bool finishImmediately = true) => _finishImmediately = finishImmediately;
+        private readonly string _finishedStatus;
+        private readonly Func<DateTime> _now;
+        private readonly Action? _onUsage;
+        public ImmediateFinishCliService(bool finishImmediately = true,
+            string finishedStatus = RunStatuses.Stopped, Func<DateTime>? now = null, Action? onUsage = null)
+        {
+            _finishImmediately = finishImmediately;
+            _finishedStatus = finishedStatus;
+            _now = now ?? (() => DateTime.UtcNow);
+            _onUsage = onUsage;
+        }
         public string CliType => CliTypes.Claude;
         public TaskCompletionSource FinishRaised { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -634,7 +693,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
                 JobId = jobId,
                 TaskKey = jobKey,
                 ProcessId = Environment.ProcessId,
-                StartedAt = DateTime.UtcNow,
+                StartedAt = _now(),
                 Status = RunStatuses.Running,
                 Model = model,
                 ThinkingLevel = thinkingLevel,
@@ -643,10 +702,11 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             if (!_finishImmediately) return (started, null);
             OnFinished?.Invoke(jobKey, started with
             {
-                Status = RunStatuses.Stopped,
+                Status = _finishedStatus,
                 ExitCode = -1,
                 DurationSeconds = 0.01,
-                RunOutcome = TerminalRunOutcomeKinds.Interrupted,
+                RunOutcome = _finishedStatus == RunStatuses.Stopped
+                    ? TerminalRunOutcomeKinds.Interrupted : TerminalRunOutcomeKinds.Success,
             });
             FinishRaised.TrySetResult();
             await AllowStartReturn.Task.WaitAsync(ct);
@@ -659,7 +719,11 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         public void DiscardPersistedOutput(string jobKey) { }
         public void ReleaseOutputResources(string jobKey) { }
         public CliExecution? GetExecution(string jobKey) => null;
-        public SessionUsage? GetLastUsage(string jobKey) => null;
+        public SessionUsage? GetLastUsage(string jobKey)
+        {
+            _onUsage?.Invoke();
+            return null;
+        }
         public bool IsRunningForProject(string rootPath) => false;
         public DateTime? GetLastStreamedAt(string jobKey) => null;
         public WatchdogState GetWatchdogState(string jobKey) => WatchdogState.Healthy;
