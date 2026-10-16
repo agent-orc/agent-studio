@@ -590,13 +590,14 @@ public sealed class BoardConditionalReadTests : IDisposable
         using var release = new ManualResetEventSlim(true);
         var requestFlowScans = 0;
         var totalScans = 0;
+        var identityWriter = new ControllableAtomicJsonFileWriter();
         using var factory = BuildFactory(scan => () =>
         {
             Interlocked.Increment(ref totalScans);
             if (RequestFlow.Value is not null) Interlocked.Increment(ref requestFlowScans);
             release.Wait(TimeSpan.FromSeconds(60));
             return scan();
-        });
+        }, identityWriter: identityWriter);
         // Run requests on the test's execution context, so the flow-scoped
         // probes below see exactly what the request flow did.
         factory.Server.PreserveExecutionContext = true;
@@ -611,61 +612,84 @@ public sealed class BoardConditionalReadTests : IDisposable
         await WaitForSettledValidatorAsync(client, Grouped);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var scansBeforeBurst = Volatile.Read(ref totalScans);
+        var identities = factory.Services.GetRequiredService<ClientIdentityStore>();
+        var runner = identities.Register(new RegisterClientRequest
+        {
+            DisplayName = "burst-runner",
+            Kind = ClientIdentityKinds.Service,
+        });
+        var identityPath = Path.Combine(_workspace, "identities", runner.Id + ".json");
+        using var identityWriteEntered = new ManualResetEventSlim();
+        using var releaseIdentityWrite = new ManualResetEventSlim();
+        identityWriter.ShouldFail = (candidate, _) =>
+        {
+            if (candidate != identityPath) return false;
+            identityWriteEntered.Set();
+            if (!releaseIdentityWrite.Wait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("Test did not release the identity writer.");
+            return false;
+        };
 
         release.Reset();
-        var burstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var readsStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task? writes = null;
         try
         {
-            writes = Task.Run(async () =>
+            // The held synchronous writer needs its own thread: board body
+            // construction uses Task.Run, so occupying a pool worker here can
+            // make the test measure pool starvation instead of board reads.
+            writes = Task.Factory.StartNew(() =>
             {
-                // The first creation is visible to the writer while the index
-                // scan is blocked. The remaining work starts with board reads.
                 Seed("t-2", "Created task 2", TaskStates.Ready);
                 scanner.InvalidateCache();
-                burstStarted.SetResult();
-                await readsStarted.Task;
                 for (var i = 3; i <= 9; i++)
                 {
                     Seed($"t-{i}", $"Created task {i}", TaskStates.Ready);
                     scanner.InvalidateCache();
-                    await Task.Yield();
                 }
                 for (var i = 0; i < 7; i++)
                 {
                     File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready, "t-1", "status.md"), $"Follow-up {i}");
                     scanner.InvalidateCache();
-                    await Task.Yield();
                 }
                 var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
                 for (var i = 0; i < 7; i++)
                 {
                     Assert.Equal(AttemptWriteStatus.Accepted, authority.AcquireRun(
                         $"t-{i + 2}", ProjectName, null, $"runner-{i}", "host", 120, $"claim-{i}").Status);
-                    await Task.Yield();
                 }
-            });
-            await burstStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.NotNull(identities.RecordRunnerActivity(
+                    runner.Id, activeSlots: 1, availableSlots: 0, claimed: true));
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            Assert.True(identityWriteEntered.Wait(TimeSpan.FromSeconds(10)),
+                "The burst did not reach identity persistence.");
 
             RequestFlow.Value = "board-request";
             using var markerReads = AgentStudio.Runner.QuotaWaitMarker.Reads.Observe();
             using var indexBuilds = TaskReferenceIndex.Builds.Observe();
+            var boardBodies = factory.Services.GetRequiredService<BoardReadConcurrencyGate>();
+            var buildsBeforeReads = boardBodies.Builds;
 
             var readTimer = System.Diagnostics.Stopwatch.StartNew();
-            var reads = Task.WhenAll(Enumerable.Range(0, 10).Select(_ => GetAsync(client, Grouped)));
-            readsStarted.SetResult();
-            Assert.Same(reads, await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(30))));
+            var reads = Task.WhenAll(Enumerable.Range(0, 10).Select(async _ =>
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                var response = await GetAsync(client, Grouped);
+                timer.Stop();
+                return (response, timer.Elapsed);
+            }));
+            Assert.Same(reads, await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(10))));
             var responses = await reads;
             readTimer.Stop();
-            await writes;
-            _output.WriteLine($"10 grouped board reads concurrent with 8 creations, 7 sidecar writes, and 7 claims: {readTimer.Elapsed.TotalMilliseconds:0.###} ms total");
-            Assert.True(readTimer.Elapsed < TimeSpan.FromSeconds(10), "Grouped reads waited for a write or index scan.");
-            Assert.All(responses, response =>
+            Assert.False(writes.IsCompleted, "The identity write completed before the board reads.");
+            Assert.True(boardBodies.Builds > buildsBeforeReads,
+                "The board reads did not build a body while identity persistence was held.");
+            _output.WriteLine($"10 grouped board reads while identity persistence held after 8 creations, 7 sidecar writes, and 7 claims: {readTimer.Elapsed.TotalMilliseconds:0.###} ms total; slowest {responses.Max(item => item.Elapsed.TotalMilliseconds):0.###} ms");
+            Assert.All(responses, item =>
             {
-                Assert.Equal(HttpStatusCode.OK, response.Status);
-                Assert.Contains("t-1", response.Body, StringComparison.Ordinal);
-                Assert.DoesNotContain("t-2", response.Body, StringComparison.Ordinal);
+                Assert.True(item.Elapsed < TimeSpan.FromSeconds(10), "A grouped read waited for an identity write or index scan.");
+                Assert.Equal(HttpStatusCode.OK, item.response.Status);
+                Assert.Contains("t-1", item.response.Body, StringComparison.Ordinal);
+                Assert.DoesNotContain("t-2", item.response.Body, StringComparison.Ordinal);
             });
 
             Assert.Equal(0, markerReads.Count);
@@ -674,11 +698,12 @@ public sealed class BoardConditionalReadTests : IDisposable
         }
         finally
         {
-            readsStarted.TrySetResult();
-            if (writes is not null) await writes;
+            releaseIdentityWrite.Set();
             RequestFlow.Value = null;
             release.Set();
+            if (writes is not null) await writes.WaitAsync(TimeSpan.FromSeconds(10));
         }
+        Assert.True(writes.IsCompletedSuccessfully, "The burst did not finish after releasing the identity writer.");
 
         // Once the background refresh publishes, the board catches up.
         var deadline = System.Diagnostics.Stopwatch.StartNew();

@@ -1308,7 +1308,7 @@ public class TaskRunnerService : BackgroundService
     public string ResolvePlacement(string projectName)
         => ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(projectName));
 
-    public string? SuggestedRemoteRunnerId => _clients?.ListAll()
+    public string? SuggestedRemoteRunnerId => _clients?.ListPublished()
         .Where(client => client.Kind != ClientIdentityKind.Retired
             && !string.IsNullOrWhiteSpace(client.RunnerDaemonState)
             && !string.Equals(client.Id, _runnerIdentity?.RunnerId, StringComparison.OrdinalIgnoreCase))

@@ -1,6 +1,8 @@
-# AGT-3155 Linux installer review fix
+# AGT-3189 board read regression result
 
-- Result SHA: `765bcc1566c8e575795b763b0805cd4433af8906` (duplicate-script removal, rebased onto `86878facd38f190124627338d2bcc986c3b36852`).
-- Removed the unreferenced `scripts/release/install.sh`. Release packaging continues to use the verified root `install.sh`.
-- Verification passed: `dotnet build agent-taskboard.sln --no-restore`; `sh scripts/release/linux-install-script.test.sh`; `sh scripts/release/release-scripts.test.sh`; setup tests filtered to `LinuxInstallerTests|InstallationJourneyTests` (86 passed); architecture and guard filter on all eight .NET test projects (82 matching backend tests passed); `FullyQualifiedName~Architecture` in backend (103 passed) and Task Server (5 passed); `npm --prefix frontend run lint`; `git diff --check`.
-- No release tag or GitHub Release was created, and package visibility was not changed. Publishing a release and setting package visibility remain operator steps.
+- Result SHA-256 (source patch, excluding this status file): `ab5982c4d9afc1cea0015aae6ed808a5157686b7f3b2206539b84f4123a0a187`. Base Git SHA: `acb056b20b9dccf0040432f6cf61bfdc7dc8e8f2`. The platform owns the delivery commit.
+- Implemented option: gate the identity persistence write after the creation, sidecar, and claim burst. The test starts ten grouped board reads only after the write enters persistence, requires a fresh board body build and every read to finish within 10 seconds while the write remains held, then releases and verifies the writer completes.
+- The revised test exposed a real defect: board body construction called `SuggestedRemoteRunnerId`, which enumerated identities through a lock held by persistence. The lookup now reads the last committed identity snapshot.
+- Final measured run: 10 reads completed while identity persistence was held in 13.679 ms total; slowest read 8.383 ms. One full index scan covered the burst. The first gated run stalled at the 10-second bound before the production fix.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:2` and the final backend test project rebuild passed; `FullyQualifiedName~BoardConditionalReadTests` passed 14/14; `FullyQualifiedName~ClientIdentityTests|FullyQualifiedName~PickupHoldEndpointsTests|FullyQualifiedName~PickupHoldSweepTests` passed 37/37; `FullyQualifiedName~.Architecture.|Category=Guard` passed on all eight .NET test projects (82 matching backend tests, no matches in the other seven); `npm --prefix frontend run lint` passed; `git diff --check` passed. Detailed test output is in the task results directory.
+- No product documentation change is needed for this scoped fix to the accepted board-read behavior.
