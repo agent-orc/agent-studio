@@ -31,6 +31,7 @@ import { NotificationComponent } from '../../../../components/notification/notif
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
 import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
+import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -41,8 +42,7 @@ import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deploy
  * identity, capability, connection, capacity, and deployment facts are disclosed
  * on demand ({@link RemoteHostCardComponent}).
  *
- * Host definitions come from {@link RemoteHostsService}; real Task Server
- * client LastSeen values hydrate liveness on every reload.
+ * Host definitions and client heartbeat facts come from {@link RemoteHostsService}.
  */
 @Component({
   selector: 'app-remote-hosts-panel',
@@ -56,6 +56,7 @@ import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deploy
     BetterCandidateLinesComponent,
     RunnerInfrastructureFailuresComponent,
     DeploymentCheckpointsComponent,
+    ExecutionInfrastructureComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -68,6 +69,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly tableState = new RemoteHostTableState();
 
   readonly hosts = this.service.hosts;
+  readonly infrastructureReload = signal(0);
   readonly loading = this.service.loading;
   readonly error = this.service.error;
   readonly identityDiagnostics = this.service.identityDiagnostics;
@@ -131,7 +133,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     const snapshot = this.reviewQueueSnapshot();
     return snapshot ? formatReviewDuration(snapshot.medianReviewDurationMs) : '-';
   });
-
   ngOnInit(): void {
     this.tableState.hydrate();
     this.service.ensureLoaded();
@@ -145,8 +146,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     if (this.tickHandle) clearInterval(this.tickHandle);
     if (this.usageHandle) clearInterval(this.usageHandle);
   }
-
-  reload(): void { this.service.reload(); }
+  reload(): void { this.service.reload(); this.infrastructureReload.update(value => value + 1); }
   reconnect(id: string): void { this.service.reconnect(id); }
   linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }
 
@@ -165,7 +165,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   sort(key: RemoteHostSortKey): void {
     this.tableState.selectSort(key);
   }
-
   ariaSort(key: RemoteHostSortKey): 'ascending' | 'descending' | 'none' {
     if (this.sortKey() !== key) return 'none';
     return this.sortDirection() === 'asc' ? 'ascending' : 'descending';

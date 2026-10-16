@@ -45,6 +45,16 @@ describe('deployment checkpoint projections', () => {
       .toMatchObject({ state: 'connected', reason: 'executor:coding advertisement is stale.' });
   });
 
+  it('does not require push access for a review role', () => {
+    const review = host({ serviceRole: 'review', capabilityHealth: [
+      capability('executor:review'), capability('provider-auth:codex'),
+    ] });
+    expect(hostReadiness(review, NOW).state).toBe('capability-ready');
+    expect(hostReadiness(host({ capabilityHealth: [
+      capability('executor:coding'), capability('provider-auth:codex'),
+    ] }), NOW)).toMatchObject({ state: 'connected', action: expect.stringContaining('task branches') });
+  });
+
   it('uses only the latest repository receipt per runner and does not treat a disconnected host as proven now', () => {
     const status: RepositoryStatus = {
       registration: { projectId: 'project-a', repositoryUrl: 'https://example.test/a.git',

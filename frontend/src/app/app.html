@@ -370,7 +370,7 @@
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
       <app-update-center />
-      <app-update-block-modal /><app-crash-recovery-prompt />
+      <app-update-block-modal />
       <app-confirm-dialog />
       @if (workspaceManager.createOpen()) {
         <app-workspace-create-dialog />
@@ -786,7 +786,7 @@
           (openCliConfig)="openCliConfigFromError()" />
       }
 
-      <app-confirm-dialog /><app-crash-recovery-prompt />
+      <app-confirm-dialog />
       @if (workspaceManager.createOpen()) {
         <app-workspace-create-dialog />
       }

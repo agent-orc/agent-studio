@@ -3,22 +3,18 @@
 }
 
 .crp__entry {
-  position: fixed;
-  z-index: 80;
-  right: var(--studio-spacing-4);
-  bottom: calc(var(--studio-spacing-7) + var(--studio-spacing-2));
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--studio-spacing-2);
-  min-height: 2rem;
-  padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 999px;
-  background: var(--studio-bg-elevated);
-  color: var(--studio-fg);
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--studio-fg-strong) 12%, transparent);
+  min-height: var(--statusbar-item-height);
+  padding: 0 var(--studio-spacing-2);
+  border: 0;
+  border-radius: 5px;
+  background: var(--notify-warning-tint);
+  color: var(--studio-fg-strong);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--statusbar-font-size);
   cursor: pointer;
 }
 

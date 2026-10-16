@@ -62,6 +62,7 @@
 .role__plane { color: var(--studio-fg-muted); }
 .role__alarm { color: var(--severity-warn); font-weight: 650; }
 .role__status { gap: var(--studio-spacing-2); white-space: nowrap; }
+.role__status-reason { display: block; max-width: 100%; color: var(--studio-fg-dim); line-height: 1.3; overflow-wrap: anywhere; }
 .role__link {
   display: block;
   margin-top: var(--studio-spacing-1);

@@ -14,12 +14,20 @@ import type {
   TaskServerRunnerCapabilitySnapshot,
 } from '../models/remote-host.model';
 import type {
+  HostReleaseDrift,
   HostReleaseDriftSnapshot,
   StableReleaseIdentity,
 } from '../models/host-release-drift';
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
+
+/** Keep the newest host report and discard a drift verdict for an older heartbeat. */
+export function mergeReleaseReport(host: RemoteHost, drift: HostReleaseDrift): RemoteHost {
+  const hostNewer = !!host.release && Date.parse(drift.lastSeenAt) < Date.parse(host.lastHeartbeatAt ?? '');
+  return { ...host, release: hostNewer ? host.release : drift.release,
+    releaseDrift: hostNewer ? null : drift };
+}
 
 export interface RunnerInfrastructureFailure {
   taskKey: string;
@@ -243,7 +251,9 @@ export class RemoteHostsService {
             const heartbeatFresh = Number.isFinite(lastSeenMs)
               && now - lastSeenMs <= RemoteHostsService.DEGRADED_CLIENT_MS;
             const capabilityDegraded = snapshot.capabilities.some(capability =>
-              !capability.isFresh || capability.healthState !== 'healthy' || capability.advertisedStatus !== 'ready');
+              !(serviceRole(snapshot) === 'review' && capability.key.startsWith('git:push'))
+              && !(serviceRole(snapshot) === 'review' && capability.key === 'git:workflow-push')
+              && (!capability.isFresh || capability.healthState !== 'healthy' || capability.advertisedStatus !== 'ready'));
             const reviewPlaneAlarm = snapshot.telemetry?.reviewPlane?.sustainedThrottling === true;
             const hostDraining = snapshot.hostAdmission.admissionState !== 'open';
             const telemetryAt = snapshot.telemetry ? Date.parse(snapshot.telemetry.observedAt) : Number.NaN;
@@ -280,7 +290,7 @@ export class RemoteHostsService {
               status,
               lastHeartbeatAt: snapshot.lastSeenAt,
               releaseId: snapshot.release?.releaseId ?? snapshot.runnerVersion,
-              release: snapshot.release ?? current.release ?? null,
+              release: snapshot.release ?? null,
               runnerInstanceId: snapshot.instanceId,
               runnerProtocolVersion: snapshot.protocolVersion,
               capabilityHealth: snapshot.capabilities,
@@ -350,7 +360,7 @@ export class RemoteHostsService {
         this.hosts.update(hosts => hosts.map(host => {
           const drift = byRunner.get(host.clientId) ?? byRunner.get(host.id);
           return drift
-            ? { ...host, release: drift.release, releaseDrift: drift }
+            ? mergeReleaseReport(host, drift)
             : { ...host, releaseDrift: null };
         }));
         this.log('release-drift-hydrated', {

@@ -132,11 +132,11 @@ export class RemoteHostCardComponent {
   readonly expandedChange = output<boolean>();
   readonly expandedSections = signal<readonly DetailSection[]>([]);
   readonly relativeHeartbeat = relativeHeartbeat;
-
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
   readonly statusLabel = computed(() => this.liveLoading() ? 'Loading live status' : hostStatusLabel(this.host().status));
+  readonly statusReason = computed(() => this.host().status === 'degraded' ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null);
   readonly roleLabel = computed(() => hostRoleLabel(this.host().role));
   readonly heartbeatLabel = computed(() => this.liveLoading()
     ? 'loading…'
@@ -147,11 +147,12 @@ export class RemoteHostCardComponent {
     const age = Math.max(0, this.now() - Date.parse(link.since));
     const ageLabel = age < 60_000 ? `${Math.floor(age / 1000)}s`
       : age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : `${Math.floor(age / 3_600_000)}h`;
-    return `${link.state} · ${ageLabel}`;
+    return `${link.state[0].toUpperCase()}${link.state.slice(1)} · ${ageLabel} ago`;
   });
   readonly linkTooltip = computed(() => {
     const link = this.host().runnerLink;
-    if (!link) return null;
+    if (!link) return this.host().role === 'local' ? 'Local process; no runner link needed.'
+      : 'No runner link reported. Expand Connection and select Set up agent host.';
     return `${link.state} since ${link.since}. ${link.lastError ?? 'No error reported.'}`;
   });
   readonly retired = computed(() => this.host().status === 'retired');

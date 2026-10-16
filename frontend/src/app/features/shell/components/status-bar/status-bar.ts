@@ -27,6 +27,7 @@ import {
 } from '../../../remote-hosts';
 
 import { StatusbarItemComponent } from '../statusbar-item/statusbar-item.component';
+import { CrashRecoveryPromptComponent } from '../crash-recovery-prompt/crash-recovery-prompt.component';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { summarizeStatusBarHostLoad, summarizeStatusBarSlotsByRole } from './status-bar-host-load';
 import { withRouteSegment } from '../../../../services/url-hash.util';
@@ -55,7 +56,7 @@ export function formatRunningLabel(
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
-  imports: [UsageHoverPanelComponent, StatusbarItemComponent, CliModelSelectorComponent],
+  imports: [UsageHoverPanelComponent, StatusbarItemComponent, CliModelSelectorComponent, CrashRecoveryPromptComponent],
   templateUrl: './status-bar.html',
   styleUrl: './status-bar.scss',
 })

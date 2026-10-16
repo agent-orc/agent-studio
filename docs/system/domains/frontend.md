@@ -673,17 +673,25 @@ occur. It is not a claim about tunnel transfer time.
   the Orchestrator proxy and direct Task Server deployment share one frontend.
 - The Execution Hosts destination at `#/workspace/settings/execution-hosts`
   uses one sortable machine row for status, host CPU load, activity, and release
-  identity. Matching role releases appear once on the machine row; differing
+  identity. Its occupied/total slots sum the visible role rows. Matching role releases appear once on the machine row; differing
   releases appear on their role rows. Coding and Review runner processes
   advertised with the same host id are role sub-rows with their own slot
   ceilings and lifecycle actions. The Review row states CPU quota in cores and
   throttled share separately from host CPU load. Narrow action columns use an
   overflow menu. Installation checkpoints map active project registry records
-  and group projects without a canonical repository behind a disclosure. Retired
+  and group projects without a canonical repository behind a disclosure only in
+  the networked profile. The local profile labels Task Server installation,
+  repository registration, placement, and full backup checkpoints as not
+  applicable and makes no Task Server v1 checkpoint requests. The adjacent
+  infrastructure summary reads the API host, decision boundary, and remote SSH
+  gate identity, slots, and last observed reachability. Review roles require
+  read access and provider authentication, while coding roles require task-branch
+  push capability. Retired
   roles are hidden until the compact history filter is enabled. The persisted
   machine disclosure opens first to one-line summaries for identity,
   connection, capabilities, capacity, project access, host work, and system
-  load; each section discloses its internals independently.
+  load; each section discloses its internals independently. Crash recovery
+  pending count occupies a status-bar slot so it cannot cover host actions.
 - The System prompts destination is the prompt registry and observability
   surface. Its overview groups runtime-step, orchestrator, drift, and framing
   templates, explains application and project pipeline override precedence, and

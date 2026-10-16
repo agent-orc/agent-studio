@@ -316,6 +316,71 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
   });
 
+  test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {
+    const liveInfrastructure = await page.request.get('/api/system/execution-infrastructure');
+    expect(liveInfrastructure.ok()).toBe(true);
+    expect((await liveInfrastructure.json()).gate.total).toBeGreaterThan(0);
+    await stubGroupedHostApis(page);
+    await page.route('**/api/crash-recovery/pending', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ pending: Array.from({ length: 5 }, (_, index) => ({
+        id: `recovery-${index}`, projectName: 'fixture', jobId: `AGT-${index}`,
+        reason: 'Changes found after restart', repoRoot: '/tmp/fixture', message: 'Recovery',
+        files: ['src/example.ts'], createdAt: '2026-10-16T08:00:00Z', classification: 'review',
+      })) }),
+    }));
+    await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        gate: { host: 'kori-gate', busy: 1, total: 3, reachability: 'reachable',
+          lastReachedAt: '2026-10-16T08:00:00Z', lastFailureAt: null },
+        taskServer: 'local monolith', engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+        workstation: 'operator-workstation',
+      }),
+    }));
+    const checkpointRequests: string[] = [];
+    page.on('request', request => {
+      if (/\/api\/v1\/(installation|projects\/[^/]+\/(repository|placement)|management\/backups\/full)/.test(request.url()))
+        checkpointRequests.push(request.url());
+    });
+    const screenshotDir = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(screenshotDir, { recursive: true });
+    for (const width of [1280, 1440, 1920]) {
+      await page.setViewportSize({ width, height: width === 1920 ? 1080 : 900 });
+      await page.goto('/#/workspace/settings/execution-hosts');
+      await page.reload();
+      const panel = page.getByTestId('remote-hosts-panel');
+      await expect(panel).toBeVisible();
+      await expect(page.getByTestId('remote-gate-host')).toContainText('kori-gate');
+      await expect(page.getByTestId('remote-gate-host')).toContainText('1 / 3 slots');
+      await expect(page.getByTestId('deployment-identity')).toContainText('not applicable in the local profile');
+      await expect(page.getByTestId('deployment-recovery')).toContainText('not applicable in the local profile');
+      const statusBar = page.getByTestId('status-bar');
+      const recovery = statusBar.getByTestId('crash-recovery-entry');
+      await expect(recovery).toContainText('Recovery pending');
+      const barBox = await statusBar.boundingBox();
+      const recoveryBox = await recovery.boundingBox();
+      expect(recoveryBox && barBox && recoveryBox.y >= barBox.y && recoveryBox.y + recoveryBox.height <= barBox.y + barBox.height).toBe(true);
+      const rowLayout = await page.getByTestId('remote-host-role-row').first().evaluate(row => {
+        const release = row.querySelector('.role__release');
+        const actions = row.querySelector('.role__actions');
+        return release && actions ? release.getBoundingClientRect().right <= actions.getBoundingClientRect().left + 1 : false;
+      });
+      expect(rowLayout).toBe(true);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: join(screenshotDir, `execution-hosts-${width}-${theme}.png`),
+          fullPage: true, animations: 'disabled' });
+        await page.getByTestId('remote-host-role-row').last().scrollIntoViewIfNeeded();
+        await page.screenshot({ path: join(screenshotDir, `execution-hosts-rows-${width}-${theme}.png`),
+          animations: 'disabled' });
+        await page.getByTestId('deployment-identity').scrollIntoViewIfNeeded();
+      }
+    }
+    expect(checkpointRequests).toEqual([]);
+    await page.getByTestId('workspace-settings-close').click();
+    await page.getByTestId('crash-recovery-entry').click();
+    await expect(page.getByTestId('crash-recovery-prompt')).toBeVisible();
+  });
+
   test('pinned installation checkpoints show observed facts and honest recovery limits in both themes', async ({ page }) => {
     const json = (body: unknown) => (route: Route) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(body),
@@ -583,34 +648,23 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-dark--mocked.png'), fullPage: false });
   });
 
-  test('keeps settings in one scroll owner and fits actions with real project response fields', async ({ page, devBackend: _devBackend }) => {
+  test('keeps local settings in one scroll owner and fits host actions', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
     await stubGroupedHostApis(page);
-    const projects = Array.from({ length: 17 }, (_, index) => ({
-      id: `PROJ-${index + 1}`, displayName: `Project ${index + 1}`,
-      shortCode: `P${index + 1}`, workspaceId: 'workspace-1', archived: false,
-      storageLocation: `/tmp/projects/project-${index + 1}`,
-    }));
-    projects.push({ id: 'PROJ-OLD', displayName: 'Archived', shortCode: 'OLD', workspaceId: 'workspace-1',
-      archived: true, storageLocation: '/tmp/projects/archived' });
-    const undefinedRequests: string[] = [];
-    page.on('request', request => { if (request.url().includes('/api/v1/projects/undefined/')) undefinedRequests.push(request.url()); });
-    await page.route('**/api/v1/projects', route => route.fulfill({ json: projects }));
-    await page.route('**/api/v1/projects/*/repository', route => route.fulfill({ status: 404, json: {} }));
-    await page.route('**/api/v1/projects/*/placement', route => route.fulfill({ status: 404, json: {} }));
+    const repositoryRequests: string[] = [];
+    page.on('request', request => {
+      if (/\/api\/v1\/projects\/[^/]+\/(repository|placement)/.test(request.url())) repositoryRequests.push(request.url());
+    });
     for (const viewport of [{ width: 1606, height: 1100 }, { width: 1834, height: 1960 }]) {
       await page.setViewportSize(viewport);
       await page.goto('/#/workspace/settings/execution-hosts');
       await dismissDevErrorDialog(page);
-      await expect(page.locator('.studio-editor__main')).toBeVisible();
-      await expect(page.getByTestId('deployment-missing-repositories')).toContainText('17 projects without canonical repository');
-      await page.getByTestId('deployment-missing-repositories').locator('summary').click();
-      await expect(page.getByTestId('deployment-project-PROJ-1')).toContainText('Project 1');
-      await page.getByTestId('deployment-missing-repositories').locator('summary').click();
+      await expect(page.locator('.ws-settings__body')).toBeVisible();
+      await expect(page.getByTestId('deployment-projects')).toContainText('not applicable in the local profile');
       await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
-      expect(undefinedRequests).toEqual([]);
+      expect(repositoryRequests).toEqual([]);
       const layout = await page.evaluate(() => {
-        const main = document.querySelector('.studio-editor__main') as HTMLElement;
+        const main = document.querySelector('.ws-settings__body') as HTMLElement;
         const table = document.querySelector('.rh__table-wrap') as HTMLElement;
         const row = document.querySelector('[data-testid="remote-host-role-row"]') as HTMLElement;
         const release = row?.querySelector('.role__release') as HTMLElement | null;
@@ -634,7 +688,8 @@ test.describe('Execution Hosts settings section', () => {
       else expect(layout.wideVisible).toBe(true);
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
-        await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-layout-${viewport.width}-${theme}.png`), fullPage: false });
+        await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? SHOT_DIR,
+          `execution-hosts-layout-${viewport.width}-${theme}.png`), fullPage: false });
       }
     }
   });

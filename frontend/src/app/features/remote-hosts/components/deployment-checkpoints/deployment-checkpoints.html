@@ -11,7 +11,9 @@
   <div class="deployment__grid">
     <section class="deployment__item" data-testid="deployment-identity">
       <h4>H1 · Installation and access</h4>
-      @if (identity(); as installation) {
+      @if (localProfile()) {
+        <p class="deployment__limit">Installation identity is not applicable in the local profile. This browser is connected to {{ origin }}.</p>
+      } @else if (identity(); as installation) {
         <dl>
           <div><dt>Installation</dt><dd><code>{{ installation.installationId }}</code></dd></div>
           <div><dt>Browser origin</dt><dd><code>{{ origin }}</code></dd></div>
@@ -22,15 +24,17 @@
           <p class="deployment__action">Complete owner bootstrap or sign in with a personal account at this origin.</p>
         }
       } @else {
-        <p class="deployment__action">{{ identityError() || 'Reading installation identity…' }}</p>
+        <p [class.deployment__error]="!!identityError()">{{ identityError() || 'Reading installation identity…' }}</p>
       }
-      <p class="deployment__limit">Installed placement and completion phase live in the installer manifest. Inspect <code>installation.json</code> on the authority host.</p>
+      @if (!localProfile()) { <p class="deployment__limit">Installed placement and completion phase live in the installer manifest. Inspect <code>installation.json</code> on the authority host.</p> }
     </section>
 
     <section class="deployment__item" data-testid="deployment-projects">
       <h4>H2 · Project repository</h4>
-      @if (projectsError()) {
-        <p class="deployment__action">{{ projectsError() }}</p>
+      @if (localProfile()) {
+        <p class="deployment__limit">Canonical Task Server repository registration and placement are not applicable in the local profile. Project checkout settings remain available in each project.</p>
+      } @else if (projectsError()) {
+        <p class="deployment__error">{{ projectsError() }}</p>
       } @else if (!projects().length) {
         <p class="deployment__action">No project is registered. Register its canonical origin and integration ref, then probe it from the selected host.</p>
       } @else {
@@ -72,17 +76,19 @@
     <section class="deployment__item" data-testid="deployment-upgrade">
       <h4>H6 · Deployed versions</h4>
       @if (stableRelease(); as stable) {
-        <p>Task Server reference: <code>{{ stable.version }}</code>. Host role versions and drift are in the table below.</p>
+        <p>{{ localProfile() ? 'Local API' : 'Task Server' }} reference: <code>{{ stable.version }}</code>. Host role versions and drift are in the table below.</p>
       } @else {
         <p class="deployment__action">Release reference unavailable. Refresh host release telemetry.</p>
       }
-      <p class="deployment__limit">Admission state, selected candidate, retained rollback and final canary are installer-owned. Inspect <code>installation.json</code> and <code>checkpoints.jsonl</code> before calling an upgrade complete.</p>
+      @if (!localProfile()) { <p class="deployment__limit">Admission state, selected candidate, retained rollback and final canary are installer-owned. Inspect <code>installation.json</code> and <code>checkpoints.jsonl</code> before calling an upgrade complete.</p> }
     </section>
 
     <section class="deployment__item" data-testid="deployment-recovery">
       <h4>H7 · Recovery</h4>
-      @if (backupsError()) {
-        <p class="deployment__action">{{ backupsError() }}</p>
+      @if (localProfile()) {
+        <p class="deployment__limit">Task Server full backup inventory is not applicable in the local profile. Check the local workspace backup and restore procedure for this installation.</p>
+      } @else if (backupsError()) {
+        <p class="deployment__error">{{ backupsError() }}</p>
       } @else if (latestBackup(); as backup) {
         <p>Latest Task Server full set <code>{{ backup.id }}</code>, created {{ backup.createdAt | date:'short' }}. {{ backup.taskCount }} tasks; {{ backup.coldPayloadCount }} cold payloads.</p>
         @if (backup.warnings.length) {
@@ -91,7 +97,7 @@
       } @else {
         <p class="deployment__action">No full set is listed. Create one and verify it before rehearsal.</p>
       }
-      <p class="deployment__limit">This list does not prove off-host custody, current integrity or empty-target rehearsal. Check the installer recovery receipt and compare the restored inventory before reopening admission.</p>
+      @if (!localProfile()) { <p class="deployment__limit">This list does not prove off-host custody, current integrity or empty-target rehearsal. Check the installer recovery receipt and compare the restored inventory before reopening admission.</p> }
     </section>
   </div>
 </section>

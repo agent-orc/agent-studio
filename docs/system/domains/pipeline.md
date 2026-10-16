@@ -465,6 +465,10 @@ the remote host. Environment variables use double underscores, for example
 `RemoteGate:Root` defaults to `/var/tmp/agentstudio-remote-gates`;
 `RemoteGate:ProcessorCount` defaults to 2 and `RemoteGate:GateSlots` defaults to
 1. The local gate equivalent is `LocalGate:GateSlots`, also defaulting to 1.
+`GET /api/system/execution-infrastructure` reports the configured remote gate
+host, live occupied and configured slots, and the most recent SSH reachability
+observed during a gate dispatch. Reachability becomes unverified five minutes
+after the last successful SSH check; this read endpoint never starts a probe.
 Size slots times processors below host online cores; see the
 [execution hosts runbook](../../operations/remote-hosts.md#remote-buildtest-gate-capacity).
 SSH must already have a trusted host

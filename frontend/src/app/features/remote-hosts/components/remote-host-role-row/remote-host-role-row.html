@@ -33,16 +33,17 @@
   </span>
 </td>
 <td>
-  <span class="role__status" data-testid="remote-host-role-status">
+  <span class="role__status" data-testid="remote-host-role-status" [attr.title]="statusReason()">
     <span class="role__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
     <span>{{ statusLabel() }}</span>
   </span>
+  @if (statusReason(); as reason) { <span class="role__status-reason">{{ reason }}</span> }
 </td>
 <td>
   @if (linkLabel(); as link) {
     <span class="role__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">{{ link }}</span>
   } @else {
-    <span class="role__placeholder">–</span>
+    <span class="role__placeholder" [attr.title]="linkTooltip()">{{ h.role === 'local' ? 'Local' : 'Not configured' }}</span>
   }
 </td>
 <td class="role__number" data-testid="remote-host-slots-summary">
@@ -54,7 +55,7 @@
 <td class="role__activity"><span class="role__placeholder" title="Reported once per machine">–</span></td>
 <td class="role__release" data-testid="remote-host-role-release" [attr.title]="releaseTooltip()">
   @if (showRelease()) {
-    <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"
+    <app-host-release-identity [host]="h" [stableRelease]="stableRelease()" [now]="now()"
       testIdPrefix="remote-host-role-release" [showIdentity]="true" />
   } @else {
     <span class="role__placeholder" title="Reported once per machine">–</span>

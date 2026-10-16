@@ -50,6 +50,7 @@ describe('HostReleaseIdentityComponent', () => {
     fixture.componentRef.setInput('host', HOST);
     fixture.componentRef.setInput('stableRelease', { version: '0.3.0' });
     fixture.componentRef.setInput('testIdPrefix', 'remote-host-release');
+    fixture.componentRef.setInput('now', Date.parse('2026-09-15T08:05:00Z'));
     fixture.detectChanges();
 
     const marker = fixture.nativeElement.querySelector('[data-testid="remote-host-release-drift"]');
@@ -57,6 +58,8 @@ describe('HostReleaseIdentityComponent', () => {
     expect(marker?.textContent).toContain('19d behind');
     expect(marker?.getAttribute('data-tone')).toBe('warn');
     expect(fixture.componentInstance.tooltip()).toContain('Stable runs 0.3.0');
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-release-stale"]')?.textContent)
+      .toContain('5m ago');
   });
 
   it('falls back to the legacy release id and renders no drift marker', () => {
@@ -71,6 +74,20 @@ describe('HostReleaseIdentityComponent', () => {
 
     expect(fixture.nativeElement.textContent).toContain('agt-2660');
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-role-release-drift"]')).toBeNull();
+  });
+
+  it('ages a release from its report when the client heartbeat is newer', () => {
+    TestBed.configureTestingModule({ imports: [HostReleaseIdentityComponent], providers: [provideZonelessChangeDetection()] });
+    const fixture = TestBed.createComponent(HostReleaseIdentityComponent);
+    fixture.componentRef.setInput('host', {
+      ...HOST, release: HOST.release!, releaseDrift: { ...HOST.releaseDrift!, release: HOST.release! },
+      lastHeartbeatAt: '2026-09-15T08:04:30Z',
+    });
+    fixture.componentRef.setInput('testIdPrefix', 'remote-host-release');
+    fixture.componentRef.setInput('now', Date.parse('2026-09-15T08:05:00Z'));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-release-stale"]')?.textContent)
+      .toContain('5m ago');
   });
 
   it('renders a commit chip only for a hex commit and recovers one from the release id', () => {

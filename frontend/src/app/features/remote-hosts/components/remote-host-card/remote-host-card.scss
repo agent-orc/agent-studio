@@ -123,7 +123,7 @@
   background: var(--studio-accent);
 }
 .host__activity { color: var(--studio-fg-dim) !important; white-space: nowrap; }
-.host__link { color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; text-transform: capitalize; }
+.host__link { color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; }
 .host__placeholder { color: var(--studio-fg-muted); }
 .host__actions { justify-content: flex-end; gap: var(--studio-spacing-1); white-space: nowrap; }
 .host__btn {
