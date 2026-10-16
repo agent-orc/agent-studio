@@ -44,3 +44,32 @@ describe('CommandDeckComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 });
+
+describe('CommandDeckComponent remote run control', () => {
+  it('renders Stop and emits the stop request while remote ownership is active', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CommandDeckComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CommandDeckComponent);
+    fixture.componentRef.setInput('currentWatchPath', '/workspace');
+    fixture.componentRef.setInput('cliTypeDraft', 'codex');
+    fixture.componentRef.setInput('modelDraft', 'gpt-6');
+    fixture.componentRef.setInput('isRunning', true);
+    fixture.componentRef.setInput('canStart', false);
+    fixture.detectChanges();
+
+    let stops = 0;
+    fixture.componentInstance.stopRequest.subscribe(() => stops++);
+    const stop = fixture.nativeElement.querySelector('.btn-exec--stop') as HTMLButtonElement;
+    expect(stop).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="command-deck-start"]')).toBeNull();
+    stop.click();
+    expect(stops).toBe(1);
+  });
+});

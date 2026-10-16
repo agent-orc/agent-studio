@@ -773,7 +773,13 @@ unreported claim expires with its lease and is queued again.
   attempt and fence scoped stop command under
   `<TaskRepository>/.metadata/remote-run-stop-requests.json` before
   `POST /api/tasks/{jobId}/stop` returns 202. The response includes the command
-  id, target attempt and fence, reason, expiry, and requested state. An optional
+  id, target attempt and fence, reason, expiry, and requested state. The route
+  accepts either the card key or folder id; the stop receipt uses the
+  held lease's task key, which is the key delivered back on runner renewal.
+  An unknown card returns 404 with an error body; an existing card without a
+  running local process or held remote lease returns 409 with a reason. The
+  board's Stop control uses this route for connected remote runs as well as
+  local processes. An optional
   `commandId` query parameter makes retries idempotent; reusing it with different
   input returns 409. `GET /api/tasks/{jobId}/stop/{commandId}` reads the durable
   requested, observed, or terminal receipt. Only a granted renewal for the
