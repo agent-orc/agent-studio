@@ -45,6 +45,37 @@ public sealed class WindowsNativeSetupTests
             new ConsolePrompter(true), "invalid", "skip", null, null));
     }
 
+    [Theory]
+    [InlineData("codex", "@openai/codex")]
+    [InlineData("claude", "@anthropic-ai/claude-code")]
+    public async Task Unattended_missing_provider_installs_selected_cli(string provider, string package)
+    {
+        var calls = new List<(string File, string Arguments)>();
+        var decisions = new WindowsNativeDecisions(provider, "skip", null, null);
+
+        await decisions.PrepareProviderAsync(new ConsolePrompter(true), unattended: true,
+            commandOnPath: _ => false,
+            requireProcess: (file, arguments) =>
+            {
+                calls.Add((file, string.Join(' ', arguments)));
+                return Task.CompletedTask;
+            });
+
+        Assert.Single(calls);
+        Assert.Equal("cmd.exe", calls[0].File);
+        Assert.Contains($"npm install --global {package}", calls[0].Arguments);
+    }
+
+    [Theory]
+    [InlineData("skip", "skip", false)]
+    [InlineData("codex", "skip", true)]
+    [InlineData("skip", "gcm", true)]
+    [InlineData("skip", "token", true)]
+    [InlineData("skip", "deploy-key", true)]
+    public void Network_access_requires_password_logon(string provider, string git, bool required)
+        => Assert.Equal(required, new WindowsNativeDecisions(provider, git, null, null)
+            .RequiresRunnerPassword);
+
     [Fact]
     public void Native_install_passes_full_studio_switch_without_changing_connector_profile()
     {
@@ -58,6 +89,10 @@ public sealed class WindowsNativeSetupTests
         Assert.Contains("-ProviderCli", studio);
         Assert.Contains("-RunnerPasswordFromStdin", studio);
         Assert.DoesNotContain("-FullStudio", connector);
+        Assert.Contains("-PrepareDeployKeyOnly", WindowsServiceScripts.Install(
+            ProductProfile.StudioWindowsServices, layout, "pkg", null, null,
+            new WindowsNativeDecisions("skip", "deploy-key", null, "git@github.com:owner/repo.git"),
+            prepareDeployKeyOnly: true));
         Assert.Contains("-Unattended", WindowsServiceScripts.Install(
             ProductProfile.StudioWindowsServices, layout, "pkg", null, null,
             unattended: true));

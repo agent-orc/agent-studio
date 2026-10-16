@@ -24,6 +24,7 @@ param(
     [ValidateSet('gcm', 'token', 'deploy-key', 'skip')] [string] $GitAccess = 'skip',
     [string] $GitTokenFile,
     [string] $GitRemote,
+    [switch] $PrepareDeployKeyOnly,
     [switch] $RunnerPasswordFromStdin
 )
 
@@ -43,6 +44,9 @@ ConfigRoot keeps the existing operator configuration untouched.
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
+if ($PrepareDeployKeyOnly -and (-not $FullStudio -or $GitAccess -ne 'deploy-key')) {
+    throw 'PrepareDeployKeyOnly requires FullStudio with deploy-key GitHub access.'
+}
 
 $packageRoot = (Resolve-Path -LiteralPath $ReleasePackageRoot).Path
 $serviceTaskNames = 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector'
@@ -283,7 +287,8 @@ if ($FullStudio) {
                 Select-Object -First 10 | ForEach-Object { $_.ToString('x2') })
         } finally { $sha.Dispose() }
         $privateKey = Join-Path $keyRoot $remoteHash
-        if (-not (Test-Path -LiteralPath $privateKey)) {
+        $keyWasGenerated = -not (Test-Path -LiteralPath $privateKey)
+        if ($keyWasGenerated) {
             # Windows PowerShell 5.1 can discard an empty native argument and
             # make ssh-keygen prompt for a passphrase. Pass an explicit empty
             # argv value through ProcessStartInfo instead.
@@ -302,6 +307,13 @@ if ($FullStudio) {
         Set-Content -LiteralPath "$privateKey.remote" -Value $GitRemote -Encoding ascii -NoNewline
         Write-Host "Add this deploy key to $GitRemote with the repository access needed by the runner:"
         Write-Host (Get-Content -LiteralPath "$privateKey.pub" -Raw)
+        if ($PrepareDeployKeyOnly) { return }
+        if ($keyWasGenerated) {
+            if ($Unattended) {
+                throw "Add the public key in $privateKey.pub to $GitRemote, then rerun unattended setup to verify access."
+            }
+            Read-Host 'After adding the deploy key in GitHub, press Enter to verify access' | Out-Null
+        }
         $sshConfig = Join-Path $keyRoot 'ssh-config'
         $configLines = @()
         $index = 0

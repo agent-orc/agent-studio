@@ -57,7 +57,9 @@ Administrators ACL; enter it on the first owner sign-up. The one-time code is
 armed by Task Server and cannot be replaced by re-running setup.
 
 The wizard detects Codex and Claude and offers an npm installation and login
-for the account that owns the Runner task. When a provider is selected, it
+for the account that owns the Runner task. In unattended mode, a selected
+missing provider is installed automatically with npm; login remains a later
+step for that account. When a provider or GitHub access is selected, setup
 asks for that Windows account's password through a hidden prompt so Task
 Scheduler can start the Runner at boot with the user's credential profile.
 The password is sent to Task Scheduler through setup stdin and is not written
@@ -68,8 +70,10 @@ specified project. Setup reads the current user's existing Git Credential
 Manager entry without an interactive prompt and copies its secret into an
 ACL-restricted credential file for the boot-time Runner task. A supplied token
 is handled the same way. The manifest records only the choice. Deploy-key
-setup prints the public key and checks the project remote; add that key to the
-GitHub repository before retrying. Each SSH project remote receives its own
+setup prints the public key, waits for you to add it to the GitHub repository,
+then checks access to the project remote. In unattended mode, a newly generated
+key stops setup with its public-key path; add it to GitHub and rerun the same
+answer file to verify access. Each SSH project remote receives its own
 key and a matching Git URL rewrite, so re-running setup for another project
 keeps the earlier project's key.
 
@@ -87,8 +91,9 @@ For CI, supply the same decisions through an answer file:
 
 `gitAccess: "token"` also needs `gitTokenFile`, an existing ACL-restricted
 file; `gitAccess: "deploy-key"` needs `gitRemote` in GitHub SSH form. No
-token value belongs in the answer file. For unattended provider setup, add
-`runnerPasswordFile`, an existing ACL-restricted one-line file. Native setup writes the decisions to
+token value belongs in the answer file. For unattended provider or GitHub
+access setup, add `runnerPasswordFile`, an existing ACL-restricted one-line
+file. Native setup writes the decisions to
 `installation.json`. `update`, `rollback` and `uninstall` reuse the recorded
 installation; `uninstall --purge` also removes data and credentials.
 

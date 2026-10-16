@@ -39,7 +39,8 @@ internal static class WindowsServiceScripts
         string? upstreamTokenFile,
         WindowsNativeDecisions? decisions = null,
         bool runnerPasswordFromStdin = false,
-        bool unattended = false)
+        bool unattended = false,
+        bool prepareDeployKeyOnly = false)
     {
         var scripts = layout.ScriptsRoot(packageRoot);
         var arguments = new List<string>(HostArguments);
@@ -67,6 +68,7 @@ internal static class WindowsServiceScripts
                 }
                 if (runnerPasswordFromStdin) arguments.Add("-RunnerPasswordFromStdin");
                 if (unattended) arguments.Add("-Unattended");
+                if (prepareDeployKeyOnly) arguments.Add("-PrepareDeployKeyOnly");
                 break;
             case ProductProfile.ConnectorWindows:
                 arguments.AddRange([
@@ -153,6 +155,11 @@ internal sealed class WindowsServiceSetup(ProcessRunner process, WindowsServiceL
     }
 
     /// <summary>Stages <paramref name="packageRoot"/> as the current release and starts its tasks.</summary>
+    public Task PrepareDeployKeyAsync(string packageRoot, WindowsNativeDecisions decisions)
+        => process.RequireAsync("powershell.exe", WindowsServiceScripts.Install(
+            ProductProfile.StudioWindowsServices, layout, packageRoot, null, null,
+            decisions, prepareDeployKeyOnly: true));
+
     public async Task ApplyAsync(ProductProfile profile, string packageRoot, string? upstreamUrl,
         string? upstreamTokenFile, WindowsNativeDecisions? decisions = null,
         string? runnerPassword = null, bool unattended = false)

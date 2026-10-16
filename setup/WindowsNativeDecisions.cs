@@ -50,13 +50,19 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
         return record;
     }
 
+    public bool RequiresRunnerPassword => ProviderCli != "skip" || GitAccess != "skip";
+
     private static bool CommandOnPath(string name)
         => (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Any(directory => File.Exists(Path.Combine(directory.Trim('"'), name)));
 
-    public async Task PrepareProviderAsync(ConsolePrompter prompter, bool unattended)
+    public async Task PrepareProviderAsync(ConsolePrompter prompter, bool unattended,
+        Func<string, bool>? commandOnPath = null,
+        Func<string, IReadOnlyList<string>, Task>? requireProcess = null)
     {
+        commandOnPath ??= CommandOnPath;
+        requireProcess ??= (file, arguments) => new ProcessRunner(false).RequireAsync(file, arguments);
         if (ProviderCli == "skip")
         {
             Console.WriteLine("Provider login skipped. Open the local Runner host card in Studio and use its provider sign-in action before running coding tasks.");
@@ -64,12 +70,12 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
         else
         {
             var executable = ProviderCli + ".cmd";
-            if (!CommandOnPath(executable) && !CommandOnPath(ProviderCli + ".exe"))
+            if (!commandOnPath(executable) && !commandOnPath(ProviderCli + ".exe"))
             {
-                if (unattended || !prompter.Confirm($"Install {ProviderCli} CLI with npm for this Windows account", true))
+                if (!unattended && !prompter.Confirm($"Install {ProviderCli} CLI with npm for this Windows account", true))
                     throw new InvalidOperationException($"{ProviderCli} CLI is missing. Install it for the runner account or choose ProviderCli=skip.");
                 var package = ProviderCli == "codex" ? "@openai/codex" : "@anthropic-ai/claude-code";
-                await new ProcessRunner(false).RequireAsync("cmd.exe",
+                await requireProcess("cmd.exe",
                     ["/d", "/s", "/c", $"npm install --global {package}"]);
             }
             if (!unattended && prompter.Confirm($"Run {ProviderCli} login for the runner account now", true))

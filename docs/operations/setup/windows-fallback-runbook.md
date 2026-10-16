@@ -55,11 +55,17 @@ can pass the same choices:
 | `-GitAccess <choice>` | Select `gcm`, `token`, `deploy-key`, or `skip` for the Runner's GitHub credential source. |
 | `-GitTokenFile <path>` | Required for `token`; the script copies the token into a protected credential file. |
 | `-GitRemote <url>` | Verify access to this repository. Required as a GitHub SSH URL for `deploy-key`; use a GitHub HTTPS URL for `gcm` or `token`. |
-| `-RunnerPasswordFromStdin` | Read the Runner account password from one stdin line for a boot-time task with that account's credential profile. |
+| `-RunnerPasswordFromStdin` | Read the Runner account password from one stdin line for a boot-time task with that account's credential profile. Use this when a provider or any GitHub access method is selected. |
+| `-PrepareDeployKeyOnly` | Generate and print the deploy key, then stop before registering tasks or checking access. Guided native setup uses this pass so you can add the key before verification. |
 | `-Unattended` | Suppress the one-time owner-code console display. The code remains in its restricted file. |
 
 The script also accepts the older `-NonInteractive` switch. The owner-code
-display is controlled by `-Unattended`.
+display is controlled by `-Unattended`. A direct guided script run waits after
+generating a deploy key until you add its public key to GitHub. An unattended
+run with a new key stops with the public-key path; add it and rerun to verify
+access. The setup executable installs a selected missing provider CLI with npm
+in unattended mode, then leaves provider login for the Runner account as a
+visible later step.
 
 The script writes `server.env`, `engine.env`, and `studio-connector.env` under
 `ConfigRoot`. Full Studio also writes `studio-backend.env` and `runner.env`.

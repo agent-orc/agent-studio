@@ -463,7 +463,7 @@ internal static class ProductSetup
         if (decisions is not null && !dryRun)
             await decisions.PrepareProviderAsync(prompter, parsed.Unattended);
         string? runnerPassword = null;
-        if (decisions is { ProviderCli: not "skip" } && !dryRun)
+        if (decisions?.RequiresRunnerPassword == true && !dryRun)
         {
             if (runnerPasswordFile is not null)
             {
@@ -474,7 +474,7 @@ internal static class ProductSetup
                 runnerPassword = prompter.Secret("Windows password for the Runner account (stored by Task Scheduler)");
             else
                 throw new InvalidOperationException(
-                    "Unattended provider setup requires RunnerPasswordFile in the answer file, with an owner-only ACL.");
+                    "Unattended provider or GitHub setup requires RunnerPasswordFile in the answer file, with an owner-only ACL.");
             if (string.IsNullOrEmpty(runnerPassword) || runnerPassword.Contains('\n') || runnerPassword.Contains('\r'))
                 throw new ArgumentException("Runner account password must be one nonempty line.");
         }
@@ -542,6 +542,12 @@ internal static class ProductSetup
             manifest = await CommitManifestAsync(pendingManifest);
             try
             {
+                if (!dryRun && decisions is { GitAccess: "deploy-key" } && !parsed.Unattended)
+                {
+                    await services.PrepareDeployKeyAsync(package, decisions);
+                    prompter.Ask("Add the public key to the GitHub repository, then press Enter to verify access",
+                        required: false);
+                }
                 await services.ApplyAsync(profile, package, upstream, tokenFile, decisions, runnerPassword,
                     parsed.Unattended);
             }
