@@ -1,9 +1,9 @@
 # Multi-machine setup
 
-Use this guide when the Control Plane and one or more Agent Hosts run on
-different Linux x64 machines. The same guided
-`agent-studio-setup` executable is used on every machine. The Control
-Plane machine needs no Agent CLI. Each Agent Host needs Git and an authenticated
+Use this guide when a Windows native Task Server or Linux Control Plane and one
+or more Agent Hosts run on different machines. Windows uses
+`agent-studio-setup.exe`; Linux can use `install.sh` or the released setup
+executable. The Control Plane machine needs no Agent CLI. Each Linux x64 Agent Host needs Git and an authenticated
 Codex or Claude CLI. No .NET SDK or runtime is required because all shipped
 binaries are self-contained.
 
@@ -11,8 +11,8 @@ binaries are self-contained.
 
 ```mermaid
 flowchart LR
-    Browser["Operator browser"] -->|"HTTPS"| CP["Control Plane machine<br/>Studio + Task Server + Engine"]
-    CP -->|"prints join command + token"| Operator["Operator"]
+    Browser["Operator browser"] -->|"HTTPS or local HTTP"| CP["Control Plane machine<br/>Studio + Task Server + Engine"]
+    CP -->|"issues protected join file"| Operator["Operator"]
     Operator -->|"secure transfer"| Setup1["agent-studio-setup<br/>Agent Host 1"]
     Operator -->|"secure transfer"| Setup2["agent-studio-setup<br/>Agent Host 2"]
     Setup1 --> Host1["agent-host<br/>Codex or Claude + Git"]
@@ -23,9 +23,9 @@ flowchart LR
     Host2 <-->|"fetch + push"| Git
 ```
 
-Only the Control Plane accepts inbound application traffic. Agent Hosts make
-outbound HTTPS requests to the Task Server and separate Git requests to the
-registered origins.
+Agent Hosts make outbound requests to the Task Server and separate Git requests
+to registered origins. A reverse SSH tunnel exposes the Windows Task Server on
+Linux loopback; LAN and public routes use trusted HTTPS.
 
 ## Import an existing Windows workspace
 
@@ -65,19 +65,34 @@ capability reports.
 
 ## Before you start
 
-On every machine, run the verified release script or download it first:
+On Linux, use the verified release script or download it with the setup executable
+and `SHA256SUMS` from the same release:
 
 ```sh
 curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
 ```
 
-The script verifies the setup executable. Setup downloads matching archives
-and verifies each one against `SHA256SUMS`. Use `--release-dir <path>` on an
-offline machine after placing the four archives and `SHA256SUMS` there.
+The script verifies the setup executable; setup verifies matching archives
+against `SHA256SUMS`. For an offline Linux install, pass `--release-dir <path>`
+after placing the four Linux archives and `SHA256SUMS` there (Control Plane,
+Agent Host, Studio, and Compose). The Windows offline package is a separate
+`win-x64.zip` archive.
 
-Prepare the public DNS name and TLS termination for the Control Plane. The
-host-visible Task Server URL must use HTTPS. Native setup serves the local UI
-at `http://127.0.0.1:4011/`; a public origin still needs TLS termination.
+On Windows, download `agent-studio-setup.exe` and `SHA256SUMS` from the same
+release and verify the executable before running it:
+
+```powershell
+$expected = ((Select-String '  agent-studio-setup.exe$' SHA256SUMS).Line -split '\s+')[0]
+if ((Get-FileHash .\agent-studio-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+  throw 'Windows setup checksum mismatch.'
+}
+```
+
+For a Linux Control Plane or Windows HTTPS route, prepare DNS and TLS
+termination. Native Linux setup serves Studio locally at
+`http://127.0.0.1:4011/`; its HTTPS origin needs TLS termination. The Windows
+reverse tunnel uses Linux loopback HTTP inside SSH and needs no certificate
+transfer.
 
 ## 1. Install the Control Plane
 
@@ -99,40 +114,67 @@ The guide asks for:
 2. the HTTPS URL visible from Agent Hosts, for example
    `https://tasks.example.com`.
 
-It installs the Task Server, Orchestrator Engine, Studio API, BFF and UI
-service as one versioned unit, waits for readiness, and prints:
-
-```text
-sudo ./agent-studio-setup --join
-```
-
-and writes an owner-only join-token file in the Control Plane configuration
-directory. The owner bootstrap code is stored at
-`/etc/agent-orchestrator/owner-bootstrap.code`; use it in the first-owner
-screen at the local UI. Configure the public origin to proxy Studio routes to
-the local UI over HTTPS. Native setup includes that HTTPS origin in the BFF's
-allowed browser origins and retains it during update and rollback. Confirm from
-an Agent Host network:
+It installs the Task Server, Orchestrator Engine, Studio API, BFF and UI as
+one versioned unit and waits for readiness. Bootstrap an owner using the code
+at `/etc/agent-orchestrator/owner-bootstrap.code` in the local Studio UI.
+Configure the public origin to proxy Studio routes to the local UI over HTTPS.
+Native setup includes that origin in the BFF's allowed browser origins during
+install, update and rollback. Confirm from an Agent Host network:
 
 ```sh
 curl -fsS https://tasks.example.com/healthz
 ```
 
-### Join token handling
+### Linux Control Plane join token
 
-The `aosj1.*` value contains the Task Server URL, release version, and current
-Task Server bearer credential. It is base64url encoded, not encrypted. The
-checksum detects copy errors; it is not an authentication signature.
+After creating the owner in Studio, issue an owner-only join file for each
+Linux host on the Control Plane machine:
 
-The token is reusable until the Task Server credential is rotated. This matches
-the current separated Task Server bearer contract and must not be described as
-a one-time enrollment. Transfer it through the same protected administration
-channel used for host access. Do not put it in shell history, tickets, chat,
-task text, or source control.
+```sh
+sudo ./agent-studio-setup join-token --runner-name agent-host-01 \
+  --route https --server-url https://tasks.example.com \
+  --join-token-file /root/agent-studio.join
+```
 
-Transfer the generated `join.token` over a protected channel to an owner-only
-file on the Agent Host, then use `--join-token-file`. Remove the transferred
-file after the host registers.
+The command reads the local protected Studio management token and prompts for
+the owner login. Transfer the file over a protected channel.
+
+### Windows native Task Server and join token
+
+Install native services on Windows with
+`agent-studio-setup.exe --mode studio --target native`. The Task Server listens
+on Windows loopback at port 5071; the bundled Studio browser opens at
+`http://127.0.0.1:5031/`. The native installer writes an owner bootstrap code
+to `%ProgramData%\AgentOrchestrator\owner-bootstrap.code`. Use it once in
+Studio to create the owner account. The Studio management bearer stays in the
+protected `%ProgramData%\AgentOrchestrator\studio.token` file. The join-token
+command reads it locally and prompts for the owner's Studio login. Issue one
+token per Linux host from an elevated terminal:
+
+```powershell
+.\agent-studio-setup.exe join-token --runner-name agent-host-01 `
+  --join-token-file "$env:ProgramData\AgentOrchestrator\host-01.join"
+```
+
+The default `reverse-tunnel` route registers and starts a keeper task named
+`AgentRunner-TunnelKeeper-<host-name>` for each Linux host. Each task has its
+own state directory and forwards that host's loopback port 15031 to Windows
+Task Server port 5071. Issuing a token for another host leaves the earlier
+host's task and SSH target intact. SSH access to the Linux host must already
+work under the selected Windows account; use `--ssh-target HOST` when its SSH
+alias differs. For a private LAN address or public URL, pass
+`--route lan --server-url https://LAN-NAME:PORT` or
+`--route https --server-url https://PUBLIC-NAME`. Those routes require a
+certificate trusted by the Linux host. The host installer probes the selected
+route before it installs packages.
+
+The `aosj2.*` file contains the selected URL, release version, installation
+identity, Runner id, expiry, and Task Server enrolment code. The code expires
+after ten minutes and exchanges exactly once for a Runner credential generated
+by the Task Server. The credential stays on the Linux host. Transfer the file
+over a protected channel, then remove it after use. Legacy `aosj1.*` tokens
+are rejected because they contain reusable management credentials. Do not
+paste tokens into shell history, tickets, chat, or source control.
 
 ## 2. Prepare each Agent Host
 
@@ -169,35 +211,37 @@ The full repository credential and rotation contract is in
 
 ## 3. Join each Agent Host
 
-Run on the Agent Host:
+Run on the Linux Agent Host after transferring the owner-only join file:
 
 ```sh
 curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh \
-  | sudo sh -s -- --join --join-token-file /root/agent-studio.join
+  | sudo sh -s -- --join --join-token-file /root/agent-studio.join \
+      --runner-name agent-host-01
 ```
 
-With `--join-token-file`, the installer reads the protected file. In a guided
-run without that option, it asks for the token at a hidden prompt. It then
-asks for the execution user, host name, CLI, service role, Git probe origin,
-and maximum parallelism. It:
+The script verifies the downloaded setup executable against `SHA256SUMS` and
+passes the join options through. The installer asks for the execution user,
+CLI, Git probe origin, and maximum parallelism. It:
 
-1. verifies Linux x64, Git, systemd, the selected CLI version, and that CLI's
-   host-owned authentication;
-2. downloads and verifies the matching `agent-host` archive;
-3. asks for a GitHub token file, a per-project deploy key, or an existing SSH
-   key, then verifies read access before starting the host;
-4. writes the Task Server credential to a separate protected file;
-5. installs the setup command and starts the role-specific systemd service;
+1. verifies Linux x64, Git, systemd, the selected CLI version and its host-owned
+   authentication, then probes Task Server reachability and TLS;
+2. downloads and verifies the matching `agent-host` archive only after the
+   route probe passes;
+3. optionally stores the GitHub credential for both repository URL forms and
+   runs both read checks, then exchanges the single-use code;
+4. writes the Task Server credential and a join receipt to separate protected
+   files before it starts the service;
+5. installs and starts the role-specific systemd service;
 6. waits until the Task Server reports that exact Agent Host registration.
 
-To use an already downloaded setup executable instead:
-
-```sh
-sudo ./agent-studio-setup \
-  --join \
-  --join-token-file /root/agent-studio.join
-sudo rm /root/agent-studio.join
-```
+An already downloaded `agent-studio-setup` executable accepts the same join
+options. Remove `/root/agent-studio.join` after the host registers. If service
+installation or registration fails after exchange, rerun with the same join
+file: setup reuses the host's protected credential. If setup failed before it
+could save that credential, issue a fresh token for the same host name from the
+Task Server and retry. Exchanging the fresh code replaces the earlier Runner
+credential; the old credential stops working. A consumed code cannot be
+exchanged again.
 
 The coding service is `agent-host.service`. A separately installed review role
 uses `agent-host-review.service`, a different identity, environment, state
@@ -241,3 +285,31 @@ drain, readiness, and rollback contract in
 If registration fails, inspect the service journal first. Common causes are an
 unreachable public URL, untrusted TLS, a rotated bearer credential, a CLI login
 owned by another Linux user, or Git credentials that are read-only.
+
+## Real-machine operator scenario
+
+The installation scenario card runs this checklist on one clean Windows x64
+machine and one clean Linux x64 host. Use scratch repositories and dedicated
+test accounts; never put real credentials in CI or the report.
+
+1. Install Windows native services from one verified release. Record the
+   Task Server health response, Studio owner bootstrap result, and release SHA.
+2. Confirm that Windows can SSH to the Linux host. Issue a token with the
+   default reverse tunnel route. Confirm the keeper task is running and the
+   Linux host reaches `http://127.0.0.1:15031/healthz`.
+3. Transfer the protected join file. Run `install.sh --join
+   --join-token-file /root/agent-studio.join --runner-name agent-host-01`.
+   Record the preflight pass before the Agent Host archive is extracted.
+4. Confirm the host service is active and that Studio lists `agent-host-01`.
+   Inspect the host credential file permissions. Confirm no Runner credential
+   exists in the Windows join file or the scenario log.
+5. Try the same join file on a second scratch host. The exchange must be
+   denied. Issue another token, wait ten minutes, and confirm expiry denial.
+6. Repeat issuance with `--route lan` and `--route https` against prepared
+   trusted HTTPS endpoints. Deliberately break each route and confirm the host
+   exits before installing packages. Restore the route and confirm preflight.
+
+Keep the machine names, release SHA, selected route, probe result, service
+state, token replay and expiry results, and redacted failure logs in the
+scenario card's `results/` report. Do not include join files, owner sessions,
+management bearers, provider logins, or Runner credentials.

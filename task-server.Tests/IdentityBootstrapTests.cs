@@ -277,11 +277,6 @@ public sealed class IdentityBootstrapTests
             "/api/v1/enrolments/exchange", new ExchangeEnrolmentRequest(runnerA.EnrolmentCode, installationId)),
             HttpStatusCode.Unauthorized));
 
-        // Re-enrolling an existing principal is a conflict, never an implicit rotation.
-        Assert.Equal("principal-exists", await ErrorCodeAsync(await ownerClient.PostAsJsonAsync(
-            "/api/v1/management/enrolments",
-            new CreateEnrolmentRequest("runner:host-a", TaskServerPrincipalKinds.Runner, "host-a")), HttpStatusCode.Conflict));
-
         // Expired code.
         var runnerB = await EnrolAsync(ownerClient, "runner:host-b", "host-b", ttl: 60);
         clock.Advance(TimeSpan.FromSeconds(61));
@@ -329,6 +324,46 @@ public sealed class IdentityBootstrapTests
         Assert.Contains(audit!, record => record.Action == "enrolment.denied");
         Assert.DoesNotContain(audit!, record => record.DetailJson.Contains("enr_", StringComparison.Ordinal)
                                                 || record.DetailJson.Contains("ats_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Owner_can_reissue_a_join_code_after_a_failed_host_install()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
+        await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
+        using var edge = Client(factory, StudioToken);
+        var owner = await BootstrapOwnerAsync(edge);
+        using var ownerClient = Client(factory, StudioToken, owner.SessionToken);
+        var installationId = (await edge.GetFromJsonAsync<InstallationIdentityDto>("/api/v1/installation"))!.InstallationId;
+        using var anonymous = Client(factory, credential: null);
+
+        var first = await EnrolAsync(ownerClient, "runner:host-a", "host-a");
+        var firstExchange = await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange",
+            new ExchangeEnrolmentRequest(first.EnrolmentCode, installationId));
+        Assert.Equal(HttpStatusCode.Created, firstExchange.StatusCode);
+        var oldCredential = (await firstExchange.Content.ReadFromJsonAsync<ExchangedEnrolment>())!.Issued.Credential;
+
+        // Setup lost the credential before it could save it. The owner issues a fresh code.
+        var replacement = await EnrolAsync(ownerClient, "runner:host-a", "host-a");
+        Assert.Equal(HttpStatusCode.OK,
+            (await Client(factory, oldCredential).GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal("runner-identity-exists", await ErrorCodeAsync(await ownerClient.PostAsJsonAsync(
+            "/api/v1/management/enrolments",
+            new CreateEnrolmentRequest("runner:other-id", TaskServerPrincipalKinds.Runner, "host-a")),
+            HttpStatusCode.Conflict));
+        var replacementExchange = await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange",
+            new ExchangeEnrolmentRequest(replacement.EnrolmentCode, installationId));
+        Assert.Equal(HttpStatusCode.Created, replacementExchange.StatusCode);
+        var newCredential = (await replacementExchange.Content.ReadFromJsonAsync<ExchangedEnrolment>())!.Issued.Credential;
+        Assert.NotEqual(oldCredential, newCredential);
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await Client(factory, oldCredential).GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await Client(factory, newCredential).GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync(
+            "/api/v1/enrolments/exchange", new ExchangeEnrolmentRequest(replacement.EnrolmentCode, installationId)))
+            .StatusCode);
     }
 
     [Fact]
