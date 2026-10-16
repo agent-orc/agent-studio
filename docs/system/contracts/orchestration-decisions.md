@@ -57,8 +57,9 @@ The review worker rechecks the current owner after long gate work and before
 each lane move. A monolith-owned resume checks again at integration dequeue,
 at the publication fence, and before its final lane move. An ownership deferral
 is not a settled archive result; rollback leaves that generation eligible for
-reconciliation. The backend policy-call boundary covers every public static
-method on decision-library policy types through `MonolithTransitionAdapter`.
+reconciliation. The backend policy-call boundary inspects compiled calls to
+decision-library policy methods through `MonolithTransitionAdapter`, including
+calls written with a type alias or `using static`.
 
 AGT-3060 (I18) moves the background deciders into this library. The operator
 decision of 15.10.2026 keeps the per-transition switch as the single selector
@@ -293,10 +294,10 @@ application boundaries.
 backend.Tests. It pins the owning assembly, rejects host definitions of the
 extracted policies and direct transition construction/branching patterns, and
 forbids boundary access and ambient time in the library. Mutation examples prove
-that the source guard rejects reintroduced rules. The guard discovers every
-exported `Decide*` method on a decision-library policy type, regardless of its
-return type, and retains the receipt-returning entry-point scan. It rejects
-backend calls outside `MonolithTransitionAdapter`.
+that the source guard rejects reintroduced rules. The policy-call guard inspects
+compiled backend calls to decision-library policy and breaker types, regardless
+of method name, return type, alias, or `using static`. It rejects calls outside
+`MonolithTransitionAdapter`.
 Host branches may inspect a returned decision to apply it or validate
 persistence results. Add new transition
 policies to the owned-policy inventory and put their facts and rules in this

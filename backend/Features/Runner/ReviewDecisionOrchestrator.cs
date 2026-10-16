@@ -4485,7 +4485,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var live = _scanner.FindJob(reviewed.Id, entry.Path);
         var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
-        if (GateCancellationPolicy.OwnsResult(result.ExpectedSha, liveSubject?.Sha,
+        if (MonolithTransitionAdapter.GateCancellationOwnsResult(result.ExpectedSha, liveSubject?.Sha,
                 result.AttemptChainId, liveSubject?.AttemptChainId,
                 reviewed.State, live?.State, live?.PendingIntent is not null))
             return false;
@@ -4517,7 +4517,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var live = _scanner.FindJob(reviewed.Id, entry.Path);
         var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
-        if (GateCancellationPolicy.OwnsResult(subject.Sha, liveSubject?.Sha,
+        if (MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
                 subject.AttemptChainId, liveSubject?.AttemptChainId,
                 reviewed.State, live?.State, live?.PendingIntent is not null))
             return false;
@@ -4734,7 +4734,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var liveSubject = liveSubjectTask is null
                 ? null : ResolveBuildTestGateSubject(liveSubjectTask, entry.Path);
             if (result.FailureKind != BuildTestGateFailureKind.Cancellation
-                && !GateCancellationPolicy.OwnsResult(subject.Sha, liveSubject?.Sha,
+                && !MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
                     subject.AttemptChainId, liveSubject?.AttemptChainId,
                     current.State, liveSubjectTask?.State,
                     liveSubjectTask?.PendingIntent is not null))
@@ -5395,7 +5395,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             live =>
             {
                 var liveSubject = ResolveBuildTestGateSubject(live, entry.Path);
-                return GateCancellationPolicy.OwnsResult(
+                return MonolithTransitionAdapter.GateCancellationOwnsResult(
                     gate?.ExpectedSha ?? subject.Sha, liveSubject.Sha,
                     gate?.AttemptChainId ?? subject.AttemptChainId, liveSubject.AttemptChainId,
                     reviewed.State, live.State, live.PendingIntent is not null);
@@ -6612,7 +6612,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             var applied = await _stateMachine.ApplyIfCurrentAsync(
                 current.Id, entry.Path,
-                live => GateCancellationPolicy.OwnsResult(
+                live => MonolithTransitionAdapter.GateCancellationOwnsResult(
                     result.ExpectedSha, ResolveBuildTestGateSubject(live, entry.Path).Sha,
                     result.AttemptChainId, ResolveBuildTestGateSubject(live, entry.Path).AttemptChainId,
                     current.State, live.State, live.PendingIntent is not null),

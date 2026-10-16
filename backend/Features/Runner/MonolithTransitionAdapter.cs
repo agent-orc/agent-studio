@@ -52,6 +52,12 @@ public static class MonolithTransitionAdapter
         => GateCancellationPolicy.Decide(expectedSha, currentSha, expectedLane, currentLane,
             continuePending, shuttingDown, reportedReason);
 
+    public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
+        string? expectedAttempt, string? currentAttempt,
+        string? expectedLane, string? currentLane, bool continuePending)
+        => GateCancellationPolicy.OwnsResult(expectedSha, currentSha,
+            expectedAttempt, currentAttempt, expectedLane, currentLane, continuePending);
+
     public static BatchPlanStep BatchPlan(BatchPlanFacts facts)
         => BatchPlanDecisionPolicy.Decide(facts);
 
