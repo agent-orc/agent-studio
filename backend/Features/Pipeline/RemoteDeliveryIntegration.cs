@@ -341,9 +341,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     result = await _integrate(delivery.Request).ConfigureAwait(false);
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
-                // a stale repair round, which a successor refuses.
+                // a stale repair round, so recheck card and profile ownership.
                 if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
-                    && !_isCurrentReview(delivery.Request))
+                    && (!_isCurrentReview(delivery.Request) || !_isAdmissibleDelivery(delivery.Request)))
                 {
                     _logger.LogInformation(
                         "remote-delivery-integration continuation project={Project} job={JobId} started=False reason={Reason}",

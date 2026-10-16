@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -442,6 +444,52 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
 
         Assert.Equal(MergeIntoIntegrationOutcome.Conflict, result.Outcome);
         Assert.Equal(0, rounds);
+    }
+
+    [Theory]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired)]
+    public async Task Running_monolith_delivery_does_not_start_agent_round_after_engine_takes_ownership(
+        MergeIntoIntegrationOutcome outcome)
+    {
+        var clock = new FakeTimeProvider();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rounds = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            async _ =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return outcome == MergeIntoIntegrationOutcome.Conflict
+                    ? MergeIntoIntegrationResult.Conflicted(["a.txt"], "conflict")
+                    : MergeIntoIntegrationResult.RequiresAgentRound(["a.txt"], "agent round required");
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) =>
+            {
+                rounds++;
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "started"));
+            },
+            configuration: configuration);
+        var request = new RemoteDeliveryIntegrationRequest(
+            "project", "owner-switch-" + outcome, "/task/owner-switch-" + outcome,
+            "/project", "develop", IntegrationStrategies.DirectMerge, PipelineTypes.Task,
+            clock.GetUtcNow(), ReviewAttemptId: "review-owner-switch", MonolithOwnedResume: true);
+
+        var pending = coordinator.EnqueueAsync(request);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        configuration["Orchestration:Transitions:ReviewReport"] = "Engine";
+        release.SetResult();
+        Assert.Equal(outcome, (await pending.WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.Equal(0, rounds);
+
+        configuration["Orchestration:Transitions:ReviewReport"] = "Monolith";
+        Assert.Equal(outcome,
+            (await coordinator.EnqueueAsync(request, discardCompletedReplay: true)
+                .WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.Equal(1, rounds);
     }
 
     private static RemoteDeliveryIntegrationRequest Request(string jobId, int minute)

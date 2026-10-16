@@ -96,6 +96,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { failure = ex; }
             if (status == RemoteReviewSettlementReconcileStatus.DeferredOwnership) return;
+            if (!OwnsReviewReport()) return;
             if (archived && failure is null && status is RemoteReviewSettlementReconcileStatus.Complete
                     or RemoteReviewSettlementReconcileStatus.NoWork or RemoteReviewSettlementReconcileStatus.Repair)
                 _settledArchive[taskKey] = generation;
@@ -198,8 +199,11 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
                 return RemoteReviewSettlementReconcileStatus.Repair;
             if (!RemoteReviewContinuationProjection.ApplyAsync(
                     task, entry, _scanner, _transitions, _mutations, _timeline, _logger,
+                    OwnsReviewReport,
                     CancellationToken.None).GetAwaiter().GetResult())
-                return RemoteReviewSettlementReconcileStatus.Repair;
+                return OwnsReviewReport()
+                    ? RemoteReviewSettlementReconcileStatus.Repair
+                    : RemoteReviewSettlementReconcileStatus.DeferredOwnership;
             task = _scanner.FindJob(task.Id, task.WatchPath) ?? task;
         }
 

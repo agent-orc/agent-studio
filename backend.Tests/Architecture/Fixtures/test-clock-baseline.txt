@@ -396,7 +396,6 @@ fixed-date backend.Tests/RecoveryChatLineTests.cs
 fixed-date backend.Tests/RecurringOutputPatternServiceTests.cs
 fixed-date backend.Tests/ReissueOpenItemsPreCheckTests.cs
 fixed-date backend.Tests/RemoteCommitAttributionGuardTests.cs
-fixed-date backend.Tests/RemoteDeliveryIntegrationTests.cs
 fixed-date backend.Tests/RemoteDeliverySettlementStoreTests.cs
 fixed-date backend.Tests/RemoteDispatchRejectionStoreTests.cs
 fixed-date backend.Tests/RemotePipelineExecutionProjectionTests.cs
