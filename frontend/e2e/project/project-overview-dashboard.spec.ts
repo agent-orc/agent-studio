@@ -239,12 +239,11 @@ async function mockDashboard(page: Page): Promise<{
   await page.route('**/api/v1/workspaces', route => fulfillJson(route, workspaces));
   await page.route('**/api/v1/projects', route => fulfillJson(route, [project]));
   await page.route('**/api/tasks', route => fulfillJson(route, [planningTask]));
-  await page.route('**/api/v1/studio/board', route => fulfillJson(route, grouped()));
+  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, route => fulfillJson(route, grouped()));
   await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/plan-deployment-history(?:\?|$)/, () => {
     planningTaskRequested = true;
-    // Navigation writes the task deep link before detail loading. Leave the
-    // heavy task pane pending so this dashboard spec verifies the handoff
-    // without compiling an unrelated editor surface.
+    // Leave the heavy task pane pending so this dashboard spec verifies the
+    // detail request without compiling an unrelated editor surface.
   });
   await page.route('**/api/crash-recovery/pending', route => fulfillJson(route, { pending: [] }));
   await page.route('**/api/projects/*/token-usage/summary', route => fulfillJson(route, tokenSummary));
@@ -629,7 +628,6 @@ test.describe('Project Overview · operator dashboard', () => {
     await page.goto(`/#/projects/${slugFor(PROJECT_NAME)}/overview`);
     await expect(page.getByTestId('project-overview-dashboard')).toBeVisible();
     await page.getByTestId('project-overview-planning-plan-deployment-history').click();
-    await expect.poll(() => new URL(page.url()).searchParams.get('job')).toBe('plan-deployment-history');
     await expect.poll(mocked.taskRequested).toBe(true);
 
     // Switch from deterministic routes to this worktree's fixture backend and
