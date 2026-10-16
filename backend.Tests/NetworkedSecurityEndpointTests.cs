@@ -2,19 +2,69 @@ extern alias Runner;
 
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using AgentStudio.Security;
+using AgentStudio.Clients;
+using AgentStudio.Projects;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 using RClient = Runner::AgentRunner.TaskServerClient;
 using RClaim = Runner::AgentRunner.RunnerClaimRequest;
+using RAcquire = Runner::AgentRunner.RunLeaseAcquireRequest;
+using RComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
 
 namespace AgentStudio.Tests;
 
 public sealed class NetworkedSecurityEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Enrolled_runner_acquires_and_completes_a_fake_task_on_the_networked_stack()
+    {
+        const string project = "networked-smoke";
+        const string taskKey = "AGT-NETWORKED-SMOKE";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        var taskPath = Path.Combine(projectPath, "3-progress", taskKey);
+        Directory.CreateDirectory(taskPath);
+        Directory.CreateDirectory(Path.Combine(projectPath, "2-ready"));
+        File.WriteAllText(Path.Combine(taskPath, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = taskKey, title = "Networked runner smoke", state = "3-progress",
+            order = 1, agent = "codex", kind = "task",
+        }));
+        File.WriteAllText(Path.Combine(taskPath, "prompt.md"), "Complete the fixture task.");
+        File.WriteAllText(Path.Combine(taskPath, "status.md"), "Result: pending.");
+
+        using var factory = BuildFactory(projectPath);
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var enrolled = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("existing-board-name", null, null, null)).Code);
+        factory.Services.GetRequiredService<ClientIdentityStore>()
+            .EnsureEnrolledRunner(enrolled.Runner.Id, enrolled.Runner.Name);
+        factory.Services.GetRequiredService<ProjectSettingsService>()
+            .SetExecutionSettings(project, "auto", enrolled.Runner.Id, true);
+        using var runner = new RClient(http, enrolled.Runner.Id, authToken: enrolled.Secret);
+
+        var lease = await runner.AcquireLeaseAsync(
+            new RAcquire(taskKey, enrolled.Runner.Id, enrolled.Runner.Name, "smoke-host", 42, "codex"), CancellationToken.None);
+        Assert.True(lease.Granted);
+        var completion = await runner.CompleteRunAsync(new RComplete(
+            taskKey, lease.Lease!.LeaseId, lease.Lease.FencingToken,
+            enrolled.Runner.Id, "Blocked", Reason: "networked fixture completed",
+            GateItems: ["fixture: controlled networked completion"],
+            AttemptId: lease.Lease.AttemptId, AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "networked-smoke-completion"), CancellationToken.None);
+        Assert.NotNull(completion);
+    }
 
     [Fact]
     public async Task Real_endpoints_bootstrap_session_csrf_and_runner_enrollment_fail_closed()
@@ -72,6 +122,11 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         selfResponse.EnsureSuccessStatusCode();
         var self = await selfResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         Assert.Equal(enrolled.RunnerId, self.GetProperty("id").GetString());
+        Assert.Equal(enrolled.RunnerName,
+            factory.Services.GetRequiredService<ClientIdentityStore>().Find(enrolled.RunnerId)?.DisplayName);
+        Assert.Equal(enrolled.RunnerName,
+            new ClientIdentityStore(factory.Services.GetRequiredService<IConfiguration>(),
+                NullLogger<ClientIdentityStore>.Instance).Find(enrolled.RunnerId)?.DisplayName);
 
         var replay = await anonymous.PostAsJsonAsync("/api/auth/runner-enroll", new { code = enrollment.EnrollmentCode });
         Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
@@ -105,14 +160,18 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, (await browser.GetAsync("/api/tasks")).StatusCode);
     }
 
-    private WebApplicationFactory<Program> BuildFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory(string? projectPath = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
             ["Security:Profile"] = "networked",
-            ["AllowedHosts"] = "studio.test"
+            ["AllowedHosts"] = "studio.test",
+            ["WatchPaths:0:Name"] = projectPath is null ? null : "networked-smoke",
+            ["WatchPaths:0:Path"] = projectPath,
+            ["WatchPaths:0:RootPath"] = projectPath,
+            ["WatchPaths:0:RepositoryPath"] = projectPath,
         }));
     });
 

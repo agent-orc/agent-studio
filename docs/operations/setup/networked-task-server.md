@@ -75,27 +75,40 @@ the daemon needs. The default set is:
 runner.claim runner.lease runner.logs runner.events runner.artifacts runner.completion
 ```
 
-Transfer the returned `enr.*` code over the SSH administration channel. On the
-Runner host, exchange it once at `POST /api/auth/runner-enroll`. Put the returned
-`rnr.*` secret in a protected credential file, not in a command line, task, or
-general environment file:
+Transfer the returned `enr.*` code over the SSH administration channel. On each
+Runner, Review, or Gate host, run the enrollment command as that service user:
 
 ```bash
-sudo install -d -m 0750 /etc/agent-runner
-sudo sh -c 'umask 0077; read -r secret; printf "%s\n" "$secret" > /etc/agent-runner/runner-auth-token'
-# Paste the one-time rnr.* value on stdin, then grant only the service group read access.
-sudo chown root:agent-runner /etc/agent-runner/runner-auth-token
-sudo chmod 0640 /etc/agent-runner/runner-auth-token
-
-RUNNER_SERVER_URL=https://tasks.example.com
-RUNNER_ID=runner_<id-returned-by-enrollment>
-RUNNER_NAME=build-runner-01
-RUNNER_AUTH_TOKEN_FILE=/etc/agent-runner/runner-auth-token
+sudo -u agent-runner -H /opt/agent-host/current/agent-host --enroll https://tasks.example.com 'enr.<one-time-code>'
 ```
 
-The Runner refuses a non-loopback HTTP URL and
-requires a service credential for a non-loopback server. `RUNNER_CLIENT_ID` is
-optional attribution only and grants no access.
+The command validates HTTPS with the host system trust store, then writes a
+private `~/.config/agent-host/runner.token` and `installation.env` (mode 0600,
+directory mode 0700). Install a private CA in the host trust store before
+enrollment. Copy the four `RUNNER_*` entries from `installation.env` into that
+service's `runner.env`, preserving the credential-file path. The enrolled
+`runner_<id>` is the execution identity; `RUNNER_NAME` keeps the existing board
+display name. Enrollment registers that id as a service client, so assign each
+project's execution location to the enrolled id before expecting claims.
+`RUNNER_CLIENT_ID` remains optional attribution only.
+
+For an existing host, stop only its daemon, have the owner issue a code for its
+existing display name and required scopes, enroll on that host, switch
+`RUNNER_SERVER_URL` to the installation's HTTPS origin, and restart. Verify
+`GET /api/auth/runner` and a claim or idle claim response with the new bearer,
+then remove the reverse SSH tunnel and its keeper. Repeat separately for every
+Review and Gate service identity. The tunnel is supported only by the `local`
+profile; a `networked` installation returns 426 on its cleartext loopback URL.
+
+Enroll the engine separately with only `orchestration.write`, save its token in
+`ENGINE_CREDENTIAL_FILE`, and set `ENGINE_CLIENT_ID` to its enrolled `engine_<id>`.
+Set `ENGINE_SERVER_URL` to the same HTTPS origin in the engine Compose environment.
+The engine container must trust the installation's issuing CA.
+
+After building the backend, run
+`deploy/compose/networked-runner-smoke/run.sh` for an isolated HTTPS Compose
+smoke. It starts a temporary networked monolith and Caddy edge, enrolls a
+fixture runner, and exercises lease acquisition and completion for a fake card.
 
 ## Runner secret rotation rehearsal
 

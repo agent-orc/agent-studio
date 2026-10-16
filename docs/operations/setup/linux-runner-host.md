@@ -235,13 +235,14 @@ routes forward.
 
 AGT-3059 adds a separate Compose service profile at
 [`deploy/compose/monolith-engine/compose.yaml`](../../../deploy/compose/monolith-engine/compose.yaml).
-Run it on `agent-runner-01`, apart from the coding and review daemons. Host
-networking lets the engine reach the supervised runner link at
-`http://127.0.0.1:15031`; `MONOLITH_RUNNER_LINK_URL` overrides that address.
+Run it on `agent-runner-01`, apart from the coding and review daemons. Set
+`ENGINE_SERVER_URL` to the installation's HTTPS origin. The loopback runner
+link remains an interim `local`-profile route only.
 Enroll a separate `engine_` principal with only `orchestration.write` on the
 monolith and place its credential in an owner-protected file on the runner host.
 Set `ENGINE_CLIENT_ID` to that exact enrolled id, `ENGINE_CREDENTIAL_FILE` to
 the credential path, and `ENGINE_VERSION` to the published engine image tag.
+The engine container must trust a private installation CA.
 Then run `docker compose -f deploy/compose/monolith-engine/compose.yaml up -d`
 from a checkout on the host. Compose supervises restarts, and the image health
 check probes the engine's loopback health listener. The engine uses per-occurrence
