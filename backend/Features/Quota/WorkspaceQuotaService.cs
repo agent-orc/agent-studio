@@ -127,6 +127,25 @@ public sealed class WorkspaceQuotaService
         }
     }
 
+    /// <summary>Reserve a hosting slot before dispatch. The read, admission and write share one lock.</summary>
+    public bool ReserveProjectEnvironment(string projectName, string environmentId)
+    {
+        var project = _projects.FindByIdOrDisplayName(projectName);
+        if (project is null) return false;
+        lock (_gate)
+        {
+            Reload();
+            var key = project.Id + "/" + environmentId;
+            var existed = _state.Environments.ContainsKey(key);
+            var admission = Admit(project.Id, hosting: !existed);
+            if (!admission.Allowed) throw new InvalidOperationException(admission.Message);
+            if (existed) return false;
+            _state.Environments[key] = project.Id;
+            Save();
+            return true;
+        }
+    }
+
     public void SetProjectEnvironment(string projectName, string environmentId, bool running)
     {
         var project = _projects.List().FirstOrDefault(p =>
@@ -193,7 +212,7 @@ public sealed class WorkspaceQuotaService
             overridden = _state.Overrides.TryGetValue(key, out var expiry) && expiry > now;
             environments = new(_state.Environments, StringComparer.OrdinalIgnoreCase);
         }
-        var projects = _projects.List().Where(p => !p.Archived && p.WorkspaceId == workspaceId
+        var projects = _projects.List().Where(p => p.WorkspaceId == workspaceId
             && (projectId is null || p.Id == projectId)).ToList();
         if (projectId is not null && projects.Count == 0) throw new KeyNotFoundException("Project does not belong to workspace.");
         var consumers = new List<QuotaConsumer>();
@@ -202,7 +221,7 @@ public sealed class WorkspaceQuotaService
         foreach (var project in projects)
         {
             var snapshot = _tokens.LoadSnapshot(project.DisplayName, project.StorageLocation);
-            if (snapshot.Freshness.Status == "unavailable") meterComplete = false;
+            if (snapshot.Freshness.Status != "complete") meterComplete = false;
             foreach (var entry in snapshot.Entries.Where(e => e.TokenUsage is not null))
             {
                 var at = AsUtc(entry.Ts);
@@ -225,7 +244,15 @@ public sealed class WorkspaceQuotaService
             }
         }
         var projectIds = projects.Select(p => p.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var task in _scanner.ScanAllJobsRaw().Where(t => projectIds.Contains(t.ProjectName)))
+        // The board scanner omits archived projects. Their current-week pipeline
+        // executions still consume workspace quota, so read those folders directly.
+        var taskFolders = _scanner.ScanAllJobsRaw()
+            .Where(t => projectIds.Contains(t.ProjectName))
+            .Select(t => (t.FolderPath, t.ProjectName, t.Id))
+            .Concat(projects.Where(p => p.Archived).SelectMany(p => ProjectTaskFolders(p.StorageLocation)
+                .Select(folder => (FolderPath: folder, ProjectName: p.DisplayName, Id: Path.GetFileName(folder)))))
+            .DistinctBy(t => t.FolderPath, StringComparer.OrdinalIgnoreCase);
+        foreach (var task in taskFolders)
         {
             var record = _pipeline.Read(task.FolderPath);
             if (record is null) continue;
@@ -286,5 +313,23 @@ public sealed class WorkspaceQuotaService
         DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
         _ => value.ToUniversalTime(),
     };
+
+    private static IEnumerable<string> ProjectTaskFolders(string projectRoot)
+    {
+        if (!Directory.Exists(projectRoot)) yield break;
+        var flat = TaskStorageLayout.EnumerateJobDirs(projectRoot).ToList();
+        if (flat.Count > 0)
+        {
+            foreach (var folder in flat) yield return folder;
+            yield break;
+        }
+        foreach (var state in TaskStates.All)
+        {
+            var lane = Path.Combine(projectRoot, state);
+            if (!Directory.Exists(lane)) continue;
+            foreach (var folder in Directory.EnumerateDirectories(lane))
+                if (!Path.GetFileName(folder).StartsWith('_')) yield return folder;
+        }
+    }
 
 }

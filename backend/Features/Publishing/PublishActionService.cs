@@ -182,9 +182,11 @@ public sealed class PublishActionService
 
     public PublishWorkflowRun DeployWebsite(string project)
     {
-        var admission = _workspaceQuota?.Admit(project,
-            hosting: !(_workspaceQuota?.HasProjectEnvironment(project, "website") ?? false));
-        if (admission is { Allowed: false }) throw new InvalidOperationException(admission.Message);
+        lock (_runGate) return DeployWebsiteCore(project);
+    }
+
+    private PublishWorkflowRun DeployWebsiteCore(string project)
+    {
         var panel = GetPanel(project, "website");
         if (panel.Target?.Kind != PublishTargetKind.Website) throw new InvalidOperationException("Website target not found.");
         if (panel.Target.PendingCount is not > 0) throw new InvalidOperationException("No pending website changes to deploy.");
@@ -196,8 +198,18 @@ public sealed class PublishActionService
         var branch = RunRequired(root, "current branch could not be resolved", "branch", "--show-current").Trim();
         if (string.IsNullOrWhiteSpace(branch)) throw new InvalidOperationException("Website deploy requires a named branch.");
 
-        RunGhRequired(root, "website workflow dispatch failed", "api", "--method", "POST",
-            $"repos/{repo}/actions/workflows/{Uri.EscapeDataString(workflow)}/dispatches", "-f", $"ref={branch}");
+        // Reserve before dispatch so concurrent deploys cannot both consume the last slot.
+        var reserved = _workspaceQuota?.ReserveProjectEnvironment(project, "website") ?? false;
+        try
+        {
+            RunGhRequired(root, "website workflow dispatch failed", "api", "--method", "POST",
+                $"repos/{repo}/actions/workflows/{Uri.EscapeDataString(workflow)}/dispatches", "-f", $"ref={branch}");
+        }
+        catch
+        {
+            if (reserved) _workspaceQuota?.SetProjectEnvironment(project, "website", false);
+            throw;
+        }
         var run = StoreRun(new PublishWorkflowRun
         {
             Project = project,
@@ -206,7 +218,6 @@ public sealed class PublishActionService
             Status = "queued",
             TriggeredAt = DateTime.UtcNow,
         });
-        _workspaceQuota?.SetProjectEnvironment(project, "website", true);
         _logger.LogInformation(
             "website-deploy-triggered project={Project} workflow={Workflow} branch={Branch}",
             project, workflow, branch);
@@ -222,7 +233,11 @@ public sealed class PublishActionService
         {
             var repo = RequireGitHubRepo(root);
             var runId = stored.RunId ?? FindTriggeredRun(root, repo, stored);
-            if (runId is null) return stored;
+            if (runId is null)
+            {
+                if (targetId == "website") ReconcileWebsiteDeployment(root, repo, project);
+                return stored;
+            }
             var json = RunGhRequired(root, "workflow status lookup failed", "api", $"repos/{repo}/actions/runs/{runId}");
             using var doc = JsonDocument.Parse(json);
             var e = doc.RootElement;
@@ -236,12 +251,38 @@ public sealed class PublishActionService
             };
             if (targetId == "website" && refreshed.Status == "completed" && refreshed.Conclusion != "success")
                 _workspaceQuota?.SetProjectEnvironment(project, "website", false);
+            else if (targetId == "website" && refreshed.Status == "completed")
+                ReconcileWebsiteDeployment(root, repo, project);
             return StoreRun(refreshed);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "publish-workflow-status-failed project={Project} target={Target}", project, targetId);
             return StoreRun(stored with { Error = ex.Message });
+        }
+    }
+
+    private void ReconcileWebsiteDeployment(string root, string repo, string project)
+    {
+        if (_workspaceQuota is null || !_workspaceQuota.HasProjectEnvironment(project, "website")) return;
+        // GitHub Pages marks its deployment inactive when the environment is stopped.
+        // An unreadable API response leaves the reservation in place rather than freeing a live slot.
+        var deployments = Run(root, "gh", CancellationToken.None, "api",
+            $"repos/{repo}/deployments?per_page=20");
+        if (deployments.Code != 0) return;
+        using var document = JsonDocument.Parse(deployments.Output);
+        foreach (var deployment in document.RootElement.EnumerateArray())
+        {
+            if (StringValue(deployment, "environment") != "github-pages") continue;
+            if (!deployment.TryGetProperty("id", out var id) || !id.TryGetInt64(out var value)) return;
+            var statuses = Run(root, "gh", CancellationToken.None, "api",
+                $"repos/{repo}/deployments/{value}/statuses?per_page=1");
+            if (statuses.Code != 0) return;
+            using var statusDocument = JsonDocument.Parse(statuses.Output);
+            var latest = statusDocument.RootElement.EnumerateArray().FirstOrDefault();
+            if (latest.ValueKind == JsonValueKind.Object && StringValue(latest, "state") == "inactive")
+                _workspaceQuota.SetProjectEnvironment(project, "website", false);
+            return;
         }
     }
 
