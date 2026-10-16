@@ -442,7 +442,6 @@ fixed-date backend.Tests/TaskScannerArtifactsTests.cs
 fixed-date backend.Tests/TaskScannerLiveFolderMemoTests.cs
 fixed-date backend.Tests/TaskScannerOutcomeIssueTests.cs
 fixed-date backend.Tests/TaskTransitionAutoCommitAttributionTests.cs
-fixed-date backend.Tests/TasksEndpointPerfTests.cs
 fixed-date backend.Tests/TestRunServiceTests.cs
 fixed-date backend.Tests/TokenPricingTests.cs
 fixed-date backend.Tests/TokenSummaryAggregateTests.cs

@@ -63,7 +63,8 @@ reference; subject and receipt files stay available for historical reads.
 Before the first schema-7 write, startup also preserves a complete, immutable
 `attempt-authority.schema6-backup.json` with inline subjects. The offline
 `--downgrade-attempt-authority-schema6` command restores inline subjects in the
-live snapshot and archive shards for a rollback to a schema-6 build.
+live snapshot and archive shards for a rollback to a schema-6 build. It writes
+the complete schema-6 primary and `.bak` before moving either journal aside.
 
 ### Integration worktree (AGT-2832)
 

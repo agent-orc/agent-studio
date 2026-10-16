@@ -336,17 +336,22 @@ public sealed class AttemptAuthorityService
 
     /// <summary>Offline rollback of the live authority and archive shards for a schema-6 host.</summary>
     public static void DowngradeToSchema6(string taskRepository)
+        => DowngradeToSchema6(taskRepository, null, null);
+
+    /// <summary>Offline rollback with an injected clock and step hook for recovery drills.</summary>
+    public static void DowngradeToSchema6(
+        string taskRepository, Func<DateTime>? utcNow, Action<string>? afterStep)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(taskRepository);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["TaskRepository"] = taskRepository }).Build();
         var service = new AttemptAuthorityService(configuration,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AttemptAuthorityService>.Instance,
-            null, null, File.ReadAllText, suppressStartupWrites: true);
-        service.WriteSchema6Store();
+            utcNow, null, File.ReadAllText, suppressStartupWrites: true);
+        service.WriteSchema6Store(afterStep);
     }
 
-    private void WriteSchema6Store()
+    private void WriteSchema6Store(Action<string>? afterStep)
     {
         if (_path is null || !File.Exists(_path))
             throw new FileNotFoundException("Attempt authority snapshot is missing.", _path);
@@ -366,20 +371,26 @@ public sealed class AttemptAuthorityService
                 if (liveReviewIds.Add(review.AttemptId)) _state.ReviewAttempts.Add(review);
             archive.SchemaVersion = 1;
             writer.WriteJson(path, archive, Schema6JsonOptions);
+            afterStep?.Invoke("archive");
         }
         InlineReviewPayloads(_state.ReviewAttempts);
         foreach (var (taskKey, subject) in _state.CurrentSubjectByTask.ToArray())
             _state.CurrentSubjectByTask[taskKey] = ResolveSubject(subject);
-        // First checkpoint the replayed state while it is still schema 7. A
-        // crash during journal removal can then restart the new build safely.
-        writer.WriteJson(_path, _state, JsonOptions);
-        foreach (var journal in new[] { JournalPath, JournalPath + ".bak" })
-            if (File.Exists(journal))
-                File.Move(journal, journal + ".schema7-backup", overwrite: true);
-        AtomicJsonFileWriter.FlushDirectory(JournalPath);
         _state.SchemaVersion = 6;
+        // Keep both journals until the primary and its backup each contain the
+        // complete replayed state. A stale backup still needs those journals if
+        // the first snapshot swap is interrupted or its primary is damaged.
         writer.WriteJson(_path, _state, Schema6JsonOptions);
+        afterStep?.Invoke("primary");
         writer.WriteJson(_path + ".bak", _state, Schema6JsonOptions);
+        afterStep?.Invoke("backup");
+        foreach (var journal in new[] { JournalPath, JournalPath + ".bak" })
+        {
+            if (!File.Exists(journal)) continue;
+            File.Move(journal, journal + ".schema7-backup", overwrite: true);
+            AtomicJsonFileWriter.FlushDirectory(journal);
+            afterStep?.Invoke(journal == JournalPath ? "journal" : "journal-backup");
+        }
     }
 
     private void InlineReviewPayloads(IEnumerable<ReviewAttemptRecord> reviews)
@@ -401,6 +412,7 @@ public sealed class AttemptAuthorityService
         if (_path is null) return;
         lock (_gate)
         {
+            var priorTerminalTaskKeys = _terminalTaskKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var added = false;
             var activeKeys = _state.RunAttempts.Select(run => run.TaskKey)
                 .Concat(_state.ReviewAttempts.Select(review => review.TaskKey))
@@ -429,7 +441,16 @@ public sealed class AttemptAuthorityService
                     review.TerminalReason = "Task entered a completed or archived lane before the review settled.";
                     _dirtyRecordIds.Add("v:" + review.AttemptId);
                 }
-                PersistLocked(forceCompaction: true);
+                try
+                {
+                    PersistLocked(forceCompaction: true);
+                }
+                catch
+                {
+                    _terminalTaskKeys.Clear();
+                    _terminalTaskKeys.UnionWith(priorTerminalTaskKeys);
+                    throw;
+                }
             }
         }
     }

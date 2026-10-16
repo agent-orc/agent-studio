@@ -3,8 +3,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -321,6 +324,14 @@ public class JobsEndpointPerfTests : IDisposable
                             // timeout without weakening the production default.
                             ["GitStateIndex:DebounceMs"] = "50",
                         });
+                    });
+                    builder.ConfigureTestServices(services =>
+                    {
+                        services.RemoveAll<AgentStudio.Runner.AttemptAuthorityService>();
+                        services.AddSingleton(provider => new AgentStudio.Runner.AttemptAuthorityService(
+                            provider.GetRequiredService<IConfiguration>(),
+                            provider.GetRequiredService<ILogger<AgentStudio.Runner.AttemptAuthorityService>>(),
+                            utcNow: () => budgetNow));
                     });
                 });
 

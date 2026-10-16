@@ -127,6 +127,70 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal(backup, File.ReadAllText(backupPath));
     }
 
+    [Theory]
+    [InlineData("archive")]
+    [InlineData("primary")]
+    [InlineData("backup")]
+    [InlineData("journal")]
+    [InlineData("journal-backup")]
+    public void Interrupted_downgrade_recovers_every_committed_journal_entry_from_backup(string interruptedAfter)
+    {
+        var now = new DateTime(2026, 10, 16, 8, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        var first = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "first").RunAttempt!;
+        var second = service.AcquireRun("AGT-2", "PROJ-1", null, "runner", "host", 60, "second").RunAttempt!;
+        service.CheckpointForMigration();
+        var third = service.AcquireRun("AGT-3", "PROJ-1", null, "runner", "host", 60, "third").RunAttempt!;
+        Assert.True(File.Exists(path + ".bak"));
+        Assert.True(File.Exists(path + ".journal.bak"));
+        Assert.True(File.Exists(path + ".journal"));
+        var archivePath = Path.Combine(Path.GetDirectoryName(path)!,
+            "attempt-authority.archive-2026-10-16-08.json");
+        File.WriteAllText(archivePath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 2, archivedAt = now,
+            runAttempts = Array.Empty<object>(), reviewAttempts = Array.Empty<object>(),
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        Assert.Throws<IOException>(() => AttemptAuthorityService.DowngradeToSchema6(
+            _root, () => now, step =>
+            {
+                if (step == interruptedAfter) throw new IOException("Simulated downgrade crash.");
+            }));
+
+        // A damaged primary forces recovery through the backup and whatever
+        // journals had not yet been moved aside at this interruption point.
+        File.WriteAllText(path, File.ReadAllText(path) + "corrupt-tail");
+        var recovered = NewService(() => now);
+        Assert.Equal(path + ".bak", recovered.RecoverySource);
+        Assert.NotNull(recovered.GetRun(first.AttemptId));
+        Assert.NotNull(recovered.GetRun(second.AttemptId));
+        Assert.NotNull(recovered.GetRun(third.AttemptId));
+    }
+
+    [Fact]
+    public void Failed_terminal_compaction_allows_a_later_sweep_to_terminalize_open_attempts()
+    {
+        var now = new DateTime(2026, 10, 16, 8, 0, 0, DateTimeKind.Utc);
+        var writer = new BoardSnapshotWriter();
+        var service = NewService(() => now, writer);
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        var run = service.AcquireRun("AGT-2", "PROJ-1", null, "runner", "host", 60, "open-run").RunAttempt!;
+        writer.Fail = true;
+
+        Assert.Throws<IOException>(() => service.CompactTerminalTasks(["AGT-1", "AGT-2"]));
+        Assert.Equal(AttemptLifecycleState.Leased, service.GetRun(run.AttemptId)!.State);
+        Assert.Equal(AttemptLifecycleState.Pending, service.GetReview(review.AttemptId)!.State);
+
+        writer.Fail = false;
+        service.CompactTerminalTasks(["AGT-1", "AGT-2"]);
+        Assert.Equal(AttemptLifecycleState.Superseded, service.GetRun(run.AttemptId)!.State);
+        Assert.Equal(AttemptLifecycleState.Superseded, service.GetReview(review.AttemptId)!.State);
+        Assert.Equal(AttemptLifecycleState.Superseded, NewService(() => now).GetRun(run.AttemptId)!.State);
+        Assert.Equal(AttemptLifecycleState.Superseded, NewService(() => now).GetReview(review.AttemptId)!.State);
+    }
+
     private sealed class Schema6AuthorityModel
     {
         public int SchemaVersion { get; set; }

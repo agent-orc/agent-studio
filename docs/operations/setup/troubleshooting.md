@@ -22,7 +22,10 @@ dotnet OrchestratorApi.dll --downgrade-attempt-authority-schema6 <TaskRepository
 The command replays pending journal entries, restores inline subjects and
 reclaim receipts in the live snapshot and archive shards, copies archived
 current attempts back into the live snapshot, writes schema 6, and
-moves the schema-7 journals aside with a `.schema7-backup` suffix. Verify that
+moves the schema-7 journals aside with a `.schema7-backup` suffix. It writes
+both the schema-6 primary and its `.bak` before moving either journal, so an
+interrupted downgrade retains a recoverable snapshot with the journals needed
+by an older backup. Verify that
 `attempt-authority.json` has `schemaVersion: 6` and inline `subjectId` values
 in both `reviewAttempts` and `currentSubjectByTask`. Start the old build only
 after the command exits successfully. Keep the subject, receipt, and backup
