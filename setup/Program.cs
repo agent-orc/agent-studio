@@ -40,7 +40,7 @@ if (OperatingSystem.IsWindows() && ProductSetup.IsProductCommand(args)
     }
 }
 
-var exitCode = ProductSetup.IsProductCommand(args) (wip(runner): salvage before teardown - outcome Done)
+var exitCode = ProductSetup.IsProductCommand(args)
     ? await ProductSetup.RunAsync(args)
     : await SetupApplication.RunAsync(args);
 if (OperatingSystem.IsWindows() && !Console.IsInputRedirected

@@ -92,8 +92,9 @@ armed by Task Server and cannot be replaced by re-running setup.
 
 The wizard detects Codex and Claude and offers an npm installation and login
 for the account that owns the Runner task. An unattended answer file that
-selects a missing provider installs its CLI through npm; Node.js and npm must
-be available on that account's PATH. When a provider or GitHub access is
+selects a missing provider installs the pinned Node.js Windows x64 package
+from nodejs.org when node or npm is missing, verifies its SHA-256 against the
+release manifest, and then installs the provider CLI through npm. When a provider or GitHub access is
 selected, setup asks for that Windows account's password through a hidden
 prompt so Task Scheduler can start the Runner at boot with the user's
 credential profile.

@@ -33,7 +33,7 @@ internal static class ProductSetup
         string? Role = null,
         int? MaxParallelism = null,
         string? ProviderCli = null,
-        string? RunnerPasswordFile = null); (wip(runner): salvage before teardown - outcome Done)
+        string? RunnerPasswordFile = null);
 
     internal sealed record InstalledState(string Mode, string Target, string Version,
         string? PreviousVersion, int UiPort, string? ServerUrl = null);
