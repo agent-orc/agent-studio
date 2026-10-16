@@ -1560,8 +1560,10 @@ public static class TaskCrudEndpoints
         }
     }
 
-    private static string OperatorActor(HttpContext context)
+    internal static string OperatorActor(HttpContext context)
     {
+        if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
+            return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string
             ?? context.Request.Headers["X-Client-Id"].FirstOrDefault();
         return TimelineActors.Human(clientId ?? string.Empty);

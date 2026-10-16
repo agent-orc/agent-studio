@@ -2050,6 +2050,14 @@ export class TaskService {
     );
   }
 
+  sendPreviewFeedback(jobId: string, watchPath: string, data: FormData) {
+    return this.http.post<ContinueTaskResponse>(
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/preview-feedback`,
+      data,
+      this.withWatchPath(watchPath),
+    );
+  }
+
   setJobModel(jobId: string, model: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
