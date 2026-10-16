@@ -201,7 +201,7 @@ public sealed class MonolithOrchestrationApplier(
                 ?? throw new InvalidOperationException("The reviewed attempt was not found.");
             var source = authority.GetRun(review.SourceRunAttemptId)
                 ?? throw new InvalidOperationException("The batch source run was not found.");
-            batches.Enqueue(task, review, source, DateTimeOffset.UtcNow);
+            await batches.EnqueueAsync(task, review, source, DateTimeOffset.UtcNow, ct);
         }
         if (decision?.ContinuationBase is { } continuation
             && decision.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound)
