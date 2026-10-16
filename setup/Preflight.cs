@@ -184,16 +184,16 @@ internal static class PreflightProbe
                 ? SetupSecrets.IsProtected(secretFile) : null,
             authority.Reachable,
             contactsAuthority ? host is not null : null,
-    journey is InstallationJourney.OneBox or InstallationJourney.JoinHost
+            journey is InstallationJourney.OneBox or InstallationJourney.JoinHost
                 ? await SucceedsAsync(processes, "git", ["--version"])
                 : null,
-    windows && target == "native" && journey == InstallationJourney.OneBox
+            windows && target == "native" && journey == InstallationJourney.OneBox
                 ? Environment.OSVersion.Version.Build >= 19045 : null,
             windows && target == "native" && journey == InstallationJourney.OneBox
                 ? await SucceedsAsync(processes, "git", ["--version"]) : null,
             windows && target == "native" && journey == InstallationJourney.OneBox
                 ? File.Exists(Path.Combine(installRoot, "install-state.json")) || NativePortsFree() : null,
-    windows && target == "native" && journey == InstallationJourney.OneBox
+            windows && target == "native" && journey == InstallationJourney.OneBox
                 ? File.Exists(Path.Combine(installRoot, "install-state.json")) : null);
     }
 
