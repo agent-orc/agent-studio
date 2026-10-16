@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, input, model, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, model, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CliModelSelectorComponent } from '../cli-model-selector';
 import type { CliModelInfo } from '../../features/cli';
 import type { CliType, RegistryProjectSummary, RegistryWorkspaceListItem } from '../../models/task.model';
+import { AuthService } from '../../services/auth.service';
 import {
   PROJECT_COLOR_SWATCHES,
   deriveProjectShortCode,
@@ -21,6 +22,8 @@ import {
   styleUrl: './project-basics-form.component.scss',
 })
 export class ProjectBasicsFormComponent {
+  private readonly auth = inject(AuthService);
+  readonly networked = computed(() => this.auth.status()?.profile === 'networked');
   readonly mode = input<'create' | 'edit'>('create');
   readonly testidPrefix = input('project-basics');
   readonly disabled = input(false);

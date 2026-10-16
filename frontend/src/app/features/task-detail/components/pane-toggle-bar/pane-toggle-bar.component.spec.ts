@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { PaneToggleBarComponent } from './pane-toggle-bar.component';
+import { AuthSessionState } from '../../../../services/auth.service';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -104,5 +105,23 @@ describe('PaneToggleBarComponent Git badge', () => {
       '[data-testid="pane-toggle-git-badge"]',
     ) as HTMLElement | null;
     expect(badge?.textContent?.trim()).toBe('7');
+  });
+});
+
+describe('PaneToggleBarComponent local actions', () => {
+  it('hides the server-side VS Code launch in networked mode', async () => {
+    await TestBed.configureTestingModule({
+      imports: [PaneToggleBarComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+    });
+    const fixture = TestBed.createComponent(PaneToggleBarComponent);
+    fixture.componentRef.setInput('panesVisible', { prompt: true, protocol: true, git: true });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="open-in-vscode"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="pane-toggle-git"]')).not.toBeNull();
   });
 });

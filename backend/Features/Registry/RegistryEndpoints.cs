@@ -54,6 +54,20 @@ public static class RegistryEndpoints
 
     public static void MapRegistryEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/projects/path-import", (ProjectPathImportRequest request, HttpContext context, ProjectRegistry projects) =>
+        {
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && human.User.Role != StudioRoles.Owner)
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (request.Mappings is null || request.Mappings.Count == 0
+                || request.Mappings.Any(mapping => string.IsNullOrWhiteSpace(mapping.WindowsPrefix)
+                    || string.IsNullOrWhiteSpace(mapping.ServerPrefix)))
+                return Results.BadRequest(new { error = "At least one Windows-to-server path mapping is required." });
+            var rows = projects.List().Select(project => ProjectPathImport.Plan(project, request.Mappings)).ToList();
+            if (request.Apply) projects.ApplyPathImport(rows);
+            return Results.Ok(new { applied = request.Apply, projects = rows });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+
         app.MapGet("/api/workspaces", (HttpContext context, WorkspaceRegistry workspaces, ProjectRegistry projects, bool? includeArchived) =>
         {
             var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
@@ -87,6 +101,10 @@ public static class RegistryEndpoints
                 ? Results.NotFound(new { error = $"Unknown projectId '{projId}'" })
                 : Results.Ok(record);
         });
+
+        app.MapGet(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}/preview/{**path}",
+            ProjectUrlPreviewProxy.HandleAsync)
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         app.MapPost("/api/component-routing/resolve", (ComponentRoutingRequest body, ComponentRoutingService routing) =>
             Results.Ok(routing.Resolve(body ?? new ComponentRoutingRequest())));

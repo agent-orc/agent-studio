@@ -16,8 +16,11 @@ import type { QuotaReport, QuotaSnapshot, QuotaWindow } from '../../models/quota
 import { cliTypeIcon } from '../../../../services/format.util';
 import { QuotaApiService } from '../../services/quota-api.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
-import { quotaProbeFailureLabel, quotaSnapshotIsStale } from '../../quota-freshness.util';
+import { formatQuotaAge, quotaProbeFailureLabel, quotaSnapshotIsStale } from '../../quota-freshness.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { AuthService } from '../../../../services/auth.service';
+import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
+import { runnerQuotaCard } from './runner-quota-card';
 
 type Tone = 'ok' | 'warn' | 'hot' | 'unknown';
 
@@ -64,7 +67,7 @@ interface QuotaPrimaryDisplay {
  */
 type QuotaCardState = 'idle' | 'warn' | 'hot' | 'stale' | 'unavailable' | 'error';
 
-interface QuotaCardModel {
+export interface QuotaCardModel {
   cliType: CliType;
   icon: string;
   label: string;
@@ -103,6 +106,9 @@ interface QuotaCardModel {
 })
 export class HeaderQuotaComponent implements OnInit, OnDestroy {
   private readonly quotaApi = inject(QuotaApiService);
+  private readonly auth = inject(AuthService);
+  private readonly providerAuth = inject(ProviderAuthStatusService);
+  readonly networked = computed(() => this.auth.status()?.profile === 'networked');
   private readonly hub = inject(JobsHubClient);
   readonly report = signal<QuotaReport | null>(null);
   /** Re-evaluated every second so the freshness label ticks live. */
@@ -135,6 +141,8 @@ export class HeaderQuotaComponent implements OnInit, OnDestroy {
   });
 
   readonly cards = computed<QuotaCardModel[]>(() => {
+    if (this.networked()) return this.displayedCliTypes.map(cli =>
+      runnerQuotaCard(cli, this.cliLabel(cli), this.providerAuth.statuses().filter(badge => badge.provider === cli)));
     const r = this.report();
     if (!r) return this.displayedCliTypes.map(cli => this.emptyCard(cli));
     const ttlMs = (r.ttlSeconds ?? 600) * 1000;
@@ -148,7 +156,7 @@ export class HeaderQuotaComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.pollingStarted = true;
     this.wasHubConnected = this.hub.connected();
-    this.fetch();
+    if (!this.networked()) this.fetch();
     // Poll the backend every 60s. The backend serves from cache and
     // background-refreshes stale entries, so we get fresh data without
     // forcing a re-probe.
@@ -162,15 +170,18 @@ export class HeaderQuotaComponent implements OnInit, OnDestroy {
   }
 
   select(cliType: CliType): void {
+    if (this.networked()) return;
     this.cliSelected.emit(cliType);
   }
 
   fetch(): void {
+    if (this.networked()) return;
     this.quotaApi.getQuotaReport().subscribe({
       next: (r) => this.report.set(r),
       error: () => { /* keep last value, do not clear */ }
     });
   }
+
 
   private buildCard(s: QuotaSnapshot, ttlMs: number, now: number): QuotaCardModel {
     const fetchedMs = s.fetchedAt ? Date.parse(s.fetchedAt) : NaN;
@@ -178,7 +189,7 @@ export class HeaderQuotaComponent implements OnInit, OnDestroy {
     const stale = quotaSnapshotIsStale(s, ttlMs, now);
     const freshness = !s.fetchedAt
       ? 'never refreshed'
-      : 'updated ' + this.formatAgo(ageMs);
+      : 'updated ' + formatQuotaAge(ageMs);
     const label = this.cliLabel(s.cliType);
     const shortWindow = this.buildWindowDisplay(s.windows, 'five_hour');
     const weekWindow = this.buildWindowDisplay(s.windows, 'weekly');
@@ -429,16 +440,4 @@ export class HeaderQuotaComponent implements OnInit, OnDestroy {
     }
   }
 
-  private formatAgo(ms: number): string {
-    if (!Number.isFinite(ms)) return 'never';
-    const sec = Math.floor(ms / 1000);
-    if (sec < 5) return 'just now';
-    if (sec < 60) return `${sec} s ago`;
-    const min = Math.floor(sec / 60);
-    if (min < 60) return `${min} min ago`;
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return `${hr} h ago`;
-    const d = Math.floor(hr / 24);
-    return `${d} d ago`;
-  }
 }

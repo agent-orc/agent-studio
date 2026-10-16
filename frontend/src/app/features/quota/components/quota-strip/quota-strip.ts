@@ -4,6 +4,8 @@ import type { CliType } from '../../../../models/task.model';
 import { QuotaApiService } from '../../services/quota-api.service';
 import type { QuotaReport, QuotaSnapshot, QuotaWindow } from '../../models/quota.model';
 import { cliTypeIcon } from '../../../../services/format.util';
+import { AuthService } from '../../../../services/auth.service';
+import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 /**
@@ -28,6 +30,10 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class QuotaStripComponent implements OnInit, OnDestroy {
+  private readonly auth = inject(AuthService);
+  private readonly providerAuth = inject(ProviderAuthStatusService);
+  readonly networked = computed(() => this.auth.status()?.profile === 'networked');
+  readonly runnerBadges = this.providerAuth.statuses;
   private jobService = inject(TaskService);
 
   private readonly quotaApi = inject(QuotaApiService);
@@ -58,10 +64,10 @@ export class QuotaStripComponent implements OnInit, OnDestroy {
   });
 
   ngOnInit() {
-    this.load();
+    if (!this.networked()) this.load();
     this.tickHandle = setInterval(() => this.nowTick.set(Date.now()), 1000);
     // Pull a fresh cached report every 30s — backend handles its own staleness.
-    this.autoHandle = setInterval(() => this.load(true), 30000);
+    if (!this.networked()) this.autoHandle = setInterval(() => this.load(true), 30000);
   }
 
   ngOnDestroy() {
@@ -80,6 +86,7 @@ export class QuotaStripComponent implements OnInit, OnDestroy {
   }
 
   refreshAll() {
+    if (this.networked()) { this.providerAuth.refresh(); return; }
     this.refreshingAll.set(true);
     this.errorMsg.set(null);
     this.quotaApi.refreshQuotaAll().subscribe({
@@ -95,6 +102,7 @@ export class QuotaStripComponent implements OnInit, OnDestroy {
   }
 
   refreshOne(cliType: CliType) {
+    if (this.networked()) { this.providerAuth.refresh(); return; }
     this.refreshing.update((m) => ({ ...m, [cliType]: true }));
     this.quotaApi.refreshQuotaForCli(cliType).subscribe({
       next: (snap) => {

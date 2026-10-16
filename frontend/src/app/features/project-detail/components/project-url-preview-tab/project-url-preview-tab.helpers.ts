@@ -8,6 +8,10 @@ export interface StartFailure {
   cwd: string;
 }
 
+export function projectPreviewProxyUrl(projectId: string | null, urlId: string): string | null {
+  return projectId ? `/api/projects/${encodeURIComponent(projectId)}/urls/${encodeURIComponent(urlId)}/preview/` : null;
+}
+
 /** Builds the embed action menu for the preview tab's `⋯` trigger. */
 export function buildEmbedMenuItems(state: {
   url: RegistryProjectUrl | null;

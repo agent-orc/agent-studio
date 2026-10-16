@@ -25,9 +25,11 @@
     }
   </button>
   <span class="detail__panes-toolbar-spacer"></span>
+  @if (localActionsAvailable()) {
   <button class="pane-toggle"
           (click)="openInVsCode.emit()"
           data-testid="open-in-vscode"
           aria-label="Open project in VS Code"
           [cacTooltip]="'Open the project root in VS Code (-r reuses an existing window).'">🪟</button>
+  }
 </div>
