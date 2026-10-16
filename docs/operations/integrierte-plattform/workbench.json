@@ -71,5 +71,6 @@
       "title": "Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in",
       "promptMarkdown": "# Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the adapters of section 7.2 and sign-in: the provider interface backed by Vault/OpenBao KV v2 and by 1Password service accounts, selected per scope; OIDC single sign-on for users with group mapping. Tests with fake servers for each adapter and the OIDC flow.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
     }
-  ]
+  ],
+  "key": "AGT-W81"
 }
