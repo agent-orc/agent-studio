@@ -1,9 +1,8 @@
-# AGT-3153 release workflow status
+# AGT-3167 delivery status
 
-- Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
-- Implemented the operator's rollback option: stage all eight images at `sha-<commit>`, record previous `v<version>` and `latest` digests, promote those tags before creating the GitHub Release, and restore touched tags if promotion fails. The rollback test covers a failure after the fourth copy, including removal of newly created version tags.
-- Kept AGT-3158's installation scenarios and deferred-step gate in the release candidate path. Workflow dispatch uploads the complete candidate and image artifacts without publishing.
-- Operator step after publication: set each `ghcr.io/agent-orc/*` release package to **public** in GitHub Packages, then confirm anonymous `v<version>` pulls. The workflow reports anonymous visibility after release without failing a completed publication. Package visibility was not changed here.
-- No release tag, GitHub Release, image, or remote ref was published by this task.
-- GitHub API run `37255120101` confirms that v0.9.5 failed in Linux `Test .NET solution` and Windows `Publish win-x64 self-contained binaries`. The API log-download endpoint returned HTTP 403 without a token in this runner, so the detailed log text could not be inspected here.
-- Verification: `dotnet build agent-taskboard.sln --no-restore` passed; the two changed backend test classes passed (29 tests); the architecture and guard filter passed (81 tests in the backend test project, no matching tests in the other seven .NET test projects); the release script contract suite, image promotion rollback test, workflow dependency test, installation scenario driver test, YAML parse, and `npm --prefix frontend run lint` passed.
+- Result SHA (SHA-256 of the source diff, excluding this status file): `1dc84cdef8d38b13bf20076d321dca9ae5f86629fd3a8a08b4e19c9f91922e02`.
+- Base commit: `40fc92227765baba37a5d46537c9027f9f7fa33b`. The platform owns the delivery commit, so no result commit SHA exists in this worktree yet.
+- Implemented the downgrade order: write the complete schema-6 primary and `.bak` atomically before moving either schema-7 journal. Crash injection covers archive conversion, both snapshots, and both journal moves; recovery from a damaged primary retains every committed attempt.
+- A failed terminal compaction restores the in-memory task markers. A later sweep terminalizes an open run and review attempt.
+- The task-list performance test injects the authority clock, and its fixed-date guard baseline entry was removed.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` passed; `dotnet build backend.Tests/OrchestratorApi.Tests.csproj --no-restore -m:1 /p:UseSharedCompilation=false` passed after the final edits; the focused class filter `FullyQualifiedName~AttemptAuthorityServiceTests|FullyQualifiedName~JobsEndpointPerfTests` passed 71 tests; the guard filter `FullyQualifiedName~.Architecture.|Category=Guard` passed on all eight .NET test projects (82 backend tests, no matches in the other seven); `npm --prefix frontend run lint` passed. `git diff --check` passed.
