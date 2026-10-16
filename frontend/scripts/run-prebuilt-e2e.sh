@@ -6,7 +6,7 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery ref-drift demo; do
+  for profile in standard recovery ref-drift demo first-run; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
@@ -16,6 +16,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
   for arg in "$@"; do
     case "${arg}" in
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
+      *first-run-journey.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
     esac
   done
@@ -27,6 +28,10 @@ if [[ ! -f "${PUBLISH_DIR}/OrchestratorApi.dll" || "$(cat "${PUBLISH_DIR}/E2E-FI
   dotnet publish "${REPO_ROOT}/backend/OrchestratorApi.csproj" --configuration Release --output "${PUBLISH_DIR}"
   git -C "${REPO_ROOT}" rev-parse HEAD > "${PUBLISH_DIR}/RELEASE-SHA"
   printf '%s\n' "${CHECKOUT_SHA}" > "${PUBLISH_DIR}/E2E-FINGERPRINT"
+fi
+if [[ "${PW_E2E_PROFILE}" == first-run ]]; then
+  dotnet publish "${REPO_ROOT}/runner/AgentRunner.csproj" --configuration Release \
+    --output "${REPO_ROOT}/runner/bin/e2e-publish"
 fi
 if [[ ! -f "${FRONTEND_ROOT}/dist/frontend/browser/index.html" || "$(cat "${FRONTEND_ROOT}/dist/frontend/browser/.source-sha" 2>/dev/null || true)" != "${CHECKOUT_SHA}" ]]; then
   npm --prefix "${FRONTEND_ROOT}" run build

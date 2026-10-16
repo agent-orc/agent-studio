@@ -84,9 +84,10 @@ export default defineConfig({
       ...(prebuilt ? {
         testMatch: profile === 'recovery' ? ['**/system/crash-recovery-prompt.spec.ts', '**/settings/first-run-checklist.spec.ts']
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
+          : profile === 'first-run' ? '**/settings/first-run-journey.spec.ts'
           : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },

@@ -52,7 +52,7 @@
       <span class="first-run__number">3</span>
       <div><h3>GitHub read and write access</h3>
         <p>{{ gitReady() ? 'The registered repository has admitted read and write proof from each online execution host.' : 'Give each execution host access to the registered GitHub repository. Verification fetches and pushes a temporary ref.' }}</p>
-        @if (repositoryReady()) {
+        @if (repository().value?.registration?.repositoryUrl) {
           <div class="first-run__form" data-testid="first-run-git-setup">
             @if (!localProfile()) { <label>Execution host
               <select data-testid="first-run-git-host" [value]="gitRunnerId()"

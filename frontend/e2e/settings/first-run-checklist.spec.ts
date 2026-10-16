@@ -6,6 +6,39 @@ import { test, expect } from '../fixtures/dev-backend';
 
 test.use({ recoveryRepository: true, trace: 'off' });
 
+test('fresh local project exposes GitHub setup before its checkout exists', async ({ page }) => {
+  const projects = await page.request.get('/api/projects');
+  expect(projects.ok()).toBeTruthy();
+  const existing = await projects.json() as { id: string; workspaceId: string; archived: boolean }[];
+  for (const project of existing.filter(entry => !entry.archived)) {
+    const archived = await page.request.put(`/api/projects/${encodeURIComponent(project.id)}`, {
+      headers: { 'X-Client-Id': 'local-default' }, data: { archived: true },
+    });
+    expect(archived.ok()).toBeTruthy();
+  }
+  const origin = 'https://github.com/example/first-run-fresh.git';
+  const created = await page.request.post('/api/projects', {
+    headers: { 'X-Client-Id': 'local-default' },
+    data: { workspaceId: existing[0]?.workspaceId ?? 'ws-default',
+      displayName: 'First Run Fresh', repositoryUrl: origin },
+  });
+  expect(created.ok(), `${created.status()}: ${await created.text()}`).toBeTruthy();
+  const project = await created.json() as { id: string; repositoryPath?: string };
+  expect(project.repositoryPath).toBeFalsy();
+
+  await page.goto('/#/workspace/settings/first-run');
+  await expect(page.getByTestId('first-run-project')).toHaveAttribute('data-state', 'pending');
+  await expect(page.getByTestId('first-run-git-setup')).toBeVisible();
+  await expect(page.getByTestId('first-run-git-start')).toBeEnabled();
+  await page.getByTestId('first-run-git-method').selectOption('token');
+  await page.getByTestId('first-run-git-token').fill(['test', 'x'.repeat(36)].join('-'));
+  await page.getByTestId('first-run-git-start').click();
+  await expect(page.getByTestId('first-run-git-state')).toContainText('awaiting-verify');
+  await page.getByTestId('first-run-git-verify').click();
+  await expect(page.getByTestId('first-run-git-state')).toContainText('denied', { timeout: 60_000 });
+  await expect(page.getByTestId('first-run-project')).toHaveAttribute('data-state', 'pending');
+});
+
 test('first-run GitHub proof rejects a checkout URL rewrite to a scratch repository', async ({ page }) => {
   test.setTimeout(180_000);
   const workspace = process.env.PW_E2E_WORKSPACE;
