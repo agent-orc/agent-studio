@@ -13,6 +13,35 @@ lifecycleHistory:
 
 # Deployment as a first-class citizen
 
+## Stage and production host deployments
+
+Projects declare each environment in `docs/deployments/environments/<id>.json`,
+using the [environment schema](../app/schemas/project-environment.schema.json).
+The declaration names its kind, host, address, container or static template,
+destination, health URL, promotion rule, and host-held secret references.
+For a container, `destination` is the local port behind the existing reverse
+proxy. For a static site, it is the served release directory; the proxy serves
+its `current` symlink. Static artifacts are tar files in the deploy host's
+artifact store, named by their SHA-256 digest.
+
+CI submits an immutable `image@sha256:<digest>` artifact and the exact verified
+integration commit to `POST /api/projects/{project}/environments/releases`.
+The server checks the commit against a verified integration record before it
+queues stage. A deploy-role credential claims work through `/api/deploy/jobs/claim`.
+`agent-host deploy-loop` runs the container or static template on the declared
+host, resolves secret names from its local secret store, checks health, and
+reports a bounded result code. The Studio shows history and pending promotion.
+The first production release needs a person in Studio. Later releases receive
+the same artifact after a person approves or stage has stayed healthy for ten
+minutes, depending on the declared rule. An approval expires after 24 hours.
+Failed production health queues the previously healthy artifact for rollback
+and leaves a failure card with the bounded health evidence in Studio.
+
+The deploy host uses a credential with only `runner.deploy`; its service
+identity must match `targetHostId`. Its secret store is a local directory of
+files named by the declared `secretRefs`. Secret values never enter the API,
+job state, or audit history. The claim response carries names only.
+
 Status: concept and initial workflow implemented, 2026-07-11. The shared
 Deployment contract now includes DEP-1 history and DEP-2 repository-derived
 targets. Runnable deploy-stable and descriptor targets launch normal visible

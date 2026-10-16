@@ -9,6 +9,49 @@
       [appPendingButton]="loading()" pendingLabel="Refreshing..." (click)="refresh()">Refresh</button>
   </header>
 
+  <section class="deployment__targets" aria-labelledby="project-environments-title" data-testid="project-environments">
+    <header><div><p class="deployment__eyebrow">Project environments</p><h2 id="project-environments-title">Environments</h2></div></header>
+    @if (environmentError(); as error) { <p role="alert">{{ error }}</p> }
+    @if (environments(); as state) {
+      @if (state.environments.length === 0) { <p>No environments are declared in this project's repository.</p> }
+      <div class="deployment__target-grid">
+        @for (environment of state.environments; track environment.declaration.id) {
+          <article class="deployment__target-choice" [attr.data-testid]="'environment-' + environment.declaration.id">
+            <strong>{{ environment.declaration.name }}</strong>
+            <small>{{ environment.declaration.kind }} · {{ environment.declaration.address }} · {{ environment.declaration.targetHostId }}</small>
+            <p>Version: <code>{{ environment.deployedArtifact || 'Not deployed' }}</code></p>
+            <p>Health: {{ environment.health }}</p>
+            @if (environment.pendingArtifact) { <p>Queued: <code>{{ environment.pendingArtifact }}</code></p> }
+            @if (environment.history.length > 1) {
+              <button type="button" (click)="rollbackEnvironment(environment.declaration.id)">Roll back</button>
+            }
+            <details><summary>History ({{ environment.history.length }})</summary>
+              <ol>@for (entry of environment.history; track entry.at + entry.artifact) {
+                <li>{{ entry.at | date:'medium' }} · {{ entry.status }} · <code>{{ entry.artifact }}</code> · {{ entry.evidence }}</li>
+              }</ol>
+            </details>
+          </article>
+        }
+      </div>
+      @for (promotion of state.promotions; track promotion.artifact) {
+        @if (promotion.status === 'pending') {
+          <div class="deployment__notice" data-testid="pending-promotion">
+            <strong>Promotion pending</strong> · <code>{{ promotion.artifact }}</code>
+            <button type="button" (click)="decidePromotion(promotion.artifact, true)">Approve production</button>
+            <button type="button" (click)="decidePromotion(promotion.artifact, false)">Reject</button>
+          </div>
+        }
+      }
+      @for (failure of state.failureCards; track failure.at + failure.artifact) {
+        <article class="deployment__notice" data-testid="deployment-failure-card">
+          <strong>Deployment failed in {{ failure.environmentId }}</strong>
+          <p><code>{{ failure.artifact }}</code> · {{ failure.evidence }} · {{ failure.at | date:'medium' }}</p>
+          @if (failure.rollbackArtifact) { <p>Rollback queued: <code>{{ failure.rollbackArtifact }}</code></p> }
+        </article>
+      }
+    }
+  </section>
+
   @if (requestFailed()) {
     <div class="deployment__empty" role="status" data-testid="project-deployment-request-error">
       <h2>Deployment history is temporarily unavailable</h2>
@@ -45,6 +88,9 @@
           <div><strong>{{ targetEnvironment(target) }}</strong><small>{{ target.source === 'repository-fact' ? 'Discovered from this repository' : target.source }}</small></div>
           <span class="deployment__status-badge" [attr.data-ready]="targetStatusReady(target)">{{ targetStatus(target) }}</span>
         </div>
+        @if (hasSecretRefs(target)) {
+          <p class="deployment__notice">Secret references run only in host deploy jobs. This legacy CLI target cannot be started here.</p>
+        }
 
         @for (parameter of target.parameters; track parameter.name) {
           @if (isStableIdle(parameter.name)) {
