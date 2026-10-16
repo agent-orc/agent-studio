@@ -44,7 +44,7 @@ public static class ManagementEndpoints
             var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
                 manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(path));
-            var gateHost = configuration["RemoteGate:Host"];
+            var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
             return Results.Ok(new
             {
                 controlHost = Environment.MachineName,

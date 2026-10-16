@@ -1,5 +1,6 @@
 import type { PhysicalHostGroup } from './physical-host-group';
 import type { RemoteHost } from './remote-host.model';
+import type { CredentialInventory } from '../../credentials/credential-inventory.service';
 
 export interface EnvironmentSnapshot {
   controlHost: string;
@@ -48,13 +49,28 @@ export interface EnvironmentMap { machines: readonly EnvironmentMachine[]; conne
 
 const unknown = 'Unknown';
 
-function access(host: RemoteHost): EnvironmentNode['repositoryAccess'] {
-  if (host.gitPushStatus === 'ready' || host.gitPushStatus === 'ready-no-workflow-scope') return 'writes';
-  // A failed push probe does not prove read permission.
-  return 'unknown';
+function access(aliases: readonly string[], inventory: CredentialInventory | null,
+  role?: EnvironmentNode['role'], ambiguousHostId?: string): EnvironmentNode['repositoryAccess'] {
+  if (!inventory) return 'unknown';
+  const ids = new Set(aliases.filter(Boolean).map(id => id.toLowerCase()));
+  const matched = inventory.items.filter(item => item.category === 'repository' && ids.has(item.hostId.toLowerCase()));
+  const ambiguous = matched.some(item => item.state !== 'missing'
+    && item.hostId.toLowerCase() === ambiguousHostId?.toLowerCase()
+    && !item.scopes.some(scope => /^(coding|review|gate|integration|control):/.test(scope)));
+  const items = matched.filter(item => {
+    const boundRoles = item.scopes.filter(scope => /^(coding|review|gate|integration|control):/.test(scope));
+    if (boundRoles.length) return !role || boundRoles.some(scope => scope.startsWith(`${role}:`));
+    return item.hostId.toLowerCase() !== ambiguousHostId?.toLowerCase();
+  });
+  const present = items.filter(item => item.state !== 'missing');
+  if (present.some(item => item.permission === 'write')) return 'writes';
+  if (ambiguous) return 'unknown';
+  if (present.some(item => item.permission === 'read')) return 'reads only';
+  return present.length ? 'unknown' : 'no access';
 }
 
-function runnerNode(host: RemoteHost, slots: number, server: EnvironmentSnapshot['taskServer']): EnvironmentNode {
+function runnerNode(host: RemoteHost, slots: number, server: EnvironmentSnapshot['taskServer'],
+  inventory: CredentialInventory | null, sharedHost: boolean): EnvironmentNode {
   const role = host.serviceRole === 'review' ? 'review' : 'coding';
   return {
     id: host.id, label: host.name, role,
@@ -67,7 +83,8 @@ function runnerNode(host: RemoteHost, slots: number, server: EnvironmentSnapshot
         ? 'same as Task Server' : 'differs from Task Server'
       : unknown,
     lastContact: host.lastHeartbeatAt ?? unknown,
-    repositoryAccess: access(host), hostId: host.id,
+    repositoryAccess: access([host.id, host.clientId, host.capacityHostId ?? '', host.name], inventory,
+      role, sharedHost ? host.capacityHostId ?? undefined : undefined), hostId: host.id,
   };
 }
 
@@ -75,40 +92,47 @@ export function buildEnvironmentMap(
   groups: readonly PhysicalHostGroup[],
   snapshot: EnvironmentSnapshot | null,
   slotsFor: (host: RemoteHost) => number,
+  inventory: CredentialInventory | null = null,
 ): EnvironmentMap {
   const controlId = 'control';
   const controlName = snapshot?.controlHost || 'Control host (unknown)';
   const controlNodes: EnvironmentNode[] = [
     { id: 'task-server', label: 'Task Server', role: 'control', health: snapshot ? 'reachable' : unknown,
       capacity: unknown, version: unknown, drift: unknown, lastContact: unknown,
-      repositoryAccess: 'unknown', hostId: null },
+      repositoryAccess: access(['task-server'], inventory), hostId: null },
   ];
   const machines: EnvironmentMachine[] = [{ id: controlId, name: controlName, nodes: controlNodes }];
   const connections: EnvironmentConnection[] = [];
   for (const group of groups) {
     // Local process identities live inside the control frame.
     if (group.machine.role === 'local') {
-      controlNodes.push(...group.roles.map(host => runnerNode(host, slotsFor(host), snapshot?.taskServer)));
+      controlNodes.push(...group.roles.map(host => runnerNode(host, slotsFor(host), snapshot?.taskServer,
+        inventory, group.roles.length > 1)));
       continue;
     }
     machines.push({ id: group.id, name: group.name,
-      nodes: group.roles.map(host => runnerNode(host, slotsFor(host), snapshot?.taskServer)) });
+      nodes: group.roles.map(host => runnerNode(host, slotsFor(host), snapshot?.taskServer,
+        inventory, group.roles.length > 1)) });
     const route = snapshot?.routes?.find(item => group.roles.some(host => host.clientId === item.runnerId));
     const link = group.roles.find(host => host.runnerLink)?.runnerLink;
-    connections.push({ id: `claim:${group.id}`, from: controlId, to: group.id,
-      type: 'outbound claim link', health: group.machine.status === 'online' ? 'ok' : 'unknown' });
+    const claim = group.roles.map(host => host.taskServerConnection).find(connection => connection?.observedAt);
+    if (route || claim) connections.push({ id: `claim:${group.id}`, from: controlId, to: group.id,
+      type: 'outbound claim link', health: claim?.status === 'reachable' ? 'ok'
+        : claim?.status === 'unreachable' ? 'warn' : 'unknown' });
     if (route?.route === 'reverse-ssh' || link?.kind === 'ssh-reverse')
       connections.push({ id: `tunnel:${group.id}`, from: group.id, to: controlId,
         type: 'reverse tunnel', health: link?.state === 'up' ? 'ok' : link ? 'warn' : 'unknown' });
     if (group.roles.some(host => host.gitPushStatus))
       connections.push({ id: `git:${group.id}`, from: group.id, to: 'git-remote',
-        type: 'Git remote', health: group.roles.some(host => access(host) === 'writes') ? 'ok' : 'unknown' });
+        type: 'Git remote', health: group.roles.some(host => host.gitPushStatus === 'ready'
+          || host.gitPushStatus === 'ready-no-workflow-scope') ? 'ok' : 'warn' });
   }
   if (snapshot?.gateHost) {
     const existing = machines.find(machine => machine.name === snapshot.gateHost);
     const gateNode: EnvironmentNode = { id: 'gate', label: 'Gate slots', role: 'gate', health: unknown,
       capacity: snapshot.gateSlots ? `${snapshot.gateSlots.busy}/${snapshot.gateSlots.total} slots` : unknown,
-      version: unknown, drift: unknown, lastContact: unknown, repositoryAccess: 'unknown', hostId: null };
+      version: unknown, drift: unknown, lastContact: unknown,
+      repositoryAccess: access([snapshot.gateHost], inventory), hostId: null };
     if (existing) machines.splice(machines.indexOf(existing), 1, { ...existing, nodes: [...existing.nodes, gateNode] });
     else machines.push({ id: `gate:${snapshot.gateHost}`, name: snapshot.gateHost, nodes: [gateNode] });
     connections.push({ id: 'gate-transport', from: controlId, to: existing?.id ?? `gate:${snapshot.gateHost}`,
@@ -121,7 +145,7 @@ export function buildEnvironmentMap(
       health: component.id === 'engine' ? snapshot?.engine.state ?? unknown : unknown,
       capacity: unknown, version: unknown, drift: unknown,
       lastContact: component.id === 'engine' ? snapshot?.engine.lastContact ?? unknown : unknown,
-      repositoryAccess: 'unknown', hostId: null,
+      repositoryAccess: access(component.id === 'integrator' ? ['control', component.id] : [component.id], inventory), hostId: null,
     }));
     const existing = machines.find(machine => machine.id === declared.id || machine.name === declared.name);
     if (existing) machines.splice(machines.indexOf(existing), 1, { ...existing, nodes: [...existing.nodes, ...nodes] });
@@ -130,12 +154,15 @@ export function buildEnvironmentMap(
   const placed = new Set((snapshot?.machines ?? []).flatMap(machine => machine.components.map(component => component.id)));
   const unplaced = ([
     { id: 'studio', label: 'Studio', role: 'control', health: unknown, capacity: unknown,
-      version: unknown, drift: unknown, lastContact: unknown, repositoryAccess: 'unknown', hostId: null },
+      version: unknown, drift: unknown, lastContact: unknown,
+      repositoryAccess: access(['studio'], inventory), hostId: null },
     { id: 'integrator', label: 'Integrator', role: 'integration', health: unknown, capacity: unknown,
-      version: unknown, drift: unknown, lastContact: unknown, repositoryAccess: 'unknown', hostId: null },
+      version: unknown, drift: unknown, lastContact: unknown,
+      repositoryAccess: access(['control', 'integrator'], inventory), hostId: null },
     { id: 'engine', label: 'Engine', role: 'control', health: snapshot?.engine.state ?? unknown,
       capacity: unknown, version: unknown, drift: unknown,
-      lastContact: snapshot?.engine.lastContact ?? unknown, repositoryAccess: 'unknown', hostId: null },
+      lastContact: snapshot?.engine.lastContact ?? unknown,
+      repositoryAccess: access(['engine'], inventory), hostId: null },
   ] satisfies EnvironmentNode[]).filter(node => !placed.has(node.id));
   if (unplaced.length) machines.push({ id: 'unplaced', name: 'Location unknown', nodes: unplaced });
   return { machines, connections };
