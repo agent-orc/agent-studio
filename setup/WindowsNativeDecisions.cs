@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace AgentStudio.Setup;
@@ -62,10 +63,12 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
 
     public async Task PrepareProviderAsync(ConsolePrompter prompter, bool unattended,
         Func<string, bool>? commandOnPath = null,
-        Func<string, IReadOnlyList<string>, Task>? install = null)
+        Func<string, IReadOnlyList<string>, Task>? install = null,
+        Func<Task>? installNode = null)
     {
         commandOnPath ??= CommandOnPath;
         install ??= (file, arguments) => new ProcessRunner(false).RequireAsync(file, arguments);
+        installNode ??= InstallNodeAsync;
         if (ProviderCli == "skip")
         {
             Console.WriteLine("Provider login skipped. Open the local Runner host card in Studio and use its provider sign-in action before running coding tasks.");
@@ -77,6 +80,13 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
             {
                 if (!InstallMissingProvider(unattended, prompter, ProviderCli))
                     throw new InvalidOperationException($"{ProviderCli} CLI is missing. Install it for the runner account or choose ProviderCli=skip.");
+                if (!commandOnPath("node.exe") || !commandOnPath("npm.cmd"))
+                {
+                    Console.WriteLine("Node.js and npm are needed for the provider CLI. Installing Node.js for this machine.");
+                    await installNode();
+                    if (!commandOnPath("node.exe") || !commandOnPath("npm.cmd"))
+                        throw new InvalidOperationException("Node.js installation completed, but node.exe or npm.cmd is unavailable. Reopen setup after checking the machine PATH.");
+                }
                 var package = ProviderCli == "codex" ? "@openai/codex" : "@anthropic-ai/claude-code";
                 await install("cmd.exe",
                     ["/d", "/s", "/c", $"npm install --global {package}"]);
@@ -115,6 +125,48 @@ internal sealed record WindowsNativeDecisions(string ProviderCli, string GitAcce
             await login.WaitForExitAsync();
             if (login.ExitCode != 0)
                 throw new InvalidOperationException($"Git Credential Manager login exited with code {login.ExitCode}.");
+        }
+    }
+
+    private static async Task InstallNodeAsync()
+    {
+        // Match the repository's Windows release toolchain. The published setup
+        // is self-contained, so the pinned version is embedded here as well.
+        const string version = "22.23.1";
+        var fileName = $"node-v{version}-x64.msi";
+        var release = $"https://nodejs.org/download/release/v{version}/";
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        var checksums = await client.GetStringAsync(release + "SHASUMS256.txt");
+        var checksum = checksums.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Where(parts => parts.Length == 2 && parts[1] == fileName)
+            .Select(parts => parts[0]).SingleOrDefault()
+            ?? throw new InvalidDataException("Node.js release checksum is missing for the Windows x64 installer.");
+        var temporary = Directory.CreateTempSubdirectory("agent-studio-node-");
+        try
+        {
+            var installer = Path.Combine(temporary.FullName, fileName);
+            await using (var source = await client.GetStreamAsync(release + fileName))
+            await using (var destination = File.Create(installer))
+                await source.CopyToAsync(destination);
+            await using (var stream = File.OpenRead(installer))
+            {
+                var actual = Convert.ToHexString(await SHA256.HashDataAsync(stream));
+                if (!actual.Equals(checksum, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Node.js installer checksum did not match its release manifest.");
+            }
+            var result = await new ProcessRunner(false).RunAsync("msiexec.exe",
+                ["/i", installer, "/qn", "/norestart", "ALLUSERS=1"], printOutput: false);
+            if (result.ExitCode is not (0 or 3010))
+                throw new InvalidOperationException($"Node.js installation exited with code {result.ExitCode}.");
+            var machinePath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine);
+            var userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("PATH", string.Join(Path.PathSeparator,
+                new[] { machinePath, userPath }.Where(path => !string.IsNullOrWhiteSpace(path))));
+        }
+        finally
+        {
+            temporary.Delete(recursive: true);
         }
     }
 

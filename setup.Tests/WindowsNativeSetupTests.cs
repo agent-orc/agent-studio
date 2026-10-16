@@ -52,20 +52,37 @@ public sealed class WindowsNativeSetupTests
     {
         string? command = null;
         IReadOnlyList<string>? arguments = null;
+        var nodeInstalled = false;
         await new WindowsNativeDecisions(provider, "skip", null, null).PrepareProviderAsync(
-            new ConsolePrompter(true), unattended: true, commandOnPath: _ => false,
+            new ConsolePrompter(true), unattended: true,
+            commandOnPath: name => nodeInstalled && (name is "node.exe" or "npm.cmd"),
             install: (file, args) =>
             {
+                Assert.True(nodeInstalled);
                 command = file;
                 arguments = args;
                 return Task.CompletedTask;
-            });
+            },
+            installNode: () => { nodeInstalled = true; return Task.CompletedTask; });
+        Assert.True(nodeInstalled);
         Assert.Equal("cmd.exe", command);
         Assert.Equal("/d", arguments![0]);
         Assert.Equal("/s", arguments[1]);
         Assert.Equal("/c", arguments[2]);
         Assert.Contains(provider == "codex" ? "@openai/codex" : "@anthropic-ai/claude-code",
             arguments[3]);
+    }
+
+    [Fact]
+    public async Task Missing_npm_with_node_already_present_installs_complete_toolchain()
+    {
+        var nodeInstalled = false;
+        await new WindowsNativeDecisions("codex", "skip", null, null).PrepareProviderAsync(
+            new ConsolePrompter(true), unattended: true,
+            commandOnPath: name => name == "node.exe" || nodeInstalled && name == "npm.cmd",
+            install: (_, _) => { Assert.True(nodeInstalled); return Task.CompletedTask; },
+            installNode: () => { nodeInstalled = true; return Task.CompletedTask; });
+        Assert.True(nodeInstalled);
     }
 
     [Theory]
