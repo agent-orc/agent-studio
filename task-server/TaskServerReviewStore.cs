@@ -275,6 +275,7 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         ReviewClaimResponse? response = null;
+        TaskServerOperationalEvent? quotaEvent = null;
         // Every unclaimable attempt, not only the ones the response names.
         IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
@@ -333,6 +334,7 @@ public sealed partial class TaskServerStore
 
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
+            string? selectedQuotaWarning = null;
             string? capabilityBlock = null;
             string? capabilityBlockReason = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
@@ -444,6 +446,7 @@ public sealed partial class TaskServerStore
                     }
                     attempt = candidate.Attempt;
                     subject = candidate.Subject;
+                    selectedQuotaWarning = quota.MeterUnavailable ? quota.Message : null;
                     capabilityAdmission = candidateAdmission;
                     break;
                 }
@@ -535,14 +538,23 @@ public sealed partial class TaskServerStore
                     fence,
                     resourceNamespace,
                 }), ct);
+            if (selectedQuotaWarning is not null)
+            {
+                await AppendLifecycleEventAsync(connection, transaction, subject.SourceRunId,
+                    attempt.TaskId, 0, "quota.meter-unavailable", new { message = selectedQuotaWarning }, ct);
+                quotaEvent = new TaskServerOperationalEvent("quota.meter-unavailable", UtcNow,
+                    actorId, new { attempt.TaskId, message = selectedQuotaWarning });
+            }
             response = new ReviewClaimResponse(
                 "claimed",
                 claimedAttempt,
                 subject,
                 lease,
+                Message: selectedQuotaWarning,
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries);
         }, ct);
+        if (quotaEvent is not null) await PublishOperationalEventsAsync([quotaEvent], ct);
         LogUnclaimableReviews(request.ExecutorId, unclaimableToLog);
         return response!;
     }

@@ -13,6 +13,18 @@ public sealed class AccessSecurityTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "studio-security-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Quota_admission_accepts_only_the_configured_service_bearer()
+    {
+        var serviceToken = "quota-service-" + Guid.NewGuid().ToString("N");
+        var (store, config, _) = NewStore(new() { ["TaskServer:QuotaAdmissionBearerToken"] = serviceToken });
+        var path = "/api/quota/admission/PROJ-001";
+        Assert.True((await Invoke(config, store, "GET", path, bearer: serviceToken)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "GET", path)).Context.Response.StatusCode);
+        Assert.Equal(403, (await Invoke(config, store, "GET", path, bearer: "wrong-" + Guid.NewGuid().ToString("N"))).Context.Response.StatusCode);
+        Assert.Equal(401, (await Invoke(config, store, "GET", "/api/workspaces/ws/quota", bearer: serviceToken)).Context.Response.StatusCode);
+    }
+
+    [Fact]
     public void Bootstrap_password_session_and_runner_secrets_are_hashed_at_rest()
     {
         var (store, _, _) = NewStore();

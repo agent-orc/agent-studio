@@ -1320,6 +1320,7 @@ public sealed partial class TaskServerStore
         else
             RequireWritable();
         ClaimResponse? response = null;
+        TaskServerOperationalEvent? quotaEvent = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ValidateRunnerAsync(connection, transaction, request.RunnerId, request.InstanceId, ct);
@@ -1466,6 +1467,7 @@ public sealed partial class TaskServerStore
                 ? null
                 : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(telemetryJson)?.CpuPercent;
             var hostAdmission = capabilityAdmission;
+            var quotaWarnings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
                 var projectName = await ScalarAsync(connection,
@@ -1477,6 +1479,8 @@ public sealed partial class TaskServerStore
                 if (!quota.Allowed)
                     return new ClaimPlacementVerdict(projectId,
                         quota.Message ?? "Workspace quota reached.", null, null);
+                if (quota.MeterUnavailable && quota.Message is not null)
+                    quotaWarnings[projectId] = quota.Message;
                 var registered = Convert.ToInt64(await ScalarAsync(connection, """
                     SELECT count(*) FROM project_repositories WHERE project_id = $project;
                     """, ct, transaction, ("$project", projectId))) > 0;
@@ -1546,7 +1550,7 @@ public sealed partial class TaskServerStore
             {
                 response = new ClaimResponse(
                     "empty",
-                    Message: "No admissible task is ready.",
+                    Message: quotaWarnings.Values.LastOrDefault() ?? "No admissible task is ready.",
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
                     PlacementReason: placementReason);
@@ -1648,6 +1652,14 @@ public sealed partial class TaskServerStore
                     placementVersion = selectedPlacement?.Version,
                     placementReason,
                 }), ct);
+            quotaWarnings.TryGetValue(task.ProjectId, out var quotaWarning);
+            if (quotaWarning is not null)
+            {
+                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                    "quota.meter-unavailable", new { message = quotaWarning }, ct);
+                quotaEvent = new TaskServerOperationalEvent("quota.meter-unavailable", UtcNow,
+                    actorId, new { task.TaskId, task.ProjectId, message = quotaWarning });
+            }
 
             var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null,
                 BriefVersion: briefVersion);
@@ -1657,6 +1669,7 @@ public sealed partial class TaskServerStore
                 run,
                 task with { State = "3-progress", Version = task.Version + 1, UpdatedAt = now },
                 lease,
+                Message: quotaWarning,
                 ReconciliationActions: reconciliationActions,
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries,
@@ -1672,6 +1685,12 @@ public sealed partial class TaskServerStore
                 PlacementReason: placementReason,
                 ContinuationIntent: continuationIntent);
         }, ct);
+        if (quotaEvent is not null)
+        {
+            _logger?.LogWarning("quota-meter-unavailable task={Task} detail={Detail}",
+                response?.Task?.TaskId, response?.Message);
+            await PublishOperationalEventsAsync([quotaEvent], ct);
+        }
         return response!;
     }
 

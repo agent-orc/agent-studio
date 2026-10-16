@@ -52,6 +52,25 @@ public sealed partial class RemoteReviewAuthorityTests
             => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
     }
 
+    [Fact]
+    public async Task Missing_meter_warns_on_review_claim_and_keeps_review_moving()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReviewSubjectAsync(seed);
+        await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null,
+            new UnconfiguredWorkspaceQuotaAdmission());
+        await guarded.InitializeAsync();
+        var claim = await guarded.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Contains("not configured", claim.Message!, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("host-a", "host-b", false, true, ReviewHostPlacementDecision.Admit)]
     [InlineData("host-a", "host-a", false, false, ReviewHostPlacementDecision.Admit)]
