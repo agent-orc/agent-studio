@@ -38,6 +38,7 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     [InlineData("GET", "/api/v1/projects/-/tasks/AGT-1", "/api/tasks/AGT-1", null)]
     [InlineData("DELETE", "/api/v1/projects/-/tasks/AGT-1", "/api/tasks/AGT-1", null)]
     [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/continue", "/api/tasks/AGT-1/continue", null)]
+    [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/preview-feedback", "/api/tasks/AGT-1/preview-feedback", null)]
     [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/move", "/api/tasks/AGT-1/move", null)]
     [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/move-to-top", "/api/tasks/AGT-1/move-to-top", null)]
     [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/start", "/api/tasks/AGT-1/start", null)]
@@ -106,6 +107,7 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     [InlineData("GET", "/api/v1/projects")]
     [InlineData("GET", "/api/v1/projects/-/tasks/AGT-1")]
     [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/start")]
+    [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/preview-feedback")]
     [InlineData("GET", "/api/v1/studio/orchestrator/context/task:PROJ/AGT-1")]
     [InlineData("GET", "/api/v1/studio/runner/status")]
     public void Standalone_task_server_keeps_versioned_api_shapes_for_the_plane_proxy(string method, string path)
