@@ -475,7 +475,11 @@ public sealed class IdentityBootstrapTests
             $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/agent-work-detail")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
             $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history")).StatusCode);
-        foreach (var segment in new[] { "HiStOrY", "AgEnT-WoRk-DeTaIl", "OuTpUt", "LoGs", "RaW-LoGs" })
+        foreach (var segment in new[]
+                 {
+                     "HiStOrY", "AgEnT-WoRk-DeTaIl", "OuTpUt", "LoGs", "RaW-LoGs",
+                     "session-events", "Session-Events", "SESSION-EVENTS"
+                 })
         {
             Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
                 $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/{segment}")).StatusCode);

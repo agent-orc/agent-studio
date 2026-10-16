@@ -10,7 +10,7 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
     {
         "credentials", "remote-hosts", "settings", "quotas", "security", "tokens", "usage",
         "logs", "raw-logs", "merge", "promotions", "production", "management",
-        "secrets", "output", "trace", "files", "agent-work-detail", "history"
+        "secrets", "output", "trace", "files", "agent-work-detail", "history", "session-events"
     };
 
     public async Task InvokeAsync(HttpContext context)

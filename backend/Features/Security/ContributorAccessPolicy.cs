@@ -9,7 +9,7 @@ public static class ContributorAccessPolicy
     {
         "credentials", "hosts", "settings", "quotas", "security", "tokens", "usage",
         "logs", "raw-logs", "merges", "promotions", "secrets", "integration",
-        "output", "trace"
+        "output", "trace", "session-events", "agent-work-detail"
     };
 
     public static bool AllowsTransition(string? currentState, string? targetState, bool operatorOverride, bool archiveOverride)
