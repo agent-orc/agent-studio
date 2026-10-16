@@ -33,6 +33,8 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 for required in \
     "$publish_root/task-server/task-server" \
     "$publish_root/orchestrator-engine/orchestrator-engine" \
+    "$publish_root/orchestrator-api/OrchestratorApi" \
+    "$publish_root/studio-bff/agent-studio-bff" \
     "$publish_root/agent-host-linux-x64/agent-host" \
     "$publish_root/agent-host-osx-arm64/agent-host" \
     "$publish_root/setup/agent-studio-setup" \
@@ -52,7 +54,8 @@ orchestrator="agent-orchestrator-$version-linux-x64"
 host="agent-host-$version"
 studio="agent-studio-$version"
 compose="agent-studio-compose-$version"
-install -d -m 0755 "$work/$orchestrator" "$work/$host/linux-x64" \
+install -d -m 0755 "$work/$orchestrator" "$work/$orchestrator/api" \
+    "$work/$orchestrator/bff" "$work/$host/linux-x64" \
     "$work/$host/osx-arm64" "$work/$host/config" "$work/$host/systemd" \
     "$work/$studio/browser" "$work/$compose/scripts" \
     "$work/$compose/deploy/compose"
@@ -61,6 +64,10 @@ install -m 0755 "$publish_root/task-server/task-server" \
     "$work/$orchestrator/task-server"
 install -m 0755 "$publish_root/orchestrator-engine/orchestrator-engine" \
     "$work/$orchestrator/orchestrator-engine"
+install -m 0755 "$publish_root/orchestrator-api/OrchestratorApi" \
+    "$work/$orchestrator/api/OrchestratorApi"
+install -m 0755 "$publish_root/studio-bff/agent-studio-bff" \
+    "$work/$orchestrator/bff/agent-studio-bff"
 cp -a "$repo_root/deploy/release/agent-orchestrator/." "$work/$orchestrator/"
 install -m 0644 "$repo_root/deploy/host_secret_transport.py" "$work/$orchestrator/host_secret_transport.py"
 install -m 0644 "$repo_root/deploy/host-secret-requirements.txt" "$work/$orchestrator/host-secret-requirements.txt"
@@ -69,6 +76,8 @@ install -m 0755 "$publish_root/agent-host-linux-x64/agent-host" \
     "$work/$host/linux-x64/agent-host"
 install -m 0755 "$publish_root/agent-host-osx-arm64/agent-host" \
     "$work/$host/osx-arm64/agent-host"
+install -m 0755 "$publish_root/setup/agent-studio-setup" \
+    "$work/$host/agent-studio-setup"
 install -m 0644 "$repo_root/deploy/release/agent-host/runner.env.template" \
     "$work/$host/config/runner.env.template"
 install -m 0644 "$repo_root/deploy/systemd/agent-host.service" \
@@ -79,6 +88,8 @@ install -m 0644 "$repo_root/deploy/host_secret_transport.py" "$work/$host/host_s
 install -m 0644 "$repo_root/deploy/host-secret-requirements.txt" "$work/$host/host-secret-requirements.txt"
 
 cp -a "$frontend_root/." "$work/$studio/browser/"
+install -m 0755 "$publish_root/setup/agent-studio-setup" \
+    "$work/$studio/agent-studio-setup"
 install -m 0644 "$repo_root/docker-compose.yml" "$work/$compose/docker-compose.yml"
 install -m 0644 "$repo_root/deploy/host_secret_transport.py" "$work/$compose/deploy/host_secret_transport.py"
 install -m 0644 "$repo_root/deploy/host-secret-requirements.txt" "$work/$compose/deploy/host-secret-requirements.txt"
