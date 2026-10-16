@@ -4,12 +4,16 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using Xunit;
+using Xunit.Abstractions;
 
 namespace AgentStudio.Tests;
 
 public sealed class AttemptAuthorityServiceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "attempt-authority-" + Guid.NewGuid().ToString("N"));
+    private readonly ITestOutputHelper _output;
+
+    public AttemptAuthorityServiceTests(ITestOutputHelper output) => _output = output;
 
     [Fact]
     public void Corrupt_primary_recovers_backup_with_higher_fence_and_epoch()
@@ -2071,6 +2075,55 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal(AttemptLifecycleState.Pending, duringWrite["AGT-1"].State);
         Assert.True((await queueRead!).ContainsKey("AGT-1"));
         Assert.Equal(AttemptLifecycleState.Leased, service.ReadBoardReviewActivity()["AGT-1"].State);
+    }
+
+    [Fact]
+    public async Task BoardRunLeaseReads_StayBoundedDuringAClaimWriteBurst()
+    {
+        var now = new DateTime(2026, 10, 15, 12, 0, 0, DateTimeKind.Utc);
+        var writer = new BoardSnapshotWriter();
+        var service = NewService(() => now, writer: writer);
+        var lease = new RunLeaseService(NullLogger<RunLeaseService>.Instance, service, () => now);
+        var first = service.AcquireRun("AGT-BOARD", "PROJ-1", null, "runner", "host", 120, "first");
+        Assert.Equal(AttemptWriteStatus.Accepted, first.Status);
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        writer.BeforeWrite = () =>
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("Test did not release the authority writer.");
+        };
+        var claim = Task.Factory.StartNew(
+            () => service.AcquireRun("AGT-OTHER", "PROJ-1", null, "runner", "host", 120, "second"),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Task<RunLeaseInspection>? reads = null;
+        var completedBeforeRelease = false;
+        var elapsed = new System.Diagnostics.Stopwatch();
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+            elapsed.Start();
+            reads = Task.Factory.StartNew(() =>
+            {
+                RunLeaseInspection result = default;
+                for (var i = 0; i < 1000; i++)
+                    result = lease.InspectBoard("AGT-BOARD");
+                return result;
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            completedBeforeRelease = await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(2))) == reads;
+            elapsed.Stop();
+        }
+        finally
+        {
+            release.Set();
+            await claim.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Assert.True(completedBeforeRelease, "Card lease reads waited for an authority claim write.");
+        _output.WriteLine($"1000 board lease reads during blocked claim: {elapsed.Elapsed.TotalMilliseconds:0.###} ms");
+        Assert.Equal("active", (await reads!).State);
+        Assert.Equal("AGT-BOARD", (await reads).Lease?.TaskKey);
+        Assert.Equal("active", lease.InspectBoard("AGT-OTHER").State);
     }
 
     [Fact]

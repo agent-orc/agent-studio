@@ -16,7 +16,8 @@ internal sealed class TaskSwitchTrace
         "review", "tokens", "runtime", "dependencies", "serialize.write",
         // AGT-3088 board-read stages; "body" covers the shared-build gate wait,
         // the build and the payload serialisation.
-        "snapshot", "filter", "git-freshness", "compose", "body"
+        "snapshot", "filter", "git-freshness", "compose", "compose.review-queue",
+        "compose.runtime", "compose.runner-status", "compose.cards", "compose.lease", "compose.identity", "body"
     ];
     private readonly long _started = Stopwatch.GetTimestamp();
     private readonly double[] _elapsed = new double[StageNames.Length];
@@ -39,6 +40,7 @@ internal sealed class TaskSwitchTrace
     public string RequestId { get; }
     public string SwitchId { get; }
     public static TaskSwitchTrace? Current => Ambient.Value;
+    public static bool IsComposing => Ambient.Value?._activeSpan.Value?.Name.StartsWith("compose", StringComparison.Ordinal) == true;
     public static TaskSwitchTrace Begin(string? requestId, string? switchId) =>
         new(ParseId(requestId), ParseId(switchId));
 
@@ -60,6 +62,12 @@ internal sealed class TaskSwitchTrace
     {
         using var span = Span(name);
         return operation();
+    }
+
+    public static void RecordMeasured(string name, long stopwatchTicks)
+    {
+        if (Ambient.Value is { } trace && stopwatchTicks > 0)
+            trace.Record(name, stopwatchTicks * 1000.0 / Stopwatch.Frequency);
     }
 
     public static void FileRead()

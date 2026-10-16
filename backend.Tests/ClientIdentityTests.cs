@@ -179,6 +179,48 @@ public class ClientIdentityTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task PublishedIdentityRead_ReturnsCommittedValueWhileDiskWriteHoldsStoreLock()
+    {
+        var config = BuildConfig();
+        var writer = new ControllableAtomicJsonFileWriter();
+        var store = BuildStore(config, NullLogger<ClientIdentityStore>.Instance, writer);
+        var runner = store.Register(new RegisterClientRequest
+        {
+            DisplayName = "blocked-runner",
+            Kind = ClientIdentityKinds.Service,
+        });
+        var path = Path.Combine(_root, "identities", runner.Id + ".json");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        writer.ShouldFail = (candidate, _) =>
+        {
+            if (candidate != path) return false;
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+            return false;
+        };
+
+        var write = Task.Run(() => store.RecordRunnerActivity(
+            runner.Id, activeSlots: 1, availableSlots: 0, claimed: true));
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "Identity write did not enter persistence.");
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var published = store.FindPublished(runner.Id);
+            timer.Stop();
+            Assert.Equal(runner, published);
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(2), "Published lookup waited for identity persistence.");
+        }
+        finally
+        {
+            release.Set();
+            await write;
+        }
+        Assert.Equal(1, store.FindPublished(runner.Id)?.RunnerActiveSlots);
+    }
+
+    [Fact]
     public void AtomicWriteFailure_LeavesPublishedIdentityParseableAndUnchanged()
     {
         var config = BuildConfig();

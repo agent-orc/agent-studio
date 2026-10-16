@@ -349,7 +349,7 @@ public class TaskRunnerService : BackgroundService
     private static RunLeaseInspection InspectRunLease(RunLeaseService? leases, string authorityKey)
         => leases is null || string.IsNullOrWhiteSpace(authorityKey)
             ? new RunLeaseInspection("none", null)
-            : leases.Inspect(authorityKey);
+            : leases.InspectBoard(authorityKey);
 
     /// <summary>
     /// Pure projection of a peeked run-lease record + this backend's own runner id
@@ -1324,7 +1324,11 @@ public class TaskRunnerService : BackgroundService
     {
         var inspection = InspectRunLease(_runLeases, job);
         var configured = _projectSettings.Get(job.ProjectName).ExecutionRunner;
-        var client = inspection.Lease is null ? null : _clients?.Find(inspection.Lease.ClientId ?? inspection.Lease.RunnerId);
+        var identityStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        var client = inspection.Lease is null ? null : _clients?.FindPublished(inspection.Lease.ClientId ?? inspection.Lease.RunnerId);
+        if (AgentStudio.Tasks.TaskSwitchTrace.IsComposing)
+            AgentStudio.Tasks.TaskSwitchTrace.RecordMeasured(
+                "compose.identity", System.Diagnostics.Stopwatch.GetTimestamp() - identityStarted);
         return ProjectExecutionLocation(
             job, execution, activity, inspection, configured, _runnerIdentity,
             client?.LastSeenAt, DateTime.UtcNow);
