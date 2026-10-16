@@ -25,6 +25,10 @@
 }
 .role__branch { color: var(--studio-fg-muted); }
 .role__name-cell strong { flex: 0 0 auto; color: var(--studio-fg-strong); }
+.role__name-cell strong { border-radius: 999px; padding: var(--studio-spacing-1) var(--studio-spacing-2); }
+:host([data-role='local']) .role__name-cell strong { background: var(--studio-bg-selected); color: var(--studio-accent-strong); }
+:host([data-role='coding']) .role__name-cell strong,
+:host([data-role='review']) .role__name-cell strong { background: var(--notify-success-tint); color: var(--severity-pass); }
 .role__identity {
   min-width: 0;
   overflow: hidden;

@@ -671,7 +671,14 @@ occur. It is not a claim about tunnel transfer time.
   hot Markdown excerpts in Docs with one restore action. All retention traffic
   uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
   the Orchestrator proxy and direct Task Server deployment share one frontend.
-- The Execution Hosts destination at `#/workspace/settings/execution-hosts`
+- The Environment destination at `#/workspace/settings/environment` (old
+  `execution-hosts` and `remote-hosts` routes redirect here) offers a per-user
+  List/Map preference. The map combines runner roles with the read-only
+  management environment snapshot: control machine, configured gate host,
+  engine readiness, manifest routes, and gate slot usage. Unreported service
+  health, repository permission, and installation machines stay unknown.
+  Selecting a runner role opens its existing list detail and actions. Narrow
+  widths show the list. The list
   uses one sortable machine row for status, host CPU load, activity, and release
   identity. Matching role releases appear once on the machine row; differing
   releases appear on their role rows. Coding and Review runner processes
