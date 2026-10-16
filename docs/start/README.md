@@ -95,6 +95,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Candidate installation scenarios and evidence, including release and nightly gates | [operations/testing/installation-scenarios.md](../operations/testing/installation-scenarios.md) |
 | Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Credentials and logins: host inventory, incident classification, guided renewal, rotation and typed recovery runbooks (AGT-2968) | [decision Dossier](../credentials-and-logins/index.html) |
+| Dynamic placement: work containers placed by load across hosts, one host agent and budget, pulled gates, per-work-item credentials (AGT-3171) | [decision Dossier](../dynamic-placement/index.html) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
 | Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
