@@ -1,9 +1,13 @@
 using System.Diagnostics;
 
-namespace AgentRunner;
+namespace AgentStudio.CliHosting;
 
-/// <summary>Runs an npm provider entry through node.exe without a command shell.</summary>
-internal static class WindowsProviderBridge
+/// <summary>
+/// Runs the packaged Windows provider entry through node.exe without a command shell.
+/// CodingAgentRunner starts this bridge as its selected CLI executable; the
+/// bridge only forwards argv and the child's exit code.
+/// </summary>
+public static class WindowsProviderBridge
 {
     public static bool IsBridgeProcess(string? processPath, out string provider, bool? windows = null)
     {

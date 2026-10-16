@@ -1,4 +1,4 @@
-using AgentRunner;
+using AgentStudio.CliHosting;
 using Xunit;
 
 namespace AgentRunner.Tests;
