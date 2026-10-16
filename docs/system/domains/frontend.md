@@ -867,6 +867,24 @@ header chip, and Result header agree on word and resolved colour, both themes).
   tab-state restoration. This does not affect the Board's `0-backlog` lane,
   which remains the lifecycle landing lane for new tasks.
 
+## Credential inventory (AGT-3170)
+
+Settings → Credentials reads the Task Server's metadata-only
+`GET /api/v1/management/credential-inventory` projection. It combines host
+credential observations with service principals, pending enrolment codes and
+human accounts. Filters cover host, kind and state. The board and Activity feed
+show current expiry and missing-access alerts from the same projection; an
+Execution Host row shows its own alert count. The per-host Credentials section
+still owns provider login renewal. No secret value or verifier is returned.
+
+The requirement policy uses registered project integration and release refs for
+control-host write access, and active private review subjects for per-host
+repository read access. A fresh `review:repository-read` capability is the
+proof for the latter. Gate hosts require no repository credential. Review and
+gate hosts holding an observed write grant are flagged. Dossier D1 and D4 use
+the recorded option A: host custody with central metadata and 14/7/1-day
+warnings.
+
 ## Verification
 
 - Visual or behavioral changes require relevant Playwright specs. Add or extend

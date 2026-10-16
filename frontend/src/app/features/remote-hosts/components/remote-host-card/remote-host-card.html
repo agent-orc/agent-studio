@@ -11,7 +11,7 @@
       <span aria-hidden="true">›</span>
     </button>
     <strong class="host__name" data-testid="remote-host-name">{{ h.name }}</strong>
-    <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span>
+    <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span><app-host-credential-badge [host]="h" />
   </td>
   <td>
     <span class="host__status" data-testid="remote-host-status">

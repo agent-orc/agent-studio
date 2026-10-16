@@ -420,6 +420,23 @@ public sealed class CredentialViewTests
         Assert.Equal(StudioUserRoles.Operator, operatorView!.Role);
         Assert.NotNull(Assert.Single(operatorView.Rows).LocalRef);
 
+        var inventoryResponse = await owner.GetAsync("/api/v1/management/credential-inventory");
+        Assert.Equal(HttpStatusCode.OK, inventoryResponse.StatusCode);
+        var inventoryJson = await inventoryResponse.Content.ReadAsStringAsync();
+        Assert.Contains("claude_oauth_token", inventoryJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(studioToken, inventoryJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(engineToken, inventoryJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(ownerCode, inventoryJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("owner password 1234", inventoryJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("secretHash", inventoryJson, StringComparison.Ordinal);
+        var inventory = JsonSerializer.Deserialize<CredentialInventoryDto>(inventoryJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(Assert.Single(inventory!.Items, item => item.Category == "human" && item.Label == "owner").LastUseAt);
+        Assert.Equal("operator-role-required", await ErrorCodeAsync(
+            await viewerClient.GetAsync("/api/v1/management/credential-inventory"), HttpStatusCode.Forbidden));
+        Assert.Equal(HttpStatusCode.OK,
+            (await operatorClient.GetAsync("/api/v1/management/credential-inventory")).StatusCode);
+
         // A session always outranks an acting-role claim.
         viewerClient.DefaultRequestHeaders.Add(CredentialViewProtocol.ActingRoleHeader, StudioUserRoles.Owner);
         Assert.Equal(StudioUserRoles.Viewer,

@@ -7,6 +7,7 @@ import {
   signal,
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { CredentialAlertsComponent } from '../../../credentials/credential-alerts/credential-alerts.component';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../../../components/menu';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import { ExecutionLocationBadgeComponent }
@@ -75,6 +76,7 @@ export interface StudioTabTriage {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    CredentialAlertsComponent,
     TooltipDirective,
     MenuComponent,
     StudioIconComponent,

@@ -68,10 +68,17 @@ internal static class StudioRoleGate
 internal static class CredentialViewEndpoints
 {
     public static void MapCredentialViewEndpoints(this RouteGroupBuilder management)
-        => management.MapGet("/credential-view", async (
+    {
+        management.MapGet("/credential-view", async (
             HttpContext context, TaskServerStore store, TaskServerBootstrapOptions bootstrap, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(async () => await store.GetCredentialViewAsync(
                 await StudioRoleGate.ResolveAsync(context, store, bootstrap, ct) ?? StudioUserRoles.Viewer, ct)));
+        management.MapGet("/credential-inventory", async (
+            HttpContext context, TaskServerStore store, TaskServerBootstrapOptions bootstrap, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () => await store.GetCredentialInventoryAsync(
+                await StudioRoleGate.ResolveAsync(context, store, bootstrap, ct) ?? StudioUserRoles.Viewer, ct)))
+            .RequireStudioRole(StudioUserRoles.Operator);
+    }
 }
 
 /// <summary>Daily evaluation, run hourly so a threshold is crossed within the hour.</summary>

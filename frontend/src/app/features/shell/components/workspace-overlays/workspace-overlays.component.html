@@ -115,6 +115,9 @@
         @case ('task-server') {
           <app-task-server-panel />
         }
+        @case ('credentials') {
+          <app-credential-inventory />
+        }
         @case ('remote-hosts') {
           <app-remote-hosts-panel [workspaces]="watchPaths()" (openTask)="openJobDetail.emit($event)" />
         }
