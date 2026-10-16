@@ -2,13 +2,15 @@
   "schemaVersion": 1,
   "id": "application-lifecycle",
   "title": "Anwendungs-Lebenszyklus: vom neuen Projekt bis Produktion",
-  "summary": "Operator-Vorgaben 16.10.2026: CI ist ueber die Gates schon integriert; Artefakte sollen in Umgebungen gehen (Stage, dann Prod); neue Projekte starten komplett in der UI und lassen sich hosten; Einsatzformen Einzelplatz, Abteilung, Unternehmen, oeffentlich mit Kontingent; Agent Studio ist das Werkzeug, Agent Orchestrator die Plattform; Hosting-Funktion gibt es, die Verantwortung fuer Hosting und Zugaenge liegt ausdruecklich beim Betreiber der Installation (entschieden 16.10.); Vanilla-Plattformen zum Erproben. Inhalt: drei Ebenen, Lebenszyklus in zehn Schritten mit Stand (2 bis 5 vorhanden, Projekt-Start und Artefakte teilweise, Stage, Freigabe, Prod und Betrieb neu), Bestand und Luecken mit Dateiverweisen, Zugaenge je Schritt, Einsatzformen, Vanilla-Plattformen V1 bis V4 mit Regeln und Ressourcen, erster Durchlauf, Kartenschnitt (AGT-3175 bis 3178, AGT-3170, WEB-33, WEB-34), Entscheidungen D1 und D3 bis D6.",
+  "summary": "Operator-Vorgaben 16.10.2026: CI ist ueber die Gates schon integriert; Artefakte sollen in Umgebungen gehen (Stage, dann Prod); neue Projekte starten komplett in der UI und lassen sich hosten; Einsatzformen Einzelplatz, Abteilung, Unternehmen, oeffentlich mit Kontingent; Agent Studio ist das Werkzeug, Agent Orchestrator die Plattform; Hosting-Funktion gibt es, die Verantwortung fuer Hosting und Zugaenge liegt ausdruecklich beim Betreiber der Installation (entschieden 16.10.); Vanilla-Plattformen zum Erproben. Inhalt: drei Ebenen, Lebenszyklus in zehn Schritten mit Stand (2 bis 5 vorhanden, Projekt-Start und Artefakte teilweise, Stage, Freigabe, Prod und Betrieb neu), Bestand und Luecken mit Dateiverweisen, Zugaenge je Schritt, Einsatzformen, Vanilla-Plattformen V1 bis V4 mit Regeln und Ressourcen, erster Durchlauf, Kartenschnitt (AGT-3175 bis 3178, AGT-3170, WEB-33, WEB-34), Entscheidungen D1 und D3 bis D12; D2 ist entschieden. D7 bis D12 konkretisieren Projektstart, Umgebungen, Artefakte, Zugaenge, Kontingente und Mandanten.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-10-16T08:00:00Z",
-  "sourceTaskKeys": [],
+  "updatedAt": "2026-10-16T08:26:00Z",
+  "sourceTaskKeys": [
+    "AGT-3174"
+  ],
   "relatedTaskKeys": [
     "AGT-3174",
     "AGT-3175",
@@ -34,6 +36,21 @@
       "id": "AL-2",
       "title": "Vanilla platform result matrix: run the installation and lifecycle scenarios against each vanilla platform from a snapshot and publish one matrix",
       "promptMarkdown": "Source: \u0060docs/operations/application-lifecycle/index.html\u0060 \u00A77 and \u00A78 and the recorded decisions D3, D5 and D6. Read AGENTS.md first.\n\n## Deliver\n1. A runner script next to the installation scenarios (AGT-3162) and the lifecycle scenario (AGT-3178) that takes a platform descriptor (name, Studio address, SSH or WinRM access for reset, snapshot names) and runs the selected scenarios after resetting the platform to its snapshot.\n2. One result file per run (scenario, platform, start, duration per step, tokens, core-hours, screenshots, pass or fail per step with evidence) and a matrix page \u0060docs/operations/application-lifecycle/results.html\u0060 that shows scenario x platform with the latest result and links to the evidence.\n3. No manual fixes on a platform: a failed step records the gap and proposes a card against installer or product.\n4. Tests for descriptor parsing, the reset step (with a fake hypervisor client) and the matrix rendering.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "AL-3",
+      "title": "Define immutable release manifests and artifact registry contracts for both project templates",
+      "promptMarkdown": "Source: docs/operations/application-lifecycle/index.html \u00a713, D9 and \u00a717. Read AGENTS.md and publishing and pipeline domain maps first. Coordinate with AGT-3175 for template outputs and AGT-3176 for deployment consumption. This task owns the shared artifact contract only.\n\nDeliver a versioned release manifest with project ID, template and build-profile versions, source commit, successful release-gate run ID, artifact kind, registry locator and content digest. Publish a static web bundle and an OCI image into operator-configured storage by digest. Make publication idempotent for a gate run and reject a manifest whose gate evidence does not match its commit. Provide a read API that retrieves the manifest and verifies the stored digest without exposing registry credentials. Add focused contract tests for both artifact kinds, tampering and repeat publication.\n\nAcceptance: each template yields exactly one manifest for a successful gate; a failed gate yields none; Stage and Prod can request the same digest without rebuilding. Keep registry custody with the installation operator under D2. Do not implement environment approval, deployment jobs or Studio screens in this task."
+    },
+    {
+      "id": "AL-4",
+      "title": "Establish tenant-scoped authority checks and company sign-in for lifecycle resources",
+      "promptMarkdown": "Source: docs/operations/application-lifecycle/index.html \u00a716, D12 and \u00a717. Read AGENTS.md and security, tasks and runner domain maps first. This task owns tenant isolation and company sign-in; AGT-3177 owns quota accounting and AGT-3170 owns credential inventory.\n\nAdd a durable tenant ID to project membership and check it at the API boundary and for task claims, release manifests, environment records and secret references. Keep installation owner authority separate from tenant owner/operator/viewer roles. Add OIDC company sign-in with explicit group-to-role mapping and deprovisioning; retain a bounded local recovery account for the installation operator. Record authorization denials without secret values. Add integration tests with two tenants, including cross-tenant object IDs and stale group membership.\n\nAcceptance: a user and worker from tenant B cannot read, claim or deploy tenant A resources even if they know IDs; removal from the company group revokes access; single-seat installs still work with one tenant. Public self-service remains closed until a separate isolation and security review."
+    },
+    {
+      "id": "AL-5",
+      "title": "Provide isolated project hosting targets for stage and production on a self-operated installation",
+      "promptMarkdown": "Source: docs/operations/application-lifecycle/index.html \u00a76, \u00a712, \u00a716, D2, D3 and D12. Read AGENTS.md and deployment and runner domain maps first. This task owns target-host capability and routing only; AGT-3176 owns the deploy job, approval, rollback and history, and AGT-3178 owns the first playthrough.\n\nOn the internal V1 Debian host, provision two isolated project runtime targets, stage and production, with separate addresses, resource limits, network rules and health endpoints. Accept an immutable static bundle or OCI image by digest from the deployment contract. Expose host capability and health result to the deploy job; reserve and report hosting resource-hours to the AGT-3177 quota contract. Ensure target teardown does not delete release artifacts or deployment history. Add focused host-level verification for address separation, health failure and resource accounting.\n\nAcceptance: the Click Counter static app runs at separate internal Stage and Prod addresses; a container service can use the same contract; one tenant cannot reach another tenant runtime through the host routing configuration. Do not expose V1 publicly or take on third-party hosting; the installation operator supplies and operates the host under D2."
     }
   ],
   "openDecisions": [
@@ -66,6 +83,42 @@
       "question": "Woher kommt der Speicher fuer V1 bis V3?",
       "recommendation": "kori-docker auf 34 GB, zwei Vanilla-Plattformen gleichzeitig.",
       "rejectedOption": "Alle als Cloud-VMs."
+    },
+    {
+      "id": "D7",
+      "question": "Wie beginnt ein neues Projekt vollst\u00e4ndig in der UI?",
+      "recommendation": "Versionierte Vorlagen mit GitHub-App; begrenzter Provisioning-Token nur als Betreiber-Ausnahme.",
+      "rejectedOption": "Nur ein bestehendes Repository registrieren."
+    },
+    {
+      "id": "D8",
+      "question": "Wie laufen Stage, Freigabe, Prod und R\u00fcckweg?",
+      "recommendation": "Umgebungsobjekte und claimbarer Deploy-Auftrag; derselbe Digest, gebundene Freigabe, Health, R\u00fcckweg und Verlauf.",
+      "rejectedOption": "Repository-Ziele als Agenten-Aufgaben zum Produktionsweg machen."
+    },
+    {
+      "id": "D9",
+      "question": "Was ist das Release-Artefakt?",
+      "recommendation": "Statisches Bundle oder OCI-Image per Digest mit Release-Manifest und Gate-Herkunft in einer Betreiber-Registry.",
+      "rejectedOption": "Aus Git in jeder Umgebung neu bauen."
+    },
+    {
+      "id": "D10",
+      "question": "Wann erh\u00e4lt ein Auftrag Geheimnisse und Tokens?",
+      "recommendation": "Nur der gepr\u00fcfte Deploy-Claim erh\u00e4lt umgebungsgebundene Geheimnisse; Prod erst nach Freigabe.",
+      "rejectedOption": "Projektweite Dauerzug\u00e4nge auf dem Runner."
+    },
+    {
+      "id": "D11",
+      "question": "Wie setzt die Plattform Kontingente durch?",
+      "recommendation": "Mandanten- und Projektgrenzen f\u00fcr Tokens, Kernstunden und Hosting mit Reservierung bei Zulassung.",
+      "rejectedOption": "Nur Verbrauch anzeigen und warnen."
+    },
+    {
+      "id": "D12",
+      "question": "Welche Grenze tragen Abteilung, Unternehmen und \u00f6ffentliche Form?",
+      "recommendation": "Echte Mandantengrenze und OIDC f\u00fcr Unternehmen; \u00f6ffentliche Betreiber-Installation erst nach Isolationstest und Review.",
+      "rejectedOption": "Heutige Workspaces sofort als \u00f6ffentliche Mandanten nutzen."
     }
   ],
   "key": "AGT-W79"

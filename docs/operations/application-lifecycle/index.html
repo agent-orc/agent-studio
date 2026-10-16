@@ -118,6 +118,13 @@
   <a href="#s8">§8 Erster Durchlauf</a><br>
   <a href="#s9">§9 Kartenschnitt</a><br>
   <a href="#s10">§10 Entscheidungen</a><br>
+  <a href="#s11">§11 Projektstart</a><br>
+  <a href="#s12">§12 Umgebungen</a><br>
+  <a href="#s13">§13 Artefakte</a><br>
+  <a href="#s14">§14 Zugänge</a><br>
+  <a href="#s15">§15 Kontingente</a><br>
+  <a href="#s16">§16 Mandanten und Betrieb</a><br>
+  <a href="#s17">§17 Umsetzungsschnitte</a><br>
   <a href="#quellen">§ Quellen</a>
 </nav>
 
@@ -216,7 +223,7 @@
   <figcaption>Abbildung 2. Zehn Schritte. Grün: vorhanden, gelb: teilweise, violett gestrichelt: neu.</figcaption>
 </figure>
 
-<h2 id="s4"><span class="no">§4</span>Bestand und Lücken</h2>
+<h2 id="s4" data-concept-section="evidence"><span class="no">§4</span>Bestand und Lücken</h2>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Baustein</th><th>Stand</th><th>Heute im Code</th><th>Fehlt</th></tr></thead>
@@ -319,12 +326,12 @@
     <tr><td>AGT-3170</td><td>Zugänge als eigene Ansicht; Erweiterung um Umgebungs-Geheimnisse und Registry-Tokens</td><td>Ready</td></tr>
     <tr><td>AGT-3154, 3155, 3157, 3162</td><td>Installer Windows und Linux, gemischter Aufbau, Installations-Szenarien: Grundlage der Vanilla-Plattformen</td><td>in Arbeit</td></tr>
     <tr><td>WEB-33, WEB-34</td><td>Website: Sicherheitsmodell, CI eingebaut</td><td>in Arbeit, Ready</td></tr>
-    <tr><td>neu (unten)</td><td>Verantwortung des Betreibers ausdrücklich formulieren; Ergebnis-Matrix der Vanilla-Plattformen</td><td>nach Entscheidung</td></tr>
+    <tr><td>AL-1 bis AL-5 (unten)</td><td>Betreiber-Verantwortung, Ergebnis-Matrix, Release-Vertrag, Mandantengrenze und Hosting-Ziele; ohne Überschneidung mit den bestehenden Karten</td><td>geplante Ergänzungen</td></tr>
   </tbody>
 </table>
 </div>
 
-<h2 id="s10"><span class="no">§10</span>Entscheidungen</h2>
+<h2 id="s10" data-concept-section="open-decisions"><span class="no">§10</span>Entscheidungen</h2>
 
 <div class="decision" data-decision-id="namen" data-decision-kind="single" data-decision-label="Namen von Werkzeug und Plattform">
   <h3>D1 · Wie heißen Werkzeug und Plattform, und wie heißt das Repo?</h3>
@@ -367,7 +374,96 @@
   <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
 </div>
 
-<p class="muted">D2 (Hosting-Verantwortung) ist entschieden, siehe §6.</p>
+<p class="muted">D2 (Hosting-Verantwortung) ist entschieden, siehe §6. D7 bis D12 stehen bei den Fachfragen in §11 bis §16.</p>
+
+<h2 id="s11" data-concept-section="alternatives"><span class="no">§11</span>Projektstart</h2>
+<p><b>Stand.</b> Der Dialog <code>frontend/src/app/features/shell/components/onboard-project-dialog/</code> und <code>POST /api/projects</code> in <code>backend/Features/Registry/RegistryEndpoints.cs</code> registrieren ein vorhandenes Repository. <code>github_provisioning_oauth</code> ist in <code>task-server/TaskServerCredentialRegistryStore.cs</code> eine Metadatenart, noch kein Ablauf zum Anlegen. Die folgenden Wege sind geplant.</p>
+<div class="box">
+  <b>Optionen.</b> A: Studio legt ein privates Repository aus einer versionierten Vorlage an, registriert es und richtet Build-Profil sowie Gates in einem wiederaufnehmbaren Vorgang ein. Der Betreiber hinterlegt dafür eine GitHub-App-Installation mit begrenztem Organisations- und Repository-Recht; ein eng begrenzter Provisioning-Token ist die Alternative für Einzelinstallationen. B: Der Nutzer erzeugt das Repository außerhalb und registriert es wie heute. B ist als Importweg sinnvoll, erfüllt aber den vollständigen Start in der UI nicht.
+</div>
+<p><b>Empfehlung.</b> A mit zwei Vorlagen: statische Web-App und containerisierter Web-Dienst. Beide liefern feste Build-Eingänge, Health-Vertrag, Gate-Konfiguration und eine Beispielaufgabe. Provisioning erhält eine idempotente Vorgangs-ID; ein Fehler beim Klonen oder Gate-Anlegen zeigt einen wiederaufnehmbaren Zustand und lässt kein als fertig markiertes Projekt zurück. Die App-Installation ist der Standard, der Token nur eine ausdrücklich angezeigte Betreiber-Ausnahme. <b>Verworfen für den ersten Durchlauf:</b> B als einziger Weg und ein freier Prompt, der Repositories und Gates ohne überprüfbare Vorlage erzeugt.</p>
+<div class="decision" data-decision-id="projektstart" data-decision-kind="single" data-decision-label="D7 Projektstart aus Vorlage">
+  <h3>D7 · Wie beginnt ein neues Projekt vollständig in der UI?</h3>
+  <label data-option-id="vorlage-app" data-option-label="A · Versionierte Vorlagen und GitHub-App, begrenzter Token als Ausnahme (Empfehlung)"><input type="radio" name="projektstart" value="vorlage-app"><span><b>A · Vorlage und Provisioning</b><span class="d">Repository, Registrierung, Build-Profil und Gates entstehen in einem wiederaufnehmbaren Vorgang.</span></span></label>
+  <label data-option-id="repo-import" data-option-label="B · Nur bestehendes Repository registrieren"><input type="radio" name="projektstart" value="repo-import"><span><b>B · Bestehendes Repository</b><span class="d">Behält den heutigen Importweg, deckt den Start eines neuen Projekts in Studio aber nicht ab.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s12"><span class="no">§12</span>Umgebungen</h2>
+<p><b>Stand.</b> <code>backend/Features/Projects/ProjectDeploymentSummaryService.cs</code> liest <code>docs/deployments/**/deployment.json</code> mit Ziel-Host und typisierten Parametern. Das <code>project-deployment-panel</code> startet daraus eine sichtbare Agenten-Aufgabe. Ein Ziel ist noch keine dauerhafte Stage- oder Prod-Umgebung mit eigener Historie. Das folgende Modell ist geplant.</p>
+<div class="box"><b>Optionen.</b> A: Stage und Prod sind Projektobjekte mit Ziel-Host, Adresse, aktuellem Artefakt, Zustand und unveränderlichem Deploy-Verlauf. Ein eigener, claimbarer Deploy-Auftrag transportiert ein bereits gebautes Artefakt. B: Zwei Repository-Befehle werden wie heute als Agenten-Aufgaben gestartet. B kann individuelle Wartungsarbeiten ausführen, führt aber keine verlässliche Promotionskette.</div>
+<p><b>Empfehlung.</b> A: Ein grünes Release-Gate gibt genau einen Artefakt-Digest frei. Stage zieht diesen Digest, schreibt ein Deployment-Receipt und prüft die festgelegte Health-Adresse. Prod verlangt eine personenbezogene Freigabe für den ersten Durchlauf; eine spätere Regel darf nur unter ausdrücklich konfigurierten Kriterien freigeben. Die Freigabe bindet Projekt, Umgebung, Digest und Ablaufzeit. Rückweg setzt den letzten gesunden Digest erneut ein und schreibt einen neuen Verlaufseintrag. Scheitert Prod oder der Health-Check, bleibt der Fehler sichtbar und erzeugt eine Karte mit Receipt und Diagnose. Deploy-Jobs erhalten eine Lease und einen Fencing-Wert, damit ein alter Worker den neueren Zustand nicht überschreibt. <b>Verworfen:</b> B als Produktionsweg und ein Neubau zwischen Stage und Prod.</p>
+<div class="decision" data-decision-id="umgebungen" data-decision-kind="single" data-decision-label="D8 Stage und Prod als Umgebungen">
+  <h3>D8 · Welcher Ablauf verbindet Gate, Stage und Prod?</h3>
+  <label data-option-id="umgebung-job" data-option-label="A · Umgebungsobjekte und claimbarer Deploy-Auftrag mit Digest-Promotion (Empfehlung)"><input type="radio" name="umgebungen" value="umgebung-job"><span><b>A · Umgebung und Deploy-Auftrag</b><span class="d">Freigabe, Health, Rückweg und Verlauf gehören zum selben Digest.</span></span></label>
+  <label data-option-id="cli-ziele" data-option-label="B · Repository-Ziele als Agenten-Aufgaben"><input type="radio" name="umgebungen" value="cli-ziele"><span><b>B · Agenten-Aufgaben</b><span class="d">Bestehender Startweg, ohne dauerhafte Promotions- und Rollback-Garantie.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s13"><span class="no">§13</span>Artefakte</h2>
+<p><b>Stand.</b> <code>backend/Features/Publishing/</code> veröffentlicht heute Pakete und Websites. Für eine Anwendung fehlen ein gemeinsamer Release-Datensatz, ein Registry-Vertrag und die Herkunft bis zur Umgebung. Die folgenden Artefakttypen und Speicherwege sind geplant.</p>
+<div class="box"><b>Optionen.</b> A: Eine statische Vorlage liefert ein unveränderliches Web-Bundle in einem vom Betreiber verwalteten Artefaktspeicher; die Dienst-Vorlage liefert ein OCI-Image in einer vom Betreiber verwalteten Registry. Beide werden über einen Digest adressiert. B: Jede Umgebung baut aus einem Git-Commit selbst. B erlaubt unterschiedliche Binärinhalte trotz gleicher Commit-ID und erschwert den Rückweg.</div>
+<p><b>Empfehlung.</b> A. Das Release-Manifest enthält Projekt-ID, Vorlagen- und Build-Profil-Version, Commit, Gate-Lauf und Ergebnis, Artefakttyp, Speicherort und Digest. Der Deploy-Auftrag prüft Digest und Gate-Bindung vor dem Transfer; jede Umgebung referenziert Manifest und Digest. Ein Release darf erst nach erfolgreichem Gate als promotierbar gelten. Die Registry-Zugangsdaten bleiben beim Betreiber gemäß D2. <b>Verworfen:</b> B und ein beweglicher Tag wie <code>latest</code> als Promotionsreferenz.</p>
+<figure><div class="figscroll"><svg viewBox="0 0 1000 172" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Geplanter Herkunftspfad eines unveränderlichen Release-Artefakts vom Gate über die Registry nach Stage und Prod">
+  <defs><marker id="release-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <rect class="pl-platform" x="18" y="34" width="210" height="92" rx="9"/><text class="t-step" x="32" y="63">Release-Gate</text><text class="t-small" x="32" y="86">Commit + grüner Lauf</text>
+  <rect class="pl-platform" x="268" y="34" width="210" height="92" rx="9"/><text class="t-step" x="282" y="63">Release-Manifest</text><text class="t-small" x="282" y="86">Digest + Herkunft</text>
+  <rect class="pl-platform" x="518" y="34" width="210" height="92" rx="9"/><text class="t-step" x="532" y="63">Registry</text><text class="t-small" x="532" y="86">Bundle oder OCI-Image</text>
+  <rect class="pl-hosting" x="768" y="16" width="210" height="62" rx="9"/><text class="t-step" x="782" y="44">Stage</text><text class="t-small" x="782" y="63">Digest X + Health</text>
+  <rect class="pl-hosting" x="768" y="94" width="210" height="62" rx="9"/><text class="t-step" x="782" y="122">Prod</text><text class="t-small" x="782" y="141">derselbe Digest X</text>
+  <path class="flow" d="M228 80 H265" marker-end="url(#release-arrow)"/><path class="flow" d="M478 80 H515" marker-end="url(#release-arrow)"/><path class="flow" d="M728 80 H748 V47 H765" marker-end="url(#release-arrow)"/><path class="flow" d="M728 80 H748 V125 H765" marker-end="url(#release-arrow)"/>
+</svg></div><figcaption>Abbildung 3. Geplanter Datenvertrag: Stage und Prod beziehen denselben Digest; die Freigabe für Prod liegt vor dem unteren Deploy-Auftrag. Darstellung, keine Aufnahme einer laufenden Oberfläche.</figcaption></figure>
+<div class="decision" data-decision-id="artefakte" data-decision-kind="single" data-decision-label="D9 Unveränderliches Release-Artefakt">
+  <h3>D9 · Was wird von Stage nach Prod befördert?</h3>
+  <label data-option-id="digest-registry" data-option-label="A · Bundle oder OCI-Image per Digest und Release-Manifest (Empfehlung)"><input type="radio" name="artefakte" value="digest-registry"><span><b>A · Unveränderliches Artefakt</b><span class="d">Gate, Commit, Registry und Umgebung bleiben nachvollziehbar verbunden.</span></span></label>
+  <label data-option-id="rebuild" data-option-label="B · Neubau je Umgebung"><input type="radio" name="artefakte" value="rebuild"><span><b>B · Neubau je Umgebung</b><span class="d">Gleicher Commit kann unterschiedliche Artefakte ergeben.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s14"><span class="no">§14</span>Zugänge</h2>
+<p><b>Stand.</b> <code>task-server/TaskServerCredentialRegistryStore.cs</code> hält Beobachtungs- und Metadaten, keine Umgebungs-Geheimnisse. <code>secret-ref</code> in <code>ProjectDeploymentSummaryService.cs</code> beschreibt nur einen Parameter. AGT-3170 entwirft das Inventar, AGT-3171 begrenzt Tokens je Arbeitseinheit. Die folgende Laufzeitgrenze ist geplant.</p>
+<div class="box"><b>Optionen.</b> A: Der Betreiber verwaltet eine verschlüsselte, pro Installation und Umgebung getrennte Geheimnisquelle. Das Inventar führt Kennung, Besitzer, Geltung, Rotation und Zustand ohne Wert. Ein kurzlebiger Deploy-Auftrag erhält nur Referenzen, die sein Projekt und seine Umgebung erlauben. B: Projektweite Umgebungsvariablen oder Registry-Tokens werden dauerhaft am Runner hinterlegt. B macht Stage- und Prod-Rechte schwer trennbar.</div>
+<p><b>Empfehlung.</b> A. Provisioning-, Build-, Registry- und Deploy-Identitäten sind getrennt. Der Claim enthält Projekt, Umgebung, Digest, Lease und genehmigten Umfang; der ausführende Host löst Geheimnisse erst nach Claim-Prüfung auf und gibt sie nicht in API-Antworten, Agenten-Prompts, Logs oder Artefakte. Prod-Geheimnisse werden erst nach gebundener Freigabe freigegeben und nach Ende des Auftrags verworfen. Rotation sperrt neue Claims mit der alten Version, während laufende Claims kontrolliert enden. AGT-3170 zeigt nur Metadaten; AGT-3171 liefert die zeitlich begrenzte Ausgabe, ohne ein zweites Geheimnisregister zu schaffen. <b>Verworfen:</b> B und die Übernahme eines Stage-Tokens nach Prod.</p>
+<div class="decision" data-decision-id="lifecycle-zugaenge" data-decision-kind="single" data-decision-label="D10 Geheimnisse und Tokens je Umgebung">
+  <h3>D10 · Wann und an wen gehen Geheimnisse und Tokens?</h3>
+  <label data-option-id="scope-claim" data-option-label="A · Pro Umgebung, nur an geprüften Deploy-Claim, Prod nach Freigabe (Empfehlung)"><input type="radio" name="lifecycle-zugaenge" value="scope-claim"><span><b>A · Ausgabe je Claim</b><span class="d">Inventar und Laufzeit-Ausgabe teilen einen Vertrag ohne Klartext im Register.</span></span></label>
+  <label data-option-id="runner-static" data-option-label="B · Dauerhafte Projektzugänge auf dem Runner"><input type="radio" name="lifecycle-zugaenge" value="runner-static"><span><b>B · Dauerhafte Zugänge</b><span class="d">Ein kompromittierter Runner kann mehr Umgebungen erreichen.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s15"><span class="no">§15</span>Kontingente</h2>
+<p><b>Stand.</b> <code>docs/run-budget-per-card/</code> beschreibt Budgets je Karte; Gate-Budgets liegen in der Pipeline. Ein verbindliches Kontingent für Mandant und Projekt über Modell-Tokens, Rechenzeit und Hosting fehlt. Das folgende Modell ist geplant.</p>
+<div class="box"><b>Optionen.</b> A: Die Installation führt ein periodisches Kontingent je Mandant mit Projektgrenzen. Ein zentrales Zulassungsverfahren reserviert vor jedem neuen Modell-, Build-, Deploy- oder Hosting-Start die erwartete Menge und bucht den gemessenen Verbrauch danach. B: Studio zeigt Verbrauch an und warnt nur. B liefert keine belastbare Grenze für einen Betreiber.</div>
+<p><b>Empfehlung.</b> A. Drei getrennte Zähler: Modell-Tokens, Rechenzeit in Kernstunden und Hosting in reservierten Ressourcenstunden. Studio zeigt Limit, verbraucht, reserviert und verbleibend je Mandant und Projekt sowie den Erneuerungszeitpunkt. Beim Limit werden neue Arbeit und neue Deploys mit einer erklärten Meldung zurückgehalten; laufende Arbeit endet an ihrer vorhandenen Einzelgrenze, aktive Prod-Instanzen bleiben für einen begrenzten, vom Betreiber konfigurierten Schonzeitraum erreichbar. Danach wird Hosting kontrolliert pausiert, nicht heimlich gelöscht. Ein Betreiber kann ein neues Limit setzen; jede Ausnahme wird protokolliert. Messung wird auch bei Abbruch abgerechnet und Reservierung freigegeben. <b>Verworfen:</b> B und eine einzige undurchsichtige Geldzahl für alle drei Ressourcen.</p>
+<div class="decision" data-decision-id="kontingente" data-decision-kind="single" data-decision-label="D11 Durchgesetztes Kontingent">
+  <h3>D11 · Wie wird Verbrauch begrenzt?</h3>
+  <label data-option-id="admission" data-option-label="A · Mandanten- und Projektgrenzen mit Reservierung bei Zulassung (Empfehlung)"><input type="radio" name="kontingente" value="admission"><span><b>A · Zulassung mit Reservierung</b><span class="d">Drei Zähler werden vor dem Start geprüft und nach dem Lauf verrechnet.</span></span></label>
+  <label data-option-id="anzeige" data-option-label="B · Nur Verbrauchsanzeige und Warnung"><input type="radio" name="kontingente" value="anzeige"><span><b>B · Anzeige</b><span class="d">Hilft bei Planung, verhindert aber keinen Verbrauch über dem Limit.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s16"><span class="no">§16</span>Mandanten und Betrieb</h2>
+<p><b>Stand.</b> <code>backend/Features/Security/AccessSecurityModels.cs</code> kennt owner, operator und viewer sowie projektbezogene Zugriffe. Die in §6 genannten Einsatzformen sind ein Zielbild; Workspace-Namen allein bilden keine Mandantengrenze. D2 bleibt entschieden: Der jeweilige Installationsbetreiber verantwortet Hosting, Zugänge und Tokens. Ein von uns betriebener Dienst für Dritte ist derzeit nicht Teil des Angebots.</p>
+<div class="box"><b>Optionen.</b> A: Ein Installationsbetreiber bietet die Hosting-Funktion in seiner eigenen Installation an. Einzelplatz hat einen Mandanten; Abteilung und Unternehmen erhalten echte Mandanten mit Daten-, Claim-, Netzwerk- und Quoten-Grenzen; Firmenanmeldung erfolgt über OIDC/SSO, lokale Betreiber-Wiederherstellung bleibt begrenzt. Die öffentliche Form kommt erst nach einem Isolationstest. B: Workspaces und Projektlisten gelten bereits als Mandanten, und die Installation wird sofort öffentlich geöffnet. B verwechselt Sichtbarkeit mit Isolation.</div>
+<p><b>Empfehlung.</b> A. Mandanten-ID wird bei API-Zugriff, Task-Claim, Artefakt- und Geheimniszugriff sowie Hosting-Route geprüft. Rollen gelten innerhalb des Mandanten; Betreiberrechte der Installation sind separat und protokolliert. Abteilungsbetrieb kann mit lokalen Konten starten; Unternehmensbetrieb braucht SSO mit gruppengebundener Rollenvergabe und Deprovisionierung. Öffentlicher selbst betriebener Zugang verlangt getrennte Ausführungs- und Hosting-Netze, Missbrauchsgrenzen und ein unabhängiges Sicherheits-Review. Ein künftig von uns gehosteter Dienst wäre ein neuer Geschäfts- und Betriebsentscheid mit eigener Organisation; die bestehende Linie ohne Subscriptions bleibt für die jetzige Betreiber-Installation gültig. <b>Verworfen:</b> B und ein öffentlicher Start auf Basis der heutigen Workspace-Grenzen.</p>
+<div class="decision" data-decision-id="mandanten" data-decision-kind="single" data-decision-label="D12 Mandantengrenzen für Einsatzformen">
+  <h3>D12 · In welcher Reihenfolge entstehen Mehrnutzer- und öffentliche Formen?</h3>
+  <label data-option-id="isolation-first" data-option-label="A · Betreiber-Installation, echte Mandantengrenze, SSO und öffentliche Form nach Review (Empfehlung)"><input type="radio" name="mandanten" value="isolation-first"><span><b>A · Grenze vor öffentlichem Betrieb</b><span class="d">Hosting-Funktion bleibt in der Plattform; der Betreiber verantwortet seine Installation gemäß D2.</span></span></label>
+  <label data-option-id="workspace-public" data-option-label="B · Workspaces sofort öffentlich nutzen"><input type="radio" name="mandanten" value="workspace-public"><span><b>B · Öffentliche Workspaces</b><span class="d">Projektfilter und Rollen allein trennen Claims, Geheimnisse und Netz nicht.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s17" data-concept-section="recommendation"><span class="no">§17</span>Umsetzungsschnitte</h2>
+<p>Die Empfehlungen D7 bis D12 sind Arbeitsannahmen bis zur Entscheidung. Die vorhandenen Karten AGT-3175 bis AGT-3178, AGT-3170 und WEB-34 bleiben ihre bisherigen Liefergegenstände. Die zusätzlichen Aufgaben im <code>workbench.json</code> schließen nur Schnittstellen, die diese Karten nicht eindeutig besitzen.</p>
+<div class="tablewrap"><table><thead><tr><th>Schnitt</th><th>Abnahme im ersten Durchlauf</th><th>Zuständigkeit</th></tr></thead><tbody>
+  <tr><td>Projektstart</td><td>Ein neuer Nutzer erzeugt beide Vorlagen über Studio; Repo, Build-Profil und Gate sind nach einem wiederholten Request genau einmal vorhanden.</td><td>AGT-3175</td></tr>
+  <tr><td>Release-Vertrag</td><td>Ein statisches Bundle und ein OCI-Image haben je ein Manifest mit Commit, Gate-ID und Digest; Stage und Prod zeigen denselben Digest.</td><td>AL-3, danach AGT-3176</td></tr>
+  <tr><td>Umgebungen</td><td>Stage-Health ist grün, eine Person gibt genau diesen Digest für Prod frei; fehlgeschlagener Prod-Health-Check führt zu Rückweg und Karte; beide Versuche bleiben im Verlauf.</td><td>AGT-3176, AGT-3178</td></tr>
+  <tr><td>Geheimnisgrenze</td><td>Ein Stage-Claim kann kein Prod-Geheimnis lesen; vor Freigabe kann auch ein Prod-Claim es nicht; Receipt und Logs enthalten keinen Wert.</td><td>AGT-3170, AGT-3176, AGT-3171</td></tr>
+  <tr><td>Kontingent</td><td>Der simulierte Nutzer sieht drei Restwerte; am Limit wird ein neuer Auftrag abgewiesen, während der laufende Auftrag nach seiner Einzelgrenze endet.</td><td>AGT-3177, AGT-3178</td></tr>
+  <tr><td>Mandanten und Hosting</td><td>V1 hostet Stage und Prod intern; ein zweiter Mandant kann weder deren API-Daten noch Claims oder Geheimnisse lesen. Öffentliche Form folgt erst nach Review.</td><td>AL-4, AL-5</td></tr>
+</tbody></table></div>
+<p>Für den ersten Durchlauf gilt D3: V1 auf KORI, intern. Die öffentliche Web-VM und V4 bleiben spätere, getrennte Prüfstände. Jeder Szenario-Lauf legt Zeiten, Verbrauch, Digest, Freigabe, Health, Rückweg und Karten-ID im Ergebnisbericht ab.</p>
 
 <h2 id="quellen">§ Quellen</h2>
 <ul>
