@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Formats.Tar;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -45,7 +46,7 @@ public static class DeployHostCommand
             healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
             if (healthy) evidence = "health-ok";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
             or HttpRequestException or System.ComponentModel.Win32Exception)
         {
             Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
@@ -79,7 +80,9 @@ public static class DeployHostCommand
             try
             {
                 await using var archive = File.OpenRead(source);
-                using var reader = new TarReader(archive);
+                using var gzip = job.Artifact.StartsWith("release-package@sha256:", StringComparison.Ordinal)
+                    ? new GZipStream(archive, CompressionMode.Decompress, leaveOpen: true) : null;
+                using var reader = new TarReader((Stream?)gzip ?? archive);
                 while (await reader.GetNextEntryAsync(cancellationToken: ct) is { } entry)
                 {
                     var relative = entry.Name.Replace('\\', '/');

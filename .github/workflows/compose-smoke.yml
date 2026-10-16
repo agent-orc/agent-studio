@@ -30,6 +30,17 @@ jobs:
           docker version
           docker compose version
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Verify deploy host against Studio and a local container
+        run: |
+          dotnet restore runner.Tests/AgentRunner.Tests.csproj --locked-mode
+          dotnet test runner.Tests/AgentRunner.Tests.csproj --no-restore \
+            --filter FullyQualifiedName~DeployHostCommandTests
+
       - name: Validate container image contracts
         run: |
           bash scripts/compose-bootstrap.test.sh
