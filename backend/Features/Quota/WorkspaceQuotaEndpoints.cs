@@ -8,6 +8,11 @@ public static class WorkspaceQuotaEndpoints
 {
     public static void MapWorkspaceQuotaEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/quota/admission/{project}", (string project,
+            WorkspaceQuotaService quotas, AgentStudio.Registry.ProjectRegistry projects) =>
+            Results.Ok(projects.FindByIdOrDisplayName(project) is null
+                ? new QuotaAdmission(false, "Project is not registered for quota admission.")
+                : quotas.Admit(project)));
         app.MapGet("/api/workspaces/{workspaceId}/quota", (string workspaceId,
             WorkspaceQuotaService quotas) => Read(() => quotas.Snapshot(workspaceId)));
         app.MapGet("/api/workspaces/{workspaceId}/projects/{projectId}/quota", (string workspaceId,

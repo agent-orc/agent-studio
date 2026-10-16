@@ -390,6 +390,18 @@ public sealed partial class TaskServerStore
                 var scannedRows = await ScanCandidatesAsync(offset);
                 foreach (var candidate in candidates)
                 {
+                    var quotaProjectName = await ScalarAsync(connection,
+                        "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
+                        ct, transaction, ("$task", candidate.Attempt.TaskId)) as string;
+                    var quota = quotaProjectName is null
+                        ? new WorkspaceQuotaVerdict(false, "Review project could not be resolved for quota admission.")
+                        : await AdmitWorkspaceQuotaAsync(quotaProjectName, ct);
+                    if (!quota.Allowed)
+                    {
+                        capabilityBlock = quota.Message ?? "Workspace quota reached.";
+                        capabilityBlockReason = "workspace-quota";
+                        continue;
+                    }
                     var candidateRequirements = RequiredReviewCapabilities(
                         request.RequiredCapabilities,
                         candidate.Subject);

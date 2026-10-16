@@ -13,6 +13,32 @@ namespace TaskServer.Tests;
 public sealed partial class TaskServerStoreTests
 {
     [Fact]
+    public async Task Quota_refusal_blocks_new_coding_claim_without_changing_ready_task()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectCodingQuota());
+        await guarded.InitializeAsync();
+        var refused = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", refused.Status);
+        Assert.Contains("quota", refused.PlacementReason!, StringComparison.OrdinalIgnoreCase);
+        var resumed = Store(temp.Path, clock);
+        await resumed.InitializeAsync();
+        Assert.Equal("claimed", (await resumed.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+    }
+
+    private sealed class RejectCodingQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
+    }
+    [Fact]
     public async Task Steering_feedback_rebuilds_the_same_command_and_attempt_in_all_read_views_after_restart()
     {
         using var temp = new TempDirectory();

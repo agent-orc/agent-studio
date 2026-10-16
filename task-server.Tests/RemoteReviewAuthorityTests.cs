@@ -24,6 +24,34 @@ public sealed partial class RemoteReviewAuthorityTests
     private const string RepositoryUrl = "https://example.invalid/product.git";
     private const string ReviewHttpToken = "review-http-token-000000000000000000000000000001";
 
+    [Fact]
+    public async Task Quota_refusal_keeps_review_attempt_queued()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(seed);
+        await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectReviewQuota());
+        await guarded.InitializeAsync();
+        var claim = await guarded.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("empty", claim.Status);
+        Assert.Contains("quota", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        var resumed = Store(temp.Path, clock);
+        await resumed.InitializeAsync();
+        Assert.Equal(subject.SubjectId, (await resumed.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default)).Subject!.SubjectId);
+    }
+
+    private sealed class RejectReviewQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
+    }
+
     [Theory]
     [InlineData("host-a", "host-b", false, true, ReviewHostPlacementDecision.Admit)]
     [InlineData("host-a", "host-a", false, false, ReviewHostPlacementDecision.Admit)]
