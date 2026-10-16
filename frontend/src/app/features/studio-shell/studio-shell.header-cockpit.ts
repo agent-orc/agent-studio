@@ -27,6 +27,7 @@ export const STUDIO_HEADER_NAV_ITEMS: readonly CockpitNavItem[] = [
   { id: 'theme', label: 'Switch theme', inlineFrom: 'desktop' },
   { id: 'usage', label: 'Usage details', inlineFrom: null },
   { id: 'feed', label: 'Orchestrator feed', inlineFrom: null },
+  { id: 'environment', label: 'Environment', inlineFrom: 'tablet' },
   { id: 'settings', label: 'Orchestrator settings', inlineFrom: null },
 ];
 
@@ -35,6 +36,7 @@ export interface StudioHeaderHost {
   readonly registryWorkspaces: Signal<readonly RegistryWorkspaceListItem[]>;
   readonly activeWorkspaceName: Signal<string | null>;
   readonly globalSearchOpen: WritableSignal<boolean>;
+  readonly environmentOpen: WritableSignal<boolean>;
   readonly pickerOpen: WritableSignal<boolean>;
   readonly chatToggle: OutputEmitterRef<void>;
   readonly openUsageSheet: OutputEmitterRef<void>;
@@ -104,6 +106,7 @@ export class StudioHeaderCockpit {
       case 'theme': host.toggleTheme(); return;
       case 'usage': host.openUsageSheet.emit(); return;
       case 'feed': host.openOrchFeed.emit(); return;
+      case 'environment': host.environmentOpen.set(true); return;
       case 'settings': host.openOrchSettings.emit(); return;
     }
   }

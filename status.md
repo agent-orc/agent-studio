@@ -1,3 +1,12 @@
+# AGT-3208 live environment flow status
+
+- Result SHA-256 for the changed worktree files, excluding this status file: `306af8705440b109b8850bd2909a3763c584d746fd951a91afb5fc41ba08554c`. Base commit: `2c4ec9e8c62e55f1b88763442277e426aab862a4`. This managed run did not create a commit.
+- Implemented the AGT-W15 recommended W0-W2 observe-first option: visible, correlated host and flow facts with open Watcher cases and latest AI Operator receipts. The view adds no autonomous mutation. The existing Watcher and AI Operator continue to own intervention decisions under their autonomy policy.
+- The Studio header opens a live Environment view. It refreshes every 15 seconds and shows fresh host load per core, memory, role capacity, provider auth, coding and review attempts, queue waits and throughput, lane flow, UTC-day card counts, and waiting reasons. The backend uses the archive-inclusive task index, lane ledger, integration success events, active gate queue, and batch gate pending/publication records. Stale host telemetry reads as unavailable.
+- Deployment card count remains unavailable because the current deployment history does not attribute deployed commits to cards across every run. The UI labels this explicitly. Gate and batch gate throughput are rolling 24-hour rates; card counts in the daily strip use the UTC calendar day.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -v:q` passed; `npm --prefix frontend run build` passed; `dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter 'FullyQualifiedName~EnvironmentFlowServiceTests|FullyQualifiedName~ProjectOperatorDashboardServiceTests'` passed 9 tests; the `FullyQualifiedName~.Architecture.|Category=Guard` filter ran on all eight .NET test projects and passed 82 backend guards with no matches in the other seven; `npm --prefix frontend run lint`, focused ESLint and Stylelint, and `npm --prefix frontend run lint:components` passed; `npm --prefix frontend run e2e -- e2e/layout/environment-flow.spec.ts` passed 1 Chromium test. The 1280 light and 1920 dark screenshots are in the task results directory.
+- Documentation: `docs/system/domains/frontend.md` describes the new surface and its aggregation limits. `git diff --check` passed.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).

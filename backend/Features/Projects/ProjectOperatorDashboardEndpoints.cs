@@ -4,6 +4,9 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>
+            Results.Ok(flow.Build()));
+
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
             ProjectThroughputService throughput) =>
