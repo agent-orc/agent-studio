@@ -254,11 +254,12 @@ async function mockDashboard(page: Page): Promise<{
   }));
   await page.route('**/api/projects/*/deployment/summary', route => fulfillJson(route, deployment));
   let promotionStatus = 'pending';
-  await page.route('**/api/projects/*/environments/promotions/*/approve', route => {
+  await page.route('**/api/projects/*/environments/promotions/approve', route => {
+    expect(route.request().postDataJSON()).toEqual({ artifact: 'registry.example/app@sha256:' + 'a'.repeat(64) });
     promotionStatus = 'production-queued';
     return fulfillJson(route, {});
   });
-  await page.route('**/api/projects/*/environments/promotions/*/reject', route => {
+  await page.route('**/api/projects/*/environments/promotions/reject', route => {
     promotionStatus = 'rejected';
     return fulfillJson(route, {});
   });

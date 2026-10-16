@@ -1,8 +1,13 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
+using AgentStudio.Security;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -29,6 +34,41 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(["stage", "production"], declarations!.Select(item => item.Id));
         Assert.Equal(["DATABASE_URL"], declarations[1].SecretRefs);
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
+    }
+
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("reject")]
+    public async Task PromotionRoutes_AcceptRegistryDigestInRequestBody(string action)
+    {
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = Path.Combine(_root, "workspace"),
+                    ["Logging:BackendFile:LogDirectory"] = Path.Combine(_root, "logs"),
+                    ["Security:Profile"] = "local",
+                }));
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var password = $"test-{Guid.NewGuid():N}!";
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            username = "local.owner", password, displayName = "Local Owner",
+        });
+        bootstrap.EnsureSuccessStatusCode();
+        var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", auth!.CsrfToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/demo/environments/promotions/{action}",
+            new PromotionDecisionRequest(_artifact));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("Promotion is not pending", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
