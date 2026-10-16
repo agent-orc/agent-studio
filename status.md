@@ -1,3 +1,10 @@
+# AGT-3191 Dossier Tag and Created controls status
+
+- Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
+- Implemented option: compact Tag suggestions retain distinct tag ids and show the duplicate label's ordinal, total, and id. The Created browser fixture supplies creation dates and checks all four presets, both Created sort directions, and URL state after reload.
+- Review captures in the task results directory: `dossier-toolbar-1440x900--mocked.png` and `dossier-toolbar-1920x1080--mocked.png`. Light and dark overview captures are also in that directory.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` and `npm --prefix frontend run build` passed. Focused backend classes (`WorkbenchCatalogueTests`, `GitServiceFileContentTests`) passed 31 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 82 backend tests; runner and task-server had no matches. Focused Angular specs (`tag-filters.component.spec.ts`, `workbench-overview-view-state.service.spec.ts`) passed 11 tests. The focused Playwright Dossier sort/filter test passed. `npm --prefix frontend run lint` passed.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
