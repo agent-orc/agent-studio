@@ -42,6 +42,11 @@ export class OnboardProjectDialogComponent {
   readonly rootPath = signal('');
   readonly repositoryUrl = signal('');
   readonly executionRunner = signal('local');
+  readonly repositoryMode = signal<'existing' | 'create'>('existing');
+  readonly repositoryOwner = signal('');
+  readonly repositoryName = signal('');
+  readonly repositoryVisibility = signal<'public' | 'private'>('private');
+  readonly repositoryTemplate = signal<'static-web' | 'container-service'>('static-web');
   readonly submitting = signal(false);
   readonly errorMsg = signal<string | null>(null);
   readonly registryWorkspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
@@ -69,6 +74,9 @@ export class OnboardProjectDialogComponent {
   }));
   readonly canSubmit = computed(() =>
     !this.submitting()
+    && (this.repositoryMode() === 'existing'
+      || (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(this.repositoryOwner().trim())
+        && /^[A-Za-z0-9_.-]{1,100}$/.test(this.repositoryName().trim())))
     && projectBasicsAreValid(validateProjectBasics(this.formValue(), {
       workspaces: this.registryWorkspaces(),
       projects: this.allProjects(),
@@ -110,6 +118,15 @@ export class OnboardProjectDialogComponent {
     return this.runnerUnavailable(host) ? `${host.name} (${host.status})` : host.name;
   }
 
+  setRepositoryMode(mode: 'existing' | 'create'): void {
+    this.repositoryMode.set(mode);
+    if (mode === 'create') {
+      this.repositoryPath.set('');
+      this.rootPath.set('');
+      this.repositoryUrl.set('');
+    }
+  }
+
   onSubmit(): void {
     if (!this.canSubmit()) return;
     const value = this.formValue();
@@ -125,6 +142,12 @@ export class OnboardProjectDialogComponent {
       repositoryPath: value.repositoryPath.trim() || undefined,
       rootPath: value.rootPath.trim() || undefined,
       repositoryUrl: value.repositoryUrl.trim() || undefined,
+      createRepository: this.repositoryMode() === 'create' ? {
+        owner: this.repositoryOwner().trim(),
+        name: this.repositoryName().trim(),
+        visibility: this.repositoryVisibility(),
+        template: this.repositoryTemplate(),
+      } : undefined,
       executionRunner: this.executionRunner() === 'local' ? undefined : this.executionRunner(),
     }).subscribe({
       next: (project) => {
@@ -152,6 +175,11 @@ export class OnboardProjectDialogComponent {
     this.rootPath.set('');
     this.repositoryUrl.set('');
     this.executionRunner.set('local');
+    this.repositoryMode.set('existing');
+    this.repositoryOwner.set('');
+    this.repositoryName.set('');
+    this.repositoryVisibility.set('private');
+    this.repositoryTemplate.set('static-web');
     this.errorMsg.set(null);
   }
 }

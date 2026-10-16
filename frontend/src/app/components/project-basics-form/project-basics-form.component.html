@@ -81,6 +81,7 @@
     </div>
   </section>
 
+  @if (showCodeLocation()) {
   <section class="pbf__section" [attr.aria-labelledby]="fieldTestid('code-title')">
     <header class="pbf__section-head">
       <span class="pbf__step" aria-hidden="true">2</span>
@@ -145,6 +146,7 @@
       </label>
     </div>
   </section>
+  }
 
   <section class="pbf__section" [attr.aria-labelledby]="fieldTestid('agent-title')">
     <header class="pbf__section-head">

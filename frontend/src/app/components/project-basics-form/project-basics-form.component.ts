@@ -24,6 +24,7 @@ export class ProjectBasicsFormComponent {
   readonly mode = input<'create' | 'edit'>('create');
   readonly testidPrefix = input('project-basics');
   readonly disabled = input(false);
+  readonly showCodeLocation = input(true);
   readonly showValidation = input(false);
   readonly allowAgentInheritance = input(false);
   readonly workspaces = input<readonly RegistryWorkspaceListItem[]>([]);
