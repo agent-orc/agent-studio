@@ -63,6 +63,8 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
                 sourceRunAttemptId = "run-1", subject, state = AttemptLifecycleState.Pending,
                 authorityEpoch = 1, createdAt = now,
             } },
+            currentRunByTask = new Dictionary<string, string> { ["AGT-OLD"] = "run-archived" },
+            currentReviewByTask = new Dictionary<string, string> { ["AGT-OLD"] = "review-archived" },
             currentSubjectByTask = new Dictionary<string, object> { ["AGT-1"] = subject },
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 
@@ -82,7 +84,11 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         File.WriteAllText(archivePath, JsonSerializer.Serialize(new
         {
             schemaVersion = 2, archivedAt = now,
-            runAttempts = Array.Empty<object>(),
+            runAttempts = new[] { new
+            {
+                attemptId = "run-archived", taskKey = "AGT-OLD", repositoryId = "PROJ-1",
+                state = AttemptLifecycleState.Completed, authorityEpoch = 1, createdAt = now,
+            } },
             reviewAttempts = new[] { new
             {
                 attemptId = "review-archived", taskKey = "AGT-OLD", repositoryId = "PROJ-1",
@@ -100,8 +106,15 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         var downgraded = JsonSerializer.Deserialize<Schema6AuthorityModel>(File.ReadAllText(path),
             new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         Assert.Equal(6, downgraded.SchemaVersion);
-        Assert.Equal("subject-1", Assert.Single(downgraded.ReviewAttempts).Subject.SubjectId);
+        Assert.Equal("subject-1", Assert.Single(downgraded.ReviewAttempts,
+            review => review.AttemptId == "review-1").Subject.SubjectId);
         Assert.Equal("subject-1", downgraded.CurrentSubjectByTask["AGT-1"].SubjectId);
+        // A schema-6 projection searches only the live lists for current ids.
+        Assert.Contains(downgraded.RunAttempts,
+            run => run.AttemptId == downgraded.CurrentRunByTask["AGT-OLD"]);
+        Assert.Contains(downgraded.ReviewAttempts,
+            review => review.AttemptId == downgraded.CurrentReviewByTask["AGT-OLD"]
+                && review.Subject.SubjectId == "subject-1");
         using var archive = JsonDocument.Parse(File.ReadAllText(archivePath));
         Assert.Equal(1, archive.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("subject-1", archive.RootElement.GetProperty("reviewAttempts")[0]
@@ -113,18 +126,68 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     private sealed class Schema6AuthorityModel
     {
         public int SchemaVersion { get; set; }
+        public List<Schema6RunModel> RunAttempts { get; set; } = [];
         public List<Schema6ReviewModel> ReviewAttempts { get; set; } = [];
+        public Dictionary<string, string> CurrentRunByTask { get; set; } = [];
+        public Dictionary<string, string> CurrentReviewByTask { get; set; } = [];
         public Dictionary<string, Schema6SubjectModel> CurrentSubjectByTask { get; set; } = [];
+    }
+
+    private sealed class Schema6RunModel
+    {
+        public string AttemptId { get; set; } = string.Empty;
     }
 
     private sealed class Schema6ReviewModel
     {
+        public string AttemptId { get; set; } = string.Empty;
         public Schema6SubjectModel Subject { get; set; } = new();
     }
 
     private sealed class Schema6SubjectModel
     {
         public string SubjectId { get; set; } = string.Empty;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Recovery_from_schema6_backup_preserves_immutable_migration_snapshot(bool corruptPrimary)
+    {
+        var now = new DateTime(2026, 10, 16, 8, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var schema6 = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 6, authorityEpoch = 1,
+            runAttempts = Array.Empty<object>(),
+            reviewAttempts = new[] { new
+            {
+                attemptId = "review-recovered", taskKey = "AGT-1", repositoryId = "PROJ-1",
+                sourceRunAttemptId = "run-1", state = AttemptLifecycleState.Pending,
+                authorityEpoch = 1, createdAt = now,
+                subject = new { subjectId = "subject-recovered", repositoryId = "PROJ-1",
+                    expectedResultSha = "result-1", sourceRunAttemptId = "run-1",
+                    taskRequirementsHash = "requirements", reviewPolicyHash = "policy",
+                    evidenceDigestInputs = new[] { "evidence-1" }, createdAt = now },
+            } },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        File.WriteAllText(path + ".bak", schema6);
+        if (corruptPrimary) File.WriteAllText(path, schema6 + "corrupt-tail");
+
+        var recovered = NewService(() => now);
+        Assert.Equal(path + ".bak", recovered.RecoverySource);
+        var migrationBackupPath = Path.Combine(Path.GetDirectoryName(path)!,
+            "attempt-authority.schema6-backup.json");
+        var migrationBackup = File.ReadAllText(migrationBackupPath);
+        var oldReader = JsonSerializer.Deserialize<Schema6AuthorityModel>(migrationBackup,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Equal(6, oldReader.SchemaVersion);
+        Assert.Equal("subject-recovered", Assert.Single(oldReader.ReviewAttempts).Subject.SubjectId);
+        Assert.Equal(7, JsonDocument.Parse(File.ReadAllText(path)).RootElement
+            .GetProperty("schemaVersion").GetInt32());
+        _ = NewService(() => now);
+        Assert.Equal(migrationBackup, File.ReadAllText(migrationBackupPath));
     }
 
     [Fact]

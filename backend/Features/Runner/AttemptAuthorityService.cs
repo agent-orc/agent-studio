@@ -261,7 +261,8 @@ public sealed class AttemptAuthorityService
         CleanupStaleTemporaryFiles();
         _state = Load();
         var requiresCompactionMigration = _state.SchemaVersion < CurrentSchemaVersion;
-        if (requiresCompactionMigration && !suppressStartupWrites && _path is not null && File.Exists(_path))
+        if (requiresCompactionMigration && !suppressStartupWrites && _path is not null
+            && (_recoverySource is not null || File.Exists(_path)))
             WriteSchema6MigrationBackup();
         NormalizeLoadedState();
         if (_state.AuthorityEpoch <= 0) _state.AuthorityEpoch = 1;
@@ -334,10 +335,18 @@ public sealed class AttemptAuthorityService
             throw new FileNotFoundException("Attempt authority snapshot is missing.", _path);
         var writer = new AtomicJsonFileWriter();
         var directory = Path.GetDirectoryName(_path)!;
+        var currentRunIds = _state.CurrentRunByTask.Values.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var currentReviewIds = _state.CurrentReviewByTask.Values.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var liveRunIds = _state.RunAttempts.Select(run => run.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var liveReviewIds = _state.ReviewAttempts.Select(review => review.AttemptId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var path in Directory.EnumerateFiles(directory, ArchiveFilePattern))
         {
             var archive = LoadArchive(path);
             InlineReviewPayloads(archive.ReviewAttempts);
+            foreach (var run in archive.RunAttempts.Where(run => currentRunIds.Contains(run.AttemptId)))
+                if (liveRunIds.Add(run.AttemptId)) _state.RunAttempts.Add(run);
+            foreach (var review in archive.ReviewAttempts.Where(review => currentReviewIds.Contains(review.AttemptId)))
+                if (liveReviewIds.Add(review.AttemptId)) _state.ReviewAttempts.Add(review);
             archive.SchemaVersion = 1;
             writer.WriteJson(path, archive, Schema6JsonOptions);
         }
