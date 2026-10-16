@@ -111,6 +111,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for the batch gate result (`HoldForEngineBatchDecision`). Batch forming, closing and the advisor move with AGT-3055. |
 | IntakeHostedService | !PD, per project | decide, operator | AI Operator decider `intake-routing` (`IntakeRoutingPolicy`): an already-done card goes to a person in Human Review. Effect: `IntakeRoutingEffect`. |
 | GitInventoryRefreshHostedService | !PD | infra | Authority host |
+| ProjectRepositoryVisibilitySync | always | infra | Authority host. Copies project visibility settings to registered Task Server repositories. |
 | GitStateIndexService | !PD | infra | Authority host |
 | GitBranchRetentionHostedService | !PD | infra | Authority host |
 | CompletedPushWorker | !PD | infra | Authority host |

@@ -122,6 +122,15 @@ internal static class IdentityBootstrapEndpoints
             }
         }).RequireTaskServerScope(TaskServerScopes.Management);
 
+        api.MapPut("/projects/repository-visibility", async (
+            HttpContext context, SetProjectRepositoryVisibilityRequest request, TaskServerStore store,
+            CancellationToken ct) => await TaskServerEndpoints.InvokeAsync(async () => new
+            {
+                found = await store.SetProjectRepositoryVisibilityAsync(request,
+                    context.TaskServerPrincipal()?.PrincipalId ?? "local-loopback", ct),
+            }))
+            .RequireTaskServerScope(TaskServerScopes.Management);
+
         api.MapGet("/projects/{projectId}/repository", async (
             string projectId, TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeNullableAsync(async () =>
