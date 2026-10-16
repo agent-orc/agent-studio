@@ -34,7 +34,8 @@ public sealed class LocalFirstRunGitSetupTests : IDisposable
         var git = new GitProbe();
         var probe = new LocalFirstRunRepositoryProbe(new FakeTimeProvider(), git);
         var setup = new LocalFirstRunGitSetup(projects, probe,
-            Path.Combine(_root, "secrets"), Path.Combine(_root, "gitconfig"));
+            Path.Combine(_root, "secrets"), Path.Combine(_root, "gitconfig"),
+            Path.Combine(_root, "ssh", "config"));
         var token = "test-" + new string('x', 36);
 
         var started = await setup.StartAsync(new(project.Id, "token", token), default);
@@ -58,6 +59,25 @@ public sealed class LocalFirstRunGitSetupTests : IDisposable
         Assert.StartsWith("ssh-ed25519 ", keySetup.PublicKey);
         Assert.True(File.Exists(Path.Combine(_root, "secrets", keySetup.Id, "deploy-key")));
         Assert.DoesNotContain("PRIVATE KEY", JsonSerializer.Serialize(keySetup));
+        var target = GitUrl("https://github.com/example/demo.git");
+        Assert.StartsWith("git@agent-studio-first-run-", target);
+        Assert.EndsWith(":example/demo.git", target);
+        Assert.Equal("git@github.com:example/other.git",
+            GitUrl("git@github.com:example/other.git"));
+        Assert.DoesNotContain("sshCommand", File.ReadAllText(Path.Combine(_root, "gitconfig")));
+        var sshConfig = File.ReadAllText(Path.Combine(_root, "ssh", "config"));
+        Assert.Contains("HostName github.com", sshConfig);
+        Assert.Contains("IdentityFile \"" + Path.Combine(_root, "secrets", keySetup.Id,
+            "deploy-key").Replace('\\', '/') + "\"", sshConfig);
+
+        var secondKey = await setup.StartAsync(new(project.Id, "deploy-key", null), default);
+        Assert.Equal(target, GitUrl("https://github.com/example/demo.git"));
+        Assert.Equal(1, File.ReadAllText(Path.Combine(_root, "gitconfig"))
+            .Split("insteadOf = https://github.com/example/demo.git").Length - 1);
+        sshConfig = File.ReadAllText(Path.Combine(_root, "ssh", "config"));
+        Assert.DoesNotContain(Path.Combine(_root, "secrets", keySetup.Id, "deploy-key"), sshConfig);
+        Assert.Contains(Path.Combine(_root, "secrets", secondKey.Id, "deploy-key")
+            .Replace('\\', '/'), sshConfig);
     }
 
     public void Dispose()
@@ -86,6 +106,26 @@ public sealed class LocalFirstRunGitSetupTests : IDisposable
         _ = process.StandardError.ReadToEnd();
         process.WaitForExit();
         return output;
+    }
+
+    private string GitUrl(string origin)
+    {
+        using var process = new Process { StartInfo = new ProcessStartInfo
+        {
+            FileName = "git", RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        } };
+        process.StartInfo.ArgumentList.Add("ls-remote");
+        process.StartInfo.ArgumentList.Add("--get-url");
+        process.StartInfo.ArgumentList.Add(origin);
+        process.StartInfo.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(_root, "gitconfig");
+        process.StartInfo.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        Assert.True(process.Start());
+        var output = process.StandardOutput.ReadToEnd();
+        _ = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+        return output.Trim();
     }
 
     private sealed class GitProbe : ILocalFirstRunGitCommand
