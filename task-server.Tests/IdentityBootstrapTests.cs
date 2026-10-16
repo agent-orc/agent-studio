@@ -471,10 +471,15 @@ public sealed class IdentityBootstrapTests
             new CreateTaskRequest("A product wish"));
         Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
         var createdTask = (await createdResponse.Content.ReadFromJsonAsync<TaskDto>())!;
-        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
-            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/agent-work-detail")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
-            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history")).StatusCode);
+        foreach (var deniedRoute in new[]
+                 {
+                     "agent-work-detail", "Agent-Work-Detail", "history", "History",
+                     "session-events", "Session-Events"
+                 })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+                $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/{deniedRoute}")).StatusCode);
+        }
         var history = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
             .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
         Assert.Contains(history.Audit, row => row.Action == "task.created" && row.ActorId == invited.User.UserId);

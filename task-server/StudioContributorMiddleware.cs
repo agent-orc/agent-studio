@@ -6,6 +6,13 @@ namespace AgentStudio.TaskServer;
 /// <summary>Restricts Product sessions on the versioned Studio plane.</summary>
 internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServerStore store)
 {
+    private static readonly HashSet<string> DeniedSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "credentials", "remote-hosts", "settings", "quotas", "security", "tokens", "usage",
+        "logs", "raw-logs", "merge", "promotions", "production", "management", "secrets",
+        "output", "trace", "files", "agent-work-detail", "history", "session-events"
+    };
+
     public async Task InvokeAsync(HttpContext context)
     {
         var authPath = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
@@ -52,11 +59,7 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
             await Deny(context);
             return;
         }
-        if (parts.Any(part => part is "credentials" or "remote-hosts" or "settings" or "quotas"
-            or "security" or "tokens" or "usage" or "logs" or "raw-logs"
-            or "merge" or "promotions" or "production" or "management"
-            or "secrets" or "output" or "trace" or "files"
-            or "agent-work-detail" or "history"))
+        if (parts.Any(DeniedSegments.Contains))
         {
             await Deny(context);
             return;
