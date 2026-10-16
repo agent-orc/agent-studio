@@ -6,6 +6,25 @@ namespace AgentRunner.Tests;
 [Collection(ProcessEnvironmentCollection.Name)]
 public sealed class RunnerHostRecordTests
 {
+    [Fact]
+    public void Deploy_role_uses_host_bound_principal_and_separate_service()
+    {
+        var record = Record(total: 4) with
+        {
+            Envelope = new HostEnvelopeDto(4, 2, 1, 1),
+            Roles = [.. Record().Roles,
+                new RunnerHostRoleRecord(HostRoles.Deploy, "build-02", "/etc/agent-runner/deploy.token")],
+        };
+        var rendering = RunnerHostRecordPolicy.Render(record);
+        Assert.Contains(rendering.Services, service => service.Role == HostRoles.Deploy
+            && service.UnitName == "agent-runner-deploy.service");
+        var environment = RunnerHostRecordPolicy.ParseEnv(rendering.Files["deploy.env"]);
+        Assert.Equal("build-02", environment["RUNNER_ID"]);
+        Assert.Equal("/etc/agent-host/secrets", environment["DEPLOY_SECRET_STORE"]);
+        Assert.Contains("principalId must equal hostId", RunnerHostRecordPolicy.Validate(record with
+        { Roles = [.. Record().Roles, new RunnerHostRoleRecord(HostRoles.Deploy, "other", "/etc/agent-runner/deploy.token")] }).Single());
+    }
+
     private static RunnerHostRecord Record(string tokenRoot = "/etc/agent-runner", int total = 3, int coding = 2, int review = 1)
         => new(
             RunnerHostRecord.CurrentSchemaVersion,
