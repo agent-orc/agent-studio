@@ -9,6 +9,7 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Security;
 using AgentStudio.Tasks;
+using Microsoft.Extensions.Hosting;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -1349,10 +1350,13 @@ public static class V1ReviewPlaneEndpoints
                     return Results.Json(new Contract.ApiError(
                         "batch-gate-evidence-missing", "The batch source run is missing."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
+                var hostStopping = context.RequestServices
+                    .GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
                 try
                 {
-                    batchPilot.Enqueue(task, settled.ReviewAttempt, batchSource,
-                        new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)));
+                    await batchPilot.EnqueueAsync(task, settled.ReviewAttempt, batchSource,
+                        new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
+                        hostStopping).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -1362,7 +1366,7 @@ public static class V1ReviewPlaneEndpoints
                         await batchPilot.RunEmergencyFallbackAsync(task,
                             settled.ReviewAttempt, batchSource,
                             new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
-                            ct).ConfigureAwait(false);
+                            hostStopping).ConfigureAwait(false);
                         emergencyBatchState = FindTask(scanner, task.Id)?.State;
                     }
                     catch (Exception fallbackError)

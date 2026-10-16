@@ -33,6 +33,15 @@ public static class BatchGateOwnershipStore
         WriteLocked(folder, ownership);
     }
 
+    public static async Task WriteAsync(string taskFolder, BatchGateOwnership ownership,
+        CancellationToken ct)
+    {
+        var folder = TaskPaths.LogsDir(taskFolder);
+        Directory.CreateDirectory(folder);
+        using var guard = await GuardAsync(folder, ct).ConfigureAwait(false);
+        WriteLocked(folder, ownership);
+    }
+
     private static void WriteLocked(string folder, BatchGateOwnership ownership)
     {
         var path = Path.Combine(folder, Name);
@@ -60,6 +69,23 @@ public static class BatchGateOwnershipStore
     private static FileStream Guard(string folder)
         => new(Path.Combine(folder, "batch-gate-ownership.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+    private static async Task<FileStream> GuardAsync(string folder, CancellationToken ct)
+    {
+        const int retries = 40;
+        for (var attempt = 0; attempt < retries; attempt++)
+        {
+            try
+            {
+                return Guard(folder);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(50, ct).ConfigureAwait(false);
+            }
+        }
+        return Guard(folder);
+    }
 
     public static BatchGateOwnership RecordContainment(string taskFolder,
         BatchGateOwnership ownership, string containedInSha, TimeProvider time,

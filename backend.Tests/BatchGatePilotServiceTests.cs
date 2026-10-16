@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
@@ -767,7 +768,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var task = factory.Services.GetRequiredService<TaskScannerService>()
             .FindJob(member.Key, _watchPath)!;
-        pilot.Enqueue(task, passed.ReviewAttempt!, authority.GetRun(member.RunAttemptId)!, _clock);
+        await pilot.EnqueueAsync(task, passed.ReviewAttempt!,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         Assert.Equal(2, store.ListPending().Count);
         _gate.Batch = request => Green(request.ExpectedSha);
@@ -1862,8 +1864,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var settled = Settle(factory, contained, ReviewTerminalOutcome.Pass);
         var task = factory.Services.GetRequiredService<TaskScannerService>()
             .FindJob(contained.Key, _watchPath)!;
-        factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(task,
-            settled, authority.GetRun(contained.RunAttemptId)!, _clock);
+        await factory.Services.GetRequiredService<BatchGatePilotService>().EnqueueAsync(task,
+            settled, authority.GetRun(contained.RunAttemptId)!, _clock, CancellationToken.None);
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         string? blockedPath = null;
@@ -2176,6 +2178,43 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Held_ownership_lock_delays_enqueue_until_the_lock_is_released()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-LOCK-RETRY", "docs/lock-retry.md", settleReview: false);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claimed = authority.ClaimReview(member.ReviewAttemptId, "review-executor", "review-host",
+            600, "claim-" + member.Key);
+        Assert.True(claimed.Accepted, claimed.Message);
+        var passed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(member.ReviewAttemptId, claimed.ReviewAttempt!.LastFence,
+                claimed.ReviewAttempt.AuthorityEpoch, "pass-" + member.Key),
+            member.ResultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(passed.Accepted, passed.Message);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var lockPath = Path.Combine(TaskPaths.LogsDir(task.FolderPath), "batch-gate-ownership.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        Task<BatchGatePendingRecord> enqueue;
+        using (var held = new FileStream(lockPath, FileMode.OpenOrCreate,
+                   FileAccess.ReadWrite, FileShare.None))
+        {
+            enqueue = pilot.EnqueueAsync(task, passed.ReviewAttempt!,
+                authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+            await Task.Delay(150, CancellationToken.None);
+            Assert.False(enqueue.IsCompleted);
+        }
+
+        var pending = await enqueue.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(member.ReviewAttemptId, pending.ReviewAttemptId);
+        Assert.Equal(member.ReviewAttemptId, Ownership(member.Key)?.ReviewAttemptId);
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
     public async Task Per_task_fallback_interrupted_by_a_restart_resumes_on_the_next_tick()
     {
         using var factory = BuildFactory();
@@ -2298,6 +2337,99 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             .ListExecutions(ProjectName));
     }
 
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_batch_enqueue_and_cancelled_emergency_gate_leave_review_retryable(
+        bool reportedCancellation)
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        // Code in a documentation-only batch causes admission to fail.
+        var member = SeedMember(factory, "CODE-CANCEL-RETRY", "backend/Cancel.cs",
+            settleReview: false);
+        _gate.FallbackAsync = (_, _) => reportedCancellation
+            ? Task.FromResult(new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+                "", "Gate cancelled: shutdown.", false, false)
+            {
+                FailureKind = BuildTestGateFailureKind.Cancellation,
+                CancellationReason = GateCancellationReasons.Shutdown,
+            })
+            : throw new TaskCanceledException("Gate transport cancelled.");
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        Assert.Equal(member.ReviewAttemptId, claim.Attempt!.AttemptId);
+        var report = PassingReport(claim, "batch-cancelled-emergency");
+
+        var failed = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report", report);
+
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Equal(0, Ownership(member.Key)?.FallbackGateStarts);
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListExecutions(ProjectName));
+
+        _gate.FallbackAsync = (request, _) => Task.FromResult(Red(request.ExpectedSha));
+        var retried = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report", report);
+
+        var body = await retried.Content.ReadAsStringAsync();
+        Assert.True(retried.IsSuccessStatusCode, body);
+        Assert.Equal(2, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.DoesNotContain("Gate cancelled: shutdown", _errors.ToString());
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Superseded_emergency_cancellation_clears_the_old_ownership(
+        bool reportedCancellation)
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-STALE-CANCEL", "docs/stale-cancel.md",
+            settleReview: false);
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!;
+        var completion = new TaskCompletionSource<BuildTestGateResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = (_, ct) => completion.Task.WaitAsync(ct);
+        var flight = factory.Services.GetRequiredService<BatchGatePilotService>()
+            .RunEmergencyFallbackAsync(task, review, authority.GetRun(member.RunAttemptId)!,
+                _clock, CancellationToken.None);
+        await WaitForAsync(() => _gate.FallbackRuns == 1);
+
+        Supersede(authority, member.Key);
+        if (reportedCancellation)
+            completion.SetResult(new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+                "", "Gate cancelled: shutdown.", false, false)
+            {
+                FailureKind = BuildTestGateFailureKind.Cancellation,
+                CancellationReason = GateCancellationReasons.Shutdown,
+            });
+        else
+            completion.SetException(new TaskCanceledException("Gate transport cancelled."));
+        await flight;
+
+        Assert.Null(Ownership(member.Key));
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListExecutions(ProjectName));
+    }
+
     [Fact]
     public async Task Batch_deferred_settlement_journals_no_delivery_so_recovery_leaves_the_member_to_the_batch()
     {
@@ -2412,8 +2544,10 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var seeded = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
         var flatLayoutCard = seeded with { Id = "doc-slug-documents-the-pilot", Key = member.Key };
 
-        var pending = factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(flatLayoutCard,
-            passed.ReviewAttempt!, authority.GetRun(member.RunAttemptId)!, _clock);
+        var pending = factory.Services.GetRequiredService<BatchGatePilotService>()
+            .EnqueueAsync(flatLayoutCard, passed.ReviewAttempt!,
+                authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None)
+            .GetAwaiter().GetResult();
 
         Assert.Equal(member.Key, pending.Subject.TaskKey);
         Assert.True(pending.Subject.CurrentGeneration);
@@ -2690,9 +2824,10 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Empty(BuildSnapshot(factory).Waiting);
         var passed = Settle(factory, replacement, ReviewTerminalOutcome.Pass);
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-        factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(
-            scanner.FindJob(old.Key, _watchPath)!, passed,
-            authority.GetRun(replacement.RunAttemptId)!, _clock);
+        factory.Services.GetRequiredService<BatchGatePilotService>()
+            .EnqueueAsync(scanner.FindJob(old.Key, _watchPath)!, passed,
+                authority.GetRun(replacement.RunAttemptId)!, _clock, CancellationToken.None)
+            .GetAwaiter().GetResult();
 
         Assert.Equal(old.Key, Assert.Single(BuildSnapshot(factory).Waiting).TaskKey);
     }
@@ -2785,8 +2920,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             resultSha, ReviewTerminalOutcome.Pass));
         Assert.True(passed.Accepted, passed.Message);
         var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(key, _watchPath)!;
-        factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(task,
-            passed.ReviewAttempt!, authority.GetRun(run.AttemptId)!, _clock);
+        factory.Services.GetRequiredService<BatchGatePilotService>()
+            .EnqueueAsync(task, passed.ReviewAttempt!, authority.GetRun(run.AttemptId)!,
+                _clock, CancellationToken.None).GetAwaiter().GetResult();
         return new SeededMember(key, run.AttemptId, reviewId, resultSha);
     }
 

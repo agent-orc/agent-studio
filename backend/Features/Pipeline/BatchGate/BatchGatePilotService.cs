@@ -100,8 +100,8 @@ public sealed partial class BatchGatePilotService
         _configuration = configuration;
     }
 
-    public BatchGatePendingRecord Enqueue(TaskInfo task, ReviewAttemptDto review,
-        RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc)
+    public async Task<BatchGatePendingRecord> EnqueueAsync(TaskInfo task, ReviewAttemptDto review,
+        RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc, CancellationToken ct)
     {
         var priorOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
         if (task.State == TaskStates.AutoReview
@@ -119,11 +119,11 @@ public sealed partial class BatchGatePilotService
         if (reason is not null)
             throw new InvalidDataException($"Batch admission failed: {reason}.");
         // The card must fail closed before it becomes visible to the queue.
-        BatchGateOwnershipStore.Write(task.FolderPath,
-            new BatchGateOwnership(review.AttemptId, candidate.Subject));
+        await BatchGateOwnershipStore.WriteAsync(task.FolderPath,
+            new BatchGateOwnership(review.AttemptId, candidate.Subject), ct).ConfigureAwait(false);
         var pending = _store.Enqueue(candidate);
-        BatchGateOwnershipStore.Write(task.FolderPath,
-            new BatchGateOwnership(review.AttemptId, pending.Subject));
+        await BatchGateOwnershipStore.WriteAsync(task.FolderPath,
+            new BatchGateOwnership(review.AttemptId, pending.Subject), ct).ConfigureAwait(false);
         Lane(pending, "enqueued", deliveredAtUtc: pending.Subject.ReviewCompletedAtUtc);
         return pending;
     }
@@ -1990,6 +1990,14 @@ public sealed partial class BatchGatePilotService
                     TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
                         .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && !recordInStore)
+            {
+                gate = new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0, "",
+                    "Emergency gate interrupted.", false, false)
+                {
+                    FailureKind = BuildTestGateFailureKind.Cancellation,
+                };
+            }
             catch (OperationCanceledException)
             {
                 var reason = ct.IsCancellationRequested
@@ -2004,6 +2012,25 @@ public sealed partial class BatchGatePilotService
                 // The active marker stays; the next tick resumes this gate.
                 _logger.LogWarning(ex, "batch-fallback-gate-interrupted task={TaskKey} attempt={AttemptId} start={Start}",
                     pending.Subject.TaskKey, pending.ReviewAttemptId, starts + 1);
+                return;
+            }
+            if (!recordInStore && !ct.IsCancellationRequested
+                && gate.FailureKind == BuildTestGateFailureKind.Cancellation)
+            {
+                // A live host retries either form of cancellation. Reset the
+                // start budget while retaining any other ownership evidence.
+                if (!Refresh(pending).Subject.CurrentGeneration)
+                    BatchGateOwnershipStore.ClearIfReviewAttempt(task.FolderPath,
+                        pending.ReviewAttemptId);
+                else
+                    BatchGateOwnershipStore.Write(task.FolderPath,
+                        ownership is { ReviewAttemptId: var id } && id == pending.ReviewAttemptId
+                            ? ownership with { FallbackGateActive = true, FallbackGateStarts = 0 }
+                            : new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                                FallbackGateActive: true));
+                _logger.LogWarning(
+                    "batch-emergency-fallback-cancelled task={TaskKey} attempt={AttemptId} reason={Reason}",
+                    pending.Subject.TaskKey, pending.ReviewAttemptId, "gate-interrupted");
                 return;
             }
             if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
