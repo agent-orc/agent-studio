@@ -13,8 +13,8 @@ public enum RunStopDispatch
     StoppedLocally,
 
     /// <summary>
-    /// The card runs on a remote host. The request is recorded for the attempt
-    /// and delivered on the owning runner's next lease renewal.
+    /// A held attempt has no local CLI process to signal. The request is
+    /// recorded for its owner and observed before the next pipeline step.
     /// </summary>
     RemoteStopRequested,
 
@@ -24,8 +24,8 @@ public enum RunStopDispatch
 
 /// <summary>
 /// Plain facts the stop decision needs, read once by the endpoint: whether a
-/// local process was actually signalled, and whether a remote runner currently
-/// holds this card's fenced lease.
+    /// local process was actually signalled, and whether a runner currently
+    /// holds this card's fenced lease.
 /// </summary>
 public sealed record RunStopFacts(bool LocalProcessStopped, bool RemoteLeaseHeld);
 
@@ -35,9 +35,8 @@ public sealed record RunStopFacts(bool LocalProcessStopped, bool RemoteLeaseHeld
 /// <para>
 /// Before this, the endpoint asked the local CLI backend only, so a card
 /// executing on a remote host answered 404 and an operator had no way to stop
-/// the run other than killing the process on the host by hand. A held remote
-/// lease is the positive evidence that a run exists and that its owner can be
-/// told to end it on the next heartbeat.
+/// the run other than killing the process on the host by hand. A held lease
+/// is positive evidence that an owner can end the run at its next boundary.
 /// </para>
 /// </summary>
 public static class RemoteRunStopPolicy
