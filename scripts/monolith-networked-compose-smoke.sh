@@ -56,16 +56,13 @@ print(json.dumps({'username':'website.owner','password':'correct horse battery s
 PY
 )"
 curl "${curl_args[@]}" --fail -H 'Content-Type: application/json' -H 'Origin: https://studio.test' -d "$payload" "$url/api/auth/bootstrap" >/dev/null
-login='{"username":"website.owner","password":"correct horse battery staple!"}'
-curl "${curl_args[@]}" --fail -c "$smoke_root/cookies" -H 'Content-Type: application/json' -H 'Origin: https://studio.test' -d "$login" "$url/api/auth/login" >/dev/null
-curl "${curl_args[@]}" --fail -b "$smoke_root/cookies" "$url/api/v1/studio/board" > "$smoke_root/board.json"
-python3 - "$smoke_root/board.json" <<'PY'
-import json, sys
-assert json.load(open(sys.argv[1], encoding='utf-8')) is not None
-PY
-echo 'Website smoke passed: TLS, owner bootstrap, login, frontend, and board.'
+STUDIO_SMOKE_URL="$url" \
+STUDIO_SMOKE_USERNAME=website.owner \
+STUDIO_SMOKE_PASSWORD='correct horse battery staple!' \
+  node "$repo_root/frontend/scripts/monolith-networked-browser-smoke.mjs"
+echo 'Website smoke passed: TLS, owner bootstrap, browser login, and board.'
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"
   rm -f "$JOB_RESULTS_DIR/website-smoke.log"
-  printf 'Website smoke passed: TLS, owner bootstrap, login, frontend, and board.\n' > "$JOB_RESULTS_DIR/website-smoke.txt"
+  printf 'Website smoke passed: TLS, owner bootstrap, browser login, and board.\n' > "$JOB_RESULTS_DIR/website-smoke.txt"
 fi
