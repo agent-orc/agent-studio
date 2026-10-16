@@ -2024,6 +2024,7 @@ taskRunner.OnRunnerStatusChanged += (projectName, status) =>
 app.MapAllEndpoints();
 app.MapConversationEndpoints();
 app.MapHub<TaskHub>("/hubs/jobs");
+ApiTokenRouteScopes.Declare(app);
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());

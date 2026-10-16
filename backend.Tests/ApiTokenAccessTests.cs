@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -97,7 +98,7 @@ public sealed class ApiTokenAccessTests : IDisposable
     }
 
     [Fact]
-    public async Task Project_scoped_token_cannot_read_workspace_token_aggregates()
+    public async Task Project_scoped_token_cannot_read_any_workspace_route()
     {
         var (store, configuration) = NewStore();
         var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
@@ -113,7 +114,9 @@ public sealed class ApiTokenAccessTests : IDisposable
             "/api/workspace/tokens/timeline",
             "/api/workspace/tokens/timeline/cached",
             "/api/workspace/tokens/expensive-jobs",
-            "/api/workspace/tokens/expensive-jobs/cached"
+            "/api/workspace/tokens/expensive-jobs/cached",
+            "/api/workspace/screenshots",
+            "/api/workspace/future-summary"
         })
         {
             var denied = await Invoke(middleware, "GET", path, scoped.Secret);
@@ -123,7 +126,24 @@ public sealed class ApiTokenAccessTests : IDisposable
             var allowed = await Invoke(middleware, "GET", path, allProjects.Secret);
             Assert.Equal(200, allowed.Response.StatusCode);
         }
-        Assert.Equal(4, called);
+        Assert.Equal(6, called);
+    }
+
+    [Fact]
+    public async Task Project_path_without_endpoint_scope_metadata_is_denied()
+    {
+        var (store, configuration) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
+        var scoped = store.CreateApiToken(new CreateApiTokenRequest("one project", StudioRoles.Viewer,
+            ["mine"], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
+        var called = false;
+        var middleware = new AccessSecurityMiddleware(_ => { called = true; return Task.CompletedTask; }, configuration, store);
+
+        var result = await Invoke(middleware, "GET", "/api/projects/mine/future-feature", scoped.Secret,
+            "?project=mine", declareProjectScope: false);
+
+        Assert.Equal(403, result.Response.StatusCode);
+        Assert.False(called);
     }
 
     [Fact]
@@ -149,7 +169,8 @@ public sealed class ApiTokenAccessTests : IDisposable
         return (new AccessSecurityStore(configuration, NullLogger<AccessSecurityStore>.Instance, _clock), configuration);
     }
 
-    private static async Task<DefaultHttpContext> Invoke(AccessSecurityMiddleware middleware, string method, string path, string token, string query = "")
+    private static async Task<DefaultHttpContext> Invoke(AccessSecurityMiddleware middleware, string method, string path,
+        string token, string query = "", bool declareProjectScope = true)
     {
         var context = new DefaultHttpContext();
         context.Request.Scheme = "https";
@@ -157,6 +178,9 @@ public sealed class ApiTokenAccessTests : IDisposable
         context.Request.Path = path;
         context.Request.QueryString = new QueryString(query);
         context.Request.Headers.Authorization = "Bearer " + token;
+        if (declareProjectScope && path.StartsWith("/api/projects/mine/", StringComparison.Ordinal))
+            context.SetEndpoint(new Endpoint(_ => Task.CompletedTask,
+                new EndpointMetadataCollection(new ApiTokenRouteScope(ProjectRouteScope.Addressed)), path));
         context.Response.Body = new MemoryStream();
         await middleware.InvokeAsync(context);
         return context;

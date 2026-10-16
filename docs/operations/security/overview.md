@@ -102,9 +102,10 @@ that is already allowed to edit that project's checkout.
   origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
   attribution only. API tokens cannot call access administration, versioned
   Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
-  Workspace token timelines and expensive-jobs lists can span all watched
-  projects, including cached responses, so those routes require the `*`
-  project grant. A `?project=` query alone does not narrow their payloads.
+  Each mapped API route declares its token project scope. Routes without a
+  project address, including workspace timelines, expensive-jobs lists, and
+  screenshots, require the `*` project grant. A `?project=` query cannot turn
+  a workspace route into a project route.
 - A Runner never receives a human password or session cookie.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,

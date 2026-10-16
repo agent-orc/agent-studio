@@ -234,6 +234,14 @@ public sealed class AccessSecurityMiddleware
                     await Reject(context, 403, "project-scope-denied", "A project-scoped token cannot mutate installation-wide settings.");
                     return;
                 }
+                var declaredScope = context.GetEndpoint()?.Metadata.GetMetadata<ApiTokenRouteScope>()?.Scope
+                    ?? ProjectRouteScope.WorkspaceWide;
+                if (declaredScope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler)
+                    && !apiToken.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal))
+                {
+                    await Reject(context, 403, "project-scope-denied", "This token requires a workspace scope for this route.");
+                    return;
+                }
                 if (!ProjectAllowed(apiToken.User, context.Request, path))
                 {
                     await Reject(context, 403, "project-scope-denied", "This token is not scoped to the requested project.");
