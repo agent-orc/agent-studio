@@ -53,8 +53,11 @@ records without a checkout remain in the report for manual setup. For example:
 The registry's `RepositoryPath`, `RootPath`, and legacy task
 `StorageLocation` are mapped only to existing server directories. A checkout
 path must contain `.git`. Copy the task store before applying its path mapping;
-the import updates pointers and does not move task files. Project URL previews
-in the networked browser use Studio's HTTPS project preview route. The server
+the import updates pointers and does not move task files. A root-only project
+must also resolve to a Git checkout; the import records that checkout as its
+repository path. Project URL previews in the networked browser use Studio's
+HTTPS project preview route with a response-level sandbox, including when the
+preview is opened in a separate tab. The server
 connects to the registered URL; `localhost` therefore names the server, not
 the operator's browser. The VS Code launch shortcut is available only in the
 local profile. The networked status bar reads provider health from runner host

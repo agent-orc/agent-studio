@@ -34,14 +34,14 @@ public static class ProjectPathImport
         if (root is not null && !Directory.Exists(root))
             return new(project.Id, project.DisplayName, "missing-checkout", repository, root, storage,
                 $"Server working directory does not exist: {root}");
-        if (repository is not null && !Directory.Exists(Path.Combine(repository, ".git"))
-            && !File.Exists(Path.Combine(repository, ".git")))
+        if (!Directory.Exists(Path.Combine(checkout, ".git"))
+            && !File.Exists(Path.Combine(checkout, ".git")))
             return new(project.Id, project.DisplayName, "missing-checkout", repository, root, storage,
-                $"Server checkout is not a git repository: {repository}");
+                $"Server checkout is not a git repository: {checkout}");
         if (storage is not null && !Directory.Exists(storage))
             return new(project.Id, project.DisplayName, "missing-storage", repository, root, storage,
                 $"Task storage does not exist: {storage}");
-        return new(project.Id, project.DisplayName, "ready", repository, root, storage, null);
+        return new(project.Id, project.DisplayName, "ready", checkout, root, storage, null);
     }
 
     public static string? Map(string? source, IReadOnlyList<ProjectPathMapping> mappings)
