@@ -299,6 +299,13 @@ if (options.HealthCheckOnly)
 try
 {
     await client.EnsureCompatibleAsync(shutdown.Token);
+    // The host polls for device-login commands independently of task slots.
+    // Only coding and review service identities own provider CLI homes.
+    var deviceLoginPoll = daemonMode && options.Role is ("coding" or "review")
+        ? new DeviceLoginPoller(client, Log, options.StateDir).RunAsync(shutdown.Token)
+        : Task.CompletedTask;
+    _ = deviceLoginPoll.ContinueWith(task => Log($"device-login poll stopped: {task.Exception?.GetBaseException().GetType().Name}"),
+        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     if (options.Role == "gate")
     {
         if (!daemonMode)

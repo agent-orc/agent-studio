@@ -53,6 +53,8 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
+builder.Services.AddSingleton<DeviceLoginSessions>();
+builder.Services.AddHostedService<DeviceLoginAuditSweep>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
 builder.Services.AddSingleton<LegacyMigrationService>();
@@ -250,6 +252,7 @@ app.MapStudioEndpoints();
 // Studio route-ownership P1 "task detail and hosts" bundle
 // (docs/studio-route-ownership/index.html).
 app.MapStudioHostsEndpoints();
+app.MapDeviceLoginEndpoints();
 app.MapStudioProjectMetaEndpoints();
 app.MapStudioRunnerOrchestratorEndpoints();
 app.MapStudioTaskMetadataEndpoints();

@@ -1249,6 +1249,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
     await expect(remote.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'retrying');
     await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toHaveAttribute('data-state', 'limited');
+    await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toContainText('rate limited');
     await expect(remote.getByTestId('remote-host-provider-auth-antigravity')).toHaveAttribute('data-state', 'expiring');
     await expect(remote.getByTestId('remote-host-provider-auth-gemini')).toHaveAttribute('data-state', 'unknown');
     await expect(remote.getByTestId('remote-host-provider-auth-expiry-antigravity')).toContainText('Expires in 10 days');
@@ -1264,6 +1265,7 @@ test.describe('Execution Hosts settings section', () => {
 
   test('completes host-owned Codex device sign-in and waits for the fresh provider probe', async ({ page, devBackend }) => {
     void devBackend;
+    const code = `${'A'.repeat(4)}-${'B'.repeat(4)}`;
     const now = Date.now();
     let allowCompletion = false;
     let signInCompleted = false;
@@ -1295,28 +1297,29 @@ test.describe('Execution Hosts settings section', () => {
     await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()),
     }));
-    await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in', async route => {
+    await page.route('**/api/v1/management/device-logins', async route => {
       requestedBody = route.request().postDataJSON() as Record<string, unknown>;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          handle: 'codex_fake_session', state: 'pending',
-          verificationUrl: 'https://auth.openai.com/codex/device',
-          userCode: 'MOCK-CODE', expiresAt: new Date(now + 900_000).toISOString(),
+          handle: 'codex_fake_session', state: 'queued', sessionKey: 'browser-session',
+          verificationUrl: null,
+          userCode: null, expiresAt: new Date(now + 900_000).toISOString(),
         }),
       });
     });
-    await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in/*', route => {
+    await page.route('**/api/v1/management/device-logins/*', route => {
       signInCompleted = allowCompletion;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          handle: 'codex_fake_session', state: allowCompletion ? 'completed' : 'pending',
+          handle: 'codex_fake_session', state: allowCompletion ? 'completed' : 'running',
           detail: allowCompletion ? 'Codex sign-in completed.' : 'Waiting for browser sign-in.',
-          requestedAt: new Date(now).toISOString(), expiresAt: new Date(now + 900_000).toISOString(),
-          completedAt: allowCompletion ? new Date().toISOString() : null,
+          verificationUrl: allowCompletion ? null : 'https://auth.openai.com/codex/device',
+          userCode: allowCompletion ? null : code,
+          expiresAt: new Date(now + 900_000).toISOString(),
         }),
       });
     });
@@ -1339,10 +1342,9 @@ test.describe('Execution Hosts settings section', () => {
     const dialog = page.getByTestId('codex-sign-in-dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('codex-sign-in-url')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
-    await expect(dialog.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
+    await expect(dialog.getByTestId('codex-sign-in-code')).toContainText(code);
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
-      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
+    expect(requestedBody).toEqual({ hostId: 'agent-runner-01', provider: 'codex' });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'codex-device-sign-in-dark--mocked.png') });

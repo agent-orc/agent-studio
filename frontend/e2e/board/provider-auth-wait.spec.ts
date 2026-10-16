@@ -180,6 +180,7 @@ test('Ready card prefers the supervised link resource while it reconnects', asyn
 });
 
 test('Codex Ready-card wait chip opens the host-owned device sign-in dialog', async ({ page }) => {
+  const code = `${'A'.repeat(4)}-${'B'.repeat(4)}`;
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
     localStorage.setItem('atp.flag.vsCodeLayout', '0');
@@ -188,14 +189,15 @@ test('Codex Ready-card wait chip opens the host-owned device sign-in dialog', as
     }));
   });
   await installRoutes(page, 'codex');
-  await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in', route => json(route, {
-    handle: 'codex_ready_card_session', state: 'pending',
-    verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'MOCK-CODE',
+  await page.route('**/api/v1/management/device-logins', route => json(route, {
+    handle: 'codex_ready_card_session', state: 'queued', sessionKey: 'browser-session',
+    verificationUrl: null, userCode: null,
     expiresAt: new Date(Date.now() + 900_000).toISOString(),
   }));
-  await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in/*', route => json(route, {
-    handle: 'codex_ready_card_session', state: 'pending', detail: 'Waiting for browser sign-in.',
-    requestedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 900_000).toISOString(), completedAt: null,
+  await page.route('**/api/v1/management/device-logins/*', route => json(route, {
+    handle: 'codex_ready_card_session', state: 'running', detail: 'Waiting for browser sign-in.',
+    verificationUrl: 'https://auth.openai.com/codex/device', userCode: code,
+    expiresAt: new Date(Date.now() + 900_000).toISOString(),
   }));
 
   await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
@@ -209,5 +211,5 @@ test('Codex Ready-card wait chip opens the host-owned device sign-in dialog', as
   await expect(wait).toContainText('Sign in');
   await wait.click();
   await expect(page.getByTestId('codex-sign-in-dialog')).toBeVisible();
-  await expect(page.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
+  await expect(page.getByTestId('codex-sign-in-code')).toContainText(code);
 });
