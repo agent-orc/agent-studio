@@ -448,6 +448,13 @@ occur. It is not a claim about tunnel transfer time.
   the existing Task Server-backed grouped task snapshot, excluding completed
   and archived cards. Readiness and last-start diagnosis remain independent, so
   a failed preview keeps both the source context and its compact failure detail.
+  In the networked profile, the registered URL is fetched through Studio's
+  preview proxy. Documents receive a CSP sandbox with an opaque origin. The
+  rewritten asset paths contain a short lived capability scoped to the project
+  URL, so module scripts, root imports, and relative dynamic imports can load
+  without a Studio session cookie. Only those capability-bearing asset
+  responses allow CORS for `Origin: null`; they never allow credentials. Other
+  opaque-origin requests to Studio APIs are rejected before session authentication.
 - `frontend/src/app/features/project-detail/components/workbench-viewer/` is the
   isolated Dossier host. The workspace-wide `#/workbenches` overview and
   project-scoped `#/projects/<project>/workbenches` overview share one ordered

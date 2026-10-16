@@ -1,3 +1,9 @@
+# AGT-3196 project URL module preview status
+
+- Result SHA (Git blob of the implementation payload before the platform-owned commit): `46a93e5a614136578425833095b7de8d54cdc6ab`.
+- Implemented option: short lived, project URL scoped asset capabilities with `Origin: null` CORS only on capability-bearing proxy responses. Networked Studio APIs reject opaque-origin requests even when a session cookie is supplied. HTML asset paths and root JavaScript imports are rewritten to the capability route; relative dynamic imports keep that route.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -maxcpucount:2 -p:UseSharedCompilation=false` passed; `ProjectUrlPreviewProxyTests` passed (6 tests); the architecture and guard filter passed in the backend test project (82 tests) and completed with no matching tests in the runner and Task Server projects; `npm --prefix frontend run lint` and focused ESLint passed. The focused Playwright module preview spec passed in Chromium. Its screenshot is in the collected results directory.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
