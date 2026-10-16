@@ -8,15 +8,30 @@ public interface ILocalFirstRunGitCommand
 {
     Task<(bool Success, string Output)> RunAsync(
         string directory, IReadOnlyList<string> args, CancellationToken ct);
+
+    Task<(bool Success, string Output)> RunAsync(string directory, IReadOnlyList<string> args,
+        IReadOnlyDictionary<string, string?> environment, CancellationToken ct)
+        => RunAsync(directory, args, ct);
 }
 
 public sealed class LocalFirstRunRepositoryProbe(TimeProvider clock, ILocalFirstRunGitCommand? git = null)
 {
     private readonly ILocalFirstRunGitCommand _git = git ?? new LocalFirstRunGitCommand();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _verified = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _deployKeys = new(StringComparer.Ordinal);
+
+    public void SetDeployKey(string projectId, string origin, string? keyPath)
+    {
+        var identity = projectId + "\n" + origin;
+        if (keyPath is null) _deployKeys.TryRemove(identity, out _);
+        else _deployKeys[identity] = keyPath;
+        foreach (var cacheKey in _verified.Keys.Where(value => value.StartsWith(identity + "\n",
+            StringComparison.Ordinal)))
+            _verified.TryRemove(cacheKey, out _);
+    }
 
     public async Task<object?> ReadAsync(ProjectRecord project, string integrationRef,
-        CancellationToken ct, bool force = false)
+        CancellationToken ct, bool force = false, string? keyPath = null)
     {
         var origin = project.Urls.FirstOrDefault(url =>
             string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase))?.Url;
@@ -24,7 +39,9 @@ public sealed class LocalFirstRunRepositoryProbe(TimeProvider clock, ILocalFirst
         if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(path)
             || !Directory.Exists(path)) return null;
 
-        var cacheKey = string.Join('\n', project.Id, origin, path, integrationRef);
+        keyPath ??= _deployKeys.GetValueOrDefault(project.Id + "\n" + origin);
+
+        var cacheKey = string.Join('\n', project.Id, origin, path, integrationRef, keyPath);
         var now = clock.GetUtcNow();
         if (!force && _verified.TryGetValue(cacheKey, out var verifiedAt)
             && now - verifiedAt < TimeSpan.FromMinutes(5))
@@ -34,13 +51,26 @@ public sealed class LocalFirstRunRepositoryProbe(TimeProvider clock, ILocalFirst
         if (!remoteOk || !string.Equals(remote.Trim(), origin.Trim(), StringComparison.Ordinal))
             return Status(project, origin, integrationRef, false, "origin-mismatch", now);
 
-        var (readOk, _) = await _git.RunAsync(path, ["ls-remote", "--heads", "origin"], ct);
+        var transport = keyPath is null ? "origin" : "git@github.com:" + new Uri(origin).AbsolutePath.TrimStart('/');
+        IReadOnlyDictionary<string, string?>? environment = keyPath is null ? null
+            : new Dictionary<string, string?>
+            {
+                ["GIT_CONFIG_NOSYSTEM"] = "1",
+                ["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null",
+                ["GIT_SSH_COMMAND"] = $"ssh -i '{keyPath.Replace('\\', '/')}' -o IdentitiesOnly=yes -o IdentityAgent=none "
+                    + "-o BatchMode=yes -o StrictHostKeyChecking=accept-new "
+                    + $"-o UserKnownHostsFile='{Path.Combine(Path.GetDirectoryName(keyPath)!, "known_hosts").Replace('\\', '/')}'",
+            };
+        async Task<(bool Success, string Output)> GitAsync(IReadOnlyList<string> args)
+            => environment is null ? await _git.RunAsync(path, args, ct)
+                : await _git.RunAsync(path, args, environment, ct);
+        var (readOk, _) = await GitAsync(["ls-remote", "--heads", transport]);
         var temporaryRef = "refs/heads/agent-studio-access-probe/" + Guid.NewGuid().ToString("N");
         var (pushOk, _) = readOk
-            ? await _git.RunAsync(path, ["push", "origin", "HEAD:" + temporaryRef], ct)
+            ? await GitAsync(["push", transport, "HEAD:" + temporaryRef])
             : (false, string.Empty);
         var (deleteOk, _) = pushOk
-            ? await _git.RunAsync(path, ["push", "origin", ":" + temporaryRef], ct)
+            ? await GitAsync(["push", transport, ":" + temporaryRef])
             : (false, string.Empty);
         var writeOk = pushOk && deleteOk;
         if (readOk && writeOk) _verified[cacheKey] = now;
@@ -77,6 +107,10 @@ public sealed class LocalFirstRunGitCommand : ILocalFirstRunGitCommand
 {
     public async Task<(bool Success, string Output)> RunAsync(
         string directory, IReadOnlyList<string> args, CancellationToken ct)
+        => await RunAsync(directory, args, new Dictionary<string, string?>(), ct);
+
+    public async Task<(bool Success, string Output)> RunAsync(string directory,
+        IReadOnlyList<string> args, IReadOnlyDictionary<string, string?> environment, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
@@ -94,6 +128,8 @@ public sealed class LocalFirstRunGitCommand : ILocalFirstRunGitCommand
         };
         process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         process.StartInfo.Environment["GCM_INTERACTIVE"] = "Never";
+        foreach (var (key, value) in environment)
+            process.StartInfo.Environment[key] = value;
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
         try
         {

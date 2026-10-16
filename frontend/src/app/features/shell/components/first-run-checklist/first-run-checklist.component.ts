@@ -40,6 +40,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   private poll: ReturnType<typeof setInterval> | null = null;
   private loginPoll: ReturnType<typeof setInterval> | null = null;
   private gitPoll: ReturnType<typeof setInterval> | null = null;
+  private reloadQueued = false;
   readonly openProjectSettings = output<string>();
 
   readonly loading = signal(false);
@@ -146,7 +147,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   }
 
   reload(): void {
-    if (this.loading()) return;
+    if (this.loading()) { this.reloadQueued = true; return; }
     this.nowMs.set(Date.now());
     this.loading.set(true);
     this.hosts.reload();
@@ -179,19 +180,20 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
         map(value => ({ value, error: false } as Probe<RepositoryStatus>)),
         catchError(() => of({ value: null, error: true } as Probe<RepositoryStatus>)));
     })).subscribe({
-      next: repository => { this.repository.set(repository); this.loading.set(false); this.refreshProof(); },
-      error: () => this.loading.set(false),
+      next: repository => { this.repository.set(repository); this.finishReload(); this.refreshProof(); },
+      error: () => this.finishReload(),
     });
   }
-
+  private finishReload(): void {
+    this.loading.set(false);
+    if (this.reloadQueued) { this.reloadQueued = false; this.reload(); }
+  }
   openProject(): void {
     const project = this.firstProject();
     if (project) this.openProjectSettings.emit(project.displayName);
     else this.workspaces.openProjectOnboard('');
   }
-
   openHosts(): void { this.overlays.select('remote-hosts'); }
-
   startGitSetup(): void {
     if (!this.gitSetupValid() || this.gitStarting()) return;
     this.gitStarting.set(true);

@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
-using System.Threading.Channels;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -57,39 +55,22 @@ public sealed class RunnerDeviceLoginAgent(RunnerOptions options, TaskServerClie
     private async Task<bool> RunLoginAsync(RunnerDeviceLoginWork work, CancellationToken ct)
     {
         if (work.Provider is not ("codex" or "claude")) return false;
-        using var process = CreateProcess(work.Provider, status: false);
-        if (!process.Start()) return false;
-        using var cancellation = ct.Register(() => Kill(process));
-        var lines = Channel.CreateBounded<string>(new BoundedChannelOptions(32)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-        });
-        var stdout = PumpAsync(process.StandardOutput, lines.Writer, ct);
-        var stderr = PumpAsync(process.StandardError, lines.Writer, ct);
         string? claudeToken = null;
-        var reader = Task.Run(async () =>
+        string? url = null;
+        string? code = null;
+        var instructionsSent = false;
+        var launcher = new RunnerProviderSetupLauncher(options.CodexCliBin, options.ClaudeCliBin);
+        var loginSucceeded = await launcher.RunAsync(work.Provider, status: false, async line =>
         {
-            string? url = null;
-            string? code = null;
-            var sent = false;
-            await foreach (var line in lines.Reader.ReadAllAsync(ct))
-            {
-                url ??= SafeVerificationUrl(line);
-                code ??= DeviceCode(line);
-                if (work.Provider == "claude") claudeToken ??= ClaudeToken(line);
-                if (sent || url is null || work.Provider == "codex" && code is null) continue;
-                await client.ReportDeviceLoginInstructionsAsync(options.RunnerId, work.Id,
-                    new ReportRunnerDeviceInstructionsRequest(url, code), ct);
-                sent = true;
-            }
-            return sent;
+            url ??= SafeVerificationUrl(line);
+            code ??= DeviceCode(line);
+            if (work.Provider == "claude") claudeToken ??= ClaudeToken(line);
+            if (instructionsSent || url is null || work.Provider == "codex" && code is null) return;
+            await client.ReportDeviceLoginInstructionsAsync(options.RunnerId, work.Id,
+                new ReportRunnerDeviceInstructionsRequest(url, code), ct);
+            instructionsSent = true;
         }, ct);
-        await process.WaitForExitAsync(ct);
-        await Task.WhenAll(stdout, stderr);
-        lines.Writer.TryComplete();
-        var instructionsSent = await reader;
-        if (process.ExitCode != 0 || !instructionsSent) return false;
+        if (!loginSucceeded || !instructionsSent) return false;
         var previousClaudeToken = work.Provider == "claude"
             ? Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN") : null;
         if (work.Provider == "claude")
@@ -100,14 +81,8 @@ public sealed class RunnerDeviceLoginAgent(RunnerOptions options, TaskServerClie
         var accepted = false;
         try
         {
-            using var status = CreateProcess(work.Provider, status: true);
-            if (!status.Start()) return false;
-            using var statusCancellation = ct.Register(() => Kill(status));
-            var stdoutDrain = status.StandardOutput.ReadToEndAsync(ct);
-            var stderrDrain = status.StandardError.ReadToEndAsync(ct);
-            await status.WaitForExitAsync(ct);
-            await Task.WhenAll(stdoutDrain, stderrDrain);
-            if (status.ExitCode != 0) return false;
+            if (!await launcher.RunAsync(work.Provider, status: true, _ => Task.CompletedTask, ct))
+                return false;
             if (work.Provider == "claude")
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(ClaudeTokenPath)!);
@@ -121,32 +96,6 @@ public sealed class RunnerDeviceLoginAgent(RunnerOptions options, TaskServerClie
             if (!accepted && work.Provider == "claude")
                 Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", previousClaudeToken);
         }
-    }
-
-    private Process CreateProcess(string provider, bool status)
-    {
-        var start = new ProcessStartInfo
-        {
-            FileName = provider == "codex" ? options.CodexCliBin : options.ClaudeCliBin,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        string[] arguments = provider == "codex"
-            ? status ? ["login", "status"] : ["login", "--device-auth"]
-            : status ? ["auth", "status", "--text"] : ["setup-token"];
-        foreach (var argument in arguments)
-            start.ArgumentList.Add(argument);
-        start.Environment["NO_BROWSER"] = "1";
-        start.Environment["BROWSER"] = "false";
-        return new Process { StartInfo = start };
-    }
-
-    private static async Task PumpAsync(StreamReader stream, ChannelWriter<string> writer, CancellationToken ct)
-    {
-        while (await stream.ReadLineAsync(ct) is { } line)
-            writer.TryWrite(line);
     }
 
     internal static string? SafeVerificationUrl(string line)
@@ -195,9 +144,4 @@ public sealed class RunnerDeviceLoginAgent(RunnerOptions options, TaskServerClie
         }
     }
 
-    private static void Kill(Process process)
-    {
-        try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-        catch (InvalidOperationException) { }
-    }
 }
