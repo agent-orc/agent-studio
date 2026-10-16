@@ -1,5 +1,6 @@
 # AGT-3153 release workflow status
 
+
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
 - Implemented the operator's rollback option: stage all eight images at `sha-<commit>`, record previous `v<version>` and `latest` digests, promote those tags before creating the GitHub Release, and restore touched tags if promotion fails. The rollback test covers a failure after the fourth copy, including removal of newly created version tags.
 - Kept AGT-3158's installation scenarios and deferred-step gate in the release candidate path. Workflow dispatch uploads the complete candidate and image artifacts without publishing.
@@ -15,3 +16,10 @@
 - Before, on stable `8a0b58b09`: observed `GET /api/tasks` latencies were 18, 166, 120, up to 304, and 64 seconds during write bursts. In one 64,530 ms trace, compose took 63,587 ms. The observed full scan took 260 to 530 ms and ran several times per second.
 - After, in the isolated `DirtyIndex_BoardReadsServeThePublishedSnapshot_WithoutRunningOrAwaitingTheRefresh` test: 90 grouped reads completed during a 1,755.257 ms write interval with 8 creations, 1 continue, 7 sidecar writes, and 7 claims. The slowest measured read was 20.951 ms; 6 full scans covered the 23 writes. Across 93 board traces from that test, the maximum `compose` stage was 8.592 ms and `compose.identity` was 0.150 ms. These test measurements are not a production load comparison.
 - Verification: the focused burst test passed; the five changed backend test classes passed (135 tests), and the lease and trace classes passed (19 tests). The backend architecture and guard filter passed (81 tests), including the test clock guard. The same filter completed in the other seven .NET test projects with no matching tests. The backend and operations-server test project builds passed, and the solution build built the other six test projects before it was stopped while waiting on the host's shared compiler. `npm --prefix frontend run lint` passed.
+
+# AGT-3200 workspace deployment dashboard status
+
+- Result source SHA-256: `e6b110eac401cdd3d2c35f82b77edaa1ca93637f3606f135fa8adcf4c27aeb8f` (the frontend source and test tree over base commit `2c4ec9e8c62e55f1b88763442277e426aab862a4`; the managed platform creates the delivery commit after this run).
+- Implemented the Dossier's recommended BD-D1 option A for the workspace dashboard entry point and BD-D2 option A for its two-environment matrix slice. Each project has Staging and Production status from a typed fixture until BD-1 provides the API. Cells open the project's existing Deployment rail.
+- The dashboard labels all fixture values as sample data. Group and environment filters, release, age, deployment state, health, approvals, and newer-release indicators are present.
+- Verification: solution and frontend builds passed; `npm --prefix frontend run lint` passed; the focused dashboard component class passed (2 tests); the architecture/guard filter passed in backend (82 tests), runner (no matches), and Task Server (no matches); the focused mocked Playwright spec passed and saved dark and light screenshots under the task results directory.

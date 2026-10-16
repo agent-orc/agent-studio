@@ -1,11 +1,22 @@
 # Frontend Domain Map
 
-Version: 2026-10-10
+Version: 2026-10-16
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Workspace deployment dashboard
+
+The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
+It lists projects against Staging and Production, with release version, deploy
+age and state, health, pending approval, and newer release. Project group and
+environment filters apply to the matrix; selecting a cell opens that project's
+Deployment rail. The dashboard currently reads a typed fixture service and
+labels its values as sample data. BD-1 will replace the fixture producer with
+the deployment API; the `Environment`, `Release`, `Deployment`, and
+`EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
 
 The project execution assignment card warns when automatic pickup is placed
 at `local` and the settings projection reports `localCodingAdmitted: false`.
