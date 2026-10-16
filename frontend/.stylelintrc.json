@@ -238,6 +238,7 @@
         "src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.scss",
         "src/app/features/project-detail/components/deployment-definition-editor/deployment-definition-editor.scss",
         "src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.scss",
+        "src/app/features/project-detail/components/project-deploy-area/project-deploy-area.scss",
         "src/app/features/project-detail/components/project-integration-panel/project-integration-panel.component.scss",
         "src/app/features/project-detail/components/project-git-changes/project-git-changes.component.scss",
         "src/app/features/project-detail/components/project-git-history/project-git-history.component.scss",

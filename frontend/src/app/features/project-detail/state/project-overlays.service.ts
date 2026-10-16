@@ -266,7 +266,7 @@ export class ProjectOverlaysService {
       }
       return;
     }
-    const railKey: ProjectRailKey = isProjectRailKey(railRaw) ? railRaw : DEFAULT_PROJECT_RAIL_KEY;
+    const railKey: ProjectRailKey = railRaw === 'deployment' ? 'deploy' : (isProjectRailKey(railRaw) ? railRaw : DEFAULT_PROJECT_RAIL_KEY);
     if (this.projectShellName() !== match.name) this.projectShellName.set(match.name);
     if (this.projectShellRail() !== railKey) this.projectShellRail.set(railKey);
   }
