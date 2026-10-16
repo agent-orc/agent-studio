@@ -6,7 +6,6 @@
             (click)="reload()">
       <app-studio-icon name="refresh" [size]="14" />
     </button>
-
     <div class="url-preview__addr" data-testid="url-preview-addr">
       <app-studio-icon class="url-preview__addr-icon" name="link" [size]="12" />
       <app-project-url-address
@@ -18,7 +17,6 @@
             [attr.data-status]="statusPill()"
             data-testid="url-preview-status">{{ statusPill() }}</span>
     </div>
-
     <button type="button" class="url-preview__nav"
             data-testid="url-preview-open-external"
             cacTooltip="Open in external browser"
@@ -37,13 +35,16 @@
             (click)="showMenu()">
       <app-studio-icon name="more" [size]="14" />
     </button>
-
     <app-menu [items]="menuItems()" [open]="menuOpen()" [anchorEl]="menuTrigger"
               [position]="menuPosition()" ariaLabel="Embed actions" testIdPrefix="url-preview-menu"
               (itemClick)="onMenuItem($event)" (closeRequest)="menuOpen.set(false)" />
   </div>
+  <app-product-feedback [projectName]="projectName()" [watchPath]="projectWatchPath()" [previewAddress]="displayUrl()" />
   @if (resolveState() === 'resolved') {
-    <app-project-url-context-header [projectId]="projectId()" [projectName]="projectName()" [urlId]="urlId()" [workingDirectoryKey]="urlRecord()?.startRule?.cwd || repositoryPath() || rootPath()" />
+    <details class="url-preview__technical" data-testid="url-preview-technical">
+      <summary>Technical details</summary>
+      <app-project-url-context-header [projectId]="projectId()" [projectName]="projectName()" [urlId]="urlId()" [workingDirectoryKey]="urlRecord()?.startRule?.cwd || repositoryPath() || rootPath()" />
+    </details>
   }
   <div class="url-preview__body">
     @switch (resolveState()) {
@@ -283,7 +284,6 @@
       }
     }
   </div>
-
   <app-project-url-process-console [label]="projectName() + ' / ' + (urlRecord()?.label ?? urlId())"
     [session]="process.session()" [open]="process.consoleOpen()" [stopping]="process.stopping()"
     (stopRequest)="stop()" (closeRequest)="process.consoleOpen.set(false)" />

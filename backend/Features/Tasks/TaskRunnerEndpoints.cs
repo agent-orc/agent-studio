@@ -180,6 +180,56 @@ public static class TaskRunnerEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
+        group.MapPost("/{jobId}/preview-feedback", async (
+            string jobId, string? project, string? watchPath, HttpContext context,
+            TaskScannerService scanner, TaskMutationService mutations, TaskRunnerService runner,
+            AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            if (scanner.FindJob(jobId, watchPath) is null) return Results.NotFound();
+            if (!context.Request.HasFormContentType)
+                return Results.BadRequest(new { error = "A screenshot crop and comment are required." });
+
+            var form = await context.Request.ReadFormAsync(ct);
+            var comment = form["comment"].ToString();
+            var address = form["previewAddress"].ToString();
+            var selector = form["selector"].ToString();
+            var error = PreviewFeedbackPrompt.Validate(comment, address, selector);
+            if (error is not null) return Results.BadRequest(new { error });
+
+            var crop = form.Files["crop"];
+            if (crop is null || crop.Length is <= 0 or > 8_000_000
+                || crop.ContentType is not ("image/png" or "image/jpeg" or "image/webp"))
+                return Results.BadRequest(new { error = "A PNG, JPEG, or WebP crop under 8 MB is required." });
+
+            using var bytes = new MemoryStream();
+            await crop.CopyToAsync(bytes, ct);
+            var (fileName, saveError) = mutations.SaveAttachment(
+                jobId, watchPath, bytes.ToArray(), crop.FileName, crop.ContentType);
+            if (fileName is null) return Results.BadRequest(new { error = saveError });
+
+            var prompt = PreviewFeedbackPrompt.Build(comment, address, selector,
+                $"attachments/{fileName}");
+            var caller = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                ? human.User.DisplayName
+                : context.User.Identity?.Name
+                    ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
+                    ?? "local-default";
+            try
+            {
+                var result = await runner.ContinueJobAsync(jobId, prompt, watchPath,
+                    author: TimelineActors.Human(caller), ct: ct,
+                    reason: "preview-feedback", triggeredBy: caller);
+                return result.Status is "queued" or "saved"
+                    ? Results.Accepted(value: result)
+                    : Results.Ok(result);
+            }
+            catch (TaskOperationException ex)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: ex.Status);
+            }
+        }).DisableAntiforgery().WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
         group.MapGet("/{jobId}/output", (string jobId, string? project, string? watchPath, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);

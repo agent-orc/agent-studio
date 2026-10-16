@@ -149,6 +149,7 @@ test('keeps start, settings, live output, and stop in the embed in both themes',
   const start = page.getByTestId('url-preview-start');
   const open = page.getByTestId('url-preview-failure-open-external');
   await expect(offline).toBeVisible();
+  await page.getByTestId('url-preview-technical').locator('summary').click();
   await expect(page.getByTestId('url-preview-repository')).toHaveText('quality-studio');
   await expect(page.getByTestId('url-preview-branch')).toHaveText('task/agt-2455-preview-context');
   await expect(page.getByTestId('url-preview-head')).toHaveText('abcdef01');

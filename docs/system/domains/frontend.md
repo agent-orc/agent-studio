@@ -60,6 +60,12 @@ the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 
+### Product preview and feedback
+
+The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
+
+Cross-origin iframes do not expose their pixels or DOM to Studio. Screenshot markup therefore uses the task's captured image, and a selector is optional unless the person knows it. The Project URL registry currently supplies the preview address. A task-specific preview address requires the companion card-preview contract when it becomes available.
+
 Product calls to `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`,
 and `Intl` formatters pass an explicit locale. The current product formatting
 locale is `en-US`; `frontend/scripts/check-explicit-locales.mjs` enforces this
