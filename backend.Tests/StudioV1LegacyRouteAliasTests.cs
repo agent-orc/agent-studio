@@ -202,6 +202,16 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
         });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.DoesNotContain("/api/v1/orchestration/host-decisions", upstream.Paths);
+
+        foreach (var cardRoute in new[]
+                 {
+                     "/api/v1/orchestration/runs/run-1/grounds-input",
+                     "/api/v1/orchestration/decision-grounds/pending",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await browser.GetAsync(cardRoute)).StatusCode);
+            Assert.Contains(cardRoute, upstream.Paths);
+        }
     }
 
     private static async Task AssertSameBodyAsync(HttpClient client, string versioned, string legacy)

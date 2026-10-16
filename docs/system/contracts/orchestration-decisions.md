@@ -145,9 +145,19 @@ from 30 days, labels the model result counterfactual, and requires explicit
 activation. An occurrence freezes the active rule version in its grounds, so
 later activation does not rewrite its receipt.
 
+Studio owns `GET /api/workspaces/{workspaceId}/decision-rules` and its
+`POST /versions`, `POST /versions/{versionId}/activate`,
+`POST /versions/{versionId}/rollback`, and
+`GET /versions/{versionId}/dry-run` subroutes. Each accepts an optional
+`projectId` query parameter for a project overlay. Studio receipt and spend
+queries at `/api/orchestration/decision-receipts` and its `/spend` subroute
+accept `workspaceId` as well as `hostId` and card or project filters.
+
 The engine can submit a card-free `capacity-check` host occurrence through
 `/api/v1/orchestration/host-decisions`. Its scope has a host and workspace id
-with null card, attempt and fence. The Task Server pins the workspace rules,
+with null card, attempt and fence. Studio handles this route on its receipt
+plane in both local and Task Server proxy profiles; the Task Server has no
+host-decision handler. Studio pins the workspace rules,
 resolves the configured strong model, bounds source references and freezes the
 grounds. The engine's receipt loop records zero to three offered actions with
 assessment and report content. The receipt remains immutable; host history is

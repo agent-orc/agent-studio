@@ -19,10 +19,11 @@ public static class OrchestratorDecisionEndpoints
 {
     private static readonly JsonSerializerOptions WireJson = DecisionGroundsPolicy.Json;
 
-    public static void MapOrchestratorDecisionEndpoints(this WebApplication app)
+    public static void MapOrchestratorDecisionEndpoints(this WebApplication app, bool mapsEngineRoutes)
     {
-        // Decision receipts share the Studio-owned store in both local and proxy profiles.
-        // The Task Server proxy has no handler for these engine endpoints.
+        // The Task Server owns card-scoped engine routes in the proxy profile.
+        // Host decisions share the Studio-owned receipt store in both profiles.
+        if (mapsEngineRoutes)
         {
             var engine = app.MapGroup("/api/v1/orchestration");
             engine.MapGet("/runs/{runId}/grounds-input", (HttpContext context, string runId,
@@ -33,65 +34,6 @@ public static class OrchestratorDecisionEndpoints
                 AccessSecurityStore security, OrchestratorDecisionStore store) =>
                 MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
                     : Wire(store.PendingReceipts(limit ?? 10)));
-            engine.MapPost("/host-decisions", (HttpContext context, HostDecisionOccurrenceRequestV1 request,
-                AccessSecurityStore security, OrchestratorDecisionStore store,
-                DecisionRuleVersionStore rules, WorkspaceRegistry workspaces,
-                WorkspaceSettingsService settings) => MonolithOrchestrationEndpoints.Execute(() =>
-            {
-                if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
-                    return Results.Unauthorized();
-                if (workspaces.Find(request.WorkspaceId) is null) return Results.NotFound();
-                if (string.IsNullOrWhiteSpace(request.OccurrenceId)
-                    || string.IsNullOrWhiteSpace(request.HostId)
-                    || request.HostId.Length > 128 || request.OccurrenceId.Length > 160
-                    || string.IsNullOrWhiteSpace(request.TriggerKind)
-                    || string.IsNullOrWhiteSpace(request.Profile)
-                    || request.ObservedAt.Kind != DateTimeKind.Utc
-                    || request.Facts is null || request.Alternatives is null || request.Omissions is null
-                    || request.Facts.Count > DecisionGroundsPolicy.MaxFacts
-                    || request.Facts.Any(fact => fact is null || fact.Source is null
-                        || string.IsNullOrWhiteSpace(fact.Source.Ref)
-                        || fact.Source.Ref.Length > 256
-                        || fact.Source.Ref.Contains("raw-session", StringComparison.OrdinalIgnoreCase)
-                        || fact.Source.Ref.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-                        || fact.Source.Ref.StartsWith('/'))
-                    || request.Alternatives.Count > DecisionGroundsPolicy.MaxAlternatives
-                    || request.Alternatives.Any(candidate => candidate is null
-                        || !DecisionActionKinds.All.Contains(candidate.Action))
-                    || request.Profile == "capacity-check" && request.TriggerKind != "capacity-check"
-                    || request.Cadence is not (null or "scheduled" or "event"))
-                    return Results.BadRequest(new ApiError("invalid-host-decision", "Host occurrence has invalid scope, trigger, or candidates."));
-                var workspace = settings.Get(request.WorkspaceId);
-                var activeRules = rules.EffectiveRules(request.WorkspaceId);
-                var policyVersion = rules.ActiveVersionId(request.WorkspaceId) ?? "platform.v1";
-                var model = activeRules
-                    .Where(rule => rule.Trigger == request.Profile || rule.Trigger == request.TriggerKind)
-                    .Select(rule => rule.Model)
-                    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
-                    ?? workspace.OrchestratorModel ?? "gpt-5.6-sol";
-                if (!DecisionRulePolicy.Validate([new DecisionRuleV1("model-route", request.Profile,
-                        "host.health", null, [], "A1", model, "ask")], false).Accepted)
-                    return Results.BadRequest(new ApiError("model-below-floor", "Host decision model is below the trusted correctness floor."));
-                var at = request.ObservedAt;
-                var ledger = new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0,
-                    DecisionTokenUsageV1.Zero, 0, 0, 0, [], DecisionPriceStatuses.NoUsage, "host", []);
-                var grounds = new DecisionGroundsInputV1(request.OccurrenceId,
-                    new(request.TriggerKind, request.Profile, at, request.Cadence),
-                    new("host", null, null, null, null, null, request.HostId, request.WorkspaceId),
-                    null, null, policyVersion,
-                    new("codex", model, workspace.OrchestratorThinkingLevel ?? "high",
-                        DecisionModelCustody.RunnerHostJob),
-                    request.Facts.Concat(DecisionRulePolicy.Signals(activeRules, request.Profile,
-                        request.Facts, policyVersion, at))
-                        .Concat(request.TriggerKind == request.Profile ? []
-                            : DecisionRulePolicy.Signals(activeRules, request.TriggerKind,
-                                request.Facts, policyVersion, at)).ToArray(),
-                    DecisionRulePolicy.Apply(activeRules, request.TriggerKind, request.Profile,
-                        request.Facts, request.Alternatives, at), [], ledger,
-                    new("host.v1", "Host occurrence has no card rounds.", null, 0, 0, 0), request.Omissions);
-                return Wire(store.FreezeInputs(new(grounds, DecisionActionKinds.Observe,
-                    request.HostId, "Host occurrence", DecisionReceiptPolicy.ActiveMode)));
-            })).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
             engine.MapPost("/decision-jobs", (HttpContext context, OrchestratorDecisionJobRequest request,
                 AccessSecurityStore security, OrchestratorDecisionStore store) =>
                 MonolithOrchestrationEndpoints.Execute(() =>
@@ -126,6 +68,67 @@ public static class OrchestratorDecisionEndpoints
                 return result;
             });
         }
+
+        var host = app.MapGroup("/api/v1/orchestration");
+        host.MapPost("/host-decisions", (HttpContext context, HostDecisionOccurrenceRequestV1 request,
+            AccessSecurityStore security, OrchestratorDecisionStore store,
+            DecisionRuleVersionStore rules, WorkspaceRegistry workspaces,
+            WorkspaceSettingsService settings) => MonolithOrchestrationEndpoints.Execute(() =>
+        {
+            if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
+                return Results.Unauthorized();
+            if (workspaces.Find(request.WorkspaceId) is null) return Results.NotFound();
+            if (string.IsNullOrWhiteSpace(request.OccurrenceId)
+                || string.IsNullOrWhiteSpace(request.HostId)
+                || request.HostId.Length > 128 || request.OccurrenceId.Length > 160
+                || string.IsNullOrWhiteSpace(request.TriggerKind)
+                || string.IsNullOrWhiteSpace(request.Profile)
+                || request.ObservedAt.Kind != DateTimeKind.Utc
+                || request.Facts is null || request.Alternatives is null || request.Omissions is null
+                || request.Facts.Count > DecisionGroundsPolicy.MaxFacts
+                || request.Facts.Any(fact => fact is null || fact.Source is null
+                    || string.IsNullOrWhiteSpace(fact.Source.Ref)
+                    || fact.Source.Ref.Length > 256
+                    || fact.Source.Ref.Contains("raw-session", StringComparison.OrdinalIgnoreCase)
+                    || fact.Source.Ref.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                    || fact.Source.Ref.StartsWith('/'))
+                || request.Alternatives.Count > DecisionGroundsPolicy.MaxAlternatives
+                || request.Alternatives.Any(candidate => candidate is null
+                    || !DecisionActionKinds.All.Contains(candidate.Action))
+                || request.Profile == "capacity-check" && request.TriggerKind != "capacity-check"
+                || request.Cadence is not (null or "scheduled" or "event"))
+                return Results.BadRequest(new ApiError("invalid-host-decision", "Host occurrence has invalid scope, trigger, or candidates."));
+            var workspace = settings.Get(request.WorkspaceId);
+            var activeRules = rules.EffectiveRules(request.WorkspaceId);
+            var policyVersion = rules.ActiveVersionId(request.WorkspaceId) ?? "platform.v1";
+            var model = activeRules
+                .Where(rule => rule.Trigger == request.Profile || rule.Trigger == request.TriggerKind)
+                .Select(rule => rule.Model)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+                ?? workspace.OrchestratorModel ?? "gpt-5.6-sol";
+            if (!DecisionRulePolicy.Validate([new DecisionRuleV1("model-route", request.Profile,
+                    "host.health", null, [], "A1", model, "ask")], false).Accepted)
+                return Results.BadRequest(new ApiError("model-below-floor", "Host decision model is below the trusted correctness floor."));
+            var at = request.ObservedAt;
+            var ledger = new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0,
+                DecisionTokenUsageV1.Zero, 0, 0, 0, [], DecisionPriceStatuses.NoUsage, "host", []);
+            var grounds = new DecisionGroundsInputV1(request.OccurrenceId,
+                new(request.TriggerKind, request.Profile, at, request.Cadence),
+                new("host", null, null, null, null, null, request.HostId, request.WorkspaceId),
+                null, null, policyVersion,
+                new("codex", model, workspace.OrchestratorThinkingLevel ?? "high",
+                    DecisionModelCustody.RunnerHostJob),
+                request.Facts.Concat(DecisionRulePolicy.Signals(activeRules, request.Profile,
+                    request.Facts, policyVersion, at))
+                    .Concat(request.TriggerKind == request.Profile ? []
+                        : DecisionRulePolicy.Signals(activeRules, request.TriggerKind,
+                            request.Facts, policyVersion, at)).ToArray(),
+                DecisionRulePolicy.Apply(activeRules, request.TriggerKind, request.Profile,
+                    request.Facts, request.Alternatives, at), [], ledger,
+                new("host.v1", "Host occurrence has no card rounds.", null, 0, 0, 0), request.Omissions);
+            return Wire(store.FreezeInputs(new(grounds, DecisionActionKinds.Observe,
+                request.HostId, "Host occurrence", DecisionReceiptPolicy.ActiveMode)));
+        })).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPost("/api/runner/orchestrator-decisions/claim", (HttpContext context,
             OrchestratorDecisionJobClaimRequest request, OrchestratorDecisionStore store) =>
