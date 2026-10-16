@@ -267,7 +267,8 @@ public sealed record RunSpecDto(
     string? ModeFraming = null,
     AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null,
     string? BriefVersion = null,
-    int? RunTimeoutSeconds = null);
+    int? RunTimeoutSeconds = null,
+    string? RunTimeoutSource = null);
 
 public sealed record RunnerClaimResponse(
     RunnerClaimStatus Status,

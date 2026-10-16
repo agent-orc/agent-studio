@@ -397,6 +397,7 @@ public static class LeaseEndpoints
             TaskScannerService scanner,
             AgentStudio.Projects.ProjectSettingsService settings,
             AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Registry.OrchestratorDefaultsProvider orchestratorDefaults,
             TaskTransitionService transitions,
             RunLeaseService leases,
             RemoteRunStopRequestStore stops,
@@ -674,7 +675,7 @@ public static class LeaseEndpoints
                                     settings,
                                     prompts,
                                     dossierMaintenance,
-                                    ReadPersistedQuotaPlan(replayedTask), decisionReceipts),
+                                    ReadPersistedQuotaPlan(replayedTask), decisionReceipts, orchestratorDefaults),
                                 replayedTask),
                             mutations.ReadStashedPendingIntent(replayedTask.FolderPath),
                             replay.Lease.AttemptId);
@@ -1146,7 +1147,7 @@ public static class LeaseEndpoints
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
                 var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance,
-                    candidateQuotaPlan, decisionReceipts);
+                    candidateQuotaPlan, decisionReceipts, orchestratorDefaults);
                 runSpec = AgentStudio.Runner.MechanicalFreshRunRoutePolicy.Qualify(
                     runSpec, candidate,
                     AgentStudio.Runner.SessionContinuationLedgerStore.PeekFreshReason(candidate.FolderPath)
@@ -3146,7 +3147,8 @@ public static class LeaseEndpoints
         AgentStudio.Prompts.RuntimePromptService prompts,
         DossierMaintenanceService? dossierMaintenance,
         QuotaAdmissionPlan? admissionPlan = null,
-        OrchestratorDecisionStore? decisionReceipts = null)
+        OrchestratorDecisionStore? decisionReceipts = null,
+        AgentStudio.Registry.OrchestratorDefaultsProvider? orchestratorDefaults = null)
     {
         var cliType = CliTypes.Normalize(admissionPlan?.CliType ?? task.CliType);
         var projectSettings = settings.Get(task.ProjectName);
@@ -3173,6 +3175,9 @@ public static class LeaseEndpoints
 
         var modeFraming = BuildModeFraming(task, prompts, dossierMaintenance);
 
+        var emergency = orchestratorDefaults?.ResolveCodingEmergencyLimit(task.ProjectName)
+            ?? (AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.DefaultSeconds, "platform");
+        var operatorLimit = decisionReceipts?.AppliedRunLimitSeconds(task.Id, task.ProjectName);
         return new RunSpecDto(
             cliType,
             model,
@@ -3180,7 +3185,8 @@ public static class LeaseEndpoints
             settings.ResolveCliMode(task.ProjectName, cliType).Mode,
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
             modeFraming,
-            RunTimeoutSeconds: decisionReceipts?.AppliedRunLimitSeconds(task.Id, task.ProjectName));
+            RunTimeoutSeconds: operatorLimit ?? emergency.Item1,
+            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator");
     }
 
     internal static string? BuildModeFraming(
