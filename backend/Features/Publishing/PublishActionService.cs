@@ -20,6 +20,7 @@ public sealed class PublishActionService
     private readonly ProjectSettingsService _settings;
     private readonly TaskScannerService _scanner;
     private readonly ILogger<PublishActionService> _logger;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly object _runGate = new();
     private readonly Dictionary<string, PublishWorkflowRun> _runs = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _autoDeploying = new(StringComparer.OrdinalIgnoreCase);
@@ -30,7 +31,8 @@ public sealed class PublishActionService
         TaskPublishableService taskTargets,
         ProjectSettingsService settings,
         TaskScannerService scanner,
-        ILogger<PublishActionService> logger)
+        ILogger<PublishActionService> logger,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
     {
         _git = git;
         _targets = targets;
@@ -38,6 +40,7 @@ public sealed class PublishActionService
         _settings = settings;
         _scanner = scanner;
         _logger = logger;
+        _workspaceQuota = workspaceQuota;
     }
 
     public PublishActionPanel GetPanel(string project, string targetId)
@@ -146,6 +149,8 @@ public sealed class PublishActionService
         string version,
         CancellationToken cancellationToken = default)
     {
+        var admission = _workspaceQuota?.Admit(project);
+        if (admission is { Allowed: false }) throw new InvalidOperationException(admission.Message);
         var panel = GetPanel(project, targetId);
         var target = panel.Target!;
         if (target.Kind != PublishTargetKind.Package) throw new InvalidOperationException("Target is not a package.");
@@ -177,6 +182,9 @@ public sealed class PublishActionService
 
     public PublishWorkflowRun DeployWebsite(string project)
     {
+        var admission = _workspaceQuota?.Admit(project,
+            hosting: !(_workspaceQuota?.HasProjectEnvironment(project, "website") ?? false));
+        if (admission is { Allowed: false }) throw new InvalidOperationException(admission.Message);
         var panel = GetPanel(project, "website");
         if (panel.Target?.Kind != PublishTargetKind.Website) throw new InvalidOperationException("Website target not found.");
         if (panel.Target.PendingCount is not > 0) throw new InvalidOperationException("No pending website changes to deploy.");
@@ -198,6 +206,7 @@ public sealed class PublishActionService
             Status = "queued",
             TriggeredAt = DateTime.UtcNow,
         });
+        _workspaceQuota?.SetProjectEnvironment(project, "website", true);
         _logger.LogInformation(
             "website-deploy-triggered project={Project} workflow={Workflow} branch={Branch}",
             project, workflow, branch);
@@ -225,6 +234,8 @@ public sealed class PublishActionService
                 Url = StringValue(e, "html_url"),
                 Error = null,
             };
+            if (targetId == "website" && refreshed.Status == "completed" && refreshed.Conclusion != "success")
+                _workspaceQuota?.SetProjectEnvironment(project, "website", false);
             return StoreRun(refreshed);
         }
         catch (Exception ex)

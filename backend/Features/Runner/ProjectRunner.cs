@@ -423,6 +423,7 @@ public class ProjectRunner
     public event Action<string, string>? OnModePersist;
 
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
 
     public ProjectRunner(
         string projectName,
@@ -475,7 +476,8 @@ public class ProjectRunner
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
         RemoteDispatchRejectionStore? dispatchRejections = null,
         LocalRunClaimAdapter? localRunClaims = null,
-        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -517,6 +519,7 @@ public class ProjectRunner
         _pickupLockOwner = pickupLockOwner;
         _localRunClaims = localRunClaims;
         _localCodingAdmission = localCodingAdmission;
+        _workspaceQuota = workspaceQuota;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
         _pipelineLog = pipelineLog;
@@ -2550,6 +2553,10 @@ public class ProjectRunner
             // Resolve the run through the canonical admission boundary exactly
             // once. The decision is run-scoped and never mutates job.json, so a
             // recovered provider is selected again on the next launch.
+            var workspaceAdmission = _workspaceQuota?.Admit(ProjectName);
+            if (workspaceAdmission is { Allowed: false })
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.QuotaCapExceeded, workspaceAdmission.Message ?? "Workspace quota reached."));
             var admissionPlan = PlanQuotaAdmission(info);
             var route = new CliRouteDecision(
                 admissionPlan.CliType,

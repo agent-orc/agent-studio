@@ -187,6 +187,8 @@ public sealed record BuildTestGateResult(
     bool RanBackendBuild,
     bool RanFrontendBuild)
 {
+    /// <summary>Executor core allocation for quota metering. Null means one legacy core.</summary>
+    public int? GrantedCores { get; init; }
     public GateVerdictSource VerdictSource { get; init; } = GateVerdictSource.Executed;
     public string? GateProfileDigest { get; init; }
     public int? PipelineDefinitionVersion { get; init; }
