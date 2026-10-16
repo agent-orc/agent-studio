@@ -230,5 +230,10 @@ internal sealed class WindowsServiceSetup(ProcessRunner process, WindowsServiceL
         if (!live.Contains("\"status\":\"live\"", StringComparison.Ordinal))
             throw new InvalidOperationException(
                 $"Studio connector is not live at {edgeUrl}/healthz: {live}");
+        if (profile == ProductProfile.StudioWindowsServices)
+        {
+            using var apiResponse = await http.GetAsync($"{edgeUrl}/api/system/version");
+            apiResponse.EnsureSuccessStatusCode();
+        }
     }
 }

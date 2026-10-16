@@ -340,7 +340,7 @@ jobs:
           $archive = [IO.Compression.ZipFile]::OpenRead("windows-package/agent-orchestrator-$env:VERSION-win-x64.zip")
           try {
             $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\\', '/') })
-            foreach ($file in @('agent-studio-setup.exe', 'agent-host.exe', 'task-server.exe', 'orchestrator-engine.exe', 'studio/browser/index.html')) {
+            foreach ($file in @('agent-studio-setup.exe', 'agent-host.exe', 'task-server.exe', 'orchestrator-engine.exe', 'OrchestratorApi.exe', 'browser/index.html')) {
               if (-not ($names -contains "agent-orchestrator-$env:VERSION-win-x64/$file")) { throw "Windows package lacks $file" }
             }
           } finally {

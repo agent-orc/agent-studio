@@ -196,15 +196,15 @@ if ($FullStudio -and -not (Test-Path -LiteralPath $backendEnvPath)) {
     @(
         "ASPNETCORE_URLS=$ConnectorListenUrl",
         "TaskRepository=$(Join-Path $DataDirectory 'workspace')",
-        "TaskServer__BaseUrl=$ListenUrl",
-        "TaskServer__AuthTokenFile=$(Join-Path $ConfigRoot 'studio.token')",
         'ASPNETCORE_ENVIRONMENT=Production'
     ) | Set-Content -LiteralPath $backendEnvPath -Encoding ascii
 }
 if ($FullStudio) {
-    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__BaseUrl' -Value $ListenUrl
-    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__AuthTokenFile' `
-        -Value (Join-Path $ConfigRoot 'studio.token')
+    # The browser's legacy /api calls terminate on this backend. Enabling the
+    # standalone Task Server proxy here closes those routes with a 404.
+    # Clear old settings on repair as well as omitting them on fresh installs.
+    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__BaseUrl' -Value ''
+    Set-EnvFileValue -Path $backendEnvPath -Key 'TaskServer__AuthTokenFile' -Value ''
 }
 if ($FullStudio -and -not (Test-Path -LiteralPath $runnerEnvPath)) {
     @(
