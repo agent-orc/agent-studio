@@ -15,7 +15,8 @@ public static class DeployHostCommand
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken);
 
-    public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
+        HttpClient? transport = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -23,7 +24,8 @@ public static class DeployHostCommand
             return 2;
         }
         var token = (await File.ReadAllTextAsync(args[2], cancellationToken)).Trim();
-        using var client = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") };
+        using var client = transport ?? new HttpClient();
+        client.BaseAddress ??= new Uri(args[0].TrimEnd('/') + "/");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var claimed = await client.PostAsJsonAsync("api/deploy/jobs/claim", new Claim(args[1]), cancellationToken);
         claimed.EnsureSuccessStatusCode();

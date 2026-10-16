@@ -1,0 +1,204 @@
+using System.Diagnostics;
+using System.Text.Json;
+using AgentStudio.Pipeline;
+using AgentStudio.Projects;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+public sealed class ProjectEnvironmentServiceTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "deploy-env-test-" + Guid.NewGuid().ToString("N"));
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
+    private readonly string _artifact = "registry.example/app@sha256:" + new string('a', 64);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, true);
+    }
+
+    [Fact]
+    public void ParsesRepositoryDeclarations_AndNeverExposesSecretValues()
+    {
+        var (service, _, _) = Build();
+        var declarations = service.Declarations("demo");
+        Assert.NotNull(declarations);
+        Assert.Equal(["stage", "production"], declarations!.Select(item => item.Id));
+        Assert.Equal(["DATABASE_URL"], declarations[1].SecretRefs);
+        Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
+    }
+
+    [Fact]
+    public void Release_Stages_ThenApprovesExactArtifact_AndCanRollBack()
+    {
+        var (service, repo, watch) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var folder = Path.Combine(watch, "completed", "card");
+        IntegrationVerificationStore.Write(folder, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop",
+            RecordedAtUtc = _clock.GetUtcNow(),
+        });
+        Assert.True(service.QueueRelease("demo", _artifact, commit));
+        Assert.False(service.QueueRelease("demo", _artifact, commit));
+        var stage = service.Claim("stage-host");
+        Assert.NotNull(stage);
+        Assert.Equal("stage", stage!.EnvironmentId);
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        Assert.Equal("pending", Assert.Single(service.Read("demo")!.Promotions).Status);
+        Assert.True(service.Decide("demo", _artifact, true, "operator"));
+        var production = service.Claim("prod-host");
+        Assert.NotNull(production);
+        Assert.Equal(_artifact, production!.Artifact);
+        Assert.Equal(["DATABASE_URL"], production.SecretRefs);
+        Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        Assert.Equal(_artifact, service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "production").DeployedArtifact);
+        Assert.False(service.Rollback("demo", "production", "operator"));
+    }
+
+    [Fact]
+    public void FailedProductionHealth_QueuesPreviousArtifact_AndRedactsHostEvidence()
+    {
+        var (service, repo, watch) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        var first = "registry.example/app@sha256:" + new string('b', 64);
+        Deploy(first);
+        Deploy(_artifact, failProduction: true);
+        var rollback = service.Claim("prod-host");
+        Assert.NotNull(rollback);
+        Assert.Equal(first, rollback!.Artifact);
+        Assert.True(service.Report("demo", rollback.Id, new(rollback.LeaseToken!, true, "health-ok")));
+        var response = JsonSerializer.Serialize(service.Read("demo"));
+        Assert.DoesNotContain("sensitive-value", response);
+        Assert.DoesNotContain("raw-host-secret", response);
+        Assert.Contains("health-ok", response);
+
+        void Deploy(string artifact, bool failProduction = false)
+        {
+            Assert.True(service.QueueRelease("demo", artifact, commit));
+            var stage = service.Claim("stage-host")!;
+            Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+            Assert.True(service.Decide("demo", artifact, true, "operator"));
+            var production = service.Claim("prod-host")!;
+            Assert.True(service.Report("demo", production.Id,
+                new(production.LeaseToken!, !failProduction, "raw-host-secret=sensitive-value")));
+        }
+    }
+
+    [Fact]
+    public void Reject_PreventsProductionClaim_AndManualRollbackUsesPreviousDigest()
+    {
+        var (service, repo, watch) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        var first = "registry.example/app@sha256:" + new string('b', 64);
+        var second = "registry.example/app@sha256:" + new string('c', 64);
+        foreach (var artifact in new[] { first, second })
+        {
+            Assert.True(service.QueueRelease("demo", artifact, commit));
+            var stage = service.Claim("stage-host")!;
+            Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+            Assert.True(service.Decide("demo", artifact, true, "operator"));
+            var production = service.Claim("prod-host")!;
+            Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        }
+        Assert.True(service.QueueRelease("demo", _artifact, commit));
+        var rejectedStage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", rejectedStage.Id, new(rejectedStage.LeaseToken!, true, "health-ok")));
+        Assert.True(service.Decide("demo", _artifact, false, "operator"));
+        Assert.Null(service.Claim("prod-host"));
+        Assert.True(service.Rollback("demo", "production", "operator"));
+        var rollback = service.Claim("prod-host")!;
+        Assert.Equal(first, rollback.Artifact);
+        Assert.True(rollback.IsRollback);
+        Assert.Equal("operator", rollback.RequestedBy);
+        Assert.True(service.Report("demo", rollback.Id, new(rollback.LeaseToken!, true, "health-ok")));
+        Assert.Equal("rolled-back", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "production").History[0].Status);
+    }
+
+    [Fact]
+    public void TimedPromotion_WaitsForInjectedClock()
+    {
+        var (service, repo, watch) = Build(timedApproval: true);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        var first = "registry.example/app@sha256:" + new string('b', 64);
+        Assert.True(service.QueueRelease("demo", first, commit));
+        var firstStage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", firstStage.Id, new(firstStage.LeaseToken!, true, "health-ok")));
+        // First production promotion always needs a person.
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.Equal("pending", service.Read("demo")!.Promotions.Last().Status);
+        Assert.True(service.Decide("demo", first, true, "operator"));
+        var firstProduction = service.Claim("prod-host")!;
+        Assert.True(service.Report("demo", firstProduction.Id, new(firstProduction.LeaseToken!, true, "health-ok")));
+        Assert.True(service.QueueRelease("demo", _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        _clock.Advance(TimeSpan.FromMinutes(9));
+        Assert.Equal("pending", service.Read("demo")!.Promotions.Single().Status);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal("production-queued", service.Read("demo")!.Promotions.Last().Status);
+        Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);
+    }
+
+    private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false)
+    {
+        var repo = Path.Combine(_root, "repo");
+        var watch = Path.Combine(_root, "workspace", "projects", "demo");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(watch);
+        Git(repo, "init", "-b", "develop");
+        Git(repo, "config", "user.email", "test@example.com");
+        Git(repo, "config", "user.name", "Test User");
+        File.WriteAllText(Path.Combine(repo, "initial"), "initial");
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "initial");
+        var declarations = Path.Combine(repo, "docs", "deployments", "environments");
+        Directory.CreateDirectory(declarations);
+        File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new
+        {
+            id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+            address = "https://stage.example", template = "container", destination = "8081",
+            healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+        }));
+        File.WriteAllText(Path.Combine(declarations, "production.json"), JsonSerializer.Serialize(new
+        {
+            id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
+            address = "https://example", template = "container", destination = "8082",
+            healthUrl = "https://example/health", approval = timedApproval ? "stage-healthy-10m" : "person",
+            secretRefs = new[] { "DATABASE_URL" },
+        }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = watch,
+            ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        return (new(config, scanner, git, settings, _clock), repo, watch);
+    }
+
+    private string Git(string directory, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = directory,
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+        return output;
+    }
+}
