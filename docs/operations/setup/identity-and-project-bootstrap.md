@@ -161,6 +161,12 @@ select the private key only for the registered repository, using a direct SSH UR
 The runner keeps the recorded origin URL for comparison and receipts. It does not
 write a global Git URL rewrite or the runner's SSH configuration, which may be
 mounted read-only in Docker.
+On a local install, verification first clones the registered URL when the
+project has no checkout. The backend persists the checkout path and sets its
+repository-local SSH command for a deploy key, or includes the scoped token
+helper there. The local read/write probe runs in a temporary Git repository
+with clean URL configuration and the explicit registered transport, so a URL
+rewrite in the checkout cannot verify a different repository.
 Device login for Codex or Claude runs inside the selected
 runner process, including Compose containers, and Studio shows only the
 provider's verification URL and a code when the provider supplies one.
