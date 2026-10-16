@@ -215,7 +215,7 @@ internal sealed class DurableAgentProcess
             Path.GetFullPath(repoPath),
             prompt,
             Path.GetFullPath(resultsDirectory),
-            timeoutSeconds ?? options.RunTimeoutSeconds,
+            timeoutSeconds ?? runSpec?.RunTimeoutSeconds ?? options.RunTimeoutSeconds,
             invocation.CliType,
             invocation.Model,
             invocation.ThinkingLevel,

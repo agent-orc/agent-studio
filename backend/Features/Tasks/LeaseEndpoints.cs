@@ -416,6 +416,7 @@ public static class LeaseEndpoints
             QuotaAdmissionRecorder quotaAdmissionRecorder,
             TaskMutationService mutations,
             ModelRoutingPolicyRegistry modelRouting,
+            OrchestratorDecisionStore decisionReceipts,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -671,7 +672,7 @@ public static class LeaseEndpoints
                                     settings,
                                     prompts,
                                     dossierMaintenance,
-                                    ReadPersistedQuotaPlan(replayedTask)),
+                                    ReadPersistedQuotaPlan(replayedTask), decisionReceipts),
                                 replayedTask),
                             mutations.ReadStashedPendingIntent(replayedTask.FolderPath),
                             replay.Lease.AttemptId);
@@ -1142,7 +1143,8 @@ public static class LeaseEndpoints
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
-                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance, candidateQuotaPlan);
+                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance,
+                    candidateQuotaPlan, decisionReceipts);
                 runSpec = AgentStudio.Runner.MechanicalFreshRunRoutePolicy.Qualify(
                     runSpec, candidate,
                     AgentStudio.Runner.SessionContinuationLedgerStore.PeekFreshReason(candidate.FolderPath)
@@ -1492,6 +1494,7 @@ public static class LeaseEndpoints
             MonolithOrchestrationStore orchestration,
             DecisionGroundsCollector decisionGrounds,
             AiOperatorDecisionGateway aiOperator,
+            OrchestratorDecisionStore decisionReceipts,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -1610,10 +1613,15 @@ public static class LeaseEndpoints
                 item.TrimStart().StartsWith(
                     HumanReviewEscalationCategories.WorktreeBlocked + ":",
                     StringComparison.OrdinalIgnoreCase));
+            var activeDecisionStop = stops.Peek(req.TaskKey);
+            var decisionStopRequested = activeDecisionStop?.Reason == RemoteRunStopReasons.DecisionStop
+                && activeDecisionStop.AttemptId == attemptId
+                && activeDecisionStop.FencingToken == req.FencingToken;
             var envelopeDecision = RemoteCompletionEnvelopePolicy.Decide(
                 requiresEnvelope: !isEpicPlanning
                                   && !TaskModes.IsReportOnly(task.Mode)
-                                  && !worktreeBlocked,
+                                  && !worktreeBlocked
+                                  && !decisionStopRequested,
                 outcome,
                 runAttemptKnown: leasedRun is not null,
                 hasResultSha: ReviewSubjectStore.IsValidResultSha(req.ResultSha),
@@ -1670,9 +1678,15 @@ public static class LeaseEndpoints
                     ? Results.BadRequest(response)
                     : Results.Conflict(response);
             }
-            // Settlement has already committed the attempt's terminal fact. The
-            // stop receipt must be retired even if a later projection fails.
-            var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
+            // Settlement has already committed the attempt's terminal fact, so a plain stop
+            // receipt is retired even if a later projection fails. A decision Stop stays
+            // pending until its card hold succeeds; a retry after a failed timeline write
+            // must still take the hold path (AGT-3147).
+            var settledStop = decisionStopRequested
+                ? activeDecisionStop
+                : stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
+            var decisionStop = decisionStopRequested;
+            if (decisionStop) targetState = TaskStates.Escalated;
             if (settled.Status == AttemptWriteStatus.Duplicate
                 && timeline.ReadAll(task.FolderPath).Any(item =>
                     item.Kind == "run-completion-superseded"
@@ -2431,6 +2445,35 @@ public static class LeaseEndpoints
                     RunAttemptId: attemptId));
             }
 
+            if (decisionStop)
+            {
+                var hold = await transitions.MoveAsync(
+                    task.Id, TaskStates.Escalated, task.WatchPath, ct,
+                    cause: $"remote-decision-stop:{source}", authorityWrite: laneWrite,
+                    suppressProductExecution: true,
+                    transitionCause: LaneChangeCauses.RunnerRequeue,
+                    transitionDetail: "decision-stop");
+                if (hold.Status != MoveJobStatus.Success)
+                    return Results.Conflict(new RemoteRunCompletionResponse(
+                        req.TaskKey, reportedOutcome, task.State,
+                        $"Decision stop hold refused: {hold.Status} {hold.Message}",
+                        RunAttemptId: attemptId));
+                if (settledStop?.CommandId.StartsWith("decision-stop:", StringComparison.Ordinal) == true)
+                {
+                    var receiptId = settledStop.CommandId["decision-stop:".Length..];
+                    var fenceSuffix = $":fence:{settledStop.FencingToken}";
+                    if (receiptId.EndsWith(fenceSuffix, StringComparison.Ordinal))
+                        receiptId = receiptId[..^fenceSuffix.Length];
+                    decisionReceipts.SetOperatorOutcome(receiptId,
+                        operatorStopped ? "applied:stopped-and-held" : "applied:run-finished-held");
+                }
+                stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, responseOutcome, TaskStates.Escalated,
+                    "The operator decision stopped the run and held the card.",
+                    RunAttemptId: attemptId));
+            }
+
             if (targetState == TaskStates.Escalated)
             {
                 if (providerRejection is not null && providerRejectionPlan is not null)
@@ -2752,7 +2795,8 @@ public static class LeaseEndpoints
                     // A verified completion is the delivery hand-off; an unverified
                     // one is requeued for another delivery round by the runner, and
                     // an operator stop returns the card without claiming either.
-                    transitionCause: deliveryFailure is null && !operatorStopped && outcome != "mechanicalfallback"
+                    transitionCause: deliveryFailure is null && !operatorStopped
+                        && outcome != "mechanicalfallback"
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
                     transitionDetail: operatorStopped
@@ -3047,7 +3091,8 @@ public static class LeaseEndpoints
         ProjectSettingsService settings,
         AgentStudio.Prompts.RuntimePromptService prompts,
         DossierMaintenanceService? dossierMaintenance,
-        QuotaAdmissionPlan? admissionPlan = null)
+        QuotaAdmissionPlan? admissionPlan = null,
+        OrchestratorDecisionStore? decisionReceipts = null)
     {
         var cliType = CliTypes.Normalize(admissionPlan?.CliType ?? task.CliType);
         var projectSettings = settings.Get(task.ProjectName);
@@ -3080,7 +3125,8 @@ public static class LeaseEndpoints
             thinkingLevel,
             settings.ResolveCliMode(task.ProjectName, cliType).Mode,
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
-            modeFraming);
+            modeFraming,
+            RunTimeoutSeconds: decisionReceipts?.AppliedRunLimitSeconds(task.Id, task.ProjectName));
     }
 
     internal static string? BuildModeFraming(

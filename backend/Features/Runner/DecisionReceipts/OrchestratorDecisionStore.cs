@@ -214,6 +214,24 @@ public sealed class OrchestratorDecisionStore
         }
     }
 
+    public (bool Accepted, IReadOnlyList<DecisionLateCallV1> NewLateCalls) CompleteWithProjection(
+        OrchestratorDecisionJobCompletion completion)
+    {
+        lock (_gate)
+        {
+            var occurrenceId = _jobs.GetValueOrDefault(completion.JobId)?.Dto.OccurrenceId;
+            var hasReceipt = occurrenceId is not null && _receipts.ContainsKey(occurrenceId);
+            var before = hasReceipt ? LateCallsLocked(occurrenceId!) : [];
+            var accepted = Complete(completion);
+            if (!accepted || !hasReceipt) return (accepted, []);
+            var added = LateCallsLocked(occurrenceId!).Where(call => !before.Any(prior =>
+                prior.JobId == call.JobId && prior.HostId == call.HostId
+                && prior.EndedAt == call.EndedAt
+                && prior.ProviderCallIds.SequenceEqual(call.ProviderCallIds))).ToArray();
+            return (true, added);
+        }
+    }
+
     /// <summary>Billed calls of an occurrence that completed after its receipt was stored.</summary>
     public IReadOnlyList<DecisionLateCallV1> LateCalls(string occurrenceId)
     {
@@ -243,6 +261,11 @@ public sealed class OrchestratorDecisionStore
                 item.Result.Tokens, item.Result.Price, item.Result.ProviderCallIds,
                 item.Result.EndedAt, item.Result.Error))
             .ToArray();
+
+    public IReadOnlyList<DecisionLateCallV1> OtherBilledCalls(OrchestratorDecisionReceiptV1 receipt)
+    {
+        lock (_gate) return OtherBilledCallsLocked(receipt);
+    }
 
     private OrchestratorDecisionReceiptSummary SummaryLocked(OrchestratorDecisionReceiptV1 receipt)
     {
@@ -282,9 +305,26 @@ public sealed class OrchestratorDecisionStore
         }
     }
 
+    public (OrchestratorDecisionReceiptV1 Receipt, bool Created,
+        IReadOnlyList<DecisionLateCallV1> OtherBilledCalls) PutReceiptWithProjection(
+            OrchestratorDecisionReceiptV1 receipt)
+    {
+        lock (_gate)
+        {
+            var created = !_receipts.ContainsKey(receipt.OccurrenceId);
+            var stored = PutReceipt(receipt);
+            return (stored, created, OtherBilledCallsLocked(stored));
+        }
+    }
+
     public OrchestratorDecisionReceiptV1? GetReceipt(string receiptId)
     {
         lock (_gate) return _receipts.Values.FirstOrDefault(item => item.ReceiptId == receiptId);
+    }
+
+    public OrchestratorDecisionReceiptV1? ReceiptForOccurrence(string occurrenceId)
+    {
+        lock (_gate) return _receipts.GetValueOrDefault(occurrenceId);
     }
 
     public DecisionOperatorIntentV1? GetOperatorIntent(string receiptId)
@@ -292,7 +332,8 @@ public sealed class OrchestratorDecisionStore
         lock (_gate) return _operatorIntents.GetValueOrDefault(receiptId);
     }
 
-    public DecisionOperatorIntentV1 PutOperatorIntent(string receiptId, DecisionOperatorIntentRequest request)
+    public DecisionOperatorIntentV1 PutOperatorIntent(string receiptId, DecisionOperatorIntentRequest request,
+        string actor = "Human Operator", int defaultRunLimitSeconds = 3600)
     {
         lock (_gate)
         {
@@ -311,19 +352,34 @@ public sealed class OrchestratorDecisionStore
                 throw new ArgumentException("Operator action must be raise, cut or stop.");
             if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
                 throw new ArgumentException("An operator reason of at most 500 characters is required.");
-            if (request.Action == "raise" ? request.RequestedEmergencyHours is not (>= 1 and <= 24)
-                : request.RequestedEmergencyHours is not null)
-                throw new ArgumentException("Raise needs an emergency limit of 1 to 24 hours; other actions have no limit.");
+            var minutes = request.RequestedEmergencyMinutes
+                ?? (request.RequestedEmergencyHours is { } hours ? hours * 60 : null);
+            if (request.Action == "stop" ? minutes is not null : minutes is not (>= 1 and <= 1440))
+                throw new ArgumentException("Raise and cut need a chosen limit of 1 to 1440 minutes; stop has no limit.");
+            if (request.RequestedEmergencyHours is not null && request.RequestedEmergencyMinutes is not null)
+                throw new ArgumentException("Provide the limit in hours or minutes, not both.");
             if (_operatorIntents.TryGetValue(receiptId, out var existing)) return existing;
+            if (request.Action is "raise" or "cut")
+            {
+                var current = AppliedRunLimitSeconds(taskId, receipt.Scope.ProjectId) ?? defaultRunLimitSeconds;
+                var chosen = minutes!.Value * 60;
+                if (request.Action == "raise" ? chosen <= current : chosen >= current)
+                    throw new InvalidOperationException("Chosen run limit must move in the selected direction.");
+            }
             var choice = request.Action switch
             {
                 "raise" => new DecisionChoiceV1(DecisionActionKinds.Adapt,
-                    $"raise-emergency-limit:{request.RequestedEmergencyHours}h", "operator-intent"),
-                "cut" => new DecisionChoiceV1(DecisionActionKinds.Adapt, "cut-smaller", "operator-intent"),
-                _ => new DecisionChoiceV1(DecisionActionKinds.Halt, "stop", "operator-intent"),
+                    $"raise-emergency-limit:{minutes}m", "recorded, not applied"),
+                "cut" => new DecisionChoiceV1(DecisionActionKinds.Adapt,
+                    $"cut-emergency-limit:{minutes}m", "recorded, not applied"),
+                _ => new DecisionChoiceV1(DecisionActionKinds.Halt, "stop", "recorded, not applied"),
             };
             var intent = new DecisionOperatorIntentV1(receiptId, taskId, request.Action,
-                request.Reason.Trim(), request.RequestedEmergencyHours, _time.GetUtcNow().UtcDateTime, choice);
+                request.Reason.Trim(), request.RequestedEmergencyHours, _time.GetUtcNow().UtcDateTime, choice)
+            {
+                Actor = actor,
+                RequestedEmergencyMinutes = minutes,
+            };
             var source = _inputs.GetValueOrDefault(receipt.OccurrenceId)
                 ?? throw new InvalidOperationException("The ask has no frozen decision grounds.");
             var occurrenceId = $"operator-response:{receiptId}";
@@ -350,6 +406,52 @@ public sealed class OrchestratorDecisionStore
             Save("operator-intents", receiptId, intent);
             _operatorIntents.Add(receiptId, intent);
             return intent;
+        }
+    }
+
+    public int? AppliedRunLimitSeconds(string taskId, string? projectId = null)
+    {
+        lock (_gate) return _operatorIntents.Values
+            .Where(item => item.TaskId == taskId && item.AppliedAt is not null
+                && (item.Action is "raise" or "cut")
+                && (projectId is null || _receipts.Values.Any(receipt => receipt.ReceiptId == item.ReceiptId
+                    && receipt.Scope.ProjectId == projectId)))
+            .OrderByDescending(item => item.AppliedAt).ThenByDescending(item => item.ReceiptId, StringComparer.Ordinal)
+            .FirstOrDefault()?.RequestedEmergencyMinutes * 60;
+    }
+
+    public DecisionOperatorIntentV1 ApplyRunLimit(string receiptId, int defaultSeconds)
+    {
+        lock (_gate)
+        {
+            var intent = _operatorIntents.GetValueOrDefault(receiptId)
+                ?? throw new KeyNotFoundException("Operator intent was not found.");
+            if (intent.AppliedAt is not null) return intent;
+            if (intent.Action is not ("raise" or "cut") || intent.RequestedEmergencyMinutes is not { } minutes)
+                throw new InvalidOperationException("This intent has no run limit.");
+            var projectId = _receipts.Values.First(item => item.ReceiptId == receiptId).Scope.ProjectId;
+            var current = AppliedRunLimitSeconds(intent.TaskId, projectId) ?? defaultSeconds;
+            var chosen = minutes * 60;
+            if (intent.Action == "raise" ? chosen <= current : chosen >= current)
+                throw new InvalidOperationException("Chosen run limit must move in the selected direction.");
+            return SetOperatorOutcome(receiptId, $"applied:run-limit:{chosen}s");
+        }
+    }
+
+    public DecisionOperatorIntentV1 SetOperatorOutcome(string receiptId, string outcome)
+    {
+        lock (_gate)
+        {
+            var intent = _operatorIntents.GetValueOrDefault(receiptId)
+                ?? throw new KeyNotFoundException("Operator intent was not found.");
+            if (intent.AppliedAt is not null) return intent;
+            var applied = intent with { Outcome = outcome,
+                TypedChoice = intent.TypedChoice is { } choice ? choice with { Outcome = outcome } : null,
+                AppliedAt = outcome.StartsWith("applied:", StringComparison.Ordinal)
+                    ? _time.GetUtcNow().UtcDateTime : null };
+            Save("operator-intents", receiptId, applied);
+            _operatorIntents[receiptId] = applied;
+            return applied;
         }
     }
 

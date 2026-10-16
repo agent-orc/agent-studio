@@ -29,7 +29,8 @@ interface SpendSummary {
   pricedUsd: number; unknownPriceCalls: number;
 }
 interface OperatorIntent {
-  action: 'raise' | 'cut' | 'stop'; reason: string; requestedEmergencyHours: number | null;
+  action: 'raise' | 'cut' | 'stop'; reason: string; actor: string; outcome: string;
+  requestedEmergencyMinutes: number | null;
 }
 
 /**
@@ -61,10 +62,12 @@ export class PipelineDecisionChainComponent implements OnDestroy {
   readonly loadError = signal<string | null>(null);
   readonly operatorIntent = signal<OperatorIntent | null>(null);
   readonly intentReason = signal('');
-  readonly emergencyHours = signal(24);
+  readonly raiseMinutes = signal(120);
+  readonly cutMinutes = signal(30);
   readonly intentBusy = signal(false);
   readonly intentError = signal<string | null>(null);
   private loadSequence = 0;
+  private intentLoadSequence = 0;
   private readonly refreshTimer = setVisibleInterval(() => {
     const taskId = this.taskId();
     if (taskId && this.current())
@@ -111,9 +114,29 @@ export class PipelineDecisionChainComponent implements OnDestroy {
       this.receipts.set([...receipts].reverse());
       this.cardSpend.set(card);
       this.projectSpend.set(project);
+      void this.refreshOpenIntent(receipts);
     } catch {
       if (sequence === this.loadSequence)
         this.loadError.set('Could not refresh engine decision receipts.');
+    }
+  }
+
+  private async refreshOpenIntent(receipts: ReceiptSummary[]): Promise<void> {
+    const receiptId = this.openReceipt();
+    const item = receipts.find(receipt => receipt.receiptId === receiptId);
+    if (!item || this.intentBusy()) return;
+    const sequence = ++this.intentLoadSequence;
+    try {
+      const intent = await firstValueFrom(this.http.get<OperatorIntent>(`${item.evidenceRef}/operator-intent`))
+        .catch((error: unknown) => {
+          if (error instanceof HttpErrorResponse && error.status === 404) return null;
+          throw error;
+        });
+      if (this.openReceipt() === receiptId && sequence === this.intentLoadSequence)
+        this.operatorIntent.set(intent);
+    } catch {
+      if (this.openReceipt() === receiptId && sequence === this.intentLoadSequence)
+        this.receiptError.set('Could not refresh the operator choice.');
     }
   }
 
@@ -124,6 +147,7 @@ export class PipelineDecisionChainComponent implements OnDestroy {
     this.receiptError.set(null);
     this.operatorIntent.set(null);
     this.intentError.set(null);
+    const intentSequence = ++this.intentLoadSequence;
     try {
       const [detail, intent] = await Promise.all([
         firstValueFrom(this.http.get<ReceiptDetail>(item.evidenceRef)),
@@ -134,7 +158,8 @@ export class PipelineDecisionChainComponent implements OnDestroy {
           }),
       ]);
       if (this.openReceipt() === item.receiptId) this.receiptDetail.set(detail);
-      if (this.openReceipt() === item.receiptId) this.operatorIntent.set(intent);
+      if (this.openReceipt() === item.receiptId && intentSequence === this.intentLoadSequence)
+        this.operatorIntent.set(intent);
     } catch {
       if (this.openReceipt() === item.receiptId) this.receiptError.set('Could not load the decision receipt.');
     }
@@ -144,18 +169,29 @@ export class PipelineDecisionChainComponent implements OnDestroy {
     const reason = this.intentReason().trim();
     if (!reason || this.intentBusy()) return;
     this.intentBusy.set(true);
+    ++this.intentLoadSequence;
     this.intentError.set(null);
     try {
       const intent = await firstValueFrom(this.http.post<OperatorIntent>(
         `${item.evidenceRef}/operator-intent`, {
-          action, reason, requestedEmergencyHours: action === 'raise' ? this.emergencyHours() : null,
+          action, reason,
+          requestedEmergencyMinutes: action === 'raise' ? this.raiseMinutes()
+            : action === 'cut' ? this.cutMinutes() : null,
         }));
       if (this.openReceipt() === item.receiptId) this.operatorIntent.set(intent);
     } catch {
-      this.intentError.set('Could not record the operator choice. Check the reason and limit.');
+      this.intentError.set('Could not apply the operator choice. Check the reason and limit.');
     } finally {
       this.intentBusy.set(false);
     }
+  }
+
+  intentOutcomeText(intent: OperatorIntent): string {
+    if (intent.outcome.startsWith('applied:run-limit:')) return 'applied to the card';
+    if (intent.outcome === 'applied:stopped-and-held') return 'run stopped and card held';
+    if (intent.outcome === 'applied:run-finished-held') return 'card held after the run finished';
+    if (intent.outcome.startsWith('recorded, not applied')) return 'recorded, not applied';
+    return intent.outcome;
   }
 
   receiptCost(item: ReceiptSummary): string {

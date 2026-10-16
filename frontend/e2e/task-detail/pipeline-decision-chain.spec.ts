@@ -172,14 +172,17 @@ test('decision chain and cost of deciding render on the card and in project usag
   const receiptId = 'odr_ui_1';
   const receiptRef = `/api/orchestration/decision-receipts/${receiptId}`;
   let operatorIntent: Record<string, unknown> | null = null;
+  let limitApplied = false;
   let laterDecision = false;
   await page.route('**/api/orchestration/decision-receipts**', async route => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/operator-intent')) {
       if (route.request().method() === 'POST') {
-        operatorIntent = route.request().postDataJSON() as Record<string, unknown>;
+        operatorIntent = { ...route.request().postDataJSON() as Record<string, unknown>,
+          actor: 'Human Operator', outcome: 'recorded, not applied' };
         await route.fulfill({ json: operatorIntent });
-      } else if (operatorIntent) await route.fulfill({ json: operatorIntent });
+      } else if (operatorIntent) await route.fulfill({ json: { ...operatorIntent,
+        outcome: limitApplied ? 'applied:run-limit:7200s' : operatorIntent['outcome'] } });
       else await route.fulfill({ status: 404, body: '' });
       return;
     }
@@ -229,9 +232,14 @@ test('decision chain and cost of deciding render on the card and in project usag
   await expect(chain.getByTestId('decision-receipt-detail')).toContainText('chosenActions');
   const ask = chain.getByTestId('decision-operator-ask');
   await expect(ask).toContainText('Human Operator');
+  await expect(ask.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
   await ask.getByRole('textbox', { name: 'Reason' }).fill('Continue only with a bounded limit');
   await ask.getByRole('button', { name: 'Raise limit' }).click();
-  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('raise to 24 h');
+  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('raise');
+  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('recorded, not applied');
+  limitApplied = true;
+  await expect(ask.getByTestId('decision-operator-recorded')).toContainText('applied to the card',
+    { timeout: 20_000 });
   await expect(page.getByTestId('escalation-title')).toHaveText('Escalation');
   const transitions = chain.getByTestId('overview-decision-transition');
   await expect(transitions).toHaveCount(5);
@@ -262,9 +270,9 @@ test('decision chain and cost of deciding render on the card and in project usag
   await dismissDevErrorDialog(page);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.getByTestId('escalation-summary').screenshot({ path: path.join(resultsDir, `escalated-blocker-${theme}.png`) });
+    await page.getByTestId('escalation-summary').screenshot({ path: path.join(resultsDir, `escalated-blocker-${theme}--mocked.png`) });
     await chain.scrollIntoViewIfNeeded();
-    await page.getByTestId('overview-pipeline').screenshot({ path: path.join(resultsDir, `overview-decision-chain-${theme}.png`) });
+    await page.getByTestId('overview-pipeline').screenshot({ path: path.join(resultsDir, `overview-decision-chain-${theme}--mocked.png`) });
   }
 
   // The open card receives a new receipt on the next pipeline poll.
@@ -291,6 +299,6 @@ test('decision chain and cost of deciding render on the card and in project usag
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.getByTestId('token-usage-pipeline-cost').screenshot({ path: path.join(resultsDir, `project-cost-of-deciding-${theme}.png`) });
+    await page.getByTestId('token-usage-pipeline-cost').screenshot({ path: path.join(resultsDir, `project-cost-of-deciding-${theme}--mocked.png`) });
   }
 });

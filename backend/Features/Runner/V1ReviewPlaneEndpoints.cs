@@ -3289,6 +3289,21 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     public Contract.RunnerDto Register(string runnerId, Contract.RegisterRunnerRequest request)
         => RegisterWithRestartObservation(runnerId, request).Runner;
 
+    public int? GetCodingRunTimeoutSeconds(string? runnerId)
+        => runnerId is not null && _registrations.TryGetValue(runnerId, out var registration)
+            && registration.Capabilities.Contains(Contract.ReviewCapabilities.CodingExecutor)
+            ? registration.RunTimeoutSeconds : null;
+
+    public IReadOnlyList<int> GetCodingRunTimeoutSecondsForClass(string classCapability)
+    {
+        var timeouts = ListCapabilitySnapshots()
+            .Where(snapshot => EvaluateCodingAdmission(snapshot.RunnerId, snapshot.InstanceId,
+                [Contract.CapabilityProtocol.CodingExecutor, classCapability]).Eligible)
+            .Select(snapshot => GetCodingRunTimeoutSeconds(snapshot.RunnerId))
+            .ToArray();
+        return timeouts.Any(timeout => timeout is null) ? [] : timeouts.OfType<int>().ToArray();
+    }
+
     public RunnerRegistrationResult RegisterWithRestartObservation(
         string runnerId,
         Contract.RegisterRunnerRequest request)
@@ -3350,7 +3365,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     request.BootstrapMaxParallelism,
                     now,
                     now,
-                    request.Release),
+                    request.Release,
+                    codingExecutor && request.RunTimeoutSeconds > 0 ? request.RunTimeoutSeconds : null),
                 (_, existing) =>
                 {
                     var existingReview =
@@ -3383,6 +3399,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                         Capabilities = capabilities.ToHashSet(StringComparer.Ordinal),
                         RoleMaxParallelism = request.BootstrapMaxParallelism,
                         LastSeenAt = now,
+                        RunTimeoutSeconds = codingExecutor && request.RunTimeoutSeconds > 0
+                            ? request.RunTimeoutSeconds : null,
                         // A heartbeat-style re-registration from the same daemon
                         // may omit the field. A replacement daemon must establish
                         // its own identity so a legacy rollback cannot inherit the
@@ -4331,7 +4349,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         int RoleMaxParallelism,
         DateTime RegisteredAt,
         DateTime LastSeenAt,
-        Contract.RunnerReleaseIdentityDto? Release = null);
+        Contract.RunnerReleaseIdentityDto? Release = null,
+        int? RunTimeoutSeconds = null);
 
     private sealed record CapabilityState(
         string InstanceId,

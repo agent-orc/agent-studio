@@ -7,16 +7,17 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Mechanically enforces the rule behind the bug
 /// <c>karten-landen-in-5-human-review-ohne-verdict-und-ohne-statusmarkdown</c>:
-/// a card may only land in <c>5e-escalated</c> through a code path that also
-/// records an orchestrator verdict. A move into the human-review lane with no
-/// accompanying <see cref="AgentStudio.Runner.ReviewDecisionRecord"/>
+/// a card may only land in <c>5e-escalated</c> through a code path that
+/// records an orchestrator verdict or an operator Stop outcome. A system move
+/// into the human-review lane with no accompanying
+/// <see cref="AgentStudio.Runner.ReviewDecisionRecord"/>
 /// produces a card the board cannot explain - <c>orchestratorVerdict == null</c>
 /// and an empty <c>status.md</c>.
 ///
 /// <para>
 /// The guarantee is structural, not textual-co-location: the ONLY files allowed
-/// to move a job into <c>TaskStates.Escalated</c> are the two that pair every
-/// such move with a verdict write -
+/// to move a job into <c>TaskStates.Escalated</c> are the paths that pair
+/// the move with an audit record or an operator decision -
 /// <list type="number">
 ///   <item><c>ReviewDecisionOrchestrator.cs</c> - the agent-driven review path;
 ///   each escalate move sits next to a <c>ReviewDecisionLog.Append(Escalate)</c>.</item>
@@ -24,6 +25,9 @@ namespace AgentStudio.Tests;
 ///   funnel (watchdog kill, permission/environment block, auto-failure park,
 ///   over-budget pickup zombie); it moves, then writes the Escalate verdict and a
 ///   minimal <c>status.md</c> stub.</item>
+///   <item><c>OrchestratorDecisionEndpoints.cs</c> - AGT-3147 operator
+///   Stop control; the direct hold records the applied outcome on the
+///   decision receipt.</item>
 /// </list>
 /// Any new move into the lane from anywhere else (the historical
 /// <c>ProjectRunner</c> escalations that caused this bug) trips this test, which
@@ -39,7 +43,7 @@ public class HumanReviewVerdictDriftTest
 {
     /// <summary>
     /// Files allowed to move a job into <c>5e-escalated</c>, each because it
-    /// writes the orchestrator verdict alongside the move.
+    /// records the reason for the move.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> Whitelist =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -48,6 +52,9 @@ public class HumanReviewVerdictDriftTest
                 "Agent-driven review path: every escalate move writes a ReviewDecisionLog Escalate record.",
             ["backend/Features/Runner/HumanReviewEscalation.cs"] =
                 "Deterministic system-escalation funnel: move + Escalate verdict + status.md stub.",
+            // AGT-3147: the operator Stop control holds the card and records its outcome on the receipt.
+            ["backend/Features/Runner/DecisionReceipts/OrchestratorDecisionEndpoints.cs"] =
+                "Operator Stop control: direct escalated hold + decision receipt outcome.",
         };
 
     /// <summary>

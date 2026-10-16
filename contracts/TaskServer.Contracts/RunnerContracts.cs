@@ -38,7 +38,8 @@ public sealed record RegisterRunnerRequest(
     int BootstrapMaxParallelism = 2,
     IReadOnlyList<RunnerActiveAttempt>? ActiveAttempts = null,
     int AttemptLeaseTtlSeconds = 120,
-    RunnerReleaseIdentityDto? Release = null);
+    RunnerReleaseIdentityDto? Release = null,
+    int? RunTimeoutSeconds = null);
 
 public static class RunnerAttemptKinds
 {
