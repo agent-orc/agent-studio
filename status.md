@@ -1,6 +1,7 @@
-# AGT-3155 Linux installer review fix
+# AGT-3187 Linux Studio follow-up
 
-- Result SHA: `765bcc1566c8e575795b763b0805cd4433af8906` (duplicate-script removal, rebased onto `86878facd38f190124627338d2bcc986c3b36852`).
-- Removed the unreferenced `scripts/release/install.sh`. Release packaging continues to use the verified root `install.sh`.
-- Verification passed: `dotnet build agent-taskboard.sln --no-restore`; `sh scripts/release/linux-install-script.test.sh`; `sh scripts/release/release-scripts.test.sh`; setup tests filtered to `LinuxInstallerTests|InstallationJourneyTests` (86 passed); architecture and guard filter on all eight .NET test projects (82 matching backend tests passed); `FullyQualifiedName~Architecture` in backend (103 passed) and Task Server (5 passed); `npm --prefix frontend run lint`; `git diff --check`.
-- No release tag or GitHub Release was created, and package visibility was not changed. Publishing a release and setting package visibility remain operator steps.
+- Result SHA: `ad569d76a298be8740ad7b883369c72f29c0c3a0` (review fix). The prior delivery `94203a9fa` was replayed as `ee2fbc0eb` on `origin/develop` at `acb056b20`, keeping the history linear.
+- Implemented the response-level sandbox option: registered project URL responses send `Content-Security-Policy: sandbox allow-scripts; form-action 'none'`, including direct navigation. The sandbox gives preview documents an opaque origin without relying on the iframe attribute.
+- Root-only imports now require a Git checkout and record its path as `RepositoryPath` when ready. Missing `.git` is reported as `missing-checkout`.
+- Updated the multi-machine setup guide for these behaviors.
+- Verification passed: `dotnet build agent-taskboard.sln --no-restore` (0 errors); focused backend class filter `ProjectPathImportTests|ProjectUrlPreviewProxyTests|PublicDemoExecutionProfileTests` (13 passed); guard filter `FullyQualifiedName~.Architecture.|Category=Guard` on backend, runner, and Task Server test projects (82 matching backend tests passed); `FullyQualifiedName~Architecture` on backend (103 passed) and Task Server (5 passed); focused frontend unit specs for project URL preview, header quota, and pane toggle (42 passed); focused Playwright `project-url-preview-in-place.spec.ts` (1 passed); `npm --prefix frontend run lint`; `git diff --check`.
