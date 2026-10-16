@@ -24,10 +24,18 @@ proxy. For a static site, it is the served release directory; the proxy serves
 its `current` symlink. Static artifacts are tar files in the deploy host's
 artifact store, named by their SHA-256 digest.
 
-CI submits an immutable `image@sha256:<digest>` artifact and the exact verified
-integration commit to `POST /api/projects/{project}/environments/releases`.
-The server checks the commit against a verified integration record before it
-queues stage. A deploy-role credential claims work through `/api/deploy/jobs/claim`.
+After the full gate passes and the release is pushed, the promotion script can
+submit the measured package digest or the gate-built image's registry digest
+to `POST /api/deploy/gate-releases`. This route requires an orchestration
+service credential. The script checks that a container image carries the exact
+gated commit as its OCI revision label. Studio records the immutable
+commit/digest pair before queueing stage. The operator release route accepts
+only an artifact already recorded for that exact commit. For a static package,
+`DEPLOY_ARTIFACT_STORE` must name a store shared with the deploy host; the
+script copies the archive there under its digest. Set
+`DEPLOY_RELEASE_TOKEN_FILE` and pass `--project` so successful gates queue
+stage automatically. A deploy-role credential claims work through
+`/api/deploy/jobs/claim`.
 `agent-host deploy-loop` runs the container or static template on the declared
 host, resolves secret names from its local secret store, checks health, and
 reports a bounded result code. The Studio shows history and pending promotion.
@@ -38,9 +46,13 @@ Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
 
 The deploy host uses a credential with only `runner.deploy`; its service
-identity must match `targetHostId`. Its secret store is a local directory of
+identity must match `targetHostId`. In the managed host record, the deploy
+principal and host id are the same enrolled `runner_<id>` value. Its secret
+store is a local directory of
 files named by the declared `secretRefs`. Secret values never enter the API,
 job state, or audit history. The claim response carries names only.
+The managed `remote-runner-onboard.sh --role deploy` path installs the separate
+`agent-runner-deploy.service` and generated `deploy.env` for the host.
 
 Status: concept and initial workflow implemented, 2026-07-11. The shared
 Deployment contract now includes DEP-1 history and DEP-2 repository-derived

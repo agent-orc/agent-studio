@@ -36,6 +36,29 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
     }
 
+    [Fact]
+    public void ProjectNameWithSpaces_PersistsAndReadsEnvironmentState()
+    {
+        var (service, repo, _) = Build(project: "Operator Demo");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(service.RegisterGateArtifact("Operator Demo", _artifact, commit));
+        Assert.True(service.QueueRelease("Operator Demo", _artifact, commit));
+        Assert.Equal("stage", Assert.Single(service.Read("Operator Demo")!.Environments
+            .Where(item => item.PendingArtifact is not null)).Declaration.Id);
+        Assert.Equal("stage", service.Claim("stage-host")!.EnvironmentId);
+    }
+
+    [Fact]
+    public void ReleaseRequiresExactGateBuiltArtifactForCommit()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.False(service.QueueRelease("demo", _artifact, commit));
+        Assert.True(service.RegisterGateArtifact("demo", _artifact, commit));
+        Assert.False(service.QueueRelease("demo", "registry.example/other@sha256:" + new string('b', 64), commit));
+        Assert.True(service.QueueRelease("demo", _artifact, commit));
+    }
+
     [Theory]
     [InlineData("approve")]
     [InlineData("reject")]
@@ -95,7 +118,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop",
             RecordedAtUtc = _clock.GetUtcNow(),
         });
-        Assert.True(service.QueueRelease("demo", _artifact, commit));
+        Assert.True(QueueGateRelease(service, _artifact, commit));
         Assert.False(service.QueueRelease("demo", _artifact, commit));
         var stage = service.Claim("stage-host");
         Assert.NotNull(stage);
@@ -133,7 +156,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         void Deploy(string artifact, bool failProduction = false)
         {
-            Assert.True(service.QueueRelease("demo", artifact, commit));
+            Assert.True(QueueGateRelease(service, artifact, commit));
             var stage = service.Claim("stage-host")!;
             Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
             Assert.True(service.Decide("demo", artifact, true, "operator"));
@@ -154,14 +177,14 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var second = "registry.example/app@sha256:" + new string('c', 64);
         foreach (var artifact in new[] { first, second })
         {
-            Assert.True(service.QueueRelease("demo", artifact, commit));
+            Assert.True(QueueGateRelease(service, artifact, commit));
             var stage = service.Claim("stage-host")!;
             Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
             Assert.True(service.Decide("demo", artifact, true, "operator"));
             var production = service.Claim("prod-host")!;
             Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
         }
-        Assert.True(service.QueueRelease("demo", _artifact, commit));
+        Assert.True(QueueGateRelease(service, _artifact, commit));
         var rejectedStage = service.Claim("stage-host")!;
         Assert.True(service.Report("demo", rejectedStage.Id, new(rejectedStage.LeaseToken!, true, "health-ok")));
         Assert.True(service.Decide("demo", _artifact, false, "operator"));
@@ -183,7 +206,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
         { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
         var first = "registry.example/app@sha256:" + new string('b', 64);
-        Assert.True(service.QueueRelease("demo", first, commit));
+        Assert.True(QueueGateRelease(service, first, commit));
         var firstStage = service.Claim("stage-host")!;
         Assert.True(service.Report("demo", firstStage.Id, new(firstStage.LeaseToken!, true, "health-ok")));
         // First production promotion always needs a person.
@@ -192,7 +215,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.True(service.Decide("demo", first, true, "operator"));
         var firstProduction = service.Claim("prod-host")!;
         Assert.True(service.Report("demo", firstProduction.Id, new(firstProduction.LeaseToken!, true, "health-ok")));
-        Assert.True(service.QueueRelease("demo", _artifact, commit));
+        Assert.True(QueueGateRelease(service, _artifact, commit));
         var stage = service.Claim("stage-host")!;
         Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
         _clock.Advance(TimeSpan.FromMinutes(9));
@@ -202,10 +225,14 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);
     }
 
-    private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false)
+    private bool QueueGateRelease(ProjectEnvironmentService service, string artifact, string commit)
+        => service.RegisterGateArtifact("demo", artifact, commit) && service.QueueRelease("demo", artifact, commit);
+
+    private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
+        string project = "demo")
     {
         var repo = Path.Combine(_root, "repo");
-        var watch = Path.Combine(_root, "workspace", "projects", "demo");
+        var watch = Path.Combine(_root, "workspace", "projects", project);
         Directory.CreateDirectory(repo);
         Directory.CreateDirectory(watch);
         Git(repo, "init", "-b", "develop");
@@ -232,7 +259,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = Path.Combine(_root, "workspace"),
-            ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = watch,
+            ["WatchPaths:0:Name"] = project, ["WatchPaths:0:Path"] = watch,
             ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
         }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);

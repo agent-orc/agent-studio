@@ -7,6 +7,13 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
+            ProjectEnvironmentService environments) =>
+            environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
+            && environments.QueueRelease(request.Project, request.Artifact, request.Commit)
+                ? Results.Accepted() : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
             ProjectEnvironmentService environments) => environments.Read(projectName) is { } value
                 ? Results.Ok(value) : Results.NotFound());

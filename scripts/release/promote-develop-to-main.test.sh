@@ -392,6 +392,50 @@ grep -Fq "\"releasePackage\":{\"status\":\"written\",\"directory\":\"$package_di
 grep -Fq "release package written: $package_dir/release.tar.gz" "$package_evidence/promotion.log"
 printf '%s\n' 'release package from the gate worktree passed'
 
+# A configured gate handoff registers only the bytes produced by that gate and
+# queues stage without a browser session.
+auto_operator=$(make_fixture package-auto pass)
+auto_root="$test_root/package-auto"
+auto_sha=$(git --git-dir="$auto_root/remote.git" rev-parse refs/heads/develop)
+auto_token="$auto_root/deploy.token"
+auto_store="$auto_root/artifact-store"
+auto_curl_bin="$auto_root/fake-curl-bin"
+mkdir -p "$auto_curl_bin"
+printf '%s\n' test-gate-credential > "$auto_token"
+cat > "$auto_curl_bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+set -eu
+body=
+url=
+while (($#)); do
+  case "$1" in
+    --data) body="$2"; shift 2 ;;
+    -o) printf '{}\n' > "$2"; shift 2 ;;
+    -H) if [[ "$2" == @* ]]; then grep -Fq 'Authorization: Bearer test-gate-credential' "${2#@}"; fi; shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+if [[ "$url" == */api/deploy/gate-releases ]]; then
+  printf '%s\n' "$body" > "${FAKE_DEPLOY_LOG:?}"
+  printf 202
+else
+  printf 200
+fi
+FAKE
+chmod +x "$auto_curl_bin/curl"
+FAKE_DOTNET_LOG="$auto_root/dotnet.log" FAKE_DEPLOY_LOG="$auto_root/deploy-call.json" \
+  PATH="$auto_curl_bin:$fake_dotnet_bin:$PATH" \
+  "$auto_operator/scripts/release/promote-develop-to-main.sh" --execute \
+  --tag release/test-package-auto --evidence-dir "$auto_root/evidence" \
+  --release-dir "$auto_root/releases" --deploy-artifact-store "$auto_store" \
+  --deploy-token-file "$auto_token" --project Demo >/dev/null
+auto_digest=$(cat "$auto_root/releases/$auto_sha/release.sha256")
+test "$(sha256sum "$auto_store/$auto_digest" | cut -d ' ' -f1)" = "$auto_digest"
+grep -Fq "\"artifact\":\"release-package@sha256:$auto_digest\",\"commit\":\"$auto_sha\"" \
+  "$auto_root/deploy-call.json"
+printf '%s\n' 'gate-built artifact queued to stage passed'
+
 # A red gate with --release-dir leaves no package and publishes nothing.
 red_package_operator=$(make_fixture package-red fail)
 red_package_releases="$test_root/package-red/releases"
