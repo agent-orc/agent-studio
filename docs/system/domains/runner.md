@@ -753,7 +753,9 @@ unreported claim expires with its lease and is queued again.
   mutation. Recent idempotency keys remain bounded in the hot authority file.
   Completed and archived lane transitions supersede orphaned attempts and move
   terminal records into the hourly archive; current projections resolve archived
-  records on demand. A completed run with a result envelope stays live during
+  records on demand. Attempt lookup by ID also resolves archived runs and reviews
+  through the archive index and a bounded shard cache, so evidence remains
+  readable after compaction. A completed run with a result envelope stays live during
   the existing 30-day handoff window.
   It performs no
   checkout, build, test, provider CLI, vision, or semantic review work.

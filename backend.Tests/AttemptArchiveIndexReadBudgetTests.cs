@@ -103,7 +103,6 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
 
         var first = SupersededRun(service, "AGT-1");
         var firstShard = CurrentHourShard();
-        Assert.Null(service.GetRun(first));
         _opens.Clear();
 
         Assert.True(service.GetTaskProjection("AGT-9", includeArchived: true).LegacyTask);
@@ -111,6 +110,9 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
         Assert.Contains(first,
             service.GetTaskProjection("AGT-1", includeArchived: true).RunAttempts.Select(run => run.AttemptId));
         Assert.Equal(new Dictionary<string, int> { [firstShard] = 1 }, _opens);
+        _opens.Clear();
+        Assert.Equal(first, service.GetRun(first)!.AttemptId);
+        Assert.Empty(_opens);
 
         _time.Advance(TimeSpan.FromHours(1));
         var second = SupersededRun(service, "AGT-2");
@@ -125,6 +127,7 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
         Assert.DoesNotContain(first,
             service.GetTaskProjection("AGT-1", includeArchived: true).RunAttempts.Select(run => run.AttemptId));
         Assert.Empty(_opens);
+        Assert.Null(service.GetRun(first));
 
         var restarted = NewService(terminalRetentionCount: 1);
         _opens.Clear();

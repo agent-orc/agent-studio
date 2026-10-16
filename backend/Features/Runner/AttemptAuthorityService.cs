@@ -170,6 +170,10 @@ public sealed class AttemptAuthorityService
     private IReadOnlyDictionary<string, ArchiveIndexEntry>? _archiveIndexFromDisk;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ArchiveIndexEntry> _archiveWrites =
         new(StringComparer.OrdinalIgnoreCase);
+    private const int CachedArchiveShardLimit = 8;
+    private readonly object _archiveCacheGate = new();
+    private readonly Dictionary<string, AuthorityArchive> _archiveCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _archiveCacheOrder = new();
 
     /// <summary>
     /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
@@ -993,6 +997,22 @@ public sealed class AttemptAuthorityService
                 Normalize(attemptId),
                 "AttemptId, ExecutorId, HostId, and IdempotencyKey are required.");
 
+        var result = ClaimLiveReview(attemptId, executorId, hostId, requestedTtlSeconds, idempotencyKey, instanceId);
+        if (result.Status != AttemptWriteStatus.NotFound) return result;
+        var archived = FindArchivedReview(attemptId);
+        return archived is null
+            ? result
+            : new AttemptWriteResult(AttemptWriteStatus.Superseded, attemptId, ReviewAttempt: archived);
+    }
+
+    private AttemptWriteResult ClaimLiveReview(
+        string attemptId,
+        string executorId,
+        string hostId,
+        int? requestedTtlSeconds,
+        string idempotencyKey,
+        string? instanceId)
+    {
         lock (_gate)
         {
             var review = FindReview(attemptId);
@@ -2255,7 +2275,9 @@ public sealed class AttemptAuthorityService
 
     public RunAttemptDto? GetRun(string attemptId)
     {
-        lock (_gate) return FindRun(attemptId) is { } run ? ToDto(run) : null;
+        lock (_gate)
+            if (FindRun(attemptId) is { } run) return ToDto(run);
+        return FindArchivedRun(attemptId);
     }
 
     private AgentStudio.TaskServer.Contracts.RunnerAttemptAdoption ReAdoptRunLocked(
@@ -2351,7 +2373,9 @@ public sealed class AttemptAuthorityService
 
     public ReviewAttemptDto? GetReview(string attemptId)
     {
-        lock (_gate) return FindReview(attemptId) is { } review ? ToDto(review) : null;
+        lock (_gate)
+            if (FindReview(attemptId) is { } review) return ToDto(review);
+        return FindArchivedReview(attemptId);
     }
 
     // Display-only committed state. A log receipt can persist a large authority
@@ -2436,7 +2460,7 @@ public sealed class AttemptAuthorityService
         // authority gate needed by claim, lease, and report traffic. Taking the
         // live snapshot first also prevents a concurrent compaction from
         // disappearing between an earlier archive read and the live snapshot.
-        if (includeArchived || archivedCurrentRunId is not null || archivedCurrentReviewId is not null)
+        if (includeArchived)
         {
             var archives = LoadArchivesForHistory(key);
             var archivedRuns = archives
@@ -2449,28 +2473,31 @@ public sealed class AttemptAuthorityService
                 .Select(ToDto).ToList();
             currentRun ??= archivedRuns.FirstOrDefault(run => Same(run.AttemptId, archivedCurrentRunId));
             currentReview ??= archivedReviews.FirstOrDefault(review => Same(review.AttemptId, archivedCurrentReviewId));
-            if (includeArchived)
-            {
-                runs = runs
+            runs = runs
                 .Concat(archives
                     .SelectMany(archive => archive.RunAttempts)
                     .Where(x => Same(x.TaskKey, key))
                     .Select(ToDto))
                 .DistinctBy(x => x.AttemptId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-                reviews = reviews
+            reviews = reviews
                 .Concat(archives
                     .SelectMany(archive => archive.ReviewAttempts)
                     .Where(x => Same(x.TaskKey, key))
                     .Select(ToDto))
                 .DistinctBy(x => x.AttemptId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            }
-            else
-            {
-                if (currentRun is not null) runs.Add(currentRun);
-                if (currentReview is not null) reviews.Add(currentReview);
-            }
+        }
+        else
+        {
+            if (archivedCurrentRunId is not null)
+                currentRun = FindArchivedRun(archivedCurrentRunId);
+            if (archivedCurrentReviewId is not null)
+                currentReview = FindArchivedReview(archivedCurrentReviewId);
+            if (currentRun is not null && !runs.Any(run => Same(run.AttemptId, currentRun.AttemptId)))
+                runs.Add(currentRun);
+            if (currentReview is not null && !reviews.Any(review => Same(review.AttemptId, currentReview.AttemptId)))
+                reviews.Add(currentReview);
         }
 
         runs = runs.OrderBy(x => x.CreatedAt).ToList();
@@ -3538,6 +3565,7 @@ public sealed class AttemptAuthorityService
             foreach (var review in archive.ReviewAttempts)
                 ExternalizeReviewPayloads(review);
             _writer.Write(archivePath, JsonSerializer.Serialize(archive, JsonOptions));
+            InvalidateArchiveCache(archivePath);
             _archiveWrites[archivePath] = IndexArchive(archive);
 
             var archivedRunIds = archivedRuns
@@ -3625,6 +3653,34 @@ public sealed class AttemptAuthorityService
             .Select(LoadArchive)
             .ToList();
 
+    private RunAttemptDto? FindArchivedRun(string attemptId)
+    {
+        foreach (var path in ArchiveIndex()
+            .Where(entry => entry.Value.RunAttemptIds.Contains(attemptId))
+            .Select(entry => entry.Key)
+            .OrderByDescending(path => path, StringComparer.Ordinal))
+        {
+            if (!File.Exists(path)) continue;
+            var run = LoadArchive(path).RunAttempts.FirstOrDefault(item => Same(item.AttemptId, attemptId));
+            if (run is not null) return ToDto(run);
+        }
+        return null;
+    }
+
+    private ReviewAttemptDto? FindArchivedReview(string attemptId)
+    {
+        foreach (var path in ArchiveIndex()
+            .Where(entry => entry.Value.ReviewAttemptIds.Contains(attemptId))
+            .Select(entry => entry.Key)
+            .OrderByDescending(path => path, StringComparer.Ordinal))
+        {
+            if (!File.Exists(path)) continue;
+            var review = LoadArchive(path).ReviewAttempts.FirstOrDefault(item => Same(item.AttemptId, attemptId));
+            if (review is not null) return ToDto(review);
+        }
+        return null;
+    }
+
     /// <summary>
     /// Builds the archive index off the request path (AGT-3109). The card detail
     /// polls history every few seconds; without a warm index the first of those
@@ -3673,7 +3729,7 @@ public sealed class AttemptAuthorityService
         // An unreadable shard fails the read closed and is retried on the next
         // history read instead of being cached as empty.
         foreach (var path in Directory.EnumerateFiles(directory, ArchiveFilePattern))
-            index[path] = IndexArchive(LoadArchive(path));
+            index[path] = IndexArchive(ReadArchive(path));
         return index;
     }
 
@@ -3682,9 +3738,45 @@ public sealed class AttemptAuthorityService
             archive.RunAttempts.Select(run => run.TaskKey)
                 .Concat(archive.ReviewAttempts.Select(review => review.TaskKey))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            archive.RunAttempts.Select(run => run.AttemptId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            archive.ReviewAttempts.Select(review => review.AttemptId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
             DeliveryRefs(archive.RunAttempts, archive.ReviewAttempts).ToList());
 
     private AuthorityArchive LoadArchive(string path)
+    {
+        lock (_archiveCacheGate)
+        {
+            if (_archiveCache.TryGetValue(path, out var cached))
+            {
+                _archiveCacheOrder.Remove(path);
+                _archiveCacheOrder.AddLast(path);
+                return cached;
+            }
+            var archive = ReadArchive(path);
+            _archiveCache[path] = archive;
+            _archiveCacheOrder.AddLast(path);
+            if (_archiveCache.Count > CachedArchiveShardLimit)
+            {
+                var oldest = _archiveCacheOrder.First!.Value;
+                _archiveCacheOrder.RemoveFirst();
+                _archiveCache.Remove(oldest);
+            }
+            return archive;
+        }
+    }
+
+    private void InvalidateArchiveCache(string path)
+    {
+        lock (_archiveCacheGate)
+        {
+            _archiveCache.Remove(path);
+            _archiveCacheOrder.Remove(path);
+        }
+    }
+
+    private AuthorityArchive ReadArchive(string path)
     {
         try
         {
@@ -3981,6 +4073,8 @@ public sealed class AttemptAuthorityService
 
     private sealed record ArchiveIndexEntry(
         IReadOnlySet<string> TaskKeys,
+        IReadOnlySet<string> RunAttemptIds,
+        IReadOnlySet<string> ReviewAttemptIds,
         IReadOnlyList<AttemptIndexedDeliveryRef> DeliveryRefs);
 
     private sealed record TerminalAttemptReference(
