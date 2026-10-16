@@ -54,12 +54,16 @@ can pass the same choices:
 | `-ProviderCli <choice>` | Select `codex`, `claude`, or `skip`. `skip` leaves provider login for later. |
 | `-GitAccess <choice>` | Select `gcm`, `token`, `deploy-key`, or `skip` for the Runner's GitHub credential source. |
 | `-GitTokenFile <path>` | Required for `token`; the script copies the token into a protected credential file. |
-| `-GitRemote <url>` | Verify access to this repository. Required as a GitHub SSH URL for `deploy-key`; use a GitHub HTTPS URL for `gcm` or `token`. |
-| `-RunnerPasswordFromStdin` | Read the Runner account password from one stdin line for a boot-time task with that account's credential profile. |
+| `-GitRemote <url>` | Select the repository. Required as a GitHub SSH URL for `deploy-key`; use a GitHub HTTPS URL for `gcm` or `token`. The setup executable verifies deploy-key access after the key is added. |
+| `-RunnerPasswordFromStdin` | Read the Runner account password from one stdin line for a boot-time task with that account's credential profile. Required by the setup executable when a provider or GitHub access is selected. |
 | `-Unattended` | Suppress the one-time owner-code console display. The code remains in its restricted file. |
 
 The script also accepts the older `-NonInteractive` switch. The owner-code
 display is controlled by `-Unattended`.
+Direct script use prints a generated deploy public key and leaves its access
+check for the caller. With the setup executable, a guided install waits for
+the user to add the key, then verifies the repository access; an unattended
+install reports the pending check for a later guided repair.
 
 The script writes `server.env`, `engine.env`, and `studio-connector.env` under
 `ConfigRoot`. Full Studio also writes `studio-backend.env` and `runner.env`.
