@@ -97,7 +97,7 @@ public sealed class ApiTokenAccessTests : IDisposable
     }
 
     [Fact]
-    public async Task Project_scoped_token_cannot_read_workspace_expensive_jobs()
+    public async Task Project_scoped_token_cannot_read_workspace_token_aggregates()
     {
         var (store, configuration) = NewStore();
         var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
@@ -110,16 +110,20 @@ public sealed class ApiTokenAccessTests : IDisposable
 
         foreach (var path in new[]
         {
+            "/api/workspace/tokens/timeline",
+            "/api/workspace/tokens/timeline/cached",
             "/api/workspace/tokens/expensive-jobs",
             "/api/workspace/tokens/expensive-jobs/cached"
         })
         {
             var denied = await Invoke(middleware, "GET", path, scoped.Secret);
             Assert.Equal(403, denied.Response.StatusCode);
+            var deniedWithProject = await Invoke(middleware, "GET", path, scoped.Secret, "?project=mine");
+            Assert.Equal(403, deniedWithProject.Response.StatusCode);
             var allowed = await Invoke(middleware, "GET", path, allProjects.Secret);
             Assert.Equal(200, allowed.Response.StatusCode);
         }
-        Assert.Equal(2, called);
+        Assert.Equal(4, called);
     }
 
     [Fact]
@@ -145,12 +149,13 @@ public sealed class ApiTokenAccessTests : IDisposable
         return (new AccessSecurityStore(configuration, NullLogger<AccessSecurityStore>.Instance, _clock), configuration);
     }
 
-    private static async Task<DefaultHttpContext> Invoke(AccessSecurityMiddleware middleware, string method, string path, string token)
+    private static async Task<DefaultHttpContext> Invoke(AccessSecurityMiddleware middleware, string method, string path, string token, string query = "")
     {
         var context = new DefaultHttpContext();
         context.Request.Scheme = "https";
         context.Request.Method = method;
         context.Request.Path = path;
+        context.Request.QueryString = new QueryString(query);
         context.Request.Headers.Authorization = "Bearer " + token;
         context.Response.Body = new MemoryStream();
         await middleware.InvokeAsync(context);
