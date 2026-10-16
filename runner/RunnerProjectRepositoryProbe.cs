@@ -32,13 +32,20 @@ public sealed class RunnerProjectRepositoryProbe(
                 && TimeProvider.System.GetUtcNow().UtcDateTime - probe.ObservedAt < TimeSpan.FromMinutes(5)))
                 continue;
             var origin = status.Registration.RepositoryUrl;
+            var keyPath = RunnerFirstRunGitCredentials.Key(options.StateDir, origin);
+            var helperPath = keyPath is null
+                ? RunnerFirstRunGitCredentials.Helper(options.StateDir, origin) : null;
+            IRepositoryGitProof? firstRunGit = keyPath is null && helperPath is null ? null
+                : new PlatformRepositoryGitProof(_ => keyPath, options.StateDir,
+                    credentialHelperForGeneration: _ => helperPath);
             RepositoryAccessProof proof;
             try
             {
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 deadline.CancelAfter(TimeSpan.FromSeconds(45));
-                proof = await git.ProveAsync(
-                    new RepositoryAccessBinding("workspace", origin, RequiresPush: true), null,
+                proof = await (firstRunGit ?? git).ProveAsync(
+                    new RepositoryAccessBinding("workspace", origin, RequiresPush: true),
+                    firstRunGit is null ? null : "first-run",
                     deadline.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
