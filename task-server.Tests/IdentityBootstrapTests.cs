@@ -471,7 +471,11 @@ public sealed class IdentityBootstrapTests
             new CreateTaskRequest("A product wish"));
         Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
         var createdTask = (await createdResponse.Content.ReadFromJsonAsync<TaskDto>())!;
-        var history = (await (await product.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/agent-work-detail")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history")).StatusCode);
+        var history = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
             .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
         Assert.Contains(history.Audit, row => row.Action == "task.created" && row.ActorId == invited.User.UserId);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.PutAsJsonAsync(
@@ -481,7 +485,7 @@ public sealed class IdentityBootstrapTests
         Assert.Equal(HttpStatusCode.Created, (await product.PostAsJsonAsync(
             $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/preview-comments",
             new StudioPreviewCommentRequest("preview-1", "Please enlarge the heading."))).StatusCode);
-        var commentedHistory = (await (await product.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
+        var commentedHistory = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
             .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
         Assert.Contains(commentedHistory.Audit, row => row.Action == "task.preview-commented"
             && row.ActorId == invited.User.UserId && row.DetailJson.Contains("preview-1", StringComparison.Ordinal));
@@ -494,7 +498,7 @@ public sealed class IdentityBootstrapTests
         Assert.Equal(HttpStatusCode.OK, (await product.PutAsJsonAsync(
             $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/release",
             new SetTaskReleaseRequest("approved", 0))).StatusCode);
-        var releasedHistory = (await (await product.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
+        var releasedHistory = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
             .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
         Assert.Contains(releasedHistory.Audit, row => row.Action == "task.release-set" && row.ActorId == invited.User.UserId);
         Assert.Equal(HttpStatusCode.OK, (await ownerClient.PutAsJsonAsync(

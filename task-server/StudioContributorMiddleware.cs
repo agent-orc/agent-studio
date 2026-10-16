@@ -55,7 +55,8 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
         if (parts.Any(part => part is "credentials" or "remote-hosts" or "settings" or "quotas"
             or "security" or "tokens" or "usage" or "logs" or "raw-logs"
             or "merge" or "promotions" or "production" or "management"
-            or "secrets" or "output" or "trace" or "files"))
+            or "secrets" or "output" or "trace" or "files"
+            or "agent-work-detail" or "history"))
         {
             await Deny(context);
             return;
