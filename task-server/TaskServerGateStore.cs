@@ -199,6 +199,7 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         GateClaimResponse? response = null;
+        TaskServerOperationalEvent? quotaEvent = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ReconcileGateTimeoutsAsync(connection, transaction, ct);
@@ -255,6 +256,7 @@ public sealed partial class TaskServerStore
                     quotaReason = quota.Message ?? "Workspace quota reached.";
                     continue;
                 }
+                var quotaWarning = quota.MeterUnavailable ? quota.Message : null;
                 if (candidate.Number > 1)
                 {
                     var previousHost = await ScalarAsync(connection, """
@@ -306,14 +308,22 @@ public sealed partial class TaskServerStore
                     ("$deadline", Iso(deadline)), ("$attempt", candidate.AttemptId));
                 await AuditAsync(connection, transaction, actorId, "gate.claimed", "gate-attempt",
                     candidate.AttemptId, JsonSerializer.Serialize(new { fence, hostId }), ct);
+                if (quotaWarning is not null)
+                {
+                    await AppendLifecycleEventAsync(connection, transaction, candidate.Subject.SourceRunId,
+                        candidate.Subject.TaskId, 0, "quota.meter-unavailable", new { message = quotaWarning }, ct);
+                    quotaEvent = new TaskServerOperationalEvent("quota.meter-unavailable", UtcNow,
+                        actorId, new { candidate.Subject.TaskId, message = quotaWarning });
+                }
                 var attempt = await ReadGateAttemptAsync(connection, transaction, candidate.AttemptId, ct);
                 response = new GateClaimResponse("claimed", candidate.Subject, attempt,
                     new GateLease(leaseId, candidate.AttemptId, request.ExecutorId, request.InstanceId,
-                        hostId, fence, 0, now, expiry, resourceNamespace, portBase));
+                        hostId, fence, 0, now, expiry, resourceNamespace, portBase), quotaWarning);
                 return;
             }
             response = new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }, ct);
+        if (quotaEvent is not null) await PublishOperationalEventsAsync([quotaEvent], ct);
         return response!;
     }
 

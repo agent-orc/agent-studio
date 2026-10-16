@@ -38,6 +38,40 @@ public sealed partial class TaskServerStoreTests
         public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
             => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
     }
+
+    [Fact]
+    public async Task Missing_meter_warns_on_coding_card_but_claim_still_starts()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var events = new RecordingQuotaEvents();
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), events, null,
+            new UnconfiguredWorkspaceQuotaAdmission());
+        await guarded.InitializeAsync();
+        var claim = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Contains("not configured", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        var timeline = await guarded.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default);
+        Assert.Contains(timeline.Entries, entry =>
+            entry.EventKind == "quota.meter-unavailable"
+            && entry.Summary.Contains("not configured", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(events.Published, evt => evt.Kind == "quota.meter-unavailable");
+    }
+
+    private sealed class RecordingQuotaEvents : ITaskServerEventPublisher
+    {
+        public List<TaskServerOperationalEvent> Published { get; } = [];
+        public Task PublishAsync(TaskServerOperationalEvent message, CancellationToken ct)
+        {
+            Published.Add(message);
+            return Task.CompletedTask;
+        }
+    }
     [Fact]
     public async Task Steering_feedback_rebuilds_the_same_command_and_attempt_in_all_read_views_after_restart()
     {

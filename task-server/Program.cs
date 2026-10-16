@@ -52,9 +52,10 @@ builder.Services
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddHttpClient(nameof(HttpWorkspaceQuotaAdmission), client =>
     client.Timeout = TimeSpan.FromSeconds(3));
-if (!builder.Environment.IsEnvironment("Testing") && !builder.Environment.IsEnvironment("Test")
-    || !string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
+if (!string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
     builder.Services.AddSingleton<IWorkspaceQuotaAdmission, HttpWorkspaceQuotaAdmission>();
+else
+    builder.Services.AddSingleton<IWorkspaceQuotaAdmission, UnconfiguredWorkspaceQuotaAdmission>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();

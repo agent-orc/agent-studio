@@ -320,6 +320,24 @@ public sealed class GateAuthorityTests
             => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
     }
 
+    [Fact]
+    public async Task Missing_meter_warns_on_gate_claim_and_keeps_gate_moving()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
+        await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null,
+            new UnconfiguredWorkspaceQuotaAdmission());
+        await guarded.InitializeAsync();
+        var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Contains("not configured", claim.Message!, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static GateReport Report(string? failure)
         => new(failure is null ? GateStates.Passed
                 : failure == GateFailureClasses.ProductFailure ? GateStates.ProductFailed : GateStates.InfraFailed,

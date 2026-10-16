@@ -7,7 +7,7 @@ public sealed class TaskServerOptions
     public string DataDirectory { get; set; } = "data";
     public string? BackupDirectory { get; set; }
     public string ListenUrl { get; set; } = "http://127.0.0.1:5071";
-    public string QuotaAdmissionBaseUrl { get; set; } = "http://127.0.0.1:5030";
+    public string? QuotaAdmissionBaseUrl { get; set; }
     public string? QuotaAdmissionBearerToken { get; set; }
     public int MinimumLeaseSeconds { get; set; } = 30;
     public int MaximumLeaseSeconds { get; set; } = 900;

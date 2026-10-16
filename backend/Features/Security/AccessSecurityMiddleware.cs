@@ -99,6 +99,24 @@ public sealed class AccessSecurityMiddleware
             ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
         var bearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
         var runner = _store.AuthenticateRunner(bearer);
+        if (HttpMethods.IsGet(context.Request.Method)
+            && path.StartsWith("/api/quota/admission/", StringComparison.OrdinalIgnoreCase))
+        {
+            var serviceToken = _configuration["TaskServer:QuotaAdmissionBearerToken"];
+            var serviceAuthenticated = !string.IsNullOrWhiteSpace(serviceToken)
+                && bearer is not null
+                && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                    System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(serviceToken)),
+                    System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(bearer)));
+            if (!serviceAuthenticated && (runner is null || !runner.Scopes.Contains(RunnerScopes.Claim)))
+            {
+                await Reject(context, 403, "quota-admission-scope-denied",
+                    "A Task Server service credential or Runner claim scope is required.");
+                return;
+            }
+            await _next(context);
+            return;
+        }
         if (human is not null)
         {
             context.Items[HumanPrincipalItem] = human;
