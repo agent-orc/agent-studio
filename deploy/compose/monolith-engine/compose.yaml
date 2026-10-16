@@ -5,6 +5,7 @@ name: agent-studio-monolith-engine
 services:
   orchestrator-engine:
     image: ${ORCHESTRATOR_ENGINE_IMAGE:-ghcr.io/agent-orc/agent-studio-orchestrator-engine}:${ENGINE_VERSION:?set ENGINE_VERSION}
+    cgroup_parent: studio.slice
     restart: unless-stopped
     network_mode: host
     entrypoint: ["/bin/sh", "-c"]
