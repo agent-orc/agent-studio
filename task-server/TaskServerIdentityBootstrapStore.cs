@@ -237,10 +237,13 @@ public sealed partial class TaskServerStore
         {
             installationId = await ReadMetaAsync(connection, transaction, InstallationIdKey, ct)
                              ?? throw new InvalidOperationException("Installation identity is not initialized.");
-            if (await ReadPrincipalAsync(connection, transaction, principalId, ct) is not null)
+            var existing = await ReadPrincipalAsync(connection, transaction, principalId, ct);
+            if (existing is not null && (kind != TaskServerPrincipalKinds.Runner
+                                         || existing.Kind != kind || existing.RunnerId != runnerId
+                                         || existing.RevokedAt is not null))
                 throw new TaskServerConflictException(
-                    "principal-exists", $"Principal '{principalId}' already exists. Rotate or revoke it explicitly.");
-            if (runnerId is not null && await ScalarAsync(connection,
+                    "principal-exists", $"Principal '{principalId}' already exists with a different identity or is revoked.");
+            if (runnerId is not null && existing is null && await ScalarAsync(connection,
                     "SELECT 1 FROM principals WHERE runner_id = $runner;", ct, transaction, ("$runner", runnerId)) is not null)
                 throw new TaskServerConflictException(
                     "runner-identity-exists", $"Runner '{runnerId}' already has a principal.");
@@ -329,10 +332,13 @@ public sealed partial class TaskServerStore
             var consumed = found && !reader.IsDBNull(5);
             var revoked = found && !reader.IsDBNull(6);
             await reader.DisposeAsync();
-            var principalExists = found
-                && (await ReadPrincipalAsync(connection, transaction, principalId, ct) is not null
-                    || runnerId is not null && await ScalarAsync(connection,
-                        "SELECT 1 FROM principals WHERE runner_id = $runner;", ct, transaction, ("$runner", runnerId)) is not null);
+            var existing = found ? await ReadPrincipalAsync(connection, transaction, principalId, ct) : null;
+            var replaceRunner = existing is not null && kind == TaskServerPrincipalKinds.Runner
+                                && existing.Kind == kind && existing.RunnerId == runnerId
+                                && existing.RevokedAt is null;
+            var principalExists = found && !replaceRunner
+                && (existing is not null || runnerId is not null && await ScalarAsync(connection,
+                    "SELECT 1 FROM principals WHERE runner_id = $runner;", ct, transaction, ("$runner", runnerId)) is not null);
             decision = EnrolmentExchangePolicy.Decide(
                 found, consumed, revoked, expiresAt, now,
                 string.Equals(installationId, request.ExpectedInstallationId?.Trim(), StringComparison.Ordinal),
@@ -344,15 +350,24 @@ public sealed partial class TaskServerStore
             }
 
             var scopes = DefaultScopes(kind);
-            await InsertPrincipalAsync(connection, transaction, principalId, kind, scopes, runnerId, credential, now, ct);
+            if (replaceRunner)
+            {
+                await ExecuteAsync(connection,
+                    "UPDATE principal_credentials SET revoked_at = $now WHERE principal_id = $id AND revoked_at IS NULL;",
+                    ct, transaction, ("$now", Iso(now)), ("$id", principalId));
+                await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
+            }
+            else
+                await InsertPrincipalAsync(connection, transaction, principalId, kind, scopes, runnerId, credential, now, ct);
             await ExecuteAsync(connection,
                 "UPDATE service_enrolments SET consumed_at = $now WHERE enrolment_id = $id;",
                 ct, transaction, ("$now", Iso(now)), ("$id", enrolmentId));
             await AuditAsync(connection, transaction, principalId, "enrolment.exchanged", "principal", principalId,
-                JsonSerializer.Serialize(new { enrolmentId, kind, runnerId }), ct);
+                JsonSerializer.Serialize(new { enrolmentId, kind, runnerId, replaced = replaceRunner }), ct);
             result = new ExchangedEnrolment(
                 installationId,
-                new IssuedPrincipalCredential(ToDto(principalId, kind, scopes, runnerId, now, null, null), credential, now));
+                new IssuedPrincipalCredential(ToDto(principalId, kind, scopes, runnerId,
+                    existing?.CreatedAt ?? now, null, existing?.LastSeenAt), credential, now));
         }, ct);
         if (result is not null) return result;
 

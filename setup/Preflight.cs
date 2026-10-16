@@ -155,7 +155,7 @@ internal static class PreflightProbe
             journey is InstallationJourney.OneBox or InstallationJourney.JoinHost or InstallationJourney.RelocateAuthority
                 ? FreeBytes(installRoot) : null,
             host is not null && !host.IsLoopback ? await ResolvesAsync(host.Host, cancellationToken) : null,
-            journey == InstallationJourney.RelocateAuthority
+            journey == InstallationJourney.RelocateAuthority && contactsAuthority
                 ? WireGuardUp(windows)
                 : null,
             authority.Trusted,
