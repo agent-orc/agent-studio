@@ -33,7 +33,7 @@ const STORAGE_KEY_TASK_NAV = 'taskNavCollapsed';
 // a live preference; the key is proactively cleared on boot (see constructor).
 const STORAGE_KEY_COMPACT_CARDS = 'compactCards';
 const STORAGE_KEY_SIDE_SHEET_WIDTH = 'sideSheetWidth';
-const STORAGE_KEY_GROUP_BY_EPIC = 'boardGroupByEpic';
+const STORAGE_KEY_GROUP_BY_EPIC = 'boardGroupByDossier';
 const STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY = 'atp.studio.openProjectChatOnEntry.v1';
 const STORAGE_KEY_CHAT_METADATA = 'atp.studio.chatMetadata.enabled.v1';
 // AGT-1812: the standalone Orchestrator-settings modal was retired into the
@@ -65,8 +65,8 @@ export class UiPreferencesService {
     this.chatMetadataOverride() ?? this.chatMetadataProjectDefault());
 
   /**
-   * Board "Gruppieren nach Epic" toggle. When on, the board case renders the
-   * epic tree (`<app-epic-group-board>`) instead of the lane columns. Persisted
+   * Board Dossier grouping toggle. When on, the board renders Dossier groups
+   * instead of the lane columns. Persisted
    * so the operator's preferred board shape survives reloads.
    */
   readonly groupByEpic = signal<boolean>(localStorage.getItem(STORAGE_KEY_GROUP_BY_EPIC) === '1');

@@ -41,6 +41,22 @@ public sealed class OrchestratorWorkbenchPromptContextComposerTests : IDisposabl
     }
 
     [Fact]
+    public void CardContext_ContainsSliceProgressAndCurrentCardStates()
+    {
+        var cards = new DossierCardList("Project", "AGT-W9", "docs/workbenches/one/index.html",
+            2, 1,
+            [new DossierCard("AGT-1", "one", "Build API", "2-ready", "waiting", ["staging"],
+                "§4", "NV-D2", 0)]);
+
+        var block = OrchestratorWorkbenchPromptContextComposer.RenderCardBlock(cards);
+
+        Assert.Contains("Implementation slices: 1/2 complete", block);
+        Assert.Contains("AGT-1: Build API | lane 2-ready | state waiting", block);
+        Assert.Contains("environments staging", block);
+        Assert.Contains("section §4 | decision NV-D2", block);
+    }
+
+    [Fact]
     public void Compose_ReturnsNull_ForUnknownDossierKey()
     {
         WriteWorkbench("kontext-orchestrator-chats", "Context-Aware Orchestrator Chats", "decided", "testing");

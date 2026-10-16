@@ -105,6 +105,7 @@ internal static class BoardCardSummary
             ["cliType"] = job.CliType,
             ["kind"] = job.Kind,
             ["epicId"] = job.EpicId,
+            ["dossier"] = job.Dossier,
             ["mode"] = job.Mode,
             ["ownerClientId"] = job.OwnerClientId,
             ["sessionName"] = job.SessionName,

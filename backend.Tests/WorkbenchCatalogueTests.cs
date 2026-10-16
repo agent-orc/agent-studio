@@ -28,6 +28,21 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_KeepsLegacyImplementationTaskKeysAsDossierSlices()
+    {
+        WriteWorkbench("legacy-slices", "Legacy slices", "active", "2026-07-10T10:00:00Z");
+        var descriptorPath = Path.Combine(_root, "docs", "workbenches", "legacy-slices", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(descriptorPath))!.AsObject();
+        descriptor["implementationTasks"] = new JsonArray(JsonValue.Create("AGT-1"), JsonValue.Create("AGT-2"));
+        File.WriteAllText(descriptorPath, descriptor.ToJsonString());
+
+        var item = Assert.Single(Service().List("Project")!.Items);
+
+        Assert.True(item.Valid);
+        Assert.Equal(["AGT-1", "AGT-2"], item.ImplementationTaskKeys);
+    }
+
+    [Fact]
     public void List_ValidatesSortsAndKeepsInvalidEntriesVisible()
     {
         WriteWorkbench("older", "Older", "active", "2026-07-10T10:00:00Z");

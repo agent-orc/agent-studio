@@ -17,7 +17,7 @@ import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
   CreateTaskDialogComponent,
-  EpicGroupBoardComponent,
+  DossierGroupBoardComponent,
   EpicOverviewScreenComponent,
   type EpicOverviewScope,
   FiltersDropdownComponent,
@@ -184,7 +184,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     StatusBarComponent,
     FormsModule,
     CreateTaskDialogComponent,
-    EpicGroupBoardComponent,
+    DossierGroupBoardComponent,
     ErrorDialogComponent,
     ConfirmDialogComponent,
     NotificationStackComponent,
@@ -452,9 +452,9 @@ export class App implements OnInit, OnDestroy {
   readonly taskNavCollapsed = this.uiPrefs.taskNavCollapsed;
 
   /**
-   * Board "Gruppieren nach Epic" toggle. When on, the board case renders the
-   * epic tree instead of the lane columns. The tree is built from the same
-   * `filteredGrouped` feed (via `epicBoardTasks`) so search + filters apply to
+   * Board "Group by Dossier" toggle. When on, the board case renders the
+   * Dossier groups instead of the lane columns. The groups use the same
+   * `displayGrouped` feed (via `dossierBoardTasks`) so search + filters apply to
    * both shapes identically. Persisted in UiPreferencesService.
    */
   readonly groupByEpic = this.uiPrefs.groupByEpic;
@@ -462,11 +462,13 @@ export class App implements OnInit, OnDestroy {
     this.uiPrefs.toggleGroupByEpic();
   }
   /**
-   * Flat, de-duplicated task list for the epic tree. Sourced from the filtered
-   * lane feed so the "Group by epic" view honours the active search + filters;
+   * Flat, de-duplicated task list for the Dossier groups. Sourced from the visible
+   * lane feed so the Dossier view honours the active search + filters;
    * `flattenGrouped` collapses the `review`/`autoReview` legacy alias so no card
    * is counted twice.
    */
+  readonly dossierBoardTasks = computed(() => flattenGrouped(this.displayGrouped()));
+  /** Existing lane cards still use the full filtered feed for their Epic subtask details. */
   readonly epicBoardTasks = computed(() => flattenGrouped(this.filteredGrouped()));
 
   /**
@@ -575,8 +577,8 @@ export class App implements OnInit, OnDestroy {
   // not just usually true.
   // Board display contract: epics are containers, not board work-items, so the
   // flat lane board (focusGroups / laneGroups) renders tasks only. The
-  // "Group by epic" view binds the unfiltered `epicBoardTasks` feed instead, so
-  // epics still surface there and via the Epic navigation. See `excludeEpics`.
+  // Dossier grouping uses the same tasks-only feed, so Epic containers stay out
+  // of the board. See `excludeEpics`.
   readonly displayGrouped = computed(() => excludeEpics(this.filteredGrouped()));
 
   /**

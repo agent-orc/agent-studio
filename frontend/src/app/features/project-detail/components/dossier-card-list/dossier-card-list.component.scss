@@ -1,0 +1,16 @@
+:host { display: block; }
+.dossier-cards {
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  background: var(--studio-bg);
+  color: var(--studio-fg);
+  border-bottom: 1px solid var(--studio-border);
+  font-size: 0.78rem;
+}
+.dossier-cards__header { display: flex; gap: var(--studio-spacing-3); align-items: baseline; }
+.dossier-cards__header span { font-variant-numeric: tabular-nums; color: var(--studio-fg-dim); }
+ul { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); padding: 0; margin: var(--studio-spacing-2) 0 0; list-style: none; }
+li { display: flex; align-items: center; gap: var(--studio-spacing-2); padding: var(--studio-spacing-2); background: var(--studio-bg-elevated); border: 1px solid var(--studio-border); border-radius: var(--studio-radius-sm); }
+li span { color: var(--studio-fg-dim); }
+button { border: 0; background: none; color: var(--studio-fg); cursor: pointer; font: inherit; }
+button:hover { color: var(--studio-accent-4-strong); }
+button:focus-visible { outline: 2px solid var(--studio-accent-4-strong); }

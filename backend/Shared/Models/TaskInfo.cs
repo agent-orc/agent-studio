@@ -111,6 +111,8 @@ public record TaskInfo
     /// decomposition run.
     /// </summary>
     public string? EpicId { get; init; }
+    /// <summary>Primary Dossier; other Dossiers remain ordinary reference links.</summary>
+    public TaskDossier? Dossier { get; init; }
     /// <summary>
     /// Execution mode (orthogonal to <see cref="Kind"/>): <c>coding</c> (default,
     /// mutates source) | <c>planning</c> | <c>research</c> (read-only reports) |

@@ -1,4 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
+import * as path from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 /**
  * Board display contract (operator 2026-06-09): the flat lane board shows
@@ -35,6 +37,9 @@ function makeCard(id: string, state: string, title: string, order: number, kind:
     model: 'claude-opus-4-7',
     kind,
     epicId: null,
+    dossier: id === 'hide-task-backlog' || id === 'hide-task-ready'
+      ? { path: 'docs/operations/fixture-dossier/index.html', section: '§4', decision: 'NV-D2' }
+      : null,
     useOwnSession: null,
     lastUsage: null,
     execution: null,
@@ -85,11 +90,26 @@ async function installRoutes(page: Page) {
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
       return;
     }
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined);
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }).catch(() => undefined);
   });
 
   await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED_PAYLOAD) }));
+
+  await page.route('**/api/v1/studio/auth/status', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+  }));
+
+  await page.route('**/api/tasks/archive**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ items: [], total: 0 }),
+  }));
+  await page.route('**/api/usage/cockpit**', (route) => route.fulfill({
+    status: 503, contentType: 'application/json', body: '{}',
+  }));
 
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill({
@@ -137,8 +157,7 @@ async function seedBoardTab(page: Page): Promise<void> {
       tabs: [{ kind: 'board', projectName: '__all__' }],
       activeKey: 'board:__all__',
     }));
-    // Ensure the board opens in lane (not group-by-epic) mode.
-    try { localStorage.setItem('boardGroupByEpic', '0'); } catch { /* ignore */ }
+    localStorage.setItem('boardGroupByDossier', '0');
   });
 }
 
@@ -171,20 +190,21 @@ test.describe('Board hides epics (tasks-only lanes)', () => {
     }
   });
 
-  test('epics remain reachable via the Group-by-epic view', async ({ page }) => {
+  test('groups cards by their primary Dossier', async ({ page }) => {
     await gotoBoard(page);
-
-    // Switch the board to the epic grouping (epic navigation surface).
-    await page.getByTestId('studio-board-epic-toggle').click();
-
-    const epicBoard = page.getByTestId('epic-group-board');
-    await expect(epicBoard).toBeVisible({ timeout: 10_000 });
-
-    // Each epic now surfaces as a group header (reachable, just not a lane card).
-    for (const epic of EPICS) {
-      const group = page.getByTestId(`epic-group-${epic.id}`);
-      await expect(group, `epic group ${epic.id}`).toHaveCount(1);
-      await expect(group).toContainText(epic.title);
+    await expect(cardByTitle(page, TASK_BACKLOG.title).getByTestId('task-card-dossier')).toContainText('fixture-dossier');
+    await expect(cardByTitle(page, TASK_BACKLOG.title).getByTestId('task-card-dossier')).toContainText('§4 · NV-D2');
+    await page.getByTestId('studio-board-dossier-toggle').click();
+    const board = page.getByTestId('dossier-group-board');
+    await expect(board).toBeVisible();
+    const dossier = board.locator('[data-dossier-path="docs/operations/fixture-dossier/index.html"]');
+    await expect(dossier).toContainText(TASK_BACKLOG.title);
+    await expect(dossier).toContainText(TASK_READY.title);
+    await expect(dossier).toContainText('0 / 2 complete');
+    for (const epic of EPICS) await expect(board).not.toContainText(epic.title);
+    if (process.env['JOB_RESULTS_DIR']) for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(process.env['JOB_RESULTS_DIR'], `dossier-board-${theme}.png`) });
     }
   });
 });

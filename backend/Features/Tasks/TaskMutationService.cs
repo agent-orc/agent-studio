@@ -345,6 +345,14 @@ public class TaskMutationService
         return WriteCommitState(folderPath, ordered);
     }
 
+    public bool SetJobDossier(string jobId, TaskDossier? dossier, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return false;
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "dossier", dossier!, _logger)) return false;
+        return Updated(info);
+    }
+
     /// <summary>
     /// Replaces one generation's attribution from its verified remote delivery
     /// range, then projects <c>commits[]</c> as the SHA-deduplicated union of
@@ -1813,6 +1821,7 @@ public class TaskMutationService
         var acceptanceScope = TaskAcceptanceScopes.Normalize(req.AcceptanceScope);
         if (req.AcceptanceScope is not null && acceptanceScope is null) return null;
         if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase)) return null;
+        if (req.Dossier != null && !ConceptDossierContract.IsDossierPath(req.Dossier.Path)) return null;
 
         // Backlog is the default landing lane when the caller supplies no
         // targetState. An explicit valid lane is authoritative. In particular,
@@ -1980,6 +1989,8 @@ public class TaskMutationService
         jobJson["kind"] = TaskKinds.Normalize(req.Kind);
         if (!string.IsNullOrWhiteSpace(req.EpicId))
             jobJson["epicId"] = req.EpicId;
+        if (req.Dossier is { Path.Length: > 0 })
+            jobJson["dossier"] = req.Dossier;
         // Execution mode (coding|planning|research) + web-access. mode is always
         // written; web access defaults by mode when the request omits it
         // (research on, else off) - see planning-research-task-kinds note.
