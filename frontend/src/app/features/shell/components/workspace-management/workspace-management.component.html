@@ -197,6 +197,15 @@
         Archived: {{ showArchivedProjects() ? 'shown' : 'hidden' }}
       </button>
     </div>
+    @for (ws of registryWorkspaces(); track ws.id) {
+      <button type="button" class="wsm__toggle" [attr.data-testid]="'settings-workspace-quota-' + ws.id"
+              (click)="activeQuotaWorkspaceId.set(activeQuotaWorkspaceId() === ws.id ? null : ws.id)">
+        {{ ws.displayName }} quota
+      </button>
+      @if (activeQuotaWorkspaceId() === ws.id) {
+        <app-workspace-quota [workspaceId]="ws.id" />
+      }
+    }
     <p class="wsm__note wsm__note--muted"
        data-testid="settings-workspaces-note">
       F45b mutation surface (ADR-0042). Click a workspace or project name to rename;
