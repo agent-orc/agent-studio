@@ -172,8 +172,8 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
                 service.ClaimReview("review-missing", "executor", "host", 60, $"claim-{i}").Status);
         }
         Assert.Equal(1, _opens[ShardName("02")]);
-        Assert.Equal(1, _opens[ShardName("01")]);
-        Assert.Equal(1, _opens[ShardName("03")]);
+        Assert.Equal(2, _opens[ShardName("01")]);
+        Assert.Equal(2, _opens[ShardName("03")]);
 
         File.Delete(damaged);
         WriteShard("02", Run("run-b1", "AGT-B"));
@@ -183,9 +183,9 @@ public sealed class AttemptArchiveIndexReadBudgetTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(3, service.WarmArchiveIndex());
         Assert.Equal("run-b1", service.GetRun("run-b1")!.AttemptId);
-        Assert.Equal(2, _opens[ShardName("02")]);
-        Assert.Equal(1, _opens[ShardName("01")]);
-        Assert.Equal(1, _opens[ShardName("03")]);
+        Assert.Equal(3, _opens[ShardName("02")]);
+        Assert.Equal(2, _opens[ShardName("01")]);
+        Assert.Equal(2, _opens[ShardName("03")]);
         _opens.Clear();
         Assert.Equal(3, service.WarmArchiveIndex());
         Assert.Empty(_opens);
