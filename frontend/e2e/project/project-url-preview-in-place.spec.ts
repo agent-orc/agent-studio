@@ -17,6 +17,7 @@ test('keeps start, settings, live output, and stop in the embed in both themes',
   let settingsSaved = false;
   let portOccupied = true;
   let startAttempted = false;
+  let profile: 'local' | 'networked' = 'local';
   const url = {
     id: 'website', label: 'Website', url: 'http://localhost:4202', sortOrder: 0,
     startRule: { command: 'npm run website', cwd: null, port: 4202, source: 'manual' },
@@ -62,7 +63,10 @@ test('keeps start, settings, live output, and stop in the embed in both themes',
       status, contentType: 'application/json', body: JSON.stringify(body),
     });
     if (pathname === '/api/v1/studio/auth/status') return json({
-      profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+      profile, bootstrapRequired: false, authenticated: true, user: null,
+    });
+    if (pathname === `/api/projects/${PROJECT_ID}/urls/website/preview/`) return route.fulfill({
+      status: 200, contentType: 'text/html', body: '<main>Preview through Studio HTTPS edge</main>',
     });
     if (pathname === '/api/watch-paths') return json([{
       name: PROJECT_NAME, path: '/mock/tasks/embed', rootPath: '/mock/repo/embed',
@@ -250,6 +254,23 @@ test('keeps start, settings, live output, and stop in the embed in both themes',
   await expect.poll(() => processState).toBe('stopped');
   await expect(page.getByTestId('url-preview-process-status')).toContainText('Stopped');
   expect(processState).toBe('stopped');
+
+  // A remote viewer must never load localhost in their browser or grant the
+  // proxied document same-origin script access to Studio.
+  profile = 'networked';
+  processState = 'running';
+  await page.reload();
+  const networkedProject = page.getByTestId(`studio-explorer-project-${PROJECT_NAME}`);
+  await expect(networkedProject).toBeVisible();
+  const networkedUrl = page.getByTestId(`studio-explorer-project-url-${PROJECT_NAME}-${url.id}`);
+  if (!await networkedUrl.isVisible().catch(() => false)) await networkedProject.click();
+  await networkedUrl.click();
+  const proxiedFrame = page.getByTestId('url-preview-frame');
+  await expect(proxiedFrame).toHaveAttribute('src', `/api/projects/${PROJECT_ID}/urls/website/preview/`);
+  await expect(proxiedFrame).not.toHaveAttribute('sandbox', /allow-same-origin/);
+  await expect(page.getByTestId('url-preview-addr-input')).toBeDisabled();
+  await expect(page.getByTestId('hquota-card-claude')).toBeDisabled();
+  await proxiedFrame.screenshot({ path: join(shots, 'preview-networked-edge--mocked.png') });
 });
 
 function previewTask(key: string, state: string) {

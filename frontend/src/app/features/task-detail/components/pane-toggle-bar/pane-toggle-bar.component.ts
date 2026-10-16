@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import { AuthService } from '../../../../services/auth.service';
 import { PaneName, PanesVisible } from '../../services/layout-panes.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -22,6 +23,8 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
   styleUrl: './pane-toggle-bar.component.scss'
 })
 export class PaneToggleBarComponent {
+  private readonly auth = inject(AuthService);
+  readonly localActionsAvailable = computed(() => this.auth.status()?.profile === 'local');
   readonly panesVisible = input.required<PanesVisible>();
   /** Commit count attributed to the task; 0 hides the badge. */
   readonly commitCount = input<number>(0);

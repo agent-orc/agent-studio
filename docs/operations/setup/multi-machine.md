@@ -27,6 +27,39 @@ Only the Control Plane accepts inbound application traffic. Agent Hosts make
 outbound HTTPS requests to the Task Server and separate Git requests to the
 registered origins.
 
+## Import an existing Windows workspace
+
+Copy the workspace task store and each Git checkout to paths on the Linux
+Control Plane before enabling project actions. Set `TaskRepository` and any
+bootstrap `WatchPaths` in the Linux `appsettings.Local.json` to Linux paths.
+Existing project registry records retain their old paths until imported.
+
+Use `POST /api/projects/path-import` with a Windows prefix and the matching
+server prefix. The default dry run reports every project as `ready`,
+`unmapped`, `missing-checkout`, or `missing-storage`. Review the report, then
+send the same request with `"apply": true`. Ready records update together;
+records without a checkout remain in the report for manual setup. For example:
+
+```json
+{
+  "mappings": [
+    { "windowsPrefix": "C:\\Projects", "serverPrefix": "/srv/studio/projects" },
+    { "windowsPrefix": "D:\\StudioJobs", "serverPrefix": "/srv/studio/jobs" }
+  ],
+  "apply": false
+}
+```
+
+The registry's `RepositoryPath`, `RootPath`, and legacy task
+`StorageLocation` are mapped only to existing server directories. A checkout
+path must contain `.git`. Copy the task store before applying its path mapping;
+the import updates pointers and does not move task files. Project URL previews
+in the networked browser use Studio's HTTPS project preview route. The server
+connects to the registered URL; `localhost` therefore names the server, not
+the operator's browser. The VS Code launch shortcut is available only in the
+local profile. The networked status bar reads provider health from runner host
+capability reports.
+
 ## Before you start
 
 On every machine, run the verified release script or download it first:

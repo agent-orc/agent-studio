@@ -19,6 +19,7 @@ import type {
 } from '../../../../models/task.model';
 import { ProjectUrlRecoveryService } from '../../services/project-url-recovery.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
+import { AuthSessionState } from '../../../../services/auth.service';
 
 /** Signal-backed probe stub so tests drive running/offline without a real fetch. */
 class ProbeStub {
@@ -50,7 +51,7 @@ function workspacesWith(urls: RegistryProjectUrl[]): RegistryWorkspaceListItem[]
   }];
 }
 
-function mount(urlId = 'url-1') {
+function mount(urlId = 'url-1', profile: 'local' | 'networked' = 'local') {
   const probe = new ProbeStub();
   TestBed.configureTestingModule({
     providers: [
@@ -61,6 +62,9 @@ function mount(urlId = 'url-1') {
       { provide: ProjectUrlProbeService, useValue: probe },
       { provide: TaskReferenceNavigationService, useValue: { openTaskKey: vi.fn() } },
     ],
+  });
+  TestBed.inject(AuthSessionState).status.set({
+    profile, bootstrapRequired: false, authenticated: true,
   });
   const fixture = TestBed.createComponent(ProjectUrlPreviewTabComponent);
   fixture.componentRef.setInput('projectName', 'Demo');
@@ -115,6 +119,17 @@ const README_SUGGESTION: ProjectUrlSuggestion = {
 
 describe('ProjectUrlPreviewTabComponent', () => {
   afterEach(() => vi.useRealTimers());
+
+  it('uses the registered HTTPS edge route in networked mode', () => {
+    const { fixture, http, probe } = mount('url-1', 'networked');
+    probe.status.set('running');
+    http.expectOne(req => req.url.endsWith('/workspaces')).flush(workspacesWith([RUNNING_URL]));
+    fixture.detectChanges();
+    const frame = fixture.nativeElement.querySelector('[data-testid="url-preview-frame"]') as HTMLIFrameElement;
+    expect(frame.getAttribute('src')).toBe('/api/projects/PROJ-001/urls/url-1/preview/');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect((fixture.nativeElement.querySelector('[data-testid="url-preview-addr-input"]') as HTMLInputElement).disabled).toBe(true);
+  });
 
   it('mounts the sandboxed iframe once the URL resolves (running / unknown)', () => {
     const { fixture, http, probe } = mount();
