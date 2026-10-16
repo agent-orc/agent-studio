@@ -9,6 +9,36 @@ namespace AgentStudio.Tests;
 
 public partial class ReviewDecisionOrchestratorCompletionGateTests
 {
+    [Fact]
+    public void Acceptance_before_gate_registration_cancels_the_queued_gate()
+    {
+        var registry = new TaskGateCancellationRegistry();
+        registry.Cancel("Fixture", "queued");
+
+        using var queuedGate = new CancellationTokenSource();
+        using (registry.Register("Fixture", "queued", queuedGate))
+            Assert.True(queuedGate.IsCancellationRequested);
+
+        using var laterReview = new CancellationTokenSource();
+        using (registry.Register("Fixture", "queued", laterReview))
+            Assert.False(laterReview.IsCancellationRequested);
+    }
+
+    [Fact]
+    public void Acceptance_with_an_active_gate_also_cancels_a_later_registration()
+    {
+        var registry = new TaskGateCancellationRegistry();
+        using var activeGate = new CancellationTokenSource();
+        using var activeRegistration = registry.Register("Fixture", "queued", activeGate);
+
+        registry.Cancel("Fixture", "queued");
+
+        Assert.True(activeGate.IsCancellationRequested);
+        using var queuedGate = new CancellationTokenSource();
+        using (registry.Register("Fixture", "queued", queuedGate))
+            Assert.True(queuedGate.IsCancellationRequested);
+    }
+
     private TaskStateMachine? _cancellationStateMachine;
     private TaskMutationService? _cancellationMutations;
     private TaskScannerService? _cancellationScanner;

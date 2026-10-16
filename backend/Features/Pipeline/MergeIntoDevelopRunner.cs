@@ -393,7 +393,8 @@ public sealed partial class MergeIntoDevelopRunner
                              ? new[] { branch, "develop" }
                              : new[] { branch })
                 {
-                    if (_git.GetBranchTip(repoRoot, anchored) is { } tip) fenceAnchors[anchored] = tip;
+                    if (_git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, anchored)) is { } tip)
+                        fenceAnchors[anchored] = tip;
                 }
             }
 
@@ -563,31 +564,8 @@ public sealed partial class MergeIntoDevelopRunner
                     : _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
                 pushBranch = branch;
             }
-            // AGT-2936 (D8): publication is the commit point of a fenced
-            // continuation. The fence enqueues the push only while its review is
-            // still current; a successor refuses it and the unpublished local
-            // merge is rolled back to the synchronized anchors.
             var pushDecidedByFence = false;
             var supersededCleanly = false;
-            if (publicationFence is not null
-                && (pushBranch is not null || result.Outcome.IsSuccessfulIntegration()))
-            {
-                var admittedPushBranch = pushBranch;
-                var admittedPushSha = approvedPushSha;
-                if (!publicationFence(() =>
-                    {
-                        if (admittedPushBranch is not null)
-                            MaybeEnqueueIntegrationPush(
-                                project, jobId, jobFolderPath, watchPath,
-                                admittedPushBranch, admittedPushSha, pipelineType);
-                    }))
-                {
-                    result = RollBackSupersededPublication(repoRoot, fenceAnchors, out supersededCleanly);
-                    preMainResult = null;
-                    preDevelopResult = null;
-                }
-                pushDecidedByFence = true;
-            }
             var conclusionFolderPath = jobFolderPath;
             var cancelledGate = preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
                 ? preMainResult : preDevelopResult?.FailureKind == BuildTestGateFailureKind.Cancellation
@@ -633,40 +611,92 @@ public sealed partial class MergeIntoDevelopRunner
                 }
             }
             var returnedGate = preMainResult ?? preDevelopResult;
-            if (returnedGate is not null && !supersededCancellation)
+            CancellationSubject? staleGateSubject = null;
+            bool HasSupersededGateResult()
             {
+                if (returnedGate is null || supersededCancellation) return false;
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
-                var published = _git.CheckPublishedDelivery(developerRoot, branch, delivery.ExpectedResultSha ?? "");
+                var published = _git.CheckPublishedDelivery(developerRoot, branch,
+                    delivery.ExpectedResultSha ?? "");
                 if (live.Lane is TaskStates.Completed or TaskStates.Archive
                     && (cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         || returnedGate.Verdict == BuildTestGateVerdict.Fail)
                     || cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         && published == PublishedDeliveryContainment.Contained)
                 {
-                    if (result.Outcome.IsFreshMerge()
-                        && !string.IsNullOrWhiteSpace(result.MergedSha)
-                        && string.Equals(_git.GetBranchTip(repoRoot, branch), result.MergedSha,
-                            StringComparison.OrdinalIgnoreCase)
-                        && _git.CheckPublishedDelivery(developerRoot, branch, result.MergedSha)
-                            != PublishedDeliveryContainment.Contained)
-                        _git.ResetIntegrationBranch(repoRoot, branch,
-                            fenceAnchors.GetValueOrDefault(branch) ?? result.PreviousIntegrationSha ?? result.MergedSha);
-                    _timeline?.Append(live.Folder, new TimelineEvent
+                    staleGateSubject = live;
+                    return true;
+                }
+                return false;
+            }
+
+            // Recheck inside the publication fence as well: acceptance can win
+            // after the gate returns but before the fence enqueues its push.
+            var staleGateResult = HasSupersededGateResult();
+            if (!staleGateResult && publicationFence is not null
+                && (pushBranch is not null || result.Outcome.IsSuccessfulIntegration()))
+            {
+                var admittedPushBranch = pushBranch;
+                var admittedPushSha = approvedPushSha;
+                if (!publicationFence(() =>
                     {
-                        Ts = _gateTime.GetUtcNow().UtcDateTime,
-                        Kind = "gate-result-superseded", Actor = TimelineActors.System,
-                        Summary = "Merge gate result belongs to a completed or integrated delivery.",
-                        Details = new Dictionary<string, string>
+                        if (HasSupersededGateResult())
                         {
-                            ["expectedSha"] = delivery.ExpectedResultSha ?? "",
-                            ["gateId"] = returnedGate.GateId,
-                            ["verdict"] = returnedGate.Verdict.ToString(),
-                        },
-                    });
+                            staleGateResult = true;
+                            return;
+                        }
+                        if (admittedPushBranch is not null)
+                            MaybeEnqueueIntegrationPush(
+                                project, jobId, jobFolderPath, watchPath,
+                                admittedPushBranch, admittedPushSha, pipelineType);
+                    }))
+                {
+                    result = RollBackSupersededPublication(repoRoot, fenceAnchors, out supersededCleanly);
+                    preMainResult = null;
+                    preDevelopResult = null;
+                }
+                pushDecidedByFence = true;
+            }
+            if (staleGateResult)
+            {
+                var live = staleGateSubject!;
+                // A stale verdict never authorizes an unpublished merge. Report
+                // rollback failure as a repairable integration error instead of
+                // claiming routine supersession while the local ref is dirty.
+                var alreadyPublished = result.Outcome.IsFreshMerge()
+                    && !string.IsNullOrWhiteSpace(result.MergedSha)
+                    && _git.CheckPublishedDelivery(developerRoot, branch, result.MergedSha)
+                        == PublishedDeliveryContainment.Contained;
+                var clean = true;
+                var rollback = alreadyPublished
+                    ? null
+                    : RollBackSupersededPublication(repoRoot, fenceAnchors, out clean);
+                _timeline?.Append(live.Folder, new TimelineEvent
+                {
+                    Ts = _gateTime.GetUtcNow().UtcDateTime,
+                    Kind = "gate-result-superseded", Actor = TimelineActors.System,
+                    Summary = "Merge gate result belongs to a completed or integrated delivery.",
+                    Details = new Dictionary<string, string>
+                    {
+                        ["expectedSha"] = delivery.ExpectedResultSha ?? "",
+                        ["gateId"] = returnedGate!.GateId,
+                        ["verdict"] = returnedGate.Verdict.ToString(),
+                    },
+                });
+                if (clean)
                     return MergeIntoIntegrationResult.Failed(
                         AcceptedIntegrationFailureCodes.StaleAttempt,
                         "The gate result was superseded by completion or published integration.");
-                }
+                _timeline?.Append(live.Folder, new TimelineEvent
+                {
+                    Ts = _gateTime.GetUtcNow().UtcDateTime,
+                    Kind = "integration-rollback-failed", Actor = TimelineActors.System,
+                    Summary = rollback!.Error ?? "Unpublished merge rollback failed; manual repair is required.",
+                });
+                return await ConcludeAsync(
+                    project, jobId, live.Folder, watchPath, taskBranch, branch, strategy,
+                    rollback! with { FailureCode = AcceptedIntegrationFailureCodes.IntegrationError },
+                    null, null, startedAt, ct, recordStep: false).ConfigureAwait(false);
             }
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
@@ -1672,7 +1702,9 @@ public sealed partial class MergeIntoDevelopRunner
         var failures = new List<string>();
         foreach (var (anchoredBranch, anchorSha) in anchors)
         {
-            if (string.Equals(_git.GetBranchTip(repoRoot, anchoredBranch), anchorSha, StringComparison.OrdinalIgnoreCase))
+            var integrationRef = _git.IntegrationLineRef(repoRoot, anchoredBranch);
+            if (string.Equals(_git.GetBranchTip(repoRoot, integrationRef), anchorSha,
+                    StringComparison.OrdinalIgnoreCase))
                 continue;
             var reset = _git.ResetIntegrationBranch(repoRoot, anchoredBranch, anchorSha);
             if (!reset.Success) failures.Add($"{anchoredBranch}: {reset.Error ?? "reset failed"}");
