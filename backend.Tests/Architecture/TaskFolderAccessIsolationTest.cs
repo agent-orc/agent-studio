@@ -116,6 +116,11 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Management/ManagementService.cs"] =
                 "Deletes isolated restore-verification staging outside the task store, never task folders.",
 
+            // AGT-3175 rolls back a project created from a template: the fresh
+            // checkout never held job folders and is removed with the remote repository.
+            ["backend/Features/Registry/ProjectRepositoryProvisioning.cs"] =
+                "Deletes the checkout of a just-created template project on rollback, never task folders.",
+
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in
             // the prompt for this task.
