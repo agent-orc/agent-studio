@@ -1,0 +1,57 @@
+name: agent-studio-website
+
+services:
+  api:
+    image: ghcr.io/agent-orc/agent-studio-api:v${STUDIO_VERSION:?Run setup.sh with a release version}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      TaskRepository: /data/workspace
+      HOME: /data/home
+      Security__Profile: networked
+      Security__BootstrapCode: ${STUDIO_BOOTSTRAP_CODE:?Run setup.sh}
+      Security__TrustedProxyAddresses: 172.30.83.3
+      AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
+      STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+    volumes:
+      - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
+      - ${STUDIO_DATA_DIR}/projects:/data/projects
+      - ${STUDIO_DATA_DIR}/home:/data/home
+    networks:
+      website:
+        ipv4_address: 172.30.83.4
+
+  frontend:
+    image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile.frontend:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api: {condition: service_healthy}
+    networks:
+      website:
+        ipv4_address: 172.30.83.3
+
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ${STUDIO_CADDYFILE:-./Caddyfile.public}:/etc/caddy/Caddyfile:ro
+      - ${STUDIO_DATA_DIR}/caddy-data:/data
+      - ${STUDIO_DATA_DIR}/caddy-config:/config
+    depends_on:
+      frontend: {condition: service_healthy}
+    networks:
+      website:
+        ipv4_address: 172.30.83.2
+
+networks:
+  website:
+    ipam:
+      config:
+        - subnet: 172.30.83.0/24

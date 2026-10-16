@@ -1,3 +1,7 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+
 namespace AgentStudio.Security;
 
 public static class AccessSecurityEndpoints
@@ -13,12 +17,15 @@ public static class AccessSecurityEndpoints
                 SecurityProfiles.ActiveProfile(configuration),
                 store.BootstrapRequired,
                 principal is not null,
-                principal is null ? null : ToResponse(principal.User)));
+                principal is null ? null : ToResponse(principal.User),
+                BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration)));
         });
 
         auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
+                if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
+                    throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
                 var created = store.Bootstrap(request);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
@@ -189,6 +196,19 @@ public static class AccessSecurityEndpoints
         var token = context.Request.Cookies[AccessSecurityStore.SessionCookieName]
                     ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
         return store.AuthenticateSession(token, touch);
+    }
+
+    private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
+        => SecurityProfiles.IsNetworked(configuration)
+           && (context.Connection.RemoteIpAddress is not { } address || !IPAddress.IsLoopback(address));
+
+    private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
+    {
+        var expected = configuration["Security:BootstrapCode"];
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(candidate)) return false;
+        return CryptographicOperations.FixedTimeEquals(
+            SHA256.HashData(Encoding.UTF8.GetBytes(candidate)),
+            SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
     }
 
     private static AuthUserResponse ToResponse(StudioUser user)

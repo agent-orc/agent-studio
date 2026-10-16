@@ -2,9 +2,11 @@ extern alias Runner;
 
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 using RClient = Runner::AgentRunner.TaskServerClient;
@@ -37,7 +39,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         {
             username = "first.owner",
             password = "correct horse battery staple!",
-            displayName = "First Owner"
+            displayName = "First Owner",
+            bootstrapCode = "website-setup-code"
         });
         bootstrap.EnsureSuccessStatusCode();
         var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
@@ -105,16 +108,85 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, (await browser.GetAsync("/api/tasks")).StatusCode);
     }
 
-    private WebApplicationFactory<Program> BuildFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    [Fact]
+    public async Task Untrusted_forwarded_https_is_ignored_but_named_proxy_is_trusted()
+    {
+        using var untrusted = BuildFactory("203.0.113.15");
+        using var untrustedClient = untrusted.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://studio.test") });
+        using var spoof = new HttpRequestMessage(HttpMethod.Get, "/api/auth/status");
+        spoof.Headers.Add("X-Forwarded-Proto", "https");
+        spoof.Headers.Add("X-Forwarded-For", "127.0.0.1");
+        Assert.Equal(HttpStatusCode.UpgradeRequired, (await untrustedClient.SendAsync(spoof)).StatusCode);
+
+        using var trusted = BuildFactory("172.30.83.3");
+        using var trustedClient = trusted.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://studio.test") });
+        using var forwarded = new HttpRequestMessage(HttpMethod.Get, "/api/auth/status");
+        forwarded.Headers.Add("X-Forwarded-Proto", "https");
+        Assert.Equal(HttpStatusCode.OK, (await trustedClient.SendAsync(forwarded)).StatusCode);
+    }
+
+    [Fact]
+    public async Task First_remote_owner_requires_the_installer_code()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
+        var status = await client.GetFromJsonAsync<AuthStatusResponse>("/api/auth/status");
+        Assert.True(status!.BootstrapCodeRequired);
+        var owner = new { username = "first.owner", password = "correct horse battery staple!", displayName = "First Owner" };
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/auth/bootstrap", owner)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            owner.username, owner.password, owner.displayName, bootstrapCode = "wrong"
+        })).StatusCode);
+        (await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            owner.username, owner.password, owner.displayName, bootstrapCode = "website-setup-code"
+        })).EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Loopback_bootstrap_and_named_host_health_remain_available()
+    {
+        using var factory = BuildFactory("127.0.0.1");
+        using var namedHost = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://studio.test") });
+        Assert.Equal(HttpStatusCode.OK, (await namedHost.GetAsync("/healthz")).StatusCode);
+        using var wrongHost = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://127.0.0.1") });
+        Assert.Equal(HttpStatusCode.BadRequest, (await wrongHost.GetAsync("/healthz")).StatusCode);
+        using var loopback = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
+        (await loopback.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            username = "loopback.owner", password = "correct horse battery staple!", displayName = "Loopback Owner"
+        })).EnsureSuccessStatusCode();
+    }
+
+    private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
+        if (remoteIp is not null)
+            builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
             ["Security:Profile"] = "networked",
+            ["Security:BootstrapCode"] = "website-setup-code",
+            ["Security:TrustedProxyAddresses"] = "172.30.83.3",
             ["AllowedHosts"] = "studio.test"
         }));
     });
+
+    private sealed class RemoteIpStartupFilter(IPAddress address) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+            => app =>
+            {
+                app.Use((context, proceed) =>
+                {
+                    context.Connection.RemoteIpAddress = address;
+                    return proceed();
+                });
+                next(app);
+            };
+    }
 
     public void Dispose()
     {

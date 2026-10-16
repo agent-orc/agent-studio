@@ -2,11 +2,17 @@ import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
-const screenshotDir = path.resolve(__dirname, '..', '..', '..', 'results', 'security');
+const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
 
 test('networked Studio gates the workspace behind same-origin login', async ({ page }) => {
   mkdirSync(screenshotDir, { recursive: true });
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: '[]',
+  }));
+  await page.route('**/api/v1/management/links', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: '[]',
+  }));
   await page.route('**/api/v1/studio/auth/login', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -26,6 +32,11 @@ test('networked Studio gates the workspace behind same-origin login', async ({ p
   await expect(page.getByTestId('auth-gate')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await page.screenshot({ path: path.join(screenshotDir, 'networked-login.png'), fullPage: true });
+
+  // The unauthenticated live-update socket remains disconnected. Its offline
+  // grace period must never disable sign-in after the page has been open.
+  await page.waitForTimeout(4_600);
+  await page.screenshot({ path: path.join(screenshotDir, 'networked-login-after-offline.png'), fullPage: true });
 
   await page.getByLabel('Username').fill('owner');
   await page.getByLabel('Password').fill('not-stored-password');
