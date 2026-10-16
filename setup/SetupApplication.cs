@@ -263,7 +263,6 @@ internal static class SetupApplication
             throw new InvalidOperationException(
                 $"Agent CLI '{agentCli}' is not installed for {executionUser}. Found: {string.Join(", ", installedClis.Keys)}.");
         await VerifyCliAsync(
-            processes,
             executionUser,
             homeDirectory,
             agentCli,
@@ -372,6 +371,27 @@ internal static class SetupApplication
         };
         try
         {
+            if (payload.SchemaVersion == 2)
+            {
+                using var exchange = await client.PostAsJsonAsync(
+                    "/api/v1/enrolments/exchange",
+                    new ExchangeEnrolmentRequest(payload.EnrolmentCode!, payload.InstallationId!),
+                    cancellationToken);
+                if (!exchange.IsSuccessStatusCode)
+                    throw new InvalidOperationException(
+                        $"Task Server rejected the one-time host enrolment ({(int)exchange.StatusCode}). Request a new join token in Studio.");
+                var exchanged = await exchange.Content.ReadFromJsonAsync<ExchangedEnrolment>(
+                    cancellationToken: cancellationToken)
+                    ?? throw new InvalidOperationException("Task Server returned no host enrolment.");
+                if (exchanged.InstallationId != payload.InstallationId
+                    || exchanged.Issued.Principal.RunnerId != runnerId
+                    || payload.RunnerId != runnerId
+                    || exchanged.Issued.Principal.Kind != TaskServerPrincipalKinds.Runner)
+                    throw new InvalidOperationException(
+                        "The one-time host enrolment is bound to another runner. Request a new join token in Studio.");
+                return exchanged.Issued.Credential
+                    ?? throw new InvalidOperationException("Task Server returned no Runner credential.");
+            }
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", payload.Credential);
             if (!client.DefaultRequestHeaders.Contains(TaskServerProtocol.HeaderName))
@@ -580,7 +600,6 @@ internal static class SetupApplication
     }
 
     private static async Task VerifyCliAsync(
-        ProcessRunner processes,
         string user,
         string homeDirectory,
         string cli,
@@ -610,26 +629,7 @@ internal static class SetupApplication
                 $"{cli} is present at {path}, but '{cli} --version' failed for {user}.");
         Console.WriteLine($"  [ok] {version.Output.Trim()}");
 
-        var authArguments = new List<string> { "env", $"HOME={homeDirectory}", path };
-        authArguments.AddRange(cli.Equals("codex", StringComparison.OrdinalIgnoreCase)
-            ? ["login", "status"]
-            : ["auth", "status", "--text"]);
-        if (!inspectCurrentUserDirectly)
-            authArguments.InsertRange(0, ["-u", user, "--"]);
-        var auth = await inspection.RunAsync(
-            inspectCurrentUserDirectly ? authArguments[0] : "runuser",
-            inspectCurrentUserDirectly ? authArguments.Skip(1) : authArguments,
-            printOutput: false,
-            cancellationToken: cancellationToken);
-        if (auth.ExitCode != 0)
-        {
-            var login = cli.Equals("codex", StringComparison.OrdinalIgnoreCase)
-                ? $"sudo -u {user} -H {path} login --device-auth"
-                : $"sudo -u {user} -H {path} auth login --claudeai";
-            throw new InvalidOperationException(
-                $"{cli} is not authenticated for {user}. Run '{login}' on this host, verify the login, then rerun setup.");
-        }
-        Console.WriteLine($"  [ok] {cli} authentication belongs to host user {user}");
+        Console.WriteLine($"  [ok] {cli} is installed for host user {user}; finish device login in Studio after join");
     }
 
     private static SetupMode AskMode(ConsolePrompter prompter)

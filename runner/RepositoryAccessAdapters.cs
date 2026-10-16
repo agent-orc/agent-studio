@@ -407,7 +407,8 @@ public sealed class PlatformRepositoryGitProof(
         env["GIT_CONFIG_NOSYSTEM"] = "1";
         env["GIT_CONFIG_GLOBAL"] = "/dev/null";
         env["GIT_SSH_COMMAND"] =
-            $"ssh -i '{keyPath}' -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes";
+            $"ssh -i '{keyPath}' -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes "
+            + $"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='{Path.Combine(Path.GetDirectoryName(keyPath)!, "known_hosts")}'";
         if (origin.StartsWith("https://github.com/", StringComparison.Ordinal))
         {
             var uri = new Uri(origin);
