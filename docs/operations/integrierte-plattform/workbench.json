@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "integrierte-plattform",
+  "title": "Integrierte Plattform: von der Planung bis zum Hosting",
+  "summary": "Operator-Vorgaben 16.10.2026 abends: eine voll integrierte Plattform von Planung ueber Entwicklung, CI/CD bis Hosting, sicher aber integriert; E1 (eigener Scheduler fuer die Arbeitszone) entschieden; Zugriffs-Management fuer alle Tokens, nicht nur Git; Secret-Provider mit Industrie-Standards; mehrnutzerfaehiges Secret-Management mit Nutzern und Berechtigungen; gross gedacht, sofort als Einzelner nutzbar; MemoWikis als erster echter Fall. Inhalt: fuenf Zonen (Werkzeug, Steuerung, Vertrauen, Arbeit, Laufzeit) mit erlaubten Verbindungen, durchgehender Fluss mit dem Artefakt als einziger Naht zwischen CI und CD, gleiche Bausteine mit getrennten Regeln fuer Arbeit und Laufzeit, acht feste Sicherheitsgrenzen, Hosting-Optionen (eigene Laufzeit plus Adapter empfohlen), Geheimnisse und Zugriff (drei Arten, Secret-Provider mit eingebautem Speicher und Adaptern, Bereiche und Verweise, Rechte an Geheimnissen, Nutzer, Gruppen, Rollen je Bereich, Dienstkonten, Einzelplatz im selben Modell, Lieferweg zur App), Verhaeltnis zu Kubernetes, Bestand und Karten, Stufen S1 bis S5, Entscheidungen IP-D1 bis IP-D10.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "architecture",
+  "updatedAt": "2026-10-16T19:30:00Z",
+  "sourceTaskKeys": [],
+  "relatedTaskKeys": [
+    "AGT-3171",
+    "AGT-3170",
+    "AGT-3175",
+    "AGT-3176",
+    "AGT-3177",
+    "AGT-3180",
+    "AGT-3181",
+    "AGT-3182",
+    "AGT-3184",
+    "AGT-3185",
+    "AGT-3186",
+    "AGT-3187",
+    "AGT-3196",
+    "AGT-3197"
+  ],
+  "implementationTasks": [
+    {
+      "id": "IP-1",
+      "title": "Run zone: host agent runs long-lived app containers behind Caddy with domains, TLS, health checks, restart and rollback",
+      "promptMarkdown": "# Run zone: host agent runs long-lived app containers behind Caddy with domains, TLS, health checks, restart and rollback\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the run-zone basics of section 6 option A: the host agent starts long-lived app containers (Docker or Podman) for an environment, Caddy terminates TLS and routes per environment domain, a deploy switches traffic only after the health check passes and keeps the previous version for rollback, crashes restart with backoff, logs and basic metrics per app are collected and linked from the environment. Reuse the deploy job of AGT-3176. Tests: deploy, failed health keeps the old version, crash restart, rollback, routing per domain.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-2",
+      "title": "Zone boundaries: no inbound to work containers, egress allowlist, no path from the run zone to control and secret store, network per tenant",
+      "promptMarkdown": "# Zone boundaries: no inbound to work containers, egress allowlist, no path from the run zone to control and secret store, network per tenant\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the zone rules of section 5: work containers have no inbound ports and an egress allowlist (control zone, Git remote, model APIs, package sources per project); run-zone containers reach only what the app declares and never the control zone or the secret store; separate networks per tenant. Provide a verification command that proves each rule on a host. Tests for the policy model and the generated host rules.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-3",
+      "title": "Release registry with provenance: built-in registry, digest bound to the gate run, optional external registry",
+      "promptMarkdown": "# Release registry with provenance: built-in registry, digest bound to the gate run, optional external registry\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 3 and IP-D3: a registry in the installation (or an external one) that stores release artifacts by digest with provenance (project, commit, gate run, template, builder identity); only the build job may push; the deploy job verifies provenance before transfer. Tests for push permission, provenance check and refusal of unverified digests.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-4",
+      "title": "Deploy adapters to existing infrastructure: a VM over SSH, Kubernetes and one cloud target",
+      "promptMarkdown": "# Deploy adapters to existing infrastructure: a VM over SSH, Kubernetes and one cloud target\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 6 option C: the deploy job can place the same verified artifact on an operator target through an adapter interface; first adapters: a VM over SSH with Docker, an existing Kubernetes namespace, and one managed container service. Credentials come from the secret provider. Tests with fake targets.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-5",
+      "title": "Persistent data for hosted apps: bring-your-own database binding and backups of declared volumes",
+      "promptMarkdown": "# Persistent data for hosted apps: bring-your-own database binding and backups of declared volumes\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement IP-D5 option A: an app declares its database as a secret reference to an operator-provided database; declared volumes are kept across versions and backed up on a schedule with a tested restore. Tests for binding, volume retention across deploys, backup and restore.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-6",
+      "title": "Secret provider core: one interface, built-in encrypted store, references, versions, rotation, revocation, audit",
+      "promptMarkdown": "# Secret provider core: one interface, built-in encrypted store, references, versions, rotation, revocation, audit\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 7.2 to 7.4: a provider interface (set, metadata, versions, rotate, revoke, issue to identity, audit) with the built-in store (envelope encryption, master key in the OS key store or an operator file, included in backups); scopes from installation to app; references secret://scope/name resolved only at the consumer; write without read for humans; reveal needs its own permission, a reason and an audit entry. Migrate the existing credential registry metadata. Tests for encryption at rest, scope inheritance, write-only behaviour, reveal audit, and that no API response or log contains a value.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-7",
+      "title": "App secrets per project and environment in Studio: many secrets per app, multi-user, bound to environments",
+      "promptMarkdown": "# App secrets per project and environment in Studio: many secrets per app, multi-user, bound to environments\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 7.3, 7.4 and 7.7 in Studio: a Secrets page per project with environments (preview, stage, prod) and inheritance, add or rotate values (write only), bind to an environment, show missing references before a deploy, production binding after approval; the deploy job resolves references on the run host and delivers them as in-memory files or environment variables. Tests for the page, the missing-reference check and delivery without values in logs.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-8",
+      "title": "Identity and access model: users, groups, roles per scope, service accounts; migrate owner, operator and viewer",
+      "promptMarkdown": "# Identity and access model: users, groups, roles per scope, service accounts; migrate owner, operator and viewer\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 7.5 and 7.6: users with local sign-in and an optional second factor, groups, role assignments per scope (Owner, Admin, Maintainer, Developer, Product, Viewer, Auditor), service accounts for runners, engine, deploy jobs and API tokens with scopes, expiry and revocation; migrate owner to Owner, operator to Admin, viewer to Viewer; a single-user installation works without creating anything extra. Tests: authorization matrix per route group and scope, migration, service account scopes.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-9",
+      "title": "Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in",
+      "promptMarkdown": "# Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the adapters of section 7.2 and sign-in: the provider interface backed by Vault/OpenBao KV v2 and by 1Password service accounts, selected per scope; OIDC single sign-on for users with group mapping. Tests with fake servers for each adapter and the OIDC flow.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    }
+  ]
+}
