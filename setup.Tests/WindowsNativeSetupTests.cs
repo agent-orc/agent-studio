@@ -45,6 +45,64 @@ public sealed class WindowsNativeSetupTests
             new ConsolePrompter(true), "invalid", "skip", null, null));
     }
 
+    [Theory]
+    [InlineData("codex")]
+    [InlineData("claude")]
+    public async Task Unattended_missing_provider_is_installed(string provider)
+    {
+        string? command = null;
+        IReadOnlyList<string>? arguments = null;
+        await new WindowsNativeDecisions(provider, "skip", null, null).PrepareProviderAsync(
+            new ConsolePrompter(true), unattended: true, commandOnPath: _ => false,
+            install: (file, args) =>
+            {
+                command = file;
+                arguments = args;
+                return Task.CompletedTask;
+            });
+        Assert.Equal("cmd.exe", command);
+        Assert.Equal("/d", arguments![0]);
+        Assert.Equal("/s", arguments[1]);
+        Assert.Equal("/c", arguments[2]);
+        Assert.Contains(provider == "codex" ? "@openai/codex" : "@anthropic-ai/claude-code",
+            arguments[3]);
+    }
+
+    [Theory]
+    [InlineData("skip", "skip", false)]
+    [InlineData("codex", "skip", true)]
+    [InlineData("skip", "gcm", true)]
+    [InlineData("skip", "token", true)]
+    [InlineData("skip", "deploy-key", true)]
+    public void Runner_uses_password_logon_for_provider_or_GitHub_access(
+        string provider, string gitAccess, bool expected)
+        => Assert.Equal(expected,
+            new WindowsNativeDecisions(provider, gitAccess, null, null).RequiresRunnerPassword);
+
+    [Fact]
+    public async Task Guided_deploy_key_verification_uses_runner_Git_environment()
+    {
+        var root = Directory.CreateTempSubdirectory("native-git-verification-");
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root.FullName, "runner.env"),
+                "RUNNER_ID=local-coding\nGIT_CONFIG_COUNT=1\nGIT_SSH_COMMAND=ssh -F config\n");
+            var choices = new WindowsNativeDecisions("skip", "deploy-key", null,
+                "git@github.com:example/project.git");
+            var verified = false;
+            await choices.VerifyDeployKeyAsync(new ConsolePrompter(true), root.FullName, environment =>
+            {
+                verified = true;
+                Assert.Equal("1", environment["GIT_CONFIG_COUNT"]);
+                Assert.Equal("ssh -F config", environment["GIT_SSH_COMMAND"]);
+                Assert.DoesNotContain("RUNNER_ID", environment.Keys);
+                return Task.FromResult(true);
+            });
+            Assert.True(verified);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     [Fact]
     public void Native_install_passes_full_studio_switch_without_changing_connector_profile()
     {
