@@ -25,11 +25,11 @@ contract lives in
 | Profile | Intended use | Network exposure | Authentication |
 |---|---|---|---|
 | `local` | One trusted operator on one machine | Loopback only | No network authentication; `X-Client-Id` is attribution only |
-| `networked` | One small organization using a separately hosted Task Server | HTTPS through the reference reverse proxy | Human server sessions and distinct Runner service credentials |
+| `networked` | One small organization using a separately hosted Task Server | HTTPS through the reference reverse proxy | Human server sessions, scoped API tokens for tools, and distinct Runner service credentials |
 
 `X-Client-Id` is attribution in both profiles. It is never proof of identity.
 The networked middleware derives the authenticated principal from the secure
-session cookie or Runner bearer credential and records any supplied
+session cookie, API token, or Runner bearer credential and records any supplied
 `X-Client-Id` separately.
 
 The local management plane has one deliberate profile-specific trust rule:
@@ -86,6 +86,22 @@ that is already allowed to edit that project's checkout.
   Credentials carry explicit scopes, optional expiry, last-use time, and
   independent revocation. Rotation creates an overlapping credential so the
   old one can remain valid until the new daemon is proven.
+- Settings > Access lets the owner invite, update, reset, or disable users;
+  create and revoke named API tokens; create runner enrollment codes; and
+  revoke enrolled runners. API tokens use the operator or viewer role and an
+  explicit project list (`*` grants all projects). The creation response shows
+  the secret once; subsequent lists expose metadata only: creator, expiry,
+  last use, and revocation. The existing `.security/access-state.json` holds
+  their hashes alongside the other access credentials. A disabled creator
+  cannot authenticate with a token they created.
+- The browser uses `/api/auth` for a networked monolith session. When that
+  endpoint is absent or reports `local`, the existing standalone Task Server
+  Studio sign-in remains the frontend's auth path.
+- Scripts send an API token as `Authorization: Bearer` in the networked
+  profile. The task-api reference scripts accept `TASKBOARD_URL` for the HTTPS
+  origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
+  attribution only. API tokens cannot call access administration, versioned
+  Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
 - A Runner never receives a human password or session cookie.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
@@ -114,6 +130,10 @@ Remote claim, event, and completion records are appended under
 initiating task owner or automation identity and the authenticated executing
 Runner identity plus credential id. Security state and audit files are written
 with owner-only permissions on Unix.
+
+Each authenticated API-token call appends its token id, creator, method, route,
+and response status to `<TaskRepository>/.security/api-token-audit.jsonl`.
+Token values and query strings are omitted from that audit.
 
 Known credential shapes and named authorization, cookie, and password fields
 are redacted from Runner log ingestion. Production exceptions omit stack

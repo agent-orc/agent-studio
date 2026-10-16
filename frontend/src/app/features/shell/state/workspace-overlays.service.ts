@@ -27,6 +27,7 @@ import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit'
 export type WorkspaceSettingsSection =
   | 'overview'
   | 'appearance'
+  | 'access'
   | 'updates'
   | 'workspaces'
   | 'task-server'
@@ -220,6 +221,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/prompts':
       case '/workspace/prompts': return 'prompts';
       case '/workspace/settings/retention': return 'retention';
+      case '/workspace/settings/access': return 'access';
       case '/workspace/settings/appearance': return 'appearance';
       case '/workspace/settings/updates': return 'updates';
       case '/workspace/settings/workspaces': return 'workspaces';
@@ -257,6 +259,7 @@ export class WorkspaceOverlaysService {
       case 'cli-paths': return '/workspace/settings/cli-paths';
       case 'prompts': return '/workspace/settings/prompts';
       case 'retention': return '/workspace/settings/retention';
+      case 'access': return '/workspace/settings/access';
       case 'appearance': return '/workspace/settings/appearance';
       case 'updates': return '/workspace/settings/updates';
       case 'workspaces': return '/workspace/settings/workspaces';
@@ -275,6 +278,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/cli-paths',
     '/workspace/settings/prompts',
     '/workspace/settings/retention',
+    '/workspace/settings/access',
     '/workspace/settings/appearance',
     '/workspace/settings/updates',
     '/workspace/settings/workspaces',
