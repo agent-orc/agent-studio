@@ -490,16 +490,18 @@ internal static class SetupApplication
                 client.DefaultRequestHeaders.Add("X-Client-Id", "agent-orchestrator-setup");
             if (payload.SchemaVersion == 2)
             {
-                if (payload.ExpiresAtUtc <= DateTime.UtcNow)
+                if (payload.ExpiresAtUtc is { } expiresAt && expiresAt <= DateTime.UtcNow)
                     throw new InvalidOperationException("Join token expired. Issue a new token on the Task Server.");
                 using var exchange = await client.PostAsJsonAsync("/api/v1/enrolments/exchange",
-                    new ExchangeEnrolmentRequest(payload.Credential, payload.InstallationId!), cancellationToken);
+                    new ExchangeEnrolmentRequest(payload.EnrolmentCode ?? payload.Credential, payload.InstallationId!), cancellationToken);
                 if (!exchange.IsSuccessStatusCode)
                     throw new InvalidOperationException($"Task Server denied the single-use join token ({(int)exchange.StatusCode}). Issue a new token and retry.");
                 var enrolled = await exchange.Content.ReadFromJsonAsync<ExchangedEnrolment>(cancellationToken: cancellationToken)
                     ?? throw new InvalidOperationException("Task Server returned an empty enrolment response.");
                 if (enrolled.InstallationId != payload.InstallationId
-                    || enrolled.Issued.Principal.RunnerId != runnerId)
+                    || enrolled.Issued.Principal.RunnerId != runnerId
+                    || payload.RunnerId != runnerId
+                    || enrolled.Issued.Principal.Kind != TaskServerPrincipalKinds.Runner)
                     throw new InvalidOperationException("Task Server returned an unexpected installation or Runner identity.");
                 return enrolled.Issued.Credential
                     ?? throw new InvalidOperationException("Task Server returned no Runner credential.");

@@ -43,6 +43,7 @@
 .first-run__subrow { display: flex; align-items: center; gap: var(--studio-spacing-3); }
 .first-run__form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-3); margin-top: var(--studio-spacing-3); }
 .first-run__form label { display: grid; gap: var(--studio-spacing-1); }
-.first-run__form input { border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2); }
+.first-run__form input, .first-run__form select { border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2); }
+.first-run__form p, .first-run__form code { width: 100%; }
 .first-run__demo-confirm { display: flex; align-items: center; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
 .first-run code { display: block; overflow-wrap: anywhere; margin-top: var(--studio-spacing-2); }

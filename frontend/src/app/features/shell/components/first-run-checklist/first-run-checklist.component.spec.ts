@@ -1,10 +1,11 @@
-import { credentialFreeRepositoryUrl } from './first-run-checklist.component';
+import { credentialFreeRepositoryUrl } from './first-run-checklist.models';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { FirstRunChecklistComponent } from './first-run-checklist.component';
 import { AuthService } from '../../../../services/auth.service';
+import type { AuthStatus } from '../../../../services/auth.service';
 import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
@@ -39,6 +40,7 @@ describe('first-run repository URL', () => {
 describe('FirstRunChecklistComponent probes', () => {
   const host = signal<RemoteHost[]>([]);
   const badges = signal<ProviderAuthBadge[]>([]);
+  const authStatus = signal<AuthStatus | null>(null);
   let http: HttpTestingController;
   const readyBadge = (): ProviderAuthBadge => ({
     id: 'auth-a', provider: 'codex', providerLabel: 'Codex', runnerId: 'runner-a',
@@ -51,11 +53,15 @@ describe('FirstRunChecklistComponent probes', () => {
 
   beforeEach(() => {
     localStorage.removeItem('studio-first-run-proof');
+    localStorage.removeItem('studio-first-run-git-setup-id');
     host.set([]);
     badges.set([]);
+    authStatus.set({ authenticated: true, profile: 'networked', bootstrapRequired: false,
+      user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner',
+        projects: [], disabled: false, mustChangePassword: false } });
     TestBed.configureTestingModule({ providers: [
       provideHttpClient(), provideHttpClientTesting(),
-      { provide: AuthService, useValue: { status: signal({ authenticated: true, profile: 'local' }) } },
+      { provide: AuthService, useValue: { status: authStatus } },
       { provide: TaskService, useValue: { getDetail: vi.fn(() => of({ info: { state: '2-ready' } })) } },
       { provide: WorkspaceManagerService, useValue: {} },
       { provide: WorkspaceOverlaysService, useValue: {} },
@@ -123,8 +129,8 @@ describe('FirstRunChecklistComponent probes', () => {
     component.demoRepositoryConfirmed.set(true);
     expect(component.canStartProof()).toBe(true);
     component.startProof();
-    const request = http.expectOne('/api/v1/studio/tasks');
-    expect(request.request.body.projectId).toBe('PROJ-1');
+    const request = http.expectOne('/api/v1/projects/PROJ-1/tasks');
+    expect(request.request.body.state).toBe('2-ready');
     request.flush({ taskId: 'proof-a' });
     http.expectOne('/api/v1/projects/PROJ-1/tasks/proof-a').flush({ taskId: 'proof-a', state: '2-ready' });
     http.expectOne('/api/v1/projects/PROJ-1/tasks/proof-a/attempts').flush([]);
@@ -151,6 +157,100 @@ describe('FirstRunChecklistComponent probes', () => {
     expect(component.proofRan()).toBe(true);
     expect(component.proofReviewed()).toBe(true);
     expect(component.proofIntegrated()).toBe(true);
+    fixture.destroy();
+  });
+
+  it('reads local owner, registry, and checkout proof from the local backend', () => {
+    authStatus.set({ authenticated: true, profile: 'local', bootstrapRequired: false });
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/projects').flush([{ id: 'PROJ-1', displayName: 'Demo',
+      shortCode: 'DM', workspaceId: 'ws-a', archived: false, storageLocation: '/tmp/demo',
+      repositoryPath: '/tmp/repo', repositoryUrl: 'https://github.com/example/demo.git' }]);
+    http.expectOne('/api/first-run/projects/PROJ-1/repository').flush({ registration: {
+      projectId: 'PROJ-1', repositoryUrl: 'https://github.com/example/demo.git',
+      integrationRef: 'main', releaseRef: null, deliveryPolicy: 'reviewed-publication',
+    }, probes: [{ runnerId: 'local', admitted: true, verdict: 'admitted', detail: null,
+      observedAt: new Date().toISOString() }] });
+    const component = fixture.componentInstance;
+    expect(component.ownerReady()).toBe(true);
+    expect(component.repositoryReady()).toBe(true);
+    expect(component.gitReady()).toBe(true);
+    fixture.destroy();
+  });
+
+  it('hands a token to the selected runner once and verifies without rereading it', () => {
+    host.set([{ id: 'runner-a', clientId: 'runner-a', name: 'Runner A', status: 'online',
+      lastHeartbeatAt: new Date().toISOString() } as RemoteHost]);
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({ installationId: 'install-a', ownerBootstrapped: true });
+    http.expectOne('/api/v1/projects').flush([{ projectId: 'PROJ-1', workspaceId: 'ws-a',
+      name: 'Demo', taskKeyPrefix: 'DM' }]);
+    http.expectOne('/api/v1/projects/PROJ-1/repository').flush({ registration: {
+      projectId: 'PROJ-1', repositoryUrl: 'https://github.com/example/demo.git',
+      integrationRef: 'main', releaseRef: null, deliveryPolicy: 'reviewed-publication',
+    }, probes: [] });
+    const component = fixture.componentInstance;
+    component.gitRunnerId.set('runner-a');
+    component.gitMethod.set('token');
+    const token = 'test-' + 'x'.repeat(32);
+    component.gitToken.set(token);
+    component.startGitSetup();
+    const start = http.expectOne('/api/v1/management/runner-git-setups');
+    expect(start.request.body.token).toBe(token);
+    start.flush({ id: 'git-a', runnerId: 'runner-a', repositoryUrl: 'https://github.com/example/demo.git',
+      method: 'token', state: 'awaiting-verify', publicKey: null,
+      fetchVerified: false, pushVerified: false });
+    expect(component.gitToken()).toBe('');
+    expect(JSON.stringify(component.gitSetup())).not.toContain(token);
+    component.verifyGitSetup();
+    http.expectOne('/api/v1/management/runner-git-setups/git-a/verify').flush(null, { status: 202,
+      statusText: 'Accepted' });
+    http.expectOne('/api/v1/management/runner-git-setups/git-a').flush({
+      id: 'git-a', runnerId: 'runner-a', repositoryUrl: 'https://github.com/example/demo.git',
+      method: 'token', state: 'verifying', publicKey: null,
+      fetchVerified: false, pushVerified: false,
+    });
+    fixture.destroy();
+  });
+
+  it('issues a one-time remote join token only for a valid HTTPS authority', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({ installationId: 'install-a', ownerBootstrapped: true });
+    http.expectOne('/api/v1/projects').flush([]);
+    const component = fixture.componentInstance;
+    component.joinServerUrl.set('https://studio.example.test');
+    component.joinRunnerName.set('linux-a');
+    expect(component.joinValid()).toBe(true);
+    component.generateJoinToken();
+    const request = http.expectOne('/api/v1/management/host-join-tokens');
+    expect(request.request.body.runnerName).toBe('linux-a');
+    request.flush({ joinToken: 'aosj2-example', runnerId: 'linux-a', expiresAt: 'soon' });
+    expect(component.joinCommand()).toContain('--join-token-file ./join.token');
+    fixture.destroy();
+  });
+
+  it('starts local deploy-key setup through the local backend', () => {
+    authStatus.set({ authenticated: true, profile: 'local', bootstrapRequired: false });
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/projects').flush([{ id: 'PROJ-1', displayName: 'Demo',
+      shortCode: 'DM', workspaceId: 'ws-a', archived: false, storageLocation: '/tmp/demo',
+      repositoryPath: '/tmp/repo' }]);
+    http.expectOne('/api/first-run/projects/PROJ-1/repository').flush({ registration: {
+      projectId: 'PROJ-1', repositoryUrl: 'https://github.com/example/demo.git',
+      integrationRef: 'main', releaseRef: null, deliveryPolicy: 'reviewed-publication',
+    }, probes: [] });
+    const component = fixture.componentInstance;
+    expect(component.gitSetupValid()).toBe(true);
+    component.startGitSetup();
+    const request = http.expectOne('/api/first-run/git-setups');
+    expect(request.request.body).toEqual({ projectId: 'PROJ-1', method: 'deploy-key', token: null });
+    request.flush({ id: 'local-git-a', state: 'awaiting-github', publicKey: 'ssh-ed25519 sample',
+      fetchVerified: false, pushVerified: false });
+    expect(component.gitSetup()?.publicKey).toBe('ssh-ed25519 sample');
     fixture.destroy();
   });
 });
