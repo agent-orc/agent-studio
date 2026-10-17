@@ -151,13 +151,21 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     logger.LogWarning(exception, "orchestration-shadow-comparison-retry-pending");
                 }
                 await RecoverRolledBackAsync(stoppingToken);
-                StartRearmPass();
+                StartRearmPass(stoppingToken);
                 AlertLongWaits();
                 await Task.Delay(PreparationGrace, time, stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         catch (Exception exception) { logger.LogError(exception, "orchestration-recovery-incomplete"); }
+        finally
+        {
+            // A stop waits for a running re-arm pass. The pass ends with the
+            // admission in progress, which the host stop cancels.
+            Task pass;
+            lock (_rearmGate) pass = _rearmPass;
+            await pass;
+        }
     }
 
     private async Task RecoverRolledBackAsync(CancellationToken ct)
@@ -246,14 +254,14 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }));
     }
 
-    private void StartRearmPass()
+    private void StartRearmPass(CancellationToken stoppingToken)
     {
         lock (_rearmGate)
         {
             if (!_rearmPass.IsCompleted) return;
             _rearmPass = Task.Run(async () =>
             {
-                try { await RearmDeferredBatchAdmissionsAsync(); }
+                try { await RearmDeferredBatchAdmissionsAsync(stoppingToken); }
                 catch (Exception exception)
                 {
                     logger.LogWarning(exception, "engine-batch-admission-rearm-incomplete");
@@ -267,12 +275,13 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     /// without its batch admission, and a completed occurrence is final, so
     /// nothing drove those cards on. A completed, non-shadow ReviewReport
     /// decision to defer to the batch that is still its card's newest re-arms the
-    /// same admission while the card waits in the source lane on the current
-    /// review and the batch gate neither owns nor queues that review. The facts
+    /// same admission while the card waits in Auto Review on the current review
+    /// and the batch gate has not taken that review past admission. The facts
     /// are in memory or in two small files, so a pass runs no Git before it
-    /// admits; a repeat finds the admission and does nothing.
+    /// admits; a repeat finds the admission and does nothing. A stop ends the
+    /// pass after the admission in progress.
     /// </summary>
-    internal async Task<int> RearmDeferredBatchAdmissionsAsync()
+    internal async Task<int> RearmDeferredBatchAdmissionsAsync(CancellationToken stoppingToken)
     {
         var tasks = scanner.ScanAllJobs();
         var admissions = 0;
@@ -281,7 +290,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             !item.Shadow && item.Run.Status == "completed"
             && item.EngineReceipt?.Action == nameof(TransitionAction.DeferToBatch)))
         {
-            if (admissions >= RearmBudgetPerPass) break;
+            if (admissions >= RearmBudgetPerPass || stoppingToken.IsCancellationRequested) break;
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
             if (card is null || card.State != occurrence.ExpectedSourceState) continue;
@@ -289,11 +298,18 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             {
                 if (!batchAdmission.AwaitsAdmission(card, occurrence)) continue;
                 admissions++;
-                var outcome = await batchAdmission.AdmitAsync(card, occurrence);
+                var outcome = await batchAdmission.AdmitAsync(card, occurrence, stoppingToken);
                 if (outcome != EngineBatchAdmissionOutcome.Skipped) rearmed++;
                 logger.LogWarning(
                     "engine-batch-admission-rearmed task={TaskKey} run={RunId} attempt={AttemptId} outcome={Outcome}",
                     card.Key ?? card.Id, occurrence.Run.RunId, occurrence.AuthorityAttemptId, outcome);
+            }
+            catch (OperationCanceledException exception)
+            {
+                // Only a host stop cancels an admission; the next start re-arms the rest.
+                logger.LogInformation(exception, "engine-batch-admission-rearm-stopped task={TaskKey} run={RunId}",
+                    card.Key ?? card.Id, occurrence.Run.RunId);
+                break;
             }
             catch (Exception exception)
             {

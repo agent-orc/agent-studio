@@ -294,10 +294,15 @@ any other failed admission keeps the occurrence `applying` for recovery to
 retry. Until 17.10.2026 that branch returned before the admission. The recovery
 service therefore re-arms, at most four per pass, a completed non-shadow
 decision that is still its card's newest `ReviewReport` occurrence while the
-card waits in Auto Review on its current review without batch-gate ownership or
-a pending record. It also clears wait markers that name a cancelled occurrence
-or a completed one without an active choice, and rereads the occurrence after
-each marker write.
+card waits in Auto Review on its current review, the batch queue has no entry
+for that review, and no batch-gate ownership records a batch, a passed per-task
+gate or a containment. Ownership alone does not count: a bare marker left by a
+stop before the queue entry, and an active per-task gate marker whose gate was
+interrupted, are admitted again, which re-enqueues the review or resumes the
+gate within its start budget. A pass checks the host stop between admissions,
+and the service waits for a running pass when it stops. It also clears wait
+markers that name a cancelled occurrence or a completed one without an active
+choice, and rereads the occurrence after each marker write.
 
 ## Verification and architecture guard
 

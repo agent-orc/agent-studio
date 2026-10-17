@@ -34,8 +34,13 @@ public sealed class EngineBatchAdmission(
     IHostApplicationLifetime lifetime,
     ILogger<EngineBatchAdmission> logger)
 {
+    /// <param name="hostStopping">
+    /// The caller's own host stop signal, such as a hosted service's stopping
+    /// token, never a request token: as in the report request, the caller going
+    /// away does not cancel a per-task gate; only a host shutdown stops it.
+    /// </param>
     public async Task<EngineBatchAdmissionOutcome> AdmitAsync(TaskInfo task,
-        MonolithOrchestrationOccurrence occurrence)
+        MonolithOrchestrationOccurrence occurrence, CancellationToken hostStopping = default)
     {
         if (LaneRefusal(task, occurrence) is { } refusal) return Skip(task, occurrence, refusal);
         var review = authority.GetReview(occurrence.AuthorityAttemptId)
@@ -49,9 +54,9 @@ public sealed class EngineBatchAdmission(
         // failed admission still reports them. A replay finds the recorded fact.
         if (RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId).Entry is { } settlement)
             batches.RecordReviewVerification(task.ProjectName, review, settlement.Report.Commands);
-        // As in the report request, a per-task gate is not cancelled by the
-        // caller going away; only a host shutdown stops it.
-        var stopping = lifetime.ApplicationStopping;
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(
+            lifetime.ApplicationStopping, hostStopping);
+        var stopping = shutdown.Token;
         try
         {
             await batches.EnqueueAsync(task, review, source, reviewedAt, stopping).ConfigureAwait(false);
@@ -85,16 +90,22 @@ public sealed class EngineBatchAdmission(
 
     /// <summary>
     /// True while the card waits in Auto Review on the occurrence's current
-    /// review, and the batch gate neither owns that review nor queues it. Reads
-    /// attempt authority and two small files; runs no Git.
+    /// review, the batch queue has no entry for that review, and no ownership
+    /// records progress past admission. Ownership alone is not enough: a
+    /// refused admission whose per-task gate was interrupted keeps an active
+    /// gate marker without a queue entry, and a host stop between the ownership
+    /// write and the queue entry leaves a bare marker. Admitting again resumes
+    /// either. Reads attempt authority and two small files; runs no Git.
     /// </summary>
     public bool AwaitsAdmission(TaskInfo task, MonolithOrchestrationOccurrence occurrence)
     {
         if (LaneRefusal(task, occurrence) is not null) return false;
         var review = authority.GetReview(occurrence.AuthorityAttemptId);
-        return review is not null && IsCurrentGeneration(review)
-            && BatchGateOwnershipStore.Read(task.FolderPath)?.ReviewAttemptId != review.AttemptId
-            && store.ReadPending(review.AttemptId) is null;
+        if (review is null || !IsCurrentGeneration(review)
+            || store.ReadPending(review.AttemptId) is not null) return false;
+        return BatchGateOwnershipStore.Read(task.FolderPath) is not { } ownership
+            || ownership.ReviewAttemptId != review.AttemptId
+            || !RecordsProgress(ownership);
     }
 
     /// <summary>
@@ -111,6 +122,12 @@ public sealed class EngineBatchAdmission(
             : task.State != TaskStates.AutoReview
                 ? $"The card left {TaskStates.AutoReview} for {task.State} before the batch admission."
                 : null;
+
+    // A batch, a passed per-task gate or a containment record carries the
+    // review past admission, so no repeat admission is owed.
+    private static bool RecordsProgress(BatchGateOwnership ownership)
+        => ownership.BatchId is not null || ownership.FallbackTestedSha is not null
+            || ownership.FallbackIntegrated || ownership.ContainedInSha is not null;
 
     // The batch subject is current only for the current review of the current run.
     private bool IsCurrentGeneration(ReviewAttemptDto review)

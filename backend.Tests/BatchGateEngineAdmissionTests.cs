@@ -154,7 +154,7 @@ public sealed partial class BatchGatePilotServiceTests
         // The completed decision is no re-arm candidate either.
         var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
             factory.Services);
-        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync());
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
         Assert.Null(Ownership(deferred.Member.Key));
         Assert.Empty(store.ListAllPending());
     }
@@ -185,8 +185,8 @@ public sealed partial class BatchGatePilotServiceTests
         var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
             factory.Services, journal);
 
-        Assert.Equal(1, await recovery.RearmDeferredBatchAdmissionsAsync());
-        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync());
+        Assert.Equal(1, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
 
         var pending = Assert.Single(factory.Services.GetRequiredService<BatchGateStore>().ListPending());
         Assert.Equal(stuck.Member.ReviewAttemptId, pending.ReviewAttemptId);
@@ -197,6 +197,117 @@ public sealed partial class BatchGatePilotServiceTests
         AssertLane(stuck.Member.Key, TaskStates.AutoReview);
         AssertLane(moved.Member.Key, TaskStates.Escalated);
         Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task Recovery_resumes_a_rearmed_per_task_gate_that_lost_its_flight()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var journal = PreFixJournal(factory);
+        // Code in a documentation-only batch scope is refused at admission.
+        var lost = SettleDeferredReview(factory, "CODE-REARM-LOST", "backend/RearmLost.cs");
+        Assert.Equal("completed", (await DecideDeferToBatchAsync(journal, lost)).Status);
+        _gate.Fallback = _ => throw new InvalidOperationException("The gate host was lost.");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
+            factory.Services, journal);
+
+        // The emergency gate keeps its active marker and never had a queue
+        // entry, so the batch tick, which resumes queued members, never sees it.
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(lost.Member.Key, TaskStates.AutoReview);
+        Assert.True(Ownership(lost.Member.Key)!.FallbackGateActive);
+        Assert.Empty(store.ListAllPending());
+
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        Assert.Equal(1, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+
+        Assert.Equal(2, _gate.FallbackRuns);
+        AssertLane(lost.Member.Key, TaskStates.Escalated);
+        Assert.Null(Ownership(lost.Member.Key));
+        Assert.Empty(store.ListAllPending());
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Recovery_rearms_an_admission_that_stopped_before_its_queue_entry()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var journal = PreFixJournal(factory);
+        var bare = SettleDeferredReview(factory, "DOC-REARM-BARE", "docs/rearm-bare.md");
+        Assert.Equal("completed", (await DecideDeferToBatchAsync(journal, bare)).Status);
+        // The previous process wrote the ownership and stopped before the queue
+        // entry; the admission rebuilds the subject.
+        BatchGateOwnershipStore.Write(CardFolder(bare.Member.Key), new BatchGateOwnership(
+            bare.Member.ReviewAttemptId, new BatchGateSubject(bare.Member.Key, ProjectName, RepositoryId,
+                "develop", "complete-suite", "digest", "v1",
+                "refs/heads/agent-studio/results/" + bare.Member.Key, bare.Member.ResultSha,
+                bare.Member.RunAttemptId, 1, 1, bare.Member.ResultSha, true, true, true, true, false, null,
+                true, bare.ReportedAt, 0)));
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
+            factory.Services, journal);
+
+        Assert.Equal(1, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+
+        var pending = Assert.Single(store.ListPending());
+        Assert.Equal(bare.Member.ReviewAttemptId, pending.ReviewAttemptId);
+        Assert.Equal(pending.Subject, Ownership(bare.Member.Key)!.Subject);
+        AssertLane(bare.Member.Key, TaskStates.AutoReview);
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task Rearm_pass_ends_at_a_host_stop_and_the_next_start_rearms_the_rest()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var journal = PreFixJournal(factory);
+        // The refused code card comes first and runs the per-task gate.
+        var gated = SettleDeferredReview(factory, "CODE-REARM-STOP", "backend/RearmStop.cs");
+        var next = SettleDeferredReview(factory, "DOC-REARM-NEXT", "docs/rearm-next.md");
+        foreach (var decided in new[] { gated, next })
+            Assert.Equal("completed", (await DecideDeferToBatchAsync(journal, decided)).Status);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
+            factory.Services, journal);
+        using (var stopped = new CancellationTokenSource())
+        {
+            stopped.Cancel();
+            // A stopped host starts no admission.
+            Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(stopped.Token));
+        }
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListAllPending());
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = async (request, ct) =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            return Red(request.ExpectedSha);
+        };
+        using var stopping = new CancellationTokenSource();
+
+        var pass = recovery.RearmDeferredBatchAdmissionsAsync(stopping.Token);
+        Assert.Same(entered.Task, await Task.WhenAny(entered.Task, pass).WaitAsync(TimeSpan.FromMinutes(1)));
+        stopping.Cancel();
+
+        // The pass ends with the cancelled admission instead of admitting the next card.
+        Assert.Equal(0, await pass);
+        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Null(store.ReadPending(next.Member.ReviewAttemptId));
+        Assert.Null(Ownership(next.Member.Key));
+        _gate.FallbackAsync = null;
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None);
+        Assert.Equal(next.Member.ReviewAttemptId, store.ReadPending(next.Member.ReviewAttemptId)?.ReviewAttemptId);
     }
 
     [Fact]
