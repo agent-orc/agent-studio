@@ -128,6 +128,20 @@ and administration credentials need the installation owner.
 
 ## 2. Renew Codex through Studio
 
+**Precondition.** The ChatGPT account must allow device-code sign-in for
+Codex: in ChatGPT open **Settings > Security** and enable the device-code
+sign-in option for Codex (German UI: "Anmeldung per Gerätecode für Codex").
+While it is off, the verification page shows a red notice and rejects the
+code; enable it and choose **Try again**.
+
+**First login or renewal.** A first login is a host where
+`~/.codex/auth.json` does not exist yet for the runner user
+(`test -e ~/.codex/auth.json || echo first-login`) and the badge says
+`Not logged in`. A renewal replaces an existing file; the badge was
+**Expiring** or **Unavailable** after earlier OK probes, and the credential
+generation in the host's **Credentials** section changes once it completes.
+Both paths use the same flow below.
+
 1. On an **Unavailable** or **Expiring** Codex badge, choose **Sign in Codex**.
    The same action is available on a Codex Ready-card wait chip.
 2. Open the displayed verification link in a browser and enter the large
@@ -145,6 +159,16 @@ outcome. If the browser flow fails, choose **Try again**; do not fall back to
 copying `~/.codex/auth.json` from another machine.
 If unit restart is unavailable, the ordinary provider-probe cadence remains the
 fallback.
+
+No restart is required for the probe to see the new login. The auth probe
+runs in its own clean-context home and re-acquires it when the native
+credential generation changes; acquiring links a shared credential file that
+is missing or a dangling link (AGT-3216). Container hosts such as the KORI
+review containers have no runner units: once `codex login status` succeeds,
+the next probe, normally within five minutes, reports **OK** without a
+container restart. Before AGT-3216 a probe home created while no
+`auth.json` existed stayed unlinked until the home was renamed and the
+container restarted; that workaround is no longer needed.
 
 ## 3. Renew Claude through Studio
 
