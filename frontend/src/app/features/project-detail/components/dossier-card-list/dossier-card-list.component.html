@@ -1,0 +1,22 @@
+<section class="dossier-cards" data-testid="dossier-card-list" aria-label="Dossier cards">
+  @if (list(); as view) {
+    <header class="dossier-cards__header">
+      <strong>Cards</strong>
+      <span data-testid="dossier-slice-progress">{{ view.completedSlices }} / {{ view.implementationSlices }} implementation slices complete</span>
+    </header>
+    @if (view.cards.length === 0) { <p>No cards are assigned to this Dossier yet.</p> }
+    <ul>
+      @for (card of view.cards; track card.key) {
+        <li>
+          <button type="button" (click)="open(card.key)" [attr.data-testid]="'dossier-card-' + card.key">
+            <strong>{{ card.key }}</strong> {{ card.title }}
+          </button>
+          <span>{{ laneName(card.lane) }} · {{ card.state }}</span>
+          <span>Environments: {{ card.environments.length ? card.environments.join(', ') : 'None' }}</span>
+          @if (card.section) { <span>Section: {{ card.section }}</span> }
+          @if (card.decision) { <span>Decision: {{ card.decision }}</span> }
+        </li>
+      }
+    </ul>
+  }
+</section>

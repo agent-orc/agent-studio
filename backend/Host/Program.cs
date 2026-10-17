@@ -1115,6 +1115,7 @@ builder.Services.AddSingleton<ProjectStyleGuideService>();
 builder.Services.AddSingleton<PromptEnrichmentService>();
 builder.Services.AddSingleton<ManagedRepositoryMutationService>();
 builder.Services.AddSingleton<WorkbenchCatalogueService>();
+builder.Services.AddSingleton<DossierCardsService>();
 builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();

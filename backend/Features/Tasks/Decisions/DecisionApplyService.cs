@@ -54,7 +54,7 @@ public sealed class DecisionApplyService
         {
             DecisionApplyOutcomes.LinkedCards => await ApplyToLinkedAsync(
                 key, decided, plan, linked.ToDictionary(item => item.Key, item => item.Card,
-                    StringComparer.OrdinalIgnoreCase), block, marker, ct),
+                    StringComparer.OrdinalIgnoreCase), block, marker, decisionCard.Dossier, ct),
             DecisionApplyOutcomes.CreatedCards => CreateFromRequirements(decisionCard, key, decided, plan, block),
             _ => new(DecisionApplyOutcomes.Nothing, [],
                 ["No implementation card is linked and the chosen option names no requirements."]),
@@ -63,7 +63,7 @@ public sealed class DecisionApplyService
 
     private async Task<DecisionApplyResult> ApplyToLinkedAsync(string key, DecisionContent decided,
         DecisionApplyPlan plan, IReadOnlyDictionary<string, TaskInfo?> cards, string block, string marker,
-        CancellationToken ct)
+        TaskDossier? dossier, CancellationToken ct)
     {
         var applied = new List<string>();
         var notes = new List<string>();
@@ -86,6 +86,20 @@ public sealed class DecisionApplyService
                     DecisionPromptBlock.Append(prompt, block, marker, key), card.WatchPath))
             {
                 notes.Add($"{step.Key}: the decision block could not be written.");
+                unfinished = true;
+                continue;
+            }
+            var adoptDossier = dossier is not null && (card.Dossier is null
+                || (string.Equals(card.Dossier.Path, dossier.Path, StringComparison.OrdinalIgnoreCase)
+                    && card.Dossier.ImplementationIndex is null && dossier.ImplementationIndex is not null));
+            if (adoptDossier && !_mutations.SetJobDossier(card.Id,
+                    (card.Dossier ?? dossier!) with
+                    {
+                        Decision = key,
+                        ImplementationIndex = card.Dossier?.ImplementationIndex ?? dossier!.ImplementationIndex,
+                    }, card.WatchPath))
+            {
+                notes.Add($"{step.Key}: the Dossier reference could not be written.");
                 unfinished = true;
                 continue;
             }
@@ -123,6 +137,9 @@ public sealed class DecisionApplyService
                     AcceptanceScope = AgentStudio.Pipeline.DossierImplementationCardPolicy.AcceptanceScopeFor(requirement),
                     Mode = TaskModes.Coding,
                     TargetState = TaskStates.Ready,
+                    Dossier = decisionCard.Dossier is { } dossier
+                        ? dossier with { Decision = key }
+                        : null,
                 })).ToList();
         var created = _promotion.CreateCards(decisionCard, spawns);
         var keys = created.Select(card => card.TaskKey ?? card.JobId).ToList();

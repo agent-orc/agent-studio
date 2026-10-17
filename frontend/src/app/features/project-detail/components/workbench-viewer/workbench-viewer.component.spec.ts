@@ -13,6 +13,7 @@ import {
 } from '../../../../services/sandboxed-html.util';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { WorkbenchViewerComponent } from './workbench-viewer.component';
 
 const DOCUMENT: WorkbenchDocument = {
@@ -39,7 +40,11 @@ const DOCUMENT: WorkbenchDocument = {
 };
 
 describe('WorkbenchViewerComponent', () => {
-  beforeEach(() => sessionStorage.clear());
+  beforeEach(() => {
+    sessionStorage.clear();
+    TestBed.overrideProvider(TaskReferenceNavigationService,
+      { useValue: { openReferenceOrNotify: vi.fn() } });
+  });
 
   it('ends loading and shows the API reason when a listed Dossier cannot be read', async () => {
     await TestBed.configureTestingModule({
