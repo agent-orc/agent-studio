@@ -33,9 +33,11 @@ public static class StudioRoles
 {
     public const string Owner = "owner";
     public const string Operator = "operator";
+    public const string Contributor = "contributor";
+    public const string ContributorDisplayName = "Product";
     public const string Viewer = "viewer";
 
-    public static bool IsValid(string? value) => value is Owner or Operator or Viewer;
+    public static bool IsValid(string? value) => value is Owner or Operator or Contributor or Viewer;
 }
 
 public static class RunnerScopes
@@ -47,6 +49,8 @@ public static class RunnerScopes
     public const string Events = "runner.events";
     public const string Artifacts = "runner.artifacts";
     public const string Completion = "runner.completion";
+    public const string Deploy = "runner.deploy";
+    public const string Release = "runner.release";
 
     /// <summary>
     /// The public-demo replay scope. It admits nothing but pre-signed simulated
@@ -57,10 +61,10 @@ public static class RunnerScopes
     public const string DemoReplay = "demo.replay";
 
     public static readonly string[] Minimum = [Claim, Lease, Logs, Events, Artifacts, Completion];
-    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration], StringComparer.Ordinal);
+    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy, Release], StringComparer.Ordinal);
 
     /// <summary>A replay credential is never also an execution credential.</summary>
-    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration;
+    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy or Release;
 }
 
 public sealed record StudioUser
@@ -71,6 +75,7 @@ public sealed record StudioUser
     public required string Role { get; init; }
     public required string PasswordHash { get; init; }
     public List<string> Projects { get; init; } = [];
+    public List<string> ProductionApprovalProjects { get; init; } = [];
     public bool Disabled { get; init; }
     public bool MustChangePassword { get; init; }
     public DateTime CreatedAt { get; init; }
@@ -131,21 +136,33 @@ public sealed record RunnerEnrollment
 public sealed record SecurityState
 {
     public List<StudioUser> Users { get; init; } = [];
+    public List<StudioInvitation> Invitations { get; init; } = [];
     public List<StudioSession> Sessions { get; init; } = [];
     public List<RunnerServiceIdentity> Runners { get; init; } = [];
     public List<RunnerEnrollment> Enrollments { get; init; } = [];
+}
+
+public sealed record StudioInvitation
+{
+    public required string Id { get; init; }
+    public required string UserId { get; init; }
+    public required string TokenHash { get; init; }
+    public required DateTime ExpiresAt { get; init; }
+    public DateTime? UsedAt { get; init; }
 }
 
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
 public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);
 
 public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false);
-public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword);
+public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null);
 public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, string? TemporaryPassword);
-public sealed record UpdateUserRequest(string? DisplayName, string? Role, IReadOnlyList<string>? Projects, bool? Disabled);
+public sealed record UpdateUserRequest(string? DisplayName, string? Role, IReadOnlyList<string>? Projects, bool? Disabled, IReadOnlyList<string>? ProductionApprovalProjects = null);
+public sealed record InviteUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects);
+public sealed record AcceptInvitationRequest(string Token, string NewPassword);
 public sealed record PasswordResetRequest(string? TemporaryPassword);
 public sealed record RunnerEnrollmentRequest(string Name, IReadOnlyList<string>? Scopes, DateTime? ExpiresAt, DateTime? CredentialExpiresAt);
 public sealed record RunnerEnrollRequest(string Code);

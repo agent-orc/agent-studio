@@ -10,8 +10,9 @@ public static class HostRoles
 {
     public const string Coding = "coding";
     public const string Review = "review";
+    public const string Deploy = "deploy";
 
-    public static readonly IReadOnlyList<string> All = [Coding, Review];
+    public static readonly IReadOnlyList<string> All = [Coding, Review, Deploy];
 }
 
 public static class HostEnrolmentStatuses
@@ -55,10 +56,11 @@ public static class HostAdmissionReasons
 /// Shared resource envelope. <see cref="TotalSlots"/> is conserved across both
 /// roles; each role cap is a sub-limit. It never changes project parallelism.
 /// </summary>
-public sealed record HostEnvelopeDto(int TotalSlots, int CodingSlots, int ReviewSlots)
+public sealed record HostEnvelopeDto(int TotalSlots, int CodingSlots, int ReviewSlots, int DeploySlots = 0)
 {
     public int RoleSlots(string role)
-        => role == HostRoles.Coding ? CodingSlots : role == HostRoles.Review ? ReviewSlots : 0;
+        => role == HostRoles.Coding ? CodingSlots : role == HostRoles.Review ? ReviewSlots
+            : role == HostRoles.Deploy ? DeploySlots : 0;
 }
 
 public sealed record HostRolePrincipalDto(string Role, string PrincipalId);
@@ -105,7 +107,7 @@ public static class HostEnrolmentPolicy
         if (roles.Count == 0) return "At least one role service is required.";
         if (roles.Any(role => role is null)) return "A role entry is empty.";
         if (roles.Any(role => !HostRoles.All.Contains(role.Role, StringComparer.Ordinal)))
-            return "Role must be coding or review.";
+            return "Role must be coding, review, or deploy.";
         if (roles.Select(role => role.Role).Distinct(StringComparer.Ordinal).Count() != roles.Count)
             return "Each role may be enrolled once per host.";
         if (roles.Any(role => string.IsNullOrWhiteSpace(role.PrincipalId)))
@@ -116,9 +118,10 @@ public static class HostEnrolmentPolicy
         if (envelope is null) return "A resource envelope is required.";
         if (envelope.TotalSlots is < 1 or > MaxTotalSlots)
             return $"Envelope totalSlots must be between 1 and {MaxTotalSlots}.";
-        if (envelope.CodingSlots < 0 || envelope.ReviewSlots < 0)
+        if (envelope.CodingSlots < 0 || envelope.ReviewSlots < 0 || envelope.DeploySlots < 0)
             return "Role slot caps cannot be negative.";
-        if (envelope.CodingSlots > envelope.TotalSlots || envelope.ReviewSlots > envelope.TotalSlots)
+        if (envelope.CodingSlots > envelope.TotalSlots || envelope.ReviewSlots > envelope.TotalSlots
+            || envelope.DeploySlots > envelope.TotalSlots)
             return "A role slot cap cannot exceed the shared envelope.";
         foreach (var role in HostRoles.All)
         {

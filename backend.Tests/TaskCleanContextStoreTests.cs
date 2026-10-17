@@ -92,6 +92,73 @@ public sealed class TaskCleanContextStoreTests : IDisposable
     }
 
     [Fact]
+    public void Reacquire_links_a_credential_that_appeared_after_the_home_was_created()
+    {
+        var userHome = NewUserHome();
+        var created = new DateTimeOffset(2026, 10, 15, 9, 0, 0, TimeSpan.Zero);
+        Write(Path.Combine(userHome, ".codex", "config.toml"), "base-config");
+
+        using (var first = TaskCleanContextStore.Acquire(
+            "codex", "provider-auth-probe", userHome, StoreRoot, nowUtc: created))
+        {
+            Assert.False(File.Exists(Path.Combine(first.HomePath, "auth.json")));
+            Assert.DoesNotContain(first.SeededFiles, seed => seed.SharedCredential);
+        }
+
+        var sourceAuth = Path.Combine(userHome, ".codex", "auth.json");
+        Write(sourceAuth, "first-login");
+        Write(Path.Combine(userHome, ".codex", "config.toml"), "changed-base-config");
+
+        using var reused = TaskCleanContextStore.Acquire(
+            "codex", "provider-auth-probe", userHome, StoreRoot, nowUtc: created.AddDays(2));
+
+        Assert.True(reused.Reused);
+        var credential = Assert.Single(reused.SeededFiles, seed => seed.SharedCredential);
+        Assert.NotEqual(CleanContextSeedMethod.Existing, credential.Method);
+        Assert.Equal("first-login", File.ReadAllText(Path.Combine(reused.HomePath, "auth.json")));
+        Assert.Equal("base-config", File.ReadAllText(Path.Combine(reused.HomePath, "config.toml")));
+
+        File.WriteAllText(Path.Combine(reused.HomePath, "auth.json"), "refreshed-in-probe");
+        Assert.Equal("refreshed-in-probe", File.ReadAllText(sourceAuth));
+    }
+
+    [Fact]
+    public void Reacquire_replaces_a_dangling_credential_link_and_keeps_a_live_one()
+    {
+        var userHome = NewUserHome();
+        var now = new DateTimeOffset(2026, 10, 17, 9, 0, 0, TimeSpan.Zero);
+        var sourceAuth = Path.Combine(userHome, ".claude", ".credentials.json");
+        Write(sourceAuth, "claude-login");
+
+        string home;
+        using (var first = TaskCleanContextStore.Acquire(
+            "claude", "provider-auth-probe", userHome, StoreRoot, nowUtc: now))
+        {
+            home = first.HomePath;
+        }
+
+        var destination = Path.Combine(home, ".credentials.json");
+        File.Delete(destination);
+        File.CreateSymbolicLink(destination, Path.Combine(_root, "removed", ".credentials.json"));
+        Assert.False(new FileInfo(destination).ResolveLinkTarget(returnFinalTarget: true)!.Exists);
+
+        using (var repaired = TaskCleanContextStore.Acquire(
+            "claude", "provider-auth-probe", userHome, StoreRoot, nowUtc: now.AddMinutes(5)))
+        {
+            Assert.Equal("claude-login", File.ReadAllText(destination));
+            Assert.Contains(repaired.SeededFiles,
+                seed => seed.SharedCredential && seed.Method != CleanContextSeedMethod.Existing);
+        }
+
+        using var stable = TaskCleanContextStore.Acquire(
+            "claude", "provider-auth-probe", userHome, StoreRoot, nowUtc: now.AddMinutes(10));
+
+        var credential = Assert.Single(stable.SeededFiles, seed => seed.SharedCredential);
+        Assert.Equal(CleanContextSeedMethod.Existing, credential.Method);
+        Assert.Equal("claude-login", File.ReadAllText(destination));
+    }
+
+    [Fact]
     public void Atomic_native_refresh_detaches_hard_links_until_drained_rebind_converges_all_consumers()
     {
         var userHome = NewUserHome();

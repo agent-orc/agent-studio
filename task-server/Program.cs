@@ -241,6 +241,7 @@ else if (armDecision != OwnerBootstrapPolicy.ArmDecision.NoCode)
 app.UseRouting();
 app.UsePublicDemoExecutionLock();
 app.UseMiddleware<TaskServerAuthenticationMiddleware>();
+app.UseMiddleware<StudioContributorMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();

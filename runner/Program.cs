@@ -16,6 +16,24 @@ if (args is ["--enroll", var installationUrl, var enrollmentCode])
     return await RunnerEnrollmentCommand.RunAsync(
         installationUrl, enrollmentCode, Console.Out, Console.Error, CancellationToken.None);
 
+if (args is ["deploy-poll", ..])
+    return await DeployHostCommand.RunAsync(args[1..], CancellationToken.None);
+
+if (args is ["deploy-loop", ..])
+{
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; stop.Cancel(); };
+    while (!stop.IsCancellationRequested)
+    {
+        try { await DeployHostCommand.RunAsync(args[1..], stop.Token); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
+        catch (Exception ex) { Console.Error.WriteLine($"Deploy poll failed: {ex.GetType().Name}"); }
+        try { await Task.Delay(TimeSpan.FromSeconds(5), stop.Token); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
+    }
+    return 0;
+}
+
 // AGT-3005: every process this host starts, daemon or detached worker, inherits
 // the build-server fence, so no dotnet invocation it spawns can leave a reusable
 // MSBuild node or MSBuild server behind after its run.
@@ -132,30 +150,15 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // (AGT-2823). Each provider gets its own stable, linked-credential clean-context
 // home - identical isolation to a task's clean home, just keyed by a fixed
 // identity instead of a task id - so the OAuth refresh still writes through
-// but no project transcript or history ever lands in it.
-var authProbeContexts = new Dictionary<string, TaskCleanContextLease>(StringComparer.OrdinalIgnoreCase);
+// but no project transcript or history ever lands in it. A credential
+// generation change re-acquires the home so a later login is linked (AGT-3216).
+var authProbeContexts = new ProviderAuthProbeContexts(
+    provider => TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity),
+    provider => ProviderCredentialMonitor.Inspect(provider).CredentialGeneration,
+    Log);
 using var client = new TaskServerClient(options);
 
-TaskCleanContextLease? AuthProbeContext(string provider)
-{
-    if (provider is not ("claude" or "codex")) return null;
-    lock (authProbeContexts)
-    {
-        if (authProbeContexts.TryGetValue(provider, out var existing)) return existing;
-        try
-        {
-            var lease = TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity);
-            authProbeContexts[provider] = lease;
-            return lease;
-        }
-        catch (Exception ex)
-        {
-            Log($"provider-auth-probe clean-context isolation unavailable for '{provider}': {ex.Message}; "
-                + "probe will run without isolation from agent sessions.");
-            return null;
-        }
-    }
-}
+TaskCleanContextLease? AuthProbeContext(string provider) => authProbeContexts.Get(provider);
 
 ProviderAuthProbe.Shared.UseLauncher(
     (fileName, arguments, ct) =>

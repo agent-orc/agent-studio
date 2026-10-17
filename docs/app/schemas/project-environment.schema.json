@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-studio.local/schemas/project-environment.schema.json",
+  "title": "Project deployment environment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "kind", "targetHostId", "address", "template", "destination", "healthUrl"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["stage", "production", "other"] },
+    "targetHostId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "address": { "type": "string", "minLength": 1 },
+    "template": { "enum": ["container", "static"] },
+    "destination": { "type": "string", "minLength": 1 },
+    "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8080 },
+    "healthUrl": { "type": "string", "format": "uri" },
+    "approval": { "enum": ["person", "stage-healthy-10m"] },
+    "secretRefs": { "type": "array", "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } }
+  }
+}
