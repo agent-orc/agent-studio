@@ -391,6 +391,21 @@ public sealed class MonolithOrchestrationStore
             && item.Run.Status is ("pending" or "cancelled")).ToArray();
     }
 
+    /// <summary>
+    /// The newest occurrence of <paramref name="profile"/> for each card. A
+    /// cancelled preparation never applied a decision and is not counted.
+    /// </summary>
+    public IReadOnlyList<MonolithOrchestrationOccurrence> NewestPerTask(string profile)
+    {
+        lock (_gate) return _runs.Values
+            .Where(item => item.Profile == profile && item.Run.Status != "cancelled")
+            .OrderBy(item => item.CreationSequence).ThenBy(item => item.Run.CreatedAt)
+            .ThenBy(item => item.Run.RunId, StringComparer.Ordinal)
+            .GroupBy(item => (item.Run.ProjectId, item.Run.TaskId))
+            .Select(group => group.Last())
+            .ToArray();
+    }
+
     public void Activate(string runId)
     {
         lock (_gate)

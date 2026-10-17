@@ -1,3 +1,10 @@
+# AGT-3216 provider-auth probe credential relink status
+
+- Result implementation SHA: `cbfa0934676c7d7ab603d5125984019271155c97`, on `88f555f13`. This status entry is a separate commit on top of it.
+- Implemented option: `TaskCleanContextStore.Acquire` relinks a shared credential (Codex `auth.json`, Claude `.credentials.json`) on reuse when the destination is missing or a dangling symbolic link and the source exists. A present but detached hard link is still left to the drained `RebindProviderCredential`. The new `ProviderAuthProbeContexts` keeps the probe lease per provider and re-acquires it when `ProviderCredentialMonitor` reports a different credential generation. `runner/Program.cs` uses it instead of caching the lease for the process lifetime.
+- Runbook `docs/operations/setup/cli-relogin-runbook.md` section 2 now covers the ChatGPT device-code precondition, how to tell a first login from a renewal, and that container hosts need no restart.
+- Verification: built `runner.Tests`, `backend.Tests` and `task-server.Tests`. `ProviderAuthProbeContextsTests|ProviderAuthProbeTests` passed (47 tests). `CarWorkerExecutionTests|MechanicalSessionContinuationTests` passed (53 tests). `TaskCleanContextStoreTests|CleanContextSessionStabilityTests|CliContextModesTests` passed (34 tests). `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests after removing the now-unneeded `fixed-date backend.Tests/TaskCleanContextStoreTests.cs` baseline line; runner and task-server had no matching tests. `npm --prefix frontend run lint` passed.
+
 # AGT-3191 Dossier Tag and Created controls status
 
 - Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
@@ -31,7 +38,16 @@
 
 # AGT-3211 operator candidate 31 findings status
 
-- Result SHA: `sha256:4af9c5e00a6e2633be2ade666516aed8e03860eafc8106db2443587df9d0588a` for the implementation diff against base `88f555f1314f0ed1a7b03eff4e1f772975def73d`. The platform owns the delivery commit.
+- Result implementation SHA: `d68bda520bf18e764752ae68553fce5a303fc653`. The delivery branch merges `origin/develop` at `1ffa78fcac5486121538d7ef92a9422a07fcd6f8` to resolve the integration conflict in this file while preserving the implementation commit.
 - Implemented option: compensate template onboarding on request cancellation and delete GitHub repositories with an independent 30-second cleanup token; clear a replacement runner's missing release and reject older drift in either response order; preserve absolute NOOP line numbers after an epoch boundary.
 - Verification: `dotnet build agent-taskboard.sln --no-restore -m:2 -p:UseSharedCompilation=false` and `npm --prefix frontend run build` passed. The focused `FullyQualifiedName~ProjectRepositoryProvisioningTests|FullyQualifiedName~ReviewDecisionEvidenceReaderTests` filter passed 18 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and found no matches in the other seven .NET test projects. The focused Angular service spec passed 26 tests, the two null-release Playwright cases passed, and `npm --prefix frontend run lint` passed. Screenshot: `results/execution-hosts-missing-release-no-stale-drift.png` in the task results directory.
 - No product documentation update was needed for these scoped bug fixes.
+
+# AGT-3189 board read regression result
+
+- Result implementation SHA: `c261893bc88c0c02eda373189df2669dc9db1456`, rebased from delivery `649255419` onto `origin/develop` at `88f555f1314f0ed1a7b03eff4e1f772975def73d` as one linear commit.
+- Implemented option: keep a sidecar file write open with a deterministic gate and require the continue POST to return 202 while that write remains open. The burst covers eight creations, seven sidecar writes, and seven claims before entering a separately gated identity persistence call. Ten grouped board reads must build a fresh body and finish individually within 10 seconds while both identity persistence and index refresh remain held. Releasing the gates must let the writer finish.
+- Final isolated burst measurement: ten reads completed in 28.251 ms total; the slowest took 22.522 ms. Five full index scans covered the burst. This is test evidence, not a production load comparison.
+- The rebased delivery retains the production correction: `SuggestedRemoteRunnerId` reads the last committed client identity snapshot through `ListPublished`, so board composition does not wait on identity persistence. This fix round needed no further production change.
+- Verification: `dotnet build backend.Tests/OrchestratorApi.Tests.csproj --no-restore` and `dotnet build operations-server.Tests/OperationsServer.Tests.csproj --no-restore` passed. The solution build was stopped after 8 minutes 57 seconds waiting on the shared compiler; it had reported zero errors. The focused filter for `BoardConditionalReadTests`, `ClientIdentityTests`, `PickupHoldEndpointsTests`, and `PickupHoldSweepTests` passed 51/51; the final isolated burst test passed 1/1. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98/98 backend tests and ran with no matching tests in the other seven .NET test projects. `npm --prefix frontend run lint` and `git diff --check` passed. Detailed output is in the task results directory.
+- No product documentation update is needed for this scoped regression correction.

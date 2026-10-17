@@ -185,7 +185,7 @@
       </div>
       <button type="button"
               data-testid="project-overview-open-deployment"
-              (click)="openRail.emit('deployment')">Open Deployment</button>
+              (click)="openRail.emit('deploy')">Open Deploy</button>
       <span class="operator-dashboard__deployment-state"
             [class.operator-dashboard__deployment-state--pending]="deploymentState() === 'pending'"
             [class.operator-dashboard__deployment-state--failed]="deploymentState() === 'failed'">

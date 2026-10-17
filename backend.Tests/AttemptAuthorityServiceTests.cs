@@ -392,6 +392,37 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     }
 
     [Fact]
+    public void Live_projection_lists_each_attempt_once_when_only_the_current_review_is_archived()
+    {
+        var now = new DateTime(2026, 10, 17, 9, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "run-create").RunAttempt!;
+        SettleRunWithEnvelope(service, run, new string('c', 40), "run-complete");
+        var review = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-1", "PROJ-1", new string('c', 40), run.AttemptId,
+            "requirements", "policy", [], "review-create")).ReviewAttempt!;
+        var claimed = service.ClaimReview(review.AttemptId, "reviewer", "review-host", 60,
+            "review-claim").ReviewAttempt!;
+        Assert.True(service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch,
+                "review-settle"),
+            new string('c', 40), ReviewTerminalOutcome.Pass)).Accepted);
+
+        // A completed card keeps its enveloped run for the 30-day result
+        // handoff window, while its settled current review moves to the archive.
+        service.CompactTerminalTasks(["AGT-1"]);
+
+        foreach (var projection in new[] { service.GetTaskProjection("AGT-1"),
+                     NewService(() => now).GetTaskProjection("AGT-1") })
+        {
+            Assert.Equal(run.AttemptId, Assert.Single(projection.RunAttempts).AttemptId);
+            Assert.Equal(review.AttemptId, Assert.Single(projection.ReviewAttempts).AttemptId);
+            Assert.Equal(run.AttemptId, projection.CurrentRunAttempt!.AttemptId);
+            Assert.Equal(review.AttemptId, projection.CurrentReviewAttempt!.AttemptId);
+        }
+    }
+
+    [Fact]
     public void Hourly_archive_merge_externalizes_legacy_inline_review_subject()
     {
         var now = new DateTime(2026, 10, 15, 13, 0, 0, DateTimeKind.Utc);
