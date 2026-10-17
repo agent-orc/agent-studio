@@ -18,6 +18,7 @@ public sealed class MonolithOrchestrationApplier(
     HumanReviewEscalation escalation,
     RemoteDeliveryIntegrationCoordinator integration,
     BatchGatePilotService batches,
+    EngineBatchAdmission batchAdmission,
     AgentStudio.Projects.ProjectSettingsService settings,
     IOperatorSweepActions sweepActions,
     ActiveChoiceAdmissionAdapter activeDecisionAuthority,
@@ -114,7 +115,10 @@ public sealed class MonolithOrchestrationApplier(
 
         var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
             TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
-        if (task.State != occurrence.ExpectedSourceState && task.State != target)
+        // A batch admission has no lane effect. A card that left the source lane
+        // owes none, as in the report path; the admission records the skip.
+        if (task.State != occurrence.ExpectedSourceState && task.State != target
+            && decision?.Action != TransitionAction.DeferToBatch)
             throw new InvalidOperationException("orchestration-source-state-mismatch");
         if (decision is null && occurrence.Run.CurrentStage == OrchestrationStage.GateDispatch)
             throw new InvalidDataException("The engine gate decision is missing its transition.");
@@ -150,6 +154,16 @@ public sealed class MonolithOrchestrationApplier(
         }
         if (target is null)
         {
+            // DeferToBatch selects no lane, so its batch admission is the whole
+            // effect. Until 17.10.2026 this branch returned before it, and every
+            // engine decision left its card in Auto Review without an owner.
+            if (decision?.Action == TransitionAction.DeferToBatch)
+            {
+                await batchAdmission.AdmitAsync(task, occurrence);
+                // The per-task gate can move the card, and its wait marker with it.
+                scanner.InvalidateCache();
+                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+            }
             EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
             scanner.InvalidateCache();
             return;
@@ -234,14 +248,6 @@ public sealed class MonolithOrchestrationApplier(
         {
             scanner.InvalidateCache();
             return;
-        }
-        if (decision?.Action == TransitionAction.DeferToBatch)
-        {
-            var review = authority.GetReview(occurrence.AuthorityAttemptId)
-                ?? throw new InvalidOperationException("The reviewed attempt was not found.");
-            var source = authority.GetRun(review.SourceRunAttemptId)
-                ?? throw new InvalidOperationException("The batch source run was not found.");
-            await batches.EnqueueAsync(task, review, source, DateTimeOffset.UtcNow, ct);
         }
         if (decision?.ContinuationBase is { } continuation
             && decision.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound)
