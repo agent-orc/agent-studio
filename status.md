@@ -1,3 +1,10 @@
+# AGT-3216 provider-auth probe credential relink status
+
+- Result implementation SHA: `cbfa0934676c7d7ab603d5125984019271155c97`, on `88f555f13`. This status entry is a separate commit on top of it.
+- Implemented option: `TaskCleanContextStore.Acquire` relinks a shared credential (Codex `auth.json`, Claude `.credentials.json`) on reuse when the destination is missing or a dangling symbolic link and the source exists. A present but detached hard link is still left to the drained `RebindProviderCredential`. The new `ProviderAuthProbeContexts` keeps the probe lease per provider and re-acquires it when `ProviderCredentialMonitor` reports a different credential generation. `runner/Program.cs` uses it instead of caching the lease for the process lifetime.
+- Runbook `docs/operations/setup/cli-relogin-runbook.md` section 2 now covers the ChatGPT device-code precondition, how to tell a first login from a renewal, and that container hosts need no restart.
+- Verification: built `runner.Tests`, `backend.Tests` and `task-server.Tests`. `ProviderAuthProbeContextsTests|ProviderAuthProbeTests` passed (47 tests). `CarWorkerExecutionTests|MechanicalSessionContinuationTests` passed (53 tests). `TaskCleanContextStoreTests|CleanContextSessionStabilityTests|CliContextModesTests` passed (34 tests). `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests after removing the now-unneeded `fixed-date backend.Tests/TaskCleanContextStoreTests.cs` baseline line; runner and task-server had no matching tests. `npm --prefix frontend run lint` passed.
+
 # AGT-3191 Dossier Tag and Created controls status
 
 - Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
