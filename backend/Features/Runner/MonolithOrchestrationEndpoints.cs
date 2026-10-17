@@ -114,10 +114,19 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     OrchestrationRolloutStore rollout,
     IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
+    EngineBatchAdmission batchAdmission,
     TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
     private static readonly TimeSpan PreparationGrace = TimeSpan.FromSeconds(30);
+
+    /// <summary>Batch admissions one re-arm pass may run; the rest wait for the next pass.</summary>
+    internal const int RearmBudgetPerPass = 4;
+
+    // An admission can run a per-task gate, so a re-arm pass runs beside the
+    // loop and a loop starts one only when none is running (as AGT-3091).
+    private readonly object _rearmGate = new();
+    private Task _rearmPass = Task.CompletedTask;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -142,6 +151,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     logger.LogWarning(exception, "orchestration-shadow-comparison-retry-pending");
                 }
                 await RecoverRolledBackAsync(stoppingToken);
+                StartRearmPass();
                 AlertLongWaits();
                 await Task.Delay(PreparationGrace, time, stoppingToken);
             }
@@ -236,6 +246,65 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }));
     }
 
+    private void StartRearmPass()
+    {
+        lock (_rearmGate)
+        {
+            if (!_rearmPass.IsCompleted) return;
+            _rearmPass = Task.Run(async () =>
+            {
+                try { await RearmDeferredBatchAdmissionsAsync(); }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(exception, "engine-batch-admission-rearm-incomplete");
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Until 17.10.2026 the applier completed every engine DeferToBatch decision
+    /// without its batch admission, and a completed occurrence is final, so
+    /// nothing drove those cards on. A completed, non-shadow ReviewReport
+    /// decision to defer to the batch that is still its card's newest re-arms the
+    /// same admission while the card waits in the source lane on the current
+    /// review and the batch gate neither owns nor queues that review. The facts
+    /// are in memory or in two small files, so a pass runs no Git before it
+    /// admits; a repeat finds the admission and does nothing.
+    /// </summary>
+    internal async Task<int> RearmDeferredBatchAdmissionsAsync()
+    {
+        var tasks = scanner.ScanAllJobs();
+        var admissions = 0;
+        var rearmed = 0;
+        foreach (var occurrence in store.NewestPerTask("ReviewReport").Where(item =>
+            !item.Shadow && item.Run.Status == "completed"
+            && item.EngineReceipt?.Action == nameof(TransitionAction.DeferToBatch)))
+        {
+            if (admissions >= RearmBudgetPerPass) break;
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is null || card.State != occurrence.ExpectedSourceState) continue;
+            try
+            {
+                if (!batchAdmission.AwaitsAdmission(card, occurrence)) continue;
+                admissions++;
+                var outcome = await batchAdmission.AdmitAsync(card, occurrence);
+                if (outcome != EngineBatchAdmissionOutcome.Skipped) rearmed++;
+                logger.LogWarning(
+                    "engine-batch-admission-rearmed task={TaskKey} run={RunId} attempt={AttemptId} outcome={Outcome}",
+                    card.Key ?? card.Id, occurrence.Run.RunId, occurrence.AuthorityAttemptId, outcome);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "engine-batch-admission-rearm-pending task={TaskKey} run={RunId}",
+                    card.Key ?? card.Id, occurrence.Run.RunId);
+            }
+        }
+        if (admissions > 0) scanner.InvalidateCache();
+        return rearmed;
+    }
+
     private void AlertLongWaits()
     {
         var now = time.GetUtcNow().UtcDateTime;
@@ -300,7 +369,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     {
                         store.Activate(occurrence.Run.RunId);
                         if (card is not null && card.State == occurrence.ExpectedSourceState)
-                            EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                            MarkWaiting(card.FolderPath, occurrence.Run.RunId);
                     }
                     else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
                         store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
@@ -324,7 +393,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     }
                     store.Activate(occurrence.Run.RunId);
                     if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
-                        EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                        MarkWaiting(card.FolderPath, occurrence.Run.RunId);
                 }
                 else
                 {
@@ -346,15 +415,51 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
             if (card is not null && card.State == occurrence.ExpectedSourceState)
-                EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                MarkWaiting(card.FolderPath, occurrence.Run.RunId);
         }
-        foreach (var cancelled in store.List(null, "cancelled"))
+        // A marker that names a cancelled occurrence, or a completed one that
+        // did not hold its card, waits for nothing; the card would show an
+        // engine wait until it leaves the lane.
+        foreach (var card in tasks.Where(item => item.WaitingForEngineDecision))
         {
-            var card = tasks.FirstOrDefault(item => item.Id == cancelled.TaskId
-                && item.ProjectName == cancelled.ProjectId);
-            if (card is not null)
-                EngineDecisionWaitMarker.Clear(card.FolderPath, cancelled.RunId);
+            if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
+                && store.GetOccurrence(runId) is { } named
+                && (named.Run.Status == "cancelled"
+                    || named.Run.Status == "completed" && !MayHoldCard(named)))
+                EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
         }
         scanner.InvalidateCache();
+    }
+
+    /// <summary>
+    /// Marks the card as waiting on <paramref name="runId"/>. The occurrence can
+    /// complete, and its applier clear the marker, between the status read and
+    /// this write, so the status is read again and a finished occurrence leaves
+    /// no marker behind.
+    /// </summary>
+    internal void MarkWaiting(string folder, string runId)
+    {
+        try { EngineDecisionWaitMarker.Write(folder, runId); }
+        catch (IOException exception)
+        {
+            // The card moved after the scan; the next pass reads its new folder.
+            logger.LogWarning(exception, "engine-decision-wait-marker-skipped run={RunId}", runId);
+            return;
+        }
+        if (store.Get(runId)?.Status is not ("pending" or "leased" or "applying"))
+            EngineDecisionWaitMarker.Clear(folder, runId);
+    }
+
+    /// <summary>
+    /// An active decision can hold its card for an AI Operator ask or a
+    /// checkpoint, and its application keeps the wait marker on purpose.
+    /// </summary>
+    private static bool MayHoldCard(MonolithOrchestrationOccurrence occurrence)
+    {
+        if (occurrence.Profile == "CodingCompletion") return true;
+        if (occurrence.Completion?.OutputJson is not { } output) return false;
+        using var document = JsonDocument.Parse(output);
+        return document.RootElement.ValueKind == JsonValueKind.Object
+            && document.RootElement.TryGetProperty("activeChoice", out _);
     }
 }

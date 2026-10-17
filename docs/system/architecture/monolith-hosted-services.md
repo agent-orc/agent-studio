@@ -72,7 +72,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 
 | Hosted service | Registration | Class | Owner after AGT-3060 |
 |---|---|---|---|
-| MonolithOrchestrationRecoveryService | always | apply-recover | Authority. Activates prepared occurrences, replays `applying` receipts, alerts on engine outages, and applies the rollout's rollback to the monolith policy. |
+| MonolithOrchestrationRecoveryService | always | apply-recover | Authority. Activates prepared occurrences, replays `applying` receipts, alerts on engine outages, and applies the rollout's rollback to the monolith policy. Re-arms the batch admission of a completed engine `DeferToBatch` decision whose card waits without batch ownership, and clears wait markers that name a finished occurrence. |
 | OrchestrationEngineReadinessService | always | report | Authority host. Reports engine readiness and alerts when a profile selects the engine and no engine is live. |
 | LinkSupervisor | always | infra | Authority host |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |

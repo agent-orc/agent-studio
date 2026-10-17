@@ -25,6 +25,7 @@ public enum EngineBatchAdmissionOutcome
 /// </summary>
 public sealed class EngineBatchAdmission(
     BatchGatePilotService batches,
+    BatchGateStore store,
     AttemptAuthorityService authority,
     TaskScannerService scanner,
     OrchestratorLog operatorLog,
@@ -81,6 +82,20 @@ public sealed class EngineBatchAdmission(
                 $"Review {review.AttemptId} was superseded while it entered the batch queue.");
         throw new InvalidOperationException(
             "The settled review could not enter the durable batch queue or finish its per-task gate.");
+    }
+
+    /// <summary>
+    /// True while the card waits in the occurrence's source lane on its current
+    /// review, and the batch gate neither owns that review nor queues it. Reads
+    /// attempt authority and two small files; runs no Git.
+    /// </summary>
+    public bool AwaitsAdmission(TaskInfo task, MonolithOrchestrationOccurrence occurrence)
+    {
+        if (task.State != occurrence.ExpectedSourceState) return false;
+        var review = authority.GetReview(occurrence.AuthorityAttemptId);
+        return review is not null && IsCurrentGeneration(review)
+            && BatchGateOwnershipStore.Read(task.FolderPath)?.ReviewAttemptId != review.AttemptId
+            && store.ReadPending(review.AttemptId) is null;
     }
 
     // The batch subject is current only for the current review of the current run.
