@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Cli;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -7,6 +8,43 @@ namespace AgentStudio.Tests;
 
 public sealed class LocalCliRepairServiceTests
 {
+    [Fact]
+    public async Task Engine_repair_budget_signal_blocks_reentry_until_operator_resume()
+    {
+        using var temp = new TempDirectory();
+        var appData = Path.Combine(temp.Path, "appdata");
+        var packageDir = Path.Combine(appData, "npm", "node_modules", "@openai", "codex");
+        Directory.CreateDirectory(packageDir);
+        File.WriteAllText(Path.Combine(packageDir, "package.json"), "{\"version\":\"0.151.0\"}");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Orchestration:Transitions:ReviewDecision"] = "Engine",
+            }).Build();
+        var now = new DateTimeOffset(2026, 10, 15, 10, 0, 0, TimeSpan.Zero);
+        var installer = new FakeInstaller((_, _) => { }, NpmGlobalInstallOutcome.Failed);
+        var service = new LocalCliRepairService(installer,
+            NullLogger<LocalCliRepairService>.Instance,
+            () => now, () => true, () => appData, () => null,
+            Path.Combine(temp.Path, "cli-self-heal.jsonl"), configuration);
+
+        Task Probe() => service.ProbeAndRepairAsync("codex", "0.151.0",
+            () => (false, null, "codex"), CancellationToken.None);
+        await Probe();
+        await Probe();
+        Assert.True(service.DecisionPending("codex"));
+        Assert.Equal(1, installer.Calls);
+
+        now = now.AddHours(2);
+        await Probe();
+        Assert.Equal(1, installer.Calls);
+
+        configuration["LocalCliRepair:ResumeSignal"] = "operator-1";
+        await Probe();
+        Assert.False(service.DecisionPending("codex"));
+        Assert.Equal(2, installer.Calls);
+    }
+
     [Theory]
     [InlineData("claude", "@anthropic-ai", "claude-code", "2.1.231")]
     [InlineData("codex", "@openai", "codex", "1.2.3")]

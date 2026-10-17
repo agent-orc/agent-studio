@@ -168,6 +168,13 @@ public class ClientIdentityStore
         return Volatile.Read(ref _published).GetValueOrDefault(id);
     }
 
+    /// <summary>Read the last committed identities without waiting for persistence.</summary>
+    public IEnumerable<ClientIdentity> ListPublished()
+    {
+        if (!Volatile.Read(ref _loaded)) EnsureLoaded();
+        return Volatile.Read(ref _published).Values;
+    }
+
     /// <summary>Coalesce board last-seen stamps so a read never waits for identity persistence.</summary>
     public void RecordSeenDeferred(string id)
     {

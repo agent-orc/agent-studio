@@ -2519,8 +2519,16 @@ public sealed class AttemptAuthorityService
             }
             else
             {
-                if (currentRun is not null) runs.Add(currentRun);
-                if (currentReview is not null) reviews.Add(currentReview);
+                // Only a current attempt resolved from the archive is missing
+                // from the live lists. When just the current review was
+                // compacted, the live current run is listed already, and a
+                // repeated attempt id breaks every projection keyed by it.
+                if (archivedCurrentRunId is not null && currentRun is { AttemptId: var runId }
+                    && !runs.Any(run => Same(run.AttemptId, runId)))
+                    runs.Add(currentRun);
+                if (archivedCurrentReviewId is not null && currentReview is { AttemptId: var reviewId }
+                    && !reviews.Any(review => Same(review.AttemptId, reviewId)))
+                    reviews.Add(currentReview);
             }
         }
 

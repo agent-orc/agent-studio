@@ -1,6 +1,8 @@
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer.Contracts;
+using System.Security.Cryptography;
+using System.Text;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
@@ -9,6 +11,27 @@ namespace OrchestratorEngine.Tests;
 public sealed class ShadowDecisionStepTests
 {
     private static readonly DateTime At = new(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public async Task Review_input_stage_claim_uses_the_active_bounded_model_receipt()
+    {
+        var input = Input(alternate: false) with { Mode = DecisionReceiptPolicy.ActiveMode };
+        var plane = new FakePlane(input, (_, job) => job with
+        {
+            Status = DecisionJobStatuses.Completed,
+            Result = Result(true,
+                """{"chosenActions":[{"action":"ask","target":"operator:ai"}],"confidence":0.7,"reasoning":"The bounded evidence is inconclusive.","citedFacts":["run.outcome"]}"""),
+        });
+        var run = new OrchestrationRunDto("orch_test", "project", "AGT-1", 1, "leased",
+            OrchestrationStage.ReviewInputDecision, "{}", 0, At, At, null);
+
+        var stage = await new ReviewInputDecisionLoop(Step(plane)).ExecuteAsync(run, default);
+
+        Assert.Equal(OrchestrationAction.Escalate, stage.Action);
+        Assert.Contains("activeChoice", stage.OutputJson);
+        Assert.Equal(DecisionReceiptPolicy.ActiveMode, plane.Stored?.Mode);
+        Assert.Single(plane.Requests);
+    }
 
     [Fact]
     public async Task Occurrence_without_frozen_grounds_has_no_shadow_step()
@@ -85,6 +108,119 @@ public sealed class ShadowDecisionStepTests
         Assert.Equal(DecisionCallStatuses.IncompletePack, receipt.Call.Status);
     }
 
+    [Fact]
+    public async Task Changed_artefact_digest_asks_and_does_not_call_the_model()
+    {
+        var bytes = Encoding.UTF8.GetBytes("bounded source");
+        var input = Input(alternate: false);
+        input = input with { Grounds = input.Grounds with
+        {
+            Facts = [.. input.Grounds.Facts, new GroundsFactV1("log.window", "signal", "Selected log",
+                "bounded source", null,
+                new GroundsSourceRefV1("artifact-window", "artifact:run-1/artifact-1", "sha256:old"),
+                At, "complete", GroundsReliability.Reliable)],
+        } };
+        var plane = new FakePlane(input, (_, _) => throw new InvalidOperationException("no job expected"))
+        {
+            Artifact = new ArtifactContentDto("artifact-1", "run-1", "window.log", "text/plain",
+                Convert.ToHexStringLower(SHA256.HashData(bytes)), Convert.ToBase64String(bytes), bytes.Length),
+        };
+
+        var receipt = (await Step(plane).RecordAsync("orch_test", default))!;
+
+        Assert.Empty(plane.Requests);
+        Assert.Equal(DecisionCallStatuses.Unavailable, receipt.Call.Status);
+        Assert.Equal(DecisionActionKinds.Ask, Assert.Single(receipt.Chosen).Action);
+    }
+
+    [Fact]
+    public async Task Matching_immutable_window_allows_the_engine_model_call()
+    {
+        var content = "bounded source";
+        var bytes = Encoding.UTF8.GetBytes(content);
+        var digest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(bytes));
+        var input = Input(alternate: false);
+        input = input with { Grounds = input.Grounds with
+        {
+            Facts = [.. input.Grounds.Facts, new GroundsFactV1("log.window", "signal", "Selected log",
+                content, null, new GroundsSourceRefV1("artifact-window", "artifact:run-1/artifact-1", digest),
+                At, "complete", GroundsReliability.Reliable)],
+        } };
+        var plane = new FakePlane(input, (_, job) => job with { Status = DecisionJobStatuses.Completed,
+            Result = Result(true,
+                """{"chosenActions":[{"action":"ask","target":"operator:ai"}],"confidence":0.6,"reasoning":"Unclear.","citedFacts":["log.window"]}""") })
+        {
+            Artifact = new ArtifactContentDto("artifact-1", "run-1", "window.log", "text/plain",
+                digest["sha256:".Length..], Convert.ToBase64String(bytes), bytes.Length),
+        };
+
+        var receipt = (await Step(plane).RecordAsync("orch_test", default))!;
+
+        Assert.Single(plane.Requests);
+        Assert.Equal(DecisionCallStatuses.Completed, receipt.Call.Status);
+    }
+
+    [Fact]
+    public async Task Engine_populates_an_empty_window_from_the_immutable_artefact()
+    {
+        var content = "verified window after source log rotation";
+        var bytes = Encoding.UTF8.GetBytes(content);
+        var digest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(bytes));
+        var input = Input(alternate: false);
+        input = input with { Grounds = input.Grounds with
+        {
+            Facts = [.. input.Grounds.Facts, new GroundsFactV1("log.window", "signal", "Selected log",
+                "", null, new GroundsSourceRefV1("artifact-window", "artifact:run-1/artifact-1", digest),
+                At, "complete", GroundsReliability.Reliable)],
+        } };
+        var plane = new FakePlane(input, (_, job) => job with { Status = DecisionJobStatuses.Completed,
+            Result = Result(true,
+                """{"chosenActions":[{"action":"ask","target":"operator:ai"}],"confidence":0.6,"reasoning":"Unclear.","citedFacts":["log.window"]}""") })
+        {
+            Artifact = new ArtifactContentDto("artifact-1", "run-1", "window.log", "text/plain",
+                digest["sha256:".Length..], Convert.ToBase64String(bytes), bytes.Length,
+                SourcePath: "/rotated/raw/cli-output.log"),
+        };
+
+        var receipt = (await Step(plane).RecordAsync("orch_test", default))!;
+
+        Assert.Single(plane.Requests);
+        Assert.Equal(DecisionCallStatuses.Completed, receipt.Call.Status);
+        Assert.DoesNotContain("/rotated/raw", plane.Requests[0].Prompt);
+        Assert.Contains(content, plane.Requests[0].Prompt);
+        Assert.Contains(receipt.Grounds.Facts, fact => fact.Id == "log.window"
+            && fact.Source.Digest == digest && fact.Value == content);
+    }
+
+    [Fact]
+    public async Task Engine_records_secret_omission_from_a_selected_artefact_window()
+    {
+        var secret = "api_key=" + new string('z', 24);
+        var bytes = Encoding.UTF8.GetBytes(secret);
+        var digest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(bytes));
+        var input = Input(alternate: false);
+        input = input with { Grounds = input.Grounds with
+        {
+            Facts = [.. input.Grounds.Facts, new GroundsFactV1("log.window", "signal", "Selected log",
+                "", null, new GroundsSourceRefV1("artifact-window", "artifact:run-1/artifact-1", digest),
+                At, "complete", GroundsReliability.Reliable)],
+        } };
+        var plane = new FakePlane(input, (_, job) => job with { Status = DecisionJobStatuses.Completed,
+            Result = Result(true,
+                """{"chosenActions":[{"action":"ask","target":"operator:ai"}],"confidence":0.6,"reasoning":"Unclear.","citedFacts":["log.window"]}""") })
+        {
+            Artifact = new ArtifactContentDto("artifact-1", "run-1", "window.log", "text/plain",
+                digest["sha256:".Length..], Convert.ToBase64String(bytes), bytes.Length),
+        };
+
+        var receipt = (await Step(plane).RecordAsync("orch_test", default))!;
+
+        Assert.Single(plane.Requests);
+        Assert.DoesNotContain(secret, plane.Requests[0].Prompt);
+        Assert.Contains(receipt.Grounds.Omissions, omission => omission.Field == "facts.log.window.value"
+            && omission.Reason == "secret");
+    }
+
     private static ShadowDecisionStep Step(IDecisionReceiptPlane plane)
         => new(plane, new EngineOptions
         {
@@ -122,11 +258,15 @@ public sealed class ShadowDecisionStepTests
     private sealed class FakePlane(
         DecisionShadowInputV1? input,
         Func<OrchestratorDecisionJobRequest, OrchestratorDecisionJobDto, OrchestratorDecisionJobDto> script)
-        : IDecisionReceiptPlane
+        : IDecisionReceiptPlane, IEngineArtifactSource
     {
         private readonly Dictionary<string, OrchestratorDecisionJobDto> _jobs = new();
         public List<OrchestratorDecisionJobRequest> Requests { get; } = [];
         public OrchestratorDecisionReceiptV1? Stored { get; private set; }
+        public ArtifactContentDto? Artifact { get; init; }
+
+        public Task<ArtifactContentDto> GetArtifactContentAsync(string runId, string artifactId, CancellationToken ct)
+            => Task.FromResult(Artifact ?? throw new InvalidDataException("Artefact missing."));
 
         public Task<IReadOnlyList<string>> GetPendingDecisionGroundsAsync(int limit, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<string>>(input is null ? [] : [input.Grounds.OccurrenceId]);

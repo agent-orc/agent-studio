@@ -131,6 +131,19 @@ public sealed record GroundsPriorDecisionV1(
 
 public sealed record GroundsOmissionV1(string Field, string Reason);
 
+/// <summary>A spent loop budget blocks repeat admission and becomes a question for the engine.</summary>
+public sealed record LoopExhaustionSignalV1(
+    string LoopId,
+    int MeasuredCount,
+    int Limit,
+    string Window,
+    string Attempt,
+    IReadOnlyList<string> CandidateActions)
+{
+    public string Name => $"loop.{LoopId}.exhausted";
+    public bool ReentryBlocked => true;
+}
+
 /// <summary>Billed token categories. Uncached input never contains cached input.</summary>
 public sealed record DecisionTokenUsageV1(long UncachedInput, long CachedInput, long CacheWrite, long Output)
 {
@@ -229,7 +242,10 @@ public sealed record DecisionGroundsInputV1(
     IReadOnlyList<GroundsPriorDecisionV1> PriorDecisions,
     CardRunLedgerV1 RunLedger,
     ProgressDefinitionV1 Progress,
-    IReadOnlyList<GroundsOmissionV1> Omissions);
+    IReadOnlyList<GroundsOmissionV1> Omissions)
+{
+    public IReadOnlyList<LoopExhaustionSignalV1> LoopSignals { get; init; } = [];
+}
 
 /// <summary>
 /// The frozen grounds plus the deterministic decision the host applies. The

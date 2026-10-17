@@ -53,7 +53,7 @@ interface SettingsRailItem {
  * Global group (per-user / app-wide): Appearance (Theme + Activity bar),
  * Updates, Workspaces (registry management), Task Server (the durable task
  * server's URL, store, evidence git, client registry and management sweeps -
- * AGT-1924), Execution Hosts, Orchestrator (the platform-global lifecycle flags
+ * AGT-1924), Environment, Orchestrator (the platform-global lifecycle flags
  * AGT-1812 moved out of their standalone modal). Workspace group
  * (defaults applied across the workspace's projects): CLI Management (the CLI
  * catalog / models / routes / usage caps / completion-contracts hub), CLI
@@ -123,7 +123,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'workspaces', label: 'Workspaces', description: 'Manage every workspace and its projects.', icon: 'folder', group: 'global' },
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },
     { key: 'credentials', label: 'Credentials', description: 'Required access, observed custody, expiry and gaps across the installation.', icon: 'check', group: 'global' },
-    { key: 'remote-hosts', label: 'Execution Hosts', description: 'Local and remote CLI execution: heartbeat, vitals, quota, and lifecycle.', icon: 'activity', group: 'global' },
+    { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
     { key: 'cli-sessions', label: 'CLI sessions', description: 'Per-CLI per-project native session inventory.', icon: 'list', group: 'workspace' },

@@ -20,7 +20,8 @@ public sealed record InstallationConnectivityManifest(
     string? LinkOwner,
     IReadOnlyList<string> EnabledListeners,
     IReadOnlyList<ConnectivityPortOverride>? PortOverrides,
-    IReadOnlyList<ConnectivityRunnerRoute> Runners)
+    IReadOnlyList<ConnectivityRunnerRoute> Runners,
+    IReadOnlyList<ConnectivityMachine>? Machines = null)
 {
     public static InstallationConnectivityManifest Parse(string json)
         => JsonSerializer.Deserialize<InstallationConnectivityManifest>(json, ConnectivityPolicy.Json)
@@ -28,6 +29,10 @@ public sealed record InstallationConnectivityManifest(
 }
 
 public sealed record ConnectivityPortOverride(string Listener, int Port);
+
+/// <summary>Optional placement inventory. It declares identity and roles, not runtime health.</summary>
+public sealed record ConnectivityMachine(string Id, string Name, IReadOnlyList<ConnectivityComponent> Components);
+public sealed record ConnectivityComponent(string Id, string Name, string Role, string Kind);
 
 /// <summary>One runner's selected route. ReverseSsh only exists for the bounded transition.</summary>
 public sealed record ConnectivityRunnerRoute(
@@ -185,7 +190,28 @@ public static class ConnectivityPolicy
         CheckOrigins(manifest, Add);
         CheckListeners(manifest, Add);
         CheckRunners(manifest, Add);
+        CheckMachines(manifest, Add);
         return findings;
+    }
+
+    private static void CheckMachines(InstallationConnectivityManifest manifest,
+        Action<string, string, string, string> add)
+    {
+        if (manifest.Machines is null) return;
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var machine in manifest.Machines)
+        {
+            if (string.IsNullOrWhiteSpace(machine.Id) || string.IsNullOrWhiteSpace(machine.Name)
+                || !ids.Add(machine.Id))
+                add("machine-identity", machine.Id ?? "machine", "Machine id and name must be set and ids must be unique.",
+                    "Give each declared machine a unique id and name.");
+            var componentIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var component in machine.Components ?? [])
+                if (string.IsNullOrWhiteSpace(component.Id) || string.IsNullOrWhiteSpace(component.Name)
+                    || !componentIds.Add(component.Id))
+                    add("component-identity", machine.Id ?? "machine", "Component id and name must be set and ids must be unique per machine.",
+                        "Give each declared component a unique id and name.");
+        }
     }
 
     private static void CheckOrigins(InstallationConnectivityManifest manifest, Action<string, string, string, string> add)

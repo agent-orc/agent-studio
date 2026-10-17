@@ -98,6 +98,24 @@ public class ProjectObservationServiceTests : IDisposable
     }
 
     [Fact]
+    public void ReadDecisionLines_PreservesMonolithEvidenceAndSkipsEngineLog()
+    {
+        var logPath = Path.Combine(_jobFolder, "logs", "cli-output.log");
+        File.WriteAllText(logPath,
+            "[12:00:00.000] [stdout] task failed\n" +
+            "[12:00:01.000] [orchestrator] [reissue] retry after failure\n");
+
+        var lines = _observe.ReadDecisionLines(logPath, "obs-test", engineDecides: false);
+
+        Assert.Contains("task failed", ObservationParsing.ExtractRecentAgentSamples(lines));
+        Assert.Contains(ObservationParsing.ExtractRecentDecisions(lines), decision =>
+            decision.Kind == "reissue" && decision.Summary == "retry after failure");
+        Assert.Equal(1, ObservationParsing.CountErrors(lines,
+            lines[^1].Timestamp.AddSeconds(1), TimeSpan.FromHours(1)).CliErrorsLastHour);
+        Assert.Empty(_observe.ReadDecisionLines(logPath, "obs-test", engineDecides: true));
+    }
+
+    [Fact]
     public async Task ToolCallsJsonl_StartsObserveLastProgressClock()
     {
         // No active job in TaskRunnerService → observation returns idle (this

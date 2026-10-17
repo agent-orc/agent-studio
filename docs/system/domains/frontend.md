@@ -60,6 +60,12 @@ the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 
+### Product preview and feedback
+
+The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
+
+Cross-origin iframes do not expose their pixels or DOM to Studio. Screenshot markup therefore uses the task's captured image, and a selector is optional unless the person knows it. The Project URL registry currently supplies the preview address. A task-specific preview address requires the companion card-preview contract when it becomes available.
+
 Product calls to `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`,
 and `Intl` formatters pass an explicit locale. The current product formatting
 locale is `en-US`; `frontend/scripts/check-explicit-locales.mjs` enforces this
@@ -464,8 +470,9 @@ occur. It is not a claim about tunnel transfer time.
   selects never-reviewed items, reviews older than 30 days, or any verdict.
   Sort orders each lifecycle group by Created, status, last movement, review
   age, project, key, or open decision count. Created defaults to newest first;
-  the direction button reverses the selected sort. The decision-first
-  projection remains the reset default.
+  the direction button reverses the selected sort. Duplicate Tag labels show
+  a numbered count and id so the compact control selects the intended tag.
+  The decision-first projection remains the reset default.
   Filter and sort state use one encoded route-local `dossier` query value and
   separate session entries for the global and each project scope; explicit URL
   state wins when a link is opened.
@@ -678,7 +685,14 @@ occur. It is not a claim about tunnel transfer time.
   hot Markdown excerpts in Docs with one restore action. All retention traffic
   uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
   the Orchestrator proxy and direct Task Server deployment share one frontend.
-- The Execution Hosts destination at `#/workspace/settings/execution-hosts`
+- The Environment destination at `#/workspace/settings/environment` (old
+  `execution-hosts` and `remote-hosts` routes redirect here) offers a per-user
+  List/Map preference. The map combines runner roles with the read-only
+  management environment snapshot: control machine, configured gate host,
+  engine readiness, manifest routes, and gate slot usage. Unreported service
+  health, repository permission, and installation machines stay unknown.
+  Selecting a runner role opens its existing list detail and actions. Narrow
+  widths show the list. The list
   uses one sortable machine row for status, host CPU load, activity, and release
   identity. Its occupied/total slots sum the visible role rows. Matching role releases appear once on the machine row; differing
   releases appear on their role rows. Coding and Review runner processes
@@ -699,6 +713,9 @@ occur. It is not a claim about tunnel transfer time.
   connection, capabilities, capacity, project access, host work, and system
   load; each section discloses its internals independently. Crash recovery
   pending count occupies a status-bar slot so it cannot cover host actions.
+  Release drift stays paired with the release reported for the same runner
+  generation. An older drift response cannot mark a newer capability release
+  behind Stable.
 - The System prompts destination is the prompt registry and observability
   surface. Its overview groups runtime-step, orchestrator, drift, and framing
   templates, explains application and project pipeline override precedence, and

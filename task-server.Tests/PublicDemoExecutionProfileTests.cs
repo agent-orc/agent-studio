@@ -87,7 +87,8 @@ public sealed class PublicDemoExecutionProfileTests
         // AGT-3061 added the integration command plane: claims (Claim),
         // {integrationId}/lease/renew and {integrationId}/report (PostStep).
         // Integration executors publish through them, so all three are denied.
-        Assert.Equal(46, routes.Count);
+        // AGT-3181 preview feedback queues a same-card continuation (Continue).
+        Assert.Equal(47, routes.Count);
         var revokedReference = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/runs/{runId}/revoked-reference");
         Assert.Equal(ExecutionAdmissionPath.PostStep,
@@ -119,7 +120,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 6,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 12,
+                [ExecutionAdmissionPath.Continue] = 13,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,

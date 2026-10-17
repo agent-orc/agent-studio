@@ -225,6 +225,7 @@ public static class LeaseEndpoints
             RunTimeoutContinuationService continuations,
             HumanReviewEscalation humanReviewEscalation,
             OrchestratorLog orchestratorLog,
+            ReviewInputDecisionGateway reviewInputDecisions,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -245,7 +246,8 @@ public static class LeaseEndpoints
             {
                 if (route == RemoteLeaseReleaseRoute.LostWorker)
                     await ApplyLostWorkerContinuationAsync(
-                        req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
+                        req, scanner, continuations, humanReviewEscalation, orchestratorLog,
+                        reviewInputDecisions, loggerFactory, ct);
                 var releaseWrite = leases.CurrentWriteReference(
                     req.TaskKey, $"infrastructure-release:{req.AttemptId}:{req.LeaseId}");
                 var released = leases.Release(req);
@@ -1495,6 +1497,7 @@ public static class LeaseEndpoints
             DecisionGroundsCollector decisionGrounds,
             AiOperatorDecisionGateway aiOperator,
             OrchestratorDecisionStore decisionReceipts,
+            ReviewInputDecisionGateway reviewInputDecisions,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -2288,6 +2291,30 @@ public static class LeaseEndpoints
                     $"attempt={claimFailure.Attempt}/{claimFailure.MaximumAttempts}; " +
                     $"host={failureState.Host ?? "unknown"}; error={claimFailure.Reason}. " +
                     "Recovery: repair the runner environment, then move this card to Ready.";
+                if (claimFailure.Signal is { } signal && reviewInputDecisions.EngineDecides)
+                {
+                    var summary = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        failureState.Fingerprint,
+                        failureState.Cause,
+                        failureState.Host,
+                        claimFailure.Attempt,
+                        claimFailure.MaximumAttempts,
+                        claimFailure.Reason,
+                    });
+                    var digest = "sha256:" + Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(summary)));
+                    var occurrence = reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                        "loop-exhaustion", task.ProjectName, task.Id, task.State,
+                        $"remote-claim:{failureState.Fingerprint}:{claimFailure.Attempt}",
+                        summary, digest, [], attemptId, req.FencingToken, epoch, signal));
+                    EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
+                    return Results.Ok(new RemoteRunCompletionResponse(
+                        req.TaskKey, reportedOutcome, task.State,
+                        $"Environment preparation exhaustion awaits engine decision {occurrence.RunId}.",
+                        RunAttemptId: attemptId));
+                }
                 if (!claimFailure.Escalate)
                 {
                     var retryMove = await transitions.MoveAsync(
@@ -2580,6 +2607,33 @@ public static class LeaseEndpoints
                 if (unverifiedDelivery is null
                     && MonolithTransitionAdapter.RunTimeoutSalvageContinuationPolicyIsNonTerminalOutcome(outcome))
                 {
+                    if (reviewInputDecisions.EngineDecides && salvage is not null
+                        && MonolithTransitionAdapter.LoopSignal(
+                            "completion.run-timeout-salvage-continuation",
+                            continuationRoundsUsed,
+                            RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds,
+                            "per-delivery-generation", attemptId,
+                            ["checkpoint", "retry", "salvage handoff", "ask"]) is { } timeoutSignal)
+                    {
+                        var summary = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            outcome,
+                            continuationRoundsUsed,
+                            salvage.Branch,
+                            salvage.CommitSha,
+                            reportedReason,
+                        });
+                        var digest = "sha256:" + Convert.ToHexStringLower(
+                            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                        var occurrence = reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                            "loop-exhaustion", task.ProjectName, task.Id, task.State,
+                            $"timeout-salvage:{attemptId}:{completionKey}", summary, digest, [], attemptId,
+                            req.FencingToken, epoch, timeoutSignal));
+                        EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
+                        scanner.InvalidateCache();
+                        return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
+                            task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
+                    }
                     var submission = aiOperator.Submit(new AiOperatorDecisionRequest(task.ProjectName, task.Id,
                         task.State,
                         new AiOperatorDecisionPayload(AiOperatorDeciders.TimeoutSalvage,
@@ -3252,6 +3306,7 @@ public static class LeaseEndpoints
         RunTimeoutContinuationService continuations,
         HumanReviewEscalation humanReviewEscalation,
         OrchestratorLog orchestratorLog,
+        ReviewInputDecisionGateway reviewInputDecisions,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
@@ -3319,6 +3374,31 @@ public static class LeaseEndpoints
                 attemptId,
                 salvage!.Describe(),
                 continuation.Reason);
+        }
+
+        if (reviewInputDecisions.EngineDecides && salvage is not null
+            && MonolithTransitionAdapter.LoopSignal(
+                "completion.run-timeout-salvage-continuation", roundsUsed,
+                RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds,
+                "per-delivery-generation", attemptId,
+                ["checkpoint", "retry", "salvage handoff", "ask"]) is { } lostWorkerSignal)
+        {
+            var summary = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                outcome = req.Outcome,
+                roundsUsed,
+                salvage.Branch,
+                salvage.CommitSha,
+                req.Detail,
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var occurrence = reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "loop-exhaustion", task.ProjectName, task.Id, task.State,
+                $"lost-worker:{attemptId}", summary, digest, [], attemptId,
+                req.FencingToken, req.AuthorityEpoch ?? 0, lostWorkerSignal));
+            EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
+            return;
         }
 
         var escalationReason = LostWorkerContinuationPolicy.ComposeEscalationReason(

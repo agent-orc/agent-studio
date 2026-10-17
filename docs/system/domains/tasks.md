@@ -7,6 +7,21 @@ Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
 or commit attribution.
 
+## Project onboarding
+
+Studio's project dialog offers an existing repository and a generated GitHub
+repository. The generated mode sends owner, repository name, visibility and
+template to `POST /api/projects`. The backend reads
+`AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN` from the host environment, creates the
+repository through `IProjectRepositoryProvisioner`, installs the selected
+product template on `main` and `develop`, and checks out `develop` under
+`ProjectOnboarding:RepositoryRoot` (or the host's local application data
+directory). The token stays out of the browser, project registry, task storage
+and Git remote URL. The template's `.agent-studio/project.yml` is the
+repository-owned build and test contract. Studio validates the initial local
+build profile before offering the "Hello world change" card. Registration
+failures compensate the registry, task storage and newly created repository.
+
 ## Board read contract
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
@@ -138,6 +153,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `delivery-under-review`; clients must not assume only `project-busy`.
 
 ## Entry Points
+
+### Preview feedback continuation
+
+`POST /api/v1/projects/-/tasks/{id}/preview-feedback` accepts a multipart PNG, JPEG, or WebP crop, a comment, the HTTP preview address, and an optional element selector. It saves the crop through the task attachment store and submits a normal continuation on the same card. The next-round prompt names the crop path, selector, address, comment, and before and after screenshot requirement. The Human Review acceptance move attributes a networked person's display name to the existing acceptance evidence; local clients retain their client identity.
 
 ### Runner host placement (AGT-2939, D11)
 

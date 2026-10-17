@@ -16,6 +16,7 @@ export { ProjectOverlaysComponent } from './components/project-overlays/project-
 export { ProjectDetailComponent } from './components/project-detail/project-detail';
 export { ProjectOverviewDashboardComponent } from './components/project-overview-dashboard/project-overview-dashboard';
 export { ProjectDeploymentPanelComponent } from './components/project-deployment-panel/project-deployment-panel.component';
+export { ProjectDeployAreaComponent } from './components/project-deploy-area/project-deploy-area';
 export { ProjectShellComponent } from './components/project-shell/project-shell.component';
 export { ProjectSettingsPanelComponent } from './components/project-settings-panel/project-settings-panel.component';
 export { ProjectExecutionDefinitionComponent } from './components/project-execution-definition/project-execution-definition';
