@@ -101,6 +101,9 @@
     </button>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
+      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
+              data-nav-inline-from="tablet" cacTooltip="Open live environment"
+              (click)="environmentOpen.set(true)">Environment</button>
       <button type="button"
               class="studio-titlebar__chatbtn"
               data-testid="studio-titlebar-chat"
@@ -135,6 +138,9 @@
     [tasks]="globalSearchTasks()"
     [open]="globalSearchOpen()"
     (openChange)="globalSearchOpen.set($event)"></app-global-search>
+  @if (environmentOpen()) {
+    <app-environment-flow [tasks]="globalSearchTasks()" (closed)="environmentOpen.set(false)" />
+  }
 
   <!-- ============ Body ============ -->
   <!-- Grid columns are conditional on `sidebarVisible()`: when the

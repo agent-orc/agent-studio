@@ -69,6 +69,7 @@ import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-ta
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { ChatSessionsPanelComponent, OrchestratorFeedStore } from '../orchestrator';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit';
+import { EnvironmentFlowComponent } from './components/environment-flow/environment-flow.component';
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */
 function normalizeStorage(path: string): string {
@@ -103,13 +104,14 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent],
+  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
   styleUrl: './studio-shell.component.scss',
 })
 export class StudioShellComponent {
+  readonly environmentOpen = signal(false);
   private readonly jobService = inject(TaskService);
   readonly clientService = inject(ClientService);
 
