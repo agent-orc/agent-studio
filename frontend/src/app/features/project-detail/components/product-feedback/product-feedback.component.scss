@@ -1,0 +1,47 @@
+.product {
+  display: grid;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-4);
+  border-block-end: 1px solid var(--studio-border);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg-strong);
+
+  &__intro { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-3); }
+  &__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+  &__draft { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-3);
+    border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-card-bg); }
+  &__question { font-weight: 700; color: var(--studio-fg-strong) !important; }
+  h2 { margin: 0; font-size: 1rem; }
+  p { margin: 0; color: var(--studio-fg-dim); }
+  button, select, textarea, input { font: inherit; }
+  button { cursor: pointer; border: 1px solid var(--studio-border); border-radius: 6px;
+    background: var(--studio-card-bg); color: var(--studio-fg-strong); padding: var(--studio-spacing-2); }
+  button:hover { background: var(--studio-bg-hover); }
+  button:disabled { opacity: .6; cursor: default; }
+  &__field { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
+  &__field span { font-weight: 600; }
+  select, textarea, input { width: 100%; min-width: 0; padding: var(--studio-spacing-2);
+    border: 1px solid var(--studio-border); border-radius: 6px;
+    background: var(--studio-card-bg); color: var(--studio-fg-strong); }
+  &__status { display: flex; gap: var(--studio-spacing-2); flex-wrap: wrap; align-items: baseline; }
+  &__status strong { color: var(--studio-accent); }
+  &__status span, &__hint { color: var(--studio-fg-dim); }
+  &__shots { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+  &__comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-2); }
+  &__comparison figure { min-width: 0; margin: 0; }
+  &__comparison img { display: block; width: 100%; height: auto; }
+  &__comparison figcaption { color: var(--studio-fg-dim); }
+  &__shots button[aria-pressed='true'] { border-color: var(--studio-accent); background: var(--studio-bg-hover); }
+  &__image-wrap { position: relative; width: min(100%, 600px); }
+  &__image-wrap img { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; }
+  &__selection { position: absolute; pointer-events: none; border: 2px solid var(--studio-accent);
+    background: color-mix(in srgb, var(--studio-accent) 18%, transparent); }
+  &__optional summary { cursor: pointer; }
+  &__message { color: var(--studio-fg-strong); }
+}
+
+@media (max-width: 600px) {
+  .product { padding: var(--studio-spacing-3); }
+  .product__intro { align-items: stretch; flex-direction: column; }
+  .product__actions { flex-direction: column; }
+}

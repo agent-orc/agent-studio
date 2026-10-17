@@ -1,11 +1,20 @@
 # AGT-3208 live environment flow status
 
-- Result SHA-256 for the changed worktree files, excluding this status file: `306af8705440b109b8850bd2909a3763c584d746fd951a91afb5fc41ba08554c`. Base commit: `2c4ec9e8c62e55f1b88763442277e426aab862a4`. This managed run did not create a commit.
+- Original delivery result SHA: `958fbf241162267c4dcbca2943c2e3ae28547ce8` (changed-file SHA-256: `306af8705440b109b8850bd2909a3763c584d746fd951a91afb5fc41ba08554c`; base: `2c4ec9e8c62e55f1b88763442277e426aab862a4`).
 - Implemented the AGT-W15 recommended W0-W2 observe-first option: visible, correlated host and flow facts with open Watcher cases and latest AI Operator receipts. The view adds no autonomous mutation. The existing Watcher and AI Operator continue to own intervention decisions under their autonomy policy.
 - The Studio header opens a live Environment view. It refreshes every 15 seconds and shows fresh host load per core, memory, role capacity, provider auth, coding and review attempts, queue waits and throughput, lane flow, UTC-day card counts, and waiting reasons. The backend uses the archive-inclusive task index, lane ledger, integration success events, active gate queue, and batch gate pending/publication records. Stale host telemetry reads as unavailable.
 - Deployment card count remains unavailable because the current deployment history does not attribute deployed commits to cards across every run. The UI labels this explicitly. Gate and batch gate throughput are rolling 24-hour rates; card counts in the daily strip use the UTC calendar day.
 - Verification: `dotnet build agent-taskboard.sln --no-restore -v:q` passed; `npm --prefix frontend run build` passed; `dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter 'FullyQualifiedName~EnvironmentFlowServiceTests|FullyQualifiedName~ProjectOperatorDashboardServiceTests'` passed 9 tests; the `FullyQualifiedName~.Architecture.|Category=Guard` filter ran on all eight .NET test projects and passed 82 backend guards with no matches in the other seven; `npm --prefix frontend run lint`, focused ESLint and Stylelint, and `npm --prefix frontend run lint:components` passed; `npm --prefix frontend run e2e -- e2e/layout/environment-flow.spec.ts` passed 1 Chromium test. The 1280 light and 1920 dark screenshots are in the task results directory.
 - Documentation: `docs/system/domains/frontend.md` describes the new surface and its aggregation limits. `git diff --check` passed.
+
+- Integration recovery: merge-into-develop conflicted only in `status.md` against `origin/develop` at `2762b6934de7a23eab81543bd74858aea3aee91a`. This resolution retains both the AGT-3208 and AGT-3191 status records; the original delivery commit remains unchanged.
+
+# AGT-3191 Dossier Tag and Created controls status
+
+- Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
+- Implemented option: compact Tag suggestions retain distinct tag ids and show the duplicate label's ordinal, total, and id. The Created browser fixture supplies creation dates and checks all four presets, both Created sort directions, and URL state after reload.
+- Review captures in the task results directory: `dossier-toolbar-1440x900--mocked.png` and `dossier-toolbar-1920x1080--mocked.png`. Light and dark overview captures are also in that directory.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` and `npm --prefix frontend run build` passed. Focused backend classes (`WorkbenchCatalogueTests`, `GitServiceFileContentTests`) passed 31 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 82 backend tests; runner and task-server had no matches. Focused Angular specs (`tag-filters.component.spec.ts`, `workbench-overview-view-state.service.spec.ts`) passed 11 tests. The focused Playwright Dossier sort/filter test passed. `npm --prefix frontend run lint` passed.
 
 # AGT-3153 release workflow status
 
@@ -24,3 +33,9 @@
 - Before, on stable `8a0b58b09`: observed `GET /api/tasks` latencies were 18, 166, 120, up to 304, and 64 seconds during write bursts. In one 64,530 ms trace, compose took 63,587 ms. The observed full scan took 260 to 530 ms and ran several times per second.
 - After, in the isolated `DirtyIndex_BoardReadsServeThePublishedSnapshot_WithoutRunningOrAwaitingTheRefresh` test: 90 grouped reads completed during a 1,755.257 ms write interval with 8 creations, 1 continue, 7 sidecar writes, and 7 claims. The slowest measured read was 20.951 ms; 6 full scans covered the 23 writes. Across 93 board traces from that test, the maximum `compose` stage was 8.592 ms and `compose.identity` was 0.150 ms. These test measurements are not a production load comparison.
 - Verification: the focused burst test passed; the five changed backend test classes passed (135 tests), and the lease and trace classes passed (19 tests). The backend architecture and guard filter passed (81 tests), including the test clock guard. The same filter completed in the other seven .NET test projects with no matching tests. The backend and operations-server test project builds passed, and the solution build built the other six test projects before it was stopped while waiting on the host's shared compiler. `npm --prefix frontend run lint` passed.
+
+# AGT-3065 bounded artefact readers and loop signals status
+
+- Result implementation SHA: `4bb0e2e806ed3c58b53b32ca131213769d75817c`, rebased onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490`.
+- Protected project labels are restored after digest-wide credential redaction, so a publish detail such as `api_key=value` beside project `secret` is omitted while the project name remains visible. The rebased review input applier calls the shared decision library through `MonolithTransitionAdapter`.
+- Verification: serial `dotnet build agent-taskboard.sln --no-restore` passed; the focused digest, endpoint, evidence reader, gateway and transition boundary filter passed (34 tests); additional review orchestrator filters passed (101 tests); the architecture and guard filter passed in all eight .NET test projects (98 backend tests, no matches in the other seven); `npm --prefix frontend run lint` passed. `git merge-tree --write-tree --name-only origin/develop HEAD` reported no conflict.

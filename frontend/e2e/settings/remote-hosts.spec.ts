@@ -51,6 +51,7 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/tasks', json([]));
   await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/management/credential-inventory', json({ generatedAt: new Date().toISOString(), items: [] }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
@@ -311,9 +312,75 @@ test.describe('Execution Hosts settings section', () => {
     await page.getByTestId('status-bar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Execution Hosts');
+    await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Environment');
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
+    await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Environment');
+  });
+
+  test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
+        { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
+          label: 'Coding key', scopes: ['coding:execution'], repository: 'github.com/team/repo', permission: 'write',
+          expiresAt: null, lastUseAt: null, state: 'ok', required: true, detail: '', affectedCards: [] },
+      ] }),
+    }));
+    await page.route('**/api/v1/management/environment', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({
+        controlHost: 'TUFI2', installationId: 'studio', mode: 'reverse-ssh-transition',
+        routes: [{ runnerId: 'agent-runner-01', route: 'reverse-ssh' }],
+        machines: [
+          { id: 'control', name: 'TUFI2', components: [
+            { id: 'studio', name: 'Studio', role: 'control', kind: 'service' },
+          ] },
+          { id: 'agent-runner-01', name: 'agent-runner-01', components: [
+            { id: 'integrator', name: 'Integrator', role: 'integration', kind: 'service' },
+            { id: 'engine', name: 'Engine', role: 'control', kind: 'container' },
+            { id: 'link', name: 'Tunnel service', role: 'link', kind: 'service' },
+          ] },
+          { id: 'kori', name: 'KORI', components: [1, 2, 3].map(index => ({
+            id: `review-${index}`, name: `Review container ${index}`, role: 'review', kind: 'container',
+          })) },
+          { id: 'website-vm', name: 'website-vm', components: [
+            { id: 'website', name: 'Website service', role: 'control', kind: 'service' },
+          ] },
+        ],
+        gateHost: 'KORI', gateSlots: { busy: 1, total: 3 },
+        taskServer: { version: '0.3.0', commit: null },
+        engine: { state: 'ready', lastContact: new Date().toISOString(), engineId: 'engine-1' },
+      }),
+    }));
+    await page.goto('/#/workspace/settings/environment');
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('environment-map-toggle').click();
+    const map = page.getByTestId('environment-map');
+    await expect(map).toBeVisible();
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'TUFI2' })).toBeVisible();
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('Review container 3');
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'website-vm' })).toBeVisible();
+    await expect(map.getByTestId('environment-repository-access').filter({ hasText: 'writes' })).toBeVisible();
+    await expect(map.getByTestId('environment-connection').filter({ hasText: 'reverse tunnel' })).toBeVisible();
+    await expect(map.getByTestId('environment-connection').filter({ hasText: 'SSH gate transport' })).toBeVisible();
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: 950 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(map).toBeVisible();
+        await page.screenshot({ path: join(SHOT_DIR, `environment-map-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      }
+    }
+    await page.reload();
+    await expect(page.getByTestId('environment-map')).toBeVisible();
+    await map.getByRole('button', { name: 'Open agent-runner-01 details' }).click();
+    await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.getByTestId('environment-map-toggle').evaluate((button: HTMLElement) => button.click());
+    await expect(map).toBeHidden();
+    await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
+    expect(errors).toEqual([]);
   });
 
   test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {
@@ -625,6 +692,51 @@ test.describe('Execution Hosts settings section', () => {
       }
     }
   });
+
+  for (const order of ['drift-first', 'capability-first'] as const) {
+    for (const sameRelease of [false, true]) {
+      test(`${sameRelease ? 'keeps drift for the same release' : 'does not mark a newer host release behind'} when ${order} resolves first`, async ({ page }) => {
+        await stubGroupedHostApis(page);
+        const newer = new Date().toISOString();
+        const older = new Date(Date.parse(newer) - 60_000).toISOString();
+        const oldRelease = { releaseId: 'old-build', version: '0.2.7', commit: 'old-commit' };
+        const release = sameRelease ? oldRelease : { releaseId: 'new-build', version: '0.3.0', commit: 'new-commit' };
+        let firstDone!: () => void;
+        const firstResponse = new Promise<void>(resolve => { firstDone = resolve; });
+        const fulfill = async (route: Route, body: unknown, first: boolean) => {
+          if (!first) await firstResponse;
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+          if (first) firstDone();
+        };
+
+        await page.unroute('**/api/v1/management/remote-hosts');
+        await page.route('**/api/v1/management/remote-hosts', route => fulfill(route, [{
+          runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+          instanceId: 'agent-runner-01:coding', runnerVersion: release.version, protocolVersion: 3,
+          status: 'active', registeredAt: older, lastSeenAt: newer,
+          hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+          capabilities: [], release,
+        }], order === 'capability-first'));
+        await page.unroute('**/api/v1/management/host-releases');
+        await page.route('**/api/v1/management/host-releases', route => fulfill(route, {
+          observedAt: older, stable: { version: '0.3.0' }, behindCount: 1,
+          hosts: [{ runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+            role: 'coding', release: oldRelease, state: 'behind', behindByHours: 100,
+            behindForHours: 100, alarmDue: true, reason: 'Old build', lastSeenAt: older,
+            heartbeatStale: false }],
+        }, order === 'drift-first'));
+
+        await page.goto('/#/workspace/settings/execution-hosts');
+        const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+        await expect(machine.getByTestId('remote-host-release')).toContainText(release.version);
+        await expect(machine.getByTestId('remote-host-release-drift')).toHaveCount(sameRelease ? 1 : 0);
+        await expect(page.getByTestId('remote-hosts-release-behind')).toHaveCount(sameRelease ? 1 : 0);
+        if (order === 'drift-first' && !sameRelease) {
+          await machine.screenshot({ path: join(SHOT_DIR, 'execution-hosts-new-release-no-stale-drift.png') });
+        }
+      });
+    }
+  }
 
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
@@ -2064,6 +2176,6 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
-      .toHaveText('Execution Hosts');
+      .toHaveText('Environment');
   });
 });

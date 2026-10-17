@@ -10,7 +10,7 @@ namespace AgentStudio.Tests;
 public sealed class RemoteClaimFailureBudgetTest
 {
     [Fact]
-    public void Persistent_budget_allows_two_requeues_then_escalates()
+    public void Persistent_budget_allows_two_requeues_then_raises_the_exhaustion_signal()
     {
         var folder = Path.Combine(
             Path.GetTempPath(),
@@ -33,6 +33,11 @@ public sealed class RemoteClaimFailureBudgetTest
             Assert.False(second.Escalate);
             Assert.Equal(3, third.Attempt);
             Assert.True(third.Escalate);
+            Assert.Null(first.Signal);
+            Assert.Null(second.Signal);
+            Assert.Equal("loop.remote-claim.environment-preparation-per-task.exhausted",
+                third.Signal?.Name);
+            Assert.True(third.Signal?.ReentryBlocked);
 
             NewBudget().PrepareForClaim(task);
             var afterOperatorRequeue = NewBudget().Record(task, "clone failed again");

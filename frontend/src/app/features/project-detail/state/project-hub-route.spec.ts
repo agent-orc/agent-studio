@@ -52,6 +52,7 @@ describe('Project Hub URL contract', () => {
 
   it('rejects unknown projects, rails, and malformed identifiers', () => {
     expect(parseProjectHubRoute('#/projects/PROJ-999', PROJECTS)).toBeNull();
+    expect(parseProjectHubRoute('#/projects/PROJ-002/deployment', PROJECTS)?.section).toBe('deploy');
     expect(parseProjectHubRoute('#/projects/PROJ-002/not-a-rail', PROJECTS)).toBeNull();
     expect(parseProjectHubRoute('#/projects/%E0%A4%A', PROJECTS)).toBeNull();
   });

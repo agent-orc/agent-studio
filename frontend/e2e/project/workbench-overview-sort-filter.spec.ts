@@ -7,6 +7,14 @@ const PROJECT = 'Dossier Demo';
 const PROJECT_ID = 'project-dossier-demo';
 const OTHER_PROJECT = 'Other Project';
 const WATCH_PATH = '/fixtures/dossier-demo';
+const NOW = '2026-10-16T12:00:00Z';
+const CREATED_AT_UTC: Record<string, string> = {
+  'decision-four': '2026-10-15T11:00:00Z',
+  'decision-one': '2026-10-16T10:00:00Z',
+  'active-new': '2026-10-10T08:00:00Z',
+  tracking: '2026-09-25T08:00:00Z',
+  archived: '2026-08-07T08:00:00Z',
+};
 
 test.use({ serviceWorkers: 'block' });
 
@@ -45,10 +53,12 @@ function dossier(
       status,
       phase: status === 'active' ? 'Testing' : null,
       updatedAtUtc,
+      createdAtUtc: CREATED_AT_UTC[id] ?? null,
       entryPath: `docs/operations/${id}/index.html`,
       valid: true,
       error: null,
       sourceTaskKeys: [],
+      tags: id === 'decision-one' ? ['decision-b'] : id === 'decision-four' ? ['decision-a'] : [],
       openDecisionCount,
       review: id === 'decision-one' ? {
         verdict: 'partially-superseded',
@@ -111,6 +121,9 @@ async function installMocks(page: Page): Promise<void> {
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, {
+    generatedAt: NOW, items: [],
+  }));
   await page.route('**/api/watch-paths', route => json(route, [
     { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
@@ -153,6 +166,10 @@ async function installMocks(page: Page): Promise<void> {
   }));
   await page.route('**/api/v1/studio/board**', route => json(route, EMPTY_GROUPED));
   await page.route('**/api/tasks', route => json(route, []));
+  await page.route('**/api/tags', route => json(route, [
+    { id: 'decision-a', label: 'Decision', color: '#888', description: '', kind: 'facet' },
+    { id: 'decision-b', label: 'Decision', color: '#777', description: '', kind: 'facet' },
+  ]));
   await page.route(/\/api\/projects\/[^/]+\/workbenches(?:\?.*)?$/, route => {
     const projectItems = items.filter(item => item.projectName === PROJECT).map(item => item.workbench);
     return json(route, {
@@ -179,6 +196,7 @@ async function installMocks(page: Page): Promise<void> {
 
 test('Dossier sort and live filter share URL and session state across both overview scopes', async ({ page }, testInfo) => {
   test.setTimeout(90_000);
+  await page.clock.setFixedTime(new Date(NOW));
   await installMocks(page);
   await page.goto('/');
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
@@ -196,6 +214,32 @@ test('Dossier sort and live filter share URL and session state across both overv
     await select.selectOption(key);
     await expect(select).toHaveValue(key);
   }
+
+  const createdFilter = page.getByTestId('workbench-overview-created-filter');
+  for (const [preset, count] of [['24h', 1], ['7d', 3], ['30d', 4], ['all', 6]] as const) {
+    await createdFilter.selectOption(preset);
+    await expect(page.locator('[data-testid^="workbench-overview-item-"]')).toHaveCount(count);
+  }
+  await createdFilter.selectOption('30d');
+  const sortSelect = page.getByTestId('workbench-overview-sort-select');
+  await sortSelect.selectOption('createdAt');
+  await expect(pending.nth(0)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-one`);
+  await expect(pending.nth(1)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-four`);
+  await page.getByTestId('workbench-overview-sort-direction').click();
+  await expect(pending.nth(0)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-four`);
+  await expect.poll(() => decodeURIComponent(new URL(page.url()).hash))
+    .toContain('created=30d&sort=createdAt&dir=asc');
+  await page.reload();
+  await expect(createdFilter).toHaveValue('30d');
+  await expect(sortSelect).toHaveValue('createdAt');
+  await createdFilter.selectOption('all');
+
+  const tagInput = page.getByTestId('workbench-overview-controls').getByTestId('shared-facet-filter');
+  await expect(page.locator('#dossier-tag-options option')).toHaveCount(2);
+  await tagInput.fill('Decision (2 of 2, decision-b)');
+  await expect(page.getByTestId(`workbench-overview-item-${PROJECT}-decision-one`)).toBeVisible();
+  await expect(page.getByTestId(`workbench-overview-item-${PROJECT}-decision-four`)).toHaveCount(0);
+  await tagInput.fill('');
 
   const reviewFilter = page.getByTestId('workbench-overview-review-filter');
   await reviewFilter.selectOption('never-reviewed');

@@ -22,7 +22,7 @@ public sealed class TransitionDecisionBoundaryTests
         "OrchestrationSettlementPolicy", "RepeatedReviewBlockPolicy", "StageDecisionPolicy",
         "CouncilDecisionPolicy", "LocalLoopDecisionPolicy", "ReviewBudgetPolicy", "TransitionDecisionPolicy",
         "RoundCounterPolicy", "ContinuationReplayPolicy", "RepeatedAspectDecisionPolicy",
-        "IntegrationResultPolicy",
+        "IntegrationResultPolicy", "LoopExhaustionPolicy",
         // AGT-3060 (I18): background deciders moved out of the monolith.
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
@@ -38,6 +38,7 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(OperatorSweepPolicy).Assembly);
         Assert.Equal(assembly, typeof(RemoteDeliveryIntegrationPolicy).Assembly);
         Assert.Equal(assembly, typeof(AiOperatorDecisionPolicy).Assembly);
+        Assert.Equal(assembly, typeof(LoopExhaustionPolicy).Assembly);
         Assert.Equal(assembly, typeof(RunLivenessPolicy).Assembly);
         Assert.Equal(assembly, typeof(GateEnvironmentRetryPolicy).Assembly);
         Assert.Equal(assembly, typeof(DeliveryChainPolicy).Assembly);
@@ -88,6 +89,11 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Matches(@"Decide\(TransitionFacts facts\)\s*=>\s*TransitionDecisionPolicy\.Decide\(facts\)", adapter);
         Assert.Matches(@"ReviewBudget\(ReviewBudgetFacts facts\)\s*=>\s*ReviewBudgetPolicy\.Decide\(facts\)", adapter);
         Assert.Matches(@"Sweep\([^)]*\)\s*=>\s*OperatorSweepPolicy\.Decide\(", adapter);
+        Assert.Matches(@"LoopSignal\([^)]*\)\s*=>\s*LoopExhaustionPolicy\.Signal\(", adapter);
+        Assert.Matches(@"ReviewText\(string output\)\s*=>\s*LegacyReviewDecisionPolicy\.Parse\(", adapter);
+        Assert.DoesNotContain(Sources(Path.Combine(root, "backend"))
+            .Where(path => !path.EndsWith("MonolithTransitionAdapter.cs", StringComparison.Ordinal)),
+            path => File.ReadAllText(path).Contains("LoopExhaustionPolicy.Signal(", StringComparison.Ordinal));
         foreach (var path in new[] { "task-server/TaskServerTransitionAdapter.cs", "orchestrator-engine/EngineTransitionAdapter.cs" })
         {
             var source = File.ReadAllText(Path.Combine(root, path));

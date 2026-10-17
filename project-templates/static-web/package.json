@@ -1,0 +1,10 @@
+{
+  "name": "studio-static-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test"
+  }
+}

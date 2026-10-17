@@ -282,6 +282,28 @@ Engine is refused with `orchestration-profile-shadow-unresolved` while an
 earlier shadow occurrence of the profile lacks a receipt, so Ready never
 hides an open comparison.
 
+An engine `DeferToBatch` decision selects no lane; its batch admission is the
+whole application. Like the monolith report path, the applier admits only a
+card in Auto Review, records the review verification minutes, enqueues the
+settled review at the accepted report's receive time, and runs the per-task
+emergency gate when the queue refuses it. The occurrence keeps the lane its
+report found and the decision policy assumes Auto Review, so a card that the
+report found in another lane, a card that left Auto Review since, and a review
+that is no longer current complete the occurrence with an operator-feed reason;
+any other failed admission keeps the occurrence `applying` for recovery to
+retry. Until 17.10.2026 that branch returned before the admission. The recovery
+service therefore re-arms, at most four per pass, a completed non-shadow
+decision that is still its card's newest `ReviewReport` occurrence while the
+card waits in Auto Review on its current review, the batch queue has no entry
+for that review, and no batch-gate ownership records a batch, a passed per-task
+gate or a containment. Ownership alone does not count: a bare marker left by a
+stop before the queue entry, and an active per-task gate marker whose gate was
+interrupted, are admitted again, which re-enqueues the review or resumes the
+gate within its start budget. A pass checks the host stop between admissions,
+and the service waits for a running pass when it stops. It also clears wait
+markers that name a cancelled occurrence or a completed one without an active
+choice, and rereads the occurrence after each marker write.
+
 ## Verification and architecture guard
 
 `TransitionDecisionGoldenTests` runs the same review and sweep table through all

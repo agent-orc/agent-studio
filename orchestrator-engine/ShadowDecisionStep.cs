@@ -31,12 +31,12 @@ public sealed class ShadowDecisionStep(IDecisionReceiptPlane plane, EngineOption
         var input = await plane.GetGroundsInputAsync(occurrenceId, ct);
         if (input is null) return null;
         if (input.Mode != mode) throw new InvalidOperationException("decision-mode-mismatch");
-        var grounds = DecisionGroundsPolicy.Freeze(input.Grounds);
+        var (preparedInput, unavailable) = await PrepareArtifactSourcesAsync(input.Grounds, ct);
+        var grounds = DecisionGroundsPolicy.Freeze(preparedInput);
         OrchestratorDecisionJobDto? job = null;
         var attempts = 0;
         var alternateUsed = false;
-        string? unavailable = null;
-        if (!grounds.Pack.Incomplete)
+        if (!grounds.Pack.Incomplete && unavailable is null)
         {
             var route = grounds.ModelRoute;
             var prompt = DecisionReceiptPolicy.RenderPrompt(grounds);
@@ -57,6 +57,61 @@ public sealed class ShadowDecisionStep(IDecisionReceiptPlane plane, EngineOption
             new DecisionChoiceV1(input.DeterministicAction, input.DeterministicTarget, "applied:deterministic"),
             input.DeterministicReason, job, attempts, alternateUsed, unavailable, mode));
         return await plane.PutDecisionReceiptAsync(receipt, ct);
+    }
+
+    private async Task<(DecisionGroundsInputV1 Input, string? Unavailable)> PrepareArtifactSourcesAsync(
+        DecisionGroundsInputV1 input, CancellationToken ct)
+    {
+        var references = input.Facts.Select(fact => fact.Source)
+            .Where(source => source.Kind == "artifact-window")
+            .Distinct().ToArray();
+        if (references.Length == 0) return (input, null);
+        if (references.Length > 2) return (input, "decision artefact window limit exceeded");
+        if (plane is not IEngineArtifactSource artifactSource)
+            return (input, "decision artefact reader is unavailable");
+        var reader = new EngineArtifactReader(artifactSource);
+        var selected = new Dictionary<GroundsSourceRefV1, BoundedArtifactWindow>();
+        foreach (var reference in references)
+        {
+            var value = reference.Ref;
+            if (!value.StartsWith("artifact:", StringComparison.Ordinal))
+                return (input, "decision artefact reference is invalid");
+            var parts = value["artifact:".Length..].Split('/', 2);
+            if (parts.Length != 2 || parts.Any(string.IsNullOrWhiteSpace))
+                return (input, "decision artefact reference is invalid");
+            try
+            {
+                var window = await reader.ReadWindowAsync(parts[0], parts[1], ct);
+                if (window.OmissionReasons.Contains("oversize-source")
+                    || window.OmissionReasons.Contains("non-text-source")
+                    || !string.Equals(reference.Digest, window.Source.Digest, StringComparison.OrdinalIgnoreCase))
+                    return (input, "decision artefact source is incomplete or changed");
+                selected.Add(reference, window);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception) { return (input, "decision artefact source is unavailable"); }
+        }
+        var facts = new List<GroundsFactV1>(input.Facts.Count);
+        var omissions = input.Omissions.ToList();
+        foreach (var fact in input.Facts)
+        {
+            if (!selected.TryGetValue(fact.Source, out var window))
+            {
+                facts.Add(fact);
+                continue;
+            }
+            var visible = window.Content.Length <= DecisionGroundsPolicy.MaxValueChars
+                ? window.Content
+                : window.Content[..DecisionGroundsPolicy.MaxValueChars] +
+                  $" [omitted {window.Content.Length - DecisionGroundsPolicy.MaxValueChars} chars]";
+            if (!string.IsNullOrEmpty(fact.Value) && fact.Value != visible
+                && !(fact.Value == "[omitted: secret]" && window.OmissionReasons.Contains("secret")))
+                return (input, "decision artefact window does not match its source");
+            facts.Add(fact with { Value = visible, Source = window.Source });
+            omissions.AddRange(window.OmissionReasons.Select(reason =>
+                new GroundsOmissionV1($"facts.{fact.Id}.value", reason)));
+        }
+        return (input with { Facts = facts, Omissions = omissions }, null);
     }
 
     private async Task<OrchestratorDecisionJobDto> RunAsync(DecisionGroundsV1 grounds, string prompt,
