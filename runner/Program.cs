@@ -16,6 +16,24 @@ if (args is ["--enroll", var installationUrl, var enrollmentCode])
     return await RunnerEnrollmentCommand.RunAsync(
         installationUrl, enrollmentCode, Console.Out, Console.Error, CancellationToken.None);
 
+if (args is ["deploy-poll", ..])
+    return await DeployHostCommand.RunAsync(args[1..], CancellationToken.None);
+
+if (args is ["deploy-loop", ..])
+{
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; stop.Cancel(); };
+    while (!stop.IsCancellationRequested)
+    {
+        try { await DeployHostCommand.RunAsync(args[1..], stop.Token); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
+        catch (Exception ex) { Console.Error.WriteLine($"Deploy poll failed: {ex.GetType().Name}"); }
+        try { await Task.Delay(TimeSpan.FromSeconds(5), stop.Token); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
+    }
+    return 0;
+}
+
 // AGT-3005: every process this host starts, daemon or detached worker, inherits
 // the build-server fence, so no dotnet invocation it spawns can leave a reusable
 // MSBuild node or MSBuild server behind after its run.

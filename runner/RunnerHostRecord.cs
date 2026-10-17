@@ -64,6 +64,7 @@ public static class RunnerHostRecordPolicy
     {
         HostRoles.Coding => new(role, "agent-runner.service", "/etc/agent-runner/runner.env", "/var/lib/agent-runner"),
         HostRoles.Review => new(role, "agent-runner-review.service", "/etc/agent-runner/review.env", "/var/lib/agent-runner-review"),
+        HostRoles.Deploy => new(role, "agent-runner-deploy.service", "/etc/agent-runner/deploy.env", "/var/lib/agent-runner-deploy"),
         _ => throw new ArgumentException($"Unknown role '{role}'."),
     };
 
@@ -100,6 +101,8 @@ public static class RunnerHostRecordPolicy
         var tokenFiles = new HashSet<string>(StringComparer.Ordinal);
         foreach (var role in record.Roles ?? [])
         {
+            if (role.Role == HostRoles.Deploy && role.PrincipalId != record.HostId)
+                errors.Add("The deploy principalId must equal hostId for host-bound claims.");
             if (string.IsNullOrWhiteSpace(role.TokenFile) || !role.TokenFile.StartsWith('/'))
                 errors.Add($"Role '{role.Role}' needs an absolute tokenFile.");
             else if (!tokenFiles.Add(role.TokenFile))
@@ -156,6 +159,12 @@ public static class RunnerHostRecordPolicy
             // record, so both counts are explicit and inherited values cannot leak.
             lines.Add($"RUNNER_HOST_CODING_SLOTS={record.Envelope.CodingSlots}");
             lines.Add($"RUNNER_HOST_REVIEW_SLOTS={record.Envelope.ReviewSlots}");
+            if (role.Role == HostRoles.Deploy)
+            {
+                lines.Add($"RUNNER_HOST_DEPLOY_SLOTS={record.Envelope.DeploySlots}");
+                lines.Add($"DEPLOY_ARTIFACT_STORE={service.ServiceRoot}/artifacts");
+                lines.Add("DEPLOY_SECRET_STORE=/etc/agent-host/secrets");
+            }
             if (record.Workstation is { } workstation)
             {
                 lines.Add("RUNNER_WORKSTATION=1");

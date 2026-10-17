@@ -279,6 +279,10 @@ public sealed class AccessSecurityMiddleware
 
     private static string? RequiredRunnerScope(string method, string path)
     {
+        if (HttpMethods.IsPost(method) && path.Equals("/api/deploy/gate-releases", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Release;
+        if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
         // Keep the versioned client surface explicit. A service credential must
