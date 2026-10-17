@@ -137,6 +137,22 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Monolith_review_scans_oversize_log_for_unresolved_sentinel()
+    {
+        const string slug = "large-log-needs-input";
+        SeedReviewJobWithNeedsInput(slug, "which column is primary?");
+        File.AppendAllText(TaskPathLog(TaskStates.AutoReview, slug),
+            string.Concat(Enumerable.Repeat("[12:00:02.000] [stdout] ordinary output\n", 8_000)));
+
+        await BuildOrchestrator(
+            "[[ORCHESTRATOR_DECISION: action=reissue; reason=Use column A.]]\n[[TASK_DONE]]")
+            .TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
+        Assert.Equal(ReviewDecisionKind.Reissue, ReadOnlyDecisionRecord().Kind);
+    }
+
+    [Fact]
     public async Task Reissue_AfterOperatorRequeue_CannotExceedSharedCardBudget()
     {
         const string slug = "spent-card-budget";

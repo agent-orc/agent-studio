@@ -4,7 +4,7 @@ import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator';
 import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { ProjectOverviewDashboardComponent } from '../project-overview-dashboard/project-overview-dashboard';
-import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
+import { ProjectDeployAreaComponent } from '../project-deploy-area/project-deploy-area';
 import { ProjectUrlsPanelComponent } from '../project-urls-panel/project-urls-panel.component';
 import { ProjectGraphComponent } from '../project-graph/project-graph.component';
 import { ProjectSettingsPanelComponent } from '../project-settings-panel/project-settings-panel.component';
@@ -43,7 +43,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     OrchestratorFeedComponent,
     ProjectDetailComponent,
     ProjectOverviewDashboardComponent,
-    ProjectDeploymentPanelComponent,
+    ProjectDeployAreaComponent,
     ProjectUrlsPanelComponent,
     ProjectGraphComponent,
     ProjectSettingsPanelComponent,
@@ -83,7 +83,7 @@ export class ProjectOverlaysComponent {
 
   hasCustomPanel(rail: ProjectRailKey): boolean {
     return rail === 'overview'
-      || rail === 'deployment'
+      || rail === 'deploy'
       || rail === 'project-urls'
       || rail === 'security'
       || rail === 'visual-evidence'

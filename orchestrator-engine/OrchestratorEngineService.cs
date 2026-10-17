@@ -42,6 +42,7 @@ public sealed class OrchestratorEngineService : BackgroundService
         Start(OrchestrationStage.OperatorSweep, 1);
         Start(OrchestrationStage.BatchPlan, _options.BatchPlanConcurrency);
         Start(OrchestrationStage.OperatorDecision, _options.OperatorDecisionConcurrency);
+        Start(OrchestrationStage.ReviewInputDecision, _options.ReviewConcurrency);
         await Task.WhenAll(loops);
         return;
 

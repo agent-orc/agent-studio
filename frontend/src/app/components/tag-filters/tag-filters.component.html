@@ -11,7 +11,7 @@
         placeholder="Tag: all" [value]="facetLabel()" (input)="selectFacetByLabel($event)" />
     </label>
     <datalist id="dossier-tag-options">
-      @for (entry of facets(); track entry.id) { <option [value]="entry.label"></option> }
+      @for (entry of facetOptions(); track entry.id) { <option [value]="entry.display"></option> }
     </datalist>
   } @else {
     <label><span>Tag</span>

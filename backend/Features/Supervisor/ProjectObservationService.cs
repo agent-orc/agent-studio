@@ -1,4 +1,5 @@
 
+using AgentStudio.Runner;
 
 namespace AgentStudio.Supervisor;
 
@@ -19,17 +20,23 @@ public sealed class ProjectObservationService
     private readonly TaskScannerService _jobScanner;
     private readonly ILogger<ProjectObservationService> _logger;
     private readonly TimeProvider _time;
+    private readonly OrchestratorDecisionStore? _decisionReceipts;
+    private readonly IConfiguration? _configuration;
 
     public ProjectObservationService(
         TaskRunnerService taskRunner,
         TaskScannerService jobScanner,
         ILogger<ProjectObservationService> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        OrchestratorDecisionStore? decisionReceipts = null,
+        IConfiguration? configuration = null)
     {
         _taskRunner = taskRunner;
         _jobScanner = jobScanner;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _decisionReceipts = decisionReceipts;
+        _configuration = configuration;
     }
 
     public Task<SupervisorObservation> ObserveAsync(string project, CancellationToken ct)
@@ -64,20 +71,11 @@ public sealed class ProjectObservationService
         }
 
         var info = SafeFindJob(activeJobId);
+        var engineDecides = _configuration is not null
+            && MonolithTransitionSwitch.For(_configuration, ReviewInputDecisionGateway.Transition)
+                == OrchestrationExecutionMode.Engine;
         var logPath = info != null ? TaskPaths.CliOutputLog(info.FolderPath) : null;
-
-        IReadOnlyList<CliOutputLine> lines = Array.Empty<CliOutputLine>();
-        if (logPath != null && File.Exists(logPath))
-        {
-            try
-            {
-                lines = CliOutputLogParser.ParseFile(logPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "ProjectObservationService failed to parse {LogPath} for {Project}", logPath, project);
-            }
-        }
+        var lines = ReadDecisionLines(logPath, project, engineDecides);
 
         // Cycle 2c: LastProgressAt must reflect the union of every file the
         // runner may append to during a live session, not just cli-output.log.
@@ -100,9 +98,16 @@ public sealed class ProjectObservationService
             }
         }
 
-        var recentDecisions = ObservationParsing.ExtractRecentDecisions(lines);
-        var recentSamples = ObservationParsing.ExtractRecentAgentSamples(lines);
-        var errorCounts = ObservationParsing.CountErrors(lines, capturedAt, TimeSpan.FromHours(1));
+        IReadOnlyList<SupervisorRecentDecision> recentDecisions = engineDecides
+            ? _decisionReceipts?.ListReceipts(activeJobId, 5, project)
+                .Select(receipt => new SupervisorRecentDecision(receipt.EndedAt, receipt.Profile,
+                    receipt.ChosenAction, receipt.EvidenceRef)).ToArray() ?? []
+            : ObservationParsing.ExtractRecentDecisions(lines);
+        IReadOnlyList<string> recentSamples = engineDecides
+            ? [] : ObservationParsing.ExtractRecentAgentSamples(lines);
+        var errorCounts = engineDecides
+            ? new SupervisorErrorCounts(0, 0, 0)
+            : ObservationParsing.CountErrors(lines, capturedAt, TimeSpan.FromHours(1));
 
         return Task.FromResult(new SupervisorObservation(
             CapturedAt: capturedAt,
@@ -114,7 +119,22 @@ public sealed class ProjectObservationService
             Quota: null,
             RecentDecisions: recentDecisions,
             RecentAgentSamples: recentSamples,
-            ErrorCounts: errorCounts));
+            ErrorCounts: errorCounts)
+        {
+            Omissions = engineDecides
+                ? ["recentAgentSamples:raw-stream", "errorCounts:raw-log"] : [],
+        });
+    }
+
+    internal IReadOnlyList<CliOutputLine> ReadDecisionLines(string? logPath, string project, bool engineDecides)
+    {
+        if (engineDecides || logPath is null || !File.Exists(logPath)) return [];
+        try { return CliOutputLogParser.ParseFile(logPath); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ProjectObservationService failed to parse {LogPath} for {Project}", logPath, project);
+            return [];
+        }
     }
 
     private TaskInfo? SafeFindJob(string jobId)

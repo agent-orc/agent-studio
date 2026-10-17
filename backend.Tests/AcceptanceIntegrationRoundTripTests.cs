@@ -2193,6 +2193,74 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal("pushed", pushStep.Verdict);
     }
 
+    /// <summary>
+    /// 17.10.2026 (AGT-3109): the approved merge result never reached the
+    /// integration line, and the delivery reached origin/develop through an
+    /// operator merge instead. The backstop retried the push every 15 minutes
+    /// with <c>sha-not-on-branch</c>. Once origin carries every attributed
+    /// delivery commit of the completed card, the push ends as a terminal skip.
+    /// </summary>
+    [Fact]
+    public async Task IntegrationPushBackstop_ApprovedMergeOffTheLine_EndsAsSupersededOnceOriginCarriesTheDelivery()
+    {
+        var deliverySha = PublishDelivery("superseded-push.txt", "published by an operator merge\n");
+        var deps = Build(deliverySha);
+        var remoteBefore = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
+        var merged = await deps.Merge.RunAsync(
+            Project,
+            Slug,
+            deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath,
+            _watchPath,
+            "develop",
+            CancellationToken.None,
+            IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, merged.Outcome);
+        Assert.Equal(MoveJobStatus.Success,
+            (await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath)).Status);
+        var folder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
+        var approved = deps.Pipeline.Read(folder)!.Steps.Single(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId).ApprovedIntegrationSha;
+        Assert.False(string.IsNullOrWhiteSpace(approved));
+        // The approved merge result leaves the integration line, as after a gate rollback.
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), remoteBefore);
+        var backstop = new IntegrationPushBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            deps.Pipeline,
+            deps.Merge,
+            deps.Configuration,
+            NullLogger<IntegrationPushBackstopHostedService>.Instance,
+            new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration));
+        PipelineStepExecution PushStep() => deps.Pipeline.Read(folder)!.Steps.Single(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
+
+        // Without proof that origin carries the delivery, the push stays a failure to retry.
+        Assert.Equal(0, await backstop.RunOnceAsync());
+        Assert.Equal(PipelineStepStatus.Failed, PushStep().Status);
+
+        // An operator merges the delivery under another merge commit.
+        RunGit(_repo, "checkout", "-q", "--detach", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "Operator merge of the remote delivery", deliverySha);
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        RunGit(_repo, "checkout", "-q", "main");
+        var operatorMerge = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
+        Assert.NotEqual(approved, operatorMerge);
+
+        Assert.Equal(0, await backstop.RunOnceAsync());
+        var skipped = PushStep();
+        Assert.Equal(PipelineStepStatus.Skipped, skipped.Status);
+        Assert.Equal("superseded", skipped.Verdict);
+        Assert.Contains("Terminal superseded", skipped.Reason);
+        Assert.Contains(approved!, skipped.Reason);
+        Assert.Equal(operatorMerge, Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
+
+        // The terminal skip ends the retries.
+        Assert.Equal(0, await backstop.RunOnceAsync());
+        Assert.Equal(skipped.CompletedAt, PushStep().CompletedAt);
+    }
+
     [Fact]
     public void AcceptanceMerge_InterruptedByRestart_IsRecoveredFromCompletedLane()
     {

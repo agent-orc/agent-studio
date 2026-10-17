@@ -19,6 +19,22 @@ export class TagFiltersComponent {
   readonly filters = inject(BoardFiltersService);
   readonly areas = computed(() => this.registry.tags().filter(tag => tag.kind === 'area'));
   readonly facets = computed(() => this.registry.tags().filter(tag => tag.kind !== 'area'));
+  readonly facetOptions = computed(() => {
+    const facets = this.facets();
+    const counts = new Map<string, number>();
+    for (const tag of facets) {
+      const label = tag.label.toLocaleLowerCase();
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const positions = new Map<string, number>();
+    return facets.map(tag => {
+      const label = tag.label.toLocaleLowerCase();
+      const count = counts.get(label) ?? 1;
+      const position = (positions.get(label) ?? 0) + 1;
+      positions.set(label, position);
+      return { id: tag.id, display: count > 1 ? `${tag.label} (${position} of ${count}, ${tag.id})` : tag.label };
+    });
+  });
   readonly area = computed(() => this.areas().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
   readonly facet = computed(() => this.facets().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
   /** Every active selection must remain visible, even before its registry loads. */
@@ -60,12 +76,12 @@ export class TagFiltersComponent {
 
   selectFacetByLabel(event: Event): void {
     const input = event.target as HTMLInputElement;
-    const choice = this.facets().find(tag => tag.label.toLocaleLowerCase() === input.value.toLocaleLowerCase());
+    const choice = this.facetOptions().find(option => option.display.toLocaleLowerCase() === input.value.toLocaleLowerCase());
     if (!input.value) this.selectId('facet', '');
     else if (choice) this.selectId('facet', choice.id);
   }
 
   facetLabel(): string {
-    return this.facets().find(tag => tag.id === this.facet())?.label ?? '';
+    return this.facetOptions().find(option => option.id === this.facet())?.display ?? '';
   }
 }

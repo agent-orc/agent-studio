@@ -71,6 +71,9 @@ public class ProjectRunner
     private static readonly Regex CompactTokenValueRegex = new(
         @"(?<value>\d+(?:[.,]\d+)?)\s*(?<suffix>[kKmM])?",
         RegexOptions.Compiled);
+    private static readonly Regex AbortEvidenceCredentialRegex = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex GitMutationCommandRegex = new(
         @"(?:^|[`""'\s>$:])git\s+(?:-C\s+\S+\s+)?(?:commit|push)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -175,6 +178,7 @@ public class ProjectRunner
     // its byte-identical fixed terminal route to typed escalation. When wired AND
     // enabled, a non-clean run end consults the step before escalating.
     private readonly PostAbortReviewStepService? _postAbortReview;
+    private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
     // Reads Claude session transcripts (~/.claude/projects) to reconstruct
     // token usage post-hoc when the CLI never reported a footer (always, for
     // Claude) or the run was killed before emitting one. Null in tests that
@@ -475,7 +479,8 @@ public class ProjectRunner
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
         RemoteDispatchRejectionStore? dispatchRejections = null,
         LocalRunClaimAdapter? localRunClaims = null,
-        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null,
+        ReviewInputDecisionGateway? reviewInputDecisions = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -532,6 +537,7 @@ public class ProjectRunner
         _projectUrlPortInspector = projectUrlPortInspector;
         _dispatchRejections = dispatchRejections;
         _postAbortReview = postAbortReview;
+        _reviewInputDecisions = reviewInputDecisions;
         _sessionInspector = sessionInspector;
 
         // Listen across all CLI backends for completion of the active job.
@@ -2527,6 +2533,28 @@ public class ProjectRunner
             {
                 var ui = pendingUiReview!.UiIterationReview!;
                 var reason = $"UI iteration cap {ui.MaxIterations} was reached without a finish decision; additional feedback iterations are not allowed.";
+                if (_reviewInputDecisions?.EngineDecides == true
+                    && MonolithTransitionAdapter.LoopSignal(
+                        "ui-task.human-feedback-iterations", ui.Iteration, ui.MaxIterations,
+                        "per-card", jobId, ["prepare feedback", "defer", "ask"]) is { } signal)
+                {
+                    var summary = JsonSerializer.Serialize(new
+                    {
+                        ui.Iteration,
+                        ui.MaxIterations,
+                        ui.ChangeDescriptionPath,
+                        ui.VisualQaStatus,
+                    });
+                    var digest = "sha256:" + Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                    var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                        "loop-exhaustion", ProjectName, jobId, info.State,
+                        $"ui-feedback:{jobId}:{ui.Iteration}", summary, digest, [], jobId,
+                        LoopSignal: signal));
+                    EngineDecisionWaitMarker.Write(info.FolderPath, occurrence.RunId);
+                    return RunOutcome.Reject(new RunRejection(RunRejectReason.UiIterationCapReached,
+                        $"UI feedback waits for engine decision {occurrence.RunId}."));
+                }
                 var escalation = await _humanReviewEscalation.EscalateAsync(
                     jobId, info.WatchPath, ProjectName,
                     HumanReviewEscalationCategories.UiIterationCap, reason, ct);
@@ -6785,6 +6813,38 @@ public class ProjectRunner
                     return;
                 }
 
+                if (_reviewInputDecisions?.EngineDecides == true
+                    && action.Kind == OutcomeActionKind.NotifyUserAndStop
+                    && activeInfo != null && restartTerminal.AllowAutomaticRetry
+                    && runIntervention is null
+                    && CompletionRetriggerDecider.IsTransientAbort(action.IssueKind))
+                {
+                    var used = _completionRetriggerUsed.TryGetValue(jobId, out var spent) ? spent : 0;
+                    var signal = MonolithTransitionAdapter.LoopSignal(
+                        "completion.retrigger-transient-abort-per-job", used,
+                        CompletionRetriggerDecider.BudgetFor(action.IssueKind), "per-card", jobId,
+                        ["retry", "adapt route", "ask"]);
+                    if (signal is not null)
+                    {
+                        var summary = JsonSerializer.Serialize(new
+                        {
+                            issue = action.IssueKind.ToString(),
+                            action.MetaMessage,
+                            execution.Status,
+                            execution.ExitCode,
+                            attemptsUsed = used,
+                        });
+                        var digest = "sha256:" + Convert.ToHexStringLower(
+                            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                        var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                            "abort-review", ProjectName, jobId, activeInfo.State,
+                            $"completion-exhausted:{jobId}:{used}", summary, digest, [], jobId,
+                            LoopSignal: signal));
+                        EngineDecisionWaitMarker.Write(activeInfo.FolderPath, occurrence.RunId);
+                        return;
+                    }
+                }
+
                 if (action.Kind == OutcomeActionKind.NotifyUserAndStop
                     && activeInfo != null
                     && (runIntervention is not null || ShouldRouteIssueToEscalated(action.IssueKind)))
@@ -7353,6 +7413,30 @@ public class ProjectRunner
             return;
         }
 
+        if (_reviewInputDecisions?.EngineDecides == true
+            && visualQa.Verdict.Status == VisualQaVerdictStatus.ClearDefect
+            && MonolithTransitionAdapter.LoopSignal(
+                "ui-task.visual-defect-auto-retry", visualQa.PriorAutomaticRetries,
+                VisualQaPolicy.MaxAutomaticDefectRetries, "per-ui-iteration", jobId,
+                ["retry", "prepare defect follow-up", "ask"]) is { } visualSignal)
+        {
+            var summary = JsonSerializer.Serialize(new
+            {
+                visualQa.Verdict.Summary,
+                visualQa.Verdict.Defects,
+                visualQa.PriorAutomaticRetries,
+                visualQa.VerdictPath,
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "loop-exhaustion", ProjectName, jobId, info.State,
+                $"visual-qa:{jobId}:{iteration}:{visualQa.PriorAutomaticRetries}",
+                summary, digest, [], jobId, LoopSignal: visualSignal));
+            EngineDecisionWaitMarker.Write(info.FolderPath, occurrence.RunId);
+            return;
+        }
+
         var contract = new UiIterationReviewContract
         {
             Iteration = iteration,
@@ -7830,6 +7914,35 @@ public class ProjectRunner
             RerunBudgetRemaining = budgetRemaining,
         };
 
+        if (_reviewInputDecisions?.EngineDecides == true)
+        {
+            var bounded = PostAbortReviewStepService.BoundEvidence(request);
+            var summary = JsonSerializer.Serialize(new
+            {
+                bounded.TaskTitle,
+                bounded.TaskBody,
+                bounded.AbortReason,
+                bounded.AbortPhase,
+                bounded.CliOutputTail,
+                bounded.ToolCallsLiveness,
+                bounded.GitState,
+                bounded.TranscriptUsage,
+                bounded.RerunBudgetRemaining,
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var run = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "abort-review", ProjectName, jobId, activeInfo.State,
+                $"{jobId}:{execution.StartedAt:O}", summary, digest,
+                bounded.Omissions.Select(value => new GroundsOmissionV1("abort-review", value)).ToArray(),
+                jobId,
+                LoopSignal: MonolithTransitionAdapter.LoopSignal(
+                    "abort-review.rerun-per-job", used, PostAbortReviewDecider.DefaultRerunBudget,
+                    "per-card", jobId, ["retry", "checkpoint", "ask"])));
+            EngineDecisionWaitMarker.Write(activeInfo.FolderPath, run.RunId);
+            return true;
+        }
+
         PostAbortReviewStepReport report;
         try
         {
@@ -8002,31 +8115,31 @@ public class ProjectRunner
     {
         if (lines == null || lines.Count == 0) return "(no CLI output captured)";
         var start = Math.Max(0, lines.Count - maxLines);
-        return string.Join("\n", lines.Skip(start).Select(l => l.Text));
+        var window = string.Join("\n", lines.Skip(start).Select(l =>
+            AbortEvidenceCredentialRegex.Replace(l.Text ?? string.Empty, "[omitted: secret]")));
+        const int maxBytes = 8 * 1024;
+        if (Encoding.UTF8.GetByteCount(window) <= maxBytes) return window;
+        window = window[^Math.Min(window.Length, maxBytes)..];
+        while (Encoding.UTF8.GetByteCount(window) > maxBytes) window = window[1..];
+        return "[omitted: oversize]\n" + window;
     }
 
-    private const int ToolCallsLivenessTailBytes = 64 * 1024;
-
-    /// <summary>Tails <c>logs/tool-calls.jsonl</c> so the model can judge
-    /// whether a tool call started shortly before the abort and never
-    /// returned (a live long-op) vs. a genuine stall. Best-effort.</summary>
-    private string BuildToolCallsLiveness(string jobFolderPath, int maxLines = 12)
+    /// <summary>Captures typed file metadata for abort review without reading
+    /// raw tool-call rows into a decision prompt.</summary>
+    private string BuildToolCallsLiveness(string jobFolderPath)
     {
         try
         {
             var path = Path.Combine(TaskPaths.LogsDir(jobFolderPath), "tool-calls.jsonl");
             if (!File.Exists(path)) return "(no tool-calls.jsonl on disk)";
-            // tool-calls.jsonl grows by one row per tool call for the whole
-            // task; read only the newest window (AGT-2991).
-            var all = BoundedFileRead.ReadTailLines(path, ToolCallsLivenessTailBytes);
-            if (all.Count == 0) return "(tool-calls.jsonl is empty)";
-            var start = Math.Max(0, all.Count - maxLines);
-            return string.Join("\n", all.Skip(start));
+            var file = new FileInfo(path);
+            return $"tool-call evidence present; bytes={file.Length}; lastWriteUtc={file.LastWriteTimeUtc:O}; " +
+                "content omitted pending authorized artefact drill-down";
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "abort-review tool-calls.jsonl read failed for {Folder}", jobFolderPath);
-            return "(tool-calls.jsonl unreadable)";
+            _logger.LogDebug(ex, "abort-review tool-call metadata read failed for {Folder}", jobFolderPath);
+            return "(tool-call evidence metadata unavailable)";
         }
     }
 
@@ -9992,6 +10105,28 @@ public class ProjectRunner
         var historySnapshot = _pickupAttempts.TryGetValue(slug, out var state)
             ? state.History.ToList()
             : new List<PickupAttemptDiagnostic>();
+        if (reasonOverride is null && candidate.Info is { } waitingTask
+            && _reviewInputDecisions?.EngineDecides == true
+            && MonolithTransitionAdapter.LoopSignal(
+                "pickup.silent-runs-per-job", attempts, threshold, "per-card", slug,
+                ["retry", "defer", "ask"]) is { } signal)
+        {
+            var summary = JsonSerializer.Serialize(new
+            {
+                attempts,
+                threshold,
+                cliTypeBeforeMove,
+                history = historySnapshot.TakeLast(threshold),
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "loop-exhaustion", ProjectName, waitingTask.Id, waitingTask.State,
+                $"pickup:{slug}:{attempts}", summary, digest, [], waitingTask.Id,
+                LoopSignal: signal));
+            EngineDecisionWaitMarker.Write(waitingTask.FolderPath, occurrence.RunId);
+            return true;
+        }
 
         // Classify the budget-exhaustion cause. A zombie escalation (passed an
         // explicit reasonOverride) is always task-shaped: a session-less folder
@@ -10191,6 +10326,32 @@ public class ProjectRunner
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "CrossSlugInfraCircuitBreaker: chat-log append failed for {Slug}", slug);
+        }
+
+        if (_reviewInputDecisions?.EngineDecides == true
+            && MonolithTransitionAdapter.LoopSignal(
+                "pickup.cross-slug-infra-circuit-breaker", trip.Slugs.Count, trip.Limit,
+                $"{trip.WindowMinutes}-minute-project-cli-window", jobIdBeforeMove,
+                ["defer project pickup", "prepare diagnosis", "ask"]) is { } infraSignal)
+        {
+            var moved = _scanner.FindJob(jobIdBeforeMove, Entry.Path);
+            if (moved is not null)
+            {
+                var summary = JsonSerializer.Serialize(new
+                {
+                    cliType,
+                    trip.Slugs,
+                    trip.WindowMinutes,
+                    trip.Limit,
+                });
+                var digest = "sha256:" + Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                    "loop-exhaustion", ProjectName, moved.Id, moved.State,
+                    $"cross-slug:{cliType}:{trip.TrippedAt:O}", summary, digest, [], moved.Id,
+                    LoopSignal: infraSignal));
+                EngineDecisionWaitMarker.Write(moved.FolderPath, occurrence.RunId);
+            }
         }
 
         // Mode flip last so any throw above does not leave us paused

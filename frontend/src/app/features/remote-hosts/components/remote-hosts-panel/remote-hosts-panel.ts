@@ -32,6 +32,12 @@ import { BetterCandidateLinesComponent } from '../../../../components/better-can
 import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
+import { HttpClient } from '@angular/common/http';
+import { AuthSessionState } from '../../../../services/auth.service';
+import { EnvironmentMapComponent } from '../environment-map/environment-map';
+import { EnvironmentHeaderComponent } from '../environment-header/environment-header';
+import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
+import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -57,6 +63,8 @@ import { ExecutionInfrastructureComponent } from '../execution-infrastructure/ex
     RunnerInfrastructureFailuresComponent,
     DeploymentCheckpointsComponent,
     ExecutionInfrastructureComponent,
+    EnvironmentMapComponent,
+    EnvironmentHeaderComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -66,6 +74,9 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly service = inject(RemoteHostsService);
   private readonly tasks = inject(TaskService);
   private readonly reviewQueue = inject(ReviewQueueService);
+  private readonly http = inject(HttpClient);
+  private readonly auth = inject(AuthSessionState);
+  private readonly credentials = inject(CredentialInventoryService);
   private readonly tableState = new RemoteHostTableState();
 
   readonly hosts = this.service.hosts;
@@ -78,6 +89,10 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly wizardOpen = signal(false);
   readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);
+  readonly view = signal<'list' | 'map'>('list');
+  readonly environment = signal<EnvironmentSnapshot | null>(null);
+  readonly environmentMap = computed(() => buildEnvironmentMap(
+    this.hostGroups(), this.environment(), host => this.boardSlots(host), this.credentials.inventory()));
   readonly setupHost = signal<RemoteHost | null>(null);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
   readonly confirmationTitle = computed(() => {
@@ -135,7 +150,11 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   });
   ngOnInit(): void {
     this.tableState.hydrate();
+    try { this.view.set(localStorage.getItem(this.viewStorageKey()) === 'map' ? 'map' : 'list'); }
+    catch { this.view.set('list'); }
     this.service.ensureLoaded();
+    this.credentials.ensureLoaded();
+    this.loadEnvironment();
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
@@ -146,7 +165,31 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     if (this.tickHandle) clearInterval(this.tickHandle);
     if (this.usageHandle) clearInterval(this.usageHandle);
   }
-  reload(): void { this.service.reload(); this.infrastructureReload.update(value => value + 1); }
+  reload(): void {
+    this.service.reload();
+    this.infrastructureReload.update(value => value + 1);
+    this.loadEnvironment();
+    this.credentials.load();
+  }
+  private loadEnvironment(): void {
+    this.http.get<EnvironmentSnapshot>('/api/v1/management/environment').subscribe({
+      next: snapshot => this.environment.set(snapshot),
+      error: () => this.environment.set(null),
+    });
+  }
+  private viewStorageKey(): string {
+    return `atp.environment.view.v1.${this.auth.status()?.user?.id ?? 'local'}`;
+  }
+  setView(view: 'list' | 'map'): void {
+    this.view.set(view);
+    try { localStorage.setItem(this.viewStorageKey(), view); }
+    catch { return; }
+  }
+  selectMapHost(id: string): void {
+    const group = this.hostGroups().find(item => item.roles.some(role => role.id === id));
+    this.setView('list');
+    if (group) this.setExpanded(group.id, true);
+  }
   reconnect(id: string): void { this.service.reconnect(id); }
   linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }
 

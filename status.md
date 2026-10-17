@@ -1,3 +1,10 @@
+# AGT-3191 Dossier Tag and Created controls status
+
+- Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
+- Implemented option: compact Tag suggestions retain distinct tag ids and show the duplicate label's ordinal, total, and id. The Created browser fixture supplies creation dates and checks all four presets, both Created sort directions, and URL state after reload.
+- Review captures in the task results directory: `dossier-toolbar-1440x900--mocked.png` and `dossier-toolbar-1920x1080--mocked.png`. Light and dark overview captures are also in that directory.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` and `npm --prefix frontend run build` passed. Focused backend classes (`WorkbenchCatalogueTests`, `GitServiceFileContentTests`) passed 31 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 82 backend tests; runner and task-server had no matches. Focused Angular specs (`tag-filters.component.spec.ts`, `workbench-overview-view-state.service.spec.ts`) passed 11 tests. The focused Playwright Dossier sort/filter test passed. `npm --prefix frontend run lint` passed.
+
 # AGT-3153 release workflow status
 
 - Result SHA: `6727e676a465911612eccb8c1c3c7157ca548fc7` (one rebased delivery commit on `ba68ca8aa`).
@@ -18,7 +25,14 @@
 
 # AGT-3204 Dossier card grouping status
 
-- Result worktree patch SHA256: `ce925fd51732f50a54b6dcb6acd22c1c63f3a626d2d9eb57370ab6c0023db85e`, based on `2c4ec9e8c62e55f1b88763442277e426aab862a4`. This hashes the tracked diff and untracked source files, excluding this status entry; the platform owns the final commit SHA.
+- Result SHA: `e7a14a0da828cd5be4ab0234eef8876af75fbb0a`. Integration recovery merged `origin/develop` at `2762b6934de7a23eab81543bd74858aea3aee91a` into the delivery branch; the sole conflict was this status file, and both task entries were retained.
 - Implemented NV-D2 option A: one primary Dossier per card, with other Dossiers retained as ordinary links. Concept promotion and decision application propagate the primary reference and section or decision provenance. Catalogue discovery backfills unambiguous references from source and related keys, legacy implementation keys, implementation titles, and promotion records.
 - Dossier reads and the cards endpoint expose assigned cards with lane, state, environments, and implementation slice progress. A decided slice waits for all resulting implementation cards. Dossier chat receives the bounded card list. The board groups visible cards by Dossier and each lane card shows its primary Dossier and provenance.
 - Verification: backend, runner, and task server test project builds passed; the frontend production build passed. The five focused backend classes passed (89 tests), and the backend architecture and guard filter passed (82 tests). The same guard filter ran in runner and task server test projects with no matching tests. Five focused frontend spec files passed (159 tests). The two focused Playwright files passed (3 tests) with light and dark board and Dossier card list screenshots in the task results directory. `npm --prefix frontend run lint` and `git diff --check` passed.
+- Integration recovery verification: solution and frontend builds passed; the five focused backend classes passed 89 tests; the guard filter passed 98 backend tests and had no matches in the other seven .NET test projects; five focused frontend spec files passed 41 tests. The board browser specs passed two tests, and the Dossier navigation spec passed after its fixture stopped waiting for a slow backend document request. Frontend lint passed. Recovery logs and light and dark screenshots are in the task results directory.
+
+# AGT-3065 bounded artefact readers and loop signals status
+
+- Result implementation SHA: `4bb0e2e806ed3c58b53b32ca131213769d75817c`, rebased onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490`.
+- Protected project labels are restored after digest-wide credential redaction, so a publish detail such as `api_key=value` beside project `secret` is omitted while the project name remains visible. The rebased review input applier calls the shared decision library through `MonolithTransitionAdapter`.
+- Verification: serial `dotnet build agent-taskboard.sln --no-restore` passed; the focused digest, endpoint, evidence reader, gateway and transition boundary filter passed (34 tests); additional review orchestrator filters passed (101 tests); the architecture and guard filter passed in all eight .NET test projects (98 backend tests, no matches in the other seven); `npm --prefix frontend run lint` passed. `git merge-tree --write-tree --name-only origin/develop HEAD` reported no conflict.

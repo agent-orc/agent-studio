@@ -2017,6 +2017,12 @@ export interface RegistryProjectSummary {
 }
 
 export interface CreateRegistryProjectRequest {
+  createRepository?: {
+    owner: string;
+    name: string;
+    visibility: 'public' | 'private';
+    template: 'static-web' | 'container-service';
+  };
   workspaceId: string;
   displayName: string;
   shortCode?: string;

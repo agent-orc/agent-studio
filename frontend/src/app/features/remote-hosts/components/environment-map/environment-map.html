@@ -1,0 +1,60 @@
+<section class="environment" data-testid="environment-map" aria-label="Installation map">
+  <p class="environment__hint">Select a runner role to open its details and actions in the list. Unknown means no source reported that fact.</p>
+  <svg class="topology" [attr.viewBox]="'0 0 900 ' + topology().height" role="img" aria-label="Machine and connection topology" preserveAspectRatio="xMidYMin meet">
+    @for (edge of topology().edges; track edge.id) {
+      <g class="topology__edge" [attr.data-health]="edge.health" data-testid="environment-topology-edge">
+        <title>{{ edge.type }}</title>
+        <line [attr.x1]="edge.x1" [attr.y1]="edge.y1" [attr.x2]="edge.x2" [attr.y2]="edge.y2" />
+        <text [attr.x]="edge.labelX" [attr.y]="edge.labelY" text-anchor="middle">{{ edge.type }}</text>
+      </g>
+    }
+    @for (point of topology().points; track point.id) {
+      <g class="topology__point" [class.topology__point--external]="point.external" data-testid="environment-topology-point">
+        <rect [attr.x]="point.x - 75" [attr.y]="point.y - 24" width="150" height="48" rx="4" />
+        <text [attr.x]="point.x" [attr.y]="point.y + 4" text-anchor="middle">{{ point.label }}</text>
+      </g>
+    }
+  </svg>
+  <div class="environment__layout">
+    <div class="environment__machines">
+      @for (machine of map().machines; track machine.id) {
+        <section class="machine" [class.machine--wide]="machine.nodes.length > 2" data-testid="environment-machine">
+          <h3>{{ machine.name }}</h3>
+          <div class="machine__nodes">
+            @for (node of machine.nodes; track node.id) {
+              <div class="node" [attr.data-role]="node.role" data-testid="environment-node">
+                <div class="node__head">
+                  <span class="node__role">{{ node.kind || node.role }}</span>
+                  @if (node.hostId) {
+                    <button type="button" [attr.aria-label]="'Open ' + node.label + ' details'"
+                            (click)="select(node)">{{ node.label }}</button>
+                  } @else { <strong>{{ node.label }}</strong> }
+                </div>
+                <dl>
+                  <div><dt>Health</dt><dd>{{ node.health }}</dd></div>
+                  <div><dt>Capacity</dt><dd>{{ node.capacity }}</dd></div>
+                  <div><dt>Load</dt><dd>{{ node.load || 'Unknown' }}</dd></div>
+                  <div><dt>Version</dt><dd>{{ node.version }}</dd></div>
+                  <div><dt>Drift vs Task Server</dt><dd>{{ node.drift }}</dd></div>
+                  <div><dt>Last contact</dt><dd>{{ node.lastContact }}</dd></div>
+                </dl>
+                <span class="node__access" [attr.data-access]="node.repositoryAccess"
+                      data-testid="environment-repository-access">Repo: {{ node.repositoryAccess }}</span>
+              </div>
+            }
+          </div>
+        </section>
+      }
+    </div>
+    <section class="connections" aria-label="Connections">
+      <h3>Connections</h3>
+      @for (connection of map().connections; track connection.id) {
+        <div class="connection" [attr.data-health]="connection.health" data-testid="environment-connection">
+          <span class="connection__line" aria-hidden="true"></span>
+          <div><strong>{{ connection.type }}</strong><small>{{ connection.from }} → {{ connection.to }}</small></div>
+          <span class="connection__health">{{ connection.health }}</span>
+        </div>
+      } @empty { <p>No connections reported.</p> }
+    </section>
+  </div>
+</section>

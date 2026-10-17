@@ -226,6 +226,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/workspaces': return 'workspaces';
       case '/workspace/settings/task-server': return 'task-server';
       case '/workspace/settings/credentials': return 'credentials';
+      case '/workspace/settings/environment':
       case '/workspace/settings/execution-hosts':
       case '/workspace/settings/remote-hosts': return 'remote-hosts';
       // Retired project-source catalogue: old bookmarks land safely on Overview.
@@ -264,7 +265,7 @@ export class WorkspaceOverlaysService {
       case 'workspaces': return '/workspace/settings/workspaces';
       case 'task-server': return '/workspace/settings/task-server';
       case 'credentials': return '/workspace/settings/credentials';
-      case 'remote-hosts': return '/workspace/settings/execution-hosts';
+      case 'remote-hosts': return '/workspace/settings/environment';
       case 'orchestrator': return '/workspace/settings/orchestrator';
       case 'working-memory': return '/workspace/settings/working-memory';
       case 'overview': return '/workspace/settings';
@@ -284,6 +285,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/task-server',
     '/workspace/settings/credentials',
     '/workspace/settings/execution-hosts',
+    '/workspace/settings/environment',
     '/workspace/settings/remote-hosts',
     '/workspace/settings/project-sources',
     '/workspace/settings/orchestrator',

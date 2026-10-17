@@ -11,7 +11,7 @@ export type ProjectRailGroup = 'insight' | 'quality' | 'context' | 'config';
 
 export type ProjectRailKey =
   | 'overview'
-  | 'deployment'
+  | 'deploy'
   | 'project-urls'
   | 'git'
   | 'integration'
@@ -92,13 +92,13 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     railIcon: 'link',
   },
   {
-    key: 'deployment',
-    group: 'insight',
-    label: 'Deployment',
-    panelTitle: 'Deployment',
-    description: 'Deploy targets, current delta, and durable run history for this project',
-    empty: 'No deployment history is available for this project.',
-    icon: 'â‡§',
+    key: 'deploy',
+    group: 'config',
+    label: 'Deploy',
+    panelTitle: 'Deploy',
+    description: 'Environments, releases, pipeline, and deployment history',
+    empty: 'No deployment data is available for this project.',
+    icon: '⇧',
     railIcon: 'activity',
   },
   {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Diagnostics;
+using AgentStudio.Runner;
 using AgentStudio.Shared;
 
 namespace AgentStudio.Cli;
@@ -82,8 +83,16 @@ public sealed class LocalCliRepairService
     private readonly Func<string?> _appData;
     private readonly Func<string?> _localAppData;
     private readonly string _journalPath;
+    private readonly IConfiguration? _configuration;
     private readonly object _sync = new();
     private readonly HashSet<string> _inFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _decisionPending = new(StringComparer.OrdinalIgnoreCase);
+    private string _resumeToken = string.Empty;
+
+    internal bool DecisionPending(string cliType)
+    {
+        lock (_sync) return _decisionPending.Contains(cliType);
+    }
     private readonly Dictionary<string, LocalCliRepairStatus> _latest =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -98,7 +107,8 @@ public sealed class LocalCliRepairService
             OperatingSystem.IsWindows,
             () => Environment.GetEnvironmentVariable("APPDATA"),
             () => Environment.GetEnvironmentVariable("LOCALAPPDATA"),
-            ResolveJournalPath(configuration))
+            ResolveJournalPath(configuration),
+            configuration)
     {
     }
 
@@ -109,7 +119,8 @@ public sealed class LocalCliRepairService
         Func<bool> isWindows,
         Func<string?> appData,
         Func<string?> localAppData,
-        string journalPath)
+        string journalPath,
+        IConfiguration? configuration = null)
     {
         _installer = installer;
         _logger = logger;
@@ -118,6 +129,7 @@ public sealed class LocalCliRepairService
         _appData = appData;
         _localAppData = localAppData;
         _journalPath = journalPath;
+        _configuration = configuration;
         foreach (var entry in ReadJournal())
         {
             if (entry.Outcome is "failed" or "detected")
@@ -600,6 +612,16 @@ public sealed class LocalCliRepairService
     {
         lock (_sync)
         {
+            var engineMode = _configuration is not null
+                && MonolithTransitionSwitch.For(_configuration,
+                    ReviewInputDecisionGateway.Transition) == OrchestrationExecutionMode.Engine;
+            var resumeToken = _configuration?["LocalCliRepair:ResumeSignal"] ?? string.Empty;
+            if (!engineMode || !string.Equals(resumeToken, _resumeToken, StringComparison.Ordinal))
+            {
+                _decisionPending.Clear();
+                _resumeToken = resumeToken;
+            }
+            if (_decisionPending.Contains(cliType)) return false;
             if (!_inFlight.Add(cliType)) return false;
             // Only the "attempting" row marks a spent attempt. A detection or a
             // resolved row must not consume the budget, or a state that is
@@ -611,6 +633,17 @@ public sealed class LocalCliRepairService
                 .LastOrDefault();
             if (AttemptAllowed(now, previous)) return true;
             _inFlight.Remove(cliType);
+            if (engineMode && MonolithTransitionAdapter.LoopSignal(
+                "local-cli.missing-npm-shim-repair", 1, 1,
+                "one-hour-per-cli", cliType + ":" + previous?.ToString("O"),
+                ["defer repair", "prepare manual repair", "ask"]) is { } signal)
+            {
+                _decisionPending.Add(cliType);
+                _logger.LogWarning(
+                    "Local CLI repair raised {Signal} for {Cli}; attempts wait for an operator resume token",
+                    signal.Name, cliType);
+                return false;
+            }
             _logger.LogInformation(
                 "Local CLI repair suppressed by one-hour attempt budget cli={Cli} previousAttempt={PreviousAttempt:o}",
                 cliType,

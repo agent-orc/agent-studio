@@ -74,10 +74,13 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
       await route.continue();
       return;
     }
-    const response = await route.fetch();
-    const document = await response.json() as Record<string, unknown>;
-    await route.fulfill({ response, json: {
-      ...document,
+    await route.fulfill({ status: 200, contentType: 'application/json', json: {
+      workbench: implementation,
+      html: '<main><h1>Dossier fixture</h1></main>',
+      branch: null,
+      revision: null,
+      workingTreeModified: false,
+      fingerprint: null,
       cards: {
         projectName: catalogue!.projectName,
         dossierKey: implementation!.key ?? null,
