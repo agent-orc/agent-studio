@@ -714,8 +714,8 @@ public sealed class WorkbenchCatalogueService
                 {
                     foreach (var assignment in assignments)
                     {
-                        _fileWriter.Write(assignment.Path, assignment.Descriptor.ToJsonString(
-                            new JsonSerializerOptions { WriteIndented = true }));
+                        _fileWriter.Write(assignment.Path, RepositoryTextLayout.IndentedJsonFor(
+                            assignment.Path, assignment.Descriptor));
                     }
                 });
             if (!persisted.Success)

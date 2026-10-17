@@ -675,6 +675,55 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_LeavesAKeylessDescriptorInAnUntrackedFolderUntouched()
+    {
+        WriteWorkbench("seed", "Seed", "active", "2026-08-10T08:00:00Z");
+        SetWorkbenchKey("seed", "PRO-W1");
+        RunGit("init", "-b", "develop");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "test: seed keyed workbench");
+        var before = RunGit("rev-parse", "HEAD").Trim();
+        WriteWorkbench("omgai-dev", "Draft", "active", "2026-08-11T08:00:00Z");
+        var draftPath = Path.Combine(_root, "docs", "workbenches", "omgai-dev", "workbench.json");
+        var draft = File.ReadAllBytes(draftPath);
+
+        Service().List("Project", includeHistory: true);
+
+        Assert.Equal(draft, File.ReadAllBytes(draftPath));
+        Assert.Equal(before, RunGit("rev-parse", "HEAD").Trim());
+        Assert.Equal("?? docs/workbenches/omgai-dev/", RunGit("status", "--porcelain").Trim());
+    }
+
+    [Fact]
+    public void List_AssignsMissingKeysInTheDescriptorsOwnLineEndings()
+    {
+        WriteWorkbench("crlf", "Crlf", "active", "2026-08-10T08:00:00Z");
+        var path = Path.Combine(_root, "docs", "workbenches", "crlf", "workbench.json");
+        var indented = JsonNode.Parse(File.ReadAllText(path))!
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true, NewLine = "\r\n" });
+        File.WriteAllText(path, indented + "\r\n");
+        RunGit("init", "-b", "develop");
+        RunGit("config", "core.autocrlf", "false");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "test: seed CRLF workbench without a key");
+
+        var item = Assert.Single(Service().List("Project", includeHistory: true)!.Items);
+
+        Assert.Equal("PRO-W1", item.Key);
+        var written = File.ReadAllText(path);
+        Assert.EndsWith("}\r\n", written);
+        Assert.DoesNotMatch("(?<!\r)\n", written);
+        Assert.Contains("\"key\": \"PRO-W1\"", written);
+        Assert.Equal(string.Empty, RunGit("status", "--porcelain"));
+        var diff = RunGit("show", "--numstat", "--pretty=format:", "HEAD").Trim();
+        Assert.StartsWith("2\t1\t", diff);
+    }
+
+    [Fact]
     public void List_WhenTheManagedCommitFails_RestoresTheDescriptorAndLeavesTheRepositoryClean()
     {
         WriteWorkbench("discovered", "Discovered", "active", "2026-08-10T08:00:00Z");
