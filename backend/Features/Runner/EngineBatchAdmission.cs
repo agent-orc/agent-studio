@@ -9,19 +9,20 @@ public enum EngineBatchAdmissionOutcome
     /// <summary>The queue refused the review, and the per-task emergency gate settled the card.</summary>
     PerTaskGate,
 
-    /// <summary>Nothing is owed: the card left its source lane or the review is no longer current.</summary>
+    /// <summary>Nothing is owed: the card is not in Auto Review or the review is no longer current.</summary>
     Skipped,
 }
 
 /// <summary>
 /// Batch admission of an engine DeferToBatch review decision. The decision has
 /// no lane effect, so this admission is its whole application. It mirrors the
-/// monolith review report: the review verification minutes are recorded first,
-/// the settled review enters the durable batch queue at the accepted report's
-/// receive time, and a refused admission runs the per-task emergency gate. An
-/// admission that owes nothing records its reason in the operator feed and lets
-/// the occurrence complete. Any other unfinished admission throws, so the
-/// occurrence stays applying and the recovery loop retries it.
+/// monolith review report: only a card in Auto Review is admitted, the review
+/// verification minutes are recorded first, the settled review enters the
+/// durable batch queue at the accepted report's receive time, and a refused
+/// admission runs the per-task emergency gate. An admission that owes nothing
+/// records its reason in the operator feed and lets the occurrence complete.
+/// Any other unfinished admission throws, so the occurrence stays applying and
+/// the recovery loop retries it.
 /// </summary>
 public sealed class EngineBatchAdmission(
     BatchGatePilotService batches,
@@ -36,11 +37,9 @@ public sealed class EngineBatchAdmission(
     public async Task<EngineBatchAdmissionOutcome> AdmitAsync(TaskInfo task,
         MonolithOrchestrationOccurrence occurrence)
     {
+        if (LaneRefusal(task, occurrence) is { } refusal) return Skip(task, occurrence, refusal);
         var review = authority.GetReview(occurrence.AuthorityAttemptId)
             ?? throw new InvalidOperationException("The reviewed attempt was not found.");
-        if (task.State != occurrence.ExpectedSourceState)
-            return Skip(task, occurrence,
-                $"The card left {occurrence.ExpectedSourceState} for {task.State} before the batch admission.");
         if (!IsCurrentGeneration(review))
             return Skip(task, occurrence, $"Review {review.AttemptId} is no longer the card's current review.");
         var source = authority.GetRun(review.SourceRunAttemptId)
@@ -85,18 +84,33 @@ public sealed class EngineBatchAdmission(
     }
 
     /// <summary>
-    /// True while the card waits in the occurrence's source lane on its current
+    /// True while the card waits in Auto Review on the occurrence's current
     /// review, and the batch gate neither owns that review nor queues it. Reads
     /// attempt authority and two small files; runs no Git.
     /// </summary>
     public bool AwaitsAdmission(TaskInfo task, MonolithOrchestrationOccurrence occurrence)
     {
-        if (task.State != occurrence.ExpectedSourceState) return false;
+        if (LaneRefusal(task, occurrence) is not null) return false;
         var review = authority.GetReview(occurrence.AuthorityAttemptId);
         return review is not null && IsCurrentGeneration(review)
             && BatchGateOwnershipStore.Read(task.FolderPath)?.ReviewAttemptId != review.AttemptId
             && store.ReadPending(review.AttemptId) is null;
     }
+
+    /// <summary>
+    /// The monolith report path admits a deferred review only while the card
+    /// sits in Auto Review. The occurrence keeps whatever lane the report found,
+    /// and the decision policy assumes Auto Review, so the report lane and the
+    /// current lane must both be Auto Review. Elsewhere the batch never resolves
+    /// the queue entry, and the ownership refuses the card's release.
+    /// </summary>
+    private static string? LaneRefusal(TaskInfo task, MonolithOrchestrationOccurrence occurrence)
+        => occurrence.ExpectedSourceState != TaskStates.AutoReview
+            ? $"The batch gate admits only from {TaskStates.AutoReview}; the report found the card in "
+              + $"{occurrence.ExpectedSourceState}."
+            : task.State != TaskStates.AutoReview
+                ? $"The card left {TaskStates.AutoReview} for {task.State} before the batch admission."
+                : null;
 
     // The batch subject is current only for the current review of the current run.
     private bool IsCurrentGeneration(ReviewAttemptDto review)

@@ -283,19 +283,21 @@ earlier shadow occurrence of the profile lacks a receipt, so Ready never
 hides an open comparison.
 
 An engine `DeferToBatch` decision selects no lane; its batch admission is the
-whole application. Like the monolith report path, the applier records the
-review verification minutes, enqueues the settled review at the accepted
-report's receive time, and runs the per-task emergency gate when the queue
-refuses it. A review that is no longer current, or a card that left the source
-lane, completes the occurrence with an operator-feed reason; any other failed
-admission keeps the occurrence `applying` for recovery to retry. Until
-17.10.2026 that branch returned before the admission. The recovery service
-therefore re-arms, at most four per pass, a completed non-shadow decision that
-is still its card's newest `ReviewReport` occurrence while the card waits in
-the source lane on its current review without batch-gate ownership or a pending
-record. It also clears wait markers that name a cancelled occurrence or a
-completed one without an active choice, and rereads the occurrence after each
-marker write.
+whole application. Like the monolith report path, the applier admits only a
+card in Auto Review, records the review verification minutes, enqueues the
+settled review at the accepted report's receive time, and runs the per-task
+emergency gate when the queue refuses it. The occurrence keeps the lane its
+report found and the decision policy assumes Auto Review, so a card that the
+report found in another lane, a card that left Auto Review since, and a review
+that is no longer current complete the occurrence with an operator-feed reason;
+any other failed admission keeps the occurrence `applying` for recovery to
+retry. Until 17.10.2026 that branch returned before the admission. The recovery
+service therefore re-arms, at most four per pass, a completed non-shadow
+decision that is still its card's newest `ReviewReport` occurrence while the
+card waits in Auto Review on its current review without batch-gate ownership or
+a pending record. It also clears wait markers that name a cancelled occurrence
+or a completed one without an active choice, and rereads the occurrence after
+each marker write.
 
 ## Verification and architecture guard
 

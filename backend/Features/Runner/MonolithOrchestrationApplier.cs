@@ -115,8 +115,8 @@ public sealed class MonolithOrchestrationApplier(
 
         var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
             TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
-        // A batch admission has no lane effect. A card that left the source lane
-        // owes none, as in the report path; the admission records the skip.
+        // A batch admission has no lane effect. A card outside Auto Review owes
+        // none, as in the report path; the admission records the skip.
         if (task.State != occurrence.ExpectedSourceState && task.State != target
             && decision?.Action != TransitionAction.DeferToBatch)
             throw new InvalidOperationException("orchestration-source-state-mismatch");

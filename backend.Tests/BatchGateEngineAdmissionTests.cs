@@ -125,6 +125,40 @@ public sealed partial class BatchGatePilotServiceTests
             reason.Reasoning);
     }
 
+    [Theory]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.Completed)]
+    [InlineData(TaskStates.Escalated)]
+    public async Task Engine_defer_to_batch_admits_only_from_auto_review(string lane)
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        // The review passed after the card left Auto Review; the report records
+        // that lane, and the decision policy still defers to the batch.
+        var deferred = SettleDeferredReview(factory, "DOC-ENGINE-LANE", "docs/engine-lane.md", lane);
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        var applied = await DecideDeferToBatchAsync(orchestration, deferred, sourceState: lane);
+
+        Assert.Equal("completed", applied.Status);
+        AssertLane(deferred.Member.Key, lane);
+        Assert.Null(store.ReadPending(deferred.Member.ReviewAttemptId));
+        Assert.Null(Ownership(deferred.Member.Key));
+        Assert.Null(EngineDecisionWaitMarker.Read(CardFolder(deferred.Member.Key)));
+        Assert.Equal(0, _gate.FallbackRuns);
+        var reason = Assert.Single(factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath),
+            entry => entry.Topic == "engine-batch-admission:" + applied.RunId);
+        Assert.Contains("admits only from " + TaskStates.AutoReview, reason.Reasoning);
+        // The completed decision is no re-arm candidate either.
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
+            factory.Services);
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync());
+        Assert.Null(Ownership(deferred.Member.Key));
+        Assert.Empty(store.ListAllPending());
+    }
+
     [Fact]
     public async Task Recovery_rearms_only_the_engine_batch_decisions_that_lost_their_admission()
     {
@@ -203,9 +237,9 @@ public sealed partial class BatchGatePilotServiceTests
     private sealed record MarkedOccurrence(string Folder, string RunId);
 
     private DeferredReview SettleDeferredReview(WebApplicationFactory<Program> factory, string key,
-        string changedFile)
+        string changedFile, string initialState = TaskStates.AutoReview)
     {
-        var member = SeedMember(factory, key, changedFile, settleReview: false);
+        var member = SeedMember(factory, key, changedFile, settleReview: false, initialState: initialState);
         var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
         var report = review.Reports.Last(item => item.AuthorityStatus == AttemptWriteStatus.Accepted);
         return new DeferredReview(member, review,
@@ -213,18 +247,20 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>
-    /// The occurrence the Engine-mode report path prepares, with its wait
-    /// marker, completed by an engine that decided DeferToBatch.
+    /// The occurrence the Engine-mode report path prepares in the lane the
+    /// report found the card in, with its wait marker, completed by an engine
+    /// that decided DeferToBatch.
     /// </summary>
     private async Task<Contract.OrchestrationRunDto> DecideDeferToBatchAsync(
-        MonolithOrchestrationStore orchestration, DeferredReview deferred, bool shadow = false)
+        MonolithOrchestrationStore orchestration, DeferredReview deferred, bool shadow = false,
+        string sourceState = TaskStates.AutoReview)
     {
         var review = deferred.Review;
         var report = review.Reports.Last(item => item.AuthorityStatus == AttemptWriteStatus.Accepted);
         var run = orchestration.Create(ProjectName, deferred.Member.Key,
             Contract.OrchestrationStage.ReviewDecision,
             JsonSerializer.Serialize(new { reviewOutcome = "Pass", reviewAttemptId = review.AttemptId }),
-            $"review-report:{review.AttemptId}:{report.IdempotencyKey}", TaskStates.AutoReview,
+            $"review-report:{review.AttemptId}:{report.IdempotencyKey}", sourceState,
             review.AttemptId, review.LastFence, review.AuthorityEpoch, profile: "ReviewReport",
             shadow: shadow);
         if (!shadow)
