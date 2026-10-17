@@ -123,6 +123,15 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     /// <summary>Batch admissions one re-arm pass may run; the rest wait for the next pass.</summary>
     internal const int RearmBudgetPerPass = 4;
 
+    /// <summary>Wait before a failed re-arm admission is tried again; it doubles per failure.</summary>
+    internal static readonly TimeSpan RearmRetryBase = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RearmRetryCap = TimeSpan.FromMinutes(30);
+
+    // A failed admission waits before its next attempt, so occurrences that keep
+    // failing cannot take the per-pass budget from the ones behind them.
+    private readonly Dictionary<string, (int Failures, DateTime RetryAt)> _rearmRetries =
+        new(StringComparer.Ordinal);
+
     // An admission can run a per-task gate, so a re-arm pass runs beside the
     // loop and a loop starts one only when none is running (as AGT-3091).
     private readonly object _rearmGate = new();
@@ -294,11 +303,17 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
             if (card is null || card.State != occurrence.ExpectedSourceState) continue;
+            if (RetryPending(occurrence.Run.RunId)) continue;
             try
             {
-                if (!batchAdmission.AwaitsAdmission(card, occurrence)) continue;
+                if (!batchAdmission.AwaitsAdmission(card, occurrence))
+                {
+                    ForgetRetry(occurrence.Run.RunId);
+                    continue;
+                }
                 admissions++;
                 var outcome = await batchAdmission.AdmitAsync(card, occurrence, stoppingToken);
+                ForgetRetry(occurrence.Run.RunId);
                 if (outcome != EngineBatchAdmissionOutcome.Skipped) rearmed++;
                 logger.LogWarning(
                     "engine-batch-admission-rearmed task={TaskKey} run={RunId} attempt={AttemptId} outcome={Outcome}",
@@ -313,12 +328,39 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             }
             catch (Exception exception)
             {
-                logger.LogWarning(exception, "engine-batch-admission-rearm-pending task={TaskKey} run={RunId}",
-                    card.Key ?? card.Id, occurrence.Run.RunId);
+                var (failures, retryAt) = RecordRetry(occurrence.Run.RunId);
+                logger.LogWarning(exception,
+                    "engine-batch-admission-rearm-pending task={TaskKey} run={RunId} failures={Failures} retryAt={RetryAt:o}",
+                    card.Key ?? card.Id, occurrence.Run.RunId, failures, retryAt);
             }
         }
         if (admissions > 0) scanner.InvalidateCache();
         return rearmed;
+    }
+
+    private bool RetryPending(string runId)
+    {
+        lock (_rearmRetries)
+            return _rearmRetries.TryGetValue(runId, out var retry)
+                && retry.RetryAt > time.GetUtcNow().UtcDateTime;
+    }
+
+    private void ForgetRetry(string runId)
+    {
+        lock (_rearmRetries) _rearmRetries.Remove(runId);
+    }
+
+    private (int Failures, DateTime RetryAt) RecordRetry(string runId)
+    {
+        lock (_rearmRetries)
+        {
+            var failures = (_rearmRetries.TryGetValue(runId, out var previous) ? previous.Failures : 0) + 1;
+            var wait = TimeSpan.FromTicks(Math.Min(RearmRetryCap.Ticks,
+                RearmRetryBase.Ticks << Math.Min(failures - 1, 16)));
+            var retry = (failures, time.GetUtcNow().UtcDateTime + wait);
+            _rearmRetries[runId] = retry;
+            return retry;
+        }
     }
 
     private void AlertLongWaits()
@@ -438,11 +480,22 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         // engine wait until it leaves the lane.
         foreach (var card in tasks.Where(item => item.WaitingForEngineDecision))
         {
-            if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
-                && store.GetOccurrence(runId) is { } named
-                && (named.Run.Status == "cancelled"
-                    || named.Run.Status == "completed" && !MayHoldCard(named)))
-                EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
+            // RecoverOnce runs outside the loop's per-step catches, so a lane move
+            // or a concurrent clear that races this read must not end the loop.
+            try
+            {
+                if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
+                    && store.GetOccurrence(runId) is { } named
+                    && (named.Run.Status == "cancelled"
+                        || named.Run.Status == "completed" && !MayHoldCard(named)))
+                    EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                or JsonException)
+            {
+                logger.LogWarning(exception, "engine-decision-wait-marker-cleanup-skipped task={TaskKey}",
+                    card.Key ?? card.Id);
+            }
         }
         scanner.InvalidateCache();
     }
@@ -455,15 +508,17 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     /// </summary>
     internal void MarkWaiting(string folder, string runId)
     {
-        try { EngineDecisionWaitMarker.Write(folder, runId); }
-        catch (IOException exception)
+        try
+        {
+            EngineDecisionWaitMarker.Write(folder, runId);
+            if (store.Get(runId)?.Status is not ("pending" or "leased" or "applying"))
+                EngineDecisionWaitMarker.Clear(folder, runId);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // The card moved after the scan; the next pass reads its new folder.
             logger.LogWarning(exception, "engine-decision-wait-marker-skipped run={RunId}", runId);
-            return;
         }
-        if (store.Get(runId)?.Status is not ("pending" or "leased" or "applying"))
-            EngineDecisionWaitMarker.Clear(folder, runId);
     }
 
     /// <summary>

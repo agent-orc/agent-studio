@@ -223,6 +223,10 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Empty(store.ListAllPending());
 
         _gate.Fallback = request => Red(request.ExpectedSha);
+        // The failed admission waits out its retry delay before the next attempt.
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(1, _gate.FallbackRuns);
+        _clock = _clock.Add(MonolithOrchestrationRecoveryService.RearmRetryBase);
         Assert.Equal(1, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
 
         Assert.Equal(2, _gate.FallbackRuns);
@@ -230,6 +234,44 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Null(Ownership(lost.Member.Key));
         Assert.Empty(store.ListAllPending());
         Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Rearm_backs_off_failing_admissions_so_the_budget_reaches_the_rest()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var journal = PreFixJournal(factory);
+        // Code in a documentation-only batch scope is refused, and the lost gate
+        // host fails every per-task gate, so these admissions keep failing.
+        var failing = Enumerable.Range(1, MonolithOrchestrationRecoveryService.RearmBudgetPerPass)
+            .Select(index => SettleDeferredReview(factory, $"CODE-REARM-FAIL{index}",
+                $"backend/RearmFail{index}.cs"))
+            .ToArray();
+        var behind = SettleDeferredReview(factory, "DOC-REARM-BEHIND", "docs/rearm-behind.md");
+        foreach (var decided in failing.Append(behind))
+            Assert.Equal("completed", (await DecideDeferToBatchAsync(journal, decided)).Status);
+        _gate.Fallback = _ => throw new InvalidOperationException("The gate host was lost.");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(
+            factory.Services, journal);
+
+        // The first pass spends its whole budget on the failing admissions.
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(failing.Length, _gate.FallbackRuns);
+        Assert.Null(store.ReadPending(behind.Member.ReviewAttemptId));
+
+        // While they wait out their retry delay, the next pass reaches the card behind them.
+        Assert.Equal(1, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(failing.Length, _gate.FallbackRuns);
+        Assert.Equal(behind.Member.ReviewAttemptId,
+            store.ReadPending(behind.Member.ReviewAttemptId)?.ReviewAttemptId);
+
+        // After the delay the failing admissions are tried again.
+        _clock = _clock.Add(MonolithOrchestrationRecoveryService.RearmRetryBase);
+        Assert.Equal(0, await recovery.RearmDeferredBatchAdmissionsAsync(CancellationToken.None));
+        Assert.Equal(2 * failing.Length, _gate.FallbackRuns);
     }
 
     [Fact]
