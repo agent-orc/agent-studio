@@ -40,6 +40,15 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
             }));
 
+        auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+            Execute(() =>
+            {
+                var accepted = store.AcceptInvitation(request);
+                SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
+                    ToResponse(accepted.User), accepted.CsrfToken));
+            }));
+
         // The local profile treats X-Client-Id as attribution only, so it must not
         // become an alternate credential for any auth administration endpoint.
         // A missing human session yields a graceful 401 (never a 500) so the
@@ -87,6 +96,19 @@ public static class AccessSecurityEndpoints
                 RequireOwner(context, store);
                 var result = store.CreateUser(request);
                 return Results.Ok(new { user = ToResponse(result.User), temporaryPassword = result.TemporaryPassword, mustChangePassword = true });
+            }));
+
+        auth.MapPost("/invitations", (InviteUserRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                var invitation = store.InviteUser(request);
+                return Results.Ok(new
+                {
+                    user = ToResponse(invitation.User),
+                    signInLink = "/?invite=" + Uri.EscapeDataString(invitation.Token),
+                    expiresAt = invitation.ExpiresAt
+                });
             }));
 
         auth.MapPut("/users/{id}", (string id, UpdateUserRequest request, HttpContext context, AccessSecurityStore store) =>
@@ -214,7 +236,8 @@ public static class AccessSecurityEndpoints
     }
 
     private static AuthUserResponse ToResponse(StudioUser user)
-        => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword);
+        => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
+            user.ProductionApprovalProjects);
 
     private static object ToRunnerResponse(RunnerServiceIdentity runner) => new
     {

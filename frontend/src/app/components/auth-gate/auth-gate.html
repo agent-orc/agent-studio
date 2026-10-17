@@ -8,6 +8,11 @@
       <p class="auth-gate__muted">This code is shown once. Keep it with the installation recovery set, outside this browser.</p>
       <output data-testid="owner-recovery-code">{{ recoveryCode }}</output>
       <button type="button" data-testid="owner-recovery-acknowledge" (click)="acknowledgeRecoveryCode()">I stored the code</button>
+    } @else if (inviteToken) {
+      <h1>Accept invitation</h1>
+      <p class="auth-gate__muted">Choose a password to activate your account. This link works once.</p>
+      <label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" [(ngModel)]="newPassword" required></label>
+      <button type="submit" [disabled]="submitting()">Join project</button>
     } @else if (auth.status()?.user?.mustChangePassword) {
       <h1>Choose a new password</h1>
       <p class="auth-gate__muted">Your temporary password must be replaced before Studio opens.</p>

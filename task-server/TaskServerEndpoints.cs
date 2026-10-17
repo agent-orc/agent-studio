@@ -99,14 +99,30 @@ public static class TaskServerEndpoints
                 maxTotalBytes));
         });
 
-        api.MapGet("/workspaces", async (TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ListWorkspacesAsync(ct)));
+        api.MapGet("/workspaces", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                var workspaces = await store.ListWorkspacesAsync(ct);
+                var status = await store.GetStudioAuthStatusAsync(StudioEndpoints.StudioSessionToken(context), ct);
+                if (status.User?.Role != StudioUserRoles.Contributor) return workspaces;
+                var projects = await store.ListProjectsAsync(null, ct);
+                var allowed = projects.Where(project => status.User.ProjectIds.Contains(project.ProjectId, StringComparer.Ordinal))
+                    .Select(project => project.WorkspaceId).ToHashSet(StringComparer.Ordinal);
+                return workspaces.Where(workspace => allowed.Contains(workspace.WorkspaceId)).ToArray();
+            }));
         api.MapPost("/workspaces", async (HttpContext context, CreateWorkspaceRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateWorkspaceAsync(request, Actor(context), ct), StatusCodes.Status201Created))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
-        api.MapGet("/projects", async (string? workspaceId, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ListProjectsAsync(workspaceId, ct)));
+        api.MapGet("/projects", async (string? workspaceId, HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                var projects = await store.ListProjectsAsync(workspaceId, ct);
+                var status = await store.GetStudioAuthStatusAsync(StudioEndpoints.StudioSessionToken(context), ct);
+                return status.User?.Role == StudioUserRoles.Contributor
+                    ? projects.Where(project => status.User.ProjectIds.Contains(project.ProjectId, StringComparer.Ordinal)).ToArray()
+                    : projects;
+            }));
         api.MapPost("/projects", async (HttpContext context, CreateProjectRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateProjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
@@ -1124,7 +1140,8 @@ public static class TaskServerEndpoints
     }
 
     internal static string Actor(HttpContext context)
-        => context.Request.Headers["X-Actor-Id"].FirstOrDefault()
+        => context.Items["StudioActorId"] as string
+           ?? context.Request.Headers["X-Actor-Id"].FirstOrDefault()
            ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
            ?? "local-compatibility";
 
