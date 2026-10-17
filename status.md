@@ -1,3 +1,11 @@
+# AGT-3215 diverged integration lane status
+
+- Result implementation SHA: `d62f87359df38a256b13791cc2d8b5d691ecfea8` on `88f555f13`. This status entry is a separate follow-up commit.
+- Implemented option: when the lane diverged from origin, each unpublished lane merge is classified by the pure `IntegrationLaneDivergencePolicy` as contained (ancestor, full tree, or `git cherry` patch-equivalent), superseded (the card's current delivery, read from board provenance, integration records, review subject, or attributed commits, is in origin), or unpublished. Lane merge commits carry no card identity, so card truth comes from the board through `IIntegrationLaneDeliveryLineage`.
+- Nothing unpublished: the old tip is kept under `refs/agent-studio/integration-backup/<branch>/<old-tip>`, the lane is compare-and-swapped to origin, one receipt log line names each dropped commit and why, and the merge continues.
+- Unpublished work remains: the lane is kept and every refused card still fails with `branch-sync-failed`. The `integration-lane-diverged` pipeline health alarm gets one Activity feed entry per hour, and the health snapshot shows the unpublished commits and the blocked cards with their count until a sync succeeds. This alert kind is the signal for the companion stall detection (AGT-3206).
+- Verification: `dotnet build agent-taskboard.sln --no-restore` passed. Focused filters `IntegrationLaneDivergencePolicyTests|MergeIntoDevelopRunnerTests|IntegrationLanePolicyTests|ReviewPlaneGateLogicTests|PipelineHealth|EvidenceFlushStallAlarmTests` (150 tests) and `TaskIntegrationStatusServiceTests|AutoReviewRestartDrillTests|IntegrationLane|AcceptedIntegration|IntegrationWorktree|RemoteDeliveryIntegration|DeliveryRefResolver` (280 tests) passed. The 16 new tests include three temp-repository scenarios: contained, rebased successor, and unrelated push over a real unpublished merge. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests; runner and task-server had no matches. `npm --prefix frontend run lint` passed.
+
 # AGT-3191 Dossier Tag and Created controls status
 
 - Result SHA: `105a681d463311ae47ecbf4fc37f2fda0528b9b3`, rebased from `c4698d51a` onto `origin/develop` at `9d355d1c63a422f1ee76dfb1a2a6c63814e17490` with no merge commit.
