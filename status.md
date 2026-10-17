@@ -44,6 +44,13 @@
 - Protected project labels are restored after digest-wide credential redaction, so a publish detail such as `api_key=value` beside project `secret` is omitted while the project name remains visible. The rebased review input applier calls the shared decision library through `MonolithTransitionAdapter`.
 - Verification: serial `dotnet build agent-taskboard.sln --no-restore` passed; the focused digest, endpoint, evidence reader, gateway and transition boundary filter passed (34 tests); additional review orchestrator filters passed (101 tests); the architecture and guard filter passed in all eight .NET test projects (98 backend tests, no matches in the other seven); `npm --prefix frontend run lint` passed. `git merge-tree --write-tree --name-only origin/develop HEAD` reported no conflict.
 
+# AGT-3211 operator candidate 31 findings status
+
+- Result implementation SHA: `d68bda520bf18e764752ae68553fce5a303fc653`. The delivery branch merges `origin/develop` at `1ffa78fcac5486121538d7ef92a9422a07fcd6f8` to resolve the integration conflict in this file while preserving the implementation commit.
+- Implemented option: compensate template onboarding on request cancellation and delete GitHub repositories with an independent 30-second cleanup token; clear a replacement runner's missing release and reject older drift in either response order; preserve absolute NOOP line numbers after an epoch boundary.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:2 -p:UseSharedCompilation=false` and `npm --prefix frontend run build` passed. The focused `FullyQualifiedName~ProjectRepositoryProvisioningTests|FullyQualifiedName~ReviewDecisionEvidenceReaderTests` filter passed 18 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and found no matches in the other seven .NET test projects. The focused Angular service spec passed 26 tests, the two null-release Playwright cases passed, and `npm --prefix frontend run lint` passed. Screenshot: `results/execution-hosts-missing-release-no-stale-drift.png` in the task results directory.
+- No product documentation update was needed for these scoped bug fixes.
+
 # AGT-3189 board read regression result
 
 - Result implementation SHA: `c261893bc88c0c02eda373189df2669dc9db1456`, rebased from delivery `649255419` onto `origin/develop` at `88f555f1314f0ed1a7b03eff4e1f772975def73d` as one linear commit.

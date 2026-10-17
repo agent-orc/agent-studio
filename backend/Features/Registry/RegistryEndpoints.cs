@@ -337,14 +337,14 @@ public static class RegistryEndpoints
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
                 if (provisioned is not null)
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.Conflict(new { error = ex.Message });
             }
             catch (ArgumentException ex)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
                 if (provisioned is not null)
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.BadRequest(new { error = ex.Message });
             }
             catch (ProjectPersistenceException ex)
@@ -360,7 +360,7 @@ public static class RegistryEndpoints
                     workspaceManagement,
                     loggerFactory);
                 if (provisioned is not null)
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
             }
 
@@ -378,11 +378,12 @@ public static class RegistryEndpoints
                     if (!validation.Green)
                         throw new InvalidOperationException($"Template build failed: {validation.Summary}");
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex)
                 {
                     projectSettings.SetBuildProfile(created.DisplayName, null);
                     CleanupFailedCreate(record, true, projects, workspaceManagement, loggerFactory);
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory, cancellationToken);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
+                    if (ex is OperationCanceledException) throw;
                     return Results.Problem($"Repository setup did not finish: {ex.Message}", statusCode: 500);
                 }
             }
@@ -743,9 +744,10 @@ public static class RegistryEndpoints
 
     private static async Task DeleteProvisionedRepositoryAsync(
         IProjectRepositoryProvisioner provisioner, CreateRepositoryRequest request,
-        ProvisionedRepository repository, ILoggerFactory loggerFactory, CancellationToken cancellationToken)
+        ProvisionedRepository repository, ILoggerFactory loggerFactory)
     {
-        try { await provisioner.DeleteAsync(request, repository.CheckoutPath, cancellationToken); }
+        using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await provisioner.DeleteAsync(request, repository.CheckoutPath, cleanupTimeout.Token); }
         catch (Exception ex)
         {
             loggerFactory.CreateLogger("ProjectCreate").LogCritical(ex,
