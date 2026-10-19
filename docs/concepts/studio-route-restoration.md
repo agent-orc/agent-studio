@@ -64,6 +64,8 @@ such as `AGT-2291`. Values are percent encoded.
 | Activity Feed | `#/feed` | Workspace-wide embedded Feed and its main-navigation state | Project and event filters, selected event, load-distribution period, scroll |
 | Project Board | `#/projects/<project>/board` | Project scope and independent `filters=` segment | Lane collapse, scroll, drag state, selection marquee |
 | Project Deck / Hub section | `#/projects/<project>[/<section>]` | Project Hub and active rail. Missing section means Overview | Rail scroll, expanded navigation groups, fetched panel cache, open dialog |
+| Project Deploy | `#/projects/<project>/deploy` | Deploy area; legacy `deployment` opens Overview, legacy `pipeline` opens Run steps | Selected view, form drafts, scroll |
+| Project Operations | `#/projects/<project>/operations` | Environment health per declared environment and Product Runtime observability; legacy `observability` lands here | Filters, scroll |
 | Wiki Overview | `#/projects/<project>/wiki` | Project Hub, Wiki rail, Wiki landing | Tree expansion, scroll, search draft, hover state |
 | Wiki page | `#/projects/<project>/wiki?page=<relative-path>` | Exact repository-relative Wiki document | Reading scroll, history flyout, editor draft, lightbox |
 | Wiki folder | `#/projects/<project>/wiki?folder=<relative-path>` | Exact Wiki folder overview | Folder scroll, transient selection and hover |
@@ -72,8 +74,7 @@ such as `AGT-2291`. Values are percent encoded.
 | Dossier | `#/projects/<project>/workbenches/<workbench-id>` | Project, exact Dossier, repository HTML artifact | iframe scroll, in-artifact anchor, runtime script state |
 | Task detail | `#/tasks/<task>` | Exact task and default Overview / Result tabs | Pane sizes, visible pane set, maximized pane, edit drafts, open menus, poll cache |
 | Task detail with active tabs | `#/tasks/<task>?view=<detail-tab>:<inspector-tab>` | Exact task, left detail tab (`overview`, `timeline`, `evidence`, `code-review`, `description`) and right inspector tab (`protocol`, `activity`) | Activity subview, selected run, source viewer, splitter positions, composer draft |
-| Epics overview | `#/epics` | Workspace-wide Epics overview | Expanded rows, sort hover, scroll |
-| Project Epics | `#/projects/<project>/epics` | Project-scoped Epics overview | Expanded rows, sort hover, scroll |
+| Legacy Epics overview | `#/epics` or `#/projects/<project>/epics` | Dossiers overview compatibility view | Scroll |
 | Epic detail | `#/epics/<task>` | Exact Epic task through the public task resolver | Expanded child task, pane layout, scroll |
 | Workspace Settings | `#/workspace/settings[/<section>][/<detail>]` | Settings editor tab, active section, and the optional token-provider detail | Unsaved form values, confirmation dialogs, scroll |
 | Project Settings | `#/projects/<project>/settings` | Project Hub and Settings rail | Unsaved form values, nested disclosure state, scroll |
@@ -198,7 +199,7 @@ review screenshots under the managed task's `results/` directory.
 1. **Core:** Wiki page and Dossier routes, including cold reload and copied
    URLs.
 2. **Task detail:** public task path plus both active tab strips.
-3. **Remaining named surfaces:** Board, Hub sections, Epics, and Settings use
+3. **Remaining named surfaces:** Board, Hub sections, Deploy, Operations, and Settings use
    the shared route parser/builder. Diff, activity drilldown, and URL preview
    remain explicit follow-ups.
 

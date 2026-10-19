@@ -6,11 +6,10 @@ import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
 
 /**
  * ASS-658/ASS-597: a project node in the Workspaces Explorer exposes exactly
- * five baseline project-scoped links: "Board" (the kanban), "Deck", "Wiki",
- * "Dossiers", and "Epics" (overview). A catalogue-owned Living Style Guide
+ * six baseline project-scoped links: Board, Dossiers, Deploy, Operations,
+ * Wiki, and Deck. A catalogue-owned Living Style Guide
  * may add one promoted sibling. The retired per-lane children (active /
- * human review / archive) stay gone, and Epics opens scoped to the
- * clicked project rather than the global rollup.
+ * human review / archive) stay gone.
  *
  * Runs against the live backend's project list; short-circuits when the
  * configured board has no projects.
@@ -91,7 +90,7 @@ const DECK_ICON_SCREENSHOTS = process.env['JOB_RESULTS_DIR']
   : path.resolve(__dirname, '..', '..', 'playwright-screenshots', 'deck-icon');
 const LEGACY_DECK_NAME = ['Project', 'Hub'].join(' ');
 
-test.describe('Explorer · project links to Board / Deck / Wiki / Epics', () => {
+test.describe('Explorer · project destinations', () => {
   test('Deck naming is visible in the tree and opened surface in both themes', async ({ page, devBackend }, testInfo) => {
     test.setTimeout(120_000);
     expect(devBackend.port).toBeGreaterThan(0);
@@ -210,19 +209,17 @@ test.describe('Explorer · project links to Board / Deck / Wiki / Epics', () => 
     const { row, name } = expanded;
     const children = row.locator('.studio-tree-children');
 
-    // Five baseline rows plus the catalogue-promoted Style Guide when this
-    // project owns the living standard.
-    const rows = children.locator('.tree-row');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(5);
-    expect(rowCount).toBeLessThanOrEqual(6);
+    // A Dossier can be expanded into nested entries; the six destinations
+    // remain visible regardless of that local disclosure state.
 
     // Each is addressable by its stable testid.
     await expect(page.getByTestId(`studio-explorer-project-board-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-deck-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-wiki-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-workbenches-${name}`)).toBeVisible();
-    await expect(page.getByTestId(`studio-explorer-project-epics-${name}`)).toBeVisible();
+    await expect(page.getByTestId(`studio-explorer-project-deploy-${name}`)).toBeVisible();
+    await expect(page.getByTestId(`studio-explorer-project-operations-${name}`)).toBeVisible();
+    await expect(page.getByTestId(`studio-explorer-project-epics-${name}`)).toHaveCount(0);
 
     // The retired per-lane labels must not appear under the project node.
     const childText = (await children.innerText()).toLowerCase();
@@ -232,7 +229,40 @@ test.describe('Explorer · project links to Board / Deck / Wiki / Epics', () => 
     expect(childText).toContain('board');
     expect(childText).toContain('deck');
     expect(childText).not.toContain('backlog');
-    expect(childText).toContain('epics');
+    expect(childText).not.toContain('epics');
+  });
+
+  test('Deploy and Operations open outside the Deck in both themes', async ({ page, devBackend }) => {
+    expect(devBackend.port).toBeGreaterThan(0);
+    await gotoStudio(page);
+    const expanded = await expandFirstProject(page);
+    if (!expanded) {
+      test.skip(true, 'No projects loaded.');
+      return;
+    }
+    const { name } = expanded;
+    const results = process.env.JOB_RESULTS_DIR;
+    if (results) mkdirSync(results, { recursive: true });
+    // Row tints fade over 120 ms; captures must show the settled active row.
+    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; }' });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId(`studio-explorer-project-deploy-${name}`).click();
+      await expect(page.getByTestId(`studio-explorer-project-deploy-${name}`)).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByTestId('project-deploy-area')).toBeVisible();
+      await expect(page.getByTestId('deploy-tab-steps')).toBeVisible();
+      await expect(page.getByText('Loading environments…')).toHaveCount(0);
+      await expect(page.getByTestId('project-shell-rail-deployment')).toHaveCount(0);
+      if (results) await page.screenshot({ path: path.join(results, `project-deploy-${theme}.png`), animations: 'disabled' });
+      await page.getByTestId(`studio-explorer-project-operations-${name}`).click();
+      await expect(page.getByTestId(`studio-explorer-project-operations-${name}`)).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByTestId(`studio-explorer-project-deploy-${name}`)).not.toHaveAttribute('aria-current', 'page');
+      await expect(page.getByTestId('project-operations-area')).toBeVisible();
+      await expect(page.getByTestId('project-operations-environments')).toBeVisible();
+      await expect(page.getByText('Loading environments…')).toHaveCount(0);
+      await expect(page.getByTestId('project-product-runtime-panel')).toBeVisible();
+      if (results) await page.screenshot({ path: path.join(results, `project-operations-${theme}.png`), animations: 'disabled' });
+    }
   });
 
   test('"Board" opens the project kanban', async ({ page, devBackend }) => {

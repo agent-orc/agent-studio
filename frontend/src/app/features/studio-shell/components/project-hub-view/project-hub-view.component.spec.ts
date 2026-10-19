@@ -77,6 +77,22 @@ describe('ProjectHubViewComponent (smoke)', () => {
     expect(tabState.activeTab()).toEqual({ kind: 'hub', projectName: 'Alpha', section: 'security' });
   });
 
+  it('hosts application runtime observability in Operations', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectHubViewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectHubViewComponent);
+    fixture.componentRef.setInput('projectName', 'Alpha');
+    fixture.componentRef.setInput('initialSection', 'operations');
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="project-operations-area"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="project-product-runtime-panel"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="project-observability-panel"]')).toBeNull();
+  });
+
   it('opens the Wiki rail as a distinct internal destination', async () => {
     window.localStorage?.removeItem('atp.studio.tabs.v1');
     await TestBed.configureTestingModule({

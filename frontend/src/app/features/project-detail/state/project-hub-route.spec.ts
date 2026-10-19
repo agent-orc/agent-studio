@@ -41,6 +41,14 @@ describe('Project Hub URL contract', () => {
     });
   });
 
+  it('resolves the first-class Deploy and Operations project routes', () => {
+    for (const section of ['deploy', 'operations'] as const) {
+      expect(projectHubRoute('PROJ-002', section)).toBe(`/projects/PROJ-002/${section}`);
+      expect(parseProjectHubRoute(`#/projects/PROJ-002/${section}`, PROJECTS)?.section)
+        .toBe(section);
+    }
+  });
+
   it('resolves a canonical Dossier detail under the Project Hub', () => {
     expect(parseProjectHubRoute(
       '#/projects/PROJ-002/workbenches/task-detail-usage-panel', PROJECTS,

@@ -656,20 +656,19 @@ test.describe('Studio route restoration', () => {
     await tabList.screenshot({ path: evidencePath(testInfo, 'wiki-tab-strip-after-middle-click.png') });
   });
 
-  test('workspace and project Epics routes restore scope and survive reload', async ({ page }) => {
+  test('legacy Epics routes open the Dossier overview and survive reload', async ({ page }) => {
     await page.goto('/#/epics', { waitUntil: 'commit' });
-    await expect(page.getByTestId('epic-overview-screen')).toBeVisible();
-    await expect(page.getByTestId('epic-overview-scope')).toHaveCount(0);
+    await expect(page.getByTestId('workbench-overview')).toBeVisible();
+    await expect(page.getByTestId('epic-overview-screen')).toHaveCount(0);
     await page.reload({ waitUntil: 'commit' });
-    await expect(page.getByTestId('epic-overview-screen')).toBeVisible();
+    await expect(page.getByTestId('workbench-overview')).toBeVisible();
 
     await page.goto(`/#/projects/${PROJECT_SLUG}/epics`, { waitUntil: 'commit' });
-    await expect(page.getByTestId('epic-overview-screen')).toBeVisible();
-    await expect(page.getByTestId('epic-overview-scope')).toHaveText(PROJECT);
-    await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/epics');
+    await expect(page.getByTestId('workbench-overview')).toBeVisible();
+    await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
+    await expect(page.getByTestId('epic-overview-screen')).toHaveCount(0);
     await page.reload({ waitUntil: 'commit' });
-    await expect(page.getByTestId('epic-overview-scope')).toHaveText(PROJECT);
+    await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
   });
 
   test('Epic detail route restores the public reference and survives reload', async ({ page }) => {

@@ -18,7 +18,8 @@ test('Deploy area shows the P1 views and preserves review captures in both theme
   const slug = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   await page.goto(`/#/projects/${slug}/deploy`);
   await expect(page.getByTestId('project-deploy-area')).toBeVisible();
-  await expect(page.getByTestId('project-shell-rail-deploy')).toHaveAttribute('aria-current', 'page');
+  // Deploy is a project main item in the Explorer, no longer a Deck rail entry.
+  await expect(page.getByTestId('project-shell-rail-deploy')).toHaveCount(0);
   await expect(page.getByTestId('deploy-environments').locator('article')).toHaveCount(2);
   await expect(page.getByTestId('deploy-environment-production')).toContainText('Newer release available');
   await expect(page.getByTestId('project-deploy-area')).toContainText('Preview data');
@@ -39,6 +40,8 @@ test('Deploy area shows the P1 views and preserves review captures in both theme
       }
     }
   }
+  await page.getByTestId('deploy-tab-steps').click();
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible();
   await page.getByTestId('deploy-tab-overview').click();
   await page.getByRole('button', { name: 'Log', exact: true }).first().click();
   await expect(page.getByTestId('deploy-log-staging')).toContainText('Health check');

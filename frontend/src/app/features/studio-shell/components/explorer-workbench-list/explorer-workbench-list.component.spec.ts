@@ -180,7 +180,7 @@ describe('ExplorerWorkbenchListComponent', () => {
     const root = fixture.nativeElement as HTMLElement;
     const styleGuide = root.querySelector(
       '[data-testid="studio-explorer-project-style-guide-Demo"]') as HTMLButtonElement;
-    expect(component.expanded()).toBe(false);
+    expect(component.expanded()).toBe(true);
     expect(styleGuide.textContent).toContain('Style Guide');
     expect(styleGuide.textContent).not.toContain('AGT-W20');
     expect(component.navTooltip(guide)).toContain(

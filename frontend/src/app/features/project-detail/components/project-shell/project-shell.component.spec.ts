@@ -280,41 +280,13 @@ describe('ProjectShellComponent rail IA', () => {
     expect(railEl(host, 'overview')?.querySelector('.tree-row__chev--placeholder')).toBeTruthy();
   });
 
-  // T5a nav-rebuild step 1: the target navigation gains three reachable
-  // shells (Pipeline / Workflow / Prompts) at project level. Pipeline and
-  // Workflow stay top-level Config rows; Prompts now lives in the Context segment.
-  it('exposes the Pipeline / Workflow shells as reachable Config rows', () => {
+  it('keeps Deployment, Pipeline, and Observability outside the Deck groups', () => {
     const host = mount().nativeElement as HTMLElement;
-    for (const key of ['pipeline', 'workflow']) {
-      const row = railEl(host, key);
-      expect(row, `rail row ${key}`).toBeTruthy();
-      // Top-level points in Config, not nested containers (no twisty).
-      expect(host.querySelector(`[data-testid="project-shell-twisty-${key}"]`)).toBeNull();
+    for (const key of ['deployment', 'pipeline', 'observability']) {
+      expect(railEl(host, key), key).toBeNull();
     }
-  });
-
-  it('clicking a new shell row emits its key', () => {
-    const fixture = mount('overview');
-    const host = fixture.nativeElement as HTMLElement;
-    const emitted: ProjectRailKey[] = [];
-    fixture.componentInstance.railChange.subscribe(k => emitted.push(k));
-
-    railEl(host, 'pipeline')!.click();
-    railEl(host, 'workflow')!.click();
-    railEl(host, 'prompts')!.click();
-    fixture.detectChanges();
-
-    expect(emitted).toEqual(['pipeline', 'workflow', 'prompts']);
-  });
-
-  it('renders the placeholder panel (title + empty hint) for a new shell when active', () => {
-    const host = mount('pipeline').nativeElement as HTMLElement;
-    const panel = host.querySelector('[data-testid="project-shell-panel-pipeline"]');
-    expect(panel).toBeTruthy();
-    expect(host.querySelector('[data-testid="project-shell-panel-title"]')!.textContent)
-      .toContain('Pipeline');
-    expect(host.querySelector('[data-testid="project-shell-panel-empty"]')!.textContent)
-      .toContain('Step 2');
+    expect(railEl(host, 'workflow')).toBeTruthy();
+    expect(railEl(host, 'prompts')).toBeTruthy();
   });
 
   it('clicking a leaf rail emits its key; re-clicking the active rail is a no-op', () => {

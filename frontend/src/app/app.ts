@@ -18,8 +18,6 @@ import {
   BoardFiltersService, ActiveBoardFiltersComponent,
   CreateTaskDialogComponent,
   DossierGroupBoardComponent,
-  EpicOverviewScreenComponent,
-  type EpicOverviewScope,
   FiltersDropdownComponent,
   TaskColumnComponent,
   KanbanFilterSidesheetComponent, TagFiltersComponent, TagChipsComponent,
@@ -205,7 +203,6 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,
     MenuComponent,
-    EpicOverviewScreenComponent,
     StudioShellComponent,
     StudioTabActionsComponent,
     ProjectHubViewComponent,
@@ -1470,42 +1467,6 @@ export class App implements OnInit, OnDestroy {
     this.boardMutations.archiveAllCompleted(this.filteredGrouped().completed);
   }
 
-  /**
-   * Epic overview screen "open epic" / "open sub-task" click. The Epics
-   * overview is a normal editor tab, so navigation opens an inline epic
-   * detail tab and keeps the overview tab in the tab strip.
-   */
-  onEpicOverviewOpenTask(event: { jobId: string; watchPath: string }): void {
-    const requestToken = ++this.relatedOpenToken;
-    this.jobService.getDetail(event.jobId, event.watchPath).subscribe({
-      next: (detail) => {
-        if (requestToken !== this.relatedOpenToken) return;
-        if (detail.info.kind === 'epic') {
-          this.openEpicDetailAsTab(detail);
-          return;
-        }
-        const epic = this.jobService.jobs().find((job) =>
-          job.kind === 'epic' &&
-          job.id === detail.info.epicId &&
-          job.watchPath === detail.info.watchPath
-        );
-        if (!epic) {
-          this.selectFetchedDetail(detail);
-          return;
-        }
-        this.openEpicAsTab(epic, detail.info.taskKey);
-        this.selectEpicTabSubTask(detail);
-      },
-      error: (err) => {
-        if (requestToken !== this.relatedOpenToken) return;
-        this.errorDialog.show(err, {
-          title: 'Failed to open task',
-          source: `task ${event.jobId}`,
-        });
-      },
-    });
-  }
-
   closeStudioTab(tab: StudioTab): void {
     this.studioTabState.close(studioTabKey(tab));
   }
@@ -1612,19 +1573,6 @@ export class App implements OnInit, OnDestroy {
     if (active.length > 0) return active[0];
     const watchPaths = this.watchPaths();
     return watchPaths.length > 0 ? watchPaths[0].name : null;
-  });
-
-  /**
-   * Project the active Epics tab is scoped to. Workspace-wide Epics tabs pass
-   * null, which keeps the overview read-only across projects.
-   */
-  readonly activeEpicScopedProject = computed<EpicOverviewScope | null>(() => {
-    const tab = this.studioTabState.activeTab();
-    if (tab?.kind !== 'epics' || !tab.projectName) return null;
-    const name = tab.projectName;
-    const entry = this.watchPaths().find((wp) => wp.name === name);
-    if (!entry) return null;
-    return { name, watchPath: entry.path };
   });
 
   /**

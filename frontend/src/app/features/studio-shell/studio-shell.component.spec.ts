@@ -641,7 +641,7 @@ describe('StudioShellComponent hub tab label + icon', () => {
     expect(component.tabLabel({ kind: 'board', projectName: 'Agent Software Studio' }))
       .toBe('ASS · Board');
     expect(component.tabLabel({ kind: 'epics', projectName: 'Agent Software Studio' }))
-      .toBe('ASS · Epics');
+      .toBe('ASS · Dossiers');
   });
 
   it('returns the section rail icon for a hub tab and null for other kinds', () => {

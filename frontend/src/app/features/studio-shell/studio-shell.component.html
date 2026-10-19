@@ -167,9 +167,7 @@
       [items]="activityBarItems"
       [activeKey]="activeActivityKey()"
       [badgeCounts]="activityBarBadgeCounts()"
-      [hasEpics]="hasEpics()"
       (panelToggle)="togglePanel($event)"
-      (openEpicsRequest)="onActivityBarOpenEpics()"
       (openWorkbenchesRequest)="openWorkbenches(null)" />
 
     <!-- Sidebar host -->
@@ -249,11 +247,12 @@
                   (toggleExpanded)="toggleProjectExpanded($event)"
                   (openBoardRequest)="openBoard($event)"
                   (openHubRequest)="openHub($event)"
+                  (openDeployRequest)="openProjectArea($event, 'deploy')"
+                  (openOperationsRequest)="openProjectArea($event, 'operations')"
                   (openUrlPreviewRequest)="openUrlPreview($event)"
                   (openWikiRequest)="openWiki($event)"
                   (openWorkbenchesRequest)="openWorkbenches($event)"
                   (openWorkbenchRequest)="openWorkbench($event)"
-                  (openEpicsRequest)="openProjectEpics($event)"
                   (onboardProjectRequest)="onAddProjectToWorkspace($event)"
                   (onboardWorkspaceRequest)="onAddWorkspace()"
                   (renameWorkspace)="onTreeRenameWorkspace($event)"

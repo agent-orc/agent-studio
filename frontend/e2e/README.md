@@ -180,13 +180,8 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `done-decide-escalated-card.spec.ts` | Done & Decide - escalated cards do not look like Done |
 | `effective-model-on-card.spec.ts` | job-card effective model |
 | `effective-model-screenshots.spec.ts` | effective model screenshots |
-| `epic-create-from-empty-state.spec.ts` | Epics empty-state + create dialog (per project) |
 | `epic-detail-editable.spec.ts` | Epic detail: editable title + properties (Edit & Status) |
 | `epic-detail-rollup-board.spec.ts` | Epic detail: rollup board + in-place sub-task swap |
-| `epic-group-board-inline-regression.spec.ts` | Board: epic group inline sub-tasks regression |
-| `epic-group-board.spec.ts` | Board: group by epic |
-| `epic-overview-history.spec.ts` | Epic overview history |
-| `epic-overview-screen.spec.ts` | Epic overview screen |
 | `epic-rollup-tight-viewport.spec.ts` | Epic rollup: tight viewport / resize keeps lanes enclosed and reachable |
 | `execution-location-badge.spec.ts` | shows each concurrent task owner and limits warnings to the stale remote run |
 | `explorer-collapse-screenshots.spec.ts` | F27 visual evidence |
@@ -434,7 +429,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `project-hub-deep-links.spec.ts` | an id-based Project Hub URL survives reload and rail history |
 | `project-hub-nav-ia.spec.ts` | default rail shows four collapsible segments with Agent Docs + Prompts in Context |
 | `project-identity.spec.ts` | Project identity & running prominence |
-| `project-observability-panel.spec.ts` | rail entry opens the observability panel and shows empty state when no bus traffic |
 | `project-overview-cli-environment.spec.ts` | overview is operator-only and settings owns CLI environment details |
 | `project-overview-dashboard.spec.ts` | Project Overview · operator dashboard |
 | `project-product-runtime-panel.spec.ts` | rail entry opens the product runtime panel and shows empty state when no events |
