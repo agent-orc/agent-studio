@@ -227,6 +227,8 @@
           @switch (activePanel()) {
             @case ('explorer') {
               <section class="studio-explorer">
+                <button type="button" class="studio-deployment-entry" data-testid="studio-open-deployment-dashboard"
+                        (click)="openDeploymentDashboard()">Deployment dashboard</button>
                 <!-- F46: two-level workspace → project tree. The flat
                      project list is grouped under its registry workspace
                      by <app-explorer-workspace-tree>; the shell keeps
@@ -493,10 +495,18 @@
           inside the new shell without re-implementing handlers here.
         -->
         <ng-content select="[studioContent]"></ng-content>
+        @if (activeTab()?.kind === 'deployment-dashboard') {
+          <app-workspace-deployment-dashboard
+            [projectNames]="knownProjectNames()"
+            [projectStorageByName]="projectStorageByName()"
+            [workspaces]="registryWorkspaces()"
+            (openDeployment)="openProjectDeployment($event)" />
+        }
         @if (activeTab() === null) {
           <app-studio-welcome
             [projects]="projectRows()"
             (boardOpened)="openBoard($event)"
+            (deploymentDashboardOpened)="openDeploymentDashboard()"
             (chatOpened)="chatToggle.emit()" />
         }
         </div>

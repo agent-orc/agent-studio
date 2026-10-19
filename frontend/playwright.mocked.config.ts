@@ -16,6 +16,7 @@ export default defineConfig({
     testMatch: [
       '**/board/card-state-pill-matches-lane.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
+      '**/workspace/deployment-dashboard.spec.ts',
     ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],

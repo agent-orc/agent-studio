@@ -2087,6 +2087,20 @@
 }
 .studio-projected-content:has(+ app-studio-welcome) { flex: 0 0 auto; min-height: auto; }
 .studio-projected-content + app-studio-welcome { margin-top: var(--studio-spacing-4); }
+.studio-projected-content:has(+ app-workspace-deployment-dashboard) { display: none; }
+app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
+.studio-deployment-entry {
+  width: 100%;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 0;
+  border-bottom: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+  background: var(--studio-bg-surface);
+  text-align: left;
+  cursor: pointer;
+}
+.studio-deployment-entry:hover { background: var(--studio-bg-hover); }
+.studio-deployment-entry:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 
 .studio-chat-rail {
   border-left: 1px solid var(--studio-border);
