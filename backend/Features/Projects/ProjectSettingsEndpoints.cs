@@ -710,15 +710,17 @@ public static class ProjectSettingsEndpoints
             });
         });
 
-        app.MapPut("/api/projects/{projectName}/repository-visibility", (
+        app.MapPut("/api/projects/{projectName}/repository-visibility", async (
             string projectName,
             SetRepositoryVisibilityRequest req,
             ProjectSettingsService settings,
+            ProjectRepositoryVisibilitySync visibilitySync,
             TaskScannerService scanner,
             ProjectRegistry projects,
             GitService git,
             RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            CancellationToken ct) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -728,6 +730,7 @@ public static class ProjectSettingsEndpoints
             if (req.Visibility is not null && normalized is null)
                 return Results.BadRequest(new { error = $"Unsupported repository visibility '{req.Visibility}'" });
 
+            await visibilitySync.SyncAsync(projectName, normalized, ct);
             settings.SetRepositoryVisibility(projectName, normalized);
             // Attempts queued before the flip (WEB-23) must carry the new
             // visibility, or they still reach a host without the credential.
