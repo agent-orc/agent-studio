@@ -12,6 +12,8 @@ export interface EnvironmentSnapshot {
   }[] }[] | null;
   gateHost: string | null;
   gateSlots: { busy: number; total: number } | null;
+  gateWorkers?: readonly { id: string; name: string; slots: number; busy: number; processorCount: number;
+    lastHeartbeat: string; currentRun: string | null }[];
   taskServer?: { version: string; commit: string | null } | null;
   engine: { state: string; lastContact: string | null; engineId: string | null };
 }
@@ -127,7 +129,26 @@ export function buildEnvironmentMap(
         type: 'Git remote', health: group.roles.some(host => host.gitPushStatus === 'ready'
           || host.gitPushStatus === 'ready-no-workflow-scope') ? 'ok' : 'warn' });
   }
-  if (snapshot?.gateHost) {
+  const healthyGateWorkers = (snapshot?.gateWorkers ?? []).filter(worker =>
+    Date.now() - new Date(worker.lastHeartbeat).getTime() < 120_000);
+  for (const worker of snapshot?.gateWorkers ?? []) {
+    const existing = machines.find(machine => machine.name === worker.name);
+    const gateNode: EnvironmentNode = {
+      id: `gate-worker:${worker.id}`, label: 'Gate worker', role: 'gate',
+      health: healthyGateWorkers.includes(worker) ? 'reachable' : 'unreachable',
+      capacity: `${worker.busy}/${worker.slots} slots`,
+      version: unknown, drift: unknown, lastContact: worker.lastHeartbeat,
+      repositoryAccess: access([worker.id, worker.name], inventory, 'gate', worker.name),
+      hostId: worker.id,
+    };
+    if (existing) machines.splice(machines.indexOf(existing), 1,
+      { ...existing, nodes: [...existing.nodes, gateNode] });
+    else machines.push({ id: `gate:${worker.id}`, name: worker.name, nodes: [gateNode] });
+    connections.push({ id: `gate-pull:${worker.id}`, from: existing?.id ?? `gate:${worker.id}`,
+      to: controlId, type: 'outbound claim link',
+      health: healthyGateWorkers.includes(worker) ? 'ok' : 'warn' });
+  }
+  if (snapshot?.gateHost && !healthyGateWorkers.length) {
     const existing = machines.find(machine => machine.name === snapshot.gateHost);
     const gateNode: EnvironmentNode = { id: 'gate', label: 'Gate slots', role: 'gate', health: unknown,
       capacity: snapshot.gateSlots ? `${snapshot.gateSlots.busy}/${snapshot.gateSlots.total} slots` : unknown,

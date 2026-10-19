@@ -370,6 +370,11 @@ public sealed class AccessSecurityMiddleware
             return RunnerScopes.Release;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
+        if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Gate;
+        if (HttpMethods.IsGet(method)
+            && path.StartsWith("/api/gate-artifacts/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Artifacts;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
         // Keep the versioned client surface explicit. A service credential must

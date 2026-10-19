@@ -397,8 +397,10 @@ test.describe('Execution Hosts settings section', () => {
     }));
     await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({
-        gate: { host: 'kori-gate', busy: 1, total: 3, reachability: 'reachable',
-          lastReachedAt: '2026-10-16T08:00:00Z', lastFailureAt: null },
+        gate: { host: 'kori-gate', transport: 'pull', busy: 1, total: 3, reachability: 'reachable',
+          lastReachedAt: '2026-10-16T08:00:00Z', lastFailureAt: null,
+          workers: [{ id: 'gate-1', name: 'kori-gate', slots: 3, busy: 1,
+            lastHeartbeat: '2026-10-16T08:00:00Z', currentRun: 'gate-run-1' }] },
         taskServer: 'local monolith', engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
         workstation: 'operator-workstation',
       }),
@@ -418,6 +420,8 @@ test.describe('Execution Hosts settings section', () => {
       await expect(panel).toBeVisible();
       await expect(page.getByTestId('remote-gate-host')).toContainText('kori-gate');
       await expect(page.getByTestId('remote-gate-host')).toContainText('1 / 3 slots');
+      await expect(page.getByTestId('remote-gate-host')).toContainText('outbound pull worker');
+      await expect(page.getByTestId('pull-gate-worker')).toContainText('current run gate-run-1');
       await expect(page.getByTestId('deployment-identity')).toContainText('not applicable in the local profile');
       await expect(page.getByTestId('deployment-recovery')).toContainText('not applicable in the local profile');
       const statusBar = page.getByTestId('status-bar');

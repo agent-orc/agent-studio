@@ -35,6 +35,7 @@ public static class ManagementEndpoints
             HttpContext context,
             IConfiguration configuration,
             AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
+            AgentStudio.Pipeline.PullGateStore pullGates,
             AgentStudio.Runner.OrchestrationEngineReadiness engine,
             AgentStudio.Runtime.BuildIdentity build) =>
         {
@@ -54,6 +55,7 @@ public static class ManagementEndpoints
                 machines = manifest?.Machines,
                 gateHost = string.IsNullOrWhiteSpace(gateHost) ? null : gateHost,
                 gateSlots = string.IsNullOrWhiteSpace(gateHost) ? null : gateSlots.Snapshot(),
+                gateWorkers = pullGates.Hosts(),
                 taskServer = new { build.Version, build.Commit },
                 engine = new { state = engine.State, lastContact = engine.LastContact, engineId = engine.LastEngineId },
             });

@@ -138,6 +138,14 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its generated GUID directory and sweeps abandoned GUID-named run folders under the fixed OS-temp transport root, never task storage.",
             ["backend/Features/Pipeline/RemoteGateWorker.cs"] =
                 "Deletes only source.git, the private clone inside the transport-created GUID invocation directory, never task storage.",
+            // AGT-3209 pull gate: the store, the Studio-side transport, and the
+            // worker daemon each delete only their own run staging directories.
+            ["backend/Features/Pipeline/PullGateStore.cs"] =
+                "Deletes only a re-claimed run's stale artifacts folder under the pull-gate storage root, never task storage.",
+            ["backend/Features/Pipeline/PullGateTransport.cs"] =
+                "Deletes only its per-run staging directory under the OS-temp agentstudio-pull-gate root, never task storage.",
+            ["backend/Features/Pipeline/PullGateDaemon.cs"] =
+                "Deletes only its per-run directory under the OS-temp agentstudio-pull-gate-worker root after the run, never task storage.",
 
             // Re-added after the structure migration folded the src/ executor
             // projects back into backend/ (the scan covers them again):
