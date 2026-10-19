@@ -487,6 +487,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         http.DefaultRequestHeaders.Add("Cookie",
             $"{AccessSecurityStore.SessionCookieName}={login.SessionToken}");
         http.DefaultRequestHeaders.Add("X-CSRF-Token", login.CsrfToken);
+        http.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
 
         var visible = await http.GetFromJsonAsync<OrchestratorDecisionReceiptSummary[]>(
             "/api/orchestration/decision-receipts?limit=20");

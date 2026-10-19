@@ -113,6 +113,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync("/hubs/jobs/negotiate", null)).StatusCode);
 
         using var browser = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = true });
+        browser.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var bootstrap = await browser.PostAsJsonAsync("/api/auth/bootstrap", new
         {
             username = "first.owner",
@@ -213,6 +214,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     {
         using var factory = BuildFactory("203.0.113.15");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         var status = await client.GetFromJsonAsync<AuthStatusResponse>("/api/auth/status");
         Assert.True(status!.BootstrapCodeRequired);
         var owner = new { username = "first.owner", password = "correct horse battery staple!", displayName = "First Owner" };
@@ -236,6 +238,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         using var wrongHost = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://127.0.0.1") });
         Assert.Equal(HttpStatusCode.BadRequest, (await wrongHost.GetAsync("/healthz")).StatusCode);
         using var loopback = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
+        loopback.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         (await loopback.PostAsJsonAsync("/api/auth/bootstrap", new
         {
             username = "loopback.owner", password = "correct horse battery staple!", displayName = "Loopback Owner"
