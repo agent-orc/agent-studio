@@ -1,0 +1,11 @@
+@use '../project-deploy-area/deploy-shared' as deploy;
+
+:host { display: block; min-width: 0; }
+
+.deploy-overview__head { @include deploy.panel-head; display: block; }
+
+.deploy-overview__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--studio-spacing-4);
+}

@@ -1,40 +1,54 @@
-<div class="deploy-releases" data-testid="deploy-releases">
-  <section class="deploy-section deploy-release-list">
-    <h2>Releases</h2>
-    <p class="deploy-muted">Immutable snapshots from the integration pipeline.</p>
-    @for (release of snapshot().releases; track release.id) {
-      <button type="button" class="deploy-release-row" [attr.aria-current]="selected()?.id === release.id ? 'true' : null" [attr.data-testid]="'deploy-release-' + release.id" (click)="select(release.id)">
-        <strong>{{ release.version }}</strong><span>{{ release.createdAtUtc | date:'medium' }}</span><small>{{ release.cardKeys.join(' · ') }}</small>
-      </button>
+<section class="releases" data-testid="deploy-releases" aria-labelledby="deploy-releases-title">
+  <header class="releases__head">
+    <h2 id="deploy-releases-title">Releases</h2>
+    <p>Immutable snapshots from green integration builds.</p>
+  </header>
+  @switch (panel().status) {
+    @case ('loading') { <app-loading-surface kind="list" label="Loading releases…" /> }
+    @case ('error') {
+      <app-empty-state icon="warn" title="Releases could not be loaded" testid="deploy-releases-error"
+        body="The release service did not answer. Environments and history are unaffected; try Refresh." />
     }
-  </section>
-  @if (selected(); as release) {
-    <article class="deploy-section deploy-release-detail" data-testid="deploy-release-detail">
-      <p class="deploy-eyebrow">{{ release.channel }} channel</p>
-      <h2>Release {{ release.version }}</h2>
-      <p class="deploy-muted">Created {{ release.createdAtUtc | date:'medium' }} · Commit <code>{{ release.commitSha }}</code></p>
-      <div class="deploy-detail-grid">
-        <div><h3>Cards</h3><p>{{ release.cardKeys.join(' · ') || 'No linked cards' }}</p></div>
-        <div><h3>Snapshot</h3><p>Process {{ release.processVersion }}<br>Variables {{ release.variablesVersion }}</p></div>
-      </div>
-      <h3>Artifacts and provenance</h3>
-      <ul>@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code><span> · from commit {{ release.commitSha }}</span></li> }</ul>
-      <h3>Deployments and approvals</h3>
-      <div class="deploy-run-list">
-        @for (environment of snapshot().environments; track environment.environment.id) {
-          <div class="deploy-run">
-            <strong>{{ environment.environment.name }}</strong>
-            @for (deployment of snapshot().deployments; track deployment.id) {
-              @if (deployment.releaseId === release.id && deployment.environmentId === environment.environment.id) {
-                <p>{{ deployment.state }} · {{ deployment.finishedAtUtc | date:'medium' }}</p>
-                <p>Approved by {{ deployment.approvedBy ?? 'Not required' }}</p>
-                <ol>@for (step of deployment.steps; track step.name) { <li>{{ step.name }} · {{ step.state }}</li> }</ol>
-              }
+    @case ('unavailable') {
+      <app-empty-state icon="archive" title="No release records on this server yet" testid="deploy-releases-unavailable"
+        body="Releases appear here once the release service records them. Each green build of the integration branch then becomes a release that pins its commit, artifact digests, process and variable versions, and the cards it contains. Until then the environment cards show the deployed artifact digest." />
+    }
+    @default {
+      @if (releases().length === 0) {
+        <app-empty-state icon="archive" title="No releases yet" testid="deploy-releases-empty"
+          body="The next green build of the integration branch creates the first release." />
+      } @else {
+        <div class="releases__layout">
+          <ul class="releases__list" aria-label="Releases, newest first">
+            @for (release of releases(); track release.id) {
+              <li>
+                <button type="button" class="releases__row" [attr.aria-current]="selected()?.id === release.id ? 'true' : null"
+                        [attr.data-testid]="'deploy-release-' + release.id" (click)="select(release.id)">
+                  <strong>{{ release.version }}</strong>
+                  <span class="releases__numeric">{{ age(release.createdAtUtc) }}</span>
+                  <span class="releases__muted">{{ release.cardKeys.length }} {{ release.cardKeys.length === 1 ? 'card' : 'cards' }} · {{ shortSha(release.commitSha) }}</span>
+                </button>
+              </li>
             }
-            @if (environment.currentRelease?.id !== release.id) { <p class="deploy-muted">Not current in this environment</p> }
-          </div>
-        }
-      </div>
-    </article>
+          </ul>
+          @if (selected(); as release) {
+            <article class="releases__detail" data-testid="deploy-release-detail" aria-labelledby="deploy-release-detail-title">
+              <h3 id="deploy-release-detail-title">Release {{ release.version }}</h3>
+              <dl class="releases__facts">
+                <dt>Created</dt><dd><time [attr.datetime]="release.createdAtUtc">{{ release.createdAtUtc | date:'medium' }}</time></dd>
+                <dt>Commit</dt><dd><code>{{ release.commitSha }}</code></dd>
+                <dt>Channel</dt><dd>{{ release.channel }}</dd>
+                <dt>Process</dt><dd>{{ release.processVersion }}</dd>
+                <dt>Variables</dt><dd>{{ release.variablesVersion }}</dd>
+                <dt>Cards</dt><dd>{{ release.cardKeys.length ? release.cardKeys.join(', ') : 'No linked cards' }}</dd>
+                <dt>Artifacts</dt>
+                <dd><ul class="releases__digests">@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code></li> }</ul></dd>
+                <dt>Running in</dt><dd data-testid="deploy-release-live-in">{{ liveIn().length ? liveIn().join(', ') : 'No environment' }}</dd>
+              </dl>
+            </article>
+          }
+        </div>
+      }
+    }
   }
-</div>
+</section>

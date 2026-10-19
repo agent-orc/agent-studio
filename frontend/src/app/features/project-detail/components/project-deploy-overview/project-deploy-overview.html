@@ -1,52 +1,26 @@
-<div class="deploy-grid" data-testid="deploy-environments">
-  @for (status of snapshot().environments; track status.environment.id) {
-    <article class="deploy-card" [attr.data-health]="status.health" [attr.data-testid]="'deploy-environment-' + status.environment.kind">
-      <header class="deploy-card__header">
-        <div><p class="deploy-eyebrow">{{ status.environment.kind }} environment</p><h2>{{ status.environment.name }}</h2></div>
-        <span class="deploy-badge" [attr.data-health]="status.health">{{ status.health }}</span>
-      </header>
-      <p class="deploy-release">{{ status.currentRelease ? 'Release ' + status.currentRelease.version : 'No release deployed' }}</p>
-      <p class="deploy-muted">{{ age(status) }} · {{ status.currentDeployment?.state ?? 'No deployment' }} · {{ status.currentRelease?.commitSha ?? 'No commit' }}</p>
-      <div class="deploy-card__detail">
-        <h3>Since the last deploy</h3>
-        @if (status.cardsSinceLastDeploy.length) {
-          <p>{{ status.cardsSinceLastDeploy.join(' · ') }}</p>
-        } @else { <p>No cards waiting</p> }
-        @if (status.newerRelease) {
-          <p class="deploy-note">Newer release available: {{ status.newerRelease.version }}</p>
-        }
-      </div>
-      <div class="deploy-actions">
-        <button type="button" disabled [title]="'Available when the deployment API connects'">{{ status.environment.kind === 'production' ? 'Approve and deploy' : 'Deploy' }}</button>
-        <button type="button" disabled title="Available when the deployment API connects">Redeploy</button>
-        <button type="button" disabled title="Available when the deployment API connects">Rollback</button>
-        <button type="button" (click)="toggleLog(status.environment.id)" [attr.aria-expanded]="logEnvironmentId() === status.environment.id"><app-disclosure-marker [open]="logEnvironmentId() === status.environment.id" />Log</button>
-      </div>
-      @if (logEnvironmentId() === status.environment.id && status.currentDeployment; as deployment) {
-        <div class="deploy-log" [attr.data-testid]="'deploy-log-' + status.environment.kind">
-          <h3>Deployment {{ deployment.id }}</h3>
-          <ol>@for (step of deployment.steps; track step.name) {
-            <li><strong>{{ step.name }}</strong> · {{ step.state }} @if (step.logRef) { <code>{{ step.logRef }}</code> }</li>
-          }</ol>
-          <p class="deploy-muted">Full step output is available when the deployment API connects.</p>
+<section class="deploy-overview" data-testid="deploy-environments" aria-labelledby="deploy-environments-title">
+  <header class="deploy-overview__head">
+    <h2 id="deploy-environments-title">Environments</h2>
+    <p>Each card shows what runs there now and how its last deploy ended.</p>
+  </header>
+  @switch (panel().status) {
+    @case ('loading') { <app-loading-surface kind="list" label="Loading environments…" /> }
+    @case ('error') {
+      <app-empty-state icon="warn" title="Environments could not be loaded"
+        body="The environment service did not answer. The other Deploy views still work; try Refresh." testid="deploy-environments-error" />
+    }
+    @default {
+      @if (cards().length) {
+        <div class="deploy-overview__grid">
+          @for (card of cards(); track card.id) {
+            <app-deploy-environment-card [environment]="card" [now]="now()"
+              (openRun)="openRun.emit($event)" (openTools)="openTools.emit()" />
+          }
         </div>
+      } @else {
+        <app-empty-state icon="layout" title="No environments declared" testid="deploy-environments-empty"
+          body="Add one JSON file per environment under docs/deployments/environments/ in the project repository. Each names its kind (stage or production), target host, address, and health URL. Staging and Production then appear here." />
       }
-    </article>
+    }
   }
-</div>
-<div class="deploy-lower">
-  <section class="deploy-section" data-testid="deploy-timeline">
-    <h2>Timeline</h2>
-    <ol class="deploy-timeline">
-      @for (deployment of snapshot().deployments; track deployment.id) {
-        <li><span class="deploy-dot"></span><div><strong>{{ deployment.environmentId.endsWith('staging') ? 'Staging' : 'Production' }} · {{ deployment.state }}</strong><p>{{ deployment.finishedAtUtc | date:'medium' }} · {{ deployment.id }}</p></div></li>
-      }
-    </ol>
-  </section>
-  <section class="deploy-section" data-testid="deploy-waiting-releases">
-    <h2>Waiting releases</h2>
-    <p><strong>{{ snapshot().releases[0].version }}</strong> · Build in progress · {{ snapshot().releases[0].cardKeys.join(', ') }}</p>
-    <button type="button" (click)="openReleases.emit()">View releases</button>
-    <button type="button" (click)="openTools.emit()">Existing deployment tools</button>
-  </section>
-</div>
+</section>

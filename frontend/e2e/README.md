@@ -407,7 +407,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `perf-frontend.spec.ts` | Frontend perceived latency |
 | `perf-stress.spec.ts` | Frontend stress: render perf at scale |
 
-### `project/` - 50 specs
+### `project/` - 51 specs
 
 | Spec | Summary |
 |------|---------|
@@ -416,6 +416,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `nav-level-and-prompt-overrides.spec.ts` | prompt overrides are explicit and filterable in both themes |
 | `nav-rebuild-t5a.spec.ts` | project rail: Pipeline / Workflow / Prompts shells in Config |
 | `nav-rebuild-t5b.spec.ts` | Project Settings no longer hosts the relocated sections |
+| `project-deploy-area.spec.ts` | AGT-3226 · Deploy area on a mocked backend: partial data, status-card focus order, history filters and run drawer, empty states, light and dark captures (mocked) |
 | `ownership-routing.spec.ts` | Project Hub ownership routing |
 | `page-action-bar.spec.ts` | shared page action bar preserves placement, task source, chat context, and page-type icons |
 | `pipeline-cost-timeline.spec.ts` | token usage: pipeline cost-by-step-kind section renders legend + stacked trend |

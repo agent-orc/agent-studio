@@ -1,0 +1,31 @@
+<app-sidesheet eyebrow="Deploy run" [title]="title()" [subtitle]="run().releaseVersion ? 'Release ' + run().releaseVersion : shortArtifact(run().artifact)"
+               testid="deploy-run-drawer" (closeRequest)="closeRequest.emit()">
+  <div body class="run-drawer">
+    <p class="run-drawer__outcome">
+      <span class="run-drawer__badge" [attr.data-tone]="run().outcome" data-testid="deploy-run-outcome">{{ outcomeLabel[run().outcome] }}</span>
+      @if (evidence(); as evidence) { <span>{{ evidence }}</span> }
+    </p>
+    <dl class="run-drawer__facts">
+      <dt>Artifact</dt><dd><code>{{ run().artifact }}</code></dd>
+      <dt>Requested by</dt><dd>{{ run().requestedBy ?? 'Not recorded' }}</dd>
+      <dt>Deploy host</dt><dd>{{ run().hostId ?? 'Not recorded' }}</dd>
+      <dt>Queued</dt><dd><time [attr.datetime]="run().queuedAt">{{ run().queuedAt | date:'medium' }}</time></dd>
+      <dt>Finished</dt><dd>@if (run().finishedAt; as finished) { <time [attr.datetime]="finished">{{ finished | date:'medium' }}</time> } @else { Not finished }</dd>
+      <dt>Duration</dt><dd class="run-drawer__numeric">{{ duration() ?? 'Not finished' }}</dd>
+    </dl>
+    <h3 id="deploy-run-steps-title">Step log</h3>
+    <ol class="run-drawer__steps" aria-labelledby="deploy-run-steps-title" data-testid="deploy-run-steps">
+      @for (step of run().steps; track $index) {
+        <li>
+          <span class="run-drawer__badge" [attr.data-tone]="step.state">{{ outcomeLabel[step.state] }}</span>
+          <div>
+            <strong>{{ step.name }}</strong>
+            @if (step.detail) { <span class="run-drawer__muted">{{ step.detail }}</span> }
+            @if (step.at) { <time class="run-drawer__muted run-drawer__numeric" [attr.datetime]="step.at">{{ step.at | date:'MMM d, HH:mm:ss' }}</time> }
+          </div>
+        </li>
+      }
+    </ol>
+    <p class="run-drawer__muted">The deploy host reports a status code per run; command output is not stored with it.</p>
+  </div>
+</app-sidesheet>

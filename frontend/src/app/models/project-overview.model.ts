@@ -59,6 +59,20 @@ export interface ProjectEnvironmentHistory {
   evidence: string | null;
 }
 
+/** One queued, claimed, or finished host deploy job. */
+export interface ProjectEnvironmentJob {
+  id: string;
+  environmentId: string;
+  hostId: string;
+  artifact: string;
+  previousArtifact: string | null;
+  status: 'queued' | 'claimed' | 'healthy' | 'failed' | string;
+  createdAt: string;
+  claimedAt: string | null;
+  isRollback: boolean;
+  requestedBy: string | null;
+}
+
 export interface ProjectEnvironments {
   project: string;
   environments: {
@@ -75,7 +89,10 @@ export interface ProjectEnvironments {
     stageHealthyAt: string;
     status: string;
     actor: string | null;
+    expiresAt?: string | null;
   }[];
+  /** Host deploy queue (AGT-3176); older servers omit it. */
+  jobs?: ProjectEnvironmentJob[];
   failureCards: {
     environmentId: string;
     artifact: string;

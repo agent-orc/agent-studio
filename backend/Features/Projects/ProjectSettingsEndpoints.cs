@@ -191,6 +191,7 @@ public static class ProjectSettingsEndpoints
             {
                 repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
                 definitionSha256 = read.DefinitionSha256,
+                lifecycle = read.IsValid ? ProjectDeployLifecycleView.From(read.Definition) : null,
                 valid = read.IsValid,
                 issues = read.Issues,
                 preparationWarnings,

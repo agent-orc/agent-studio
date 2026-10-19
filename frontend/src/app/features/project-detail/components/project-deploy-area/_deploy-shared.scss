@@ -1,0 +1,61 @@
+@use '../../../../../styles/mixins' as m;
+
+/* Shared look of the Deploy area panels: Deck panel surface, one heading
+   scale, and outcome / health tones as whole-badge tints (no side stripes). */
+
+@mixin panel {
+  @include m.deck-panel;
+  min-width: 0;
+}
+
+@mixin panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+  margin-bottom: var(--studio-spacing-3);
+
+  h2, h3 { @include m.deck-section-title; }
+  p { @include m.deck-section-desc; }
+}
+
+@mixin muted { color: var(--studio-fg-dim); }
+
+@mixin numeric { font-variant-numeric: tabular-nums; }
+
+@mixin button {
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg);
+  font: inherit;
+  cursor: pointer;
+
+  &:hover { background: var(--studio-bg-hover); }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+}
+
+/* `data-tone` carries the state: succeeded/healthy, failed/unhealthy,
+   running/queued/awaiting-approval, everything else neutral. */
+@mixin tone-badge {
+  @include m.chip(var(--studio-fg-dim));
+  text-transform: none;
+  letter-spacing: 0;
+
+  &[data-tone='succeeded'], &[data-tone='healthy'] { @include m.chip(var(--studio-success)); text-transform: none; letter-spacing: 0; }
+  &[data-tone='failed'], &[data-tone='unhealthy'] { @include m.chip(var(--studio-error)); text-transform: none; letter-spacing: 0; }
+  &[data-tone='running'], &[data-tone='queued'], &[data-tone='awaiting-approval'] {
+    @include m.chip(var(--studio-accent)); text-transform: none; letter-spacing: 0;
+  }
+}
+
+@mixin fact-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  margin: 0;
+
+  dt { color: var(--studio-fg-dim); }
+  dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+}

@@ -1,50 +1,40 @@
+@use 'deploy-shared' as deploy;
+
 :host { display: block; min-width: 0; }
-.deploy-area { padding: var(--studio-spacing-6); color: var(--studio-fg); min-height: 100%; }
+.deploy-area { container-type: inline-size; padding: var(--studio-spacing-6); color: var(--studio-fg); min-height: 100%; }
 .deploy-area__head { display: flex; justify-content: space-between; align-items: start; gap: var(--studio-spacing-5); margin-bottom: var(--studio-spacing-5); }
-.deploy-area h1, .deploy-area h2, .deploy-area h3 { color: var(--studio-fg-strong); margin: 0; }
+.deploy-area h1, .deploy-area h2 { color: var(--studio-fg-strong); margin: 0; }
 .deploy-area h1 { font-size: 2rem; }
 .deploy-area h2 { font-size: 1.25rem; }
-.deploy-area h3 { font-size: 1rem; }
 .deploy-area p { margin: 0; }
 .deploy-eyebrow { color: var(--studio-fg-dim); font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: var(--studio-spacing-2) !important; }
 .deploy-muted { color: var(--studio-fg-dim); }
-.deploy-source { color: var(--studio-fg-dim); background: var(--studio-surface-muted); border: 1px solid var(--studio-border); border-radius: 999px; padding: var(--studio-spacing-2) var(--studio-spacing-3); white-space: nowrap; }
+.deploy-area__refresh { @include deploy.button; }
 .deploy-tabs { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); margin-bottom: var(--studio-spacing-5); }
-.deploy-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--studio-fg); padding: var(--studio-spacing-3) var(--studio-spacing-4); cursor: pointer; }
+.deploy-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--studio-fg); padding: var(--studio-spacing-3); cursor: pointer; font: inherit; }
+.deploy-tabs button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 .deploy-tabs button[aria-current="page"] { color: var(--studio-accent-3-strong); border-bottom-color: var(--studio-accent-3-strong); }
 .deploy-tabs button:disabled { opacity: .5; cursor: default; }
-.deploy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-4); }
-.deploy-card, .deploy-section { border: 1px solid var(--studio-border); border-radius: 12px; background: var(--studio-surface); padding: var(--studio-spacing-5); }
-.deploy-card__header { display: flex; justify-content: space-between; gap: var(--studio-spacing-3); align-items: start; margin-bottom: var(--studio-spacing-4); }
-.deploy-badge { border-radius: 999px; background: var(--studio-surface-muted); color: var(--studio-fg-dim); padding: var(--studio-spacing-1) var(--studio-spacing-3); text-transform: capitalize; }
-.deploy-badge[data-health="healthy"] { background: color-mix(in srgb, var(--studio-success) 12%, var(--studio-surface)); color: var(--studio-success); }
-.deploy-badge[data-health="unhealthy"] { background: color-mix(in srgb, var(--studio-accent-6) 12%, var(--studio-surface)); color: var(--studio-accent-6); }
-.deploy-release { font-size: 1.3rem; font-weight: 700; color: var(--studio-fg-strong); font-variant-numeric: tabular-nums; }
-.deploy-card__detail { margin-top: var(--studio-spacing-5); padding: var(--studio-spacing-4); background: var(--studio-surface-muted); border-radius: 8px; }
-.deploy-card__detail h3 { margin-bottom: var(--studio-spacing-2); }
-.deploy-note { color: var(--studio-accent-3-strong); margin-top: var(--studio-spacing-3) !important; }
-.deploy-actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-5); }
-.deploy-actions button, .deploy-section button:not(.deploy-release-row) { padding: var(--studio-spacing-2) var(--studio-spacing-3); border: 1px solid var(--studio-border-strong); background: var(--studio-surface-muted); color: var(--studio-fg); border-radius: 6px; cursor: pointer; }
-.deploy-actions button:disabled { opacity: .5; cursor: default; }
-.deploy-log { margin-top: var(--studio-spacing-4); padding: var(--studio-spacing-4); background: var(--studio-surface-muted); border-radius: 8px; }
-.deploy-log ol { padding-left: var(--studio-spacing-5); }
-.deploy-lower { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-4); margin-top: var(--studio-spacing-4); }
+
+/* The run drawer pushes the views aside instead of floating over them. */
+.deploy-area__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--studio-spacing-4); align-items: start; }
+.deploy-area__body--drawer { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
+.deploy-area__main { display: flex; flex-direction: column; gap: var(--studio-spacing-4); min-width: 0; }
+.deploy-area__drawer { position: sticky; top: 0; border: 1px solid var(--studio-border); border-radius: 8px; overflow: hidden; }
+.deploy-area__tools-link { color: var(--studio-fg-dim); }
+.deploy-area__link { padding: 0; border: 0; background: none; color: var(--studio-accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.deploy-area__link:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+
+.deploy-section { @include deploy.panel; }
 .deploy-section h2 { margin-bottom: var(--studio-spacing-4); }
-.deploy-timeline { list-style: none; padding: 0; margin: 0; }
-.deploy-timeline li { display: flex; gap: var(--studio-spacing-3); padding: var(--studio-spacing-3) 0; border-bottom: 1px solid var(--studio-border); }
-.deploy-timeline li p { color: var(--studio-fg-dim); }
-.deploy-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--studio-accent-3-strong); margin-top: var(--studio-spacing-2); flex: none; }
-.deploy-releases { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(0, 2fr); gap: var(--studio-spacing-4); }
-.deploy-release-row { display: grid; text-align: left; width: 100%; gap: var(--studio-spacing-1); padding: var(--studio-spacing-3); margin-top: var(--studio-spacing-2); background: transparent; border: 1px solid var(--studio-border); border-radius: 8px; color: var(--studio-fg); cursor: pointer; }
-.deploy-release-row[aria-current="true"] { background: var(--studio-nav-active-bg); border-color: var(--studio-accent-3-strong); }
-.deploy-release-detail h3 { margin-top: var(--studio-spacing-5); margin-bottom: var(--studio-spacing-2); }
-.deploy-detail-grid, .deploy-run-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-4); }
-.deploy-run { background: var(--studio-surface-muted); border-radius: 8px; padding: var(--studio-spacing-4); }
-.deploy-run ol, .deploy-release-detail ul { padding-left: var(--studio-spacing-5); }
-.deploy-flow { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: var(--studio-spacing-3); padding: 0; margin: var(--studio-spacing-5) 0 0; list-style: none; overflow-x: auto; }
-.deploy-flow__stage { position: relative; border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-surface-muted); padding: var(--studio-spacing-4); }
-.deploy-flow__stage:not(:last-child)::after { content: '→'; position: absolute; right: -12px; top: 50%; z-index: 1; color: var(--studio-accent-3-strong); }
-.deploy-flow__number { display: inline-block; color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; margin-bottom: var(--studio-spacing-3); }
-.deploy-flow__stage ol { padding-left: var(--studio-spacing-4); margin-top: var(--studio-spacing-4); }
-.deploy-flow__stage li { margin-bottom: var(--studio-spacing-2); }
-@media (max-width: 900px) { .deploy-grid, .deploy-lower, .deploy-releases { grid-template-columns: 1fr; } .deploy-area { padding: var(--studio-spacing-4); } }
+.deploy-section button { @include deploy.button; margin-bottom: var(--studio-spacing-3); }
+
+/* A narrow Deck pane (1280 px with Explorer and rail open) stacks the drawer above the view. */
+@container (max-width: 960px) {
+  .deploy-area__body--drawer { grid-template-columns: minmax(0, 1fr); }
+  .deploy-area__drawer { position: static; order: -1; }
+}
+
+@media (max-width: 900px) {
+  .deploy-area { padding: var(--studio-spacing-4); }
+}
