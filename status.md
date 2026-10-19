@@ -26,8 +26,11 @@
 
 # AGT-3194 late gate result status
 
-- Fix round from delivery `7cdb87d40`, rebased onto current `origin/develop`. Final result SHA and verification pending.
-- Implemented option: completed or integrated deliveries supersede late gate results and queue budget violations. Acceptance and integration detection cancel queued remote gates.
+- Result implementation SHA: `06debcd2cfc4f77fd054ddc365949ea190645528`. Delivery `0bf8bd17b` was replayed linearly onto `origin/develop` at `9ce339492`, with no merge commit. The 19.10.2026 fence fix follows as its own commit; this status entry is a separate commit on top of it.
+- Implemented option: completed or integrated deliveries supersede late gate results and queue budget violations. Acceptance and integration detection cancel queued remote gates, including a gate that registers after acceptance. The merge runner checks supersession before and inside the publication fence and surfaces a failed rollback as a repairable integration error.
+- 19.10.2026 fix: the fence treated any delivery already on the published integration branch as stale. A batch member that leaves through containment (unattributable, or already published) starts its integration contained and runs the AGT-3103 no-op verification, so its own gate evidence was fenced and it never recorded its containment SHA. Containment now marks a gate result stale only when the attempt did not start contained. The completed-card rule is unchanged. The fix also restores the original line endings of unchanged lines that the earlier delivery had rewritten in four files.
+- New test `MergeIntoDevelopRunnerTests.Delivery_contained_before_the_attempt_is_not_a_stale_gate_result` fails without the fix and passes with it. The existing late-gate tests are kept and share one fixture.
+- Verification (local on agent-runner-01): `dotnet build agent-taskboard.sln --no-restore` passed. The filter `BatchGatePilotServiceTests|MergeIntoDevelopRunnerTests|ReviewDecisionOrchestratorGateCancellationTests|ReviewDecisionOrchestratorCompletionGateTests|AcceptanceIntegrationRoundTripTests` passed all 296 tests, including the three BatchGatePilotServiceTests that had failed. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and matched nothing in the other seven .NET test projects. `npm --prefix frontend run lint` and `git diff --check` passed.
 
 # AGT-3153 release workflow status
 
