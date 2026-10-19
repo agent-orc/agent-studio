@@ -148,7 +148,8 @@ public class CliInvocationCentralizationGuardTests
             DocumentedException
             + "AGT-3214 starts `codex login --device-auth` for an operator-initiated provider sign-in "
             + "on the host. It holds the host provider login lock, is bounded to 15 minutes and never "
-            + "starts an agent run or reads a card."),
+            + "starts an agent run or reads a card. AGT-2373 keeps such bounded login processes outside "
+            + "the execution layer as a permanent non-run process boundary."),
 
         new("runner/RunnerCapabilityProbe.cs",
             DocumentedException
