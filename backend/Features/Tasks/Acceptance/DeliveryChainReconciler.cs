@@ -17,13 +17,11 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     private readonly ILogger<DeliveryChainReconciler> _logger;
     private readonly GateFailureRouter? _gateFailures;
     private readonly AiOperatorDecisionGateway _decisions;
-    private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
 
     public DeliveryChainReconciler(TaskScannerService scanner,
         TaskIntegrationStatusService statuses, TaskTransitionService transitions,
         IConfiguration configuration, ILogger<DeliveryChainReconciler> logger,
-        GateFailureRouter? gateFailures = null, AiOperatorDecisionGateway? decisions = null,
-        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
+        GateFailureRouter? gateFailures = null, AiOperatorDecisionGateway? decisions = null)
     {
         _scanner = scanner;
         _statuses = statuses;
@@ -32,7 +30,6 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         _logger = logger;
         _gateFailures = gateFailures;
         _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
-        _gateCancellation = gateCancellation;
     }
 
     public string Decider => AiOperatorDeciders.DeliveryChain;
@@ -66,8 +63,6 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         foreach (var (card, status, unbounded) in candidates)
         {
             ct.ThrowIfCancellationRequested();
-            if (status?.Status == IntegrationStatuses.Integrated)
-                _gateCancellation?.Cancel(card.ProjectName, card.Id);
             var facts = unbounded with { CompletedReopenLimitReached = completedAlarm };
             var submission = _decisions.Submit(new AiOperatorDecisionRequest(card.ProjectName, card.Id, card.State,
                 new AiOperatorDecisionPayload(Decider, SubjectKey(card, facts), DeliveryChain: facts),

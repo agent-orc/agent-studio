@@ -43,7 +43,6 @@ public sealed class TaskTransitionService
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly AgentStudio.Pipeline.BatchGateStore? _batchGateStore;
     private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
-    private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
     private readonly TimeProvider _time;
     private readonly bool _guardedDelivery;
     private long _resultScaffoldCreatedCount;
@@ -93,8 +92,7 @@ public sealed class TaskTransitionService
         TimeProvider? timeProvider = null,
         IConfiguration? configuration = null,
         AgentStudio.Pipeline.BatchGateStore? batchGateStore = null,
-        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
-        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
+        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null)
     {
         _scanner = scanner;
         _states = states;
@@ -119,7 +117,6 @@ public sealed class TaskTransitionService
         _branchReclaim = branchReclaim;
         _batchGateStore = batchGateStore;
         _failureInterventions = failureInterventions;
-        _gateCancellation = gateCancellation;
         _time = timeProvider ?? TimeProvider.System;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
@@ -757,8 +754,6 @@ public sealed class TaskTransitionService
 
         if (outcome.Status == MoveJobStatus.Success && fromState != targetState)
         {
-            if (targetState == TaskStates.Completed)
-                _gateCancellation?.Cancel(info.ProjectName, info.Id);
             if (TaskModes.IsConcept(info.Mode)
                 && fromState == TaskStates.HumanReview
                 && targetState == TaskStates.Completed)

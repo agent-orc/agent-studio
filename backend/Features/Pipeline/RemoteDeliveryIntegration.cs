@@ -588,8 +588,6 @@ public sealed class RemoteDeliveryIntegrationCoordinator
 
         var job = scanner.FindJob(request.JobId, request.WatchPath);
         if (job is null) return result;
-        if (result.FailureCode == AcceptedIntegrationFailureCodes.StaleAttempt)
-            return result;
         if (result.Outcome.IsFreshMerge()
             && !string.IsNullOrWhiteSpace(result.MergedSha))
         {

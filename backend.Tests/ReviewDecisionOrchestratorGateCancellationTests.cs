@@ -9,85 +9,9 @@ namespace AgentStudio.Tests;
 
 public partial class ReviewDecisionOrchestratorCompletionGateTests
 {
-    [Fact]
-    public void Acceptance_before_gate_registration_cancels_the_queued_gate()
-    {
-        var registry = new TaskGateCancellationRegistry();
-        registry.Cancel("Fixture", "queued");
-
-        using var queuedGate = new CancellationTokenSource();
-        using (registry.Register("Fixture", "queued", queuedGate))
-            Assert.True(queuedGate.IsCancellationRequested);
-
-        using var laterReview = new CancellationTokenSource();
-        using (registry.Register("Fixture", "queued", laterReview))
-            Assert.False(laterReview.IsCancellationRequested);
-    }
-
-    [Fact]
-    public void Acceptance_with_an_active_gate_also_cancels_a_later_registration()
-    {
-        var registry = new TaskGateCancellationRegistry();
-        using var activeGate = new CancellationTokenSource();
-        using var activeRegistration = registry.Register("Fixture", "queued", activeGate);
-
-        registry.Cancel("Fixture", "queued");
-
-        Assert.True(activeGate.IsCancellationRequested);
-        using var queuedGate = new CancellationTokenSource();
-        using (registry.Register("Fixture", "queued", queuedGate))
-            Assert.True(queuedGate.IsCancellationRequested);
-    }
-
     private TaskStateMachine? _cancellationStateMachine;
     private TaskMutationService? _cancellationMutations;
     private TaskScannerService? _cancellationScanner;
-    private TaskTransitionService? _cancellationTransitions;
-
-    [Fact]
-    public async Task Accepted_card_cancels_its_queued_gate()
-    {
-        const string slug = "accept-cancels-gate";
-        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
-        WriteRemoteSubject(slug, new string('a', 40), "accepted");
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var transport = new WaitingTransport(started);
-        var registry = new TaskGateCancellationRegistry();
-        var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 0,
-            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance, registry),
-            new CancellationClock(), gateCancellation: registry);
-        var tick = orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
-        await started.Task;
-        Assert.Equal(MoveJobStatus.Success,
-            _cancellationStateMachine!.MoveJob(slug, TaskStates.HumanReview, _watchPath).Status);
-        var reviewFolder = Path.Combine(_watchPath, TaskStates.HumanReview, slug);
-        TaskJsonFile.UpdateField(reviewFolder, "requiresIntegration", false,
-            NullLogger<TaskTransitionService>.Instance);
-        _cancellationScanner!.InvalidateCache();
-        var accepted = await _cancellationTransitions!.MoveAsync(slug, TaskStates.Completed, _watchPath,
-            cause: "operator:test", reason: "Accepted the reviewed result.", operatorOverride: true);
-        Assert.Equal(MoveJobStatus.Success, accepted.Status);
-        await tick;
-
-        var folder = Path.Combine(_watchPath, TaskStates.Completed, slug);
-        Assert.True(Directory.Exists(folder));
-        Assert.Equal("superseded", Assert.Single(new TimelineLog(NullLogger<TimelineLog>.Instance)
-            .ReadAll(folder), item => item.Kind == "gate-cancelled").Details!["reason"]);
-    }
-
-    private sealed class WaitingTransport(TaskCompletionSource started) : IRemoteGateTransport
-    {
-        public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
-            IReadOnlyList<string>? changedFiles, AgentStudio.Shared.BuildProfile? profile,
-            PostStepMode mode, TimeSpan timeout, CancellationToken ct)
-        {
-            var cancelled = new TaskCompletionSource<BuildTestGateResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            using var registration = ct.Register(() => cancelled.TrySetCanceled(ct));
-            started.SetResult();
-            return await cancelled.Task;
-        }
-    }
 
     [Fact]
     public async Task Completed_aspect_review_for_superseded_delivery_does_not_move_new_run()
@@ -177,10 +101,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             Assert.Contains("Run the queued fix", File.ReadAllText(Path.Combine(folder, "pending-intent.json")));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Late_gate_failure_after_operator_acceptance_records_old_result_without_escalation(bool queueTimeout)
+    [Fact]
+    public async Task Queued_gate_timeout_after_operator_acceptance_records_old_result_without_escalation()
     {
         const string slug = "accepted-queue-timeout";
         SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
@@ -193,15 +115,14 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
                 _cancellationStateMachine!.MoveJob(slug, TaskStates.HumanReview, _watchPath).Status);
             Assert.Equal(MoveJobStatus.Success,
                 _cancellationStateMachine.MoveJob(slug, TaskStates.Completed, _watchPath).Status);
-            return new BuildTestGateResult(BuildTestGateVerdict.Fail, queueTimeout ? null : 1, 0,
-                queueTimeout ? "Gate queue wait budget expired" : "dotnet test failed",
-                queueTimeout ? "queue wait timeout" : "test failure", false, false)
+            return new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+                "Gate queue wait budget expired", "queue wait timeout", false, false)
             {
                 ExpectedSha = request.ExpectedSha,
                 TestedSha = request.ExpectedSha,
                 GateId = request.GateId,
-                FailureKind = queueTimeout ? BuildTestGateFailureKind.Timeout : BuildTestGateFailureKind.Code,
-                GateQueueWaitMs = queueTimeout ? 60_000 : 0,
+                FailureKind = BuildTestGateFailureKind.Timeout,
+                GateQueueWaitMs = 60_000,
             };
         });
         var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 0,
@@ -218,8 +139,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         Assert.Equal(oldSha, receipt.Details!["expectedSha"]);
         Assert.Equal("Fail", receipt.Details["verdict"]);
         Assert.Contains(Directory.EnumerateFiles(Path.Combine(folder, "post-steps"), "build-test-gate-*.log"),
-            file => File.ReadAllText(file).Contains(
-                queueTimeout ? "Gate queue wait budget expired" : "dotnet test failed", StringComparison.Ordinal));
+            file => File.ReadAllText(file).Contains("Gate queue wait budget expired", StringComparison.Ordinal));
     }
 
     [Theory]

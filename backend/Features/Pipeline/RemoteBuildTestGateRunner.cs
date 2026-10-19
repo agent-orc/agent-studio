@@ -40,8 +40,7 @@ public interface IRemoteGateTransport
 /// </summary>
 public sealed class RemoteBuildTestGateRunner(
     IRemoteGateTransport transport,
-    ILogger<RemoteBuildTestGateRunner> logger,
-    TaskGateCancellationRegistry? cancellationRegistry = null) : IBuildTestGateRunner
+    ILogger<RemoteBuildTestGateRunner> logger) : IBuildTestGateRunner
 {
     internal const int MaxTransportAttempts = 3;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -60,9 +59,6 @@ public sealed class RemoteBuildTestGateRunner(
         if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromHours(12))
             return Failure(request, BuildTestGateFailureKind.Environment,
                 "Remote verification requires a positive run budget of at most 12 hours.");
-        using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        using var registration = cancellationRegistry?.Register(request.Project, request.JobId, gateCancellation);
-        ct = gateCancellation.Token;
         var started = Stopwatch.StartNew();
         for (var attempt = 1; attempt <= MaxTransportAttempts; attempt++)
         {
