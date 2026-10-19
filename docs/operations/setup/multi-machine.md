@@ -160,9 +160,13 @@ The default `reverse-tunnel` route registers and starts a keeper task named
 `AgentRunner-TunnelKeeper-<host-name>` for each Linux host. Each task has its
 own state directory and forwards that host's loopback port 15031 to Windows
 Task Server port 5071. Issuing a token for another host leaves the earlier
-host's task and SSH target intact. SSH access to the Linux host must already
-work under the selected Windows account; use `--ssh-target HOST` when its SSH
-alias differs. For a private LAN address or public URL, pass
+host's task, mutex, and SSH target intact. By default, the SSH target is the
+`--runner-name` value, so configure each host name as a resolvable SSH target
+under the selected Windows account. Use `--ssh-target HOST` or
+`--ssh-target USER@HOST` when its SSH alias differs. Each host uses remote
+port 15031 on its own machine. Use `--remote-port PORT` to change a reverse
+tunnel's Linux loopback port; the join token and keeper then use the same
+port. For a private LAN address or public URL, pass
 `--route lan --server-url https://LAN-NAME:PORT` or
 `--route https --server-url https://PUBLIC-NAME`. Those routes require a
 certificate trusted by the Linux host. The host installer probes the selected
