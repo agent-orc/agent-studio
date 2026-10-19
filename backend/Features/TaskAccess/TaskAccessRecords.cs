@@ -72,6 +72,7 @@ public record TaskTransitionRequest
     public string? TransitionCause { get; init; }
     /// <summary>Short qualifier for <see cref="TransitionCause"/>.</summary>
     public string? TransitionDetail { get; init; }
+    public string? ExpectedSourceState { get; init; }
     public TaskAccessVersion? ExpectedVersion { get; init; }
 }
 
