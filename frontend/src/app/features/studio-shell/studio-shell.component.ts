@@ -152,7 +152,7 @@ export class StudioShellComponent {
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
   private readonly projectLookup = inject(ProjectLookupService);
   private readonly themeService = inject(ThemeService);
-  private readonly orchestratorFeed = inject(OrchestratorFeedStore);
+  readonly orchestratorFeed = inject(OrchestratorFeedStore);
 
   /** Tab list + active selection re-exposed for the template. */
   readonly tabs = this.tabState.tabs;

@@ -1070,6 +1070,7 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.IntegrationFailureRepetitionProbe>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.TaskLaneIntegrationContradictionProbe>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.QuotaProbeSignalProbe>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.OperationalStallProbe>();
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());

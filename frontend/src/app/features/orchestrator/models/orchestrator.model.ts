@@ -27,6 +27,15 @@ export interface OrchestratorLogEntry {
   topic: string;
   summary: string;
   reasoning?: string | null;
+  stall?: {
+    subject: string;
+    severity: string;
+    sinceUtc: string | null;
+    blockedCount: number;
+    affectedCards: string[];
+    suggestedAction: string | null;
+    evidence: Record<string, string>;
+  } | null;
   jobId?: string | null;
   commandId?: string | null;
   attemptId?: string | null;
@@ -56,6 +65,18 @@ export interface OrchestratorLogResponse {
 
 export interface GlobalOrchestratorFeedResponse {
   entries: OrchestratorLogEntry[];
+}
+
+export interface OperationalStallCase {
+  id: string;
+  project: string;
+  subject: string;
+  severity: string;
+  sinceUtc?: string | null;
+  lastSummary?: string;
+  blockedCount?: number;
+  suggestedAction?: string | null;
+  affectedCards: string[];
 }
 
 export interface OrchestratorSession {
