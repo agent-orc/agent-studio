@@ -61,6 +61,20 @@ public static class MonolithTransitionAdapter
     public static BatchPlanStep BatchPlan(BatchPlanFacts facts)
         => BatchPlanDecisionPolicy.Decide(facts);
 
+    public static GateQueueOverrunAction GateQueueOverrun(string? budgetName, string? budgetPhase,
+        string? lane, bool currentGeneration)
+        => GateQueueStallPolicy.Decide(budgetName, budgetPhase, lane, currentGeneration);
+
+    public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
+
+    public static bool GateQueueStallRaisesEvent(bool episodeOpen) => GateQueueStallPolicy.RaisesStallEvent(episodeOpen);
+
+    public static bool GateQueueEpisodeDrained(int queueDepth) => GateQueueStallPolicy.EpisodeDrained(queueDepth);
+
+    public static bool GateQueueStallReleasable(string? lane, string? budgetName, string? budgetPhase,
+        bool currentGeneration, bool reviewPassed)
+        => GateQueueStallPolicy.Releasable(lane, budgetName, budgetPhase, currentGeneration, reviewPassed);
+
     public static RemoteReviewContinuationStep ContinuationReplay(IEnumerable<RoundTimelineFact> ledger,
         string attemptId, string cause, string moveKey, string currentState)
         => ContinuationReplayPolicy.Decide(ledger, attemptId, cause, moveKey, currentState);

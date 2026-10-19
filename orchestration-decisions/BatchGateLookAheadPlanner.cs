@@ -5,6 +5,9 @@ namespace AgentStudio.OrchestrationDecisions;
 /// <summary>Pure batch membership and wait decision. Risk is the chance a card adds a red gate.</summary>
 public static class BatchGateLookAheadPlanner
 {
+    /// <summary>Reason of a batch closed instead of a per-task gate because the gate queue is backlogged.</summary>
+    public const string BacklogReason = "gate backlog: batch preferred over a per-task gate";
+
     public static BatchPlanDecision Plan(BatchPlanInput input)
     {
         var waiting = input.Waiting.OrderBy(card => card.ReadyAtUtc)
@@ -38,6 +41,13 @@ public static class BatchGateLookAheadPlanner
         var urgent = waiting.Any(card => card.Tags.Any(tag => input.UrgentTags.Contains(tag,
             StringComparer.OrdinalIgnoreCase)));
         var highRisk = waiting[0].Risk >= riskLimit;
+        // AGT-3219: behind a gate backlog a per-task gate only joins the slot
+        // queue and can overrun its wait budget. A batch of the other cards
+        // drains more of the queue per slot run.
+        if (highRisk && input.GateBacklog && candidates.Length >= input.MinimumSize)
+            return new("close", BacklogReason, null,
+                candidates.Take(Math.Max(input.MinimumSize, target)).Select(card => card.TaskKey).ToArray(),
+                target, upcoming);
         if (highRisk)
             return new("per-task", "oldest card exceeds batch risk limit", null,
                 [oldest.TaskKey], 1, upcoming);
@@ -50,6 +60,9 @@ public static class BatchGateLookAheadPlanner
             && candidates.Length < target && !input.IdleGateHost)
             return new("wait", "waiting for target size or deadline",
                 closeAt, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
+        if (candidates.Length < input.MinimumSize && input.GateBacklog && due && !input.CloseNow)
+            return new("wait", "gate backlog: waiting for a batch partner instead of a per-task gate",
+                arriving.First().ReadyAtUtc, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
         if (candidates.Length < input.MinimumSize)
             return new("per-task", "close condition reached below minimum batch size",
                 null, [oldest.TaskKey], input.MinimumSize, upcoming);

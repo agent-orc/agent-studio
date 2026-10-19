@@ -304,6 +304,28 @@ and the service waits for a running pass when it stops. It also clears wait
 markers that name a cancelled occurrence or a completed one without an active
 choice, and rereads the occurrence after each marker write.
 
+`GateQueueStallPolicy` (AGT-3219) decides what a per-task batch gate result
+does when its budget ran out. Only a `machine-gate-queue` budget spent in the
+`queue` phase, for the current review of a card in Auto Review, is requeued:
+the request never held a slot, so the card stays in Auto Review, a queued
+member keeps its pending record and sequence, and an emergency gate is admitted
+to the batch queue when the batch accepts it (otherwise its per-task marker
+stays active with a fresh start budget, so the admission retry resumes it). An
+execution-phase overrun keeps its escalation. The batch pilot raises one
+`GateQueueStallEvent` per queue episode (queue depth, oldest wait, busy and
+total slots, estimated drain time, idle configured slots and an advisory) into
+the batch store and the operator feed; the episode ends when the queue drains.
+`Assess` marks the queue backlogged when the slots in use cannot drain it inside
+one request's queue budget. Both planners then prefer a batch: the look-ahead
+planner closes the other cards instead of a per-task gate for a high-risk
+oldest card and waits for a due partner instead of a lone per-task gate, and
+the threshold planner closes at pressure size and holds a lone card while
+reviews are pending. Configured but unused gate slots are only reported as an
+advisory; host capacity never changes. `Releasable` lets one operator action
+(`POST /api/projects/{project}/batch-gate/queue-stalls/release`, offered in the
+escalation summary) return every card an earlier build escalated for a queue
+overrun to Auto Review and the batch queue.
+
 ## Verification and architecture guard
 
 `TransitionDecisionGoldenTests` runs the same review and sweep table through all
