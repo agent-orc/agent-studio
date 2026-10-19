@@ -304,6 +304,20 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
+    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken)
+    {
+        if (string.IsNullOrWhiteSpace(project) || project is "." or ".." || project.IndexOfAny(['/', '\\', '\0']) >= 0)
+            return null;
+        lock (_gate)
+        {
+            var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+                && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
+                    System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
+            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime.AddMinutes(-5) ? null : job;
+        }
+    }
+
     public bool Report(string project, string jobId, DeployReportRequest report)
     {
         lock (_gate)

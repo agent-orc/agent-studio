@@ -337,6 +337,12 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
+builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretAuditLog>();
+builder.Services.AddSingleton<SecretValueScrubber>();
+builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
 builder.Services.AddSingleton<IRunnerLinkProcessLauncher, RunnerLinkProcessLauncher>();

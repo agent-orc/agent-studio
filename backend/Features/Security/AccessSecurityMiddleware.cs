@@ -159,6 +159,15 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // Secret values go only to a service credential; the endpoint binds it
+        // to a live deploy-job or run lease and checks the matching scope.
+        if (path.Equals(AgentStudio.Secrets.SecretEndpoints.ResolvePath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
+            await _next(context);
+            return;
+        }
+
         // Core-attach aliases are applied before this middleware. Check the
         // original versioned route as a fallback so only those client reads
         // gain a Runner scope, not other legacy /api/tasks/{id} reads.
