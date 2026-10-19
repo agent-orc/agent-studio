@@ -402,6 +402,7 @@ builder.Services.AddHttpClient("project-url-preview", client =>
     AllowAutoRedirect = false,
     UseCookies = false,
 });
+builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlPreviewAccess>();
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskKeyResolver>();
 builder.Services.AddSingleton<ScreenshotIndexService>();
 // F21: per-project write mutex for the lane tree. Must be registered

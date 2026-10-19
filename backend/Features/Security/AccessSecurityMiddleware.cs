@@ -18,6 +18,7 @@ public sealed class AccessSecurityMiddleware
     private readonly AgentStudio.Registry.ProjectRegistry? _projects;
     private readonly TimelineLog? _timeline;
     private readonly TimeProvider _clock;
+    private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -27,7 +28,8 @@ public sealed class AccessSecurityMiddleware
         RunLeaseService? leases = null,
         AgentStudio.Registry.ProjectRegistry? projects = null,
         TimelineLog? timeline = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null)
     {
         _next = next;
         _configuration = configuration;
@@ -37,6 +39,7 @@ public sealed class AccessSecurityMiddleware
         _projects = projects;
         _timeline = timeline;
         _clock = clock ?? TimeProvider.System;
+        _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -82,6 +85,21 @@ public sealed class AccessSecurityMiddleware
         if (!context.Request.IsHttps)
         {
             await Reject(context, 426, "https-required", "HTTPS is required for the networked profile.");
+            return;
+        }
+
+        // Module fetches from a CSP-sandboxed document have an opaque origin
+        // and omit Studio's SameSite session cookie. The URL capability grants
+        // only a GET under the registered preview asset route.
+        if (_previewAccess.AllowsAssetRequest(context.Request))
+        {
+            await _next(context);
+            return;
+        }
+        if (context.Request.Headers.Origin == "null"
+            && path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            await Reject(context, 403, "opaque-origin-denied", "An opaque origin cannot access Studio APIs.");
             return;
         }
 
