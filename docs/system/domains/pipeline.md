@@ -914,9 +914,12 @@ comparison before Quality Studio's verdict contract can decide a review.
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
   synchronization drops only lane merges whose delivery is already on origin
-  by ancestry or patch equality.
-  It restarts the lane at origin when every lane merge is published; otherwise
-  it refuses and names the unpublished merges. Before a legacy acceptance
+  by ancestry, tree, or patch equality, or that a newer published delivery of
+  the same card superseded (AGT-3215, `IntegrationLaneDivergencePolicy`).
+  It backs the old tip up under `refs/agent-studio/integration-backup/` and
+  restarts the lane at origin when nothing unpublished remains; otherwise it
+  refuses, names the unpublished merges, and raises the
+  `integration-lane-diverged` pipeline health alarm with the blocked cards. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
   checks the card's delivery there. It resolves that delivery from the review
   subject, card attribution, or local task branch, including local deliveries
