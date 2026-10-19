@@ -179,7 +179,7 @@ public sealed class TelemetryOtlpDecodingTests
     [Fact]
     public void Limits_truncate_bodies_and_values_and_cap_attribute_count()
     {
-        var factory = new OtlpRecordFactory(new OtlpLimits(MaxAttributes: 2, MaxAttributeValueChars: 4, MaxBodyChars: 5), Received);
+        var factory = new OtlpRecordFactory(Limits with { MaxAttributes = 2, MaxAttributeValueChars = 4, MaxBodyChars = 5 }, Received);
         const string body = """
             {"resourceLogs":[{"resource":{"attributes":[{"key":"a","value":{"stringValue":"123456"}}]},
               "scopeLogs":[{"logRecords":[{"body":{"stringValue":"abcdefgh"},
@@ -190,6 +190,127 @@ public sealed class TelemetryOtlpDecodingTests
 
         Assert.Equal("abcde…", log.Body);
         Assert.Equal(new Dictionary<string, string> { ["a"] = "1234…", ["b"] = "x" }, log.Attributes.Values);
+    }
+
+    [Fact]
+    public void Records_without_own_attributes_share_one_set_per_resource_and_scope()
+    {
+        const string body = """
+            {"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"shop-api"}}]},
+              "scopeLogs":[{"scope":{"name":"a"},"logRecords":[{"body":{"stringValue":"1"}},{"body":{"stringValue":"2"}},
+                  {"body":{"stringValue":"3"},"attributes":[{"key":"order.id","value":{"intValue":"7"}}]}]},
+                {"scope":{"name":"b"},"logRecords":[{"body":{"stringValue":"4"}}]}]}]}
+            """;
+
+        var logs = OtlpJsonDecoder.DecodeLogs(Encoding.UTF8.GetBytes(body), Factory()).Items;
+
+        Assert.Same(logs[0].Attributes, logs[1].Attributes);
+        Assert.True(logs[0].Attributes.IsShared);
+        Assert.False(logs[2].Attributes.IsShared);
+        Assert.Equal(new Dictionary<string, string>
+        {
+            ["order.id"] = "7", ["otel.scope.name"] = "a", ["service.name"] = "shop-api"
+        }, logs[2].Attributes.Values);
+        // The merged set refers to the strings of the shared set instead of copying them.
+        Assert.Same(logs[0].Attributes.Items[1].Value, logs[2].Attributes.Items[2].Value);
+        Assert.NotSame(logs[0].Attributes, logs[3].Attributes);
+        Assert.Equal("b", logs[3].Attributes.Values["otel.scope.name"]);
+    }
+
+    [Fact]
+    public void Attribute_byte_budget_caps_the_merged_set_and_lets_replacements_fit()
+    {
+        var factory = new OtlpRecordFactory(Limits with { MaxAttributeBytes = 20 }, Received);
+        const string body = """
+            {"resourceLogs":[{"resource":{"attributes":[{"key":"a","value":{"stringValue":"1234567890"}}]},
+              "scopeLogs":[{"logRecords":[
+                {"attributes":[{"key":"b","value":{"stringValue":"123456789"}},{"key":"c","value":{"stringValue":"1234"}}]},
+                {"attributes":[{"key":"a","value":{"stringValue":"x"}},{"key":"b","value":{"stringValue":"123456789"}}]}]}]}]}
+            """;
+
+        var logs = OtlpJsonDecoder.DecodeLogs(Encoding.UTF8.GetBytes(body), factory).Items;
+
+        // a (11 bytes) plus b (10) would pass 20 bytes, so b is dropped and c (5) still fits.
+        Assert.Equal(new Dictionary<string, string> { ["a"] = "1234567890", ["c"] = "1234" }, logs[0].Attributes.Values);
+        Assert.Equal(new Dictionary<string, string> { ["a"] = "x", ["b"] = "123456789" }, logs[1].Attributes.Values);
+    }
+
+    [Fact]
+    public void Record_cap_stops_decoding_at_the_first_record_past_the_limit()
+    {
+        var capped = Limits with { MaxRecords = 3 };
+
+        Assert.Equal(3, OtlpProtobufDecoder.DecodeMetrics(PointFlood(points: 3, resourceAttributes: 0), new OtlpRecordFactory(capped, Received)).Items.Count);
+        var error = Assert.Throws<OtlpLimitException>(()
+            => OtlpProtobufDecoder.DecodeMetrics(PointFlood(points: 4, resourceAttributes: 0), new OtlpRecordFactory(capped, Received)));
+        Assert.Contains("more than 3 data points or log records", error.Message);
+        var logs = "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{},{},{},{}]}]}]}";
+        Assert.Throws<OtlpLimitException>(() => OtlpJsonDecoder.DecodeLogs(Encoding.UTF8.GetBytes(logs), new OtlpRecordFactory(capped, Received)));
+    }
+
+    [Fact]
+    public void Amplified_body_stops_at_a_request_cap_long_before_it_is_fully_decoded()
+    {
+        // 128 resource attributes of 1000 characters, then 350,000 points that each bring one attribute:
+        // the shape that used to build one full attribute dictionary per point and allocate gigabytes.
+        var body = PointFlood(points: 350_000, resourceAttributes: 128);
+        Assert.True(body.Length < new TelemetryOptions().MaxRequestBytes);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Throws<OtlpLimitException>(() => OtlpProtobufDecoder.DecodeMetrics(body, Factory()));
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.True(allocated < 256L * 1024 * 1024, $"decoding allocated {allocated} bytes before it stopped");
+    }
+
+    [Fact]
+    public void Memory_cap_stops_decoding_when_records_carry_wide_attributes()
+    {
+        var factory = new OtlpRecordFactory(Limits with { MaxDecodedBytes = 1024 * 1024 }, Received);
+
+        var error = Assert.Throws<OtlpLimitException>(() => OtlpProtobufDecoder.DecodeMetrics(WideAttributeFlood(points: 5_000), factory));
+
+        Assert.Contains("bytes of memory", error.Message);
+    }
+
+    /// <summary>
+    /// ExportMetricsServiceRequest with one resource of <paramref name="resourceAttributes"/> wide
+    /// attributes and one gauge of <paramref name="points"/> points, each with the attribute k=v.
+    /// </summary>
+    internal static byte[] PointFlood(int points, int resourceAttributes)
+    {
+        var resource = new MemoryStream();
+        for (var index = 0; index < resourceAttributes; index++)
+            resource.Write(Field(1, KeyValue("resource." + index, new string('x', 1000))));
+        byte[] point = Field(1, [.. Field(7, KeyValue("k", "v")), 0x21, .. BitConverter.GetBytes(1.5d)]);
+        var gauge = new MemoryStream();
+        for (var index = 0; index < points; index++) gauge.Write(point);
+        byte[] metric = [.. Text(1, "flood"), .. Field(5, gauge.ToArray())];
+        byte[] resourceMetrics = [.. Field(1, resource.ToArray()), .. Field(2, Field(2, metric))];
+        return Field(1, resourceMetrics);
+    }
+
+    /// <summary>One gauge whose points each carry a 1000-character attribute of their own.</summary>
+    private static byte[] WideAttributeFlood(int points)
+    {
+        var gauge = new MemoryStream();
+        for (var index = 0; index < points; index++)
+            gauge.Write(Field(1, [.. Field(7, KeyValue("wide", new string('w', 1000))), 0x21, .. BitConverter.GetBytes(1.5d)]));
+        return Field(1, Field(2, Field(2, [.. Text(1, "wide"), .. Field(5, gauge.ToArray())])));
+    }
+
+    private static byte[] KeyValue(string key, string value) => [.. Text(1, key), .. Field(2, Text(1, value))];
+
+    private static byte[] Text(int field, string value) => Field(field, Encoding.UTF8.GetBytes(value));
+
+    private static byte[] Field(int field, byte[] payload) => [.. Varint((ulong)field << 3 | 2), .. Varint((ulong)payload.Length), .. payload];
+
+    private static byte[] Varint(ulong value)
+    {
+        var bytes = new List<byte>();
+        for (; value >= 0x80; value >>= 7) bytes.Add((byte)(value | 0x80));
+        bytes.Add((byte)value);
+        return [.. bytes];
     }
 
     private static OtlpRecordFactory Factory() => new(Limits, Received);

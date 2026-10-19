@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text;
 using System.Text.Json;
 
 namespace AgentStudio.Telemetry;
@@ -16,35 +18,88 @@ public enum MetricTemporality { Unspecified = 0, Delta = 1, Cumulative = 2 }
 /// <summary>
 /// Attribute set with string values, sorted by key. OTLP values of other types
 /// are rendered as text so that series identity and attribute filters compare
-/// one representation.
+/// one representation. The set is an immutable array of key-value references:
+/// a record without attributes of its own shares the set of its resource and
+/// scope (<see cref="IsShared"/>), and a record with its own attributes refers
+/// to the same strings. Only shared sets cache their JSON text, so a queued
+/// batch never holds one JSON text per record.
 /// </summary>
 public sealed class TelemetryAttributes
 {
-    public static readonly TelemetryAttributes Empty = new(new SortedDictionary<string, string>(StringComparer.Ordinal));
+    public static readonly TelemetryAttributes Empty = new([], shared: true);
 
-    private readonly SortedDictionary<string, string> _values;
+    private readonly KeyValuePair<string, string>[] _items;
     private string? _json;
 
-    private TelemetryAttributes(SortedDictionary<string, string> values) => _values = values;
+    private TelemetryAttributes(KeyValuePair<string, string>[] items, bool shared)
+    {
+        _items = items;
+        IsShared = shared;
+    }
 
-    public IReadOnlyDictionary<string, string> Values => _values;
+    /// <summary>True for the resource and scope set that many records refer to.</summary>
+    public bool IsShared { get; }
+
+    public int Count => _items.Length;
+
+    /// <summary>Entries in ordinal key order.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> Items => _items;
+
+    /// <summary>A sorted copy for queries and tests; the set itself keeps no dictionary.</summary>
+    public IReadOnlyDictionary<string, string> Values
+    {
+        get
+        {
+            var values = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (key, value) in _items) values[key] = value;
+            return values;
+        }
+    }
 
     /// <summary>Canonical JSON object; equal sets have equal text.</summary>
-    public string Json => _json ??= JsonSerializer.Serialize(_values);
+    public string Json => IsShared ? _json ??= Render() : Render();
 
-    public static TelemetryAttributes From(IEnumerable<KeyValuePair<string, string>> values)
+    public static TelemetryAttributes From(IEnumerable<KeyValuePair<string, string>> values, bool shared = false)
     {
-        var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (key, value) in values) sorted[key] = value;
-        return new(sorted);
+        var unique = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in values) unique[key] = value;
+        var items = unique.ToArray();
+        Array.Sort(items, (left, right) => string.CompareOrdinal(left.Key, right.Key));
+        return new(items, shared);
     }
 
     public static TelemetryAttributes ParseJson(string json)
         => From(JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? []);
 
-    /// <summary>Applies <paramref name="map"/> to every value, for masking before storage.</summary>
+    /// <summary>
+    /// Applies <paramref name="map"/> to every value, for masking before storage.
+    /// A set whose values do not change is returned as it is, so sharing survives.
+    /// </summary>
     public TelemetryAttributes MapValues(Func<string, string> map)
-        => From(_values.Select(item => KeyValuePair.Create(item.Key, map(item.Value))));
+    {
+        KeyValuePair<string, string>[]? mapped = null;
+        for (var index = 0; index < _items.Length; index++)
+        {
+            var (key, value) = _items[index];
+            var result = map(value);
+            if (mapped is null && string.Equals(result, value, StringComparison.Ordinal)) continue;
+            mapped ??= (KeyValuePair<string, string>[])_items.Clone();
+            mapped[index] = KeyValuePair.Create(key, result);
+        }
+        return mapped is null ? this : new(mapped, IsShared);
+    }
+
+    private string Render()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            foreach (var (key, value) in _items) writer.WriteString(key, value);
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
 }
 
 /// <summary>
@@ -61,12 +116,16 @@ public sealed record TelemetryLogRecord(
     long TimeUnixNano, int SeverityNumber, string SeverityText, string Body,
     TelemetryAttributes Attributes, string? TraceId, string? SpanId, string? EventName);
 
-/// <summary>What one OTLP request produced: accepted items plus a count of rejected ones.</summary>
-public sealed record OtlpDecodeResult<T>(IReadOnlyList<T> Items, long Rejected, string? RejectionMessage);
+/// <summary>
+/// What one OTLP request produced: accepted items, a count of rejected ones,
+/// and the estimated memory the items hold (see <see cref="OtlpRecordFactory"/>).
+/// </summary>
+public sealed record OtlpDecodeResult<T>(IReadOnlyList<T> Items, long Rejected, string? RejectionMessage, long EstimatedBytes = 0);
 
 /// <summary>One accepted request, waiting for the background writer.</summary>
 public sealed record TelemetryIngestBatch(
-    TelemetryEnvironmentKey Environment, IReadOnlyList<MetricSample> Metrics, IReadOnlyList<TelemetryLogRecord> Logs)
+    TelemetryEnvironmentKey Environment, IReadOnlyList<MetricSample> Metrics, IReadOnlyList<TelemetryLogRecord> Logs,
+    long EstimatedBytes)
 {
     public int RecordCount => Metrics.Count + Logs.Count;
 }

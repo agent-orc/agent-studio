@@ -56,7 +56,7 @@ internal static class OtlpProtobufDecoder
     private static void ReadScopeMetrics(ReadOnlySpan<byte> data, IReadOnlyList<KeyValuePair<string, string>> resource,
         OtlpRecordFactory factory)
     {
-        var scoped = WithScope(data, resource, factory.Limits);
+        var scoped = WithScope(data, resource, factory);
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
@@ -65,8 +65,7 @@ internal static class OtlpProtobufDecoder
         }
     }
 
-    private static void ReadMetric(ReadOnlySpan<byte> data, IReadOnlyList<KeyValuePair<string, string>> resource,
-        OtlpRecordFactory factory)
+    private static void ReadMetric(ReadOnlySpan<byte> data, TelemetryAttributes scope, OtlpRecordFactory factory)
     {
         string name = "", unit = "";
         var reader = new ProtoWireReader(data);
@@ -86,11 +85,11 @@ internal static class OtlpProtobufDecoder
             }
             switch (field)
             {
-                case 5: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Gauge, NumberPoint, resource, factory); break;
-                case 7: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Sum, NumberPoint, resource, factory); break;
-                case 9: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Histogram, HistogramPoint, resource, factory); break;
-                case 10: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.ExponentialHistogram, ExponentialHistogramPoint, resource, factory); break;
-                case 11: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Summary, SummaryPoint, resource, factory); break;
+                case 5: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Gauge, NumberPoint, scope, factory); break;
+                case 7: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Sum, NumberPoint, scope, factory); break;
+                case 9: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Histogram, HistogramPoint, scope, factory); break;
+                case 10: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.ExponentialHistogram, ExponentialHistogramPoint, scope, factory); break;
+                case 11: ReadPoints(reader.ReadBytes(), name, unit, MetricKind.Summary, SummaryPoint, scope, factory); break;
                 default: reader.Skip(type); break;
             }
         }
@@ -98,7 +97,7 @@ internal static class OtlpProtobufDecoder
 
     /// <summary>Gauge, Sum, Histogram, ExponentialHistogram, or Summary: points in field 1, temporality in field 2.</summary>
     private static void ReadPoints(ReadOnlySpan<byte> data, string name, string unit, MetricKind kind, PointLayout layout,
-        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpRecordFactory factory)
+        TelemetryAttributes scope, OtlpRecordFactory factory)
     {
         var temporality = kind == MetricKind.Summary ? MetricTemporality.Cumulative : MetricTemporality.Unspecified;
         var reader = new ProtoWireReader(data);
@@ -112,7 +111,7 @@ internal static class OtlpProtobufDecoder
         while (reader.TryReadTag(out var field, out var type))
         {
             if (field == 1 && type == ProtoWireType.LengthDelimited)
-                factory.AddPoint(name, unit, kind, temporality, resource, ReadPoint(reader.ReadBytes(), kind, layout, factory.Limits));
+                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(reader.ReadBytes(), kind, layout, factory.Limits));
             else reader.Skip(type);
         }
     }
@@ -154,7 +153,7 @@ internal static class OtlpProtobufDecoder
     private static void ReadScopeLogs(ReadOnlySpan<byte> data, IReadOnlyList<KeyValuePair<string, string>> resource,
         OtlpRecordFactory factory)
     {
-        var scoped = WithScope(data, resource, factory.Limits);
+        var scoped = WithScope(data, resource, factory);
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
@@ -208,9 +207,9 @@ internal static class OtlpProtobufDecoder
         return attributes;
     }
 
-    /// <summary>Adds the instrumentation scope name (field 1 of ScopeMetrics or ScopeLogs) as <c>otel.scope.name</c>.</summary>
-    private static IReadOnlyList<KeyValuePair<string, string>> WithScope(ReadOnlySpan<byte> data,
-        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpLimits limits)
+    /// <summary>The shared set of the resource plus the instrumentation scope name (field 1 of ScopeMetrics or ScopeLogs).</summary>
+    private static TelemetryAttributes WithScope(ReadOnlySpan<byte> data,
+        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpRecordFactory factory)
     {
         var scopeName = "";
         var reader = new ProtoWireReader(data);
@@ -228,8 +227,7 @@ internal static class OtlpProtobufDecoder
                 else scope.Skip(innerType);
             }
         }
-        if (scopeName.Length == 0) return resource;
-        return new OtlpAttributeBuilder(limits).AddRange(resource).AddRange([KeyValuePair.Create("otel.scope.name", scopeName)]).ToList();
+        return factory.Scope(resource, scopeName);
     }
 
     private static KeyValuePair<string, string> ReadKeyValue(ReadOnlySpan<byte> data, OtlpLimits limits)

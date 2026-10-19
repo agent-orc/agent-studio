@@ -26,7 +26,7 @@ internal static class OtlpJsonDecoder
             var resource = ReadResource(resourceMetrics, factory.Limits);
             foreach (var scopeMetrics in Array(resourceMetrics, "scopeMetrics"))
             {
-                var scoped = WithScope(scopeMetrics, resource, factory.Limits);
+                var scoped = WithScope(scopeMetrics, resource, factory);
                 foreach (var metric in Array(scopeMetrics, "metrics")) ReadMetric(metric, scoped, factory);
             }
         }
@@ -41,7 +41,7 @@ internal static class OtlpJsonDecoder
             var resource = ReadResource(resourceLogs, factory.Limits);
             foreach (var scopeLogs in Array(resourceLogs, "scopeLogs"))
             {
-                var scoped = WithScope(scopeLogs, resource, factory.Limits);
+                var scoped = WithScope(scopeLogs, resource, factory);
                 foreach (var record in Array(scopeLogs, "logRecords")) factory.AddLog(scoped, ReadLogRecord(record, factory.Limits));
             }
         }
@@ -66,7 +66,7 @@ internal static class OtlpJsonDecoder
         }
     }
 
-    private static void ReadMetric(JsonElement metric, IReadOnlyList<KeyValuePair<string, string>> resource, OtlpRecordFactory factory)
+    private static void ReadMetric(JsonElement metric, TelemetryAttributes scope, OtlpRecordFactory factory)
     {
         RequireObject(metric, "metric");
         var name = String(metric, "name");
@@ -86,7 +86,7 @@ internal static class OtlpJsonDecoder
                     _ => MetricTemporality.Unspecified
                 };
             foreach (var point in Array(data, "dataPoints"))
-                factory.AddPoint(name, unit, kind, temporality, resource, ReadPoint(point, kind, factory.Limits));
+                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(point, kind, factory.Limits));
             return;
         }
     }
@@ -137,13 +137,11 @@ internal static class OtlpJsonDecoder
         return Object(container, "resource") is { } resource ? Attributes(resource, limits) : [];
     }
 
-    private static IReadOnlyList<KeyValuePair<string, string>> WithScope(JsonElement container,
-        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpLimits limits)
+    private static TelemetryAttributes WithScope(JsonElement container,
+        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpRecordFactory factory)
     {
         RequireObject(container, "scope entry");
-        var name = Object(container, "scope") is { } scope ? String(scope, "name") : "";
-        if (name.Length == 0) return resource;
-        return new OtlpAttributeBuilder(limits).AddRange(resource).AddRange([KeyValuePair.Create("otel.scope.name", name)]).ToList();
+        return factory.Scope(resource, Object(container, "scope") is { } scope ? String(scope, "name") : "");
     }
 
     private static List<KeyValuePair<string, string>> Attributes(JsonElement element, OtlpLimits limits)

@@ -135,7 +135,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     [Fact]
     public async Task Burst_beyond_the_queue_budget_is_refused_with_retry_after_and_never_waits()
     {
-        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 10 });
+        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 10, MaxConcurrentRequests = 64 });
         var token = (await CreateToken(harness)).Secret;
         var body = Fixture("logs.pb"); // three records per request
 
@@ -169,15 +169,22 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         var harness = await Start(sink: sink);
         var token = (await CreateToken(harness)).Secret;
         var leaked = "Authorization: Bearer " + new string('k', 24);
-        var logs = $$"""
+        var logs = $$$"""
             {"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"shop-api"}}]},
               "scopeLogs":[{"logRecords":[{"timeUnixNano":"1792152000000000000","severityNumber":17,
-                "body":{"stringValue":"login failed, {{leaked}}"},
+                "body":{"stringValue":"login failed, {{{leaked}}}"},
                 "attributes":[{"key":"db.url","value":{"stringValue":"password=hunter2hunter2"}}]}]}]}]}
+            """;
+
+        var metrics = """
+            {"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"shop-api"}}]},
+              "scopeMetrics":[{"metrics":[{"name":"db.pool.size","gauge":{"dataPoints":[{"timeUnixNano":"1792152000000000000",
+                "asInt":"4","attributes":[{"key":"db.url","value":{"stringValue":"password=hunter2hunter2"}}]}]}}]}]}]}
             """;
 
         Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Encoding.UTF8.GetBytes(logs), token, "application/json")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Fixture("metrics.pb"), token)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Encoding.UTF8.GetBytes(metrics), token, "application/json")).StatusCode);
         await harness.Writer.DrainOnceAsync(CancellationToken.None);
 
         var page = await harness.Client.GetStringAsync(Environment + "/logs?from=2026-10-16T11:00:00Z&minSeverity=error&text=login&attr.service.name=shop-api");
@@ -192,11 +199,78 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         Assert.Equal(DateTimeOffset.Parse("2026-10-16T12:00:00Z"), point.GetProperty("time").GetDateTimeOffset());
         var names = await harness.Client.GetStringAsync(Environment + "/metrics/names");
         Assert.Contains("http.server.duration", names);
+        var pool = await harness.Client.GetStringAsync(Environment + "/metrics?name=db.pool.size&from=2026-10-16T11:00:00Z&to=2026-10-16T12:30:00Z&step=60");
+        Assert.Contains("[REDACTED]", pool);
+        Assert.DoesNotContain("hunter2", pool);
 
         var exported = Assert.Single(sink.Batches, batch => batch.Logs.Count > 0);
         Assert.Equal(new TelemetryEnvironmentKey("shop", "stage"), exported.Environment);
         Assert.DoesNotContain(new string('k', 24), exported.Logs[0].Body);
-        Assert.Equal(5, Assert.Single(sink.Batches, batch => batch.Metrics.Count > 0).Metrics.Count);
+        var exportedMetrics = Assert.Single(sink.Batches, batch => batch.Metrics.Count > 0).Metrics;
+        Assert.Equal(6, exportedMetrics.Count);
+        Assert.DoesNotContain(exportedMetrics, sample => sample.Attributes.Json.Contains("hunter2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Gzip_bomb_of_points_is_refused_with_413_and_queues_nothing()
+    {
+        var harness = await Start();
+        var token = (await CreateToken(harness)).Secret;
+        var body = Gzip(TelemetryOtlpDecodingTests.PointFlood(points: 350_000, resourceAttributes: 128));
+        Assert.True(body.Length < 200 * 1024, $"the compressed flood is {body.Length} bytes");
+
+        var response = await Send(harness, Metrics, body, token, encoding: "gzip");
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Equal(8, StatusCode(await response.Content.ReadAsByteArrayAsync()));
+        Assert.Equal((0L, 0L), (harness.Queue.PendingRecords, harness.Queue.PendingBytes));
+    }
+
+    [Fact]
+    public async Task Requests_beyond_the_concurrent_slots_get_429_while_a_body_is_still_arriving()
+    {
+        var harness = await Start(new TelemetryOptions { MaxConcurrentRequests = 1 });
+        var token = (await CreateToken(harness)).Secret;
+        var intake = harness.Services.GetRequiredService<TelemetryIntakeService>();
+        Task<OtlpIntakeOutcome> Receive(Stream body) => intake.ReceiveAsync(TelemetrySignals.Logs, "application/x-protobuf", null,
+            "Bearer " + token, null, body, CancellationToken.None);
+        var slow = new GatedStream(Fixture("logs.pb"));
+
+        var first = Receive(slow);
+        Assert.True(slow.Reading.IsCompleted);
+        var second = await Receive(new MemoryStream(Fixture("logs.pb")));
+
+        Assert.Equal((429, (int?)TelemetryIntakeService.RetryAfterSeconds), (second.StatusCode, second.RetryAfterSeconds));
+        slow.Open();
+        Assert.Equal(200, (await first).StatusCode);
+        Assert.Equal(200, (await Receive(new MemoryStream(Fixture("logs.pb")))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Token_stops_working_once_its_environment_is_no_longer_declared()
+    {
+        var directory = new ShopStageDirectory();
+        var harness = await Start(directory: directory);
+        var token = (await CreateToken(harness)).Secret;
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Fixture("logs.pb"), token)).StatusCode);
+
+        directory.Declared = [];
+        // The intake re-reads the declarations at most every EnvironmentRecheck.
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Fixture("logs.pb"), token)).StatusCode);
+        _clock.Advance(TelemetryIntakeService.EnvironmentRecheck);
+        var removed = await Send(harness, Logs, Fixture("logs.pb"), token);
+        Assert.Equal(HttpStatusCode.Unauthorized, removed.StatusCode);
+        Assert.Equal(16, StatusCode(await removed.Content.ReadAsByteArrayAsync()));
+
+        // Unreadable declarations are a retryable outage, not a reason to drop the token.
+        directory.Declared = ["stage"];
+        directory.Unreadable = true;
+        _clock.Advance(TelemetryIntakeService.EnvironmentRecheck);
+        var unreadable = await Send(harness, Logs, Fixture("logs.pb"), token);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unreadable.StatusCode);
+        Assert.Equal("2", unreadable.Headers.GetValues("Retry-After").Single());
+        directory.Unreadable = false;
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Fixture("logs.pb"), token)).StatusCode);
     }
 
     [Fact]
@@ -288,7 +362,8 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         Assert.True(called);
     }
 
-    private async Task<Harness> Start(TelemetryOptions? options = null, ITelemetryExportSink? sink = null)
+    private async Task<Harness> Start(TelemetryOptions? options = null, ITelemetryExportSink? sink = null,
+        ITelemetryEnvironmentDirectory? directory = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
@@ -300,7 +375,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         builder.Services.AddSingleton((options ?? new TelemetryOptions()) with { StoreRoot = Path.Combine(_root, "telemetry") });
         builder.Services.AddSingleton(new AccessSecurityStore(configuration, NullLogger<AccessSecurityStore>.Instance, _clock));
         builder.Services.AddSingleton<ITelemetryIngestCredentials, AccessStoreTelemetryIngestCredentials>();
-        builder.Services.AddSingleton<ITelemetryEnvironmentDirectory>(new ShopStageDirectory());
+        builder.Services.AddSingleton(directory ?? new ShopStageDirectory());
         builder.Services.AddSingleton<ITelemetryValueMasker, CredentialTelemetryValueMasker>();
         builder.Services.AddSingleton<TelemetryStore>();
         builder.Services.AddSingleton<TelemetryIntakeQueue>();
@@ -313,7 +388,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         await app.StartAsync();
         _apps.Add(app);
         return new Harness(app.GetTestClient(), app.Services.GetRequiredService<TelemetryIntakeQueue>(),
-            app.Services.GetRequiredService<TelemetryWriter>());
+            app.Services.GetRequiredService<TelemetryWriter>(), app.Services);
     }
 
     private static async Task<TelemetryIngestTokenCreatedResponse> CreateToken(Harness harness, string[]? signals = null, DateTime? expiresAt = null)
@@ -378,12 +453,48 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         return (rejected, message);
     }
 
-    private sealed record Harness(HttpClient Client, TelemetryIntakeQueue Queue, TelemetryWriter Writer);
+    private sealed record Harness(HttpClient Client, TelemetryIntakeQueue Queue, TelemetryWriter Writer, IServiceProvider Services);
 
     private sealed class ShopStageDirectory : ITelemetryEnvironmentDirectory
     {
+        public IReadOnlyCollection<string> Declared { get; set; } = ["stage"];
+        public bool Unreadable { get; set; }
+
         public IReadOnlyCollection<string>? Environments(string project)
-            => string.Equals(project, "shop", StringComparison.OrdinalIgnoreCase) ? ["stage"] : null;
+        {
+            if (Unreadable) throw new IOException("environment declarations are being rewritten");
+            return string.Equals(project, "shop", StringComparison.OrdinalIgnoreCase) ? Declared : null;
+        }
+    }
+
+    /// <summary>A request body whose bytes arrive only after <see cref="Open"/>.</summary>
+    private sealed class GatedStream(byte[] content) : Stream
+    {
+        private readonly MemoryStream _content = new(content);
+        private readonly TaskCompletionSource _reading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Reading => _reading.Task;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public void Open() => _gate.TrySetResult();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _reading.TrySetResult();
+            await _gate.Task.WaitAsync(cancellationToken);
+            return await _content.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class RecordingSink : ITelemetryExportSink
