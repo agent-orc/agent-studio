@@ -1,0 +1,549 @@
+#!/bin/sh
+# Move Studio from the workstation (Stable) to the networked monolith stack on
+# the server (application lifecycle D15, option B). One repeatable procedure:
+#
+#   --dry-run   (default) inventory, path mapping, credential checklist, server
+#               preflight. Changes nothing.
+#   --transfer  only the transfer pass into server staging (Stable keeps
+#               running); --rehearse and --apply run it too.
+#   --rehearse  transfer into server staging while Stable keeps running, then
+#               start a separate Compose project on a loopback port against a
+#               copy of staging, run the smoke checks, and tear it down.
+#   --apply     stop Stable, send the final delta, switch the server stack to
+#               the relocated copy, check it, and print the rollback command.
+#
+# Run it on the workstation from Git Bash (or any POSIX shell with Git, GNU
+# tar, gzip, curl, ssh, and Node). The workstation workspace is only read.
+# The planning logic lives in move-studio-to-server.mjs and is unit tested.
+# Guide: docs/operations/setup/move-studio-to-server.md
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+self="$script_dir/$(basename -- "$0")"
+
+log() { printf '[move-studio] %s\n' "$*"; }
+fail() { printf '[move-studio] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Single-quote one argument for the remote shell.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+safe_path() {
+  case "$1" in
+    /*) ;;
+    *) fail "$2 must be an absolute path: $1" ;;
+  esac
+  case "$1" in
+    *[!A-Za-z0-9._/-]*|*/../*|*/..) fail "$2 contains unsupported characters: $1" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Server side. The workstation copies this file to <server-root>/move-bin and
+# calls it as: sh move-studio-to-server.sh --server-side <command> <args>.
+# ---------------------------------------------------------------------------
+
+env_value() { sed -n "s/^$1=//p" "$2" | tail -n 1; }
+
+json_field() {
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s)[process.argv[1]];process.stdout.write(v===undefined||v===null?"":String(v));});' "$1"
+}
+
+json_payload() {
+  node -e 'const a=process.argv.slice(1);const o={};for(let i=0;i<a.length;i+=2)o[a[i]]=a[i+1];process.stdout.write(JSON.stringify(o));' "$@"
+}
+
+random_hex() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
+
+as_service_owner() {
+  # The API runs as UID 10001; ownership changes go through a root container
+  # so the operator account needs only Docker access (same as setup.sh).
+  owner=$1; shift
+  base=$1; shift
+  docker run --rm --user 0 -v "$base:/site" --entrypoint chown caddy:2-alpine -R "$owner" "$@" >/dev/null
+}
+
+server_preflight() {
+  root=$1
+  missing=
+  for tool in docker git node curl tar gzip od; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  [ -z "$missing" ] || fail "server is missing:$missing"
+  docker compose version >/dev/null || fail 'docker compose is not available on the server'
+  [ -f "$root/stack/compose.yaml" ] || fail "no stack at $root/stack; copy deploy/compose/monolith-networked there"
+  [ -f "$root/stack/.env" ] || fail "no $root/stack/.env; run setup.sh <version> <domain> $root/data in $root/stack first"
+  data_dir=$(env_value STUDIO_DATA_DIR "$root/stack/.env")
+  [ -n "$data_dir" ] || fail "STUDIO_DATA_DIR is not set in $root/stack/.env"
+  [ -w "$data_dir" ] || fail "$data_dir is not writable by $(id -un)"
+  printf 'server: %s ok, data %s, version %s, domain %s\n' "$(hostname)" "$data_dir" \
+    "$(env_value STUDIO_VERSION "$root/stack/.env")" "$(env_value STUDIO_DOMAIN "$root/stack/.env")"
+  if [ -d "$root/move-staging/workspace/.git" ]; then
+    printf 'staging: %s present\n' "$(du -sh "$root/move-staging" | cut -f1)"
+  else
+    printf 'staging: empty\n'
+  fi
+  df -h "$root" | tail -n 1
+}
+
+server_clone_workspace() {
+  dir=$1; url=$2
+  if [ -d "$dir/.git" ]; then
+    git -C "$dir" fetch -q --prune origin
+    echo existing
+  else
+    mkdir -p "$(dirname "$dir")"
+    git clone -q "$url" "$dir" || fail "cannot clone the workspace remote on the server; give the server its own Git credential first"
+    echo cloned
+  fi
+}
+
+server_sync_workspace() {
+  dir=$1; head=$2
+  git -C "$dir" cat-file -e "$head^{commit}" || fail "source HEAD $head did not arrive on the server"
+  git -C "$dir" reset -q --hard "$head"
+}
+
+server_clone_checkout() {
+  dir=$1; url=$2
+  if [ -d "$dir/.git" ]; then
+    git -C "$dir" fetch -q --prune origin
+  else
+    mkdir -p "$(dirname "$dir")"
+    git clone -q "$url" "$dir" || fail "cannot clone $url on the server"
+  fi
+}
+
+server_relocate() {
+  root=$1; workspace=$2; projects=$3
+  set -- --workspace "$workspace" --mapping "$root/move-bin/path-map.json"
+  if [ -d "$projects" ]; then
+    for checkout in "$projects"/*; do
+      [ -d "$checkout/.git" ] && set -- "$@" --checkout "$checkout"
+    done
+  fi
+  # Dry run first: exit 2 lists unresolved Windows paths and stops here.
+  node "$root/move-bin/relocate-workspace-paths.mjs" "$@" >"$root/move-bin/relocate-report.json" \
+    || fail "path relocation has unresolved paths; see $root/move-bin/relocate-report.json and add them with --extra-mapping"
+  node "$root/move-bin/relocate-workspace-paths.mjs" "$@" --apply >/dev/null
+}
+
+server_disable_push() {
+  repo=$1
+  for remote in $(git -C "$repo" remote); do
+    git -C "$repo" remote set-url --push "$remote" no-push://move-rehearsal
+  done
+}
+
+server_smoke() {
+  host=$1; port=$2; work=$3
+  base="https://$host:$port"
+  jar="$work/cookies"
+  origin_header="Origin: $base"
+  c() { curl --silent --show-error --insecure --max-time 30 --resolve "$host:$port:127.0.0.1" "$@"; }
+
+  attempt=0
+  until c --fail "$base/api/auth/status" >"$work/status.json" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 90 ] || fail 'health: the rehearsal stack did not answer /api/auth/status'
+    sleep 2
+  done
+  echo 'check: health ok'
+
+  if [ "$(json_field bootstrapRequired <"$work/status.json")" = true ]; then
+    username=move.rehearsal.owner
+    password="Rehearsal-$(random_hex 16)"
+    code=$(env_value STUDIO_BOOTSTRAP_CODE "$work/.env")
+    json_payload username "$username" password "$password" displayName 'Move rehearsal owner' bootstrapCode "$code" >"$work/auth.json"
+    endpoint=bootstrap
+  else
+    username=$login_username
+    password=$login_password
+    [ -n "$username" ] && [ -n "$password" ] || fail 'sign-in: the copy has owners; set MOVE_REHEARSAL_OWNER_USERNAME and MOVE_REHEARSAL_OWNER_PASSWORD'
+    json_payload username "$username" password "$password" >"$work/auth.json"
+    endpoint=login
+  fi
+  c --fail -c "$jar" -H 'Content-Type: application/json' -H "$origin_header" --data-binary "@$work/auth.json" \
+    "$base/api/auth/$endpoint" >"$work/session.json" || fail "sign-in: $endpoint failed"
+  rm -f "$work/auth.json"
+  csrf=$(json_field csrfToken <"$work/session.json")
+  [ -n "$csrf" ] || fail 'sign-in: no CSRF token in the session response'
+  echo "check: sign-in ok ($endpoint as $username)"
+
+  c --fail -b "$jar" "$base/api/projects" >"$work/projects.json" || fail 'board: GET /api/projects failed'
+  project=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const l=Array.isArray(p)?p:(p.projects??p.items??[]);process.stdout.write(l.length?String(l[0].id??l[0].Id):"");' "$work/projects.json")
+  if [ -n "$project" ]; then
+    c --fail -b "$jar" "$base/api/tasks?project=$project" >/dev/null || fail "board: GET /api/tasks?project=$project failed"
+    echo "check: board read ok ($project)"
+  else
+    echo 'check: board read ok (no projects registered)'
+  fi
+
+  printf '%s' '{"name":"move-rehearsal-runner","scopes":["runner.claim"]}' >"$work/enrollment-request.json"
+  c --fail -b "$jar" -H 'Content-Type: application/json' -H "$origin_header" -H "X-CSRF-Token: $csrf" \
+    --data-binary "@$work/enrollment-request.json" "$base/api/auth/runner-enrollments" >"$work/enrollment.json" \
+    || fail 'runner: enrollment failed'
+  json_payload code "$(json_field enrollmentCode <"$work/enrollment.json")" >"$work/enroll.json"
+  c --fail -H 'Content-Type: application/json' --data-binary "@$work/enroll.json" "$base/api/auth/runner-enroll" >"$work/runner.json" \
+    || fail 'runner: enrol with the one-time code failed'
+  runner_id=$(json_field runnerId <"$work/runner.json")
+  runner_name=$(json_field runnerName <"$work/runner.json")
+  printf 'header = "Authorization: Bearer %s"\n' "$(json_field secret <"$work/runner.json")" >"$work/runner.curl"
+  rm -f "$work/runner.json" "$work/enroll.json"
+  # Zero free slots: the claim authenticates and records runner status but
+  # leases no card, so the rehearsal never starts work on the copy.
+  node -e 'process.stdout.write(JSON.stringify({runnerId:process.argv[1],runnerName:process.argv[2],hostname:"move-rehearsal",pid:1,backendName:"move-rehearsal",availableSlots:0}))' \
+    "$runner_id" "$runner_name" >"$work/claim-request.json"
+  status=$(c --config "$work/runner.curl" -o "$work/claim.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+    --data-binary "@$work/claim-request.json" "$base/api/runner/claim")
+  rm -f "$work/runner.curl"
+  [ "$status" = 200 ] || fail "runner: claim with the test credential returned HTTP $status"
+  echo "check: runner claim ok ($runner_name, status $(json_field status <"$work/claim.json"))"
+}
+
+server_rehearse() {
+  root=$1; port=$2; subnet=$3; sign_in=$4
+  login_username=
+  login_password=
+  # Read the owner login first, before any other command can consume stdin.
+  if [ "$sign_in" = login ]; then
+    IFS= read -r login_username || true
+    IFS= read -r login_password || true
+  fi
+  stack="$root/stack"
+  rehearsal="$root/move-rehearsal"
+  project=studio-move-rehearsal
+  host=move-rehearsal.studio.test
+  [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the transfer pass did not run'
+  compose() { docker compose -p "$project" -f "$stack/compose.yaml" -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
+  teardown() {
+    result=$?
+    if [ -f "$rehearsal/.env" ]; then
+      [ "$result" -eq 0 ] || compose logs --tail 80 >"$root/move-bin/rehearsal-failure.log" 2>&1 || true
+      compose down --remove-orphans >/dev/null 2>&1 || true
+    fi
+    as_service_owner "$(id -u):$(id -g)" "$rehearsal" /site >/dev/null 2>&1 || true
+    rm -rf "$rehearsal"
+    if [ "$result" -eq 0 ]; then echo 'rehearsal: torn down'; else echo "rehearsal: failed and torn down; logs in $root/move-bin/rehearsal-failure.log" >&2; fi
+    exit "$result"
+  }
+  if [ -e "$rehearsal" ]; then
+    as_service_owner "$(id -u):$(id -g)" "$rehearsal" /site >/dev/null 2>&1 || true
+    rm -rf "$rehearsal"
+  fi
+  trap teardown EXIT
+  trap 'exit 130' HUP INT TERM
+  mkdir -p "$rehearsal/data/home" "$rehearsal/data/caddy-data" "$rehearsal/data/caddy-config" "$rehearsal/data/projects"
+  cp -a "$root/move-staging/workspace" "$rehearsal/data/workspace"
+  if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$rehearsal/data/projects/"; fi
+  server_relocate "$root" "$rehearsal/data/workspace" "$rehearsal/data/projects"
+  echo 'check: path relocation ok (0 unresolved)'
+  server_disable_push "$rehearsal/data/workspace"
+  for checkout in "$rehearsal/data/projects"/*; do
+    [ -d "$checkout/.git" ] && server_disable_push "$checkout"
+  done
+  access="$rehearsal/data/workspace/.security/access-state.json"
+  if [ -f "$access" ] && [ "$sign_in" = bootstrap ]; then
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$access" || fail 'access state: .security/access-state.json is not valid JSON'
+    mv "$access" "$rehearsal/access-state.checked.json"
+    echo 'check: access state parses; the copy signs in with a disposable test owner'
+  fi
+  grep -v -e '^STUDIO_DATA_DIR=' -e '^STUDIO_DOMAIN=' -e '^STUDIO_CADDYFILE=' -e '^STUDIO_BOOTSTRAP_CODE=' "$stack/.env" >"$rehearsal/.env"
+  {
+    echo "STUDIO_DATA_DIR=$rehearsal/data"
+    echo "STUDIO_DOMAIN=$host"
+    echo 'STUDIO_CADDYFILE=./Caddyfile.private'
+    echo "STUDIO_BOOTSTRAP_CODE=$(random_hex 24)"
+  } >>"$rehearsal/.env"
+  chmod 600 "$rehearsal/.env"
+  cat >"$rehearsal/compose.override.yaml" <<EOF
+services:
+  api:
+    environment:
+      Security__TrustedProxyAddresses: $subnet.3
+      WorkspaceEvidence__Push: 'false'
+    networks:
+      website:
+        ipv4_address: $subnet.4
+  frontend:
+    networks:
+      website:
+        ipv4_address: $subnet.3
+  edge:
+    ports: !override
+      - '127.0.0.1:$port:443'
+    networks:
+      website:
+        ipv4_address: $subnet.2
+networks:
+  website:
+    ipam:
+      config: !override
+        - subnet: $subnet.0/24
+EOF
+  as_service_owner 10001:10001 "$rehearsal/data" /site/workspace /site/projects /site/home
+  compose up -d --quiet-pull >/dev/null
+  server_smoke "$host" "$port" "$rehearsal"
+}
+
+server_apply() {
+  root=$1; stamp=$2
+  stack="$root/stack"
+  data_dir=$(env_value STUDIO_DATA_DIR "$stack/.env")
+  domain=$(env_value STUDIO_DOMAIN "$stack/.env")
+  [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the final pass did not run'
+  docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" stop >/dev/null 2>&1 || true
+  for name in workspace projects; do
+    if [ -e "$data_dir/$name" ]; then mv "$data_dir/$name" "$data_dir/$name.pre-move-$stamp"; fi
+  done
+  cp -a "$root/move-staging/workspace" "$data_dir/workspace"
+  mkdir -p "$data_dir/projects" "$data_dir/home"
+  if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$data_dir/projects/"; fi
+  server_relocate "$root" "$data_dir/workspace" "$data_dir/projects"
+  echo 'check: path relocation ok (0 unresolved)'
+  as_service_owner 10001:10001 "$data_dir" /site/workspace /site/projects /site/home
+  docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" up -d --quiet-pull >/dev/null
+  attempt=0
+  until curl --silent --fail --insecure --max-time 10 --resolve "$domain:443:127.0.0.1" "https://$domain/api/auth/status" >"$root/move-bin/status.json" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 90 ] || fail "the server stack did not answer https://$domain/api/auth/status"
+    sleep 2
+  done
+  if [ -f "$data_dir/workspace/.security/access-state.json" ]; then
+    [ "$(json_field bootstrapRequired <"$root/move-bin/status.json")" = false ] \
+      || fail 'the server stack asks for owner bootstrap although the access state was moved'
+    echo "check: https://$domain answers locally with the moved accounts"
+  else
+    echo "check: https://$domain answers locally; the workstation had no accounts, so the first visit needs STUDIO_BOOTSTRAP_CODE from $stack/.env"
+  fi
+  docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" ps --format '{{.Service}} {{.State}}'
+}
+
+if [ "${1:-}" = --server-side ]; then
+  shift
+  command=$1; shift
+  case "$command" in
+    preflight) server_preflight "$@" ;;
+    clone-workspace) server_clone_workspace "$@" ;;
+    sync-workspace) server_sync_workspace "$@" ;;
+    receive-archive) mkdir -p "$1"; gzip -dc | tar -C "$1" -xf - ;;
+    remove-paths) cd "$1" && xargs -0 rm -f -- ;;
+    clone-checkout) server_clone_checkout "$@" ;;
+    rehearse) server_rehearse "$@" ;;
+    apply) server_apply "$@" ;;
+    *) fail "unknown server-side command: $command" ;;
+  esac
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Workstation side.
+# ---------------------------------------------------------------------------
+
+usage() {
+  cat <<'EOF'
+Usage: move-studio-to-server.sh [--dry-run | --transfer | --rehearse | --apply] [options]
+  --workspace DIR        workstation workspace (default: ../agent-taskboard-workspace beside this checkout)
+  --server HOST          SSH host alias of the server (default: agent-runner-01)
+  --server-root DIR      server directory holding stack/, data/, move-staging/ (default: /srv/agent-studio)
+  --state-dir DIR        local plan and delta state (default: <workspace>.move-state)
+  --extra-mapping FILE   JSON of additional Windows prefix -> Linux path entries
+  --rehearsal-port N     loopback port for the rehearsal stack (default: 18443)
+  --rehearsal-subnet P   first three octets of the rehearsal network (default: 172.30.84)
+  --yes                  skip the interactive confirmation of --apply
+Environment: MOVE_STABLE_STOP, MOVE_STABLE_START, MOVE_STABLE_HEALTH_URL,
+  MOVE_REHEARSAL_OWNER_USERNAME, MOVE_REHEARSAL_OWNER_PASSWORD.
+EOF
+}
+
+mode=dry-run
+workspace=${MOVE_WORKSPACE:-}
+server=${MOVE_SERVER:-agent-runner-01}
+server_root=${MOVE_SERVER_ROOT:-/srv/agent-studio}
+state_dir=${MOVE_STATE_DIR:-}
+extra_mapping=${MOVE_EXTRA_MAPPING:-}
+rehearsal_port=${MOVE_REHEARSAL_PORT:-18443}
+rehearsal_subnet=${MOVE_REHEARSAL_SUBNET:-172.30.84}
+assume_yes=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run) mode=dry-run; shift ;;
+    --transfer) mode=transfer; shift ;;
+    --rehearse) mode=rehearse; shift ;;
+    --apply) mode=apply; shift ;;
+    --yes) assume_yes=1; shift ;;
+    --workspace|--server|--server-root|--state-dir|--extra-mapping|--rehearsal-port|--rehearsal-subnet)
+      [ "$#" -ge 2 ] || fail "$1 needs a value"
+      case "$1" in
+        --workspace) workspace=$2 ;;
+        --server) server=$2 ;;
+        --server-root) server_root=$2 ;;
+        --state-dir) state_dir=$2 ;;
+        --extra-mapping) extra_mapping=$2 ;;
+        --rehearsal-port) rehearsal_port=$2 ;;
+        --rehearsal-subnet) rehearsal_subnet=$2 ;;
+      esac
+      shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; fail "unknown option: $1" ;;
+  esac
+done
+
+[ -n "$workspace" ] || workspace="$script_dir/../../../agent-taskboard-workspace"
+[ -d "$workspace/.git" ] || fail "workspace is not a Git repository: $workspace"
+workspace=$(CDPATH= cd -- "$workspace" && pwd)
+devspace=$(dirname -- "$workspace")
+[ -n "$state_dir" ] || state_dir="$workspace.move-state"
+stable_stop=${MOVE_STABLE_STOP:-$devspace/stop-stable.sh}
+stable_start=${MOVE_STABLE_START:-$devspace/start-stable.sh}
+stable_health=${MOVE_STABLE_HEALTH_URL:-http://127.0.0.1:5031/healthz}
+safe_path "$server_root" '--server-root'
+case "$rehearsal_port" in ''|*[!0-9]*) fail '--rehearsal-port must be a number' ;; esac
+case "$rehearsal_subnet" in *[!0-9.]*|'') fail '--rehearsal-subnet must be three dotted octets' ;; esac
+case "$server" in -*|*[!A-Za-z0-9._@-]*|'') fail "unsupported server alias: $server" ;; esac
+staging="$server_root/move-staging"
+
+# Native (Windows) spelling of a path when running under Git Bash.
+native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+
+server_side() {
+  remote_command="sh $(sq "$server_root/move-bin/move-studio-to-server.sh") --server-side"
+  for argument in "$@"; do remote_command="$remote_command $(sq "$argument")"; done
+  ssh -o BatchMode=yes "$server" "$remote_command"
+}
+
+# Carriage returns are stripped: a Windows checkout may hold these files with CRLF.
+upload() {
+  tr -d '\r' <"$1" | ssh -o BatchMode=yes "$server" "mkdir -p $(sq "$server_root/move-bin") && cat > $(sq "$server_root/move-bin/$2")"
+}
+
+for tool in git node tar gzip ssh curl; do
+  command -v "$tool" >/dev/null 2>&1 || fail "missing local tool: $tool"
+done
+mkdir -p "$state_dir"
+
+inventory() {
+  git -C "$workspace" ls-files -z >"$state_dir/tracked.z"
+  git -C "$workspace" diff --name-only -z HEAD >"$state_dir/dirty.z"
+  : >"$state_dir/remotes.tsv"
+  node "$script_dir/move-studio-to-server.mjs" projects --workspace "$(native_path "$workspace")" >"$state_dir/projects.tsv"
+  tab=$(printf '\t')
+  while IFS="$tab" read -r project_id repository; do
+    url=$(git -C "$repository" remote get-url origin 2>/dev/null || true)
+    [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
+  done <"$state_dir/projects.tsv"
+  set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
+    --remotes "$state_dir/remotes.tsv" --home "$(native_path "$HOME")" \
+    --credential-helper "$(git -C "$workspace" config --get credential.helper || true)" --out-dir "$state_dir"
+  [ -z "$extra_mapping" ] || set -- "$@" --extra-mapping "$extra_mapping"
+  inventory_status=0
+  node "$script_dir/move-studio-to-server.mjs" "$@" || inventory_status=$?
+  case "$inventory_status" in
+    0) ;;
+    3) [ "$mode" = dry-run ] || fail 'blocking inventory issues above; resolve them (registry repo URL or --extra-mapping) before moving' ;;
+    *) fail "inventory failed with exit $inventory_status" ;;
+  esac
+}
+
+transfer_pass() {
+  upload "$self" move-studio-to-server.sh
+  upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
+  upload "$state_dir/path-map.json" path-map.json
+  workspace_url=$(git -C "$workspace" remote get-url origin) || fail 'the workspace has no origin remote to clone on the server'
+  clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")
+  # A fresh clone invalidates what earlier passes recorded as sent.
+  [ "$clone_state" != cloned ] || rm -f "$state_dir/manifest.json"
+  head=$(git -C "$workspace" rev-parse HEAD)
+  git -C "$workspace" push -q "$server:$staging/workspace" "+$head:refs/move/source-head"
+  server_side sync-workspace "$staging/workspace" "$head"
+  log "workspace history at $head on the server ($clone_state clone)"
+
+  set -- delta --inventory "$state_dir/inventory.json" --copy "$state_dir/copy.z" --remove "$state_dir/remove.z" \
+    --manifest "$state_dir/manifest.next.json"
+  [ ! -f "$state_dir/manifest.json" ] || set -- "$@" --previous "$state_dir/manifest.json"
+  node "$script_dir/move-studio-to-server.mjs" "$@"
+  if [ -s "$state_dir/copy.z" ]; then
+    {
+      tar_status=0
+      tar -C "$workspace" --null -T "$state_dir/copy.z" --warning=no-file-changed -cf - || tar_status=$?
+      echo "$tar_status" >"$state_dir/tar.status"
+    } | gzip -1 | server_side receive-archive "$staging/workspace"
+    # Exit 1 means a file changed while it was read; its new mtime sends it again next pass.
+    case "$(cat "$state_dir/tar.status")" in 0|1) ;; *) fail 'tar failed while streaming the untracked state' ;; esac
+  fi
+  [ ! -s "$state_dir/remove.z" ] || server_side remove-paths "$staging/workspace" <"$state_dir/remove.z"
+  mv "$state_dir/manifest.next.json" "$state_dir/manifest.json"
+
+  tab=$(printf '\t')
+  while IFS="$tab" read -r name url; do
+    [ -n "$url" ] || fail "checkout $name has no repository URL"
+    server_side clone-checkout "$staging/projects/$name" "$url" </dev/null
+    log "checkout /data/projects/$name from $url"
+  done <"$state_dir/checkouts.tsv"
+}
+
+server_side_preflight() {
+  upload "$self" move-studio-to-server.sh
+  server_side preflight "$server_root"
+}
+
+stable_running() { curl --silent --fail --max-time 5 "$stable_health" >/dev/null 2>&1; }
+
+rollback_hint() {
+  log 'Rollback: stop the server stack and restart Stable from the untouched workstation workspace:'
+  printf '  ssh %s %s && %s\n' "$server" \
+    "$(sq "docker compose --project-directory $server_root/stack stop")" "$(sq "$stable_start")"
+}
+
+log "mode: $mode; workspace $workspace; server $server:$server_root; state $state_dir"
+inventory
+
+case "$mode" in
+  dry-run)
+    # Streams this script instead of uploading it, so the dry run writes nothing on the server.
+    if tr -d '\r' <"$self" | ssh -o BatchMode=yes "$server" "sh -s -- --server-side preflight $(sq "$server_root")"; then
+      log 'server preflight passed'
+    else
+      log "server preflight did not pass (see above); fix it before --rehearse"
+    fi
+    if stable_running; then log "Stable answers at $stable_health"; else log "Stable does not answer at $stable_health"; fi
+    log 'Dry run only: nothing was copied, stopped, or started.'
+    log 'Next: --rehearse (Stable keeps running), then --apply in the outage window.'
+    ;;
+  transfer)
+    server_side_preflight
+    transfer_pass
+    log 'Transfer pass complete. Run it again any time; it sends only the delta.'
+    ;;
+  rehearse)
+    server_side_preflight
+    transfer_pass
+    if [ -n "${MOVE_REHEARSAL_OWNER_USERNAME:-}" ]; then
+      # The owner login travels on stdin, never on a command line.
+      printf '%s\n%s\n' "$MOVE_REHEARSAL_OWNER_USERNAME" "${MOVE_REHEARSAL_OWNER_PASSWORD:-}" \
+        | server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" login
+    else
+      server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" bootstrap </dev/null
+    fi
+    log 'Rehearsal passed. Staging keeps the transferred state, so --apply only sends the final delta.'
+    ;;
+  apply)
+    server_side_preflight
+    if [ "$assume_yes" -ne 1 ]; then
+      printf 'Stop Stable on this workstation and switch Studio to %s? Type "move" to continue: ' "$server"
+      IFS= read -r answer || answer=
+      [ "$answer" = move ] || fail 'apply cancelled'
+    fi
+    [ -x "$stable_stop" ] || fail "Stable stop script is not executable: $stable_stop"
+    trap 'status=$?; [ "$status" -eq 0 ] || rollback_hint; exit "$status"' EXIT
+    log 'stopping Stable'
+    "$stable_stop"
+    ! stable_running || fail "Stable still answers at $stable_health"
+    log 'final inventory and delta with Stable stopped'
+    inventory
+    transfer_pass
+    server_side apply "$server_root" "$(date -u +%Y%m%dT%H%M%SZ)"
+    log 'Studio now runs on the server. Do not start Stable against the workstation workspace while it does.'
+    rollback_hint
+    log 'Then: sign in at the public URL, re-point remote runners, and complete the credential replacements listed above.'
+    ;;
+esac
