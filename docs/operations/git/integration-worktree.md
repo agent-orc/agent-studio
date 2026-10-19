@@ -123,8 +123,23 @@ When no push worker runs for the result - the project disabled the
 not moved either; the gated result stays on the integration lane until a later
 push publishes it.
 
-Recovering a lane that diverged from origin (the integration error names the
-lane): the gated merges on the lane were never published. Drop the lane with
+A lane that diverged from origin heals itself when origin already holds every
+unpublished lane merge (AGT-3215). Each lane merge is classified: its delivery
+is contained in origin (ancestor, full tree, or patch-equivalent per
+`git cherry`), superseded by a newer delivery of the same card that origin
+contains (the card is read from the board), or genuinely unpublished. When
+nothing is unpublished, the old lane tip is kept under
+`refs/agent-studio/integration-backup/<branch>/<old-tip>`, the lane restarts at
+`origin/<branch>`, and one log line (`Integration lane ... restarted at ...;
+backup ...; dropped: ...`) names each dropped commit and why. Integration then
+continues without a human step.
+
+When genuinely unpublished work remains, nothing is dropped. Every refused card
+fails with `branch-sync-failed` and joins one `integration-lane-diverged` pipeline
+health alarm: one Activity feed entry per hour, and the health snapshot names the
+unpublished commits and the blocked cards with their count until a lane sync
+succeeds again. To recover, publish the named merges, or, after checking that
+their work is not needed, drop the lane with
 `git update-ref -d refs/agent-studio/integration/<branch>` in the project
 checkout; the next integration seeds it from `origin/<branch>` again, and the
 affected cards retry their integration.

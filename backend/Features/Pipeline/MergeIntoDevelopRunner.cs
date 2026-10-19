@@ -47,6 +47,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly BatchIntegrationReservationService? _batchReservations;
     private readonly BatchGateStore? _batchGates;
     private readonly PipelineHealthService? _pipelineHealth;
+    private readonly IIntegrationLaneStallAlarm? _laneStallAlarm;
     private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
@@ -97,7 +98,8 @@ public sealed partial class MergeIntoDevelopRunner
         BatchIntegrationReservationService? batchReservations = null,
         BatchGateStore? batchGates = null,
         PipelineHealthService? pipelineHealth = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IIntegrationLaneStallAlarm? laneStallAlarm = null)
     {
         _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
@@ -123,6 +125,7 @@ public sealed partial class MergeIntoDevelopRunner
         _batchReservations = batchReservations;
         _batchGates = batchGates;
         _pipelineHealth = pipelineHealth;
+        _laneStallAlarm = laneStallAlarm ?? pipelineHealth;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
@@ -355,14 +358,15 @@ public sealed partial class MergeIntoDevelopRunner
             MergeIntoIntegrationResult result;
             ImmediateIntegrationLineageDecision? lineage = null;
             IntegrationBranchSyncResult synchronized;
+            var laneLineage = LaneDeliveryLineage(project, watchPath);
             // Repository identity is read where it is stable: the integration
             // worktree runs on a detached HEAD and cannot answer "what is this
             // repository's default line".
             if (!isPullRequest && IsReleaseBranch(branch) && HasDevelopLine(developerRoot))
             {
-                synchronized = _git.SynchronizeIntegrationBranch(repoRoot, "develop", ct);
+                synchronized = _git.SynchronizeIntegrationBranch(repoRoot, "develop", ct, laneLineage);
                 if (synchronized.Success)
-                    synchronized = _git.SynchronizeIntegrationBranch(repoRoot, branch, ct);
+                    synchronized = _git.SynchronizeIntegrationBranch(repoRoot, branch, ct, laneLineage);
 
                 if (synchronized.Success)
                 {
@@ -377,7 +381,7 @@ public sealed partial class MergeIntoDevelopRunner
             }
             else
             {
-                synchronized = _git.SynchronizeIntegrationBranch(repoRoot, branch, ct);
+                synchronized = _git.SynchronizeIntegrationBranch(repoRoot, branch, ct, laneLineage);
                 lineage = ImmediateIntegrationLineagePolicy.Decide(
                     branch,
                     developAvailable: false,
@@ -397,6 +401,7 @@ public sealed partial class MergeIntoDevelopRunner
                 }
             }
 
+            ReportLaneSync(project, watchPath, branch, jobId, synchronized);
             if (!synchronized.Success)
             {
                 result = MergeIntoIntegrationResult.Failed(
