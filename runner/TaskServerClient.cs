@@ -1013,6 +1013,80 @@ public sealed class TaskServerClient : IDisposable
         return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
     }
 
+    public async Task<Contract.ProjectRepositoryStatusDto?> GetProjectRepositoryAsync(
+        string projectId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/repository", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.ProjectRepositoryStatusDto>(
+            TaskServerContractJson, ct);
+    }
+
+    public async Task<Contract.ProjectRepositoryProbeDto> ReportProjectRepositoryProbeAsync(
+        string runnerId, string projectId, Contract.ProjectRepositoryProbeRequest request,
+        CancellationToken ct)
+        => await PostJsonAsync<Contract.ProjectRepositoryProbeRequest, Contract.ProjectRepositoryProbeDto>(
+               $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/project-probes/{Uri.EscapeDataString(projectId)}",
+               request, ct)
+           ?? throw new TaskServerException(500, "Empty repository probe response.");
+
+    public async Task<Contract.RunnerDeviceLoginWork?> ClaimDeviceLoginAsync(
+        string runnerId, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/claim", new { }, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.RunnerDeviceLoginWork>(
+            TaskServerContractJson, ct);
+    }
+
+    public async Task ReportDeviceLoginInstructionsAsync(string runnerId, string id,
+        Contract.ReportRunnerDeviceInstructionsRequest request, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/instructions",
+            request, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReportDeviceLoginResultAsync(string runnerId, string id, bool verified, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/result",
+            new Contract.ReportRunnerDeviceResultRequest(verified), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<Contract.RunnerGitSetupWork?> ClaimGitSetupAsync(string runnerId, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/claim", new { }, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
+            TaskServerContractJson, ct);
+    }
+
+    public async Task ReportGitSetupKeyAsync(string runnerId, string id, string publicKey, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/{Uri.EscapeDataString(id)}/key",
+            new Contract.ReportRunnerGitKeyRequest(publicKey), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReportGitSetupProofAsync(string runnerId, string id, string step,
+        bool fetchVerified, bool pushVerified, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/{Uri.EscapeDataString(id)}/{step}",
+            new Contract.ReportRunnerGitProofRequest(fetchVerified, pushVerified), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
     public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)
     {

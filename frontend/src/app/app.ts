@@ -80,6 +80,7 @@ import {
   WorkspaceManagerService,
   WorkspaceOverlaysComponent,
   WorkspaceOverlaysService,
+  FirstRunLaunchService,
   type WorkspaceSettingsSection,
 } from './features/shell';
 import {
@@ -236,6 +237,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   styleUrl: './app.scss',
 })
 export class App implements OnInit, OnDestroy {
+  private readonly firstRunLaunch = inject(FirstRunLaunchService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
   readonly errorDialog = inject(ErrorDialogService);
@@ -1085,10 +1087,7 @@ export class App implements OnInit, OnDestroy {
     this.clientService.refresh();
     this.jobSelection.restoreFromUrl();
 
-    // Deep-link: open the workspace token timeline when the URL already
-    // points at it, and keep the overlay in sync as the hash changes.
-    // Also reconciles legacy top-level hash routes into their current
-    // editor-tab destinations.
+    // Reconcile settings deep links with editor tabs.
     const applyHash = (event?: Event) => {
       const fromHistory = event?.type === 'popstate' || event?.type === 'hashchange';
       this.workspaceOverlays.syncFromHash();
@@ -1100,6 +1099,7 @@ export class App implements OnInit, OnDestroy {
       this.syncEpicsTabFromHash();
     };
     applyHash();
+    this.firstRunLaunch.maybeOpen(() => this.openWorkspaceSettingsInStudio('first-run'));
     this.hashListener = applyHash;
     window.addEventListener('hashchange', this.hashListener);
     window.addEventListener('popstate', this.hashListener);
@@ -2172,10 +2172,9 @@ export class App implements OnInit, OnDestroy {
   }
 
   private openWorkspaceSettingsInStudio(section: WorkspaceSettingsSection): void {
-    // AGT-2035: settings is now purely an editor tab; it no longer also opens a
-    // sidebar "Settings" panel (that panel was removed and folded into here).
+    // The editor tab is mounted only in Studio layout.
     this.workspaceOverlays.open(section);
-    this.studioTabState.open({ kind: 'workspace-settings' });
+    if (this.featureFlags.vsCodeLayout()) this.studioTabState.open({ kind: 'workspace-settings' });
   }
 
   private toggleWorkspaceSettingsInStudio(section: WorkspaceSettingsSection): void {

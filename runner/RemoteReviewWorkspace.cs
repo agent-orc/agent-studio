@@ -2393,7 +2393,7 @@ public sealed class RemoteReviewWorkspace
                 "git",
                 ["-c", "credential.helper=", "fetch", "--no-tags", "origin", _subject.Plan.IntegrationRef!],
                 RepositoryPath,
-                environment: ProcessEnvironment(),
+                environment: GitTransportEnvironment(),
                 clearEnvironment: true,
                 ct: ct)
             : await FetchPrivateRefAsync(credential, _subject.Plan.IntegrationRef!, ct);
@@ -2682,6 +2682,10 @@ public sealed class RemoteReviewWorkspace
     private async Task MaterializeGitAsync(string repositoryUrl, CancellationToken ct)
     {
         var credential = RepositoryCredential();
+        var keyPath = RunnerFirstRunGitCredentials.Key(_options.StateDir, repositoryUrl);
+        var cloneUrl = keyPath is null || repositoryUrl.StartsWith("git@github.com:", StringComparison.Ordinal)
+            ? repositoryUrl
+            : "git@github.com:" + new Uri(repositoryUrl).AbsolutePath.TrimStart('/');
         // A private clone is complete, not blob-filtered: a promisor remote would
         // fetch missing blobs lazily from later git commands, which hold no
         // credential. Nothing has run in the fresh clone yet, so its config and
@@ -2689,9 +2693,9 @@ public sealed class RemoteReviewWorkspace
         var clone = credential is null
             ? await ProcessRunner.RunAsync(
                 "git",
-                ["-c", "credential.helper=", "clone", "--no-checkout", "--filter=blob:none", repositoryUrl, RepositoryPath],
+                ["-c", "credential.helper=", "clone", "--no-checkout", "--filter=blob:none", cloneUrl, RepositoryPath],
                 AttemptRoot,
-                environment: ProcessEnvironment(),
+                environment: GitTransportEnvironment(),
                 clearEnvironment: true,
                 ct: ct)
             : await ProcessRunner.RunAsync(
@@ -2717,7 +2721,7 @@ public sealed class RemoteReviewWorkspace
                 "git",
                 ["-c", "credential.helper=", "fetch", "--no-tags", "origin", resultRef],
                 RepositoryPath,
-                environment: ProcessEnvironment(),
+                environment: GitTransportEnvironment(),
                 clearEnvironment: true,
                 ct: ct)
             : await ProcessRunner.RunAsync(
@@ -2738,9 +2742,12 @@ public sealed class RemoteReviewWorkspace
     {
         // A public subject never reads the credentials file, so a file that
         // turns unreadable or malformed later cannot fail public reviews.
-        if (!_subject.Plan.PrivateRepository || string.IsNullOrWhiteSpace(_subject.RepositoryUrl)) return null;
+        if (string.IsNullOrWhiteSpace(_subject.RepositoryUrl)) return null;
         try
         {
+            if (RunnerFirstRunGitCredentials.Token(_options.StateDir, _subject.RepositoryUrl) is { } firstRun)
+                return firstRun;
+            if (!_subject.Plan.PrivateRepository) return null;
             return ReviewRepositoryCredentials.Load(_options.ReviewGitCredentialsFile).Find(_subject.RepositoryUrl);
         }
         catch (Exception exception) when (exception is ArgumentException or IOException
@@ -2750,6 +2757,20 @@ public sealed class RemoteReviewWorkspace
                 "SnapshotUnavailable",
                 $"Review repository credentials are unreadable: {exception.Message}");
         }
+    }
+
+    private IReadOnlyDictionary<string, string?> GitTransportEnvironment()
+    {
+        var environment = new Dictionary<string, string?>(ProcessEnvironment(), StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(_subject.RepositoryUrl)
+            || RunnerFirstRunGitCredentials.Key(_options.StateDir, _subject.RepositoryUrl) is not { } keyPath)
+            return environment;
+        var quotedKey = keyPath.Replace("'", "'\\''", StringComparison.Ordinal);
+        var knownHosts = Path.Combine(Path.GetDirectoryName(keyPath)!, "known_hosts")
+            .Replace("'", "'\\''", StringComparison.Ordinal);
+        environment["GIT_SSH_COMMAND"] = $"ssh -i '{quotedKey}' -o IdentitiesOnly=yes -o BatchMode=yes "
+            + $"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='{knownHosts}'";
+        return environment;
     }
 
     internal static bool LooksLikeMissingReadAccess(string stderr)

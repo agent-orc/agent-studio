@@ -3,9 +3,10 @@
 Use this guide when a Windows native Task Server or Linux Control Plane and one
 or more Agent Hosts run on different machines. Windows uses
 `agent-studio-setup.exe`; Linux can use `install.sh` or the released setup
-executable. The Control Plane machine needs no Agent CLI. Each Linux x64 Agent Host needs Git and an authenticated
-Codex or Claude CLI. No .NET SDK or runtime is required because all shipped
-binaries are self-contained.
+executable. The Control Plane machine needs no Agent CLI. Each Linux x64 Agent
+Host needs Git and an installed Codex or Claude CLI; Studio guides authentication
+after join. No .NET SDK or runtime is required because all shipped binaries are
+self-contained.
 
 ## Topology
 
@@ -127,8 +128,21 @@ curl -fsS https://tasks.example.com/healthz
 
 ### Linux Control Plane join token
 
-After creating the owner in Studio, issue an owner-only join file for each
-Linux host on the Control Plane machine:
+For new hosts, the owner can issue `aosj2.*` from Studio Settings > First-run
+checklist. The downloaded `join.token` contains a single-use runner enrolment
+code, the installation id, and the selected runner id. It contains no
+management bearer. Transfer the file to the Linux host, set mode 0600, and
+run the one-line command shown in Studio. The installer exchanges the code
+for a bound runner credential before starting the host. An expired or spent
+code requires a fresh file.
+
+After creating the owner in Studio, the control-plane console can also issue
+an owner-only join file for each Linux host. It uses a single-use `aosj2.*`
+enrolment code:
+
+Legacy `aosj1.*` join files contain the Task Server URL, release version, and
+current Task Server bearer credential. They are base64url encoded, not encrypted.
+The checksum detects copy errors; it is not an authentication signature.
 
 ```sh
 sudo ./agent-studio-setup join-token --runner-name agent-host-01 \
@@ -196,11 +210,13 @@ claude --version
 claude auth status --text
 ```
 
-Run the login on that host. Do not copy another machine's Codex or Claude
-credential files. The setup guide checks the CLI as the selected execution
-user before it writes or starts a service.
+Do not copy another machine's Codex or Claude credential files. The installer
+checks the selected CLI version as the execution user and allows an unsigned-in
+host to join. Studio then starts sign-in in that runner process.
 
-For GitHub HTTPS access, prepare a token before the credential-storage step:
+For GitHub HTTPS access, Studio can send a token once to the selected runner
+or ask it to generate a deploy key. If using a token, prepare it before the
+GitHub access step:
 
 - Prefer a fine-grained PAT owned by the organization or account that owns the
   repository. Limit it to assigned repositories and grant **Contents: Read and
@@ -227,8 +243,8 @@ The script verifies the downloaded setup executable against `SHA256SUMS` and
 passes the join options through. The installer asks for the execution user,
 CLI, Git probe origin, and maximum parallelism. It:
 
-1. verifies Linux x64, Git, systemd, the selected CLI version and its host-owned
-   authentication, then probes Task Server reachability and TLS;
+1. verifies Linux x64, Git, systemd, and the selected CLI version, then probes
+   Task Server reachability and TLS; Studio guides CLI authentication after join;
 2. downloads and verifies the matching `agent-host` archive only after the
    route probe passes;
 3. optionally stores the GitHub credential for both repository URL forms and

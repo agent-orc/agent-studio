@@ -121,6 +121,14 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Registry/ProjectRepositoryProvisioning.cs"] =
                 "Deletes the checkout of a just-created template project on rollback, never task folders.",
 
+            // AGT-3156 first-run repository access: the probe removes its
+            // OS-temp proof clone, and git setup removes only a checkout it
+            // just failed to clone under its own first-run-git root.
+            ["backend/Features/Registry/LocalFirstRunRepositoryProbe.cs"] =
+                "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
+            ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
+                "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in
             // the prompt for this task.

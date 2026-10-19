@@ -156,6 +156,13 @@ public class CliInvocationCentralizationGuardTests
             + "a bounded read-only installation probe, not an agent run. AGT-2373 keeps it as a "
             + "permanent non-run probe boundary."),
 
+        new("runner/RunnerProviderSetupLauncher.cs",
+            DocumentedException
+            + "AGT-3156 needs interactive device sign-in before CodingAgentRunner can run a card. "
+            + "CodingAgentRunner exposes sign-in instructions but no login execution API; this "
+            + "setup-only launcher accepts only codex login, claude setup-token, and their status "
+            + "checks, without a prompt or child-output logging. AGT-2373 card execution stays in CAR."),
+
         new("runner/Program.cs",
             DocumentedException
             + "AGT-2373 keeps the bounded provider-auth probe as a documented non-card exception. It "
