@@ -2412,14 +2412,94 @@ new fact even when its operator-facing summary is unchanged.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, and `deploy`. Existing `commands` and
-`testSuites` remain the execution source until the pipeline engine is extended.
-The P1 deployment definition uses exactly `[staging, production]`. Staging is
-automatic after integration; Production requires successful Staging and approval
-by Owner or Maintainer. The accepted steps are `publish-static`,
-`start-container`, `run`, `health`, and `approval`. `start-container` is a
-configuration placeholder until the run-host adapter is available. The editor
-contract is [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json).
+`environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
+`commands` and `testSuites` remain the execution source until the pipeline
+engine is extended.
+
+- `artifacts` name what the gate keeps: `static` (a site bundle `path`) or
+  `container` (a `dockerfile`, an optional build-context `path`, and an optional
+  registry `image` without tag or digest).
+- `environments` are ordered and exactly Staging, then Production. Each entry may
+  set `protected`; a protected environment accepts a deploy, redeploy, or
+  rollback only after an Owner or Maintainer approval. Production must be
+  protected. The shorthand `[staging, production]` protects Production. When the
+  file describes a deployment but omits `environments` or `lifecycles`, the
+  default is Staging, protected Production, and the standard lifecycle.
+- `lifecycles.standard`: Staging is automatic after integration; Production
+  requires successful Staging and approval by Owner or Maintainer.
+- `deploy` steps in P1 (AGT-3221): `static-site` copies a static artifact to an
+  absolute `directory` on an SSH `target`; `container` pulls and restarts the
+  compose `service` of an absolute `composeFile` on an SSH `target`. Both need
+  `healthUrl` (http or https, no credentials) and `healthTimeoutSeconds`
+  (1 to 900), and may narrow `environments`. `target` is a registered host id;
+  credentials never appear in the file. The AGT-3198 steps `publish-static`,
+  `start-container` (configuration placeholder), `run`, `health`, and
+  `approval` stay valid.
+- `variables` hold either a plain `value` or a `secret` name for the secret
+  provider, optionally scoped to `environments`. A value under a sensitive name
+  (token, password, secret, key, credential, connection string) or a value
+  shaped like a credential (URL with a password, private key, authorization
+  header) is refused as `secret-value-inline`.
+
+Unknown keys are refused per section and per step kind. Every issue carries its
+definition path and, when the path resolves, the 1-based `line` in project.yml.
+The editor contract is
+[`project-execution.schema.json`](../../app/schemas/project-execution.schema.json);
+`ProjectDefinitionSchemaTwoTests` keeps its step kinds, step keys, artifact types,
+and variable keys equal to `ProjectDeploymentVocabulary`.
+
+`/api/projects/{projectName}/pipeline-definition` serves the parsed diagram
+(gate, artifacts, environments with their steps and variables) with the issues.
+`POST .../validate` validates edited text without writing. For a valid schema 1
+file, `GET .../migration` returns a schema 2 proposal as a dry run: the schema 1
+text stays as it is apart from the `schemaVersion` line, the new sections are
+appended with the file's own line ending, Staging and Production deploy steps
+come from the AGT-3176 declarations under `docs/deployments/environments/`, and
+every default the proposal had to choose is listed as a note.
+`POST .../migration` writes only when both the current file digest and the
+regenerated proposal digest still equal the dry run, and only through
+`ManagedRepositoryMutationService` as one path-scoped commit. The project
+Settings page shows the diagram, the validation result with line and path, and
+the migration preview with its confirm button in the Pipeline section below
+Execution.
+
+A static site over SSH and a compose service, each with a health check:
+
+```yaml
+artifacts:
+  - name: site
+    type: static
+    path: dist
+  - name: api
+    type: container
+    dockerfile: Dockerfile
+environments:
+  - name: staging
+  - name: production
+    protected: true
+deploy:
+  - step: static-site
+    artifact: site
+    target: web-vm
+    directory: /srv/www/_staging/studio
+    healthUrl: https://agent-orchestrator.dev/_staging/studio/
+    healthTimeoutSeconds: 60
+    environments: [staging]
+  - step: container
+    artifact: api
+    target: run-host
+    composeFile: /srv/apps/api/compose.yml
+    service: api
+    healthUrl: https://api.agent-orchestrator.dev/healthz
+    healthTimeoutSeconds: 120
+    environments: [production]
+variables:
+  - name: LOG_LEVEL
+    value: info
+  - name: DATABASE_URL
+    secret: DATABASE_URL
+    environments: [production]
+```
 
 A static deploy example uses a branch pulled by the web target:
 

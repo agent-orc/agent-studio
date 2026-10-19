@@ -275,7 +275,8 @@ public sealed record ProjectExecutionDefinition(
     public ProjectDeploymentDefinition? Deployment { get; init; }
 }
 
-public sealed record ProjectDefinitionIssue(string Path, string Code, string Message);
+/// <summary>One definition problem. <paramref name="Line"/> is the 1-based project.yml line when the path resolves to one.</summary>
+public sealed record ProjectDefinitionIssue(string Path, string Code, string Message, int? Line = null);
 
 public sealed record ProjectDefinitionReadResult(
     ProjectExecutionDefinition? Definition,
@@ -283,6 +284,8 @@ public sealed record ProjectDefinitionReadResult(
     string? DefinitionSha256)
 {
     public bool IsValid => Definition is not null && Issues.Count == 0;
+    /// <summary>The parsed definition even when it has issues; display only, never executed.</summary>
+    public ProjectExecutionDefinition? Parsed { get; init; }
 }
 
 /// <summary>
@@ -327,6 +330,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
+            "variables",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -366,9 +370,10 @@ public static partial class ProjectDefinitionReader
             Deployment = ParseDeployment(lines, issues),
         };
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace));
+        issues = LocateIssues(lines, issues);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
-        return new(issues.Count == 0 ? definition : null, issues, digest);
+        return new(issues.Count == 0 ? definition : null, issues, digest) { Parsed = definition };
     }
 
     private static IReadOnlyList<YamlLine> Tokenize(string yaml, List<ProjectDefinitionIssue> issues)
@@ -822,7 +827,7 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Deployment is not null)
-            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, or deploy. Use schemaVersion 2."));
+            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, deploy, or variables. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 2 && definition.Project is null)
             issues.Add(new("project", "v2-project-required", "schemaVersion 2 requires a project section."));
