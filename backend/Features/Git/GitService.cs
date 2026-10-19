@@ -8189,6 +8189,28 @@ public class GitService
     }
 
     /// <summary>
+    /// BD-1: the commits reachable from <paramref name="tip"/> but not from
+    /// <paramref name="exclusiveBase"/>, newest first and at most
+    /// <paramref name="maxCount"/>. A release uses them to find the cards it
+    /// adds. Empty when a revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<string> ListRevisions(string repoRoot, string tip, string? exclusiveBase, int maxCount)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(tip) || !IsLikelyShaOrRef(tip)
+            || tip.StartsWith('-')) return [];
+        if (exclusiveBase is not null && (!IsLikelyShaOrRef(exclusiveBase) || exclusiveBase.StartsWith('-'))) return [];
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return [];
+        var arguments = new List<string> { "rev-list", $"--max-count={Math.Max(1, maxCount)}", tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(root, [.. arguments]);
+        return code == 0
+            ? output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [];
+    }
+
+    /// <summary>
     /// Reads one tracked file from the first parent of a validated commit. The
     /// Dossier maintenance gate uses this as the immutable baseline for proving
     /// that a delivery only appended inside its bounded implementation log.

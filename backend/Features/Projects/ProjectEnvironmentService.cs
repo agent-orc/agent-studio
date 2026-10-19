@@ -19,7 +19,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -140,25 +140,68 @@ public sealed class ProjectEnvironmentService
     }
 
     public bool QueueRelease(string project, string artifact, string commit)
+        => QueueReleaseJob(project, artifact, commit) is not null;
+
+    /// <summary>Queues stage for a gate-built artifact and returns the stage job.</summary>
+    public DeployJob? QueueReleaseJob(string project, string artifact, string commit)
     {
-        if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
-        if (!HasBuiltArtifact(project, artifact, commit)) return false;
+        if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return null;
+        if (!HasBuiltArtifact(project, artifact, commit)) return null;
         var repo = _git.ResolveRepoRootForProject(project);
-        if (repo is null || !_git.IsGitRepo(repo)) return false;
+        if (repo is null || !_git.IsGitRepo(repo)) return null;
         var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
         var tip = _git.GetBranchTip(repo, branch);
         if (tip is null || !_git.IsAncestor(repo, commit, tip))
-            return false;
+            return null;
         lock (_gate)
         {
             var declarations = Declarations(project);
             var stage = declarations?.FirstOrDefault(item => item.Kind == "stage");
             var production = declarations?.FirstOrDefault(item => item.Kind == "production");
-            if (stage is null || production is null) return false;
+            if (stage is null || production is null) return null;
             var state = Load(project);
-            if (state.Promotions.Any(item => item.Artifact == artifact && item.Status is not ("rejected" or "failed"))) return false;
+            if (state.Promotions.Any(item => item.Artifact == artifact
+                    && item.Status is not ("rejected" or "failed" or "cancelled"))) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
-            Queue(project, stage, artifact, state, actor: "release-gate");
+            var job = Queue(project, stage, artifact, state, actor: "release-gate");
+            Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>
+    /// Queues an already released artifact into one environment. The caller
+    /// (the BD-1 lifecycle) has decided that the deployment may start.
+    /// </summary>
+    public DeployJob? QueueDeployment(string project, string environmentId, string artifact, string actor, bool rollback)
+    {
+        if (!Digest.IsMatch(artifact)) return null;
+        lock (_gate)
+        {
+            var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
+            if (declaration is null) return null;
+            var state = Load(project);
+            var job = Queue(project, declaration, artifact, state, rollback, actor);
+            Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>Cancels a job no host has claimed yet and closes its promotion.</summary>
+    public bool CancelQueued(string project, string jobId, string actor)
+    {
+        lock (_gate)
+        {
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "queued");
+            if (job is null) return false;
+            state.Jobs[state.Jobs.IndexOf(job)] = job with
+            { Status = "cancelled", FinishedAt = _clock.GetUtcNow().UtcDateTime };
+            var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
+                && (item.Status == "stage-queued" && item.StageId == job.EnvironmentId
+                    || item.Status == "production-queued" && item.ProductionId == job.EnvironmentId));
+            if (promotion is not null)
+                state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with { Status = "cancelled", Actor = actor };
             Save(project, state);
             return true;
         }
@@ -238,22 +281,26 @@ public sealed class ProjectEnvironmentService
             artifact[(artifact.LastIndexOf("@sha256:", StringComparison.Ordinal) + 8)..] + ".txt");
 
     public bool Decide(string project, string artifact, bool approve, string actor)
+        => DecidePromotion(project, artifact, approve, actor).Decided;
+
+    /// <summary>Decides a pending promotion; an approval returns the production job.</summary>
+    public (bool Decided, DeployJob? Job) DecidePromotion(string project, string artifact, bool approve, string actor)
     {
         lock (_gate)
         {
             var declarations = Declarations(project);
-            if (declarations is null) return false;
+            if (declarations is null) return (false, null);
             var state = Load(project);
             var promotion = state.Promotions.LastOrDefault(item => item.Artifact == artifact && item.Status == "pending");
             if (promotion is null || promotion.ExpiresAt is null
-                || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return false;
+                || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return (false, null);
             var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
-            if (production is null) return false;
+            if (production is null) return (false, null);
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
-            if (approve) Queue(project, production, artifact, state, actor: actor);
+            var job = approve ? Queue(project, production, artifact, state, actor: actor) : null;
             Save(project, state);
-            return true;
+            return (true, job);
         }
     }
 
@@ -314,10 +361,11 @@ public sealed class ProjectEnvironmentService
             if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime.AddMinutes(-5)) return false;
             var now = _clock.GetUtcNow().UtcDateTime;
             var success = report.Healthy;
-            state.Jobs[state.Jobs.IndexOf(job)] = job with { Status = success ? "healthy" : "failed", LeaseToken = null };
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
+            state.Jobs[state.Jobs.IndexOf(job)] = job with
+            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
@@ -363,17 +411,19 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    private void Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
+    private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
         bool rollback = false, string? actor = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
             .LastOrDefault()?.Item.Artifact;
-        state.Jobs.Add(new(Guid.NewGuid().ToString("N"), project, declaration.Id,
+        var job = new DeployJob(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor));
+            IsRollback: rollback, RequestedBy: actor);
+        state.Jobs.Add(job);
+        return job;
     }
 
     private string StoreRoot() => Path.Combine(_configuration["TaskRepository"] ??
@@ -382,7 +432,7 @@ public sealed class ProjectEnvironmentService
     {
         return Path.Combine(StoreRoot(), SafeProjectName(project) + ".json");
     }
-    private static string SafeProjectName(string project)
+    internal static string SafeProjectName(string project)
     {
         if (string.IsNullOrWhiteSpace(project) || project is "." or ".." ||
             project.IndexOfAny(['/', '\\', '\0']) >= 0)

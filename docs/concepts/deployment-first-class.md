@@ -45,6 +45,54 @@ minutes, depending on the declared rule. An approval expires after 24 hours.
 Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
 
+### Releases, standard lifecycle and deploy runs (BD-1)
+
+Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
+adds a release layer in `backend/Features/Deploy/`. The host deploy queue above
+stays the only executor; releases and runs describe and steer it.
+
+- **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
+  operator route `POST /api/projects/{project}/environments/releases`) records an
+  immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
+  version (hash of the project.yml schema 2 artifacts, standard lifecycle and
+  deploy steps at the release commit plus the environment declarations), a
+  variables version (hash of the secret reference names per environment), the
+  cards it adds, and channel `default`. Each release is one write-once file under
+  `<TaskRepository>/deployments/projects/<project>/releases/`. The same project,
+  commit and artifacts always resolve to the same release. Cards are those whose
+  integration verification names a commit reachable from the release commit and
+  not from the previous release (at most 200 commits for the first release).
+- **Standard lifecycle.** Staging deploys automatically after integration.
+  Production needs a successful Staging run of the same release and approval by
+  Owner or Maintainer. Owner is the Studio owner role; Maintainer is an account
+  with the project's production approval grant. Without a session in the local
+  profile, the local operator approves. An environment declared with
+  `approval: stage-healthy-10m` keeps its AGT-3176 timed promotion, which the
+  run records as approved by `stage-health-rule`.
+- **Deploy run.** Each run of a release in an environment has the state
+  `queued`, `running`, `succeeded`, `failed`, `cancelled` or `awaiting-approval`,
+  and the steps `approval` (production only), `publish-static` or
+  `start-container`, and `health`. The host reports one bounded result code, so
+  the health step has one observed instant. Step log lines are written by the
+  Studio, never copied from host output. Runs follow the queue: jobs started by
+  the gate, the timed promotion, the older promotion and rollback routes, and
+  automatic rollback are adopted into runs, and pending promotions become runs
+  that await approval.
+- **Redeploy and rollback.** Redeploy runs the environment's current release
+  again. Rollback runs the latest successful release older than the current one.
+  Both follow the same approval rule.
+- **Audit.** Every release, request, approval, rejection, cancellation and host
+  transition appends an entry to `audit.jsonl` next to the runs.
+
+Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
+(one EnvironmentStatus per environment), `releases`, `releases/{id}`,
+`deployments[?environmentId=]`, `deployments/{id}`, `deployments/{id}/log[?step=]`
+and `audit`; `POST releases/{id}/deployments` (`{environmentId, approve}`),
+`deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
+`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
+`GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
+caller's projects.
+
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy
 principal and host id are the same enrolled `runner_<id>` value. Its secret

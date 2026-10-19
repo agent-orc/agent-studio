@@ -151,7 +151,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3175 adds one Start route for new projects from a template.
         // AGT-3176 added the gate release handoff on Start. It records the
         // artifact digest and queues stage, so public demo must deny it.
-        Assert.Equal(112, routes.Count);
+        // AGT-3201 (BD-1) added deploy runs: deploy a release, redeploy and
+        // rollback on Start; approve, reject and cancel a run on Continue.
+        Assert.Equal(118, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -165,6 +167,12 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         {
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/redeploy", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/rollback", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue)
@@ -192,8 +200,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 9,
-                [ExecutionAdmissionPath.Start] = 19,
-                [ExecutionAdmissionPath.Continue] = 22,
+                [ExecutionAdmissionPath.Start] = 22,
+                [ExecutionAdmissionPath.Continue] = 25,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,

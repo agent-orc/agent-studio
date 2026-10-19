@@ -2420,6 +2420,9 @@ by Owner or Maintainer. The accepted steps are `publish-static`,
 `start-container`, `run`, `health`, and `approval`. `start-container` is a
 configuration placeholder until the run-host adapter is available. The editor
 contract is [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json).
+Each release hashes these sections at its commit into its process version; the
+release, lifecycle and deploy-run contract is described in
+[Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1).
 
 A static deploy example uses a branch pulled by the web target:
 

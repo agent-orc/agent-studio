@@ -1,0 +1,104 @@
+using System.Security.Cryptography;
+using System.Text;
+
+namespace AgentStudio.Deploy;
+
+/// <summary>
+/// Persisted deploy run. The AGT-3176 deploy job (<see cref="JobId"/>) stays
+/// the unit the deploy host executes; this record adds release identity,
+/// approval, steps and the log.
+/// </summary>
+public sealed record DeploymentRecord
+{
+    public required string Id { get; init; }
+    public required string ReleaseId { get; init; }
+    public required string EnvironmentId { get; init; }
+    public required string State { get; init; }
+    public required string Trigger { get; init; }
+    /// <summary><c>publish-static</c> or <c>start-container</c>, from the environment template.</summary>
+    public required string DeployStep { get; init; }
+    public bool NeedsApproval { get; init; }
+    public string? RequestedBy { get; init; }
+    public string? ApprovedBy { get; init; }
+    public DateTime? ApprovedAtUtc { get; init; }
+    public string? CancelledBy { get; init; }
+    public string? JobId { get; init; }
+    public string? HostId { get; init; }
+    /// <summary>Stage-healthy time of the AGT-3176 promotion that asked for this approval.</summary>
+    public DateTime? PromotionStageHealthyAtUtc { get; init; }
+    public string? Evidence { get; init; }
+    public DateTime CreatedAtUtc { get; init; }
+    public DateTime? StartedAtUtc { get; init; }
+    public DateTime? FinishedAtUtc { get; init; }
+    public List<DeploymentStepRecord> Steps { get; init; } = [];
+}
+
+public sealed record DeploymentStepRecord(string Name, string State, DateTime? StartedAtUtc, DateTime? FinishedAtUtc);
+
+public sealed record DeploymentLogEntry(string DeploymentId, string Step, DateTime AtUtc, string Message);
+
+public static class DeployStepNames
+{
+    public const string Approval = "approval";
+    public const string PublishStatic = "publish-static";
+    public const string StartContainer = "start-container";
+    public const string Health = "health";
+
+    public static string ForTemplate(string template) => template == "static" ? PublishStatic : StartContainer;
+}
+
+/// <summary>Host result codes accepted by the AGT-3176 report route.</summary>
+public static class DeployEvidence
+{
+    public const string HealthOk = "health-ok";
+    public const string HealthFailed = "health-http-failed";
+    public const string DeployFailed = "deploy-step-failed";
+}
+
+public static class DeployIds
+{
+    public static string For(string key)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16].ToLowerInvariant();
+}
+
+/// <summary>Derives the P1 step list from the run's facts. Pure.</summary>
+public static class DeploymentStepPlan
+{
+    public static List<DeploymentStepRecord> Build(DeploymentRecord run)
+    {
+        var steps = new List<DeploymentStepRecord>();
+        var cancelled = run.State == DeploymentStates.Cancelled;
+        if (run.NeedsApproval)
+        {
+            var state = run.ApprovedBy is not null ? DeploymentStates.Succeeded
+                : cancelled ? DeploymentStates.Cancelled : DeploymentStates.AwaitingApproval;
+            steps.Add(new(DeployStepNames.Approval, state, run.CreatedAtUtc,
+                run.ApprovedAtUtc ?? (cancelled ? run.FinishedAtUtc : null)));
+        }
+
+        var healthFailed = run.Evidence == DeployEvidence.HealthFailed;
+        var deployState = run.State switch
+        {
+            DeploymentStates.Running => DeploymentStates.Running,
+            DeploymentStates.Succeeded => DeploymentStates.Succeeded,
+            DeploymentStates.Failed => healthFailed ? DeploymentStates.Succeeded : DeploymentStates.Failed,
+            DeploymentStates.Cancelled => DeploymentStates.Cancelled,
+            _ => DeploymentStepStates.Pending,
+        };
+        var finished = DeploymentStates.IsFinished(run.State) && run.StartedAtUtc is not null;
+        steps.Add(new(run.DeployStep, deployState, run.StartedAtUtc, finished ? run.FinishedAtUtc : null));
+
+        var healthState = run.State switch
+        {
+            DeploymentStates.Succeeded => DeploymentStates.Succeeded,
+            DeploymentStates.Failed => healthFailed ? DeploymentStates.Failed : DeploymentStepStates.Skipped,
+            DeploymentStates.Cancelled => DeploymentStates.Cancelled,
+            _ => DeploymentStepStates.Pending,
+        };
+        // The host reports deploy and health together, so the health step has
+        // one observed instant: the report.
+        var healthAt = healthState is DeploymentStates.Succeeded or DeploymentStates.Failed ? run.FinishedAtUtc : null;
+        steps.Add(new(DeployStepNames.Health, healthState, healthAt, healthAt));
+        return steps;
+    }
+}
