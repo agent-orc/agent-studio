@@ -502,6 +502,9 @@ public sealed partial class MergeIntoDevelopRunner
             // AGT-3103: when the published branch already carries it, the
             // integration is a no-op: no gate, no push, and the integration
             // reservation is released as soon as this call returns.
+            // Containment observed here is this attempt's own premise, not a
+            // later integration that would make its gate result stale.
+            var startedContained = result.Outcome.IsAlreadyContained();
             ContainedDeliveryVerification? verification = null;
             var noOpIntegration = false;
             if (result.Outcome.IsAlreadyContained())
@@ -626,7 +629,8 @@ public sealed partial class MergeIntoDevelopRunner
                 if (live.Lane is TaskStates.Completed or TaskStates.Archive
                     && (cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         || returnedGate.Verdict == BuildTestGateVerdict.Fail)
-                    || cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
+                    || !startedContained
+                        && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         && published == PublishedDeliveryContainment.Contained)
                 {
                     staleGateSubject = live;
