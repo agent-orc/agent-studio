@@ -1,0 +1,32 @@
+# Cloudflare edge mode: the hostname is a proxied Cloudflare DNS record with
+# SSL mode Full. Only peers in cloudflare-ips.caddy count as proxies; their
+# CF-Connecting-IP becomes the client address. Any other peer is refused
+# unless STUDIO_CLOUDFLARE_ALLOW_DIRECT is true, in which case the peer
+# itself is the client and its CF-Connecting-IP is ignored.
+{
+    servers {
+        import /etc/caddy/cloudflare-ips.caddy
+        client_ip_headers CF-Connecting-IP
+        trusted_proxies_strict
+    }
+}
+
+{$STUDIO_DOMAIN} {
+    encode zstd gzip
+    header {
+        >Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        >X-Content-Type-Options nosniff
+        >Referrer-Policy same-origin
+        -Server
+    }
+
+    @bypass {
+        vars {http.vars.trusted_proxy} false
+        not vars {env.STUDIO_CLOUDFLARE_ALLOW_DIRECT} true
+    }
+    respond @bypass "Direct origin access is disabled. Use the Cloudflare hostname." 403
+
+    reverse_proxy frontend:8080 {
+        header_up X-Forwarded-For {client_ip}
+    }
+}

@@ -1,0 +1,129 @@
+using System.Net;
+using System.Text.RegularExpressions;
+using AgentStudio.Security;
+using AgentStudio.TestSupport;
+using Microsoft.AspNetCore.Http;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+public sealed class StudioResponseHeaderPolicyTests
+{
+    private static readonly string Stack = Path.Combine(
+        RepositoryRoot.Find(), "deploy", "compose", "monolith-networked");
+
+    [Fact]
+    public void Response_without_own_policy_gets_the_full_baseline()
+    {
+        IHeaderDictionary headers = new HeaderDictionary();
+
+        StudioResponseHeaderPolicy.Apply(headers);
+
+        Assert.Equal(StudioResponseHeaderPolicy.ContentSecurityPolicy, headers.ContentSecurityPolicy.ToString());
+        Assert.Contains("frame-ancestors 'self'", headers.ContentSecurityPolicy.ToString());
+        Assert.Equal("SAMEORIGIN", headers.XFrameOptions.ToString());
+        Assert.Equal("same-origin", headers["Cross-Origin-Opener-Policy"].ToString());
+        Assert.Equal(StudioResponseHeaderPolicy.PermissionsPolicy, headers["Permissions-Policy"].ToString());
+        Assert.Equal("same-origin", headers["Referrer-Policy"].ToString());
+        Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
+    }
+
+    [Theory]
+    [InlineData("sandbox allow-scripts; form-action 'none'", false)]
+    [InlineData("sandbox; default-src 'none'", false)]
+    [InlineData("default-src 'none'; frame-ancestors 'none'", true)]
+    [InlineData("default-src 'self'; sandboxed-name 'x'", true)]
+    public void Endpoint_policy_is_kept_and_sandboxed_documents_get_no_frame_options(string ownPolicy, bool frameOptions)
+    {
+        IHeaderDictionary headers = new HeaderDictionary { ["Content-Security-Policy"] = ownPolicy };
+
+        StudioResponseHeaderPolicy.Apply(headers);
+
+        Assert.Equal(ownPolicy, headers.ContentSecurityPolicy.ToString());
+        Assert.Equal(frameOptions, headers.ContainsKey("X-Frame-Options"));
+        Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
+        Assert.Equal(StudioResponseHeaderPolicy.PermissionsPolicy, headers["Permissions-Policy"].ToString());
+    }
+
+    [Fact]
+    public void Endpoint_frame_and_referrer_choices_are_not_weakened()
+    {
+        IHeaderDictionary headers = new HeaderDictionary
+        {
+            ["X-Frame-Options"] = "DENY",
+            ["Referrer-Policy"] = "no-referrer",
+        };
+
+        StudioResponseHeaderPolicy.Apply(headers);
+
+        Assert.Equal("DENY", headers.XFrameOptions.ToString());
+        Assert.Equal("no-referrer", headers["Referrer-Policy"].ToString());
+    }
+
+    [Fact]
+    public void Frontend_shell_policy_matches_the_api_baseline()
+    {
+        var frontend = File.ReadAllText(Path.Combine(Stack, "Caddyfile.frontend"));
+
+        Assert.Contains($"Content-Security-Policy \"{StudioResponseHeaderPolicy.ContentSecurityPolicy}\"", frontend);
+        Assert.Contains($"Permissions-Policy \"{StudioResponseHeaderPolicy.PermissionsPolicy}\"", frontend);
+        Assert.Contains("X-Frame-Options SAMEORIGIN", frontend);
+        Assert.Contains("Cross-Origin-Opener-Policy same-origin", frontend);
+    }
+
+    [Theory]
+    [InlineData("Caddyfile.public")]
+    [InlineData("Caddyfile.private")]
+    [InlineData("Caddyfile.cloudflare")]
+    public void Every_edge_mode_forces_hsts_and_forwards_only_its_resolved_client(string caddyfile)
+    {
+        var edge = File.ReadAllText(Path.Combine(Stack, caddyfile));
+
+        Assert.Contains($">Strict-Transport-Security \"{StudioResponseHeaderPolicy.StrictTransportSecurity}\"", edge);
+        Assert.Contains("header_up X-Forwarded-For {client_ip}", edge);
+    }
+
+    [Fact]
+    public void Proxy_trust_chain_matches_the_compose_addresses()
+    {
+        var compose = File.ReadAllText(Path.Combine(Stack, "compose.yaml"));
+        var frontend = File.ReadAllText(Path.Combine(Stack, "Caddyfile.frontend"));
+        var edgeAddress = ServiceAddress(compose, "edge");
+        var frontendAddress = ServiceAddress(compose, "frontend");
+
+        Assert.Contains($"trusted_proxies static {edgeAddress}/32", frontend);
+        Assert.Contains($"Security__TrustedProxyAddresses: {frontendAddress}", compose);
+        Assert.Contains("./cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro", compose);
+        Assert.Contains("STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}", compose);
+    }
+
+    [Fact]
+    public void Cloudflare_mode_trusts_only_the_versioned_ranges_and_refuses_other_peers()
+    {
+        var cloudflare = File.ReadAllText(Path.Combine(Stack, "Caddyfile.cloudflare"));
+        var ranges = File.ReadAllLines(Path.Combine(Stack, "cloudflare-ips.caddy"))
+            .Select(line => Regex.Match(line, @"^\s*([0-9A-Fa-f.:]+/\d+)"))
+            .Where(match => match.Success)
+            .Select(match => IPNetwork.Parse(match.Groups[1].Value))
+            .ToList();
+
+        Assert.Contains("import /etc/caddy/cloudflare-ips.caddy", cloudflare);
+        Assert.Contains("client_ip_headers CF-Connecting-IP", cloudflare);
+        Assert.Contains("vars {http.vars.trusted_proxy} false", cloudflare);
+        Assert.Contains("not vars {env.STUDIO_CLOUDFLARE_ALLOW_DIRECT} true", cloudflare);
+        Assert.Contains(ranges, range => range.BaseAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+        Assert.Contains(ranges, range => range.BaseAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6);
+        Assert.DoesNotContain(ranges, range => range.Contains(IPAddress.Parse("172.30.83.2")));
+        Assert.DoesNotContain(ranges, range => range.Contains(IPAddress.Loopback));
+    }
+
+    private static string ServiceAddress(string compose, string service)
+    {
+        var match = Regex.Match(
+            compose,
+            $@"^  {service}:\n(?:(?!^  \S).*\n)*?\s+ipv4_address: (?<address>[0-9.]+)",
+            RegexOptions.Multiline);
+        Assert.True(match.Success, $"compose.yaml names no address for {service}");
+        return match.Groups["address"].Value;
+    }
+}

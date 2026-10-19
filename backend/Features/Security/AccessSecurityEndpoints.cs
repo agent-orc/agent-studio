@@ -21,12 +21,19 @@ public static class AccessSecurityEndpoints
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration)));
         });
 
-        auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+        auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration, ILoggerFactory loggers) =>
             Execute(() =>
             {
+                // The address is the client the edge resolved (Cloudflare or
+                // direct), forwarded by the trusted frontend hop (AGT-3230).
+                var audit = loggers.CreateLogger("AgentStudio.Security.Bootstrap");
                 if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
+                {
+                    audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
                     throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
+                }
                 var created = store.Bootstrap(request);
+                audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));

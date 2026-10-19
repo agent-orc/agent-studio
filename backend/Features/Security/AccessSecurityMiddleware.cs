@@ -19,6 +19,7 @@ public sealed class AccessSecurityMiddleware
     private readonly TimelineLog? _timeline;
     private readonly TimeProvider _clock;
     private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
+    private readonly ILogger<AccessSecurityMiddleware>? _logger;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -29,7 +30,8 @@ public sealed class AccessSecurityMiddleware
         AgentStudio.Registry.ProjectRegistry? projects = null,
         TimelineLog? timeline = null,
         TimeProvider? clock = null,
-        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null)
+        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null,
+        ILogger<AccessSecurityMiddleware>? logger = null)
     {
         _next = next;
         _configuration = configuration;
@@ -40,6 +42,7 @@ public sealed class AccessSecurityMiddleware
         _timeline = timeline;
         _clock = clock ?? TimeProvider.System;
         _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -115,6 +118,28 @@ public sealed class AccessSecurityMiddleware
             && presentedBearer?.StartsWith("api.", StringComparison.Ordinal) != true)
         {
             await _next(context);
+            return;
+        }
+
+        // A request that carries a Studio session cookie, or asks for one, must
+        // prove it came from a Studio page. SameSite does not separate sibling
+        // hosts of the same site (AGT-3230).
+        var browserCredential = context.Request.Cookies.ContainsKey(AccessSecurityStore.SessionCookieName)
+                                || context.Request.Cookies.ContainsKey(AccessSecurityStore.InsecureSessionCookieName)
+                                || BrowserOriginPolicy.IsBrowserSignIn(path);
+        var origin = BrowserOriginPolicy.Decide(
+            context.Request.Method,
+            browserCredential,
+            context.Request.Headers.Origin.FirstOrDefault(),
+            context.Request.Headers["Sec-Fetch-Site"].FirstOrDefault(),
+            context.Request.Scheme,
+            context.Request.Host);
+        if (!origin.Allowed)
+        {
+            _logger?.LogWarning(
+                "Rejected {Method} {Path} from client {ClientAddress}: {Code}",
+                context.Request.Method, path, context.Connection.RemoteIpAddress, origin.Code);
+            await Reject(context, 403, origin.Code!, origin.Message!);
             return;
         }
 

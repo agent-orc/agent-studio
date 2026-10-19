@@ -64,7 +64,11 @@ that is already allowed to edit that project's checkout.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
-  header. Studio exposes an explicit sign-out action; a logout or API 401 tears
+  header. Because SameSite does not separate sibling hosts of one site, every
+  unsafe request that carries a session cookie, and every sign-in, bootstrap,
+  or invitation acceptance, must also carry a matching `Origin` or
+  `Sec-Fetch-Site: same-origin`. Runner bearer and enrollment-code requests
+  carry no browser credential and are outside this rule. Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, contributor (shown as Product)
@@ -135,6 +139,18 @@ minimal `/healthz` liveness endpoint. It trusts one forwarded-header hop from a
 known proxy. The reference Caddy deployment owns ACME renewal, redirects HTTP,
 sets HSTS, caps request bodies, forwards WebSocket upgrades, and serves Angular
 from the same origin as `/api` and `/hubs`.
+
+Every networked response carries a Content-Security-Policy with
+`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`,
+`Cross-Origin-Opener-Policy: same-origin`, a minimal `Permissions-Policy`,
+`X-Content-Type-Options: nosniff`, and HSTS with `includeSubDomains`. The API
+sets them in `StudioResponseHeaderPolicy`; the website stack's frontend Caddy
+sets the same values for the static shell. The URL preview proxy and task
+result HTML keep their own sandbox policy and get no `X-Frame-Options`, because
+Studio frames those opaque-origin documents itself. The baseline keeps
+`'unsafe-inline'` in `script-src`: sandboxed `srcdoc` frames inherit the shell
+policy and run the inline scripts of repository HTML on their opaque origin.
+Serving that HTML from a separate origin would allow a stricter script policy.
 
 Anonymous API reads, mutations, client registration, Runner registration, hub
 negotiation, and reconnects fail closed. Debug, internal probe, and filesystem

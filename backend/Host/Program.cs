@@ -81,6 +81,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
         options.KnownProxies.Add(address);
     }
 });
+// AGT-3230: the networked edge sends a one-year HSTS with includeSubDomains;
+// the API's own header must not advertise a weaker policy.
+builder.Services.AddOptions<Microsoft.AspNetCore.HttpsPolicy.HstsOptions>().Configure<IConfiguration>((options, configuration) =>
+{
+    if (!SecurityProfiles.IsNetworked(configuration)) return;
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
+});
 var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
 var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
     publicDemoBodyCap ? "Security:PublicDemoMaxRequestBodyBytes" : "Security:MaxRequestBodyBytes",
@@ -1384,6 +1392,9 @@ if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
     });
 }
 if (networkedSecurityProfile || publicDemoExecutionProfile) app.UseHsts();
+// Before the exception handler and the access boundary, so rejections and
+// errors carry the framing and content policy too (AGT-3230).
+if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Only the public-demo profile limits anything, so only it runs the rate
 // limiter. RateLimitingMiddleware starts two partitioned limiters, each with a
 // 100 ms heartbeat timer that nothing disposes. Under WebApplicationFactory
