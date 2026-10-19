@@ -4,6 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { WorkspaceQuotaBoardState } from '../../../quota';
 import type { UsageCli, UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import { UsageCockpitHostComponent } from './usage-cockpit-host';
 
@@ -34,6 +35,10 @@ function snapshot(workspaceId: string): UsageCockpitResponse {
   };
 }
 
+function quota(status: string, message: string | null, codingAllowed: boolean) {
+  return { status, message, overrideActive: false, codingAllowed };
+}
+
 describe('production usage cockpit host', () => {
   afterEach(() => TestBed.inject(HttpTestingController).verify());
 
@@ -45,14 +50,22 @@ describe('production usage cockpit host', () => {
     const fixture = TestBed.createComponent(UsageCockpitHostComponent);
     fixture.componentInstance.secondaryVisible.set(true);
     fixture.componentRef.setInput('workspaceName', 'Workspace A');
-    fixture.componentRef.setInput('workspaces', [{ id: 'ws-a', displayName: 'Workspace A', projects: [] }]);
+    fixture.componentRef.setInput('workspaces', [{ id: 'ws-a', displayName: 'Workspace A', projects: [{ id: 'p-alpha', displayName: 'Alpha' }] }]);
     fixture.detectChanges();
     const http = TestBed.inject(HttpTestingController);
+    const quotaBoard = TestBed.inject(WorkspaceQuotaBoardState);
     const request = http.expectOne(req => req.url === '/api/usage/cockpit' && req.params.get('workspaceId') === 'ws-a');
     request.flush(snapshot('ws-a'));
+    http.expectOne('/api/workspaces/ws-a/quota').flush(quota('warning', 'Workspace A used 85 % of its weekly model tokens.', true));
+    http.expectOne('/api/workspaces/ws-a/projects/p-alpha/quota').flush(quota('blocked', 'Alpha reached its weekly compute quota.', false));
     await fixture.whenStable();
 
     const root = fixture.nativeElement as HTMLElement;
+    const quotaStatus = () => root.querySelector('[data-testid="workspace-quota-status"]');
+    expect(quotaStatus()?.getAttribute('data-status')).toBe('warning');
+    expect(quotaStatus()?.textContent).toContain('85 %');
+    expect(quotaBoard.messageFor('Alpha')).toBe('Alpha reached its weekly compute quota.');
+    expect(quotaBoard.messageFor('Beta')).toBeNull();
     expect(root.querySelector('[data-testid="usage-cli-chip-claude"]')?.getAttribute('data-alarm')).toBe('limited');
     expect(root.querySelector('[data-testid="usage-cost-chip"]')?.getAttribute('data-alarm')).toBe('warning');
     expect(root.querySelector('[data-testid="usage-alarm-status"]')?.textContent).toContain('Claude is limited');
@@ -68,8 +81,13 @@ describe('production usage cockpit host', () => {
     fixture.componentRef.setInput('workspaces', [{ id: 'ws-b', displayName: 'Workspace B', projects: [] }]);
     fixture.detectChanges();
     expect(root.querySelector('[data-testid="usage-cli-chip-claude"]')).toBeNull();
+    expect(quotaStatus()).toBeNull();
+    expect(quotaBoard.messageFor('Alpha')).toBeNull();
     http.expectOne(req => req.params.get('workspaceId') === 'ws-b').flush(snapshot('ws-b'));
+    http.expectOne('/api/workspaces/ws-b/quota').flush(quota('blocked', 'Workspace B reached its weekly model-token quota.', false));
     await fixture.whenStable();
+    expect(quotaStatus()?.getAttribute('data-status')).toBe('blocked');
+    expect(quotaBoard.messageFor('Alpha')).toBe('Workspace B reached its weekly model-token quota.');
     expect(root.querySelector('[data-testid="usage-hidden-alarm"]')?.getAttribute('data-severity')).toBe('limited');
     fixture.destroy();
   });

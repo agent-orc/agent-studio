@@ -84,7 +84,7 @@ import { BetterCandidateLinesComponent } from '../../../../components/better-can
 import { BatchMemberComponent } from '../../../batch-gate/batch-member/batch-member';
 import { ReviewQueuePillComponent } from '../review-queue-pill/review-queue-pill';
 import { handleReviewPriorityAction } from './review-priority-action';
-import { WorkspaceQuotaBoardState } from '../../../quota/state/workspace-quota-board-state.service';
+import { TaskCardQuotaNoticeComponent } from '../../../quota';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
@@ -93,7 +93,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -118,8 +118,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    */
   readonly pickNextRequested = output<TaskInfo>();
   private readonly hostRef = inject(ElementRef<HTMLElement>);
-  private readonly quotaBoard = inject(WorkspaceQuotaBoardState);
-  readonly workspaceQuotaMessage = computed(() => this.quotaBoard.messageFor(this.job().projectName));
   readonly showWorkspaceQuotaMessage = computed(() => !this.isRunning() && !isTerminalTaskState(this.job().state));
   /** True when this card should render the just-created highlight. */
   readonly isJustCreated = computed(() => this.highlightJobId() === this.job().id);

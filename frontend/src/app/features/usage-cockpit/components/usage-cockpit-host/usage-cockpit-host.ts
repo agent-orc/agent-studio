@@ -5,7 +5,7 @@ import { Subscription } from 'rxjs';
 import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
-import { WorkspaceQuotaBoardState } from '../../../quota/state/workspace-quota-board-state.service';
+import { WorkspaceQuotaBoardState } from '../../../quota';
 import { UsageAlarmStateService } from '../../state/usage-alarm-state.service';
 import { UsageAlarmStatusComponent } from '../usage-alarm-status/usage-alarm-status';
 import { UsageCliChipComponent } from '../usage-cli-chip/usage-cli-chip';
@@ -87,6 +87,7 @@ export class UsageCockpitHostComponent implements OnInit, OnDestroy {
       this.snapshot.set(null);
       this.readFailed.set(false);
       this.alarms.reset();
+      this.workspaceQuota.set(null);
       this.quotaBoard.reset();
     }
     const sequence = ++this.requestSequence;
