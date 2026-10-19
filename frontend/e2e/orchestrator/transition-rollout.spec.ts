@@ -11,14 +11,30 @@ test('transition profiles show comparison state and require an operator reason',
   await page.route('**/api/orchestration/rollout/profiles', async route => {
     if (route.request().method() === 'GET') {
       await route.fulfill({ json: [
-        { profile: 'CodingCompletion', state: 'shadow', streak: 12, threshold: 50,
-          mismatchCount: 0, lastMismatch: null },
+        { profile: 'CodingCompletion', state: 'canary', streak: 50, threshold: 50,
+          mismatchCount: 0, lastMismatch: null,
+          applierContract: { status: 'covered', actions: ['CreateReview', 'ReturnToReady', 'SalvageContinuation',
+            'Escalate', 'HumanReview', 'Continue'], uncovered: [] },
+          canary: { status: 'watching', required: 3, verified: 1, instanceId: 'studio/abc123',
+            passedOnThisInstance: false },
+          lastEffectCheck: { occurrence: 'orch_coding', action: 'CreateReview', verified: true, missing: [],
+            evidence: 'AGT-4242 is in 4-auto-review.', checkedAt: '2026-10-19T08:00:00Z' } },
         { profile: 'ReviewReport', state: 'ready', streak: 50, threshold: 50,
           mismatchCount: 1, lastMismatch: { monolith: {
             occurrence: 'review-one', inputsDigest: 'abc', action: 'FindingRound', reason: 'Fix finding.' },
-          engine: { occurrence: 'review-one', inputsDigest: 'abc', action: 'Escalate', reason: 'Test block.' } } },
+          engine: { occurrence: 'review-one', inputsDigest: 'abc', action: 'Escalate', reason: 'Test block.' } },
+          applierContract: { status: 'covered', actions: ['FindingRound', 'DeferToBatch'], uncovered: [] },
+          canary: { status: 'failed', required: 3, verified: 0, instanceId: 'studio/abc123',
+            passedOnThisInstance: false },
+          lastEffectCheck: { occurrence: 'orch_defer', action: 'DeferToBatch', verified: false,
+            missing: ['BatchAdmission'], evidence: 'DOC-1 is in 4-auto-review; missing BatchAdmission.',
+            checkedAt: '2026-10-16T09:12:00Z' } },
         { profile: 'GateResult', state: 'engine', streak: 50, threshold: 50,
-          mismatchCount: 0, lastMismatch: null },
+          mismatchCount: 0, lastMismatch: null,
+          applierContract: { status: 'covered', actions: ['Continue', 'ReturnToReady', 'Escalate'], uncovered: [] },
+          canary: { status: 'passed', required: 3, verified: 3, instanceId: 'studio/abc123',
+            passedOnThisInstance: true },
+          lastEffectCheck: null },
       ] });
     } else await route.continue();
   });
@@ -46,9 +62,18 @@ test('transition profiles show comparison state and require an operator reason',
   await expect(panel.getByTestId('decision-workspace-spend')).toContainText('no usage data');
   await expect(panel.getByTestId('transition-profile-ReviewReport')).toContainText('ready');
   await expect(panel.getByTestId('transition-profile-ReviewReport')).toContainText('50 / 50');
-  await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeDisabled();
+  // AGT-3218: Ready proves no applied effect, so the engine waits for an applier canary.
+  const review = panel.getByTestId('transition-profile-ReviewReport');
+  await expect(review.getByRole('button', { name: 'Switch to engine' })).toHaveCount(0);
+  await expect(review.getByRole('button', { name: 'Start applier canary' })).toBeDisabled();
+  await expect(panel.getByTestId('applier-canary-ReviewReport')).toContainText('failed · 0 / 3');
+  await expect(panel.getByTestId('effect-check-ReviewReport')).toContainText('missing BatchAdmission');
+  await expect(panel.getByTestId('applier-contract-CodingCompletion')).toContainText('covered · 6 actions');
+  await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('watching · 1 / 3');
+  await expect(panel.getByTestId('effect-check-CodingCompletion')).toContainText('CreateReview · applied');
+  await expect(panel.getByTestId('applier-canary-GateResult')).toContainText('passed on this instance');
   await panel.getByTestId('transition-rollout-reason').fill('Shadow receipts matched');
-  await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeEnabled();
+  await expect(review.getByRole('button', { name: 'Start applier canary' })).toBeEnabled();
   const decision = panel.getByTestId(`shadow-decision-${receipt}`);
   await expect(decision).toContainText('AGT-4242');
   await expect(decision).toContainText('match');

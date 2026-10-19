@@ -3219,6 +3219,10 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                     descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(DeliveryChainReconciler));
                 services.Remove(reconciler);
+                // AGT-3218: the applier canary checks on a wall-clock timer; tests drive CheckOnce.
+                services.Remove(services.Single(descriptor =>
+                    descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(EngineApplierCanaryService)));
             });
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;

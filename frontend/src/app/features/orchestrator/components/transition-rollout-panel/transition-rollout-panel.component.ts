@@ -36,13 +36,40 @@ interface ShadowDecision {
   endedAt: string;
 }
 
+/** AGT-3218: what the effect probe found for one applied engine decision. */
+interface EffectCheck {
+  occurrence: string;
+  action: string;
+  verified: boolean;
+  missing: string[];
+  evidence: string;
+  checkedAt: string;
+}
+
+interface CanaryStatus {
+  status: 'watching' | 'passed' | 'failed' | 'stopped';
+  required: number;
+  verified: number;
+  instanceId: string;
+  passedOnThisInstance: boolean;
+}
+
+interface ApplierContract {
+  status: 'covered' | 'uncovered';
+  actions: string[];
+  uncovered: string[];
+}
+
 interface Profile {
   profile: string;
-  state: 'monolith' | 'shadow' | 'ready' | 'engine' | 'rolled-back';
+  state: 'monolith' | 'shadow' | 'ready' | 'canary' | 'engine' | 'rolled-back';
   streak: number;
   threshold: number;
   mismatchCount: number;
   lastMismatch: Mismatch | null;
+  applierContract?: ApplierContract | null;
+  canary?: CanaryStatus | null;
+  lastEffectCheck?: EffectCheck | null;
 }
 
 interface SpendSummary {
@@ -101,7 +128,17 @@ export class TransitionRolloutPanelComponent implements OnInit {
     return spend.pricedUsd === 0 ? '<$0.0001 priced' : `$${spend.pricedUsd.toFixed(4)} priced`;
   }
 
-  async switch(profile: Profile, target: 'shadow' | 'engine' | 'rollback'): Promise<void> {
+  canaryText(canary: CanaryStatus): string {
+    const here = canary.passedOnThisInstance ? ' · passed on this instance' : '';
+    return `${canary.status} · ${canary.verified} / ${canary.required} decisions applied${here}`;
+  }
+
+  effectText(check: EffectCheck): string {
+    const result = check.verified ? 'applied' : `missing ${check.missing.join(', ')}`;
+    return `${check.action} · ${result} · ${check.checkedAt.slice(0, 16).replace('T', ' ')} UTC`;
+  }
+
+  async switch(profile: Profile, target: 'shadow' | 'canary' | 'engine' | 'rollback'): Promise<void> {
     const reason = this.reason().trim();
     if (!reason || this.busy()) return;
     this.busy.set(profile.profile);

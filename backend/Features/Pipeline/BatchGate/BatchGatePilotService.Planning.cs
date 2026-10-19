@@ -29,6 +29,11 @@ public sealed partial class BatchGatePilotService
 
     private sealed record EngineBatchPlan(string RunId, BatchPlanDecision Decision, DateTimeOffset AtUtc);
 
+    // AGT-3218: the applier canary checks that an engine plan reached the tick,
+    // which removes the intent when it reads it, so receipt is kept apart.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _receivedEngineBatchPlans =
+        new(StringComparer.Ordinal);
+
     private int _batchPlanRefusalLogged;
 
     /// <summary>
@@ -62,7 +67,16 @@ public sealed partial class BatchGatePilotService
 
     /// <summary>Records an applied engine intent. The next tick validates it against current facts.</summary>
     public void AcceptEngineBatchPlan(string runId, string taskId, BatchPlanDecision decision)
-        => _engineBatchPlans[taskId] = new EngineBatchPlan(runId, decision, _time.GetUtcNow());
+    {
+        var now = _time.GetUtcNow();
+        _engineBatchPlans[taskId] = new EngineBatchPlan(runId, decision, now);
+        foreach (var stale in _receivedEngineBatchPlans.Where(item => now - item.Value > TimeSpan.FromDays(1)))
+            _receivedEngineBatchPlans.TryRemove(stale.Key, out _);
+        _receivedEngineBatchPlans[runId] = now;
+    }
+
+    /// <summary>True when this process received the engine batch plan of <paramref name="runId"/>.</summary>
+    public bool ReceivedEngineBatchPlan(string runId) => _receivedEngineBatchPlans.ContainsKey(runId);
 
     private async Task<BatchPlanDecision?> PlanLookAheadAsync(string project, string scopeKey,
         BatchPlanInput snapshot, CancellationToken ct)

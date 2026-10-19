@@ -42,7 +42,9 @@ including comparisons recovered after newer outcomes. The default threshold
 is 50 consecutive matches;
 `Orchestration:ShadowMatchThreshold` can change it. Ready is visible but does
 not switch automatically. A Studio operator switches or rolls back through one
-API call with an actor and reason receipt. Rollback keeps pending occurrences
+API call with an actor and reason receipt. Ready leads to Engine only through
+the applier canary described in
+[Applier contract and canary](#applier-contract-and-canary). Rollback keeps pending occurrences
 and resumes them through the monolith's shared library. Unactivated review
 occurrences do not carry a waiting marker. Engine mode never invokes the
 monolith decision on engine unavailability; after one minute a pending
@@ -303,6 +305,91 @@ gate within its start budget. A pass checks the host stop between admissions,
 and the service waits for a running pass when it stops. It also clears wait
 markers that name a cancelled occurrence or a completed one without an active
 choice, and rereads the occurrence after each marker write.
+
+## Applier contract and canary
+
+On 16.10.2026 ReviewReport switched from Shadow to Engine after 39 matching
+shadow decisions, and for 16 hours `MonolithOrchestrationApplier` completed
+every engine `DeferToBatch` decision without its batch admission. Shadow mode
+compares decision receipts and never runs the applier, so no streak can prove
+that an engine decision is applied. AGT-3218 adds the applier contract and the
+applier canary.
+
+`EngineApplierContract` (`backend/Features/Runner/ApplierCanary/`) is the one
+action to effect table. `For(TransitionAction)` has no default arm and the
+backend build treats CS8509 as an error, so a new action without an applier
+effect fails the build. `ProfileActions` lists the actions each rollout profile
+can complete. Every row except `BatchPlan` also owes a cleared wait marker
+(`WaitMarkerCleared`) and a completed occurrence that holds the engine receipt
+and its stage result (`DecisionReceipt`).
+
+| Action | Profiles | Lane | Effect the applier owes |
+|---|---|---|---|
+| CreateReview | CodingCompletion | payload lane (Auto Review) | Lane move; a review request creates the review attempt and the review subject |
+| FindingRound, ConcernRound | ReviewReport | Ready | Lane move, keyed continuation prompt, quality-loop timeline receipt |
+| AcceptAndIntegrate | ReviewReport | Human Review | Delivery settlement journal at `IntegrationSettled`, lane move, park verdict |
+| DeferToBatch | ReviewReport | none | Batch admission: ownership and pending record, a per-task gate that settled the card, or an operator-feed reason why none was owed |
+| HumanReview | CodingCompletion, ReviewReport | Human Review | Lane move; a review occurrence records its park verdict |
+| Escalate | CodingCompletion, ReviewReport, GateResult | Escalated | Lane move |
+| ReviewInfrastructureRetry | ReviewReport | none | Scheduled review infrastructure retry; lane kept |
+| DegradeWithFollowUp | ReviewReport | Human Review | Linked follow-up in Ready, settlement journal, lane move, park verdict |
+| SweepIgnore, SweepHold | operator sweep | none | Lane kept |
+| SweepRound, SweepWaitForPerson | operator sweep | stage lane | Lane move when they reach a transition profile |
+| SalvageContinuation | CodingCompletion | Ready | Lane move |
+| ReturnToReady | CodingCompletion, GateResult | Ready | Lane move, keyed continuation prompt |
+| Continue | CodingCompletion, GateResult | stage lane | Lane move to the payload lane; a passed gate without one keeps its lane and records `Continue`, which dispatches the aspect review |
+| Halt | ReviewReport | none | Lane kept |
+| BatchPlan | BatchPlan | none | The batch tick receives the plan as its next intent |
+
+The stage lane is the payload's `targetState`, or Escalated for an escalating
+stage action. `EngineApplierContract.Owed` narrows a row by that lane and the
+payload: a park verdict is owed only by a review occurrence parked in Human
+Review, a review attempt only by a coding completion that carries a review
+request, and a gate dispatch only by a gate decision without a lane.
+`EngineApplierEffectProbe` reads these effects without writing. A lane move
+counts when the card is in the lane or its timeline holds the keyed
+`LaneChanged` row of the decision, so a card that a runner picked up again
+still verifies. An active choice held by the AI Operator verifies through its
+ask custody, and a checkpoint through `results/checkpoint.md`.
+
+The contract tests (`BatchGateEngineApplierContractTests`, partial
+`BatchGatePilotServiceTests`) run the real applier on an engine-completed
+occurrence for every profile action, assert each owed effect directly, and
+check that the probe agrees. `EngineApplierContractGuardTests`
+(`Category=Guard`) fails when a transition action has no row, when a row's lane
+differs from the applier's lane rule, or when a profile action has no contract
+case.
+
+The canary rule:
+
+- `ready -> engine` is refused with
+  `orchestration-profile-applier-canary-required` unless an applier canary for
+  the profile passed on this instance. The instance is the host name and build
+  commit (`Orchestration:InstanceId` overrides it), because a canary proves the
+  applier code that ran it.
+- `ready -> canary` selects the engine (`MonolithTransitionSwitch` reads
+  Engine) and watches the first `Orchestration:ApplierCanary:Decisions`
+  (default 3) non-shadow engine decisions of the profile. A decision is watched
+  when the engine completes it, before the applier runs, so a decision that
+  never applies is watched too; `engine_rollback` completions do not count.
+  Every switch to `canary` or `engine` starts a new watch.
+- `EngineApplierCanaryService` probes each watched decision every five seconds.
+  When the required decisions show their effects, the canary passes on this
+  instance and a `canary` profile becomes `engine` with an `applier-canary`
+  switch receipt.
+- When one decision still lacks an effect after
+  `Orchestration:ApplierCanary:WindowSeconds` (default 120), the canary fails,
+  the profile rolls back (`rolled-back`, so the monolith decides pending
+  occurrences), and the card's operator feed gets an `applier-canary` alert
+  with the missing effects and the probe evidence.
+
+`GET /api/orchestration/rollout/profiles` reports per profile the streak, the
+applier contract status (`covered` when every profile action has a row), the
+canary status with its observations, and the last effect check.
+`GET /api/orchestration/rollout/applier-contract` returns the table. The
+Transition decisions panel on the engine settings page shows the same fields
+and offers Start applier canary for a Ready profile; Switch to engine appears
+only after a canary passed on this instance.
 
 ## Verification and architecture guard
 

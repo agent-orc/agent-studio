@@ -15,6 +15,12 @@ public static class OrchestrationRolloutEndpoints
                 ? Results.Ok(store.Mismatches(profile)) : Results.NotFound());
         api.MapGet("/switch-receipts", (OrchestrationRolloutStore store) =>
             Results.Ok(store.SwitchReceipts()));
+        // AGT-3218: the action to effect table the applier canary checks.
+        api.MapGet("/applier-contract", () => Results.Ok(new
+        {
+            effects = EngineApplierContract.All,
+            profiles = EngineApplierContract.ProfileActions,
+        }));
         api.MapPost("/profiles/{profile}/switch", (HttpContext context, string profile,
             OrchestrationProfileSwitchRequest request, MonolithOrchestrationStore store,
             IConfiguration configuration) =>

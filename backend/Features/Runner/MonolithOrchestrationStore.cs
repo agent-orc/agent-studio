@@ -335,16 +335,18 @@ public sealed class MonolithOrchestrationStore
     }
 
     /// <summary>
-    /// Switches a rollout profile. The engine takes over only when every earlier
-    /// shadow occurrence of the profile is compared or resolved; a ready streak
-    /// does not account for an occurrence whose comparison is still open.
+    /// Switches a rollout profile. The engine takes over, as canary or engine,
+    /// only when every earlier shadow occurrence of the profile is compared or
+    /// resolved; a ready streak does not account for an occurrence whose
+    /// comparison is still open.
     /// </summary>
     public OrchestrationProfileStatus SwitchProfile(string profile, string target, string actor, string reason)
     {
         var rollout = _rollout ?? throw new InvalidOperationException("orchestration-rollout-unavailable");
         lock (_gate)
         {
-            if (string.Equals(target, "engine", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(target, "engine", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(target, "canary", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (var item in _runs.Values.Where(value => value.Shadow)
                              .OrderBy(value => value.CreationSequence).ThenBy(value => value.Run.CreatedAt)
@@ -569,6 +571,10 @@ public sealed class MonolithOrchestrationStore
                     Run = item.Run with { Status = "applying", UpdatedAt = _time.GetUtcNow().UtcDateTime } };
                 Save(item);
                 _runs[runId] = item;
+                // AGT-3218: the applier canary watches the decision before it is
+                // applied, so a decision that never applies is watched too.
+                if (!item.Shadow && item.Profile is not null && request.EngineId != "engine_rollback")
+                    _rollout?.ObserveEngineDecision(item.Profile, runId, item.EngineReceipt!.Action);
             }
         }
         if (item.Shadow)
