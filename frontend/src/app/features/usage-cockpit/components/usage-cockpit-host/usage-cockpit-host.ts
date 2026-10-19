@@ -5,7 +5,6 @@ import { Subscription } from 'rxjs';
 import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
-import { WorkspaceQuotaBoardState } from '../../../quota';
 import { UsageAlarmStateService } from '../../state/usage-alarm-state.service';
 import { UsageAlarmStatusComponent } from '../usage-alarm-status/usage-alarm-status';
 import { UsageCliChipComponent } from '../usage-cli-chip/usage-cli-chip';
@@ -22,7 +21,6 @@ import { UsageCostChipComponent } from '../usage-cost-chip/usage-cost-chip';
 })
 export class UsageCockpitHostComponent implements OnInit, OnDestroy {
   private readonly http = inject(HttpClient);
-  private readonly quotaBoard = inject(WorkspaceQuotaBoardState);
   readonly alarms = inject(UsageAlarmStateService);
   readonly workspaceName = input<string | null>(null);
   readonly workspaces = input<readonly RegistryWorkspaceListItem[]>([]);
@@ -30,7 +28,6 @@ export class UsageCockpitHostComponent implements OnInit, OnDestroy {
   readonly workspaceId = computed(() => this.workspaces().find(ws => ws.displayName === this.workspaceName())?.id ?? null);
   readonly openUsage = output<void>();
   readonly snapshot = signal<UsageCockpitResponse | null>(null);
-  readonly workspaceQuota = signal<{ status: string; message: string | null; overrideActive: boolean; codingAllowed: boolean } | null>(null);
   readonly readFailed = signal(false);
   readonly phone = signal(typeof window !== 'undefined' && window.innerWidth <= 600);
   readonly secondaryVisible = signal(typeof window !== 'undefined' && window.innerWidth > 1024);
@@ -87,32 +84,9 @@ export class UsageCockpitHostComponent implements OnInit, OnDestroy {
       this.snapshot.set(null);
       this.readFailed.set(false);
       this.alarms.reset();
-      this.workspaceQuota.set(null);
-      this.quotaBoard.reset();
     }
     const sequence = ++this.requestSequence;
     this.request?.unsubscribe();
-    const quotaWorkspace = workspace ?? this.workspaces().find(ws => ws.isDefault)?.id ?? this.workspaces()[0]?.id;
-    if (quotaWorkspace) this.http.get<{ status: string; message: string | null; overrideActive: boolean; codingAllowed: boolean }>(
-      `/api/workspaces/${encodeURIComponent(quotaWorkspace)}/quota`).subscribe({
-        next: quota => {
-          if (sequence !== this.requestSequence) return;
-          this.workspaceQuota.set(quota);
-          this.quotaBoard.setWorkspace(!quota.codingAllowed ? quota.message : null);
-        },
-        error: () => { if (sequence === this.requestSequence) this.workspaceQuota.set(null); },
-      });
-    const projects = this.workspaces().find(ws => ws.id === quotaWorkspace)?.projects ?? [];
-    for (const project of projects) {
-      this.http.get<{ status: string; message: string | null; overrideActive: boolean; codingAllowed: boolean }>(
-        `/api/workspaces/${encodeURIComponent(quotaWorkspace!)}/projects/${encodeURIComponent(project.id)}/quota`).subscribe({
-        next: quota => {
-          if (sequence === this.requestSequence)
-            this.quotaBoard.setProject(project.displayName, !quota.codingAllowed ? quota.message : null);
-        },
-        error: () => { if (sequence === this.requestSequence) this.quotaBoard.setProject(project.displayName, null); },
-      });
-    }
     const preferredCli = typeof localStorage === 'undefined' ? null : localStorage.getItem('defaultCliType');
     let params = new HttpParams();
     if (workspace) params = params.set('workspaceId', workspace);

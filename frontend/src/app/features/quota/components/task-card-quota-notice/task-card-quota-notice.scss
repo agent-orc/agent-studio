@@ -2,6 +2,8 @@
 .task-card-quota-notice {
   margin: var(--studio-spacing-2) 0;
   padding: var(--studio-spacing-2);
-  background: var(--studio-error-bg, var(--studio-surface-2));
-  border-radius: var(--studio-radius-md);
+  border: 1px solid color-mix(in srgb, var(--studio-error) 46%, var(--studio-border));
+  border-radius: var(--studio-action-radius-sm);
+  background: color-mix(in srgb, var(--studio-error) 14%, var(--studio-bg-elevated));
+  color: var(--studio-text-primary);
 }

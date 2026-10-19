@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { api } from '../helpers/api';
+import { createJob } from '../helpers/jobs';
 
 test('owner can inspect and edit a blocked workspace quota', async ({ page, request }) => {
   const workspaces = await (await request.get('/api/workspaces')).json() as Array<{ id: string }>;
@@ -35,7 +37,10 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   await page.goto('/');
   await page.getByTestId('studio-ab-settings').click();
   await page.getByTestId('workspace-settings-rail-workspaces').click();
-  await page.getByTestId(`settings-workspace-quota-${workspaceId}`).click();
+  // The quota toggle renders once the settings view has read the workspace registry.
+  const quotaToggle = page.getByTestId(`settings-workspace-quota-${workspaceId}`);
+  await expect(quotaToggle).toBeVisible({ timeout: 30_000 });
+  await quotaToggle.click();
   const panel = page.getByTestId('workspace-quota');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('100 tokens used');
@@ -53,4 +58,38 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'dark'));
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
   if (results) await page.getByTestId('workspace-quota').screenshot({ path: path.join(results, 'workspace-quota-dark.png') });
+});
+
+test('a blocked workspace quota shows in the board header and on waiting cards', async ({ page }) => {
+  const watchPaths = await api<Array<{ path: string }>>('/api/watch-paths');
+  expect(watchPaths.length).toBeGreaterThan(0);
+  const watchPath = watchPaths[0].path;
+  const title = 'Quota waiting card';
+  const message = 'Weekly quota reached. New work is paused until Monday 00:00 UTC or an owner override.';
+  const quota = (status: string, codingAllowed: boolean, text: string | null) => JSON.stringify({ status, message: text, overrideActive: false, codingAllowed });
+  await page.route('**/api/workspaces/*/quota', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: quota('blocked', false, message) }));
+  await page.route('**/api/workspaces/*/projects/*/quota', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: quota('ok', true, null) }));
+  // The backend assigns the card key, so cleanup matches this spec's cards by title.
+  const removeCards = async () => {
+    const tasks = await api<Array<{ id: string; title: string; watchPath: string }>>('/api/tasks?includeFixtures=true');
+    for (const task of tasks.filter(task => task.title === title && task.watchPath === watchPath))
+      await api(`/api/tasks/${encodeURIComponent(task.id)}?watchPath=${encodeURIComponent(watchPath)}`, { method: 'DELETE' });
+  };
+  await removeCards();
+  await createJob({ title, watchPath, targetState: '2-ready', fixture: false });
+  try {
+    await page.goto('/');
+    const card = page.locator('.task-card', { hasText: title });
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    // A cold e2e backend answers the first header reads slowly; the quota read waits behind them.
+    await expect(page.getByTestId('workspace-quota-status')).toHaveAttribute('data-status', 'blocked', { timeout: 30_000 });
+    await expect(page.getByTestId('workspace-quota-status')).toContainText('Weekly quota reached');
+    await expect(card.getByTestId('task-card-workspace-quota')).toContainText('Weekly quota reached');
+    const results = process.env.JOB_RESULTS_DIR;
+    if (results) await card.screenshot({ path: path.join(results, 'workspace-quota-card.png') });
+  } finally {
+    await removeCards();
+  }
 });

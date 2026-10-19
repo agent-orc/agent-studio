@@ -45,4 +45,9 @@ claim message, and operator event describing the outage. At 80% usage, Studio di
 returns a reason without interrupting active work. A weekly owner override
 allows new admissions in its scope; an override on a project does not exempt it
 from a blocked workspace limit. The board header and eligible cards show the
-current stop reason.
+current stop reason: the Studio shell's header cockpit (`StudioHeaderCockpit`)
+reads the admission of the selected workspace, or of the default workspace in
+the all-projects view, and of its projects once on change and then every
+minute into `WorkspaceQuotaBoardState`. `WorkspaceQuotaBannerComponent` renders
+the warning or stop as a header row, and `TaskCardQuotaNoticeComponent` renders
+the refusal on cards that are neither running nor finished.
