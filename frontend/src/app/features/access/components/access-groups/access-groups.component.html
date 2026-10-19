@@ -1,0 +1,45 @@
+<div class="groups" data-testid="access-groups">
+  @for (group of groups(); track group.id) {
+    <article class="groups__item" [attr.data-testid]="'access-group-' + group.id">
+      <header class="groups__head">
+        <div>
+          <h4>{{ group.name }}</h4>
+          @if (group.description) { <p class="access-hint">{{ group.description }}</p> }
+        </div>
+        <span class="access-badge access-numeric" data-tone="muted">{{ bindingLabel(group) }}</span>
+        <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="remove(group)">Delete group</button>
+      </header>
+      <ul class="groups__members" aria-label="Members">
+        @for (member of members(group); track member.id) {
+          <li class="access-badge">
+            {{ member.displayName }}
+            <button type="button" class="access-quiet" [disabled]="access.busy()" [attr.aria-label]="'Remove ' + member.displayName" (click)="removeMember(group, member.id)">×</button>
+          </li>
+        } @empty {
+          <li class="access-hint">No members yet.</li>
+        }
+      </ul>
+      @if (candidates(group).length) {
+        <div class="access-row"><label>Add member
+          <select [attr.data-testid]="'access-group-add-' + group.id" [disabled]="access.busy()" (change)="addMember(group, $any($event.target).value)">
+            <option value="">Choose a user</option>
+            @for (user of candidates(group); track user.id) {
+              <option [value]="user.id">{{ user.displayName }} ({{ user.username }})</option>
+            }
+          </select>
+        </label></div>
+      }
+    </article>
+  } @empty {
+    <p class="access-hint" data-testid="access-groups-empty">No groups. A single user needs none; create one when several people share a role.</p>
+  }
+  <div class="access-row">
+    <label>Group name
+      <input data-testid="access-group-name" [value]="name()" (input)="name.set($any($event.target).value)" />
+    </label>
+    <label>Description
+      <input data-testid="access-group-description" [value]="description()" (input)="description.set($any($event.target).value)" />
+    </label>
+    <button type="button" data-testid="access-group-create" [disabled]="!name().trim() || access.busy()" (click)="create()">Create group</button>
+  </div>
+</div>

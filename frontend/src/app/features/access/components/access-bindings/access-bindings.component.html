@@ -1,0 +1,43 @@
+<div class="bindings" data-testid="access-bindings">
+  @for (group of groups(); track group.key) {
+    <section class="bindings__scope" [attr.data-testid]="'access-scope-' + group.key">
+      <h4>{{ scopeTitle(group.bindings[0]) }} <span class="access-hint">{{ group.scope.kind }}</span></h4>
+      <table>
+        <thead><tr><th scope="col">Principal</th><th scope="col">Kind</th><th scope="col">Role</th><th scope="col">Source</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+          @for (binding of group.bindings; track binding.id) {
+            <tr [attr.data-testid]="'access-binding-' + binding.id">
+              <td>{{ principalLabel(binding) }}</td>
+              <td>{{ kindLabel(binding.principalKind) }}</td>
+              <td><span class="access-badge" [attr.data-tone]="binding.role === 'owner' ? 'owner' : null">{{ roleName(binding.role) }}</span></td>
+              <td class="access-hint">{{ binding.source }}</td>
+              <td class="access-actions">
+                <button type="button" class="access-quiet" [disabled]="access.busy()" [attr.aria-label]="'Remove ' + roleName(binding.role) + ' from ' + principalLabel(binding)" (click)="remove(binding)">Remove</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+  } @empty {
+    <p class="access-hint" data-testid="access-bindings-empty">No role bindings yet.</p>
+  }
+
+  <section class="bindings__add" aria-labelledby="access-add-binding-title">
+    <h4 id="access-add-binding-title">Add a role binding</h4>
+    <div class="access-row">
+      <label>Principal
+        <select data-testid="access-binding-principal" (change)="principal.set($any($event.target).value)">
+          @for (item of principals(); track item.value) {
+            <option [value]="item.value" [selected]="item.value === selectedPrincipal()?.value">{{ item.label }}</option>
+          }
+        </select>
+      </label>
+    </div>
+    <app-access-grant-form [roles]="access.overview()?.roles ?? []" [projects]="access.projects()"
+                           [principalKind]="selectedPrincipal()?.kind ?? 'user'" (grantChange)="grant.set($event)" />
+    <div class="access-row">
+      <button type="button" data-testid="access-binding-add" [disabled]="!grant() || !selectedPrincipal() || access.busy()" (click)="add()">Add binding</button>
+    </div>
+  </section>
+</div>

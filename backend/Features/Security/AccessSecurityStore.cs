@@ -7,8 +7,10 @@ namespace AgentStudio.Security;
 /// Small-organization security store. The state file contains password, session,
 /// enrollment, and Runner credential hashes only. Plaintext credentials are
 /// returned once by the operation that creates them and are never persisted.
+/// Role bindings, groups, and service accounts live in the same state file;
+/// see <c>Iam/AccessSecurityStore.Iam.cs</c>.
 /// </summary>
-public sealed class AccessSecurityStore
+public sealed partial class AccessSecurityStore
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
     // __Host- verlangt Secure+HTTPS; im lokalen HTTP-Dev-Betrieb verwirft der
@@ -68,6 +70,9 @@ public sealed class AccessSecurityStore
                 PasswordChangedAt = now
             };
             state.Users.Add(user);
+            state.RoleBindings.Add(NewBinding(IamPrincipalKind.User, user.Id,
+                new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id));
+            state.IamVersion = CurrentIamVersion;
             var created = CreateSessionLocked(state, user);
             SaveLocked(state);
             return (user, created.Token, created.Csrf);
@@ -175,10 +180,7 @@ public sealed class AccessSecurityStore
     public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request)
     {
         ValidateUsername(request.Username);
-        if (!StudioRoles.IsValid(request.Role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
-        if (request.Role == StudioRoles.Contributor && (request.Projects is null || request.Projects.Count == 0
-            || request.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
-            throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
+        var grants = InitialGrants(request.Role, request.Projects, request.Bindings);
         var temporary = string.IsNullOrWhiteSpace(request.TemporaryPassword) ? GenerateTemporaryPassword() : request.TemporaryPassword;
         ValidatePassword(temporary, request.Username);
         lock (_gate)
@@ -195,6 +197,7 @@ public sealed class AccessSecurityStore
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             state.Users.Add(user);
+            user = AddUserGrantsLocked(state, user, grants);
             SaveLocked(state);
             return (user, temporary);
         }
@@ -203,11 +206,7 @@ public sealed class AccessSecurityStore
     public (StudioUser User, string Token, DateTime ExpiresAt) InviteUser(InviteUserRequest request)
     {
         ValidateUsername(request.Username);
-        if (!StudioRoles.IsValid(request.Role))
-            throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
-        if (request.Role == StudioRoles.Contributor && (request.Projects is null || request.Projects.Count == 0
-            || request.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
-            throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
+        var grants = InitialGrants(request.Role, request.Projects, request.Bindings);
         lock (_gate)
         {
             var state = StateLocked();
@@ -227,6 +226,7 @@ public sealed class AccessSecurityStore
             var token = $"inv.{id}.{PasswordSecretHasher.RandomToken()}";
             var expiresAt = now.AddHours(24);
             state.Users.Add(user);
+            user = AddUserGrantsLocked(state, user, grants);
             state.Invitations.Add(new StudioInvitation
             {
                 Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
@@ -295,6 +295,11 @@ public sealed class AccessSecurityStore
                 ProductionApprovalProjects = approvalProjects
             };
             state.Users[state.Users.IndexOf(user)] = updated;
+            // A legacy role assignment replaces the user's direct bindings;
+            // group bindings stay. The summary is then re-derived from them.
+            if (request.Role is not null || request.Projects is not null || request.ProductionApprovalProjects is not null)
+                updated = ReplaceDirectGrantsLocked(state, updated,
+                    LegacyRoleMapping.Grants(role, memberships, approvalProjects), actingUserId);
             if (disabled) state.Sessions.RemoveAll(x => x.UserId == id);
             SaveLocked(state);
             return updated;
@@ -554,6 +559,7 @@ public sealed class AccessSecurityStore
         RestrictDirectoryPermissions(SecurityFolder);
         try { _state = File.Exists(StatePath) ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
         catch (Exception ex) { throw new InvalidOperationException($"Security state at '{StatePath}' cannot be read safely.", ex); }
+        if (_state.IamVersion < CurrentIamVersion) MigrateToRoleBindingsLocked(_state);
         return _state;
     }
 

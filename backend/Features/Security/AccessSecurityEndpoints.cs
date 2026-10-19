@@ -190,15 +190,17 @@ public static class AccessSecurityEndpoints
                 store.RevokeRunner(id);
                 return Results.NoContent();
             }));
+
+        app.MapIamEndpoints();
     }
 
-    private static IResult Execute(Func<IResult> operation)
+    internal static IResult Execute(Func<IResult> operation)
     {
         try { return operation(); }
         catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
     }
 
-    private static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
+    internal static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
            ?? store.AuthenticateSession(
                context.Request.Cookies[AccessSecurityStore.SessionCookieName]
@@ -235,7 +237,7 @@ public static class AccessSecurityEndpoints
             SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
     }
 
-    private static AuthUserResponse ToResponse(StudioUser user)
+    internal static AuthUserResponse ToResponse(StudioUser user)
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
             user.ProductionApprovalProjects);
 

@@ -2,11 +2,17 @@ using Microsoft.Extensions.Primitives;
 
 namespace AgentStudio.Security;
 
-/// <summary>Fail-closed authentication and project-scoped human authorization.</summary>
+/// <summary>
+/// Fail-closed authentication and project-scoped authorization. After the
+/// legacy role checks, every human and service-account request must hold the
+/// named permission its route declares (<see cref="RoutePermissionCatalog"/>)
+/// through a role binding that covers the addressed scope.
+/// </summary>
 public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
     public const string RunnerPrincipalItem = "AccessSecurity.RunnerPrincipal";
+    public const string ServiceAccountPrincipalItem = "AccessSecurity.ServiceAccountPrincipal";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
 
     private readonly RequestDelegate _next;
@@ -105,6 +111,7 @@ public sealed class AccessSecurityMiddleware
             ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
         var bearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
         var runner = _store.AuthenticateRunner(bearer);
+        var serviceAccount = runner is null ? _store.AuthenticateServiceAccount(bearer) : null;
         if (human is not null)
         {
             context.Items[HumanPrincipalItem] = human;
@@ -132,6 +139,7 @@ public sealed class AccessSecurityMiddleware
         {
             if (human is null) { await Reject(context, 401, "authentication-required", "An authenticated Studio session is required for event streams."); return; }
             if (human.User.MustChangePassword) { await Reject(context, 403, "password-change-required", "Change the temporary password before continuing."); return; }
+            if (!await HumanPermissionAllowed(context, human, path)) return;
             await _next(context);
             return;
         }
@@ -146,6 +154,7 @@ public sealed class AccessSecurityMiddleware
         {
             if (human is not null && !human.User.MustChangePassword)
             {
+                if (!await HumanPermissionAllowed(context, human, path)) return;
                 await _next(context);
                 return;
             }
@@ -193,6 +202,12 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        if (human is null && serviceAccount is not null)
+        {
+            await AuthorizeServiceAccount(context, serviceAccount, path);
+            return;
+        }
+
         if (human is null)
         {
             var managementRequest = path.StartsWith("/api/v1/management", StringComparison.OrdinalIgnoreCase);
@@ -235,16 +250,23 @@ public sealed class AccessSecurityMiddleware
             }
         }
 
-        if (human.User.Role == StudioRoles.Contributor)
+        // The Product allowlist applies to a summary Product user and to anyone
+        // whose strongest role on the addressed project is Contributor.
+        var productRole = human.User.Role == StudioRoles.Contributor
+            || (human.User.Role == StudioRoles.Operator && _store.UserHoldsRole(human.User.Id, IamRoles.Contributor)
+                && _store.StrongestUserRole(human.User.Id, Target(context, path, null), SameProject) == IamRoles.Contributor);
+        if (productRole)
         {
             var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
                 ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
                 : null;
             var productionApproval = card is not null
-                && human.User.ProductionApprovalProjects.Any(project =>
-                    string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
-                    || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
-                        && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)));
+                && (human.User.ProductionApprovalProjects.Any(project =>
+                        string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
+                        || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
+                            && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)))
+                    || _store.AuthorizeUser(human.User.Id, IamPermissions.EnvironmentProductionDeployApprove,
+                        PermissionTarget.ForProject(card.ProjectName, LegacyRoleMapping.ProductionEnvironment), SameProject).Allowed);
             if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval))
             {
                 await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
@@ -258,8 +280,10 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        if (!await HumanPermissionAllowed(context, human, path)) return;
+
         await _next(context);
-        if (human.User.Role == StudioRoles.Contributor
+        if (productRole
             && !safeMethod && context.Response.StatusCode is >= 200 and < 400
             && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
             && _timeline is not null)
@@ -276,6 +300,71 @@ public sealed class AccessSecurityMiddleware
                 });
         }
     }
+
+    /// <summary>
+    /// The named-permission check for a signed-in human. A request without a
+    /// routed endpoint cannot execute a handler and is left to the 404 path.
+    /// The workspace-scope evaluation runs first because a workspace binding
+    /// covers every target, so the route address is resolved only when needed.
+    /// </summary>
+    private async Task<bool> HumanPermissionAllowed(HttpContext context, HumanPrincipal human, string path)
+    {
+        var endpoint = context.GetEndpoint();
+        if (endpoint is null) return true;
+        var required = RoutePermissionCatalog.Resolve(endpoint, context.Request.Method);
+        if (required is null)
+        {
+            await Reject(context, 403, "permission-undeclared", "This route declares no permission.");
+            return false;
+        }
+        if (_store.AuthorizeUser(human.User.Id, required.Permission, PermissionTarget.WorkspaceWide, SameProject).Allowed)
+            return true;
+        var decision = _store.AuthorizeUser(human.User.Id, required.Permission, Target(context, path, required), SameProject);
+        if (decision.Allowed) return true;
+        await Reject(context, 403, "permission-denied", decision.Reason ?? $"'{required.Permission}' is required.");
+        return false;
+    }
+
+    /// <summary>
+    /// Service accounts authenticate with a bearer token and need no CSRF
+    /// token. They act only through their own role bindings; routes that
+    /// filter collections for human principals need a workspace binding.
+    /// </summary>
+    private async Task AuthorizeServiceAccount(HttpContext context, ServiceAccountPrincipal account, string path)
+    {
+        var endpoint = context.GetEndpoint();
+        var required = endpoint is null ? null : RoutePermissionCatalog.Resolve(endpoint, context.Request.Method);
+        if (required is null)
+        {
+            await Reject(context, 403, "permission-undeclared", "This route declares no permission.");
+            return;
+        }
+        if (required.Permission == IamPermissions.SelfSession)
+        {
+            await Reject(context, 403, "human-session-required", "A service account has no Studio session.");
+            return;
+        }
+        var decision = _store.AuthorizeServiceAccount(account.AccountId, required.Permission, Target(context, path, required), SameProject);
+        if (!decision.Allowed)
+        {
+            await Reject(context, 403, "permission-denied", decision.Reason ?? $"'{required.Permission}' is required.");
+            return;
+        }
+        context.Items[ServiceAccountPrincipalItem] = account;
+        context.Items["ClientId"] = account.AccountId;
+        await _next(context);
+    }
+
+    private PermissionTarget Target(HttpContext context, string path, RequiredPermissionMetadata? required)
+    {
+        var address = ResolveRouteAddress(context.Request, path);
+        var environment = required?.Environment
+            ?? (required?.EnvironmentRouteValue is { } key ? context.Request.RouteValues[key]?.ToString() : null);
+        return new PermissionTarget(address.Scope, address.Projects, environment, context.Request.Query["project"].FirstOrDefault());
+    }
+
+    private bool SameProject(string bound, string requested)
+        => ProjectAccessAuthorization.SameProject(bound, requested, _projects);
 
     private static string? RequiredRunnerScope(string method, string path)
     {
