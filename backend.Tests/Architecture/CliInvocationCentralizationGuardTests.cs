@@ -144,6 +144,12 @@ public class CliInvocationCentralizationGuardTests
             + "the allowlisted script installs only Task Server-pinned packages and never starts an "
             + "agent run. AGT-2373 keeps it as a permanent non-run process boundary."),
 
+        new("runner/DeviceLoginExecutor.cs",
+            DocumentedException
+            + "AGT-3214 starts `codex login --device-auth` for an operator-initiated provider sign-in "
+            + "on the host. It holds the host provider login lock, is bounded to 15 minutes and never "
+            + "starts an agent run or reads a card."),
+
         new("runner/RunnerCapabilityProbe.cs",
             DocumentedException
             + "AGT-2778 directly runs --version while building the host capability snapshot; this is "
