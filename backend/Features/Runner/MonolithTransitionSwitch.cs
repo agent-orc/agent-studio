@@ -34,9 +34,12 @@ public static class EngineDecisionWaitMarker
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    public static void Clear(string folder, string runId)
+    /// <summary>Removes the marker if it names <paramref name="runId"/>; returns whether it did.</summary>
+    public static bool Clear(string folder, string runId)
     {
         var path = Path.Combine(folder, FileName);
-        if (Read(folder) == runId) File.Delete(path);
+        if (Read(folder) != runId) return false;
+        File.Delete(path);
+        return true;
     }
 }
