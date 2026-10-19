@@ -2038,6 +2038,33 @@ public sealed class TaskServerClient : IDisposable
         return await resp.Content.ReadAsStringAsync(ct);
     }
 
+    /// <summary>Fetch a task attachment through the same authenticated HTTP client as the claim.</summary>
+    public async Task<byte[]> ReadTaskAttachmentAsync(
+        string taskKey, string fileName, long maxBytes, CancellationToken ct)
+    {
+        if (maxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        var url = _useV1
+            ? $"/api/v1/runner/tasks/{Uri.EscapeDataString(taskKey)}/attachments/{Uri.EscapeDataString(fileName)}"
+            : $"/api/tasks/{Uri.EscapeDataString(taskKey)}/attachments/{Uri.EscapeDataString(fileName)}";
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode,
+                $"GET task attachment '{fileName}' failed with {(int)response.StatusCode}.");
+        if (response.Content.Headers.ContentLength > maxBytes)
+            throw new InvalidDataException($"Task attachment '{fileName}' exceeds the server request limit.");
+        await using var source = await response.Content.ReadAsStreamAsync(ct);
+        using var destination = new MemoryStream();
+        var buffer = new byte[81920];
+        int count;
+        while ((count = await source.ReadAsync(buffer, ct)) > 0)
+        {
+            if (destination.Length + count > maxBytes)
+                throw new InvalidDataException($"Task attachment '{fileName}' exceeds the server request limit.");
+            await destination.WriteAsync(buffer.AsMemory(0, count), ct);
+        }
+        return destination.ToArray();
+    }
+
     public async Task<ProviderComparisonSnapshot> ReadProviderComparisonAsync(
         ProviderComparisonQuery query, CancellationToken ct)
     {
