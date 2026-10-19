@@ -118,9 +118,78 @@ public sealed class ProjectDeployLifecycleTests
 
         Assert.True(staging.Automatic);
         Assert.Empty(staging.Approval);
-        Assert.Equal(["publish-static: web to web-vm (deploy/website)", "health: /healthz"], staging.Items);
+        Assert.Empty(staging.Items);
+        Assert.Equal(
+        [
+            new DeployLifecycleStep("publish-static", "web", "web-vm", "deploy/website", null),
+            new DeployLifecycleStep("health", null, null, null, "/healthz"),
+        ], staging.Steps);
         Assert.False(production.Automatic);
         Assert.Equal(["Owner", "Maintainer"], production.Approval);
-        Assert.Equal(["publish-static: web to web-vm (deploy/website)", "approval: Owner"], production.Items);
+        Assert.Equal(
+        [
+            new DeployLifecycleStep("publish-static", "web", "web-vm", "deploy/website", null),
+            new DeployLifecycleStep("approval", null, null, "Owner", null),
+        ], production.Steps);
+    }
+
+    [Fact]
+    public void RunStep_ShowsItsCommand()
+    {
+        var yaml = Base + Lifecycle + """
+
+              - step: run
+                run: ./smoke.sh
+                environments: [staging]
+            """;
+
+        var staging = ProjectDeployLifecycleView.From(Parse(yaml))!.Nodes.Single(node => node.Id == "staging");
+
+        Assert.Equal(new DeployLifecycleStep("run", null, null, "./smoke.sh", null), staging.Steps[^1]);
+    }
+
+    [Fact]
+    public void InvalidDefinition_StillProjectsTheParsedLifecycle_WithStaticSiteAndContainerSteps()
+    {
+        // static-site and container are AGT-3221 step kinds; this server's
+        // validator rejects them, yet the diagram still shows what they deploy where.
+        var yaml = Base + """
+
+            artifacts:
+              - name: web
+                type: static
+                path: dist
+              - name: api
+                type: container
+                dockerfile: Dockerfile
+            environments: [staging, production]
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+                  requires: staging
+            deploy:
+              - step: static-site
+                artifact: web
+                target: web-vm
+              - step: container
+                artifact: api
+                target: app-vm
+            """;
+        var read = ProjectDefinitionReader.Parse(yaml);
+
+        Assert.False(read.IsValid);
+        Assert.Contains(read.Issues, issue => issue.Code == "deploy-step-invalid");
+        var view = ProjectDeployLifecycleView.From(read.Definition ?? read.Parsed);
+
+        Assert.NotNull(view);
+        Assert.Equal(["gate", "artifact", "staging", "production"], view!.Nodes.Select(node => node.Id));
+        Assert.Equal(
+        [
+            new DeployLifecycleStep("static-site", "web", "web-vm", null, null),
+            new DeployLifecycleStep("container", "api", "app-vm", null, null),
+        ], view.Nodes[2].Steps);
     }
 }

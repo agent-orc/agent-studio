@@ -16,15 +16,15 @@
     <div class="deploy-area__main">
       @switch (view()) {
         @case ('overview') {
-          <app-project-deploy-overview [panel]="environmentPanel()" [cards]="cards()" [now]="now()"
+          <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
             (openRun)="openRun($event)" (openTools)="show('tools')" />
-          <p class="deploy-area__tools-link">Deploy commands, promotion approval, and rollback live in the
+          <p class="deploy-area__tools-link">Deploy commands and the AGT-3176 promotion and rollback controls live in the
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">existing deployment tools</button>.</p>
         }
         @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()" /> }
-        @case ('pipeline') { <app-project-deploy-pipeline [panel]="lifecyclePanel()" /> }
+        @case ('pipeline') { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> }
         @case ('history') {
-          <app-project-deploy-history [panel]="environmentPanel()" [runs]="runs()" [environments]="environmentOptions()"
+          <app-project-deploy-history [panel]="deploymentPanel()" [runs]="runs()" [environments]="environmentOptions()"
             [now]="now()" [selectedRunId]="selectedRunId()" (openRun)="openRun($event)" />
         }
         @case ('tools') {
@@ -34,7 +34,8 @@
       }
     </div>
     @if (selectedRun(); as run) {
-      <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" (closeRequest)="closeRun()" />
+      <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
+        (act)="act($event)" (closeRequest)="closeRun()" />
     }
   </div>
 </div>

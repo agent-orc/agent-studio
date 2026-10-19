@@ -3,14 +3,26 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRe
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
 import {
-  OUTCOME_LABEL,
-  evidenceLabel,
+  RUN_STATE_LABEL,
+  STEP_STATE_LABEL,
   formatDuration,
-  shortArtifact,
+  groupStepLog,
+  runActions,
+  triggerLabel,
+  type DeployPanel,
   type DeployRun,
+  type DeployRunAction,
+  type DeploymentLogLine,
 } from '../../state/deploy-area.model';
 
-/** Detail drawer of one deploy run with its step log. Escape closes it. */
+export interface DeployRunActionState {
+  busy: DeployRunAction | null;
+  error: string | null;
+}
+
+const ACTION_LABEL: Record<DeployRunAction, string> = { approve: 'Approve', reject: 'Reject', cancel: 'Cancel run' };
+
+/** Detail drawer of one AGT-3201 deploy run: facts, approval, steps with their log. Escape closes it. */
 @Component({
   selector: 'app-deploy-run-drawer',
   standalone: true,
@@ -22,14 +34,32 @@ import {
 export class DeployRunDrawerComponent {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly run = input.required<DeployRun>();
+  readonly log = input.required<DeployPanel<DeploymentLogLine[]>>();
+  readonly action = input<DeployRunActionState>({ busy: null, error: null });
+  readonly act = output<DeployRunAction>();
   readonly closeRequest = output<void>();
 
-  readonly title = computed(() => `${this.run().kind === 'rollback' ? 'Rollback' : 'Deploy'} to ${this.run().environmentName}`);
-  readonly duration = computed(() => formatDuration(this.run().queuedAt, this.run().finishedAt));
-  readonly evidence = computed(() => evidenceLabel(this.run().evidence));
+  readonly title = computed(() => `${triggerLabel(this.run().trigger)} to ${this.run().environmentName}`);
+  readonly subtitle = computed(() => this.run().releaseVersion ? `Release ${this.run().releaseVersion}` : this.run().releaseId);
+  readonly duration = computed(() => formatDuration(this.run().startedAt, this.run().finishedAt));
+  readonly approval = computed(() => {
+    const run = this.run();
+    if (run.approvedBy) return `Approved by ${run.approvedBy}`;
+    if (run.state === 'awaiting-approval') return 'Waiting for an Owner or Maintainer';
+    return run.steps.some(step => step.name === 'approval') ? 'Not approved' : 'Not required';
+  });
+  readonly actions = computed(() => runActions(this.run().state).map(kind => ({ kind, label: ACTION_LABEL[kind] })));
+  readonly logError = computed(() => {
+    const log = this.log();
+    return log.status === 'error' ? log.message : null;
+  });
+  readonly steps = computed(() => {
+    const log = this.log();
+    return groupStepLog(this.run().steps, log.status === 'ready' ? log.value : []);
+  });
 
-  protected readonly outcomeLabel = OUTCOME_LABEL;
-  protected readonly shortArtifact = shortArtifact;
+  protected readonly stateLabel = RUN_STATE_LABEL;
+  protected readonly stepLabel = STEP_STATE_LABEL;
 
   constructor() {
     // Escape goes through the shared modal stack, so the drawer closes before any surface below it.

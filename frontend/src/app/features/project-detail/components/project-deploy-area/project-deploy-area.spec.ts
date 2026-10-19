@@ -1,29 +1,60 @@
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpErrorResponse } from '@angular/common/http';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { BehaviorSubject, type Observable } from 'rxjs';
+import { BehaviorSubject, Subject, type Observable } from 'rxjs';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
+import { pipelineFromExecution } from '../../state/deploy-pipeline.model';
 import {
   DEPLOY_FIXTURE_NOW,
+  deployDeploymentsFixture,
   deployEnvironmentsFixture,
-  deployLifecycleFixture,
   deployReleasesFixture,
+  deployStatusFixture,
+  deploymentLogFixture,
+  executionLifecycleFixture,
 } from '../../testing/deploy-fixtures';
 
 class FakeDeployData {
   readonly environmentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
+  readonly statusPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly releasesPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
-  readonly healthPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
-  readonly lifecyclePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
+  readonly deploymentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
+  readonly pipelinePanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
   readonly requests: string[] = [];
+  readonly actions: string[] = [];
+  actionResult = new Subject<unknown>();
 
-  environments(project: string): Observable<DeployPanel<unknown>> { this.requests.push(project); return this.environmentsPanel; }
+  environments(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`environments:${project}`); return this.environmentsPanel; }
+  statuses(): Observable<DeployPanel<unknown>> { this.requests.push('status'); return this.statusPanel; }
   releases(): Observable<DeployPanel<unknown>> { return this.releasesPanel; }
-  healthSummaries(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
-  lifecycle(): Observable<DeployPanel<unknown>> { return this.lifecyclePanel; }
+  deployments(): Observable<DeployPanel<unknown>> { this.requests.push('deployments'); return this.deploymentsPanel; }
+  pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
+  deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`log:${id}`);
+    return new BehaviorSubject<DeployPanel<unknown>>({ status: 'ready', value: deploymentLogFixture(id) });
+  }
+  act(_project: string, id: string, action: string): Observable<unknown> {
+    this.actions.push(`${action}:${id}`);
+    return this.actionResult;
+  }
+
+  serveEverything(): void {
+    this.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
+    this.statusPanel.next({ status: 'ready', value: deployStatusFixture() });
+    this.releasesPanel.next({ status: 'ready', value: deployReleasesFixture() });
+    this.deploymentsPanel.next({ status: 'ready', value: deployDeploymentsFixture() });
+    this.pipelinePanel.next({ status: 'ready', value: pipelineFromExecution(executionLifecycleFixture()) });
+  }
+
+  /** A server without AGT-3201: its routes are missing. */
+  serveHostOnly(): void {
+    this.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
+    for (const panel of [this.statusPanel, this.releasesPanel, this.deploymentsPanel]) panel.next({ status: 'unavailable' });
+  }
 }
 
 describe('ProjectDeployAreaComponent', () => {
@@ -31,6 +62,7 @@ describe('ProjectDeployAreaComponent', () => {
   let data: FakeDeployData;
   const host = () => fixture.nativeElement as HTMLElement;
   const byTestId = (id: string) => host().querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
+  const text = (id: string) => byTestId(id)?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
 
   async function settle(): Promise<void> {
     fixture.detectChanges();
@@ -68,56 +100,67 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelector('app-deploy-environment-card')).toBeNull();
   });
 
-  it('works with partial data: environments ready, releases unavailable, health checks absent', async () => {
-    data.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
-    data.releasesPanel.next({ status: 'unavailable' });
+  it('works with partial data: AGT-3176 environments only, AGT-3201 routes missing', async () => {
+    data.serveHostOnly();
     await settle();
 
     expect(host().querySelectorAll('app-deploy-environment-card')).toHaveLength(2);
-    expect(byTestId('deploy-environment-stage')?.textContent).toContain('website@sha256:bbbbbbbbbbbb');
-    expect(byTestId('deploy-environment-stage')?.textContent).toContain('No checks');
-    expect(byTestId('deploy-environment-stage')?.textContent).toContain('Card lists arrive with release records');
+    expect(text('deploy-environment-stage')).toContain('website@sha256:cccccccccccc');
+    expect(text('deploy-environment-stage')).toContain('Healthy');
+    expect(text('deploy-environment-stage')).toContain('Card lists arrive with release records');
 
     await click('deploy-tab-releases');
     expect(byTestId('deploy-releases-unavailable')).not.toBeNull();
-
+    await click('deploy-tab-history');
+    expect(byTestId('deploy-history-unavailable')).not.toBeNull();
     await click('deploy-tab-pipeline');
     expect(host().querySelector('app-loading-surface')).not.toBeNull();
   });
 
-  it('names releases and their cards once release records exist', async () => {
-    data.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
-    data.releasesPanel.next({ status: 'ready', value: deployReleasesFixture() });
-    data.lifecyclePanel.next({ status: 'ready', value: deployLifecycleFixture() });
+  it('reads cards, approval, and history from the AGT-3201 deploy routes', async () => {
+    data.serveEverything();
     await settle();
 
-    expect(byTestId('deploy-environment-stage')?.textContent).toContain('Release 2026.10.19.1');
-    expect(byTestId('deploy-environment-stage')?.textContent).toContain('WEB-33, WEB-34, WEB-35');
+    expect(text('deploy-environment-stage')).toContain('Release 2026.10.19.2');
+    expect(text('deploy-environment-production')).toContain('Awaiting approval: Release 2026.10.19.2');
+    await click('deploy-tab-history');
+    expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
     await click('deploy-tab-pipeline');
     expect(byTestId('deploy-stage-production')).not.toBeNull();
   });
 
-  it('keeps the other panels when the environment read fails', async () => {
+  it('keeps the other panels and shows the error when a deploy route fails', async () => {
     data.environmentsPanel.next({ status: 'error', message: 'Environments could not be loaded.' });
     data.releasesPanel.next({ status: 'ready', value: deployReleasesFixture() });
+    data.deploymentsPanel.next({ status: 'error', message: 'Deploy runs could not be loaded.' });
     await settle();
 
     expect(byTestId('deploy-environments-error')).not.toBeNull();
     await click('deploy-tab-releases');
     expect(byTestId('deploy-release-detail')).not.toBeNull();
     await click('deploy-tab-history');
-    expect(byTestId('deploy-history-error')).not.toBeNull();
+    expect(text('deploy-history-error')).toContain('Deploy runs could not be loaded.');
   });
 
-  it('opens the run drawer from a status card and returns focus to the opener on close', async () => {
-    data.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
+  it('builds the overview from AGT-3201 status when the environments read fails', async () => {
+    data.serveEverything();
+    data.environmentsPanel.next({ status: 'error', message: 'Environments could not be loaded.' });
+    await settle();
+
+    expect(byTestId('deploy-environments-error')).toBeNull();
+    expect(text('deploy-environment-production')).toContain('Release 2026.10.18.1');
+  });
+
+  it('opens a run from a status card with its step log and returns focus to the opener on close', async () => {
+    data.serveEverything();
     await settle();
     const opener = host().querySelector('[aria-label="Open last run for Staging"]') as HTMLButtonElement;
     opener.focus();
     opener.click();
     await settle();
 
-    expect(byTestId('deploy-run-drawer')?.textContent).toContain('Deploy to Staging');
+    expect(text('deploy-run-drawer')).toContain('Redeploy to Staging');
+    expect(data.requests).toContain('log:run-c-stage-redeploy');
     expect(host().querySelector('.deploy-area__body--drawer')).not.toBeNull();
 
     (host().querySelector('[data-testid="sidesheet-close"]') as HTMLButtonElement).click();
@@ -128,18 +171,48 @@ describe('ProjectDeployAreaComponent', () => {
   });
 
   it('opens a run from the history table and marks its row', async () => {
-    data.environmentsPanel.next({ status: 'ready', value: deployEnvironmentsFixture() });
+    data.serveEverything();
     await settle();
     await click('deploy-tab-history');
-    await click('deploy-run-open-job-c-stage');
+    await click('deploy-run-open-run-b-stage');
 
-    expect(byTestId('deploy-run-outcome')?.textContent?.trim()).toBe('Failed');
-    expect(byTestId('deploy-run-row-job-c-stage')?.getAttribute('aria-current')).toBe('true');
+    expect(text('deploy-run-outcome')).toBe('Failed');
+    expect(text('deploy-run-step-health')).toContain('Health check failed (health-http-failed).');
+    expect(byTestId('deploy-run-row-run-b-stage')?.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('approves a waiting run, then reloads status, runs, and the step log', async () => {
+    data.serveEverything();
+    await settle();
+    await click('deploy-environment-review-approval');
+    data.requests.length = 0;
+    await click('deploy-run-approve');
+
+    expect(data.actions).toEqual(['approve:run-c-production']);
+    expect((byTestId('deploy-run-reject') as HTMLButtonElement).disabled).toBe(true);
+    data.actionResult.next(deployDeploymentsFixture()[1]);
+    await settle();
+    expect(data.requests).toEqual(['status', 'deployments', 'log:run-c-production']);
+    // The table stays while the reload is in flight.
+    expect(byTestId('deploy-run-drawer')).not.toBeNull();
+  });
+
+  it('shows the server refusal of an action in the drawer', async () => {
+    data.serveEverything();
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    data.actionResult.error(new HttpErrorResponse({ status: 403, error: { error: 'Approval requires the Owner or Maintainer role.' } }));
+    await settle();
+
+    expect(text('deploy-run-action-error')).toBe('Approval requires the Owner or Maintainer role.');
+    expect((byTestId('deploy-run-approve') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
+    data.requests.length = 0;
     await click('deploy-refresh');
-    expect(data.requests).toEqual(['Website', 'Website']);
+    expect(data.requests).toEqual(['environments:Website', 'status', 'deployments']);
 
     await click('deploy-open-tools');
     expect(host().querySelector('app-project-deployment-panel')).not.toBeNull();

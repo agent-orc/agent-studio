@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
@@ -20,4 +20,10 @@ export class ProjectDeployOverviewComponent {
   readonly now = input.required<number>();
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+
+  readonly errorBody = computed(() => {
+    const panel = this.panel();
+    const reason = panel.status === 'error' ? panel.message : '';
+    return `${reason} The other Deploy views still work; try Refresh.`.trim();
+  });
 }

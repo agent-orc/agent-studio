@@ -19,6 +19,20 @@
   h3 { margin: 0; color: var(--studio-fg-strong); font-size: 1.05rem; font-weight: 600; }
 }
 
+.env-card__health { margin: 0; }
+
+/* Read by screen readers only, so the badge is announced as the health state. */
+.env-card__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.env-card__newer { margin: 0; }
+
 .env-card__address { @include deploy.muted; margin: 0; overflow-wrap: anywhere; }
 .env-card__badge { @include deploy.tone-badge; }
 .env-card__facts { @include deploy.fact-list; }

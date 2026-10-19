@@ -25,6 +25,10 @@ export class ProjectDeployReleasesComponent {
       ? [...panel.value].sort((a, b) => Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc))
       : [];
   });
+  readonly errorMessage = computed(() => {
+    const panel = this.panel();
+    return panel.status === 'error' ? `${panel.message} Environments and history are unaffected; try Refresh.` : '';
+  });
   readonly selected = computed<Release | null>(() =>
     this.releases().find(release => release.id === this.selectedId()) ?? this.releases()[0] ?? null);
   readonly liveIn = computed(() => {

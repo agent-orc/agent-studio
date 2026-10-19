@@ -191,7 +191,8 @@ public static class ProjectSettingsEndpoints
             {
                 repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
                 definitionSha256 = read.DefinitionSha256,
-                lifecycle = read.IsValid ? ProjectDeployLifecycleView.From(read.Definition) : null,
+                // An invalid file still draws its parsed lifecycle next to the issues.
+                lifecycle = ProjectDeployLifecycleView.From(read.Definition ?? read.Parsed),
                 valid = read.IsValid,
                 issues = read.Issues,
                 preparationWarnings,

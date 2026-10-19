@@ -6,8 +6,7 @@
   @switch (panel().status) {
     @case ('loading') { <app-loading-surface kind="list" label="Loading environments…" /> }
     @case ('error') {
-      <app-empty-state icon="warn" title="Environments could not be loaded"
-        body="The environment service did not answer. The other Deploy views still work; try Refresh." testid="deploy-environments-error" />
+      <app-empty-state icon="warn" title="Environments could not be loaded" [body]="errorBody()" testid="deploy-environments-error" />
     }
     @default {
       @if (cards().length) {

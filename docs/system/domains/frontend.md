@@ -610,15 +610,22 @@ occur. It is not a claim about tunnel transfer time.
   and History. One status card per declared environment shows the live release
   or artifact digest, its age, its cards, health, and the last deploy run.
   `ProjectDeployDataService` loads each panel on its own, so a missing source
-  leaves the others intact: environments, deploy jobs, and history come from
-  `GET /api/projects/{projectName}/environments` (AGT-3176); releases from
-  `GET /api/projects/{projectName}/releases` in the BD-1 `Release` shape, where a
-  404 means "no release service yet" and the view explains how releases appear;
-  the read-only lifecycle diagram from the `lifecycle` projection on
-  `GET /api/projects/{projectName}/execution`. Health reads "No checks" until a
-  health-check source is provided through the `DEPLOY_HEALTH_CHECKS` token
-  (AGT-3223). The History table filters by environment, outcome, and period and
-  opens a push drawer with the step log recorded for the run. The view holds no
+  leaves the others intact. Declarations, host health, history, and pending
+  promotions come from `GET /api/projects/{projectName}/environments`
+  (AGT-3176). Environment status, releases, deploy runs, and each run's step
+  log come from the AGT-3201 routes under `/api/projects/{projectName}/deploy`
+  (`status`, `releases`, `deployments`, `deployments/{id}/log`); the run drawer
+  posts `approve`, `reject`, and `cancel` there and shows the server's refusal.
+  A 404 without an `error` body means the route is not on the server, so the
+  panel explains how its data appears; every other failure, including a 404
+  with `{ error }`, shows as an error. Without AGT-3201 the cards read the
+  AGT-3176 state: deployed artifact, host health, last host report, and the
+  pending promotion. Run states, step states, and triggers map explicitly;
+  an unknown value reads "Unknown state". The read-only lifecycle diagram uses
+  AGT-3221's `GET /api/projects/{projectName}/pipeline-definition` when the
+  route exists and the `lifecycle` projection of
+  `GET /api/projects/{projectName}/execution` otherwise; both draw an invalid
+  project.yml as parsed below its validation issues. The view holds no
   fixture data; tests read `project-detail/testing/deploy-fixtures.ts`.
 - `frontend/src/app/features/project-detail/components/project-test-runs-panel/`:
   the Test Quality run pipeline. It shows planned, running, and completed

@@ -4,18 +4,17 @@ import { EmptyStateComponent } from '../../../../components/empty-state/empty-st
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import {
   ALL_DEPLOY_RUNS,
-  OUTCOME_LABEL,
+  DEPLOYMENT_STATES,
+  RUN_STATE_LABEL,
   filterDeployRuns,
   formatDuration,
-  shortArtifact,
+  triggerLabel,
   type DeployPanel,
   type DeployPeriod,
   type DeployRun,
   type DeployRunFilter,
-  type DeploymentState,
 } from '../../state/deploy-area.model';
 
-const OUTCOMES: readonly DeploymentState[] = ['succeeded', 'failed', 'running', 'queued'];
 const PERIODS: readonly { value: DeployPeriod; label: string }[] = [
   { value: '24h', label: 'Last 24 hours' },
   { value: '7d', label: 'Last 7 days' },
@@ -23,7 +22,7 @@ const PERIODS: readonly { value: DeployPeriod; label: string }[] = [
   { value: 'all', label: 'All time' },
 ];
 
-/** Deploy history table with environment, outcome, and period filters. */
+/** AGT-3201 deploy history with environment, outcome, and period filters. */
 @Component({
   selector: 'app-project-deploy-history',
   standalone: true,
@@ -44,15 +43,20 @@ export class ProjectDeployHistoryComponent {
   readonly visible = computed(() => filterDeployRuns(this.runs(), this.filter(), this.now()));
   readonly filtered = computed(() => this.filter() !== ALL_DEPLOY_RUNS);
 
-  protected readonly outcomes = OUTCOMES;
+  readonly errorMessage = computed(() => {
+    const panel = this.panel();
+    return panel.status === 'error' ? `${panel.message} Try Refresh.` : '';
+  });
+
+  protected readonly states = DEPLOYMENT_STATES;
   protected readonly periods = PERIODS;
-  protected readonly outcomeLabel = OUTCOME_LABEL;
-  protected readonly shortArtifact = shortArtifact;
+  protected readonly stateLabel = RUN_STATE_LABEL;
+  protected readonly triggerLabel = triggerLabel;
   protected readonly duration = formatDuration;
 
   setEnvironment(environmentId: string): void { this.filter.update(filter => ({ ...filter, environmentId })); }
-  setOutcome(outcome: string): void {
-    this.filter.update(filter => ({ ...filter, outcome: outcome as DeployRunFilter['outcome'] }));
+  setState(state: string): void {
+    this.filter.update(filter => ({ ...filter, state: state as DeployRunFilter['state'] }));
   }
   setPeriod(period: string): void { this.filter.update(filter => ({ ...filter, period: period as DeployPeriod })); }
   reset(): void { this.filter.set(ALL_DEPLOY_RUNS); }

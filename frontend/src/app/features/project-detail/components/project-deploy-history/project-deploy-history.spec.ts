@@ -1,8 +1,8 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ProjectDeployHistoryComponent } from './project-deploy-history';
-import { buildDeployRuns, type DeployPanel, type DeployRun } from '../../state/deploy-area.model';
-import { DEPLOY_FIXTURE_NOW, deployEnvironmentsFixture, deployReleasesFixture } from '../../testing/deploy-fixtures';
+import type { DeployPanel, DeployRun } from '../../state/deploy-area.model';
+import { DEPLOY_FIXTURE_NOW, deployRunsFixture } from '../../testing/deploy-fixtures';
 
 const ENVIRONMENTS = [{ id: 'stage', name: 'Staging' }, { id: 'production', name: 'Production' }];
 
@@ -29,7 +29,7 @@ describe('ProjectDeployHistoryComponent', () => {
     await fixture.whenStable();
   }
 
-  const fixtureRuns = () => buildDeployRuns(deployEnvironmentsFixture(), deployReleasesFixture());
+  const fixtureRuns = () => deployRunsFixture();
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
@@ -39,49 +39,66 @@ describe('ProjectDeployHistoryComponent', () => {
     fixture = TestBed.createComponent(ProjectDeployHistoryComponent);
   });
 
-  it('shows loading, error, and empty states', async () => {
+  it('shows loading, error, unavailable, and empty states', async () => {
     await render({ status: 'loading' });
     expect(host().querySelector('app-loading-surface')).not.toBeNull();
 
-    await render({ status: 'error', message: 'Environments could not be loaded.' });
-    expect(byTestId('deploy-history-error')).not.toBeNull();
+    await render({ status: 'error', message: "Unknown project 'Website'" });
+    expect(byTestId('deploy-history-error')?.textContent).toContain("Unknown project 'Website'");
+
+    await render({ status: 'unavailable' });
+    expect(byTestId('deploy-history-unavailable')?.textContent).toContain('once the deploy service records them');
 
     await render({ status: 'ready', value: {} }, []);
     expect(byTestId('deploy-history-empty')?.textContent).toContain('No deploy runs yet');
     expect(byTestId('deploy-history-filter-environment')).toBeNull();
   });
 
-  it('lists every run newest first with release, outcome, and duration', async () => {
+  it('lists every run newest first with trigger, release, outcome, requester, and duration', async () => {
     await render({ status: 'ready', value: {} }, fixtureRuns());
 
-    expect(rowIds()).toEqual(['job-b-stage', 'job-a-stage-rollback', 'job-c-stage', 'job-a-production', 'job-a-stage']);
-    const failed = byTestId('deploy-run-row-job-c-stage')!.textContent!.replace(/\s+/g, ' ');
-    expect(failed).toContain('Staging');
-    expect(failed).toContain('website@sha256:cccccccccccc');
-    expect(failed).toContain('Failed');
-    expect(failed).toContain('2 min 0 s');
-    expect(byTestId('deploy-history-count')?.textContent?.trim()).toBe('5 of 5 runs');
+    expect(rowIds()).toEqual([
+      'run-c-stage-redeploy', 'run-c-production', 'run-c-stage', 'run-a-stage-rollback', 'run-b-stage', 'run-a-production', 'run-a-stage',
+    ]);
+    const cells = (id: string) => Array.from(byTestId(`deploy-run-row-${id}`)!.querySelectorAll('td')).map(cell => cell.textContent?.trim());
+    // The Queued column (index 5) renders in the browser time zone.
+    const withoutTime = (id: string) => cells(id).filter((_, index) => index !== 5);
+    expect(withoutTime('run-b-stage')).toEqual(['Deploy', 'Staging', '2026.10.19.1', 'Failed', 'release-gate', '1 min 0 s']);
+    expect(withoutTime('run-c-production')).toEqual(['Deploy', 'Production', '2026.10.19.2', 'Awaiting approval', 'local.dev', 'Not finished']);
+    expect(cells('run-c-stage-redeploy').slice(0, 4)).toEqual(['Redeploy', 'Staging', '2026.10.19.2', 'Cancelled']);
+    expect(cells('run-a-stage-rollback')[0]).toBe('Automatic rollback');
+    expect(byTestId('deploy-history-count')?.textContent?.trim()).toBe('7 of 7 runs');
+  });
+
+  it('offers every deployment state as an outcome filter', async () => {
+    await render({ status: 'ready', value: {} }, fixtureRuns());
+    const options = Array.from(byTestId<HTMLSelectElement>('deploy-history-filter-outcome')!.options).map(option => option.value);
+
+    expect(options).toEqual(['all', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval']);
   });
 
   it('filters by environment, outcome, and period, and clears all filters', async () => {
     await render({ status: 'ready', value: {} }, fixtureRuns());
 
     await choose('environment', 'production');
-    expect(rowIds()).toEqual(['job-a-production']);
+    expect(rowIds()).toEqual(['run-c-production', 'run-a-production']);
 
     await choose('environment', 'all');
-    await choose('outcome', 'failed');
-    expect(rowIds()).toEqual(['job-c-stage']);
+    await choose('outcome', 'cancelled');
+    expect(rowIds()).toEqual(['run-c-stage-redeploy']);
+
+    await choose('outcome', 'awaiting-approval');
+    expect(rowIds()).toEqual(['run-c-production']);
 
     await choose('outcome', 'all');
     await choose('period', '24h');
-    expect(rowIds()).toEqual(['job-b-stage', 'job-a-stage-rollback', 'job-c-stage', 'job-a-production']);
-    expect(byTestId('deploy-history-count')?.textContent?.trim()).toBe('4 of 5 runs');
+    expect(rowIds()).toHaveLength(6);
+    expect(byTestId('deploy-history-count')?.textContent?.trim()).toBe('6 of 7 runs');
 
     byTestId('deploy-history-reset')!.click();
     fixture.detectChanges();
     await fixture.whenStable();
-    expect(rowIds()).toHaveLength(5);
+    expect(rowIds()).toHaveLength(7);
     expect(byTestId('deploy-history-reset')).toBeNull();
   });
 
@@ -99,14 +116,14 @@ describe('ProjectDeployHistoryComponent', () => {
     const opened: string[] = [];
     fixture.componentInstance.openRun.subscribe(id => opened.push(id));
 
-    byTestId('deploy-run-open-job-a-stage-rollback')!.click();
-    fixture.componentRef.setInput('selectedRunId', 'job-a-stage-rollback');
+    byTestId('deploy-run-open-run-a-stage-rollback')!.click();
+    fixture.componentRef.setInput('selectedRunId', 'run-a-stage-rollback');
     fixture.detectChanges();
     await fixture.whenStable();
 
-    expect(opened).toEqual(['job-a-stage-rollback']);
-    expect(byTestId('deploy-run-row-job-a-stage-rollback')?.getAttribute('aria-current')).toBe('true');
-    expect(byTestId('deploy-run-open-job-a-stage-rollback')?.getAttribute('aria-label')).toContain('Open rollback run on Staging');
+    expect(opened).toEqual(['run-a-stage-rollback']);
+    expect(byTestId('deploy-run-row-run-a-stage-rollback')?.getAttribute('aria-current')).toBe('true');
+    expect(byTestId('deploy-run-open-run-a-stage-rollback')?.getAttribute('aria-label')).toContain('Open Automatic rollback run on Staging');
   });
 
   it('labels every filter control', async () => {

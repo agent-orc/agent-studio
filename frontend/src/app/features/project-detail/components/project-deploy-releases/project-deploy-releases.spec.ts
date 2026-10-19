@@ -1,8 +1,8 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ProjectDeployReleasesComponent } from './project-deploy-releases';
-import { buildDeployRuns, buildEnvironmentCards, type DeployPanel, type Release } from '../../state/deploy-area.model';
-import { DEPLOY_FIXTURE_NOW, deployEnvironmentsFixture, deployReleasesFixture } from '../../testing/deploy-fixtures';
+import { buildEnvironmentCards, type DeployPanel, type Release } from '../../state/deploy-area.model';
+import { DEPLOY_FIXTURE_NOW, deployReleasesFixture, deploySourcesFixture } from '../../testing/deploy-fixtures';
 
 describe('ProjectDeployReleasesComponent', () => {
   let fixture: ComponentFixture<ProjectDeployReleasesComponent>;
@@ -10,10 +10,8 @@ describe('ProjectDeployReleasesComponent', () => {
   const byTestId = (id: string) => host().querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
 
   async function render(panel: DeployPanel<Release[]>): Promise<void> {
-    const data = deployEnvironmentsFixture();
-    const releases = panel.status === 'ready' ? panel.value : null;
     fixture.componentRef.setInput('panel', panel);
-    fixture.componentRef.setInput('environments', buildEnvironmentCards(data, buildDeployRuns(data, releases), releases, null));
+    fixture.componentRef.setInput('environments', buildEnvironmentCards(deploySourcesFixture()));
     fixture.componentRef.setInput('now', DEPLOY_FIXTURE_NOW);
     fixture.detectChanges();
     await fixture.whenStable();
@@ -40,8 +38,8 @@ describe('ProjectDeployReleasesComponent', () => {
   });
 
   it('distinguishes a failed read and an empty release list', async () => {
-    await render({ status: 'error', message: 'Releases could not be loaded.' });
-    expect(byTestId('deploy-releases-error')).not.toBeNull();
+    await render({ status: 'error', message: 'invalid deployment state' });
+    expect(byTestId('deploy-releases-error')?.textContent).toContain('invalid deployment state');
 
     await render({ status: 'ready', value: [] });
     expect(byTestId('deploy-releases-error')).toBeNull();
@@ -52,22 +50,22 @@ describe('ProjectDeployReleasesComponent', () => {
     await render({ status: 'ready', value: deployReleasesFixture() });
 
     const rows = Array.from(host().querySelectorAll('.releases__row')).map(row => row.getAttribute('data-testid'));
-    expect(rows).toEqual(['deploy-release-release-2026.10.19.1', 'deploy-release-release-2026.10.18.1']);
-    expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.19.1');
-    expect(byTestId('deploy-release-detail')?.textContent).toContain('WEB-33, WEB-34, WEB-35');
+    expect(rows).toEqual([`deploy-release-${'c'.repeat(16)}`, `deploy-release-${'b'.repeat(16)}`, `deploy-release-${'a'.repeat(16)}`]);
+    expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.19.2');
+    expect(byTestId('deploy-release-detail')?.textContent).toContain('WEB-35');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Staging');
-    expect(byTestId('deploy-release-release-2026.10.19.1')?.getAttribute('aria-current')).toBe('true');
+    expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBe('true');
   });
 
   it('selects another release and names the environments it runs in', async () => {
     await render({ status: 'ready', value: deployReleasesFixture() });
 
-    byTestId('deploy-release-release-2026.10.18.1')!.click();
+    byTestId(`deploy-release-${'a'.repeat(16)}`)!.click();
     fixture.detectChanges();
     await fixture.whenStable();
 
     expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.18.1');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Production');
-    expect(byTestId('deploy-release-release-2026.10.19.1')?.getAttribute('aria-current')).toBeNull();
+    expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBeNull();
   });
 });

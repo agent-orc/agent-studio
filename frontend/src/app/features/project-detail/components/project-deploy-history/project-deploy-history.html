@@ -2,19 +2,22 @@
   <header class="history__head">
     <div>
       <h2 id="deploy-history-title">Deploy history</h2>
-      <p>Every deploy and rollback run, newest first. Open a run for its step log.</p>
+      <p>Every deploy, redeploy, and rollback run, newest first. Open a run for its step log, approval, or cancellation.</p>
     </div>
   </header>
   @switch (panel().status) {
     @case ('loading') { <app-loading-surface kind="list" label="Loading deploy runs…" /> }
     @case ('error') {
-      <app-empty-state icon="warn" title="Deploy history could not be loaded" testid="deploy-history-error"
-        body="The environment service did not answer. Try Refresh." />
+      <app-empty-state icon="warn" title="Deploy history could not be loaded" testid="deploy-history-error" [body]="errorMessage()" />
+    }
+    @case ('unavailable') {
+      <app-empty-state icon="clock" title="No deploy run records on this server yet" testid="deploy-history-unavailable"
+        body="Deploy runs appear here once the deploy service records them. Each run of a release in Staging or Production then lists its steps, approval, and outcome. The environment cards meanwhile show the last host report." />
     }
     @default {
       @if (runs().length === 0) {
         <app-empty-state icon="clock" title="No deploy runs yet" testid="deploy-history-empty"
-          body="A run is recorded when a release is queued for an environment, approved for Production, or rolled back." />
+          body="A run is recorded when a release is queued for an environment, waits for Production approval, or is rolled back." />
       } @else {
         <div class="history__filters" role="group" aria-label="Filter deploy runs">
           <label>Environment
@@ -24,9 +27,9 @@
             </select>
           </label>
           <label>Outcome
-            <select data-testid="deploy-history-filter-outcome" [value]="filter().outcome" (change)="setOutcome($any($event.target).value)">
+            <select data-testid="deploy-history-filter-outcome" [value]="filter().state" (change)="setState($any($event.target).value)">
               <option value="all">All outcomes</option>
-              @for (outcome of outcomes; track outcome) { <option [value]="outcome">{{ outcomeLabel[outcome] }}</option> }
+              @for (state of states; track state) { <option [value]="state">{{ stateLabel[state] }}</option> }
             </select>
           </label>
           <label>Period
@@ -43,21 +46,22 @@
           <div class="history__scroll">
           <table class="history__table">
             <thead>
-              <tr><th scope="col">Run</th><th scope="col">Environment</th><th scope="col">Release</th><th scope="col">Outcome</th><th scope="col">Queued</th><th scope="col">Duration</th></tr>
+              <tr><th scope="col">Run</th><th scope="col">Environment</th><th scope="col">Release</th><th scope="col">Outcome</th><th scope="col">Requested by</th><th scope="col">Queued</th><th scope="col">Duration</th></tr>
             </thead>
             <tbody>
               @for (run of visible(); track run.id) {
                 <tr [attr.data-testid]="'deploy-run-row-' + run.id" [attr.aria-current]="run.id === selectedRunId() ? 'true' : null">
                   <td>
                     <button type="button" class="history__open" [attr.data-testid]="'deploy-run-open-' + run.id"
-                            [attr.aria-label]="'Open ' + run.kind + ' run on ' + run.environmentName + ' queued ' + (run.queuedAt | date:'medium')"
-                            (click)="openRun.emit(run.id)">{{ run.kind === 'rollback' ? 'Rollback' : 'Deploy' }}</button>
+                            [attr.aria-label]="'Open ' + triggerLabel(run.trigger) + ' run on ' + run.environmentName + ' queued ' + (run.createdAt | date:'medium')"
+                            (click)="openRun.emit(run.id)">{{ triggerLabel(run.trigger) }}</button>
                   </td>
                   <td>{{ run.environmentName }}</td>
-                  <td [title]="run.artifact">{{ run.releaseVersion ?? shortArtifact(run.artifact) }}</td>
-                  <td><span class="history__badge" [attr.data-tone]="run.outcome">{{ outcomeLabel[run.outcome] }}</span></td>
-                  <td class="history__numeric"><time [attr.datetime]="run.queuedAt">{{ run.queuedAt | date:'MMM d, HH:mm' }}</time></td>
-                  <td class="history__numeric">{{ duration(run.queuedAt, run.finishedAt) ?? 'Not finished' }}</td>
+                  <td [title]="run.releaseId">{{ run.releaseVersion ?? run.releaseId }}</td>
+                  <td><span class="history__badge" [attr.data-tone]="run.state">{{ stateLabel[run.state] }}</span></td>
+                  <td>{{ run.requestedBy ?? 'Not recorded' }}</td>
+                  <td class="history__numeric"><time [attr.datetime]="run.createdAt">{{ run.createdAt | date:'MMM d, HH:mm' }}</time></td>
+                  <td class="history__numeric">{{ duration(run.startedAt, run.finishedAt) ?? 'Not finished' }}</td>
                 </tr>
               }
             </tbody>

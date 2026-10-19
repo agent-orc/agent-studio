@@ -1,8 +1,8 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ProjectDeployOverviewComponent } from './project-deploy-overview';
-import { buildDeployRuns, buildEnvironmentCards, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
-import { DEPLOY_FIXTURE_NOW, deployEnvironmentsFixture, deployReleasesFixture } from '../../testing/deploy-fixtures';
+import { buildEnvironmentCards, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
+import { DEPLOY_FIXTURE_NOW, deploySourcesFixture } from '../../testing/deploy-fixtures';
 
 describe('ProjectDeployOverviewComponent', () => {
   let fixture: ComponentFixture<ProjectDeployOverviewComponent>;
@@ -16,11 +16,7 @@ describe('ProjectDeployOverviewComponent', () => {
     await fixture.whenStable();
   }
 
-  function fixtureCards(): EnvironmentCardView[] {
-    const data = deployEnvironmentsFixture();
-    const releases = deployReleasesFixture();
-    return buildEnvironmentCards(data, buildDeployRuns(data, releases), releases, null);
-  }
+  const fixtureCards = (): EnvironmentCardView[] => buildEnvironmentCards(deploySourcesFixture());
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
@@ -36,9 +32,11 @@ describe('ProjectDeployOverviewComponent', () => {
     expect(host().querySelector('app-deploy-environment-card')).toBeNull();
   });
 
-  it('explains a failed environment read', async () => {
-    await render({ status: 'error', message: 'Environments could not be loaded.' });
-    expect(host().querySelector('[data-testid="deploy-environments-error"]')?.textContent).toContain('Environments could not be loaded');
+  it('explains a failed environment read with the server message', async () => {
+    await render({ status: 'error', message: "Unknown project 'Website'" });
+    const error = host().querySelector('[data-testid="deploy-environments-error"]')?.textContent;
+    expect(error).toContain('Environments could not be loaded');
+    expect(error).toContain("Unknown project 'Website'");
   });
 
   it('invites setup when no environment is declared', async () => {
@@ -62,18 +60,17 @@ describe('ProjectDeployOverviewComponent', () => {
       'Open last run for Production',
       'Review the pending approval for Production',
     ]);
+    const headings = Array.from(host().querySelectorAll('article h3')).map(heading => heading.textContent?.trim());
+    expect(headings).toEqual(['Staging', 'Production']);
   });
 
-  it('forwards run and tools requests from the cards', async () => {
+  it('forwards run requests from the cards', async () => {
     await render({ status: 'ready', value: {} }, fixtureCards());
     const runs: string[] = [];
-    let tools = 0;
     fixture.componentInstance.openRun.subscribe(id => runs.push(id));
-    fixture.componentInstance.openTools.subscribe(() => tools++);
 
-    (host().querySelector('[aria-label="Open last run for Production"]') as HTMLButtonElement).click();
+    (host().querySelector('[aria-label="Open last run for Staging"]') as HTMLButtonElement).click();
     (host().querySelector('[data-testid="deploy-environment-review-approval"]') as HTMLButtonElement).click();
-    expect(runs).toEqual(['job-a-production']);
-    expect(tools).toBe(1);
+    expect(runs).toEqual(['run-c-stage-redeploy', 'run-c-production']);
   });
 });

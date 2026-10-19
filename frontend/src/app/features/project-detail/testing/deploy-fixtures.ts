@@ -1,14 +1,26 @@
 /**
  * Test-only Deploy area data (component specs and the mocked Playwright spec).
  * App code never imports this file, so it is not part of a production build.
+ * Shapes follow the AGT-3176 environments API, the AGT-3201 deploy routes,
+ * and the AGT-3221 pipeline-definition route.
  *
  * Story: release 2026.10.18.1 (artifact A) runs in Staging and Production.
- * Staging then tried an unreleased artifact C, failed its health check, and
- * rolled back to A automatically; release 2026.10.19.1 (artifact B) is now
- * healthy in Staging and awaits approval for Production.
+ * Release 2026.10.19.1 (artifact B) failed its Staging health check and was
+ * rolled back automatically. Release 2026.10.19.2 (artifact C) is healthy in
+ * Staging, a redeploy of it was cancelled, and it awaits approval for Production.
  */
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
-import type { DeployHealthCheckSummary, DeployLifecycleRead, Release } from '../state/deploy-area.model';
+import {
+  buildDeployRuns,
+  environmentNames,
+  type DeployRun,
+  type DeploySources,
+  type Deployment,
+  type DeploymentLogLine,
+  type EnvironmentStatus,
+  type Release,
+} from '../state/deploy-area.model';
+import type { ExecutionLifecycleRead, PipelineDefinitionRead } from '../state/deploy-pipeline.model';
 
 export const DEPLOY_FIXTURE_NOW = Date.parse('2026-10-19T12:00:00Z');
 
@@ -23,21 +35,16 @@ const declaration = (id: string, name: string, kind: 'stage' | 'production') => 
   approval: 'person' as const, secretRefs: [],
 });
 
-const job = (id: string, environmentId: string, artifact: string, status: string, createdAt: string,
-  claimedAt: string | null, requestedBy: string, isRollback = false) => ({
-  id, environmentId, hostId: 'web-vm', artifact, previousArtifact: null, status, createdAt, claimedAt, isRollback, requestedBy,
-});
-
 export function deployEnvironmentsFixture(): ProjectEnvironments {
   return {
     project: 'Website',
     environments: [
       {
-        declaration: declaration('stage', 'Staging', 'stage'), deployedArtifact: ARTIFACT_B, health: 'healthy', pendingArtifact: null,
+        declaration: declaration('stage', 'Staging', 'stage'), deployedArtifact: ARTIFACT_C, health: 'healthy', pendingArtifact: null,
         history: [
-          { at: '2026-10-19T11:48:00Z', status: 'healthy', artifact: ARTIFACT_B, previousArtifact: ARTIFACT_A, evidence: 'health-ok' },
+          { at: '2026-10-19T11:48:00Z', status: 'healthy', artifact: ARTIFACT_C, previousArtifact: ARTIFACT_A, evidence: 'health-ok' },
           { at: '2026-10-19T08:02:00Z', status: 'rolled-back', artifact: ARTIFACT_A, previousArtifact: ARTIFACT_A, evidence: 'health-ok' },
-          { at: '2026-10-19T08:00:00Z', status: 'failed', artifact: ARTIFACT_C, previousArtifact: ARTIFACT_A, evidence: 'health-http-failed' },
+          { at: '2026-10-19T08:00:00Z', status: 'failed', artifact: ARTIFACT_B, previousArtifact: ARTIFACT_A, evidence: 'health-http-failed' },
           { at: '2026-10-18T09:00:00Z', status: 'healthy', artifact: ARTIFACT_A, previousArtifact: null, evidence: 'health-ok' },
         ],
       },
@@ -50,50 +57,166 @@ export function deployEnvironmentsFixture(): ProjectEnvironments {
     ],
     promotions: [
       { artifact: ARTIFACT_A, stageId: 'stage', productionId: 'production', stageHealthyAt: '2026-10-18T09:00:00Z', status: 'deployed', actor: 'local.owner' },
-      { artifact: ARTIFACT_B, stageId: 'stage', productionId: 'production', stageHealthyAt: '2026-10-19T11:48:00Z', status: 'pending', actor: null, expiresAt: '2026-10-20T11:48:00Z' },
-    ],
-    jobs: [
-      job('job-a-stage', 'stage', ARTIFACT_A, 'healthy', '2026-10-18T08:58:00Z', '2026-10-18T08:59:00Z', 'release-gate'),
-      job('job-a-production', 'production', ARTIFACT_A, 'healthy', '2026-10-18T22:05:00Z', '2026-10-18T22:06:00Z', 'local.owner'),
-      job('job-c-stage', 'stage', ARTIFACT_C, 'failed', '2026-10-19T07:58:00Z', '2026-10-19T07:59:00Z', 'release-gate'),
-      job('job-a-stage-rollback', 'stage', ARTIFACT_A, 'healthy', '2026-10-19T08:00:00Z', '2026-10-19T08:01:00Z', 'automatic-rollback', true),
-      job('job-b-stage', 'stage', ARTIFACT_B, 'healthy', '2026-10-19T11:45:00Z', '2026-10-19T11:46:00Z', 'release-gate'),
+      { artifact: ARTIFACT_C, stageId: 'stage', productionId: 'production', stageHealthyAt: '2026-10-19T11:48:00Z', status: 'pending', actor: null },
     ],
     failureCards: [
-      { environmentId: 'stage', artifact: ARTIFACT_C, at: '2026-10-19T08:00:00Z', evidence: 'health-http-failed', rollbackArtifact: ARTIFACT_A },
+      { environmentId: 'stage', artifact: ARTIFACT_B, at: '2026-10-19T08:00:00Z', evidence: 'health-http-failed', rollbackArtifact: ARTIFACT_A },
     ],
   };
 }
 
+const release = (version: string, artifact: string, fill: string, cardKeys: string[], createdAtUtc: string): Release => ({
+  id: fill.repeat(16), projectId: 'Website', version, commitSha: fill.repeat(40),
+  artifactDigests: [artifact.slice(artifact.lastIndexOf('@') + 1)], processVersion: fill.repeat(12),
+  variablesVersion: `${fill}0`.repeat(6), cardKeys, createdAtUtc, channel: 'default',
+});
+
+export const RELEASE_1 = release('2026.10.18.1', ARTIFACT_A, 'a', ['WEB-29', 'WEB-30'], '2026-10-18T08:50:00Z');
+export const RELEASE_2 = release('2026.10.19.1', ARTIFACT_B, 'b', ['WEB-33', 'WEB-34'], '2026-10-19T07:50:00Z');
+export const RELEASE_3 = release('2026.10.19.2', ARTIFACT_C, 'c', ['WEB-35'], '2026-10-19T11:40:00Z');
+
+/** `GET /deploy/releases`: newest first, as AGT-3201 serves them. */
 export function deployReleasesFixture(): Release[] {
-  const release = (version: string, artifact: string, commit: string, cardKeys: string[], createdAtUtc: string): Release => ({
-    id: `release-${version}`, projectId: 'PROJ-WEB', version, commitSha: commit.repeat(40).slice(0, 40),
-    artifactDigests: [artifact.slice(artifact.lastIndexOf('@') + 1)], processVersion: `project.yml@${commit.repeat(7)}`,
-    variablesVersion: `project.yml@${commit.repeat(7)}`, cardKeys, createdAtUtc, channel: 'standard',
-  });
+  return [RELEASE_3, RELEASE_2, RELEASE_1];
+}
+
+type StepTuple = [name: string, state: string, startedAtUtc: string | null, finishedAtUtc: string | null];
+
+const run = (id: string, releaseId: string, environmentId: string, state: string, trigger: string,
+  times: { created: string; started?: string; finished?: string }, steps: StepTuple[],
+  people: { requestedBy?: string; approvedBy?: string } = {}): Deployment => ({
+  id, releaseId, environmentId, state, trigger,
+  createdAtUtc: times.created, startedAtUtc: times.started ?? null, finishedAtUtc: times.finished ?? null,
+  requestedBy: people.requestedBy ?? null, approvedBy: people.approvedBy ?? null,
+  steps: steps.map(([name, stepState, startedAtUtc, finishedAtUtc]) => ({
+    name, state: stepState, startedAtUtc, finishedAtUtc, logRef: `${id}/${name}`,
+  })),
+});
+
+/** `GET /deploy/deployments`: newest first. */
+export function deployDeploymentsFixture(): Deployment[] {
   return [
-    release('2026.10.18.1', ARTIFACT_A, 'a', ['WEB-29', 'WEB-30'], '2026-10-18T08:50:00Z'),
-    release('2026.10.19.1', ARTIFACT_B, 'b', ['WEB-33', 'WEB-34', 'WEB-35'], '2026-10-19T11:40:00Z'),
+    run('run-c-stage-redeploy', RELEASE_3.id, 'stage', 'cancelled', 'redeploy', { created: '2026-10-19T11:54:00Z', finished: '2026-10-19T11:55:00Z' },
+      [['publish-static', 'cancelled', null, null], ['health', 'cancelled', null, null]], { requestedBy: 'local.dev' }),
+    run('run-c-production', RELEASE_3.id, 'production', 'awaiting-approval', 'deploy', { created: '2026-10-19T11:49:00Z' },
+      [['approval', 'awaiting-approval', '2026-10-19T11:49:00Z', null], ['publish-static', 'pending', null, null], ['health', 'pending', null, null]],
+      { requestedBy: 'local.dev' }),
+    run('run-c-stage', RELEASE_3.id, 'stage', 'succeeded', 'deploy', { created: '2026-10-19T11:45:00Z', started: '2026-10-19T11:46:00Z', finished: '2026-10-19T11:48:00Z' },
+      [['publish-static', 'succeeded', '2026-10-19T11:46:00Z', '2026-10-19T11:48:00Z'], ['health', 'succeeded', '2026-10-19T11:48:00Z', '2026-10-19T11:48:00Z']],
+      { requestedBy: 'release-gate' }),
+    run('run-a-stage-rollback', RELEASE_1.id, 'stage', 'succeeded', 'automatic-rollback', { created: '2026-10-19T08:00:00Z', started: '2026-10-19T08:01:00Z', finished: '2026-10-19T08:02:00Z' },
+      [['publish-static', 'succeeded', '2026-10-19T08:01:00Z', '2026-10-19T08:02:00Z'], ['health', 'succeeded', '2026-10-19T08:02:00Z', '2026-10-19T08:02:00Z']],
+      { requestedBy: 'automatic-rollback' }),
+    run('run-b-stage', RELEASE_2.id, 'stage', 'failed', 'deploy', { created: '2026-10-19T07:58:00Z', started: '2026-10-19T07:59:00Z', finished: '2026-10-19T08:00:00Z' },
+      [['publish-static', 'succeeded', '2026-10-19T07:59:00Z', '2026-10-19T08:00:00Z'], ['health', 'failed', '2026-10-19T08:00:00Z', '2026-10-19T08:00:00Z']],
+      { requestedBy: 'release-gate' }),
+    run('run-a-production', RELEASE_1.id, 'production', 'succeeded', 'deploy', { created: '2026-10-18T21:00:00Z', started: '2026-10-18T22:06:00Z', finished: '2026-10-18T22:10:00Z' },
+      [['approval', 'succeeded', '2026-10-18T21:00:00Z', '2026-10-18T22:05:00Z'], ['publish-static', 'succeeded', '2026-10-18T22:06:00Z', '2026-10-18T22:10:00Z'],
+        ['health', 'succeeded', '2026-10-18T22:10:00Z', '2026-10-18T22:10:00Z']],
+      { requestedBy: 'release-gate', approvedBy: 'local.owner' }),
+    run('run-a-stage', RELEASE_1.id, 'stage', 'succeeded', 'deploy', { created: '2026-10-18T08:58:00Z', started: '2026-10-18T08:59:00Z', finished: '2026-10-18T09:00:00Z' },
+      [['publish-static', 'succeeded', '2026-10-18T08:59:00Z', '2026-10-18T09:00:00Z'], ['health', 'succeeded', '2026-10-18T09:00:00Z', '2026-10-18T09:00:00Z']],
+      { requestedBy: 'release-gate' }),
   ];
 }
 
-export function deployHealthFixture(): DeployHealthCheckSummary[] {
-  return [{ environmentId: 'stage', state: 'healthy', checkCount: 2, checkedAtUtc: '2026-10-19T11:59:00Z' }];
+const environment = (id: string, name: string, order: number, kind: string) => ({ id, projectId: 'Website', name, order, kind });
+
+/** `GET /deploy/status`, as `EnvironmentStatusProjection` derives it from the runs above. */
+export function deployStatusFixture(): EnvironmentStatus[] {
+  const runs = deployDeploymentsFixture();
+  return [
+    { environment: environment('stage', 'Staging', 0, 'staging'), currentRelease: RELEASE_3,
+      currentDeployment: runs.find(item => item.id === 'run-c-stage-redeploy')!, newerRelease: null, cardsSinceLastDeploy: [], health: 'healthy' },
+    { environment: environment('production', 'Production', 1, 'production'), currentRelease: RELEASE_1,
+      currentDeployment: runs.find(item => item.id === 'run-c-production')!, newerRelease: RELEASE_3,
+      cardsSinceLastDeploy: ['WEB-33', 'WEB-34', 'WEB-35'], health: 'healthy' },
+  ];
 }
 
-export function deployLifecycleFixture(): DeployLifecycleRead {
+/** Every source ready: AGT-3176 environments plus the AGT-3201 deploy routes. */
+export function deploySourcesFixture(): DeploySources {
+  return {
+    environments: deployEnvironmentsFixture(), statuses: deployStatusFixture(),
+    deployments: deployDeploymentsFixture(), releases: deployReleasesFixture(),
+  };
+}
+
+/** A server without AGT-3201: only the AGT-3176 environments answer. */
+export function hostOnlySourcesFixture(): DeploySources {
+  return { environments: deployEnvironmentsFixture(), statuses: null, deployments: null, releases: null };
+}
+
+export function deployRunsFixture(): DeployRun[] {
+  const sources = deploySourcesFixture();
+  return buildDeployRuns(sources.deployments!, environmentNames(sources), sources.releases);
+}
+
+const LOGS: Record<string, DeploymentLogLine[]> = {
+  'run-b-stage': [
+    { step: 'publish-static', atUtc: '2026-10-19T07:58:00Z', message: 'Release 2026.10.19.1 queued for Staging by release-gate (automatic after integration).' },
+    { step: 'publish-static', atUtc: '2026-10-19T07:59:00Z', message: 'Claimed by deploy host web-vm.' },
+    { step: 'health', atUtc: '2026-10-19T08:00:00Z', message: 'Health check failed (health-http-failed).' },
+  ],
+  'run-c-production': [
+    { step: 'approval', atUtc: '2026-10-19T11:49:00Z', message: 'Release 2026.10.19.2 awaits Owner or Maintainer approval for Production.' },
+  ],
+};
+
+/** `GET /deploy/deployments/{id}/log` lines. */
+export function deploymentLogFixture(deploymentId: string): DeploymentLogLine[] {
+  return LOGS[deploymentId] ?? [];
+}
+
+/** AGT-3221 `GET /pipeline-definition` with its static-site and container steps. */
+export function pipelineDefinitionFixture(): PipelineDefinitionRead {
+  const step = (kind: string, artifact: string, target: string, destination: string) => ({
+    kind, artifact, target, destination, healthUrl: '/healthz', healthTimeoutSeconds: 60,
+  });
+  const steps = [step('static-site', 'web', 'web-vm', '/srv/www/website'), step('container', 'api', 'app-vm', '/srv/api/compose.yml (api)')];
   return {
     valid: true,
-    lifecycle: {
-      declared: true,
-      nodes: [
-        { id: 'gate', kind: 'gate', name: 'Gate', items: ['npm run build', 'npm test'], automatic: true, approval: [], requires: null },
-        { id: 'artifact', kind: 'artifact', name: 'Artifact', items: ['web (static, dist)'], automatic: true, approval: [], requires: 'gate' },
-        { id: 'staging', kind: 'environment', name: 'staging', items: ['publish-static: web to web-vm (deploy/website)', 'health: /healthz'],
-          automatic: true, approval: [], requires: 'artifact' },
-        { id: 'production', kind: 'environment', name: 'production', items: ['publish-static: web to web-vm (deploy/website)'],
-          automatic: false, approval: ['Owner', 'Maintainer'], requires: 'staging' },
+    issues: [],
+    diagram: {
+      gate: { source: 'pipeline', build: ['npm run build'], test: ['npm test'], testSuites: [] },
+      artifacts: [
+        { name: 'web', type: 'static', source: 'dist', image: null },
+        { name: 'api', type: 'container', source: 'Dockerfile', image: 'registry.example/website-api' },
+      ],
+      environments: [
+        { name: 'staging', order: 0, protected: false, automatic: true, approval: [], requires: null, steps },
+        { name: 'production', order: 1, protected: true, automatic: false, approval: ['Owner', 'Maintainer'], requires: 'staging', steps },
       ],
     },
+  };
+}
+
+type LifecycleNode = NonNullable<ExecutionLifecycleRead['lifecycle']>['nodes'][number];
+const lifecycleNodes = (): LifecycleNode[] => [
+  { id: 'gate', kind: 'gate', name: 'Gate', items: ['npm run build', 'npm test'], steps: [], automatic: true, approval: [], requires: null },
+  { id: 'artifact', kind: 'artifact', name: 'Artifact', items: ['web (static, dist)'], steps: [], automatic: true, approval: [], requires: 'gate' },
+  { id: 'staging', kind: 'environment', name: 'staging', items: [], automatic: true, approval: [], requires: 'artifact', steps: [
+    { kind: 'publish-static', artifact: 'web', target: 'web-vm', destination: 'deploy/website', health: null },
+    { kind: 'health', artifact: null, target: null, destination: null, health: '/healthz' },
+  ] },
+  { id: 'production', kind: 'environment', name: 'production', items: [], automatic: false, approval: ['Owner', 'Maintainer'], requires: 'staging', steps: [
+    { kind: 'publish-static', artifact: 'web', target: 'web-vm', destination: 'deploy/website', health: null },
+  ] },
+];
+
+/** This server's `GET /execution` lifecycle projection (no AGT-3221 route). */
+export function executionLifecycleFixture(): ExecutionLifecycleRead {
+  return { valid: true, issues: [], lifecycle: { declared: true, nodes: lifecycleNodes() } };
+}
+
+/** An invalid project.yml: the parsed lifecycle still comes with its issues. */
+export function invalidExecutionFixture(): ExecutionLifecycleRead {
+  const nodes = lifecycleNodes();
+  nodes[2].steps = [{ kind: 'static-site', artifact: 'web', target: 'web-vm', destination: null, health: null }];
+  return {
+    valid: false,
+    issues: [{ path: 'deploy[0].step', code: 'deploy-step-invalid',
+      message: 'P1 deploy step must be publish-static, start-container, run, health, or approval.' }],
+    lifecycle: { declared: true, nodes },
   };
 }

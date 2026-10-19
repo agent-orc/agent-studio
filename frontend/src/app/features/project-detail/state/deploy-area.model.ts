@@ -1,8 +1,19 @@
 import { InjectionToken } from '@angular/core';
-import type { Observable } from 'rxjs';
-import type { ProjectEnvironmentHistory, ProjectEnvironmentJob, ProjectEnvironments } from '../../../models/project-overview.model';
+import type { ProjectEnvironments } from '../../../models/project-overview.model';
 
-/** Release from the shared P1 data contract (BD-1, served by AGT-3201). */
+// BD-1 wire contract served by AGT-3201 under /api/projects/{project}/deploy
+// (backend/Features/Deploy/DeployContract.cs). States, triggers and health
+// arrive as strings and are mapped explicitly below; an unknown value shows as
+// unknown instead of borrowing another state's meaning.
+
+export interface DeployEnvironment {
+  id: string;
+  projectId: string;
+  name: string;
+  order: number;
+  kind: string;
+}
+
 export interface Release {
   id: string;
   projectId: string;
@@ -16,11 +27,112 @@ export interface Release {
   channel: string;
 }
 
-export type DeploymentState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'awaiting-approval';
+export interface DeploymentStep {
+  name: string;
+  state: string;
+  startedAtUtc: string | null;
+  finishedAtUtc: string | null;
+  logRef: string;
+}
+
+export interface Deployment {
+  id: string;
+  releaseId: string;
+  environmentId: string;
+  state: string;
+  startedAtUtc: string | null;
+  finishedAtUtc: string | null;
+  approvedBy: string | null;
+  steps: DeploymentStep[];
+  trigger: string;
+  requestedBy: string | null;
+  createdAtUtc: string;
+}
+
+export interface EnvironmentStatus {
+  environment: DeployEnvironment;
+  currentRelease: Release | null;
+  currentDeployment: Deployment | null;
+  newerRelease: Release | null;
+  cardsSinceLastDeploy: string[];
+  health: string;
+}
+
+export interface DeploymentLogLine {
+  step: string;
+  atUtc: string;
+  message: string;
+}
+
+export interface DeploymentLogResponse {
+  deploymentId: string;
+  lines: DeploymentLogLine[];
+}
+
+/** Every `DeploymentStates` value of the contract. */
+export const DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval'] as const;
+export type DeploymentState = (typeof DEPLOYMENT_STATES)[number];
+export type RunState = DeploymentState | 'unknown';
+/** Step states reuse the run vocabulary plus `pending` and `skipped`. */
+export type StepState = RunState | 'pending' | 'skipped';
+
+export const RUN_STATE_LABEL: Record<RunState, string> = {
+  queued: 'Queued',
+  running: 'Running',
+  succeeded: 'Succeeded',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  'awaiting-approval': 'Awaiting approval',
+  unknown: 'Unknown state',
+};
+
+export const STEP_STATE_LABEL: Record<StepState, string> = { ...RUN_STATE_LABEL, pending: 'Pending', skipped: 'Skipped' };
+
+export function runState(raw: string): RunState {
+  return (DEPLOYMENT_STATES as readonly string[]).includes(raw) ? raw as DeploymentState : 'unknown';
+}
+
+export function stepState(raw: string): StepState {
+  return raw === 'pending' || raw === 'skipped' ? raw : runState(raw);
+}
+
+export const DEPLOY_TRIGGERS = ['deploy', 'redeploy', 'rollback', 'automatic-rollback'] as const;
+const TRIGGER_LABEL: Record<(typeof DEPLOY_TRIGGERS)[number], string> = {
+  deploy: 'Deploy',
+  redeploy: 'Redeploy',
+  rollback: 'Rollback',
+  'automatic-rollback': 'Automatic rollback',
+};
+
+/** A trigger this build does not know keeps its wire name. */
+export function triggerLabel(raw: string): string {
+  return (DEPLOY_TRIGGERS as readonly string[]).includes(raw) ? TRIGGER_LABEL[raw as keyof typeof TRIGGER_LABEL] : raw;
+}
+
+export type HealthState = 'healthy' | 'unhealthy' | 'unknown';
+/** AGT-3201 `EnvironmentStatus.health`. */
+const STATUS_HEALTH: Record<string, HealthState> = { healthy: 'healthy', unhealthy: 'unhealthy', unknown: 'unknown' };
+/** AGT-3176 `environments[].health`, from the latest host report. */
+const HOST_HEALTH: Record<string, HealthState> = { healthy: 'healthy', failed: 'unhealthy', unknown: 'unknown' };
+/** AGT-3176 history statuses: what a host report says about the run it closed. */
+const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> = {
+  healthy: { state: 'succeeded', trigger: 'deploy' },
+  'rolled-back': { state: 'succeeded', trigger: 'rollback' },
+  failed: { state: 'failed', trigger: 'deploy' },
+};
+
+export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'Unknown' };
+
+/** Actions the lifecycle accepts per state (AGT-3201 StandardLifecyclePolicy); the server still decides. */
+export type DeployRunAction = 'approve' | 'reject' | 'cancel';
+export function runActions(state: RunState): DeployRunAction[] {
+  if (state === 'awaiting-approval') return ['approve', 'reject', 'cancel'];
+  return state === 'queued' ? ['cancel'] : [];
+}
 
 /**
- * One panel's data. `unavailable` means the source does not exist on this
- * server yet (for example releases before AGT-3201); it is not an error.
+ * One panel's data. `unavailable` means the route is not on this server yet
+ * (AGT-3201 before it ships); it is not an error.
  */
 export type DeployPanel<T> =
   | { status: 'loading' }
@@ -28,23 +140,9 @@ export type DeployPanel<T> =
   | { status: 'unavailable' }
   | { status: 'error'; message: string };
 
-/** Latest health-check result per environment (AGT-3223). */
-export interface DeployHealthCheckSummary {
-  environmentId: string;
-  state: 'healthy' | 'unhealthy' | 'unknown';
-  checkCount: number;
-  checkedAtUtc: string | null;
+export function ready<T>(panel: DeployPanel<T>): T | null {
+  return panel.status === 'ready' ? panel.value : null;
 }
-
-export interface DeployHealthCheckSource {
-  summaries(projectName: string): Observable<DeployHealthCheckSummary[]>;
-}
-
-/** Health checks connect here; without a source every card reads "No checks". */
-export const DEPLOY_HEALTH_CHECKS = new InjectionToken<DeployHealthCheckSource | null>('DEPLOY_HEALTH_CHECKS', {
-  providedIn: 'root',
-  factory: () => null,
-});
 
 /** Epoch-millisecond clock for ages and the history period filter; tests replace it. */
 export const DEPLOY_CLOCK = new InjectionToken<() => number>('DEPLOY_CLOCK', {
@@ -52,71 +150,75 @@ export const DEPLOY_CLOCK = new InjectionToken<() => number>('DEPLOY_CLOCK', {
   factory: () => () => Date.now(),
 });
 
-export interface DeployLifecycleNode {
-  id: string;
-  kind: 'gate' | 'artifact' | 'environment';
-  name: string;
-  items: string[];
-  automatic: boolean;
-  approval: string[];
-  requires: string | null;
-}
-
-/** The `GET /api/projects/{p}/execution` fields the Pipeline view reads. */
-export interface DeployLifecycleRead {
-  valid: boolean;
-  lifecycle?: { declared: boolean; nodes: DeployLifecycleNode[] } | null;
-}
-
 export interface DeployRunStep {
   name: string;
-  state: DeploymentState;
-  at: string | null;
-  detail: string | null;
+  state: StepState;
+  startedAt: string | null;
+  finishedAt: string | null;
 }
 
 export interface DeployRun {
   id: string;
   environmentId: string;
   environmentName: string;
-  artifact: string;
+  releaseId: string;
   releaseVersion: string | null;
-  kind: 'deploy' | 'rollback';
-  outcome: DeploymentState;
+  trigger: string;
+  state: RunState;
   requestedBy: string | null;
-  hostId: string | null;
-  queuedAt: string;
+  approvedBy: string | null;
+  createdAt: string;
+  startedAt: string | null;
   finishedAt: string | null;
-  evidence: string | null;
   steps: DeployRunStep[];
 }
 
 export type DeployCards = { status: 'known'; keys: string[] } | { status: 'unknown'; reason: string };
-export type DeployHealth =
-  | { status: 'checks'; state: DeployHealthCheckSummary['state']; checkCount: number; checkedAt: string | null }
-  | { status: 'no-checks' };
+export type DeployHealth = { status: 'reported'; state: HealthState } | { status: 'no-checks' };
+
+/** The latest run of a card: an AGT-3201 deployment, or the last AGT-3176 host report without it. */
+export interface CardRun {
+  deploymentId: string | null;
+  trigger: string;
+  state: RunState;
+  at: string;
+}
+
+export interface CardApproval {
+  deploymentId: string | null;
+  subject: string;
+  requestedBy: string | null;
+}
 
 export interface EnvironmentCardView {
   id: string;
   name: string;
-  kind: 'stage' | 'production' | 'other';
-  address: string;
+  address: string | null;
   artifact: string | null;
   releaseVersion: string | null;
   deployedAt: string | null;
   cards: DeployCards;
+  newer: { version: string; cardKeys: string[] } | null;
   health: DeployHealth;
-  lastRun: DeployRun | null;
-  awaitingApproval: string | null;
+  lastRun: CardRun | null;
+  awaitingApproval: CardApproval | null;
+}
+
+/** Ready panel values; null means that source is loading, failed, or absent. */
+export interface DeploySources {
+  environments: ProjectEnvironments | null;
+  statuses: EnvironmentStatus[] | null;
+  deployments: Deployment[] | null;
+  releases: Release[] | null;
 }
 
 export type DeployPeriod = '24h' | '7d' | '30d' | 'all';
 export interface DeployRunFilter {
   environmentId: string;
-  outcome: DeploymentState | 'all';
+  state: RunState | 'all';
   period: DeployPeriod;
 }
-export const ALL_DEPLOY_RUNS: DeployRunFilter = { environmentId: 'all', outcome: 'all', period: 'all' };
+export const ALL_DEPLOY_RUNS: DeployRunFilter = { environmentId: 'all', state: 'all', period: 'all' };
 
 const PERIOD_MS: Record<DeployPeriod, number> = {
   '24h': 86_400_000,
@@ -124,32 +226,6 @@ const PERIOD_MS: Record<DeployPeriod, number> = {
   '30d': 30 * 86_400_000,
   all: Number.POSITIVE_INFINITY,
 };
-
-const JOB_OUTCOME: Record<string, DeploymentState> = {
-  queued: 'queued',
-  claimed: 'running',
-  healthy: 'succeeded',
-  failed: 'failed',
-};
-
-const EVIDENCE_LABEL: Record<string, string> = {
-  'health-ok': 'Health check passed',
-  'health-http-failed': 'Health check failed',
-  'deploy-step-failed': 'Deploy step failed',
-};
-
-export const OUTCOME_LABEL: Record<DeploymentState, string> = {
-  queued: 'Queued',
-  running: 'Running',
-  succeeded: 'Succeeded',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  'awaiting-approval': 'Awaiting approval',
-};
-
-export function evidenceLabel(evidence: string | null): string | null {
-  return evidence ? EVIDENCE_LABEL[evidence] ?? evidence : null;
-}
 
 /** `registry/app@sha256:<hex>` reads as `app@sha256:<first 12 hex>`. */
 export function shortArtifact(artifact: string): string {
@@ -188,106 +264,162 @@ export function releaseForArtifact(artifact: string | null, releases: readonly R
   return releases.find(release => release.artifactDigests.some(item => digestOf(item) === digest)) ?? null;
 }
 
-const SUCCESS_HISTORY = new Set(['healthy', 'rolled-back']);
+const newestFirst = (a: Deployment, b: Deployment) =>
+  Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc) || b.id.localeCompare(a.id);
+
+/** Environment names by id: AGT-3176 declarations first, then AGT-3201 environments. */
+export function environmentNames(sources: Pick<DeploySources, 'environments' | 'statuses'>): Map<string, string> {
+  const names = new Map((sources.statuses ?? []).map(item => [item.environment.id, item.environment.name]));
+  for (const item of sources.environments?.environments ?? []) names.set(item.declaration.id, item.declaration.name);
+  return names;
+}
+
+/** AGT-3201 deploy runs, newest first, with environment names and release versions. */
+export function buildDeployRuns(deployments: readonly Deployment[], names: ReadonlyMap<string, string>,
+  releases: readonly Release[] | null): DeployRun[] {
+  const versions = new Map((releases ?? []).map(release => [release.id, release.version]));
+  return [...deployments].sort(newestFirst).map(item => ({
+    id: item.id,
+    environmentId: item.environmentId,
+    environmentName: names.get(item.environmentId) ?? item.environmentId,
+    releaseId: item.releaseId,
+    releaseVersion: versions.get(item.releaseId) ?? null,
+    trigger: item.trigger,
+    state: runState(item.state),
+    requestedBy: item.requestedBy,
+    approvedBy: item.approvedBy,
+    createdAt: item.createdAtUtc,
+    startedAt: item.startedAtUtc,
+    finishedAt: item.finishedAtUtc,
+    steps: item.steps.map(step => ({
+      name: step.name, state: stepState(step.state), startedAt: step.startedAtUtc, finishedAt: step.finishedAtUtc,
+    })),
+  }));
+}
+
+interface CardBase {
+  id: string;
+  name: string;
+  address: string | null;
+  healthUrl: string | null;
+  view: ProjectEnvironments['environments'][number] | null;
+}
+
+function cardBases(sources: DeploySources): CardBase[] {
+  if (sources.environments) {
+    return sources.environments.environments.map(view => ({
+      id: view.declaration.id, name: view.declaration.name, address: view.declaration.address,
+      healthUrl: view.declaration.healthUrl, view,
+    }));
+  }
+  return [...(sources.statuses ?? [])].sort((a, b) => a.environment.order - b.environment.order).map(status => ({
+    id: status.environment.id, name: status.environment.name, address: null, healthUrl: null, view: null,
+  }));
+}
 
 /**
- * Deploy runs from the AGT-3176 job queue, newest first. A finished job takes
- * its finish time and evidence from the environment history row it reported;
- * history rows without a job (older state files) still appear as runs.
+ * One status card per declared environment, in the server's Staging-then-Production
+ * order. AGT-3201 status and runs win; without them the card reads the AGT-3176
+ * environment state (deployed artifact, host health, last report, pending promotion).
  */
-export function buildDeployRuns(data: ProjectEnvironments, releases: readonly Release[] | null): DeployRun[] {
-  const names = new Map(data.environments.map(item => [item.declaration.id, item.declaration.name]));
-  const unmatched = new Map(data.environments.map(item => [item.declaration.id,
-    [...item.history].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))]));
-  const jobs = [...(data.jobs ?? [])].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-  const runs = jobs.map(job => jobRun(job, names, takeReport(job, unmatched), releases));
-  for (const [environmentId, rows] of unmatched) {
-    for (const row of rows) runs.push(historyRun(environmentId, names, row, releases));
-  }
-  return runs.sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt) || b.id.localeCompare(a.id));
-}
-
-function takeReport(job: ProjectEnvironmentJob, unmatched: Map<string, ProjectEnvironmentHistory[]>): ProjectEnvironmentHistory | null {
-  const outcome = JOB_OUTCOME[job.status];
-  if (outcome !== 'succeeded' && outcome !== 'failed') return null;
-  const rows = unmatched.get(job.environmentId) ?? [];
-  const since = Date.parse(job.claimedAt ?? job.createdAt);
-  const index = rows.findIndex(row => row.artifact === job.artifact && Date.parse(row.at) >= since
-    && SUCCESS_HISTORY.has(row.status) === (outcome === 'succeeded'));
-  return index < 0 ? null : rows.splice(index, 1)[0];
-}
-
-function jobRun(job: ProjectEnvironmentJob, names: Map<string, string>, report: ProjectEnvironmentHistory | null,
-  releases: readonly Release[] | null): DeployRun {
-  const outcome = JOB_OUTCOME[job.status] ?? 'queued';
-  const evidence = report?.evidence ?? null;
-  const steps: DeployRunStep[] = [
-    { name: 'Queued', state: 'succeeded', at: job.createdAt,
-      detail: job.requestedBy ? `Requested by ${job.requestedBy}` : null },
-    { name: 'Claimed by deploy host', state: job.claimedAt ? 'succeeded' : 'queued', at: job.claimedAt, detail: job.hostId },
-    { name: job.isRollback ? 'Restore previous release and check health' : 'Deploy and check health',
-      state: outcome === 'queued' ? 'queued' : outcome, at: report?.at ?? null, detail: evidenceLabel(evidence) },
-  ];
-  return {
-    id: job.id, environmentId: job.environmentId, environmentName: names.get(job.environmentId) ?? job.environmentId,
-    artifact: job.artifact, releaseVersion: releaseForArtifact(job.artifact, releases)?.version ?? null,
-    kind: job.isRollback ? 'rollback' : 'deploy', outcome, requestedBy: job.requestedBy, hostId: job.hostId,
-    queuedAt: job.createdAt, finishedAt: report?.at ?? null, evidence, steps,
-  };
-}
-
-function historyRun(environmentId: string, names: Map<string, string>, row: ProjectEnvironmentHistory,
-  releases: readonly Release[] | null): DeployRun {
-  const outcome: DeploymentState = SUCCESS_HISTORY.has(row.status) ? 'succeeded' : 'failed';
-  return {
-    id: `history:${environmentId}:${row.at}`, environmentId, environmentName: names.get(environmentId) ?? environmentId,
-    artifact: row.artifact, releaseVersion: releaseForArtifact(row.artifact, releases)?.version ?? null,
-    kind: row.status === 'rolled-back' ? 'rollback' : 'deploy', outcome, requestedBy: null, hostId: null,
-    queuedAt: row.at, finishedAt: row.at, evidence: row.evidence,
-    steps: [{ name: 'Deploy and check health', state: outcome, at: row.at, detail: evidenceLabel(row.evidence) }],
-  };
-}
-
-/** One status card per declared environment, in the server's Staging-then-Production order. */
-export function buildEnvironmentCards(
-  data: ProjectEnvironments,
-  runs: readonly DeployRun[],
-  releases: readonly Release[] | null,
-  health: readonly DeployHealthCheckSummary[] | null,
-): EnvironmentCardView[] {
-  return data.environments.map(({ declaration, history }) => {
-    const live = history.find(row => SUCCESS_HISTORY.has(row.status)) ?? null;
-    const release = releaseForArtifact(live?.artifact ?? null, releases);
-    const check = health?.find(item => item.environmentId === declaration.id);
-    const pending = data.promotions.find(item => item.status === 'pending' && item.productionId === declaration.id);
+export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardView[] {
+  return cardBases(sources).map(base => {
+    const status = sources.statuses?.find(item => item.environment.id === base.id) ?? null;
+    const runs = sources.deployments?.filter(item => item.environmentId === base.id).sort(newestFirst) ?? null;
+    const lastSucceeded = runs?.filter(item => item.state === 'succeeded')
+      .sort((a, b) => Date.parse(b.finishedAtUtc ?? '') - Date.parse(a.finishedAtUtc ?? ''))[0] ?? null;
+    const report = base.view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded') ?? null;
+    const artifact = base.view?.deployedArtifact ?? status?.currentRelease?.artifactDigests[0] ?? null;
+    const release = status?.currentRelease ?? releaseForArtifact(artifact, sources.releases);
     return {
-      id: declaration.id,
-      name: declaration.name,
-      kind: declaration.kind,
-      address: declaration.address,
-      artifact: live?.artifact ?? null,
+      id: base.id,
+      name: base.name,
+      address: base.address,
+      artifact,
       releaseVersion: release?.version ?? null,
-      deployedAt: live?.at ?? null,
-      cards: cardsFor(live?.artifact ?? null, release, releases),
-      health: check
-        ? { status: 'checks', state: check.state, checkCount: check.checkCount, checkedAt: check.checkedAtUtc }
-        : { status: 'no-checks' },
-      lastRun: runs.find(run => run.environmentId === declaration.id) ?? null,
-      awaitingApproval: pending?.artifact ?? null,
+      deployedAt: lastSucceeded?.finishedAtUtc ?? report?.at ?? null,
+      cards: cardsFor(artifact !== null || release !== null, release, sources.releases !== null || status !== null),
+      newer: status?.newerRelease ? { version: status.newerRelease.version, cardKeys: status.cardsSinceLastDeploy } : null,
+      health: healthFor(status, base),
+      lastRun: runs ? lastRunOf(runs) : lastReportOf(base.view),
+      awaitingApproval: approvalFor(base, runs, sources),
     };
   });
 }
 
-function cardsFor(artifact: string | null, release: Release | null, releases: readonly Release[] | null): DeployCards {
-  if (!artifact) return { status: 'unknown', reason: 'Nothing deployed yet' };
-  if (!releases) return { status: 'unknown', reason: 'Card lists arrive with release records' };
-  if (!release) return { status: 'unknown', reason: 'No release record for this artifact' };
-  return { status: 'known', keys: release.cardKeys };
+function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnown: boolean): DeployCards {
+  if (!deployed) return { status: 'unknown', reason: 'Nothing deployed yet' };
+  if (release) return { status: 'known', keys: release.cardKeys };
+  return releaseRecordsKnown
+    ? { status: 'unknown', reason: 'No release record for this artifact' }
+    : { status: 'unknown', reason: 'Card lists arrive with release records' };
+}
+
+function healthFor(status: EnvironmentStatus | null, base: CardBase): DeployHealth {
+  const raw = status?.health ?? base.view?.health;
+  const map = status ? STATUS_HEALTH : HOST_HEALTH;
+  const state = raw === undefined ? 'unknown' : map[raw] ?? 'unknown';
+  // Without a declared health URL there is nothing to check.
+  return state === 'unknown' && base.view && !base.healthUrl ? { status: 'no-checks' } : { status: 'reported', state };
+}
+
+function lastRunOf(runs: readonly Deployment[]): CardRun | null {
+  const run = runs[0];
+  return run
+    ? { deploymentId: run.id, trigger: run.trigger, state: runState(run.state), at: run.finishedAtUtc ?? run.startedAtUtc ?? run.createdAtUtc }
+    : null;
+}
+
+function lastReportOf(view: CardBase['view']): CardRun | null {
+  const row = view?.history[0];
+  if (!row) return null;
+  const report = HOST_REPORT[row.status];
+  return { deploymentId: null, trigger: report?.trigger ?? 'deploy', state: report?.state ?? 'unknown', at: row.at };
+}
+
+function approvalFor(base: CardBase, runs: readonly Deployment[] | null, sources: DeploySources): CardApproval | null {
+  // AGT-3201 adopts pending AGT-3176 promotions into runs that await approval.
+  if (runs) {
+    const waiting = runs.find(item => item.state === 'awaiting-approval');
+    if (!waiting) return null;
+    const status = sources.statuses?.find(item => item.environment.id === base.id);
+    const release = sources.releases?.find(item => item.id === waiting.releaseId)
+      ?? [status?.newerRelease, status?.currentRelease].find(item => item?.id === waiting.releaseId);
+    return { deploymentId: waiting.id, subject: release ? `Release ${release.version}` : 'A release', requestedBy: waiting.requestedBy };
+  }
+  const pending = sources.environments?.promotions.find(item => item.status === 'pending' && item.productionId === base.id);
+  return pending ? { deploymentId: null, subject: shortArtifact(pending.artifact), requestedBy: null } : null;
 }
 
 export function filterDeployRuns(runs: readonly DeployRun[], filter: DeployRunFilter, now: number): DeployRun[] {
   const oldest = now - PERIOD_MS[filter.period];
   return runs.filter(run => (filter.environmentId === 'all' || run.environmentId === filter.environmentId)
-    && (filter.outcome === 'all' || run.outcome === filter.outcome)
-    && Date.parse(run.queuedAt) >= oldest);
+    && (filter.state === 'all' || run.state === filter.state)
+    && Date.parse(run.createdAt) >= oldest);
+}
+
+export interface DeployStepLog {
+  step: string;
+  state: StepState | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lines: DeploymentLogLine[];
+}
+
+/** Log lines under their step, in step order; lines of a step the run does not list follow at the end. */
+export function groupStepLog(steps: readonly DeployRunStep[], lines: readonly DeploymentLogLine[]): DeployStepLog[] {
+  const groups: DeployStepLog[] = steps.map(step => ({
+    step: step.name, state: step.state, startedAt: step.startedAt, finishedAt: step.finishedAt,
+    lines: lines.filter(line => line.step === step.name),
+  }));
+  const known = new Set(steps.map(step => step.name));
+  for (const line of lines.filter(item => !known.has(item.step))) {
+    let group = groups.find(item => item.step === line.step && item.state === null);
+    if (!group) {
+      group = { step: line.step, state: null, startedAt: null, finishedAt: null, lines: [] };
+      groups.push(group);
+    }
+    group.lines.push(line);
+  }
+  return groups;
 }

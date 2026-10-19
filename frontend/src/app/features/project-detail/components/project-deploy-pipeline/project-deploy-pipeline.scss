@@ -44,3 +44,19 @@
 
 .pipeline__number { @include deploy.numeric; @include deploy.muted; }
 .pipeline__rule { margin: 0; color: var(--studio-fg); font-weight: 600; }
+
+.pipeline__steps li { display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
+
+.pipeline__issues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  margin-bottom: var(--studio-spacing-4);
+  padding: var(--studio-spacing-3);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-surface));
+
+  h3 { margin: 0; color: var(--studio-fg-strong); font-size: 0.95rem; }
+  ul { display: flex; flex-direction: column; gap: var(--studio-spacing-1); margin: 0; padding-left: var(--studio-spacing-4); }
+  code { margin-right: var(--studio-spacing-1); }
+}

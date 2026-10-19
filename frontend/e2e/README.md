@@ -416,7 +416,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `nav-level-and-prompt-overrides.spec.ts` | prompt overrides are explicit and filterable in both themes |
 | `nav-rebuild-t5a.spec.ts` | project rail: Pipeline / Workflow / Prompts shells in Config |
 | `nav-rebuild-t5b.spec.ts` | Project Settings no longer hosts the relocated sections |
-| `project-deploy-area.spec.ts` | AGT-3226 · Deploy area on a mocked backend: partial data, status-card focus order, history filters and run drawer, empty states, light and dark captures (mocked) |
+| `project-deploy-area.spec.ts` | AGT-3226 · Deploy area on the AGT-3176, AGT-3201, and AGT-3221 contracts (mocked): partial data when deploy routes are missing, status-card labels and focus order, history filters, run drawer with step log and approve or cancel, pipeline with static-site and container steps and an invalid project.yml, unmasked errors, empty states, light and dark captures |
 | `ownership-routing.spec.ts` | Project Hub ownership routing |
 | `page-action-bar.spec.ts` | shared page action bar preserves placement, task source, chat context, and page-type icons |
 | `pipeline-cost-timeline.spec.ts` | token usage: pipeline cost-by-step-kind section renders legend + stacked trend |

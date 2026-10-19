@@ -283,6 +283,8 @@ public sealed record ProjectDefinitionReadResult(
     string? DefinitionSha256)
 {
     public bool IsValid => Definition is not null && Issues.Count == 0;
+    /// <summary>The parsed definition even when it has issues; display only, never executed.</summary>
+    public ProjectExecutionDefinition? Parsed { get; init; }
 }
 
 /// <summary>
@@ -368,7 +370,7 @@ public static partial class ProjectDefinitionReader
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace));
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
-        return new(issues.Count == 0 ? definition : null, issues, digest);
+        return new(issues.Count == 0 ? definition : null, issues, digest) { Parsed = definition };
     }
 
     private static IReadOnlyList<YamlLine> Tokenize(string yaml, List<ProjectDefinitionIssue> issues)

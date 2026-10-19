@@ -4,37 +4,53 @@
     <p>Read from .agent-studio/project.yml. Edit the file in the repository to change it.</p>
   </header>
   @switch (panel().status) {
-    @case ('loading') { <app-loading-surface kind="list" label="Loading the project.yml lifecycle…" /> }
+    @case ('loading') { <app-loading-surface kind="list" label="Loading the project.yml pipeline…" /> }
     @case ('error') {
-      <app-empty-state icon="warn" title="The lifecycle could not be loaded" testid="deploy-pipeline-error"
-        body="The project definition did not answer. Try Refresh." />
+      <app-empty-state icon="warn" title="The pipeline could not be loaded" testid="deploy-pipeline-error" [body]="errorMessage()" />
     }
-    @default {
-      @if (diagram() === 'invalid') {
-        <app-empty-state icon="warn" title="project.yml has validation issues" testid="deploy-pipeline-invalid"
-          body="Fix the issues listed under Deck › Settings › Execution; the lifecycle is drawn once the file validates." />
-      } @else if (diagram() === 'undeclared') {
-        <app-empty-state icon="branch" title="No deploy lifecycle declared" testid="deploy-pipeline-undeclared"
-          body="Add the schema 2 sections artifacts, environments, lifecycles.standard, and deploy to .agent-studio/project.yml. The diagram then shows gate, artifact, Staging, and Production with the steps of each." />
-      } @else {
-        <ol class="pipeline__flow" aria-label="Lifecycle from gate to Production">
-          @for (node of nodes(); track node.id) {
-            <li class="pipeline__node" [attr.data-kind]="node.kind" [attr.data-testid]="'deploy-stage-' + node.id">
-              <span class="pipeline__number" aria-hidden="true">{{ $index + 1 }}</span>
-              <h3>{{ node.name }}</h3>
-              <p class="pipeline__rule">{{ gateLabel(node) }}</p>
-              @if (node.items.length) {
-                <ul>@for (item of node.items; track $index) { <li><code>{{ item }}</code></li> }</ul>
-              } @else {
-                <p class="pipeline__muted">{{ emptyItems(node) }}</p>
-              }
-              @if (node.kind === 'environment' && node.requires) {
-                <p class="pipeline__muted">After {{ node.requires }}</p>
-              }
-            </li>
+  }
+  @if (pipeline(); as pipeline) {
+    @if (!pipeline.valid) {
+      <div class="pipeline__issues" data-testid="deploy-pipeline-issues" role="group" aria-labelledby="deploy-pipeline-issues-title">
+        <h3 id="deploy-pipeline-issues-title">project.yml has {{ pipeline.issues.length }} validation {{ pipeline.issues.length === 1 ? 'issue' : 'issues' }}</h3>
+        <p class="pipeline__muted">{{ pipeline.nodes?.length ? 'The diagram below shows the file as parsed; it does not run until the issues are fixed.' : 'No diagram could be parsed from the file.' }}</p>
+        <ul>
+          @for (issue of pipeline.issues; track $index) {
+            <li><code>{{ issue.path }}@if (issue.line) {:{{ issue.line }}}</code> {{ issue.message }}</li>
           }
-        </ol>
-      }
+        </ul>
+      </div>
+    }
+    @if (pipeline.nodes?.length) {
+      <ol class="pipeline__flow" aria-label="Lifecycle from gate to Production">
+        @for (node of pipeline.nodes; track node.id) {
+          <li class="pipeline__node" [attr.data-kind]="node.kind" [attr.data-testid]="'deploy-stage-' + node.id">
+            <span class="pipeline__number" aria-hidden="true">{{ $index + 1 }}</span>
+            <h3>{{ node.name }}</h3>
+            <p class="pipeline__rule">{{ gateLabel(node) }}</p>
+            @if (node.items.length) {
+              <ul>@for (item of node.items; track $index) { <li><code>{{ item }}</code></li> }</ul>
+            } @else if (node.steps.length) {
+              <ul class="pipeline__steps">
+                @for (step of node.steps; track $index) {
+                  <li [attr.data-testid]="'deploy-step-' + node.id + '-' + $index">
+                    <strong>{{ kindLabel(step.kind) }}</strong>
+                    @for (detail of stepDetails(step); track $index) { <code>{{ detail }}</code> }
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p class="pipeline__muted">{{ emptyItems(node) }}</p>
+            }
+            @if (node.kind === 'environment' && node.requires) {
+              <p class="pipeline__muted">After {{ node.requires }}</p>
+            }
+          </li>
+        }
+      </ol>
+    } @else if (pipeline.valid) {
+      <app-empty-state icon="branch" title="No deploy lifecycle declared" testid="deploy-pipeline-undeclared"
+        body="Add the schema 2 sections artifacts, environments, lifecycles.standard, and deploy to .agent-studio/project.yml. The diagram then shows gate, artifact, Staging, and Production with the steps of each." />
     }
   }
 </section>

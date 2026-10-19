@@ -6,8 +6,7 @@
   @switch (panel().status) {
     @case ('loading') { <app-loading-surface kind="list" label="Loading releases…" /> }
     @case ('error') {
-      <app-empty-state icon="warn" title="Releases could not be loaded" testid="deploy-releases-error"
-        body="The release service did not answer. Environments and history are unaffected; try Refresh." />
+      <app-empty-state icon="warn" title="Releases could not be loaded" testid="deploy-releases-error" [body]="errorMessage()" />
     }
     @case ('unavailable') {
       <app-empty-state icon="archive" title="No release records on this server yet" testid="deploy-releases-unavailable"
