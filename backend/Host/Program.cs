@@ -598,6 +598,7 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<PromptCallTelemetryService>();
 builder.Services.AddSingleton<RuntimePromptService>();
 builder.Services.AddSingleton<VisualQaService>();
+builder.Services.AddSingleton<IVisualQaService>(provider => provider.GetRequiredService<VisualQaService>());
 builder.Services.AddSingleton<PromptReviewService>();
 builder.Services.AddSingleton<PromptAdminService>();
 builder.Services.AddSingleton<TitleGenerationService>();
