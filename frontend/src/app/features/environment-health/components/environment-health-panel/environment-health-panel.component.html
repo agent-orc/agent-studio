@@ -19,6 +19,9 @@
             <span class="environment-health__dot" aria-hidden="true"></span>{{ statusLabel[environment.status] }}
           </span>
         </header>
+        @if (environment.error; as message) {
+          <p class="environment-health__incident" role="alert" data-testid="environment-health-error">{{ message }}</p>
+        }
         @if (environment.currentIncident; as incident) {
           <p class="environment-health__incident" role="status" data-testid="environment-health-incident">
             Incident since {{ incident.startedAt | date:'medium':'UTC' }} UTC · {{ incident.checkId }} · {{ incident.firstError }}

@@ -43,6 +43,28 @@ public static class HealthIncidentPolicy
     }
 }
 
+public enum EnvironmentIncidentAction
+{
+    None,
+    Open,
+    Close,
+}
+
+/// <summary>
+/// Pure grouping rule: an environment incident is open while at least one of its checks has an
+/// open incident, so the checks of one down site share one incident, one alert and one card.
+/// </summary>
+public static class EnvironmentIncidentPolicy
+{
+    public static EnvironmentIncidentAction Next(bool incidentOpen, int openCheckIncidents)
+        => (incidentOpen, openCheckIncidents > 0) switch
+        {
+            (false, true) => EnvironmentIncidentAction.Open,
+            (true, false) => EnvironmentIncidentAction.Close,
+            _ => EnvironmentIncidentAction.None,
+        };
+}
+
 /// <summary>
 /// Pure certificate expiry rule: warn once per certificate when it is within 14 days and
 /// once more within 3 days. A certificate first seen inside 3 days warns once, at 3.

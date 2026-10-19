@@ -33,6 +33,7 @@
   border-radius: 50%;
   background: var(--studio-text-secondary);
   &[data-status='up'] { background: var(--studio-success); }
-  &[data-status='degraded'] { background: var(--studio-warn); }
+  &[data-status='degraded'],
+  &[data-status='invalid'] { background: var(--studio-warn); }
   &[data-status='down'] { background: var(--studio-error); }
 }

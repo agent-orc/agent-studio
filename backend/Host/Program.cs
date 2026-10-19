@@ -508,7 +508,10 @@ builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
     // The probe applies the per-check timeout on the injected clock.
     client.Timeout = Timeout.InfiniteTimeSpan;
     client.DefaultRequestHeaders.UserAgent.ParseAdd("AgentStudio-HealthCheck/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    // Refuses loopback, link-local, metadata and (without the environment's opt-in) private addresses.
+    services.GetRequiredService<HealthCheckConnector>().CreateHandler());
+builder.Services.AddSingleton(_ => new HealthCheckConnector());
 builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
 builder.Services.AddSingleton<HealthCheckStore>();
 builder.Services.AddSingleton<HealthAlerts>();

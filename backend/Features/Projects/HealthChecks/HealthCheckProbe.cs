@@ -13,9 +13,12 @@ public interface IHealthCheckProbe
 
 /// <summary>
 /// Probes from the control plane. The timeout runs on the injected clock, and every
-/// failure is reduced to a bounded error code; remote bodies are never stored.
+/// failure is reduced to a bounded error code; remote bodies are never stored. Every
+/// connection goes through <see cref="HealthCheckConnector"/>, so a target that resolves to a
+/// refused address fails with <c>address-blocked</c> before a byte is sent.
 /// </summary>
-public sealed class NetworkHealthCheckProbe(IHttpClientFactory httpClients, TimeProvider clock) : IHealthCheckProbe
+public sealed class NetworkHealthCheckProbe(IHttpClientFactory httpClients, HealthCheckConnector connector,
+    TimeProvider clock) : IHealthCheckProbe
 {
     public const string HttpClientName = "environment-health-checks";
     private const int BodyLimit = 64 * 1024;
@@ -41,9 +44,19 @@ public sealed class NetworkHealthCheckProbe(IHttpClientFactory httpClients, Time
         {
             return new(at, false, null, null, "timeout");
         }
+        catch (HealthCheckAddressBlockedException)
+        {
+            return new(at, false, null, null, HealthSample.AddressBlocked);
+        }
         catch (HttpRequestException ex)
         {
-            return new(at, false, null, null, ex.InnerException is AuthenticationException ? "tls-failed" : "connection-failed");
+            return new(at, false, null, null, ex.InnerException switch
+            {
+                HealthCheckAddressBlockedException => HealthSample.AddressBlocked,
+                AuthenticationException => "tls-failed",
+                SocketException { SocketErrorCode: SocketError.HostNotFound } => "dns-failed",
+                _ => "connection-failed",
+            });
         }
         catch (SocketException ex)
         {
@@ -63,6 +76,9 @@ public sealed class NetworkHealthCheckProbe(IHttpClientFactory httpClients, Time
         Func<int> elapsed, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, check.Url);
+        request.Options.Set(HealthCheckConnector.AllowPrivateNetworkOption, check.AllowPrivateNetwork);
+        // A pooled connection opened under another environment's opt-in is never reused.
+        request.Headers.ConnectionClose = true;
         using var response = await httpClients.CreateClient(HttpClientName)
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var status = (int)response.StatusCode;
@@ -77,22 +93,22 @@ public sealed class NetworkHealthCheckProbe(IHttpClientFactory httpClients, Time
         return new(at, true, elapsed(), status, null);
     }
 
-    private static async Task<HealthSample> ProbeTcpAsync(HealthCheckDefinition check, DateTimeOffset at,
+    private async Task<HealthSample> ProbeTcpAsync(HealthCheckDefinition check, DateTimeOffset at,
         Func<int> elapsed, CancellationToken cancellationToken)
     {
-        using var client = new TcpClient();
-        await client.ConnectAsync(check.Host!, check.Port!.Value, cancellationToken);
+        using var socket = await connector.ConnectAsync(check.Host!, check.Port!.Value, check.AllowPrivateNetwork,
+            cancellationToken);
         return new(at, true, elapsed(), null, null);
     }
 
     private async Task<HealthSample> ProbeTlsAsync(HealthCheckDefinition check, DateTimeOffset at,
         Func<int> elapsed, CancellationToken cancellationToken)
     {
-        using var client = new TcpClient();
-        await client.ConnectAsync(check.Host!, check.Port!.Value, cancellationToken);
+        var socket = await connector.ConnectAsync(check.Host!, check.Port!.Value, check.AllowPrivateNetwork,
+            cancellationToken);
         DateTimeOffset? notAfter = null;
         var errors = SslPolicyErrors.None;
-        await using var stream = new SslStream(client.GetStream(), false);
+        await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: true), false);
         await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
         {
             TargetHost = check.Host,

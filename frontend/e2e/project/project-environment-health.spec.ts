@@ -6,7 +6,7 @@ import { setTheme } from '../helpers/theme';
 
 // IP-14: the project Operations tab and the workspace Environment view read the
 // control-plane health checks. The health endpoints are mocked so the screenshots
-// show an open incident, a close certificate expiry and a healthy stage.
+// show an open incident, a close certificate expiry, a healthy stage and a broken declaration.
 const results = process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', 'test-results');
 let projectName = '';
 
@@ -26,7 +26,7 @@ const environments = (project: string) => [
     status: 'down', uptime24h: 0.9861, uptime7d: 0.998, uptime30d: 0.9991, latency24h: { p50Ms: 131, p95Ms: 284, p99Ms: 512 },
     currentIncident: { id: 'production/http/20261019T074500Z', environmentId: 'production', checkId: 'http',
       startedAt: '2026-10-19T07:45:00Z', firstError: 'timeout', failedProbes: 15, endedAt: null,
-      cardId: 'health-production-http-202610190745' },
+      cardId: 'health-production-202610190745' },
     lastIncident: null,
     checks: [
       check({ status: 'down', lastSample: sample(false), consecutiveFailures: 15, uptime24h: 0.9861 }),
@@ -39,8 +39,14 @@ const environments = (project: string) => [
     status: 'up', uptime24h: 1, uptime7d: 0.9997, uptime30d: 0.9994, latency24h: { p50Ms: 98, p95Ms: 190, p99Ms: 260 },
     currentIncident: null,
     lastIncident: { id: 'stage/http/20261018T101000Z', environmentId: 'stage', checkId: 'http', startedAt: '2026-10-18T10:10:00Z',
-      firstError: 'unexpected-status', failedProbes: 4, endedAt: '2026-10-18T10:16:00Z', cardId: 'health-stage-http-202610181010' },
+      firstError: 'unexpected-status', failedProbes: 4, endedAt: '2026-10-18T10:16:00Z', cardId: 'health-stage-202610181010' },
     checks: [check({ target: 'https://stage.shop.example/healthz' })],
+  },
+  {
+    project, environmentId: 'preview', name: 'preview', kind: 'unknown', address: '', status: 'invalid',
+    uptime24h: null, uptime7d: null, uptime30d: null, latency24h: { p50Ms: null, p95Ms: null, p99Ms: null },
+    currentIncident: null, lastIncident: null, checks: [],
+    error: 'preview.json: Environment preview.json health check intervalSeconds must be an integer.',
   },
 ];
 
@@ -75,6 +81,9 @@ test('Operations tab shows uptime, latency, the open incident and certificate ex
   await expect(production.getByTestId('environment-health-incident')).toContainText('15 failed probes');
   await expect(production.getByTestId('environment-health-check-tls')).toContainText('Certificate expires in 10 days');
   await expect(panel.getByTestId('environment-health-stage')).toContainText('Last incident');
+  const preview = panel.getByTestId('environment-health-preview');
+  await expect(preview).toContainText('Misconfigured');
+  await expect(preview.getByTestId('environment-health-error')).toContainText('intervalSeconds must be an integer');
 
   for (const [width, height] of [[1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height });
@@ -99,9 +108,10 @@ test('Environment view lists application health across the workspace', async ({ 
   }
   const overview = page.getByTestId('environment-health-overview');
   await expect(overview).toBeVisible();
-  await expect(overview).toContainText('2 environments · 1 open incidents');
+  await expect(overview).toContainText('3 environments · 1 open incidents');
   const row = overview.locator('tr[data-status="down"]');
   await expect(row).toContainText('since Oct 19, 07:45 UTC · http');
+  await expect(overview.locator('tr[data-status="invalid"]')).toContainText('intervalSeconds must be an integer');
   await overview.scrollIntoViewIfNeeded();
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);

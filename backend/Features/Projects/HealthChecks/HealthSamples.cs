@@ -1,8 +1,23 @@
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.Projects;
 
 /// <summary>One probe result. <see cref="Error"/> is a bounded code, never remote output.</summary>
 public sealed record HealthSample(DateTimeOffset At, bool Ok, int? LatencyMs, int? Status, string? Error,
-    DateTimeOffset? CertificateNotAfter = null);
+    DateTimeOffset? CertificateNotAfter = null)
+{
+    /// <summary>The target resolves only to refused addresses: a declaration problem, not an outage.</summary>
+    public const string AddressBlocked = "address-blocked";
+    /// <summary>The probe itself threw: a control-plane fault, not an outage.</summary>
+    public const string ProbeFailed = "probe-failed";
+
+    /// <summary>
+    /// False for results that say nothing about the target's availability. They are shown on the
+    /// check but neither stored in the series nor counted toward an incident.
+    /// </summary>
+    [JsonIgnore]
+    public bool MeasuresAvailability => Error is not (AddressBlocked or ProbeFailed);
+}
 
 /// <summary>One hour of samples after raw retention has passed.</summary>
 public sealed record HealthHourlyAggregate(DateTimeOffset Hour, int Total, int Failures, int? P50Ms, int? P95Ms,
@@ -29,6 +44,36 @@ public static class HealthSeries
         }
         return total == 0 ? null : (double)ok / total;
     }
+
+    /// <summary>
+    /// Uptime over a long window from the hourly aggregates, completed by the raw samples after
+    /// the last aggregated hour. The oldest edge has hour granularity.
+    /// </summary>
+    public static double? Uptime(IReadOnlyList<HealthHourlyAggregate> hourly, IEnumerable<HealthSample> raw,
+        DateTimeOffset now, TimeSpan window)
+    {
+        var start = now - window;
+        var total = 0;
+        var failures = 0;
+        var aggregatedUntil = AggregatedUntil(hourly) ?? DateTimeOffset.MinValue;
+        foreach (var hour in hourly)
+        {
+            if (hour.Hour + TimeSpan.FromHours(1) <= start || hour.Hour > now) continue;
+            total += hour.Total;
+            failures += hour.Failures;
+        }
+        foreach (var sample in raw)
+        {
+            if (sample.At < aggregatedUntil || sample.At <= start || sample.At > now) continue;
+            total++;
+            if (!sample.Ok) failures++;
+        }
+        return total == 0 ? null : (double)(total - failures) / total;
+    }
+
+    /// <summary>The end of the last aggregated hour; raw samples from there on are not aggregated yet.</summary>
+    public static DateTimeOffset? AggregatedUntil(IReadOnlyList<HealthHourlyAggregate> hourly)
+        => hourly.Count == 0 ? null : hourly.Max(item => item.Hour) + TimeSpan.FromHours(1);
 
     public static HealthLatency Latency(IEnumerable<HealthSample> samples, DateTimeOffset now, TimeSpan window)
     {
@@ -60,13 +105,16 @@ public static class HealthSeries
             }).ToArray();
 
     /// <summary>
-    /// Raw day files (UTC dates) whose whole day lies before the raw retention window and
-    /// must be folded into hourly aggregates.
+    /// Raw day files (UTC dates) that are complete and therefore folded into hourly aggregates,
+    /// which serve the 7- and 30-day uptime.
     /// </summary>
     public static IReadOnlyList<DateOnly> DaysToAggregate(IEnumerable<DateOnly> rawDays, DateTimeOffset now)
-    {
-        var cutoff = now.UtcDateTime - RawRetention;
-        return rawDays.Where(day => day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).AddDays(1) <= cutoff)
-            .Order().ToArray();
-    }
+        => DaysEndingBy(rawDays, now.UtcDateTime);
+
+    /// <summary>Raw day files whose whole day lies before the raw retention window and are deleted.</summary>
+    public static IReadOnlyList<DateOnly> DaysPastRawRetention(IEnumerable<DateOnly> rawDays, DateTimeOffset now)
+        => DaysEndingBy(rawDays, now.UtcDateTime - RawRetention);
+
+    private static DateOnly[] DaysEndingBy(IEnumerable<DateOnly> days, DateTime cutoff)
+        => days.Where(day => day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).AddDays(1) <= cutoff).Order().ToArray();
 }

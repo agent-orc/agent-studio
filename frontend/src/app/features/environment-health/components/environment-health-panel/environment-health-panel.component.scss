@@ -61,7 +61,9 @@
 .environment-health__badge[data-status='up'] .environment-health__dot,
 .environment-health__dot[data-status='up'] { background: var(--studio-success); }
 .environment-health__badge[data-status='degraded'] .environment-health__dot,
-.environment-health__dot[data-status='degraded'] { background: var(--studio-warn); }
+.environment-health__badge[data-status='invalid'] .environment-health__dot,
+.environment-health__dot[data-status='degraded'],
+.environment-health__dot[data-status='invalid'] { background: var(--studio-warn); }
 .environment-health__badge[data-status='down'] .environment-health__dot,
 .environment-health__dot[data-status='down'] { background: var(--studio-error); }
 .environment-health__incident { font-weight: 600; }

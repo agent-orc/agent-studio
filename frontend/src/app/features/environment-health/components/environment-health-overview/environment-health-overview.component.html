@@ -20,7 +20,7 @@
               <td>
                 @if (environment.currentIncident; as incident) {
                   since {{ incident.startedAt | date:'MMM d, HH:mm':'UTC' }} UTC · {{ incident.checkId }}
-                } @else { None }
+                } @else if (environment.error; as message) { <small>{{ message }}</small> } @else { None }
               </td>
             </tr>
           }

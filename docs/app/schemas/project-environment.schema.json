@@ -18,6 +18,11 @@
     "approval": { "enum": ["person", "stage-healthy-10m"] },
     "secretRefs": { "type": "array", "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } },
+    "healthChecksAllowPrivateNetwork": {
+      "description": "Lets this environment's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses. Loopback, link-local, metadata and unspecified addresses stay refused.",
+      "type": "boolean",
+      "default": false
+    },
     "healthChecks": {
       "description": "Control-plane health checks (IP-14). When absent, checks derive from healthUrl and address; an empty array turns checks off.",
       "type": "array",

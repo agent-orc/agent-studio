@@ -1,5 +1,6 @@
 /** Wire shapes of `/api/environment/health` and `/api/projects/{project}/environments/health` (IP-14). */
-export type HealthStatus = 'up' | 'degraded' | 'down' | 'unknown';
+/** `invalid`: the declaration is broken or a target resolves to an address the control plane refuses. */
+export type HealthStatus = 'up' | 'degraded' | 'down' | 'invalid' | 'unknown';
 
 export interface HealthSample {
   at: string;
@@ -62,6 +63,8 @@ export interface EnvironmentHealth {
   currentIncident: HealthIncident | null;
   lastIncident: HealthIncident | null;
   checks: EnvironmentHealthCheck[];
+  /** Why the environment cannot be watched, for example a broken declaration file. */
+  error: string | null;
 }
 
 export interface EnvironmentHealthResponse {
@@ -74,6 +77,7 @@ export const HEALTH_STATUS_LABEL: Record<HealthStatus, string> = {
   up: 'Up',
   degraded: 'Degraded',
   down: 'Down',
+  invalid: 'Misconfigured',
   unknown: 'No data',
 };
 
