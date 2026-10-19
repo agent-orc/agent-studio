@@ -54,6 +54,16 @@ job state, or audit history. The claim response carries names only.
 The managed `remote-runner-onboard.sh --role deploy` path installs the separate
 `agent-runner-deploy.service` and generated `deploy.env` for the host.
 
+A container environment with `"destination": "edge"` is hosted by the
+run-target role instead (IP-1, `RUNNER_ROLE=run-target`). It declares
+`domains`, `edge` (`acme` or `cloudflare`), `healthPath`, plain `variables`, and
+`resources`. The run host polls its desired state, starts each new revision
+next to the running one behind an edge Caddy, and switches traffic only after
+the health check passes. It keeps the previous revision for rollback and
+restarts crashed apps with backoff. The same deploy jobs, promotions, and
+automatic rollback apply. See the
+[runner domain map](../system/domains/runner.md#run-target-host-app-hosting-ip-1).
+
 Status: concept and initial workflow implemented, 2026-07-11. The shared
 Deployment contract now includes DEP-1 history and DEP-2 repository-derived
 targets. Runnable deploy-stable and descriptor targets launch normal visible

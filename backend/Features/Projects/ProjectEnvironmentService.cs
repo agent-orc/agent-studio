@@ -7,13 +7,14 @@ namespace AgentStudio.Projects;
 public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
-    IReadOnlyList<string> SecretRefs, int ContainerPort);
+    IReadOnlyList<string> SecretRefs, int ContainerPort, RunTargetHosting? Hosting = null);
 
 public sealed record DeploymentHistoryItem(DateTime At, string Status, string Artifact, string? PreviousArtifact,
     string? Evidence);
 
 public sealed record ProjectEnvironmentView(EnvironmentDeclaration Declaration, string? DeployedArtifact,
-    string Health, string? PendingArtifact, IReadOnlyList<DeploymentHistoryItem> History);
+    string Health, string? PendingArtifact, IReadOnlyList<DeploymentHistoryItem> History,
+    RunTargetObservation? Observed = null);
 
 public sealed record DeployJob(string Id, string Project, string EnvironmentId, string HostId,
     string Artifact, string Template, string Destination, string? HealthUrl,
@@ -90,8 +91,9 @@ public sealed class ProjectEnvironmentService
             var destination = Required("destination");
             if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
                 throw new JsonException("Static destination must be an absolute path without traversal.");
-            if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
-                throw new JsonException("Container destination must be a local proxy port.");
+            var edgeHosted = template == "container" && destination == RunTargetVocabulary.EdgeDestination;
+            if (template == "container" && !edgeHosted && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
+                throw new JsonException("Container destination must be a local proxy port or 'edge'.");
             var healthUrl = Optional("healthUrl");
             if (kind is "stage" or "production" && healthUrl is null)
                 throw new JsonException("Stage and production require a health URL.");
@@ -104,7 +106,8 @@ public sealed class ProjectEnvironmentService
                 ? containerPortValue.GetInt32() : 8080;
             if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
             result.Add(new(id, Required("name"), kind, host, Required("address"), template,
-                destination, healthUrl, approval, secrets, containerPort));
+                destination, healthUrl, approval, secrets, containerPort,
+                edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null));
         }
         if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new JsonException("Environment ids must be unique within a project.");
@@ -130,7 +133,8 @@ public sealed class ProjectEnvironmentService
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
                     latest is null ? "unknown" : latest.Status == "failed" ? "failed" : "healthy",
-                    pending?.Artifact, history);
+                    pending?.Artifact, history,
+                    state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
                     .Take(20).Select(row => new DeploymentFailureCard(row.EnvironmentId,
@@ -292,7 +296,9 @@ public sealed class ProjectEnvironmentService
                 var state = Load(project);
                 var declarations = Declarations(project);
                 if (declarations is not null) AdvanceTimedPromotions(project, declarations, state);
-                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
+                // Edge-hosted environments converge through the run-target role.
+                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId
+                    && item.Destination != RunTargetVocabulary.EdgeDestination &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt < now.AddMinutes(-5)));
                 if (job is null) continue;
                 var claimed = job with { Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N") };
@@ -340,6 +346,86 @@ public sealed class ProjectEnvironmentService
             }
             Save(project, state);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Desired state of every edge-hosted environment placed on this host. An
+    /// open deploy job is claimed, or its lease renewed, by the same read, so a
+    /// polling host keeps the job while it converges.
+    /// </summary>
+    public RunTargetDesiredState DesiredState(string hostId)
+    {
+        lock (_gate)
+        {
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var environments = new List<RunTargetEnvironmentSpec>();
+            foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                IReadOnlyList<EnvironmentDeclaration>? declarations;
+                try { declarations = Declarations(project); }
+                catch (JsonException)
+                {
+                    // The project's environment page reports the parse error;
+                    // one broken declaration must not stop the host's other apps.
+                    continue;
+                }
+                var hosted = declarations?.Where(item => item.TargetHostId == hostId && item.Hosting is not null).ToArray() ?? [];
+                if (hosted.Length == 0) continue;
+                var state = Load(project);
+                AdvanceTimedPromotions(project, declarations!, state);
+                foreach (var declaration in hosted)
+                {
+                    var job = state.Jobs.FirstOrDefault(item => item.EnvironmentId == declaration.Id
+                        && item.HostId == hostId && item.Status is "queued" or "claimed");
+                    if (job is not null)
+                    {
+                        var held = job.Status == "claimed" && job.ClaimedAt >= now.AddMinutes(-5) && job.LeaseToken is not null;
+                        var claimed = job with { Status = "claimed", ClaimedAt = now,
+                            LeaseToken = held ? job.LeaseToken : Guid.NewGuid().ToString("N") };
+                        state.Jobs[state.Jobs.IndexOf(job)] = claimed;
+                        job = claimed;
+                    }
+                    var history = state.History.Where(row => row.EnvironmentId == declaration.Id).Select(row => row.Item).ToArray();
+                    environments.Add(RunTargetDesiredStatePolicy.Project(project, declaration, job, history));
+                }
+                Save(project, state);
+            }
+            return new(hostId, now, environments);
+        }
+    }
+
+    /// <summary>Keeps the latest sanitized observation per environment placed on this host.</summary>
+    public int RecordObserved(string hostId, RunTargetObservedReport report)
+    {
+        lock (_gate)
+        {
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var accepted = 0;
+            foreach (var group in (report.Environments ?? []).GroupBy(item => item.Project, StringComparer.Ordinal))
+            {
+                IReadOnlyList<EnvironmentDeclaration>? declarations;
+                try { declarations = Declarations(group.Key); }
+                catch (JsonException)
+                {
+                    // Not accepted: without a valid declaration the host cannot be checked.
+                    continue;
+                }
+                if (declarations is null) continue;
+                var state = Load(group.Key);
+                foreach (var observation in group)
+                {
+                    var declaration = declarations.FirstOrDefault(item => item.Id == observation.EnvironmentId);
+                    if (declaration?.Hosting is null || declaration.TargetHostId != hostId) continue;
+                    var sanitized = RunTargetDesiredStatePolicy.Sanitize(observation, now);
+                    if (sanitized is null) continue;
+                    state.Observed.RemoveAll(row => row.EnvironmentId == declaration.Id);
+                    state.Observed.Add(new(declaration.Id, sanitized));
+                    accepted++;
+                }
+                Save(group.Key, state);
+            }
+            return accepted;
         }
     }
 
@@ -405,6 +491,8 @@ public sealed class ProjectEnvironmentService
         public List<DeployJob> Jobs { get; set; } = [];
         public List<EnvironmentPromotion> Promotions { get; set; } = [];
         public List<EnvironmentHistoryRow> History { get; set; } = [];
+        public List<RunTargetObservedRow> Observed { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
+    public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);
 }

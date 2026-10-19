@@ -110,6 +110,61 @@ in the review subject. The Review Executor fetches that artifact and verifies
 its digest and HEAD before reporting. Completion leaves no review subject when
 the matching artifact is unavailable.
 
+### Run-target host (app hosting, IP-1)
+
+`RUNNER_ROLE=run-target` starts `RunTargetDaemon` (`runner/RunTargets/`).
+It hosts long-lived app containers for the container environments declared
+with `"destination": "edge"` and `targetHostId` equal to its `RUNNER_ID`
+([environment schema](../../app/schemas/project-environment.schema.json)).
+It is separate from the coding, review, gate, and integration roles and runs on
+a run host, not on a work host
+([Integrated platform §5, §7](../../operations/integrierte-plattform/index.html)).
+The protocol is outbound-only. Every `RUN_TARGET_POLL_SECONDS` (default 15) it
+reads `GET /api/deploy/run-targets/{hostId}/desired-state` from Studio.
+It then reports each answered AGT-3176 deploy job on
+`POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
+events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
+require `runner.deploy`, and in the networked profile the caller's Runner ID
+must equal `hostId`. The desired-state read claims the open deploy job, or
+renews its lease. Without an open job, an environment keeps its last healthy
+or rolled-back artifact. The legacy `deploy-loop` never claims an edge job.
+
+`RunTargetReconciler` converges each environment through Docker Compose. A
+revision (artifact, port, health path, variables, secret names, resources) is
+pulled and started as its own compose project on the environment's bridge
+network. It is health-checked from inside the edge container, so the check
+uses the same path as public traffic. Traffic switches only after the check
+passes. The replaced revision is stopped and kept, so a rollback restarts it.
+The revision before it is removed. A failed check removes the candidate and
+leaves the running revision serving. Studio then queues the previous artifact,
+which the host already runs. Docker's `on-failure:3` covers short crashes.
+After that the host restarts with `RunTargetCrashPolicy` backoff: 10 s
+doubling to 5 min. From the fifth attempt it reports `crash-loop`, and it
+forgets the attempts after two minutes of stable running. Apps get `cpus`,
+`mem_limit`, `memswap_limit`, `pids_limit`, and `no-new-privileges`. They
+publish no port, use no host network, and mount nothing from the host.
+
+The edge is the `rt-edge` Caddy container (`RUN_TARGET_EDGE_IMAGE`, default
+`caddy:2-alpine`; it needs `wget` for the health check). It publishes
+`RUN_TARGET_HTTP_PORT`/`RUN_TARGET_HTTPS_PORT` (80/443) and joins each app
+network with `docker network connect`. `RunTargetCaddyfile` gives `acme` sites
+automatic HTTPS (`RUN_TARGET_ACME_EMAIL`). `cloudflare` sites use the origin
+certificate in `RUN_TARGET_CLOUDFLARE_CERT_DIR` (`origin.pem`, `origin.key`;
+SSL mode Full strict) or else Caddy's internal CA (SSL mode Full). With
+`RUN_TARGET_CLOUDFLARE_TRUSTED_PROXIES` set, the client IP comes from
+`CF-Connecting-IP`. A domain declared by two environments is routed only to
+the first and reported as `domain-conflict` on the other.
+
+Secret references are resolved on the host just in time from
+`RUN_TARGET_SECRET_DIR` (default `/etc/agent-host/secrets`, one file per
+reference, as for `deploy-loop`). The compose file names each variable without
+a value. `docker compose up` receives the values in its process environment
+only, and every diagnostic is masked before it is logged. Values never enter
+the compose files, host state (`RUN_TARGET_STATE_DIR`, default
+`$RUNNER_STATE_DIR/run-target`), Studio, or logs. Docker itself keeps them in
+the container configuration, as it does for any container environment.
+Egress allowlists and host firewall rules for the run zone belong to IP-2.
+
 ### Integration host (standalone review loop)
 
 `RUNNER_ROLE=integration` starts `RemoteIntegrationDaemon` (AGT-3061, AGT-W65

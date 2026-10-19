@@ -53,6 +53,32 @@ public sealed class TaskServerClient : IDisposable
     public TaskServerClient(RunnerOptions options)
     {
         _options = options;
+        _http = new HttpClient(CreateServiceHandler(options))
+        {
+            BaseAddress = new Uri(options.ServerUrl),
+            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+        };
+        _configuredClientId = options.ClientId;
+        _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AuthToken);
+        // X-Client-Id is attribution only. Seed it with the configured label or
+        // Runner id; authentication is supplied independently by the service
+        // credential in the networked profile.
+        SetClientId(options.ClientId ?? options.RunnerId);
+        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.HeaderName, RunnerOptions.ProtocolVersion.ToString());
+        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.ClientVersionHeaderName, typeof(TaskServerClient).Assembly.GetName().Version?.ToString(3) ?? "unknown");
+        _runtimeCapacityCache = ConfigureRuntimeCapacityCache(options);
+        RestoreRuntimeCapacityCache();
+    }
+
+    /// <summary>
+    /// TLS pin and reloading service credential of a Runner principal. The
+    /// run-target role uses the same handler for its Studio calls.
+    /// </summary>
+    internal static HttpMessageHandler CreateServiceHandler(RunnerOptions options)
+    {
         HttpMessageHandler handler = new HttpClientHandler();
         if (!string.IsNullOrWhiteSpace(options.TlsServerCertificateSha256))
         {
@@ -72,24 +98,7 @@ public sealed class TaskServerClient : IDisposable
         }
         if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
             handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        _http = new HttpClient(handler)
-        {
-            BaseAddress = new Uri(options.ServerUrl),
-            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
-        };
-        _configuredClientId = options.ClientId;
-        _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
-        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AuthToken);
-        // X-Client-Id is attribution only. Seed it with the configured label or
-        // Runner id; authentication is supplied independently by the service
-        // credential in the networked profile.
-        SetClientId(options.ClientId ?? options.RunnerId);
-        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.HeaderName, RunnerOptions.ProtocolVersion.ToString());
-        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.ClientVersionHeaderName, typeof(TaskServerClient).Assembly.GetName().Version?.ToString(3) ?? "unknown");
-        _runtimeCapacityCache = ConfigureRuntimeCapacityCache(options);
-        RestoreRuntimeCapacityCache();
+        return handler;
     }
 
     /// <summary>

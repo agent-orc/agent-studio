@@ -12,11 +12,29 @@
     "targetHostId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
     "address": { "type": "string", "minLength": 1 },
     "template": { "enum": ["container", "static"] },
-    "destination": { "type": "string", "minLength": 1 },
+    "destination": { "type": "string", "minLength": 1,
+      "description": "Container: a local proxy port for agent-host deploy-loop, or \"edge\" for the run-target role. Static: the served release directory." },
     "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8080 },
     "healthUrl": { "type": "string", "format": "uri" },
     "approval": { "enum": ["person", "stage-healthy-10m"] },
     "secretRefs": { "type": "array", "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } }
+      "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } },
+    "domains": { "type": "array", "uniqueItems": true,
+      "description": "Run-target hosting (destination \"edge\" only): public domains the edge Caddy routes to the app.",
+      "items": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$" } },
+    "edge": { "enum": ["acme", "cloudflare"], "default": "acme",
+      "description": "acme: automatic HTTPS. cloudflare: behind the Cloudflare proxy, origin certificate or Caddy internal CA." },
+    "healthPath": { "type": "string", "pattern": "^/[A-Za-z0-9._~/-]{0,255}$",
+      "description": "Health path checked through the edge before traffic switches. Defaults to the path of healthUrl." },
+    "variables": { "type": "object",
+      "description": "Plain, non-secret environment variables. Secrets stay in secretRefs.",
+      "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]{0,63}$" },
+      "additionalProperties": { "type": "string", "maxLength": 4096 } },
+    "resources": { "type": "object", "additionalProperties": false,
+      "properties": {
+        "cpus": { "type": "number", "minimum": 0.1, "maximum": 64, "default": 1 },
+        "memoryMb": { "type": "integer", "minimum": 32, "maximum": 262144, "default": 512 },
+        "pidsLimit": { "type": "integer", "minimum": 16, "maximum": 32768, "default": 256 }
+      } }
   }
 }

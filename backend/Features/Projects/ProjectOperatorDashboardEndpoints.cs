@@ -64,6 +64,19 @@ public static class ProjectOperatorDashboardEndpoints
             environments.Report(project, jobId, request) ? Results.Ok() : Results.Conflict())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        // IP-1 run-target role: the host polls; Studio never dials in.
+        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration)
+                ? RunTargetForbidden() : Results.Ok(environments.DesiredState(hostId)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+
+        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration)
+                ? RunTargetForbidden() : Results.Ok(new { accepted = environments.RecordObserved(hostId, report) }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
             ProjectThroughputService throughput) =>
@@ -115,4 +128,14 @@ public static class ProjectOperatorDashboardEndpoints
             return item is null ? Results.NotFound() : Results.Ok(item);
         });
     }
+
+    // Results.Forbid() needs an authentication scheme; Runner credentials are
+    // checked by AccessSecurityMiddleware, so answer 403 directly.
+    private static IResult RunTargetForbidden() => Results.Json(
+        new { error = "A run target may access only its enrolled host identity." }, statusCode: StatusCodes.Status403Forbidden);
+
+    private static bool RunTargetCallerDenied(HttpContext context, string hostId, IConfiguration configuration)
+        => SecurityProfiles.IsNetworked(configuration)
+            && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
+                || principal.RunnerId != hostId);
 }
