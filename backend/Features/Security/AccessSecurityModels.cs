@@ -140,6 +140,7 @@ public sealed record SecurityState
     public List<StudioSession> Sessions { get; init; } = [];
     public List<RunnerServiceIdentity> Runners { get; init; } = [];
     public List<RunnerEnrollment> Enrollments { get; init; } = [];
+    public List<StudioApiToken> ApiTokens { get; init; } = [];
 }
 
 public sealed record StudioInvitation
@@ -150,6 +151,28 @@ public sealed record StudioInvitation
     public required DateTime ExpiresAt { get; init; }
     public DateTime? UsedAt { get; init; }
 }
+
+public sealed record StudioApiToken
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public required string Role { get; init; }
+    public required List<string> Projects { get; init; }
+    public required string SecretHash { get; init; }
+    public required string CreatedBy { get; init; }
+    public required DateTime CreatedAt { get; init; }
+    public required DateTime ExpiresAt { get; init; }
+    public DateTime? LastUsedAt { get; init; }
+    public DateTime? RevokedAt { get; init; }
+}
+
+public sealed record ApiTokenPrincipal(StudioApiToken Token, StudioUser User);
+public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime ExpiresAt);
+public sealed record ApiTokenResponse(string Id, string Name, string Role, IReadOnlyList<string> Projects,
+    string CreatedBy, DateTime CreatedAt, DateTime ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt);
+public sealed record CreatedApiTokenResponse(ApiTokenResponse Token, string Secret);
+public sealed record RunnerEnrollmentResponse(string Id, string Name, IReadOnlyList<string> Scopes,
+    DateTime CreatedAt, DateTime ExpiresAt, DateTime? UsedAt);
 
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
 public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);

@@ -72,4 +72,15 @@ describe('sessionSecurityInterceptor', () => {
     expect(auth.status()?.bootstrapRequired).toBe(true);
     expect(auth.status()?.bootstrapCodeRequired).toBe(true);
   });
+
+  it('keeps the monolith login open after incorrect credentials', () => {
+    const { http, requests, auth } = configure();
+    auth.status.set({ profile: 'networked', bootstrapRequired: false, authenticated: false });
+    const before = auth.status();
+    http.post('/api/auth/login', { username: 'owner', password: 'wrong' })
+      .subscribe({ error: () => undefined });
+    requests.expectOne('/api/auth/login').flush(
+      { error: 'invalid-credentials' }, { status: 401, statusText: 'Unauthorized' });
+    expect(auth.status()).toBe(before);
+  });
 });
