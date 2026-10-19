@@ -17,6 +17,28 @@
     "healthUrl": { "type": "string", "format": "uri" },
     "approval": { "enum": ["person", "stage-healthy-10m"] },
     "secretRefs": { "type": "array", "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } }
+      "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } },
+    "healthChecks": {
+      "description": "Control-plane health checks (IP-14). When absent, checks derive from healthUrl and address; an empty array turns checks off.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "kind": { "enum": ["http", "tcp", "tls"] },
+          "url": { "type": "string", "format": "uri", "description": "Required for http; tcp and tls may take host and port from it." },
+          "host": { "type": "string" },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "expectedStatus": { "type": "integer", "minimum": 100, "maximum": 599, "default": 200 },
+          "bodyContains": { "type": "string", "maxLength": 200 },
+          "intervalSeconds": { "type": "integer", "minimum": 60, "maximum": 3600, "default": 60 },
+          "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 60, "default": 10 },
+          "failureThreshold": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+          "recoveryThreshold": { "type": "integer", "minimum": 1, "maximum": 20, "default": 2 }
+        }
+      }
+    }
   }
 }

@@ -7,7 +7,8 @@ namespace AgentStudio.Projects;
 public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
-    IReadOnlyList<string> SecretRefs, int ContainerPort);
+    IReadOnlyList<string> SecretRefs, int ContainerPort,
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null);
 
 public sealed record DeploymentHistoryItem(DateTime At, string Status, string Artifact, string? PreviousArtifact,
     string? Evidence);
@@ -104,7 +105,8 @@ public sealed class ProjectEnvironmentService
                 ? containerPortValue.GetInt32() : 8080;
             if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
             result.Add(new(id, Required("name"), kind, host, Required("address"), template,
-                destination, healthUrl, approval, secrets, containerPort));
+                destination, healthUrl, approval, secrets, containerPort,
+                HealthCheckDeclarations.Parse(value, Path.GetFileName(file))));
         }
         if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new JsonException("Environment ids must be unique within a project.");

@@ -1,0 +1,31 @@
+<section class="health-overview" aria-labelledby="health-overview-title" data-testid="environment-health-overview">
+  <h2 id="health-overview-title">Application health
+    <small>{{ snapshot()?.environments?.length ?? 0 }} environments · {{ openIncidents() }} open incidents · probed from the control plane</small>
+  </h2>
+  @if (error(); as message) { <p role="status">{{ message }}</p> }
+  @if (snapshot(); as state) {
+    @if (state.environments.length) {
+      <div class="health-overview__table-wrap"><table>
+        <thead><tr><th>Environment</th><th>Status</th><th>24 h</th><th>7 d</th><th>30 d</th><th>p50</th><th>p95</th><th>Current incident</th></tr></thead>
+        <tbody>
+          @for (environment of state.environments; track environment.project + '/' + environment.environmentId) {
+            <tr [attr.data-status]="environment.status" [attr.data-testid]="'health-overview-' + environment.project + '-' + environment.environmentId">
+              <th>{{ environment.project }} · {{ environment.name }} <small>{{ environment.kind }}</small></th>
+              <td><span class="health-overview__dot" [attr.data-status]="environment.status" aria-hidden="true"></span>{{ statusLabel[environment.status] }}</td>
+              <td>{{ uptime(environment.uptime24h) }}</td>
+              <td>{{ uptime(environment.uptime7d) }}</td>
+              <td>{{ uptime(environment.uptime30d) }}</td>
+              <td>{{ latency(environment.latency24h.p50Ms) }}</td>
+              <td>{{ latency(environment.latency24h.p95Ms) }}</td>
+              <td>
+                @if (environment.currentIncident; as incident) {
+                  since {{ incident.startedAt | date:'MMM d, HH:mm':'UTC' }} UTC · {{ incident.checkId }}
+                } @else { None }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table></div>
+    } @else { <p>No project declares an environment yet.</p> }
+  } @else if (!error()) { <p role="status">Loading application health…</p> }
+</section>

@@ -1,0 +1,38 @@
+.health-overview {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  h2 { margin: 0 0 var(--studio-spacing-2); font-size: 1rem; }
+  h2 small { font-weight: normal; color: var(--studio-text-secondary); }
+  p { margin: 0; color: var(--studio-text-secondary); }
+}
+.health-overview__table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+}
+.health-overview table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  background: var(--studio-surface);
+  th, td {
+    padding: var(--studio-spacing-2) var(--studio-spacing-3);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--studio-border);
+  }
+  thead { color: var(--studio-text-secondary); font-size: 0.76rem; }
+  tbody th { font-weight: 500; }
+  tbody th small { color: var(--studio-text-secondary); }
+  tr[data-status='down'] { background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-surface)); }
+}
+.health-overview__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--studio-spacing-1);
+  border-radius: 50%;
+  background: var(--studio-text-secondary);
+  &[data-status='up'] { background: var(--studio-success); }
+  &[data-status='degraded'] { background: var(--studio-warn); }
+  &[data-status='down'] { background: var(--studio-error); }
+}
