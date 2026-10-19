@@ -74,7 +74,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 |---|---|---|---|
 | MonolithOrchestrationRecoveryService | always | apply-recover | Authority. Activates prepared occurrences, replays `applying` receipts, alerts on engine outages, and applies the rollout's rollback to the monolith policy. Re-arms the batch admission of a completed engine `DeferToBatch` decision whose card waits in Auto Review without a queue entry or ownership past admission, and clears wait markers that name a finished occurrence. |
 | OrchestrationEngineReadinessService | always | report | Authority host. Reports engine readiness and alerts when a profile selects the engine and no engine is live. |
-| EngineApplierCanaryService | always | apply-recover | Authority. Probes the effects of the first engine decisions after a rollout switch (AGT-3218), passes the applier canary, or rolls the profile back to the monolith and raises an operator alert when an effect is missing after the canary window. |
+| EngineApplierCanaryService | always | apply-recover | Authority. Probes the effects of the first engine decisions after a rollout switch (AGT-3218), passes the applier canary, or rolls the profile back to the monolith and raises an operator alert with the card and its manual redrive when an effect is missing after its deadline (apply deadline while the applier runs, effect window after completion). |
 | LinkSupervisor | always | infra | Authority host |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |
 | DecisionReminderSweepHostedService | always | report | Authority host |

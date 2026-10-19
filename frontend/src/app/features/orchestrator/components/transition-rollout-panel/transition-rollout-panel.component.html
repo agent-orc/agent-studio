@@ -64,6 +64,10 @@
             <button type="button" [disabled]="!reason().trim() || !!busy()"
                     (click)="switch(item, 'rollback')">Roll back</button>
           }
+          @if (item.state !== 'engine') {
+            <button type="button" [attr.data-testid]="'force-engine-' + item.profile" [disabled]="!reason().trim() || !!busy()"
+                    (click)="switch(item, 'force-engine')">Force engine (emergency override)</button>
+          }
         </div>
       </section>
     }

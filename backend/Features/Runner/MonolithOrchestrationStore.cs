@@ -338,7 +338,8 @@ public sealed class MonolithOrchestrationStore
     /// Switches a rollout profile. The engine takes over, as canary or engine,
     /// only when every earlier shadow occurrence of the profile is compared or
     /// resolved; a ready streak does not account for an occurrence whose
-    /// comparison is still open.
+    /// comparison is still open. The audited <c>force-engine</c> override
+    /// (AGT-3218) skips this check for an emergency.
     /// </summary>
     public OrchestrationProfileStatus SwitchProfile(string profile, string target, string actor, string reason)
     {

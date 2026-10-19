@@ -512,4 +512,11 @@ public static class TimelineEventKinds
     /// <c>evidenceDigest</c>.
     /// </summary>
     public const string WatcherCaseLinked = "watcher_case_linked";
+
+    /// <summary>
+    /// AGT-3218: the monolith gate handler took a passed engine gate decision
+    /// and dispatched the aspect review. Details carry <c>orchestrationRunId</c>;
+    /// the applier canary reads it as the durable gate dispatch.
+    /// </summary>
+    public const string EngineGateDispatched = "engine_gate_dispatched";
 }

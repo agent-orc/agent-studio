@@ -41,12 +41,19 @@ public enum EngineApplierEffectKind
     ParkVerdict,
 
     /// <summary>
-    /// A passed gate keeps its lane and records a Continue stage result, which the
-    /// monolith gate handler reads to dispatch the aspect review.
+    /// A passed gate keeps its lane and records a Continue stage result; the
+    /// monolith gate handler reads it on its next pass, dispatches the aspect
+    /// review and records <c>engine_gate_dispatched</c> on the card timeline.
+    /// That receipt is written by a later pass, so it may take longer than the
+    /// effect window.
     /// </summary>
     GateDispatch,
 
-    /// <summary>The batch tick received the engine batch plan as its next intent.</summary>
+    /// <summary>
+    /// The engine batch plan is stored as the durable intent of its scope, or
+    /// the batch tick recorded what it did with it (applied, expired, rejected
+    /// or superseded).
+    /// </summary>
     BatchPlanIntent,
 
     /// <summary>The card's engine wait marker no longer names the occurrence.</summary>
@@ -54,6 +61,35 @@ public enum EngineApplierEffectKind
 
     /// <summary>The occurrence completed with the engine receipt and its stage result.</summary>
     DecisionReceipt,
+
+    /// <summary>
+    /// The integration raised a review-input decision, whose occurrence now
+    /// holds the card; the applier stops before the lane move and the park
+    /// verdict, which that decision owns.
+    /// </summary>
+    ReviewInputHandoff,
+}
+
+/// <summary>What an effect check verified; only <see cref="Row"/> checks count toward a canary.</summary>
+public static class EngineEffectBasis
+{
+    /// <summary>The decision's row of <see cref="EngineApplierContract"/>.</summary>
+    public const string Row = "row";
+
+    /// <summary>The AI Operator holds the decision as an ask.</summary>
+    public const string Ask = "ask";
+
+    /// <summary>An active choice wrote the verified-tree checkpoint.</summary>
+    public const string Checkpoint = "checkpoint";
+
+    /// <summary>The applier handed the card to a review-input decision.</summary>
+    public const string ReviewInputHandoff = "review-input-handoff";
+
+    /// <summary>
+    /// A person moved the card out of the source lane before the applier ran;
+    /// the applier refuses the decision on purpose, so this is no applier defect.
+    /// </summary>
+    public const string ManualMove = "manual-move";
 }
 
 /// <summary>The effect the applier owes one engine decision action.</summary>
@@ -118,7 +154,7 @@ public static class EngineApplierContract
 
     public static EngineApplierEffect BatchPlan { get; } = new(BatchPlanAction, null,
         [EngineApplierEffectKind.BatchPlanIntent, EngineApplierEffectKind.DecisionReceipt],
-        "The batch tick receives the plan as its next intent and checks the authority floors again.");
+        "Stores the plan as the durable intent of its scope; the batch tick takes it, checks the authority floors again and records what it did.");
 
     /// <summary>The effect of a named action, or null for an action outside the table.</summary>
     public static EngineApplierEffect? Find(string action)
@@ -126,23 +162,35 @@ public static class EngineApplierContract
             : Enum.TryParse<TransitionAction>(action, out var parsed)
               && Enum.IsDefined(parsed) && parsed.ToString() == action ? For(parsed) : null;
 
+    /// <summary>Effects that a later pass of another loop writes, after the applier completed.</summary>
+    public static bool Downstream(EngineApplierEffectKind effect) => effect == EngineApplierEffectKind.GateDispatch;
+
     /// <summary>
     /// The effects one decision owes: its row narrowed by the lane the stage
     /// selects (<paramref name="lane"/>, null when none) and by the occurrence
-    /// payload. The effect probe and the contract tests both read this.
+    /// payload. With <paramref name="reviewInputHandoff"/> the applier stopped
+    /// at the review-input decision that holds the card: it owes what it did
+    /// before (follow-up, integration journal) and the handoff, and the lane
+    /// move, park verdict and prompts belong to that decision. The effect probe
+    /// and the contract tests both read this.
     /// </summary>
     public static IReadOnlyList<EngineApplierEffectKind> Owed(EngineApplierEffect row, string? lane,
-        bool gateStage, bool reviewPayload, bool reviewRequest)
+        bool gateStage, bool reviewPayload, bool reviewRequest, bool reviewInputHandoff = false)
         => row.Effects
             .Select(effect => effect == EngineApplierEffectKind.LaneMove && lane is null
                 ? EngineApplierEffectKind.LaneKept : effect)
-            .Where(effect => effect switch
-            {
-                EngineApplierEffectKind.GateDispatch => lane is null && gateStage,
-                EngineApplierEffectKind.ParkVerdict => lane == TaskStates.HumanReview && reviewPayload,
-                EngineApplierEffectKind.ReviewAttempt => lane == TaskStates.AutoReview && reviewRequest,
-                _ => true,
-            })
+            .Where(effect => reviewInputHandoff
+                ? effect is EngineApplierEffectKind.LinkedFollowUp or EngineApplierEffectKind.IntegrationJournal
+                    or EngineApplierEffectKind.ReviewRetryScheduled or EngineApplierEffectKind.WaitMarkerCleared
+                    or EngineApplierEffectKind.DecisionReceipt
+                : effect switch
+                {
+                    EngineApplierEffectKind.GateDispatch => lane is null && gateStage,
+                    EngineApplierEffectKind.ParkVerdict => lane == TaskStates.HumanReview && reviewPayload,
+                    EngineApplierEffectKind.ReviewAttempt => lane == TaskStates.AutoReview && reviewRequest,
+                    _ => true,
+                })
+            .Concat(reviewInputHandoff ? [EngineApplierEffectKind.ReviewInputHandoff] : [])
             .Distinct().ToArray();
 
     // CS8524 asks for an arm for unnamed enum values; those cannot come from a

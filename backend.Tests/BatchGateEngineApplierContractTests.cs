@@ -29,8 +29,9 @@ public sealed partial class BatchGatePilotServiceTests
 
     /// <summary>
     /// Each profile action of <see cref="EngineApplierContract.ProfileActions"/>,
-    /// a passed gate that holds a batch member (it carries a lane), and the
-    /// sweep hold, which reaches the applier's no-lane branch.
+    /// a passed gate that holds a batch member (it carries a lane), the sweep
+    /// hold, which reaches the applier's no-lane branch, and an accepted review
+    /// whose integration handed the card to a review-input decision.
     /// </summary>
     internal static readonly (string Profile, string Action, string Variant)[] ApplierContractCases =
     [
@@ -43,6 +44,7 @@ public sealed partial class BatchGatePilotServiceTests
         ("ReviewReport", nameof(TransitionAction.FindingRound), ""),
         ("ReviewReport", nameof(TransitionAction.ConcernRound), ""),
         ("ReviewReport", nameof(TransitionAction.AcceptAndIntegrate), ""),
+        ("ReviewReport", nameof(TransitionAction.AcceptAndIntegrate), ReviewInputHandoffVariant),
         ("ReviewReport", nameof(TransitionAction.DeferToBatch), ""),
         ("ReviewReport", nameof(TransitionAction.HumanReview), ""),
         ("ReviewReport", nameof(TransitionAction.Escalate), ""),
@@ -57,6 +59,8 @@ public sealed partial class BatchGatePilotServiceTests
         ("OperatorSweep", nameof(TransitionAction.SweepHold), ""),
     ];
 
+    private const string ReviewInputHandoffVariant = "review-input-handoff";
+
     public static TheoryData<string, string, string> ApplierContractData()
     {
         var data = new TheoryData<string, string, string>();
@@ -69,7 +73,14 @@ public sealed partial class BatchGatePilotServiceTests
     public async Task Applier_contract_applies_the_effect_of_every_engine_decision(string profile, string action,
         string variant)
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        // The engine parks in Human Review without integrating only a delivery
+        // that needs no integration (and a batch member after its gate
+        // integrated it). The seeded card carries a changed result, so the
+        // guarded delivery chain is off for those cases, as in
+        // MonolithOrchestrationEndpointTests; the applier's effect is the subject here.
+        using var factory = BuildFactory(authorityOnTestClock: true,
+            configuration: action == nameof(TransitionAction.HumanReview) || variant == "batch-hold"
+                ? UnguardedDeliveryChain : null);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 4);
         var arranged = Arrange(factory, profile, action, variant);
@@ -80,9 +91,18 @@ public sealed partial class BatchGatePilotServiceTests
             arranged.Epoch, profile: profile);
         if (arranged.Stage != Contract.OrchestrationStage.BatchPlan)
             EngineDecisionWaitMarker.Write(CardFolder(arranged.TaskId), run.RunId);
+        // The marker an integration's loop-exhaustion signal leaves: a
+        // review-input decision now holds the card (MonolithOrchestrationApplier).
+        var handoff = variant == ReviewInputHandoffVariant
+            ? orchestration.CreateReviewInputDecision(ProjectName, arranged.TaskId,
+                JsonSerializer.Serialize(new { kind = "loop-exhaustion" }), "contract-handoff",
+                arranged.SourceState, arranged.AuthorityAttemptId, arranged.Fence, arranged.Epoch).RunId
+            : null;
+        if (handoff is not null) EngineDecisionWaitMarker.Write(CardFolder(arranged.TaskId), handoff);
         var claim = orchestration.Claim(new Contract.OrchestrationClaimRequest("engine", "instance",
             [arranged.Stage]));
         Assert.Equal(run.RunId, claim.Run!.RunId);
+        if (action == nameof(TransitionAction.DegradeWithFollowUp)) SeedEngineFollowUp(factory, run.RunId);
         var completed = await orchestration.CompleteAsync(run.RunId, new Contract.CompleteOrchestrationStageRequest(
             "engine", "instance", claim.Lease!.LeaseId, claim.Lease.Fence, arranged.Stage, arranged.StageAction,
             arranged.Output, "complete:" + run.RunId), CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(2));
@@ -94,14 +114,36 @@ public sealed partial class BatchGatePilotServiceTests
         var owed = EngineApplierContract.Owed(row, lane, arranged.Stage == Contract.OrchestrationStage.GateDispatch,
             payload.RootElement.TryGetProperty("reviewOutcome", out _),
             payload.RootElement.TryGetProperty("reviewAttemptRequest", out var request)
-                && request.ValueKind == JsonValueKind.Object);
+                && request.ValueKind == JsonValueKind.Object,
+            handoff is not null);
         Assert.Contains(EngineApplierEffectKind.DecisionReceipt, owed);
         var occurrence = orchestration.GetOccurrence(run.RunId)!;
+        var probe = factory.Services.GetRequiredService<EngineApplierEffectProbe>();
+        if (owed.Contains(EngineApplierEffectKind.GateDispatch))
+        {
+            // The applier only frees the card; the gate handler's next pass
+            // dispatches the aspect review, so the canary gives it the apply deadline.
+            var before = probe.Check(occurrence);
+            Assert.Equal((false, true), (before.Verified, before.AwaitingDownstream));
+            Assert.Equal([nameof(EngineApplierEffectKind.GateDispatch)], before.Missing);
+            EngineGateDispatchReceipt.Record(factory.Services.GetRequiredService<TimelineLog>(),
+                CardFolder(arranged.TaskId), run.RunId);
+        }
         foreach (var effect in owed)
-            AssertApplied(factory, effect, occurrence, arranged, lane, action);
+            AssertApplied(factory, effect, occurrence, arranged, lane, action, handoff);
+        if (handoff is not null)
+        {
+            // The review-input decision owns the lane move and the park verdict.
+            AssertLane(arranged.TaskId, arranged.SourceState);
+            Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_workspace, ProjectName), record =>
+                record.JobId == arranged.TaskId
+                && record.FailureKind == $"remote-review-park:{arranged.ReviewAttemptId}");
+        }
         // The canary reads the same effects with its probe.
-        var check = factory.Services.GetRequiredService<EngineApplierEffectProbe>().Check(occurrence);
+        var check = probe.Check(occurrence);
         Assert.True(check.Verified, $"{profile}/{action}: {check.Evidence} Errors: {_errors}");
+        Assert.Equal(handoff is null ? EngineEffectBasis.Row : EngineEffectBasis.ReviewInputHandoff, check.Basis);
+        Assert.Equal(occurrence.Run.CompletedAt, check.CompletedAt);
     }
 
     /// <summary>
@@ -147,6 +189,10 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(OrchestratorLogKinds.Alert, alert.Kind);
         Assert.Contains("DOC-CANARY", alert.Summary);
         Assert.Contains("BatchAdmission", alert.Reasoning);
+        // The rollback re-decides only pending occurrences; the alert names the card's redrive.
+        Assert.Contains("Manual redrive", alert.Reasoning);
+        Assert.Contains($"DOC-CANARY is in {TaskStates.AutoReview}", alert.Reasoning);
+        Assert.False(rolledBack.Canary.PassedOnThisInstance);
         // Nothing is watched any more, and no second alert follows.
         Assert.Equal(0, canary.CheckOnce());
         Assert.Null(factory.Services.GetRequiredService<BatchGateStore>().ReadPending(deferred.Member.ReviewAttemptId));
@@ -179,6 +225,166 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(OrchestrationExecutionMode.Engine, MonolithTransitionSwitch.For(
             factory.Services.GetRequiredService<IConfiguration>(), "ReviewReport"));
     }
+
+    /// <summary>
+    /// The review of 19.10.2026: an applier that awaits a whole integration
+    /// (queue and delivery gate) leaves its occurrence applying far past the
+    /// effect window. That decision waits for the apply deadline, and its
+    /// effects are judged once it completed.
+    /// </summary>
+    [Fact]
+    public async Task Applier_canary_waits_for_an_applier_that_has_not_completed()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 8);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        StartReviewReportCanary(factory);
+        var held = new HeldApplier(factory.Services.GetRequiredService<IMonolithOrchestrationApplier>());
+        var slow = new MonolithOrchestrationStore(Path.Combine(_workspace, "slow-occurrences"),
+            factory.Services.GetRequiredService<TimeProvider>(), held, rollout);
+        var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services, slow);
+        var deciding = DecideDeferToBatchAsync(slow, SettleDeferredReview(factory, "DOC-SLOW", "docs/slow.md"));
+
+        _clock = _clock.Add(rollout.CanaryWindow * 2);
+        Assert.Equal(0, canary.CheckOnce());
+        var applying = ReviewReport(rollout);
+        Assert.Equal(("canary", "watching"), (applying.State, applying.Canary!.Status));
+        Assert.Null(applying.LastEffectCheck!.CompletedAt);
+        Assert.Equal([nameof(EngineApplierEffectKind.DecisionReceipt)], applying.LastEffectCheck.Missing);
+
+        held.Release.SetResult();
+        Assert.Equal("completed", (await deciding.WaitAsync(TimeSpan.FromMinutes(2))).Status);
+        Assert.Equal(0, canary.CheckOnce());
+        var verified = Assert.Single(ReviewReport(rollout).Canary!.Observations);
+        Assert.Equal("verified", verified.Status);
+        Assert.NotNull(verified.LastCheck!.CompletedAt);
+    }
+
+    /// <summary>
+    /// A person moves the card out of Auto Review while the engine decides; the
+    /// applier refuses the decision with a source-state mismatch on purpose.
+    /// That is no applier defect: the decision is not counted, and the next
+    /// engine decision takes its place.
+    /// </summary>
+    [Fact]
+    public async Task Applier_canary_does_not_count_a_decision_whose_card_a_person_moved()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 8);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        StartReviewReportCanary(factory);
+        var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services);
+        var moved = SettleDeferredReview(factory, "DOC-MOVED", "docs/moved.md");
+        var (run, claim) = PrepareReviewDecision(orchestration, moved);
+        const string person = "human:operator@example.invalid";
+        var manual = await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync(
+            moved.Member.Key, TaskStates.Escalated, _watchPath, CancellationToken.None, cause: person,
+            suppressProductExecution: true, expectedSourceState: TaskStates.AutoReview);
+        Assert.Equal(MoveJobStatus.Success, manual.Status);
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestration.CompleteAsync(
+            run.RunId, ReviewCompletion(claim, moved, TransitionAction.HumanReview), CancellationToken.None));
+        Assert.Equal("orchestration-source-state-mismatch", refused.Message);
+        _clock = _clock.Add(rollout.ApplyDeadline);
+        Assert.Equal(0, canary.CheckOnce());
+
+        var watching = ReviewReport(rollout);
+        Assert.Equal(("canary", "watching"), (watching.State, watching.Canary!.Status));
+        var skipped = Assert.Single(watching.Canary.Observations);
+        Assert.Equal(("not-counted", EngineEffectBasis.ManualMove), (skipped.Status, skipped.LastCheck!.Basis));
+        Assert.Contains(person, skipped.LastCheck.Evidence);
+        Assert.Equal("completed", (await DecideDeferToBatchAsync(orchestration,
+            SettleDeferredReview(factory, "DOC-NEXT", "docs/next.md"))).Status);
+        Assert.Equal(0, canary.CheckOnce());
+        Assert.Equal(["not-counted", "verified"], ReviewReport(rollout).Canary!.Observations.Select(item => item.Status));
+    }
+
+    /// <summary>
+    /// One decision the probe cannot read leaves the others checked in the same
+    /// pass, stays unverified, and fails the canary at the apply deadline.
+    /// </summary>
+    [Fact]
+    public async Task Applier_canary_isolates_a_failing_probe_and_fails_closed()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 8);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        StartReviewReportCanary(factory);
+        var journal = new MonolithOrchestrationStore(Path.Combine(_workspace, "probe-occurrences"),
+            factory.Services.GetRequiredService<TimeProvider>(), new UnappliedDecisions(), rollout);
+        var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services, journal);
+        var unreadable = SettleDeferredReview(factory, "DOC-UNREADABLE", "docs/unreadable.md");
+        var (first, firstClaim) = PrepareReviewDecision(journal, unreadable);
+        await journal.CompleteAsync(first.RunId, ReviewCompletion(firstClaim, unreadable, TransitionAction.Halt,
+            activeChoice: new { action = 5 }), CancellationToken.None);
+        // A Halt applies nothing, so it shows its effects without an applier.
+        var halted = SettleDeferredReview(factory, "DOC-HALTED", "docs/halted.md");
+        var (second, secondClaim) = PrepareReviewDecision(journal, halted, waitMarker: false);
+        await journal.CompleteAsync(second.RunId, ReviewCompletion(secondClaim, halted, TransitionAction.Halt),
+            CancellationToken.None);
+
+        Assert.Equal(0, canary.CheckOnce());
+        var observations = ReviewReport(rollout).Canary!.Observations;
+        Assert.Equal(["pending", "verified"], observations.Select(item => item.Status));
+        Assert.Equal(["probe"], observations[0].LastCheck!.Missing);
+        Assert.Contains("could not read", observations[0].LastCheck!.Evidence);
+
+        _clock = _clock.Add(rollout.ApplyDeadline);
+        Assert.Equal(1, canary.CheckOnce());
+        Assert.Equal("rolled-back", ReviewReport(rollout).State);
+    }
+
+    private (Contract.OrchestrationRunDto Run, Contract.OrchestrationClaimResponse Claim) PrepareReviewDecision(
+        MonolithOrchestrationStore orchestration, DeferredReview deferred, bool waitMarker = true)
+    {
+        var review = deferred.Review;
+        var report = review.Reports.Last(item => item.AuthorityStatus == AttemptWriteStatus.Accepted);
+        var run = orchestration.Create(ProjectName, deferred.Member.Key, Contract.OrchestrationStage.ReviewDecision,
+            JsonSerializer.Serialize(new { reviewOutcome = "Pass", reviewAttemptId = review.AttemptId }),
+            $"review-report:{review.AttemptId}:{report.IdempotencyKey}", TaskStates.AutoReview,
+            review.AttemptId, review.LastFence, review.AuthorityEpoch, profile: "ReviewReport");
+        if (waitMarker) EngineDecisionWaitMarker.Write(CardFolder(deferred.Member.Key), run.RunId);
+        var claim = orchestration.Claim(new Contract.OrchestrationClaimRequest("engine", "instance",
+            [Contract.OrchestrationStage.ReviewDecision]));
+        Assert.Equal(run.RunId, claim.Run!.RunId);
+        return (run, claim);
+    }
+
+    private static Contract.CompleteOrchestrationStageRequest ReviewCompletion(
+        Contract.OrchestrationClaimResponse claim, DeferredReview deferred, TransitionAction action,
+        object? activeChoice = null)
+    {
+        var transition = TransitionDecisionPolicy.Create(action, $"Engine decided {action}.", deferred.Member.Key,
+            deferred.Review.AttemptId, 0, 4);
+        var output = activeChoice is null
+            ? JsonSerializer.Serialize(new { transition })
+            : JsonSerializer.Serialize(new { transition, activeChoice });
+        return new Contract.CompleteOrchestrationStageRequest("engine", "instance", claim.Lease!.LeaseId,
+            claim.Lease.Fence, Contract.OrchestrationStage.ReviewDecision, StageDecisionPolicy.ToStageAction(action),
+            output, "complete:" + claim.Run!.RunId);
+    }
+
+    /// <summary>The real applier, held until the test releases it, as a long integration holds it.</summary>
+    private sealed class HeldApplier(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
+    {
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+            Contract.CompleteOrchestrationStageRequest completion, CancellationToken ct)
+        {
+            await Release.Task.WaitAsync(ct);
+            await inner.ApplyAsync(occurrence, completion, ct);
+        }
+    }
+
+    private static readonly Dictionary<string, string?> UnguardedDeliveryChain = new()
+    {
+        ["DeliveryChain:Guarded"] = "false",
+    };
 
     private static readonly Dictionary<string, string?> OneMatchThreshold = new()
     {
@@ -357,6 +563,27 @@ public sealed partial class BatchGatePilotServiceTests
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)), null);
     }
 
+    /// <summary>
+    /// The follow-up card an interrupted DegradeWithFollowUp left, as a replay
+    /// finds it. Card creation writes the flat task layout, under which this
+    /// fixture's lane-folder cards are no longer scanned, so the case runs the
+    /// applier's replay branch: it links both cards and continues.
+    /// </summary>
+    private void SeedEngineFollowUp(WebApplicationFactory<Program> factory, string runId)
+    {
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, ContractKey + "-FOLLOW-UP");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = ContractKey + "-FOLLOW-UP", key = ContractKey + "-FOLLOW-UP",
+            title = "Follow-up: review findings in " + ContractKey, state = TaskStates.Ready, order = 1,
+            agent = "claude", kind = TaskKinds.Task, enteredLaneAt = _clock.UtcDateTime,
+            creationSource = "engine-follow-up:" + runId,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Fix the remaining review findings.\n");
+        factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
+    }
+
     private static string Output(TransitionAction action, string attemptId)
     {
         Contract.ReviewFollowUpFinding[] findings = action is TransitionAction.FindingRound
@@ -371,7 +598,8 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     private void AssertApplied(WebApplicationFactory<Program> factory, EngineApplierEffectKind effect,
-        MonolithOrchestrationOccurrence occurrence, ArrangedDecision arranged, string? lane, string action)
+        MonolithOrchestrationOccurrence occurrence, ArrangedDecision arranged, string? lane, string action,
+        string? handoff)
     {
         var runId = occurrence.Run.RunId;
         var writeKey = $"engine-decision:{runId}:complete:{runId}";
@@ -434,10 +662,17 @@ public sealed partial class BatchGatePilotServiceTests
                 AssertLane(arranged.TaskId, arranged.SourceState);
                 Assert.Equal(Contract.OrchestrationAction.Continue,
                     Assert.Single(occurrence.Run.StageResults!).Action);
+                Assert.Contains(timeline.ReadAll(Folder()), entry =>
+                    entry.Kind == TimelineEventKinds.EngineGateDispatched
+                    && entry.Details?.GetValueOrDefault(EngineGateDispatchReceipt.RunIdKey) == runId);
                 break;
             case EngineApplierEffectKind.BatchPlanIntent:
-                Assert.True(factory.Services.GetRequiredService<BatchGatePilotService>()
-                    .ReceivedEngineBatchPlan(runId));
+                // The intent is a file, so a restarted host still finds it.
+                var restarted = new BatchGateStore(Path.Combine(_workspace, "batch-gates"));
+                Assert.Equal(runId, restarted.ReadEngineIntent(arranged.TaskId)?.RunId);
+                break;
+            case EngineApplierEffectKind.ReviewInputHandoff:
+                Assert.Equal(handoff, EngineDecisionWaitMarker.Read(Folder()));
                 break;
             case EngineApplierEffectKind.WaitMarkerCleared:
                 Assert.NotEqual(runId, EngineDecisionWaitMarker.Read(Folder()));

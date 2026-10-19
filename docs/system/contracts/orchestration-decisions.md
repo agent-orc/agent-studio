@@ -337,25 +337,34 @@ and its stage result (`DecisionReceipt`).
 | SweepRound, SweepWaitForPerson | operator sweep | stage lane | Lane move when they reach a transition profile |
 | SalvageContinuation | CodingCompletion | Ready | Lane move |
 | ReturnToReady | CodingCompletion, GateResult | Ready | Lane move, keyed continuation prompt |
-| Continue | CodingCompletion, GateResult | stage lane | Lane move to the payload lane; a passed gate without one keeps its lane and records `Continue`, which dispatches the aspect review |
+| Continue | CodingCompletion, GateResult | stage lane | Lane move to the payload lane; a passed gate without one keeps its lane and records `Continue`; the gate handler's next pass dispatches the aspect review and records `engine_gate_dispatched` on the card timeline |
 | Halt | ReviewReport | none | Lane kept |
-| BatchPlan | BatchPlan | none | The batch tick receives the plan as its next intent |
+| BatchPlan | BatchPlan | none | The plan is stored as the durable intent of its scope; the batch tick takes it and records `applied`, `expired`, `rejected` or `superseded` |
 
 The stage lane is the payload's `targetState`, or Escalated for an escalating
 stage action. `EngineApplierContract.Owed` narrows a row by that lane and the
 payload: a park verdict is owed only by a review occurrence parked in Human
 Review, a review attempt only by a coding completion that carries a review
-request, and a gate dispatch only by a gate decision without a lane.
-`EngineApplierEffectProbe` reads these effects without writing. A lane move
-counts when the card is in the lane or its timeline holds the keyed
-`LaneChanged` row of the decision, so a card that a runner picked up again
-still verifies. An active choice held by the AI Operator verifies through its
-ask custody, and a checkpoint through `results/checkpoint.md`.
+request, and a gate dispatch only by a gate decision without a lane. When the
+integration of an accepted or degraded review raised a review-input decision,
+the applier stops before the lane move and the park verdict, which that
+decision owns: the decision then owes its follow-up and settlement journal and
+the `ReviewInputHandoff` (the wait marker names the review-input occurrence, or
+that occurrence was raised for the card while the decision applied).
+`EngineApplierEffectProbe` reads these effects without writing and without a
+scanner rescan. A lane move counts when the card is in the lane or its
+timeline holds the keyed `LaneChanged` row of the decision, so a card that a
+runner picked up again still verifies. The engine batch plan intent and the
+gate dispatch receipt are files, so a restart inside the canary window keeps
+both.
 
 The contract tests (`BatchGateEngineApplierContractTests`, partial
 `BatchGatePilotServiceTests`) run the real applier on an engine-completed
 occurrence for every profile action, assert each owed effect directly, and
-check that the probe agrees. `EngineApplierContractGuardTests`
+check that the probe agrees; the review-input handoff has its own case. The
+gate case records the handler's dispatch receipt after the applier ran,
+because the test host does not run the review orchestrator.
+`EngineApplierContractGuardTests`
 (`Category=Guard`) fails when a transition action has no row, when a row's lane
 differs from the applier's lane rule, or when a profile action has no contract
 case.
@@ -373,23 +382,48 @@ The canary rule:
   when the engine completes it, before the applier runs, so a decision that
   never applies is watched too; `engine_rollback` completions do not count.
   Every switch to `canary` or `engine` starts a new watch.
-- `EngineApplierCanaryService` probes each watched decision every five seconds.
-  When the required decisions show their effects, the canary passes on this
-  instance and a `canary` profile becomes `engine` with an `applier-canary`
-  switch receipt.
-- When one decision still lacks an effect after
-  `Orchestration:ApplierCanary:WindowSeconds` (default 120), the canary fails,
-  the profile rolls back (`rolled-back`, so the monolith decides pending
+- `EngineApplierCanaryService` probes each watched decision every five seconds;
+  one decision that fails to probe leaves the others checked and stays
+  unverified. Only a verified row check counts toward the required number. An
+  ask, a checkpoint, a review-input handoff, and a decision whose card a
+  person moved out of the source lane (the applier then refuses it with
+  `orchestration-source-state-mismatch` on purpose) are `not-counted`, and the
+  next engine decision takes their place. When the required decisions show
+  their effects, the canary passes on this instance and a `canary` profile
+  becomes `engine` with an `applier-canary` switch receipt.
+- A decision the applier has not completed waits until
+  `Orchestration:ApplierCanary:ApplyDeadlineSeconds` (default 10800, three
+  hours) after it was observed: AcceptAndIntegrate and DegradeWithFollowUp
+  await the whole integration, queue and delivery gate included, and a
+  DeferToBatch admission can run a per-task gate. Once completed, its effects
+  must show within `Orchestration:ApplierCanary:WindowSeconds` (default 120)
+  after `CompletedAt`; an effect that a later pass writes (the gate dispatch)
+  gets the apply deadline after `CompletedAt` instead.
+- When a decision misses its deadline, the canary fails, this instance loses
+  any earlier pass (a direct switch back to engine needs a new canary), the
+  profile rolls back (`rolled-back`, so the monolith decides pending
   occurrences), and the card's operator feed gets an `applier-canary` alert
-  with the missing effects and the probe evidence.
+  with the missing effects, the probe evidence, the card and its lane, and the
+  manual redrive. The rollback re-decides only pending and leased occurrences:
+  a completed occurrence is final, and an applying one keeps retrying the
+  engine decision, so the alert tells the operator where to move the card.
+- `force-engine` is the emergency override: it switches any profile that is
+  not `engine` to `engine` without a passed canary and without the shadow
+  check. It needs an operator reason (and the Owner role on a networked host),
+  its switch receipt carries `override: true`, and the host logs
+  `orchestration-profile-engine-forced`. Its canary still watches and alerts,
+  but does not roll the profile back.
 
 `GET /api/orchestration/rollout/profiles` reports per profile the streak, the
 applier contract status (`covered` when every profile action has a row), the
-canary status with its observations, and the last effect check.
+canary status with its observations (and whether an override started it),
+and the last effect check with its basis, completion time, and whether it
+waits for a downstream effect.
 `GET /api/orchestration/rollout/applier-contract` returns the table. The
 Transition decisions panel on the engine settings page shows the same fields
 and offers Start applier canary for a Ready profile; Switch to engine appears
-only after a canary passed on this instance.
+only after a canary passed on this instance. Force engine (emergency override)
+asks for confirmation before it sends `force-engine`.
 
 ## Verification and architecture guard
 

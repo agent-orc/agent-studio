@@ -44,6 +44,9 @@ interface EffectCheck {
   missing: string[];
   evidence: string;
   checkedAt: string;
+  basis?: 'row' | 'ask' | 'checkpoint' | 'review-input-handoff' | 'manual-move';
+  completedAt?: string | null;
+  awaitingDownstream?: boolean;
 }
 
 interface CanaryStatus {
@@ -52,6 +55,8 @@ interface CanaryStatus {
   verified: number;
   instanceId: string;
   passedOnThisInstance: boolean;
+  override?: boolean;
+  observations?: { status: 'pending' | 'verified' | 'not-counted' | 'missing' }[];
 }
 
 interface ApplierContract {
@@ -129,18 +134,26 @@ export class TransitionRolloutPanelComponent implements OnInit {
   }
 
   canaryText(canary: CanaryStatus): string {
+    const skipped = canary.observations?.filter(item => item.status === 'not-counted').length ?? 0;
     const here = canary.passedOnThisInstance ? ' · passed on this instance' : '';
-    return `${canary.status} · ${canary.verified} / ${canary.required} decisions applied${here}`;
+    return `${canary.status} · ${canary.verified} / ${canary.required} decisions applied`
+      + `${skipped ? ` · ${skipped} not counted` : ''}${here}${canary.override ? ' · operator override' : ''}`;
   }
 
   effectText(check: EffectCheck): string {
-    const result = check.verified ? 'applied' : `missing ${check.missing.join(', ')}`;
+    const result = check.basis === 'manual-move' ? 'not counted, card moved by a person'
+      : check.verified ? (check.basis && check.basis !== 'row' ? `not counted, ${check.basis}` : 'applied')
+      : !check.completedAt && check.missing.includes('DecisionReceipt') ? 'applier still running'
+      : `${check.awaitingDownstream ? 'waiting for' : 'missing'} ${check.missing.join(', ')}`;
     return `${check.action} · ${result} · ${check.checkedAt.slice(0, 16).replace('T', ' ')} UTC`;
   }
 
-  async switch(profile: Profile, target: 'shadow' | 'canary' | 'engine' | 'rollback'): Promise<void> {
+  async switch(profile: Profile,
+    target: 'shadow' | 'canary' | 'engine' | 'force-engine' | 'rollback'): Promise<void> {
     const reason = this.reason().trim();
     if (!reason || this.busy()) return;
+    if (target === 'force-engine' && !globalThis.confirm(
+      `Force ${profile.profile} to the engine without a passed applier canary? The switch is recorded as an override.`)) return;
     this.busy.set(profile.profile);
     try {
       await firstValueFrom(this.http.post(

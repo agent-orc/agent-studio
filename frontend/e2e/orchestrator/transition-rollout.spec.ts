@@ -16,9 +16,11 @@ test('transition profiles show comparison state and require an operator reason',
           applierContract: { status: 'covered', actions: ['CreateReview', 'ReturnToReady', 'SalvageContinuation',
             'Escalate', 'HumanReview', 'Continue'], uncovered: [] },
           canary: { status: 'watching', required: 3, verified: 1, instanceId: 'studio/abc123',
-            passedOnThisInstance: false },
-          lastEffectCheck: { occurrence: 'orch_coding', action: 'CreateReview', verified: true, missing: [],
-            evidence: 'AGT-4242 is in 4-auto-review.', checkedAt: '2026-10-19T08:00:00Z' } },
+            passedOnThisInstance: false,
+            observations: [{ status: 'verified' }, { status: 'not-counted' }, { status: 'pending' }] },
+          lastEffectCheck: { occurrence: 'orch_coding', action: 'CreateReview', verified: false,
+            missing: ['DecisionReceipt'], evidence: 'The occurrence is applying.', checkedAt: '2026-10-19T08:00:00Z',
+            basis: 'row', completedAt: null, awaitingDownstream: false } },
         { profile: 'ReviewReport', state: 'ready', streak: 50, threshold: 50,
           mismatchCount: 1, lastMismatch: { monolith: {
             occurrence: 'review-one', inputsDigest: 'abc', action: 'FindingRound', reason: 'Fix finding.' },
@@ -70,10 +72,22 @@ test('transition profiles show comparison state and require an operator reason',
   await expect(panel.getByTestId('effect-check-ReviewReport')).toContainText('missing BatchAdmission');
   await expect(panel.getByTestId('applier-contract-CodingCompletion')).toContainText('covered · 6 actions');
   await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('watching · 1 / 3');
-  await expect(panel.getByTestId('effect-check-CodingCompletion')).toContainText('CreateReview · applied');
+  await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('1 not counted');
+  // A long integration is not a missing effect while the applier still runs.
+  await expect(panel.getByTestId('effect-check-CodingCompletion')).toContainText('CreateReview · applier still running');
   await expect(panel.getByTestId('applier-canary-GateResult')).toContainText('passed on this instance');
+  await expect(panel.getByTestId('force-engine-GateResult')).toHaveCount(0);
   await panel.getByTestId('transition-rollout-reason').fill('Shadow receipts matched');
   await expect(review.getByRole('button', { name: 'Start applier canary' })).toBeEnabled();
+  // The emergency override is explicit: it asks for confirmation and sends its own target.
+  let switched: unknown = null;
+  await page.route('**/api/orchestration/rollout/profiles/ReviewReport/switch', async route => {
+    switched = route.request().postDataJSON();
+    await route.fulfill({ json: {} });
+  });
+  page.once('dialog', dialog => void dialog.accept());
+  await panel.getByTestId('force-engine-ReviewReport').click();
+  await expect.poll(() => switched).toEqual({ target: 'force-engine', reason: 'Shadow receipts matched' });
   const decision = panel.getByTestId(`shadow-decision-${receipt}`);
   await expect(decision).toContainText('AGT-4242');
   await expect(decision).toContainText('match');
