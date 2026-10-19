@@ -203,7 +203,8 @@ public sealed record RunSpecDto(
     string? ModeFraming = null,
     AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null,
     string? BriefVersion = null,
-    int? RunTimeoutSeconds = null);
+    int? RunTimeoutSeconds = null,
+    string? RunTimeoutSource = null);
 
 /// <summary>Result of one daemon pickup poll.</summary>
 public sealed record RunnerClaimResponse(

@@ -1443,6 +1443,9 @@ public sealed class RemoteTaskRunner
         DurableAgentProcess process;
         try
         {
+            _log($"coding-emergency-limit task={taskKey} attempt={slot.AttemptId} "
+                + $"seconds={EffectiveRunTimeoutSeconds(runSpec, slot.InputSessionId is not null) ?? _options.RunTimeoutSeconds} "
+                + $"source={(slot.InputSessionId is null ? runSpec?.RunTimeoutSource : "mechanical-resume") ?? "runner-default"}");
             process = DurableAgentProcess.Start(
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
                 runSpec: runSpec,

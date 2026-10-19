@@ -49,6 +49,13 @@ in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infr
 
 ## Key Code
 
+Coding claims carry the effective emergency process limit and its source from
+project setting, workspace default, or the 24-hour platform constant. The
+runner logs both before launch. Watchdog expiry stops the CLI process and
+continues through the existing typed timeout and salvage result path; the limit
+does not size the card. A separate Human Operator card limit wins for later
+runs. Mechanical session resumes retain their shorter safety ceiling.
+
 `runner/WorkstationProfile.cs` and
 [workstation runner-host setup](../../operations/setup/workstation-runner-host.md)
 adapt the same `agent-host` binary for a Windows operator workstation. Its

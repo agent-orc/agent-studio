@@ -57,14 +57,14 @@
                       } @else {
                         <label>Reason <input type="text" maxlength="500" [value]="intentReason()"
                           (input)="intentReason.set($any($event.target).value)" /></label>
-                        <label>Raise limit to, minutes <input type="number" min="1" max="1440" [value]="raiseMinutes()"
+                        <label>Raise limit to, minutes <input type="number" min="1" max="10080" [value]="raiseMinutes()"
                           (input)="raiseMinutes.set(+$any($event.target).value)" /></label>
-                        <label>Cut limit to, minutes <input type="number" min="1" max="1440" [value]="cutMinutes()"
+                        <label>Cut limit to, minutes <input type="number" min="1" max="10080" [value]="cutMinutes()"
                           (input)="cutMinutes.set(+$any($event.target).value)" /></label>
                         <div class="decision-chain__operator-actions">
-                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || raiseMinutes() < 1 || raiseMinutes() > 1440"
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || raiseMinutes() < 1 || raiseMinutes() > 10080"
                             (click)="submitIntent(item, 'raise')">Raise limit</button>
-                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || cutMinutes() < 1 || cutMinutes() > 1440"
+                          <button type="button" [disabled]="!intentReason().trim() || intentBusy() || cutMinutes() < 1 || cutMinutes() > 10080"
                             (click)="submitIntent(item, 'cut')">Cut smaller</button>
                         </div>
                         <p>The receipt shows recorded, not applied until the action takes effect.</p>
