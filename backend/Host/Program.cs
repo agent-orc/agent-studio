@@ -337,6 +337,12 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
+builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretAuditLog>();
+builder.Services.AddSingleton<SecretValueScrubber>();
+builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
 builder.Services.AddSingleton<IRunnerLinkProcessLauncher, RunnerLinkProcessLauncher>();
@@ -1261,6 +1267,10 @@ hostTimeline.Checkpoint("entryToBuild");
 var app = builder.Build();
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
+// Capture the secrets key-encryption key now, before any hosted service starts
+// a child process: the source removes the variable from the process
+// environment so CLI runs, build gates and project processes never inherit it.
+app.Services.GetRequiredService<IKeyEncryptionKeySource>();
 
 if (connectorProfile)
 {
