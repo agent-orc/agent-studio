@@ -22,6 +22,14 @@ with actor, host, provider and outcome, without the code. Timeout and cancel
 clear the instructions. Each runner keeps its own native credential store;
 neither Task Server nor Studio distributes ChatGPT login files.
 
+`POST /api/tasks/{jobId}/stop` targets the card's canonical authority key for
+both remote and local leases. A local lease can remain held while preparation or
+post-processing runs without a CLI process. Its owner observes a fenced stop
+before starting the next step, releases the lease with outcome `Stopped`, and
+settles the stop receipt so the card shows the stopped attempt.
+The endpoint shares a gate with CLI launch and review moves. A stop accepted
+while visual QA is running is checked before the UI card can enter Human Review.
+
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
 `execution-placement` hold. The picker skips it before `RunCliAsync`, records
