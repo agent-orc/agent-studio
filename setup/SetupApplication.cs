@@ -411,7 +411,7 @@ internal static class SetupApplication
 
     internal static async Task<string> GetOrMintJoinCredentialAsync(
         JoinPayload payload, string runnerId, string role, string configRoot,
-        CancellationToken cancellationToken, HttpClient? client = null)
+        CancellationToken cancellationToken, HttpClient? client = null, TimeProvider? clock = null)
     {
         var name = role == "coding" ? "runner" : "review";
         var credentialPath = Path.Combine(configRoot, $"{name}.token");
@@ -428,7 +428,7 @@ internal static class SetupApplication
                 return saved;
         }
 
-        var credential = await MintRunnerCredentialAsync(payload, runnerId, cancellationToken, client);
+        var credential = await MintRunnerCredentialAsync(payload, runnerId, cancellationToken, client, clock);
         Directory.CreateDirectory(configRoot);
         WriteJoinSecret(credentialPath, credential);
         WriteJoinSecret(receiptPath, receipt);
@@ -472,7 +472,8 @@ internal static class SetupApplication
         JoinPayload payload,
         string runnerId,
         CancellationToken cancellationToken,
-        HttpClient? client = null)
+        HttpClient? client = null,
+        TimeProvider? clock = null)
     {
         var ownsClient = client is null;
         client ??= new HttpClient
@@ -490,7 +491,7 @@ internal static class SetupApplication
                 client.DefaultRequestHeaders.Add("X-Client-Id", "agent-orchestrator-setup");
             if (payload.SchemaVersion == 2)
             {
-                if (payload.ExpiresAtUtc <= DateTime.UtcNow)
+                if (payload.ExpiresAtUtc <= (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime)
                     throw new InvalidOperationException("Join token expired. Issue a new token on the Task Server.");
                 using var exchange = await client.PostAsJsonAsync("/api/v1/enrolments/exchange",
                     new ExchangeEnrolmentRequest(payload.Credential, payload.InstallationId!), cancellationToken);

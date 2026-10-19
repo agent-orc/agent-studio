@@ -117,12 +117,27 @@ public sealed class JoinTokenIssuerTests
             };
         });
 
-        var credential = await SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client);
+        var credential = await SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client,
+            new FixedClock());
         Assert.Equal(issued.Credential, credential);
         Assert.NotEqual(payload.Credential, credential);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client));
+            SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client, new FixedClock()));
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Expired_join_token_is_rejected_using_the_injected_clock()
+    {
+        var enrollment = Enrollment();
+        var payload = new JoinPayload(2, "https://tasks.example.test", enrollment.EnrolmentCode,
+            "1.2.0", IssuedAt, enrollment.InstallationId, enrollment.RunnerId, enrollment.ExpiresAt);
+        using var client = Client(_ => throw new InvalidOperationException("Expired token reached the server."));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client,
+                new FixedClock(enrollment.ExpiresAt)));
+        Assert.Contains("Join token expired", error.Message);
     }
 
     [Fact]
@@ -148,10 +163,10 @@ public sealed class JoinTokenIssuerTests
         var config = Path.GetDirectoryName(temp.Request("https", payload.ServerUrl).OutputFile)!;
 
         var first = await SetupApplication.GetOrMintJoinCredentialAsync(payload, "host-a", "coding", config,
-            default, client);
+            default, client, new FixedClock());
         // A later systemd failure leaves the protected credential available to a retry.
         var retry = await SetupApplication.GetOrMintJoinCredentialAsync(payload, "host-a", "coding", config,
-            default, client);
+            default, client, new FixedClock());
 
         Assert.Equal(issued.Credential, first);
         Assert.Equal(first, retry);
@@ -236,9 +251,9 @@ public sealed class JoinTokenIssuerTests
             => Task.FromResult(reply(request));
     }
 
-    private sealed class FixedClock : TimeProvider
+    private sealed class FixedClock(DateTime? now = null) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => new(IssuedAt);
+        public override DateTimeOffset GetUtcNow() => new(now ?? IssuedAt);
     }
 
     private sealed class TestFiles : IDisposable
