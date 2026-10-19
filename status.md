@@ -1,3 +1,26 @@
+# AGT-3218 engine applier contract and canary status
+
+- Result SHA: `304cadb788ac8cb980a87dabde83e492e478049e`, one commit on the earlier delivery `ef3995c7ec5d40ae27d8e5e918f51d9bf652259b` (not rebased). This status entry is a separate commit on top of it.
+- The follow-up fixes the operator review of 19.10.2026 (BLOCK on ef3995c7e):
+  - Blocker: a decision the applier has not completed waits until `Orchestration:ApplierCanary:ApplyDeadlineSeconds` (default 10800) after its observation. The effect window (`WindowSeconds`, default 120) now starts at `CompletedAt`. A card that a person moved out of the source lane (the applier then refuses the decision with `orchestration-source-state-mismatch`) is `not-counted`, not missing.
+  - Major: the probe has a review-input handoff branch (`ReviewInputHandoff` effect, `EngineApplierContract.Owed(..., reviewInputHandoff)`). A new contract case runs AcceptAndIntegrate through the real applier while a review-input decision holds the card.
+  - Minor: BatchPlan intents are durable (`BatchGateStore.EngineIntents`). The tick records `applied`, `expired`, `rejected` or `superseded`, and the probe checks the stored intent or that receipt. The gate handler records `engine_gate_dispatched`, and the probe checks that receipt within the apply deadline after completion.
+  - Minor: only verified row checks count toward the required decisions. Asks, checkpoints, handoffs and manual moves are `not-counted`, and the next decision takes their place.
+  - Minor: the alert names the card, its lane and the manual redrive. `FailCanary` clears this instance's earlier pass.
+  - Minor: a probe failure stays on its own observation and fails closed at the deadline. The probe no longer invalidates the scanner cache.
+  - Override: `force-engine` is an explicit, audited emergency switch. It is owner-only on a networked host, its switch receipt has `override: true`, and the host logs `orchestration-profile-engine-forced`. Its canary alerts but does not roll back. The panel shows it as Force engine (emergency override) with a confirmation, plus not-counted decisions, applier-still-running and downstream waits.
+- Existing failures fixed on the way:
+  - `TransitionDecisionBoundaryTests` flagged the probe's `?? TransitionAction.Continue`.
+  - Four contract cases failed on this base. Three are the Human Review parks (the guarded delivery chain demands integration of the fixture's changed result; the guard is off for them, as in `MonolithOrchestrationEndpointTests`). The fourth is DegradeWithFollowUp: card creation writes the flat layout and hides the fixture's lane-folder card, so the case seeds the follow-up and runs the applier's replay branch.
+- Verification:
+  - `dotnet build` of the backend, `backend.Tests`, `runner.Tests` and `task-server.Tests` passed.
+  - `FullyQualifiedName~OrchestrationRolloutTests|FullyQualifiedName~EngineApplierContractGuardTests|FullyQualifiedName~BatchGatePilotServiceTests.Applier_` passed 68 tests.
+  - `BatchGatePilotServiceTests|BatchGateLookAheadPlannerTests|OrchestrationExecutionModeTests|OrchestratorDecisionReceiptTests|AiOperatorDecisionTests|MonolithOrchestrationEndpointTests|ReviewDecisionOrchestratorGradeStepTests|TimelineLogTests` passed 294 tests.
+  - The `FullyQualifiedName~.Architecture.|Category=Guard` filter passed 122 backend tests; runner.Tests and task-server.Tests have no matching tests.
+  - `npm --prefix frontend run lint` passed.
+  - The focused Playwright spec `e2e/orchestrator/transition-rollout.spec.ts` passed; its light and dark screenshots are in the task results directory.
+- Not covered: the GateResult contract case records the gate handler's dispatch receipt itself, because the test host disables the review orchestrator.
+
 # AGT-3208 live environment flow status
 
 - Original delivery result SHA: `958fbf241162267c4dcbca2943c2e3ae28547ce8` (changed-file SHA-256: `306af8705440b109b8850bd2909a3763c584d746fd951a91afb5fc41ba08554c`; base: `2c4ec9e8c62e55f1b88763442277e426aab862a4`).
