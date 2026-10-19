@@ -19,11 +19,11 @@
             class="studio-tab-action studio-tab-action--toggle"
             [class.studio-tab-action--active]="groupByEpic()"
             [attr.aria-pressed]="groupByEpic()"
-            data-testid="studio-board-epic-toggle"
-            [cacTooltip]="groupByEpic() ? 'Show lane columns' : 'Group tasks by epic'"
+            data-testid="studio-board-dossier-toggle"
+            [cacTooltip]="groupByEpic() ? 'Show lane columns' : 'Group tasks by Dossier'"
             (click)="toggleGroupByEpic.emit()">
       <app-studio-icon [name]="groupByEpic() ? 'epic' : 'grid'" [size]="14"></app-studio-icon>
-      <span>{{ groupByEpic() ? 'Epics' : 'Lanes' }}</span>
+      <span>{{ groupByEpic() ? 'Dossiers' : 'Lanes' }}</span>
     </button>
     <span class="studio-tab-actions-sep" aria-hidden="true"></span>
     <button type="button"

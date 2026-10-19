@@ -390,6 +390,18 @@ warns, and the command exits with code `8`. Without `--release-dir` the train
 behaves as before and records `"releasePackage":null`. In `--dry-run` the
 option is only logged.
 
+For automatic stage deployment, configure the backend's
+`Deploy:ReleaseEvidenceRoot` to the same absolute directory as `--release-dir`.
+Keep that directory writable only by the promotion train and readable by the
+backend. The release credential cannot submit a digest on its own: the backend
+checks the package hash, passed gate log, promoted record, and exact artifact
+manifest under `<release-dir>/<candidate sha>/` before it queues stage. The
+train writes the record and manifest only after the package is complete. For a
+container target, pass `--deploy-image-ref <registry tag>` and
+`--deploy-dockerfile <relative path>`; the train builds and pushes that image
+from the gated checkout and records the returned registry digest. A prebuilt
+image with a matching revision label does not qualify.
+
 ## Branch reclaim after promotion
 
 AGT-2793: `develop`/`main` promotion is the last point at which a task's

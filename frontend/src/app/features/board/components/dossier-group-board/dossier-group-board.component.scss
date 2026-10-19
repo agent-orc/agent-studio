@@ -1,0 +1,12 @@
+:host { display: block; grid-column: 1 / -1; min-width: 0; width: 100%; overflow: auto; }
+.dossier-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); align-content: start; gap: var(--studio-spacing-4); padding: var(--studio-spacing-4); }
+.dossier-board__group { background: var(--studio-bg-elevated); border: 1px solid var(--studio-border); border-radius: var(--studio-radius-sm); }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--studio-spacing-3); padding: var(--studio-spacing-3) var(--studio-spacing-4); }
+h2 { margin: 0; color: var(--studio-fg); font-size: 1rem; }
+header span { color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; }
+ul { margin: 0; padding: 0; list-style: none; }
+li { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-3); padding: var(--studio-spacing-2) var(--studio-spacing-4); border-top: 1px solid var(--studio-border); }
+li span { color: var(--studio-fg-dim); }
+button { border: 0; background: none; color: var(--studio-fg); font: inherit; cursor: pointer; text-align: left; }
+button:hover { color: var(--studio-accent-4-strong); }
+button:focus-visible { outline: 2px solid var(--studio-accent-4-strong); }

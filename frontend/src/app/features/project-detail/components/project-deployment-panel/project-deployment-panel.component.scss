@@ -77,6 +77,11 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .deployment__target-choice.is-selected { border-color: var(--studio-accent); background: var(--studio-bg-selected); }
 .deployment__target-choice span:last-child { display: grid; gap: var(--studio-spacing-1); }
 .deployment__target-choice small { color: var(--studio-fg-muted); }
+.deployment__environment { display: grid; align-content: start; gap: var(--studio-spacing-2); min-width: 0; padding: var(--studio-spacing-3); border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-surface-muted); }
+.deployment__environment p { margin: 0; }
+.deployment__environment code { overflow-wrap: anywhere; }
+.deployment__environment small { color: var(--studio-fg-muted); }
+.deployment__environment button { justify-self: start; }
 
 .deployment__launcher { display: grid; gap: var(--studio-spacing-4); }
 .deployment__selected-header { align-items: flex-start; justify-content: space-between; gap: var(--studio-spacing-4); }

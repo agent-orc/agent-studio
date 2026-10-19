@@ -171,6 +171,72 @@ public sealed class ProjectRepositoryProvisioningTests
     }
 
     [Fact]
+    public async Task Cancellation_rolls_back_onboarding_and_partially_created_repository()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "studio-onboard-cancel-" + Guid.NewGuid().ToString("N"));
+        var repositoryRoot = Path.Combine(root, "repositories");
+        var handler = new FakeGitHubHandler();
+        var checkout = new CreatingCheckout();
+        var provisioner = new TrackingProvisioner(CreateClient(handler, checkout, repositoryRoot));
+        using var requestCancellation = new CancellationTokenSource();
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.UseEnvironment("Test");
+                    builder.ConfigureAppConfiguration((_, config) =>
+                        config.AddInMemoryCollection(new Dictionary<string, string?>
+                        {
+                            ["TaskRepository"] = root,
+                            ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
+                        }));
+                    builder.ConfigureTestServices(services =>
+                    {
+                        services.RemoveAll<IProjectRepositoryProvisioner>();
+                        services.AddSingleton<IProjectRepositoryProvisioner>(provisioner);
+                        services.RemoveAll<IBuildCommandRunner>();
+                        services.AddSingleton<IBuildCommandRunner>(new CancelingBuildRunner(requestCancellation));
+                    });
+                });
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+
+            var post = client.PostAsJsonAsync("/api/projects", new
+            {
+                displayName = "Canceled Project",
+                workspaceId = DefaultWorkspace.Id,
+                createRepository = Request(),
+            }, requestCancellation.Token);
+            await provisioner.DeletionCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => post);
+
+            Assert.Equal(1, handler.Deletes);
+            Assert.False(provisioner.DeleteTokenWasCanceled);
+            Assert.Empty(await client.GetFromJsonAsync<List<ProjectSummary>>("/api/projects") ?? []);
+            Assert.Null(factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+                .Get("Canceled Project").BuildProfile);
+            Assert.False(Directory.Exists(checkout.Path));
+            var projectsRoot = Path.Combine(root, "projects");
+            if (Directory.Exists(projectsRoot))
+                Assert.Empty(Directory.EnumerateDirectories(projectsRoot));
+
+            var partialHandler = new FakeGitHubHandler();
+            using var partialCancellation = new CancellationTokenSource();
+            var partial = CreateClient(partialHandler, new CancelingCheckout(partialCancellation), repositoryRoot);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => partial.CreateAsync(Request(), partialCancellation.Token));
+            Assert.Equal(1, partialHandler.Deletes);
+            Assert.False(partialHandler.DeleteTokenWasCanceled);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Missing_host_credential_explains_next_step()
     {
         var source = new HostProvisioningCredentialSource();
@@ -262,6 +328,42 @@ public sealed class ProjectRepositoryProvisioningTests
         }
     }
 
+    private sealed class CancelingBuildRunner(CancellationTokenSource cancellation) : IBuildCommandRunner
+    {
+        public async Task<BuildCommandResult> RunAsync(string workingDir, string command, CancellationToken ct)
+        {
+            cancellation.Cancel();
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("Canceled validation unexpectedly continued.");
+        }
+    }
+
+    private sealed class CancelingCheckout(CancellationTokenSource cancellation) : IProjectRepositoryCheckout
+    {
+        public Task CloneAsync(string url, string token, string path, CancellationToken ct)
+        {
+            cancellation.Cancel();
+            ct.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("Canceled clone unexpectedly continued.");
+        }
+    }
+
+    private sealed class TrackingProvisioner(IProjectRepositoryProvisioner inner) : IProjectRepositoryProvisioner
+    {
+        public TaskCompletionSource DeletionCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool DeleteTokenWasCanceled { get; private set; }
+
+        public Task<ProvisionedRepository> CreateAsync(CreateRepositoryRequest request, CancellationToken ct)
+            => inner.CreateAsync(request, ct);
+
+        public async Task DeleteAsync(CreateRepositoryRequest request, string path, CancellationToken ct)
+        {
+            DeleteTokenWasCanceled = ct.IsCancellationRequested;
+            await inner.DeleteAsync(request, path, ct);
+            DeletionCompleted.TrySetResult();
+        }
+    }
+
     private sealed class FakeClientFactory(FakeGitHubHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
@@ -272,6 +374,7 @@ public sealed class ProjectRepositoryProvisioningTests
         public HttpStatusCode CreateStatus { get; init; } = HttpStatusCode.Created;
         public bool FailTree { get; init; }
         public int Deletes { get; private set; }
+        public bool DeleteTokenWasCanceled { get; private set; }
         public List<string> Routes { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -280,6 +383,8 @@ public sealed class ProjectRepositoryProvisioningTests
             Routes.Add(path);
             if (request.Method == HttpMethod.Delete)
             {
+                DeleteTokenWasCanceled = cancellationToken.IsCancellationRequested;
+                cancellationToken.ThrowIfCancellationRequested();
                 Deletes++;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
             }

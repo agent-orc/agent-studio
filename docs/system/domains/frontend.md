@@ -7,6 +7,24 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Environment flow
+
+The Studio header opens a full-width Environment view. It refreshes every 15
+seconds while visible. The view joins the archive-inclusive
+`GET /api/environment/flow` projection with execution-host heartbeat telemetry,
+open Watcher cases, and AI Operator decision receipts. Host, queue, and lane
+markers resolve a case's affected card IDs against the current board. A missing
+host metric or unlinked receipt reads as unavailable, never as a healthy zero.
+
+The flow endpoint counts distinct cards entering delivery, human review, and
+completion during the current UTC day; integration uses `integration_succeeded`
+ledger events. Lane flow uses the rolling last 24 hours and median completed
+stays. Queue throughput divides rolling lane exits by 24 hours; the gate uses
+distinct cards with a completed build/test step and the batch gate uses members
+in verified publications. Gate waiting comes from the active auto-review gate
+queue, and batch gate waiting from its pending store. Deployment card counts
+have no global attribution source yet, so that value remains unavailable.
+
 The project execution assignment card warns when automatic pickup is placed
 at `local` and the settings projection reports `localCodingAdmitted: false`.
 Ready cards show the corresponding `execution-placement` pickup hold and a

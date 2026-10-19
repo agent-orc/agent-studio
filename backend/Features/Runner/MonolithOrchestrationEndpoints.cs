@@ -114,10 +114,28 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     OrchestrationRolloutStore rollout,
     IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
+    EngineBatchAdmission batchAdmission,
     TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
     private static readonly TimeSpan PreparationGrace = TimeSpan.FromSeconds(30);
+
+    /// <summary>Batch admissions one re-arm pass may run; the rest wait for the next pass.</summary>
+    internal const int RearmBudgetPerPass = 4;
+
+    /// <summary>Wait before a failed re-arm admission is tried again; it doubles per failure.</summary>
+    internal static readonly TimeSpan RearmRetryBase = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RearmRetryCap = TimeSpan.FromMinutes(30);
+
+    // A failed admission waits before its next attempt, so occurrences that keep
+    // failing cannot take the per-pass budget from the ones behind them.
+    private readonly Dictionary<string, (int Failures, DateTime RetryAt)> _rearmRetries =
+        new(StringComparer.Ordinal);
+
+    // An admission can run a per-task gate, so a re-arm pass runs beside the
+    // loop and a loop starts one only when none is running (as AGT-3091).
+    private readonly object _rearmGate = new();
+    private Task _rearmPass = Task.CompletedTask;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -142,12 +160,21 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     logger.LogWarning(exception, "orchestration-shadow-comparison-retry-pending");
                 }
                 await RecoverRolledBackAsync(stoppingToken);
+                StartRearmPass(stoppingToken);
                 AlertLongWaits();
                 await Task.Delay(PreparationGrace, time, stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         catch (Exception exception) { logger.LogError(exception, "orchestration-recovery-incomplete"); }
+        finally
+        {
+            // A stop waits for a running re-arm pass. The pass ends with the
+            // admission in progress, which the host stop cancels.
+            Task pass;
+            lock (_rearmGate) pass = _rearmPass;
+            await pass;
+        }
     }
 
     private async Task RecoverRolledBackAsync(CancellationToken ct)
@@ -236,6 +263,106 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }));
     }
 
+    private void StartRearmPass(CancellationToken stoppingToken)
+    {
+        lock (_rearmGate)
+        {
+            if (!_rearmPass.IsCompleted) return;
+            _rearmPass = Task.Run(async () =>
+            {
+                try { await RearmDeferredBatchAdmissionsAsync(stoppingToken); }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(exception, "engine-batch-admission-rearm-incomplete");
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Until 17.10.2026 the applier completed every engine DeferToBatch decision
+    /// without its batch admission, and a completed occurrence is final, so
+    /// nothing drove those cards on. A completed, non-shadow ReviewReport
+    /// decision to defer to the batch that is still its card's newest re-arms the
+    /// same admission while the card waits in Auto Review on the current review
+    /// and the batch gate has not taken that review past admission. The facts
+    /// are in memory or in two small files, so a pass runs no Git before it
+    /// admits; a repeat finds the admission and does nothing. A stop ends the
+    /// pass after the admission in progress.
+    /// </summary>
+    internal async Task<int> RearmDeferredBatchAdmissionsAsync(CancellationToken stoppingToken)
+    {
+        var tasks = scanner.ScanAllJobs();
+        var admissions = 0;
+        var rearmed = 0;
+        foreach (var occurrence in store.NewestPerTask("ReviewReport").Where(item =>
+            !item.Shadow && item.Run.Status == "completed"
+            && item.EngineReceipt?.Action == nameof(TransitionAction.DeferToBatch)))
+        {
+            if (admissions >= RearmBudgetPerPass || stoppingToken.IsCancellationRequested) break;
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is null || card.State != occurrence.ExpectedSourceState) continue;
+            if (RetryPending(occurrence.Run.RunId)) continue;
+            try
+            {
+                if (!batchAdmission.AwaitsAdmission(card, occurrence))
+                {
+                    ForgetRetry(occurrence.Run.RunId);
+                    continue;
+                }
+                admissions++;
+                var outcome = await batchAdmission.AdmitAsync(card, occurrence, stoppingToken);
+                ForgetRetry(occurrence.Run.RunId);
+                if (outcome != EngineBatchAdmissionOutcome.Skipped) rearmed++;
+                logger.LogWarning(
+                    "engine-batch-admission-rearmed task={TaskKey} run={RunId} attempt={AttemptId} outcome={Outcome}",
+                    card.Key ?? card.Id, occurrence.Run.RunId, occurrence.AuthorityAttemptId, outcome);
+            }
+            catch (OperationCanceledException exception)
+            {
+                // Only a host stop cancels an admission; the next start re-arms the rest.
+                logger.LogInformation(exception, "engine-batch-admission-rearm-stopped task={TaskKey} run={RunId}",
+                    card.Key ?? card.Id, occurrence.Run.RunId);
+                break;
+            }
+            catch (Exception exception)
+            {
+                var (failures, retryAt) = RecordRetry(occurrence.Run.RunId);
+                logger.LogWarning(exception,
+                    "engine-batch-admission-rearm-pending task={TaskKey} run={RunId} failures={Failures} retryAt={RetryAt:o}",
+                    card.Key ?? card.Id, occurrence.Run.RunId, failures, retryAt);
+            }
+        }
+        if (admissions > 0) scanner.InvalidateCache();
+        return rearmed;
+    }
+
+    private bool RetryPending(string runId)
+    {
+        lock (_rearmRetries)
+            return _rearmRetries.TryGetValue(runId, out var retry)
+                && retry.RetryAt > time.GetUtcNow().UtcDateTime;
+    }
+
+    private void ForgetRetry(string runId)
+    {
+        lock (_rearmRetries) _rearmRetries.Remove(runId);
+    }
+
+    private (int Failures, DateTime RetryAt) RecordRetry(string runId)
+    {
+        lock (_rearmRetries)
+        {
+            var failures = (_rearmRetries.TryGetValue(runId, out var previous) ? previous.Failures : 0) + 1;
+            var wait = TimeSpan.FromTicks(Math.Min(RearmRetryCap.Ticks,
+                RearmRetryBase.Ticks << Math.Min(failures - 1, 16)));
+            var retry = (failures, time.GetUtcNow().UtcDateTime + wait);
+            _rearmRetries[runId] = retry;
+            return retry;
+        }
+    }
+
     private void AlertLongWaits()
     {
         var now = time.GetUtcNow().UtcDateTime;
@@ -300,7 +427,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     {
                         store.Activate(occurrence.Run.RunId);
                         if (card is not null && card.State == occurrence.ExpectedSourceState)
-                            EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                            MarkWaiting(card.FolderPath, occurrence.Run.RunId);
                     }
                     else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
                         store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
@@ -324,7 +451,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     }
                     store.Activate(occurrence.Run.RunId);
                     if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
-                        EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                        MarkWaiting(card.FolderPath, occurrence.Run.RunId);
                 }
                 else
                 {
@@ -346,15 +473,64 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
             if (card is not null && card.State == occurrence.ExpectedSourceState)
-                EngineDecisionWaitMarker.Write(card.FolderPath, occurrence.Run.RunId);
+                MarkWaiting(card.FolderPath, occurrence.Run.RunId);
         }
-        foreach (var cancelled in store.List(null, "cancelled"))
+        // A marker that names a cancelled occurrence, or a completed one that
+        // did not hold its card, waits for nothing; the card would show an
+        // engine wait until it leaves the lane.
+        foreach (var card in tasks.Where(item => item.WaitingForEngineDecision))
         {
-            var card = tasks.FirstOrDefault(item => item.Id == cancelled.TaskId
-                && item.ProjectName == cancelled.ProjectId);
-            if (card is not null)
-                EngineDecisionWaitMarker.Clear(card.FolderPath, cancelled.RunId);
+            // RecoverOnce runs outside the loop's per-step catches, so a lane move
+            // or a concurrent clear that races this read must not end the loop.
+            try
+            {
+                if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
+                    && store.GetOccurrence(runId) is { } named
+                    && (named.Run.Status == "cancelled"
+                        || named.Run.Status == "completed" && !MayHoldCard(named)))
+                    EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                or JsonException)
+            {
+                logger.LogWarning(exception, "engine-decision-wait-marker-cleanup-skipped task={TaskKey}",
+                    card.Key ?? card.Id);
+            }
         }
         scanner.InvalidateCache();
+    }
+
+    /// <summary>
+    /// Marks the card as waiting on <paramref name="runId"/>. The occurrence can
+    /// complete, and its applier clear the marker, between the status read and
+    /// this write, so the status is read again and a finished occurrence leaves
+    /// no marker behind.
+    /// </summary>
+    internal void MarkWaiting(string folder, string runId)
+    {
+        try
+        {
+            EngineDecisionWaitMarker.Write(folder, runId);
+            if (store.Get(runId)?.Status is not ("pending" or "leased" or "applying"))
+                EngineDecisionWaitMarker.Clear(folder, runId);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The card moved after the scan; the next pass reads its new folder.
+            logger.LogWarning(exception, "engine-decision-wait-marker-skipped run={RunId}", runId);
+        }
+    }
+
+    /// <summary>
+    /// An active decision can hold its card for an AI Operator ask or a
+    /// checkpoint, and its application keeps the wait marker on purpose.
+    /// </summary>
+    private static bool MayHoldCard(MonolithOrchestrationOccurrence occurrence)
+    {
+        if (occurrence.Profile == "CodingCompletion") return true;
+        if (occurrence.Completion?.OutputJson is not { } output) return false;
+        using var document = JsonDocument.Parse(output);
+        return document.RootElement.ValueKind == JsonValueKind.Object
+            && document.RootElement.TryGetProperty("activeChoice", out _);
     }
 }

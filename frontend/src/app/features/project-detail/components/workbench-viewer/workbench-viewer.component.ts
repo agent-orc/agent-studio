@@ -41,6 +41,7 @@ import {
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
+import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
 
 /**
  * Trusted host chrome around repository-authored HTML. The artifact receives an
@@ -58,6 +59,7 @@ import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/wor
     StudioIconComponent,
     WorkbenchViewerHeaderComponent,
     WorkbenchDecisionPanelComponent,
+    DossierCardListComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-viewer.component.html',

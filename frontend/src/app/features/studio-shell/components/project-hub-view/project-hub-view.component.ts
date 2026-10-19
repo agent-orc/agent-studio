@@ -3,7 +3,7 @@ import {
   ProjectShellComponent,
   ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
-  ProjectDeploymentPanelComponent,
+  ProjectDeployAreaComponent,
   ProjectSettingsPanelComponent,
   SecurityPanelComponent,
   UxuiPanelComponent,
@@ -37,7 +37,7 @@ import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 /** Rails whose content panel is real (not the project-shell placeholder). */
 const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRailKey>([
   'overview',
-  'deployment',
+  'deploy',
   'project-urls',
   'git',
   'integration',
@@ -86,7 +86,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectShellComponent,
     ProjectDetailComponent,
     ProjectOverviewDashboardComponent,
-    ProjectDeploymentPanelComponent,
+    ProjectDeployAreaComponent,
     ProjectSettingsPanelComponent,
     SecurityPanelComponent,
     UxuiPanelComponent,
@@ -133,7 +133,7 @@ export class ProjectHubViewComponent {
   constructor() {
     effect(() => {
       const raw = this.initialSection();
-      this.activeRail.set(isProjectRailKey(raw) ? raw : DEFAULT_PROJECT_RAIL_KEY);
+      this.activeRail.set(raw === 'deployment' ? 'deploy' : (isProjectRailKey(raw) ? raw : DEFAULT_PROJECT_RAIL_KEY));
     });
   }
 

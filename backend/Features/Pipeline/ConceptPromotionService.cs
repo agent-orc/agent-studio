@@ -41,7 +41,11 @@ public sealed class ConceptPromotionService
             var item = plan.Items[index];
             return new ConceptCardSpawn(
                 ReasonFor(plan.Source.RepoRelativePath, index),
-                item.Decision is null ? CodingRequest(plan.Source, item) : DecisionRequest(plan.Source, item));
+                (item.Decision is null ? CodingRequest(plan.Source, item) : DecisionRequest(plan.Source, item)) with
+                {
+                    Dossier = TaskDossierProvenance.FromImplementation(
+                        plan.Source.RepoRelativePath, item, index),
+                });
         }).ToList();
 
         return new PromoteConceptTasksResponse
@@ -69,6 +73,12 @@ public sealed class ConceptPromotionService
                     .FirstOrDefault(record => string.Equals(record.Reason, spawn.Reason, StringComparison.Ordinal));
                 if (existing != null)
                 {
+                    if (spawn.Request.Dossier is { } dossier)
+                    {
+                        var prior = _scanner.FindJob(existing.TargetJobId ?? existing.TargetKey ?? "", source.WatchPath);
+                        if (prior is { Dossier: null })
+                            _mutations.SetJobDossier(prior.Id, dossier, prior.WatchPath);
+                    }
                     promoted.Add(new PromotedConceptTask
                     {
                         JobId = existing.TargetJobId ?? "",
@@ -82,6 +92,7 @@ public sealed class ConceptPromotionService
                 {
                     Title = title,
                     WatchPath = source.WatchPath,
+                    Dossier = spawn.Request.Dossier ?? source.Dossier,
                 });
                 if (string.IsNullOrWhiteSpace(jobId))
                     throw new InvalidOperationException(

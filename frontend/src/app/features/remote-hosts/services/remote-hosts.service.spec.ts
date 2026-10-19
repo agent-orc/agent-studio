@@ -945,6 +945,50 @@ describe('RemoteHostsService client registry hydration', () => {
     },
   );
 
+  it.each(['drift-first', 'capability-first'])(
+    'clears the previous release and drift when a newer runner reports no release (%s)', order => {
+      TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
+      const svc = TestBed.inject(RemoteHostsService);
+      const http = TestBed.inject(HttpTestingController);
+      const older = '2026-10-16T08:00:00Z';
+      const newer = '2026-10-16T08:01:00Z';
+      const oldRelease = { releaseId: 'old-build', version: '0.2.7', commit: 'old-commit' };
+
+      svc.reload();
+      http.expectOne('/api/clients').flush([]);
+      const capabilityRequest = http.expectOne('/api/v1/management/remote-hosts');
+      const driftRequest = http.expectOne('/api/v1/management/host-releases');
+      const drift = {
+        observedAt: older, stable: { version: '0.3.0' }, behindCount: 1,
+        hosts: [{
+          runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'host-1', role: 'coding',
+          release: oldRelease, state: 'behind', behindByHours: 100, behindForHours: 100,
+          alarmDue: true, reason: 'Old build', lastSeenAt: older, heartbeatStale: false,
+        }],
+      };
+      const capability = [{
+        runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'host-1', instanceId: 'host-1:2',
+        runnerVersion: '0.3.0', protocolVersion: 3, status: 'active', registeredAt: older,
+        lastSeenAt: newer, hostAdmission: { hostId: 'host-1', admissionState: 'open' },
+        capabilities: [], release: null,
+      }];
+      if (order === 'drift-first') {
+        driftRequest.flush(drift);
+        capabilityRequest.flush(capability);
+      } else {
+        capabilityRequest.flush(capability);
+        driftRequest.flush(drift);
+      }
+
+      const host = svc.hosts().find(item => item.clientId === 'agent-runner-01');
+      expect(host?.release).toBeNull();
+      expect(host?.releaseDrift).toBeNull();
+      flushHostHydration(http);
+      flushRunnerInfrastructureFailures(http);
+      http.verify();
+    },
+  );
+
   it('invalidates cached project proofs before reloading a re-probed host', () => {
     TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
     const svc = TestBed.inject(RemoteHostsService);

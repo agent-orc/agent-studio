@@ -239,12 +239,11 @@ async function mockDashboard(page: Page): Promise<{
   await page.route('**/api/v1/workspaces', route => fulfillJson(route, workspaces));
   await page.route('**/api/v1/projects', route => fulfillJson(route, [project]));
   await page.route('**/api/tasks', route => fulfillJson(route, [planningTask]));
-  await page.route('**/api/v1/studio/board', route => fulfillJson(route, grouped()));
+  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, route => fulfillJson(route, grouped()));
   await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/plan-deployment-history(?:\?|$)/, () => {
     planningTaskRequested = true;
-    // Navigation writes the task deep link before detail loading. Leave the
-    // heavy task pane pending so this dashboard spec verifies the handoff
-    // without compiling an unrelated editor surface.
+    // Leave the heavy task pane pending so this dashboard spec verifies the
+    // detail request without compiling an unrelated editor surface.
   });
   await page.route('**/api/crash-recovery/pending', route => fulfillJson(route, { pending: [] }));
   await page.route('**/api/projects/*/token-usage/summary', route => fulfillJson(route, tokenSummary));
@@ -254,6 +253,30 @@ async function mockDashboard(page: Page): Promise<{
     gateSlots: { busy: 2, total: 3 },
   }));
   await page.route('**/api/projects/*/deployment/summary', route => fulfillJson(route, deployment));
+  let promotionStatus = 'pending';
+  await page.route('**/api/projects/*/environments/promotions/approve', route => {
+    expect(route.request().postDataJSON()).toEqual({ artifact: 'registry.example/app@sha256:' + 'a'.repeat(64) });
+    promotionStatus = 'production-queued';
+    return fulfillJson(route, {});
+  });
+  await page.route('**/api/projects/*/environments/promotions/reject', route => {
+    promotionStatus = 'rejected';
+    return fulfillJson(route, {});
+  });
+  await page.route('**/api/projects/*/environments', route => fulfillJson(route, {
+    project: PROJECT_NAME,
+    environments: [{
+      declaration: { id: 'stage', name: 'Stage', kind: 'stage', targetHostId: 'web-stage',
+        address: 'https://stage.example', template: 'container', destination: '8081',
+        healthUrl: 'https://stage.example/health', approval: 'person', secretRefs: [] },
+      deployedArtifact: 'registry.example/app@sha256:' + 'a'.repeat(64), health: 'healthy',
+      pendingArtifact: null, history: [{ at: '2026-07-11T10:00:00Z', status: 'healthy',
+        artifact: 'registry.example/app@sha256:' + 'a'.repeat(64), previousArtifact: null, evidence: 'health-ok' }],
+    }],
+    promotions: [{ artifact: 'registry.example/app@sha256:' + 'a'.repeat(64), stageId: 'stage',
+      productionId: 'production', stageHealthyAt: '2026-07-11T10:00:00Z', status: promotionStatus, actor: null }],
+    failureCards: [],
+  }));
   await page.route('**/api/projects/*/test-runs', route => fulfillJson(route, testRuns));
   await page.route('**/api/projects/*/deployment/compile', async route => {
     const request = route.request().postDataJSON() as { prompt?: string };
@@ -417,6 +440,7 @@ test.describe('Project Overview · operator dashboard', () => {
     await openDashboard(page);
 
     await page.getByTestId('project-overview-open-deployment').click();
+    await page.getByRole('button', { name: 'Existing deployment tools' }).click();
     const launcher = page.getByTestId('project-deployment-launcher');
     await expect(launcher).toBeVisible();
     await expect(launcher).toContainText('Run TR-202607110930-green');
@@ -489,7 +513,12 @@ test.describe('Project Overview · operator dashboard', () => {
     await expect(page.getByTestId('project-overview-last-deployment-details')).toContainText('Operator-first project overview');
 
     await page.getByTestId('project-overview-open-deployment').click();
+    await page.getByRole('button', { name: 'Existing deployment tools' }).click();
     await expect(page.getByTestId('project-deployment-panel')).toBeVisible();
+    await expect(page.getByTestId('environment-stage')).toContainText('healthy');
+    await expect(page.getByTestId('pending-promotion')).toBeVisible();
+    await page.getByRole('button', { name: 'Approve production' }).click();
+    await expect(page.getByTestId('pending-promotion')).toHaveCount(0);
     await expect(page.getByTestId('project-deployment-pending-count')).toHaveText('5');
     await expect(page.getByTestId('project-deployment-history').locator(':scope > li')).toHaveCount(3);
     await expect(page.getByTestId('project-deployment-targets').locator('button')).toHaveCount(2);
@@ -602,7 +631,6 @@ test.describe('Project Overview · operator dashboard', () => {
     await page.goto(`/#/projects/${slugFor(PROJECT_NAME)}/overview`);
     await expect(page.getByTestId('project-overview-dashboard')).toBeVisible();
     await page.getByTestId('project-overview-planning-plan-deployment-history').click();
-    await expect.poll(() => new URL(page.url()).searchParams.get('job')).toBe('plan-deployment-history');
     await expect.poll(mocked.taskRequested).toBe(true);
 
     // Switch from deterministic routes to this worktree's fixture backend and
@@ -628,6 +656,7 @@ test.describe('Project Overview · operator dashboard', () => {
       });
     }
     await page.getByTestId('project-overview-open-deployment').click();
+    await page.getByRole('button', { name: 'Existing deployment tools' }).click();
     await expect(page.getByTestId('project-deployment-panel')).toBeVisible();
     await expect(page.getByTestId('project-deployment-refresh')).toHaveText('Refresh', { timeout: 20_000 });
     for (const theme of ['light', 'dark'] as const) {

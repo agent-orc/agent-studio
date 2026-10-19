@@ -101,15 +101,28 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `frontend/e2e/visual-evidence/presentation-capture.spec.ts`,
   `scripts/stable-frontend-boot-probe.mjs`, and
   `frontend/e2e/fixtures/dev-backend.ts` for the capture and readiness patterns.
-- `references.workbenches` is the canonical typed card-to-Dossier edge.
+- `references.workbenches` carries typed card-to-Dossier links.
+  `task.json.dossier` now identifies the one primary Dossier for board grouping
+  and implementation progress. It stores the repository entry path and optional
+  source section, decision, and zero-based implementation slice index. Other
+  `references.workbenches` entries remain links. Concept promotion and decision
+  apply inherit this primary association. Writable Dossier catalogue discovery
+  backfills unassigned cards only when descriptor keys, legacy
+  `implementationTasks` keys, implementation titles, or the concept promotion
+  ledger identify exactly one Dossier. Ambiguous
+  claims leave the card unassigned. The Dossier read and `/cards` endpoint
+  project assigned cards with lane, state, environment tags, and completed
+  implementation slice count. A decision slice stays incomplete while any
+  implementation card created from its choice remains open. Dossier chat
+  receives the same bounded card list.
   `TaskInfo.ConceptDossier` still detects a repository-relative
   `docs/.../index.html` path from
   `results/deliverables.md` first and `status.md` second. Task detail renders
   that one path only as a compatibility fallback. A concept in `5-human-review` or
   `6-completed` with neither a link nor a deliberate no-dossier explanation
   gets one compact `No dossier linked` notice with the two correction actions.
-  Existing cards are not bulk-migrated. MKT-21 is the reference example and
-  remains a manual backfill rather than an application migration.
+  The legacy Markdown reference is not bulk-migrated. MKT-21 remains a manual
+  correction example for that separate concept delivery contract.
 - The Dossier-key reference reuses the same detail row and operator actions,
   not a second Dossier block. The Markdown detector remains read-only
   compatibility for already-linked cards and never produces a duplicate visible

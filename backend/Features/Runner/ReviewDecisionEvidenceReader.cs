@@ -44,9 +44,13 @@ public static class ReviewDecisionEvidenceReader
     {
         var lines = BoundedFileRead.ReadTailLines(logPath, SourceWindowBytes, out var truncated);
         var selected = lines;
+        var lineOffset = 0;
         if (!truncated && activeEpochLineBoundary is >= 0)
-            selected = lines.Skip(activeEpochLineBoundary.Value <= lines.Count
-                ? activeEpochLineBoundary.Value : 0).ToArray();
+        {
+            lineOffset = activeEpochLineBoundary.Value <= lines.Count
+                ? activeEpochLineBoundary.Value : 0;
+            selected = lines.Skip(lineOffset).ToArray();
+        }
         var text = string.Join('\n', selected);
         var sourceDigest = "sha256:" + Convert.ToHexStringLower(
             SHA256.HashData(Encoding.UTF8.GetBytes(text)));
@@ -67,7 +71,7 @@ public static class ReviewDecisionEvidenceReader
             ("done", done?.LineNumber ?? -1, null),
         }.OrderByDescending(item => item.Line).First();
         ReviewDecisionSignal? signal = latest.Line >= 0
-            ? new(latest.Kind, latest.Line,
+            ? new(latest.Kind, latest.Line + lineOffset,
                 Bound(Redact(latest.Reason ?? string.Empty), 512))
             : ReviewDecisionParsing.LacksTerminalSentinelInLatestRun(text)
                 ? new("no-completion-signal", -1, null) : null;

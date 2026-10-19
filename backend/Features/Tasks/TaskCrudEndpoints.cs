@@ -1239,6 +1239,20 @@ public static class TaskCrudEndpoints
             return ok ? Results.Ok() : Results.NotFound();
         });
 
+        group.MapPut("/{jobId}/dossier", (string jobId, string? project, string? watchPath,
+            TaskDossier? req, TaskScannerService scanner, TaskMutationService mutations,
+            AgentStudio.Registry.ProjectRegistry projects, AgentStudio.Docs.WorkbenchCatalogueService workbenches) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound();
+            if (req != null && (!ConceptDossierContract.IsDossierPath(req.Path)
+                || workbenches.List(info.ProjectName, includeHistory: true)?.Items.Any(item =>
+                    item.Valid && string.Equals(item.EntryPath, req.Path, StringComparison.OrdinalIgnoreCase)) != true))
+                return Results.BadRequest(new { error = "Choose a Dossier in this project." });
+            return mutations.SetJobDossier(jobId, req, watchPath) ? Results.Ok() : Results.NotFound();
+        });
+
         group.MapPut("/{jobId}/title", (string jobId, string? project, string? watchPath, SetJobTitleRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             if (req is null || string.IsNullOrWhiteSpace(req.Title))

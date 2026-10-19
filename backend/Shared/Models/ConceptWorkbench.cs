@@ -19,8 +19,13 @@ public static class ArticlePatterns
 /// <summary>One implementation card proposed by a concept Workbench.</summary>
 public sealed record ConceptImplementationTask
 {
+    public string? Id { get; init; }
     public string Title { get; init; } = "";
     public string PromptMarkdown { get; init; } = "";
+    /// <summary>Optional source section and decision identifiers shown on the card.</summary>
+    public string? Section { get; init; }
+    public string? DecisionId { get; init; }
+    public string[] Environments { get; init; } = [];
     /// <summary>
     /// Optional explicit one-slice boundary. Promotion normalizes every Dossier
     /// item to a bounded acceptance scope; older descriptors without this field

@@ -9,8 +9,8 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
     private static readonly HashSet<string> DeniedSegments = new(StringComparer.OrdinalIgnoreCase)
     {
         "credentials", "remote-hosts", "settings", "quotas", "security", "tokens", "usage",
-        "logs", "raw-logs", "merge", "promotions", "production", "management", "secrets",
-        "output", "trace", "files", "agent-work-detail", "history", "session-events"
+        "logs", "raw-logs", "merge", "promotions", "production", "management",
+        "secrets", "output", "trace", "files", "agent-work-detail", "history", "session-events"
     };
 
     public async Task InvokeAsync(HttpContext context)

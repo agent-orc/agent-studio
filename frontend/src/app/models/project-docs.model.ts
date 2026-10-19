@@ -471,6 +471,20 @@ export interface WorkbenchDocument {
   workingTreeModified: boolean;
   fingerprint: string | null;
   entryFingerprint?: string | null;
+  cards?: DossierCardList | null;
+}
+
+export interface DossierCardList {
+  projectName: string;
+  dossierKey: string | null;
+  dossierPath: string;
+  implementationSlices: number;
+  completedSlices: number;
+  cards: {
+    key: string; id: string; title: string; lane: string; state: string;
+    environments: string[]; section: string | null; decision: string | null;
+    implementationIndex: number | null;
+  }[];
 }
 
 export interface WorkbenchTaskReferences {

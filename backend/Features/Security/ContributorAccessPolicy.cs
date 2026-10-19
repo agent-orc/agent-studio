@@ -5,6 +5,13 @@ namespace AgentStudio.Security;
 /// <summary>Small, fail-closed browser route surface for the Product role.</summary>
 public static class ContributorAccessPolicy
 {
+    private static readonly HashSet<string> DeniedSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "credentials", "hosts", "settings", "quotas", "security", "tokens", "usage",
+        "logs", "raw-logs", "merges", "promotions", "secrets", "integration",
+        "output", "trace", "session-events", "agent-work-detail"
+    };
+
     public static bool AllowsTransition(string? currentState, string? targetState, bool operatorOverride, bool archiveOverride)
         => !operatorOverride && !archiveOverride
             && ((currentState is (TaskStates.Backlog or TaskStates.Ready)
@@ -19,9 +26,7 @@ public static class ContributorAccessPolicy
             || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)) return false;
 
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Any(segment => segment is "credentials" or "hosts" or "settings" or "quotas"
-            or "security" or "tokens" or "usage" or "logs" or "raw-logs"
-            or "merges" or "promotions" or "secrets" or "integration" or "output" or "trace")) return false;
+        if (segments.Any(DeniedSegments.Contains)) return false;
 
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
         {

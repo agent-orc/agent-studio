@@ -3,7 +3,7 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { TaskService } from '../../../../services/task.service';
-import type { ProjectDeploymentSummary, ProjectDeploymentTarget } from '../../../../models/project-overview.model';
+import type { ProjectDeploymentSummary, ProjectDeploymentTarget, ProjectEnvironments } from '../../../../models/project-overview.model';
 import { VisibleCliTaskService, type VisibleCliTaskCreated } from '../../../visible-cli-task';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import { DeploymentDefinitionEditorComponent } from '../deployment-definition-editor/deployment-definition-editor';
@@ -22,6 +22,8 @@ export class ProjectDeploymentPanelComponent {
 
   readonly projectName = input.required<string>();
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
+  readonly environments = signal<ProjectEnvironments | null>(null);
+  readonly environmentError = signal<string | null>(null);
   readonly loading = signal(true);
   readonly requestFailed = signal(false);
   readonly workspaces = signal<WatchPathEntry[]>([]);
@@ -42,6 +44,22 @@ export class ProjectDeploymentPanelComponent {
     this.load(this.projectName());
   }
 
+  decidePromotion(artifact: string, approve: boolean): void {
+    this.environmentError.set(null);
+    this.tasks.decideProjectPromotion(this.projectName(), artifact, approve).subscribe({
+      next: () => this.loadEnvironments(this.projectName()),
+      error: () => this.environmentError.set('Promotion could not be updated.'),
+    });
+  }
+
+  rollbackEnvironment(id: string): void {
+    this.environmentError.set(null);
+    this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
+      next: () => this.loadEnvironments(this.projectName()),
+      error: () => this.environmentError.set('Rollback could not be queued.'),
+    });
+  }
+
   chooseTarget(target: ProjectDeploymentTarget): void {
     this.selectedTarget.set(target);
     this.parameterValues.set(Object.fromEntries(target.parameters.map(parameter => [
@@ -60,6 +78,7 @@ export class ProjectDeploymentPanelComponent {
   }
 
   canRun(target: ProjectDeploymentTarget): boolean {
+    if (target.parameters.some(parameter => parameter.type === 'secret-ref')) return false;
     const values = this.parameterValues();
     const revisionReady = this.revisionMode() === 'tested'
       ? !!this.summary()?.defaultEvidenceRun
@@ -78,6 +97,10 @@ export class ProjectDeploymentPanelComponent {
 
   hasValueParameters(target: ProjectDeploymentTarget): boolean {
     return target.parameters.some(parameter => !this.isStableIdle(parameter.name));
+  }
+
+  hasSecretRefs(target: ProjectDeploymentTarget): boolean {
+    return target.parameters.some(parameter => parameter.type === 'secret-ref');
   }
 
   targetEnvironment(target: ProjectDeploymentTarget): string {
@@ -167,6 +190,7 @@ export class ProjectDeploymentPanelComponent {
   }
 
   private load(projectName: string): void {
+    this.loadEnvironments(projectName);
     this.loading.set(true);
     this.requestFailed.set(false);
     this.tasks.getProjectDeploymentSummary(projectName).subscribe({
@@ -186,6 +210,13 @@ export class ProjectDeploymentPanelComponent {
       },
     });
     this.tasks.getWatchPaths().subscribe({ next: paths => this.workspaces.set(paths) });
+  }
+
+  private loadEnvironments(projectName: string): void {
+    this.tasks.getProjectEnvironments(projectName).subscribe({
+      next: value => this.environments.set(value),
+      error: () => this.environmentError.set('Environments could not be loaded.'),
+    });
   }
 }
 

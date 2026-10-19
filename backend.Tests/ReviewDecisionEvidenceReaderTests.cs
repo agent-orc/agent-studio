@@ -125,6 +125,28 @@ public sealed class ReviewDecisionEvidenceReaderTests
     }
 
     [Fact]
+    public void Recovery_progress_uses_absolute_noop_line_after_epoch_boundary()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "[agent] previous run\n"
+                + "[agent] previous output\n"
+                + "[orchestrator] [reissue] NOOP recovery\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"type\":\"file_change\"}}\n"
+                + "[[TASK_NOOP]]\n");
+
+            var read = ReviewDecisionEvidenceReader.Read(path, activeEpochLineBoundary: 2);
+            Assert.Equal("noop", read.Signal?.Kind);
+            Assert.Equal(5, read.Signal?.LineNumber);
+            var progress = ReviewDecisionEvidenceReader.ReadRecoveryProgress(path, read.Signal!.LineNumber);
+            Assert.True(progress.SawNoOpRecoveryReissue);
+            Assert.Equal(1, progress.FileChanges);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void Omission_reason_survives_when_a_secret_signal_is_outside_the_prompt_window()
     {
         var path = Path.GetTempFileName();
