@@ -564,7 +564,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         Microsoft.Extensions.Logging.ILogger<TaskStateMachine>? stateLogger = null,
         bool enableFailureIntervention = false,
         Func<Task>? gateFailureDecisionCheckpoint = null,
-        Action<IConfigurationRoot>? configure = null)
+        Action<IConfigurationRoot>? configure = null,
+        TaskGateCancellationRegistry? gateCancellation = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -605,7 +606,10 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         _cancellationStateMachine = stateMachine;
         _cancellationMutations = mutations;
         _cancellationScanner = scanner;
-        var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
+        var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings,
+            NullLogger<TaskTransitionService>.Instance, configuration: config,
+            gateCancellation: gateCancellation);
+        _cancellationTransitions = transitions;
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, stateMachine, transitions, indexCache,
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
