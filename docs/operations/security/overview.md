@@ -96,6 +96,69 @@ that is already allowed to edit that project's checkout.
   old one can remain valid until the new daemon is proven.
 - A Runner never receives a human password or session cookie.
 
+### Rights model: role bindings per scope (IP-8)
+
+The networked profile authorizes every human and service-account request
+through role bindings (Dossier integrierte-plattform §9.5, decision IP-D9 A).
+A binding is a principal (user, group, or service account) times a role times
+a scope (the workspace, one project, or one environment of one project). The
+effective permission set is the union of a principal's bindings, direct and
+through its groups. Code: `backend/Features/Security/Iam/`.
+
+| Role | Bindable at | Holds |
+|---|---|---|
+| Owner | workspace | every permission; break-glass role, the only one with `access.manage` and `workspace.administer` |
+| Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write`, `access.read` |
+| Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
+| Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
+| Viewer | workspace, project, environment | reads, secret metadata included |
+| Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
+
+- Every route declares one named permission, such as `project.cards.write`,
+  `environment.production.deploy.approve`, `secrets.write`, or
+  `secrets.resolve`: explicitly with `RequirePermission(...)` or through one
+  rule of `RoutePermissionCatalog`. `RoutePermissionInventoryTests` fails for
+  any mapped route without a declaration, in the local, networked, and
+  standalone-Task-Server host profiles. The middleware refuses an undeclared
+  route with `permission-undeclared`.
+- The route decides the addressed project as before. A binding covers a
+  project route when its scope is the workspace or that project; collection
+  routes accept any binding because their handlers filter per project;
+  workspace-wide routes need a workspace binding. An environment binding
+  grants its environment-level permissions in that environment and read
+  access to the project. `access.*` permissions need a workspace binding.
+- The permission check runs after the existing role, CSRF, Product allowlist,
+  and project-scope checks and only narrows them. Each user record keeps its
+  legacy `role`, `projects`, and `productionApprovalProjects` fields as a
+  summary derived from the bindings (strongest role, union of projects) for
+  handlers that still read them.
+- Service accounts are non-human principals with their own bearer tokens
+  (`sat.` prefix), stored as hashes with expiry (default 90 days, at most one
+  year), last use, and revocation. They need no CSRF token, can hold Admin,
+  Developer, or Viewer, and need a workspace binding on collection routes
+  because handler filtering applies to human principals only. Runners and the
+  engine keep their enrollment credentials and Runner scopes.
+- `secrets.resolve` is granted to service accounts only; a human resolves a
+  secret value only through Owner (write without read, IP-D8 A). No secret
+  routes exist yet; the permissions are declared for IP-6 and IP-7.
+- Migration: loading an access state without bindings creates them once and
+  keeps the original file as `.security/access-state.v0.json`. owner becomes
+  Owner on the workspace, operator becomes Admin, viewer stays Viewer, the
+  Product role becomes Product per assigned project plus Approver on the
+  `production` environment of each production-approval project, and the `*`
+  entry becomes the workspace scope. An operator or viewer with an empty
+  project list held no project and receives no binding; it can no longer use
+  unaddressed workspace routes. A single-user installation migrates its owner
+  and needs no setup; a fresh bootstrap binds the first owner directly.
+- The legacy user endpoints keep working: a role change through
+  `PUT /api/auth/users/{id}` replaces the user's direct bindings and keeps
+  group bindings. Invitations accept explicit `bindings`.
+- Access administration lives under `/api/auth/iam` and in Studio under
+  Settings → Access. The store refuses any change that would leave the
+  installation without an active Owner or that removes the acting Owner's own
+  Owner role. With a standalone Task Server the Studio's accounts are the Task
+  Server's; this area then reports that and manages nothing.
+
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
 for a claimed task is covered by `runner.claim`. Lease requests bind the wire

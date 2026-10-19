@@ -1,0 +1,9 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+.groups { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+.groups__item { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding-bottom: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); }
+.groups__head { display: flex; align-items: center; gap: var(--studio-spacing-2); }
+.groups__head > div { flex: 1; min-width: 0; }
+.groups__members { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); margin: 0; padding: 0; list-style: none; }

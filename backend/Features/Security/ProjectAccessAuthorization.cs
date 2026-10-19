@@ -31,11 +31,26 @@ public static class ProjectAccessAuthorization
         if (string.IsNullOrWhiteSpace(projectHandle)) return false;
         if (user.Projects.Contains(projectHandle, StringComparer.OrdinalIgnoreCase)) return true;
 
-        var project = registry?.FindByIdOrDisplayName(projectHandle)
-                      ?? registry?.FindByShortCode(projectHandle)
-                      ?? registry?.FindByStorageLocation(projectHandle);
+        var project = Resolve(projectHandle, registry);
         return project is not null && user.Projects.Any(allowed => Matches(project, allowed));
     }
+
+    /// <summary>
+    /// True when a granted project entry (id, display name, short code, or
+    /// storage location) names the requested project handle. Role binding
+    /// scopes use the same matching as legacy membership lists.
+    /// </summary>
+    public static bool SameProject(string allowed, string projectHandle, ProjectRegistry? registry = null)
+    {
+        if (string.Equals(allowed, projectHandle, StringComparison.OrdinalIgnoreCase)) return true;
+        var project = Resolve(projectHandle, registry);
+        return project is not null && Matches(project, allowed);
+    }
+
+    private static ProjectRecord? Resolve(string projectHandle, ProjectRegistry? registry)
+        => registry?.FindByIdOrDisplayName(projectHandle)
+           ?? registry?.FindByShortCode(projectHandle)
+           ?? registry?.FindByStorageLocation(projectHandle);
 
     public static IEnumerable<TaskInfo> FilterTasks(
         HttpContext context,

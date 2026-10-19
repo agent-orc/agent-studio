@@ -1,0 +1,20 @@
+<div class="invite" data-testid="access-invite-form">
+  <div class="access-row">
+    <label>Username
+      <input data-testid="access-invite-username" autocomplete="off" [value]="username()" (input)="username.set($any($event.target).value)" />
+    </label>
+    <label>Display name
+      <input data-testid="access-invite-display-name" autocomplete="off" [value]="displayName()" (input)="displayName.set($any($event.target).value)" />
+    </label>
+  </div>
+  <app-access-grant-form [roles]="access.overview()?.roles ?? []" [projects]="access.projects()" principalKind="user" (grantChange)="grant.set($event)" />
+  <div class="access-row">
+    <button type="button" data-testid="access-invite-submit" [disabled]="!canInvite()" (click)="invite()">Create invitation</button>
+  </div>
+  @if (link(); as created) {
+    <div class="invite__link" data-testid="access-invite-link">
+      <p>Send this sign-in link to <strong>{{ created.username }}</strong>. It works once and expires at {{ created.expiresAt }}.</p>
+      <p class="access-secret">{{ created.url }}</p>
+    </div>
+  }
+</div>
