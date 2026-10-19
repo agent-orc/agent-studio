@@ -1,11 +1,26 @@
 # Runner Domain Map
 
-Version: 2026-10-10
+Version: 2026-10-17
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
+
+## Host-owned Codex device login
+
+The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
+Codex login session for a registered host. Task Server holds the browser URL and
+one-time code only in memory. A random session key is returned solely to the
+initiating browser session and is required to read or cancel those instructions.
+The runner claims the command through its outbound Task Server channel, holds a
+local provider login lock, starts `codex login --device-auth` in its own service
+account, and reports the URL and
+code without logging them. A changed local `auth.json` and a successful real
+provider probe are required before completion. Terminal results are audited
+with actor, host, provider and outcome, without the code. Timeout and cancel
+clear the instructions. Each runner keeps its own native credential store;
+neither Task Server nor Studio distributes ChatGPT login files.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

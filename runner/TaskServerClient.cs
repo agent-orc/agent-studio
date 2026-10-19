@@ -25,6 +25,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
+    private readonly string _deviceLoginRunnerId;
     // Per-run caches, evicted on release after pre-settlement evidence transport
     // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
@@ -53,6 +54,7 @@ public sealed class TaskServerClient : IDisposable
     public TaskServerClient(RunnerOptions options)
     {
         _options = options;
+        _deviceLoginRunnerId = options.RunnerId;
         HttpMessageHandler handler = new HttpClientHandler();
         if (!string.IsNullOrWhiteSpace(options.TlsServerCertificateSha256))
         {
@@ -111,6 +113,7 @@ public sealed class TaskServerClient : IDisposable
     {
         _http = http;
         _options = options;
+        _deviceLoginRunnerId = runnerId;
         if (options is not null)
         {
             var configuredTimeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds);
@@ -1192,6 +1195,28 @@ public sealed class TaskServerClient : IDisposable
                    "/api/runner/project-chat/claim", stamped, ct)
                ?? new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
     }
+
+    public async Task<Contract.DeviceLoginClaimDto?> ClaimDeviceLoginAsync(CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/claim",
+            new { }, Json, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.DeviceLoginClaimDto>(Json, ct);
+    }
+
+    public async Task ReportDeviceLoginInstructionsAsync(string handle,
+        Contract.DeviceLoginInstructionsRequest instructions, CancellationToken ct)
+        => await PostJsonWithoutResponseAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/instructions",
+            instructions, ct);
+
+    public async Task CompleteDeviceLoginAsync(string handle,
+        Contract.DeviceLoginCompletionRequest completion, CancellationToken ct)
+        => await PostJsonWithoutResponseAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/completion",
+            completion, ct);
 
     public async Task<bool> RenewProjectChatWorkAsync(
         RemoteChatWorkRenewRequest request,
