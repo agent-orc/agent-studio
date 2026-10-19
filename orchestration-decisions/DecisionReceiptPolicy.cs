@@ -13,7 +13,9 @@ public sealed record DecisionModelResponse(
     string? Reasoning,
     IReadOnlyList<string> CitedFacts,
     string? Prediction,
-    string? Uncertainty);
+    string? Uncertainty,
+    string? Assessment = null,
+    string? Report = null);
 
 /// <summary>What the engine observed for one shadow decision occurrence.</summary>
 public sealed record DecisionReceiptFacts(
@@ -42,6 +44,7 @@ public static class DecisionReceiptPolicy
     public const string ShadowDispatch = "not-dispatched:shadow";
     public const string ActiveDispatch = "submitted:authority-adapter";
     public const string ActiveHold = "held:operator-ai";
+    public const string PeriodicDispatch = "proposed:host-authority";
     public const string DegradedTarget = "decision-unavailable";
     public const int MaxReasoningChars = 2_000;
     public const int MaxResponseChars = 16_384;
@@ -57,7 +60,7 @@ public static class DecisionReceiptPolicy
     {
         var maxActions = grounds.Scope.Kind == "card" ? "exactly one" : "zero to three";
         return $$"""
-            You decide the next typed action of one orchestrator transition in Agent Studio.
+            You decide one bounded orchestrator occurrence in Agent Studio.
             Read only the frozen decision grounds below. Do not run tools, read files or query sessions.
             Choose {{maxActions}} action from the alternatives whose "available" is true.
             Signals are questions to weigh, not commands. Missing or unpriced cost raises uncertainty;
@@ -70,7 +73,9 @@ public static class DecisionReceiptPolicy
              "reasoning":"<at most 120 words>",
              "citedFacts":["<fact id>"],
              "prediction":"<expected next receipt, chance of completion, incremental spend and time>",
-             "uncertainty":"<missing evidence or none>"}
+             "uncertainty":"<missing evidence or none>",
+             "assessment":"<periodic assessment when applicable>",
+             "report":"<periodic report, at most 600 characters>"}
 
             Decision grounds ({{grounds.SchemaVersion}}, digest {{grounds.ContentDigest}}):
             {{JsonSerializer.Serialize(grounds, DecisionGroundsPolicy.Json)}}
@@ -120,6 +125,10 @@ public static class DecisionReceiptPolicy
             var reasoning = Text(root, "reasoning")?.Trim();
             if (string.IsNullOrWhiteSpace(reasoning))
                 return Invalid("missing-reasoning", Rejected(chosen, "missing-reasoning"));
+            if (grounds.Scope.Kind == "host" && grounds.Trigger.Profile == "capacity-check"
+                && (string.IsNullOrWhiteSpace(Text(root, "assessment"))
+                    || string.IsNullOrWhiteSpace(Text(root, "report"))))
+                return Invalid("missing-periodic-report", Rejected(chosen, "missing-periodic-report"));
             var factIds = grounds.Facts.Select(fact => fact.Id).ToHashSet(StringComparer.Ordinal);
             var cited = root.TryGetProperty("citedFacts", out var facts) && facts.ValueKind == JsonValueKind.Array
                 ? facts.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
@@ -136,7 +145,8 @@ public static class DecisionReceiptPolicy
                 : [];
             return new(true, null, chosen.Select(choice => choice with { Outcome = ShadowDispatch }).ToArray(),
                 considered, confidence, Bound(reasoning, MaxReasoningChars), cited,
-                Bound(Text(root, "prediction"), 1_000), Bound(Text(root, "uncertainty"), 1_000));
+                Bound(Text(root, "prediction"), 1_000), Bound(Text(root, "uncertainty"), 1_000),
+                Bound(Text(root, "assessment"), 1_000), Bound(Text(root, "report"), 600));
         }
     }
 
@@ -160,7 +170,9 @@ public static class DecisionReceiptPolicy
         var callStatus = tokenCapExceeded ? DecisionCallStatuses.Unavailable
             : unavailable ?? (response!.Valid ? DecisionCallStatuses.Completed
             : DecisionCallStatuses.InvalidResponse);
-        var dispatch = facts.Mode == ActiveMode
+        var dispatch = facts.Mode == ActiveMode && grounds.Scope.Kind != "card"
+            ? response is { Valid: true } ? PeriodicDispatch : ActiveHold
+            : facts.Mode == ActiveMode
             ? response is { Valid: true } && response.Chosen.Count == 1
                 && response.Chosen[0].Action != DecisionActionKinds.Ask
                 ? ActiveDispatch : ActiveHold
@@ -227,7 +239,7 @@ public static class DecisionReceiptPolicy
             result?.StartedAt ?? grounds.Trigger.ObservedAt,
             result?.EndedAt ?? grounds.Trigger.ObservedAt,
             grounds,
-            Bound(result?.ResponseText, MaxResponseChars));
+            Bound(result?.ResponseText, MaxResponseChars), response?.Assessment, response?.Report);
     }
 
     private static IReadOnlyList<DecisionChoiceV1> Rejected(IReadOnlyList<DecisionChoiceV1> chosen, string reason)

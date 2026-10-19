@@ -1177,7 +1177,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         var hostRow = Assert.Single(store.ListReceipts(null, 10));
         Assert.Null(hostRow.TaskId);
         Assert.Null(hostRow.ProjectId);
-        Assert.Equal("decision-step", hostRow.Actor);
+        Assert.Equal("ai-operator", hostRow.Actor);
         Assert.Equal(1, store.SpendSummary(null, null).Occurrences);
         Assert.Equal(0, store.SpendSummary("AGT-1", null).Occurrences);
     }

@@ -189,7 +189,9 @@ public sealed class ShadowDecisionService(
     {
         try
         {
-            var receipt = await step.RecordAsync(occurrenceId, ct);
+            var input = await plane.GetGroundsInputAsync(occurrenceId, ct);
+            if (input is null) return;
+            var receipt = await step.RecordAsync(occurrenceId, ct, input.Mode);
             if (receipt is not null)
                 logger.LogInformation(
                     "shadow decision recorded; occurrence={Occurrence} receipt={Receipt} call={Call} matches={Matches}",

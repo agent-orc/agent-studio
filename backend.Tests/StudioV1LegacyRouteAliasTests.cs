@@ -2,11 +2,19 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Host;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Registry;
+using AgentStudio.Runner;
+using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
+using System.Net.Http.Headers;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -183,6 +191,79 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync("/api/tasks/grouped")).StatusCode);
     }
 
+    [Fact]
+    public async Task Proxy_profile_records_card_free_decisions_on_the_engine_visible_receipt_plane()
+    {
+        var upstream = new RecordingUpstream();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 8, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory("http://task-server.invalid", upstream, clock);
+        var workspace = factory.Services.GetRequiredService<WorkspaceRegistry>().Create("Capacity", clock: clock);
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var engine = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "engine-one", [RunnerScopes.Orchestration], null, null)).Code);
+        using var browser = CreateClient(factory);
+        browser.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
+        Assert.Equal(HttpStatusCode.OK,
+            (await browser.GetAsync($"/api/workspaces/{workspace.Id}/decision-rules")).StatusCode);
+        var occurrence = "capacity:host-1:sample";
+        var response = await browser.PostAsJsonAsync("/api/v1/orchestration/host-decisions",
+            new HostDecisionOccurrenceRequestV1(occurrence, workspace.Id, "host-1",
+                "capacity-check", "capacity-check", clock.GetUtcNow().UtcDateTime, [], [], [], "scheduled"));
+        response.EnsureSuccessStatusCode();
+        var frozen = await response.Content.ReadFromJsonAsync<DecisionShadowInputV1>();
+        Assert.NotNull(frozen);
+        Assert.Equal("host", frozen.Grounds.Scope.Kind);
+        Assert.Equal([occurrence], await browser.GetFromJsonAsync<string[]>(
+            "/api/v1/orchestration/decision-grounds/pending?limit=10"));
+        var read = await browser.GetFromJsonAsync<DecisionShadowInputV1>(
+            $"/api/v1/orchestration/runs/{occurrence}/grounds-input");
+        Assert.Equal(occurrence, read?.Grounds.OccurrenceId);
+        var grounds = DecisionGroundsPolicy.Freeze(frozen.Grounds);
+        var jobResponse = await browser.PostAsJsonAsync("/api/v1/orchestration/decision-jobs",
+            new OrchestratorDecisionJobRequest(occurrence, "", "", 1, grounds.ContentDigest,
+                DecisionReceiptPolicy.RenderPrompt(grounds), "codex", grounds.ModelRoute.Model,
+                grounds.ModelRoute.ThinkingLevel, 8_000, 1_000));
+        jobResponse.EnsureSuccessStatusCode();
+        var job = await jobResponse.Content.ReadFromJsonAsync<OrchestratorDecisionJobDto>();
+        Assert.NotNull(job);
+        Assert.Equal(job.JobId, (await browser.GetFromJsonAsync<OrchestratorDecisionJobDto>(
+            $"/api/v1/orchestration/decision-jobs/{job.JobId}"))?.JobId);
+        var claimResponse = await browser.PostAsJsonAsync("/api/runner/orchestrator-decisions/claim",
+            new OrchestratorDecisionJobClaimRequest("runner-1", "runner-1"));
+        claimResponse.EnsureSuccessStatusCode();
+        var claim = (await claimResponse.Content.ReadFromJsonAsync<OrchestratorDecisionJobClaimResponse>())?.Work;
+        Assert.NotNull(claim);
+        var completionResponse = await browser.PostAsJsonAsync("/api/runner/orchestrator-decisions/complete",
+            new OrchestratorDecisionJobCompletion(claim.JobId, claim.ClaimToken, "runner-1", true,
+                """{"chosenActions":[],"confidence":0.8,"reasoning":"Capacity is stable.","citedFacts":[],"assessment":"Stable","report":"No action needed."}""",
+                grounds.ModelRoute.Model, [new("call-1", grounds.ModelRoute.Model, 100, 0, 0, 20, false)],
+                clock.GetUtcNow().UtcDateTime, clock.GetUtcNow().UtcDateTime.AddSeconds(2), null, false));
+        completionResponse.EnsureSuccessStatusCode();
+        job = await browser.GetFromJsonAsync<OrchestratorDecisionJobDto>(
+            $"/api/v1/orchestration/decision-jobs/{job.JobId}");
+        Assert.Equal(DecisionJobStatuses.Completed, job?.Status);
+        var receipt = DecisionReceiptPolicy.Build(new(grounds,
+            new(DecisionActionKinds.Observe, "host-1", "applied:deterministic"),
+            "Host occurrence", job, 1, false, null, DecisionReceiptPolicy.ActiveMode));
+        (await browser.PutAsJsonAsync($"/api/v1/orchestration/runs/{occurrence}/decision-receipt", receipt))
+            .EnsureSuccessStatusCode();
+        Assert.Empty(await browser.GetFromJsonAsync<string[]>(
+            "/api/v1/orchestration/decision-grounds/pending?limit=10"));
+        var historyResponse = await browser.GetAsync("/api/orchestration/decision-receipts?hostId=host-1");
+        var historyJson = await historyResponse.Content.ReadAsStringAsync();
+        Assert.True(historyResponse.IsSuccessStatusCode,
+            $"Host history returned {(int)historyResponse.StatusCode}: {historyJson}");
+        using var history = JsonDocument.Parse(historyJson);
+        Assert.Equal(occurrence, history.RootElement[0].GetProperty("occurrenceId").GetString());
+        Assert.Null(history.RootElement[0].GetProperty("taskId").GetString());
+        Assert.Equal(120, history.RootElement[0].GetProperty("totalTokens").GetInt32());
+        Assert.DoesNotContain(upstream.Paths, path => path.Contains("decision-grounds", StringComparison.Ordinal)
+            || path.Contains("decision-jobs", StringComparison.Ordinal)
+            || path.Contains("decision-receipt", StringComparison.Ordinal)
+            || path.Contains("host-decisions", StringComparison.Ordinal)
+            || path.Contains("orchestrator-decisions", StringComparison.Ordinal));
+    }
+
     private static async Task AssertSameBodyAsync(HttpClient client, string versioned, string legacy)
     {
         var fromVersioned = await client.GetStringAsync(versioned);
@@ -197,17 +278,25 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
         return client;
     }
 
-    private WebApplicationFactory<Program> BuildFactory(string? taskServerBaseUrl, RecordingUpstream? upstream = null)
+    private WebApplicationFactory<Program> BuildFactory(string? taskServerBaseUrl, RecordingUpstream? upstream = null,
+        TimeProvider? clock = null)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             // Program registers the proxy client before these configuration
             // overrides are visible, so the test sets its origin directly.
-            if (upstream is not null)
-                builder.ConfigureTestServices(services => services
-                    .AddHttpClient(TaskServerPlaneProxy.ClientName)
-                    .ConfigureHttpClient(client => client.BaseAddress = new Uri(taskServerBaseUrl!.TrimEnd('/') + "/"))
-                    .ConfigurePrimaryHttpMessageHandler(() => upstream));
+            builder.ConfigureTestServices(services =>
+            {
+                if (clock is not null)
+                {
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton<TimeProvider>(clock);
+                }
+                if (upstream is not null)
+                    services.AddHttpClient(TaskServerPlaneProxy.ClientName)
+                        .ConfigureHttpClient(client => client.BaseAddress = new Uri(taskServerBaseUrl!.TrimEnd('/') + "/"))
+                        .ConfigurePrimaryHttpMessageHandler(() => upstream);
+            });
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _workspace,

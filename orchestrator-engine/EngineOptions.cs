@@ -8,6 +8,9 @@ public sealed class EngineOptions
     public required string ClientId { get; init; }
     public string? ClientCredential { get; init; }
     public string? ClientCredentialFile { get; init; }
+    public string? DecisionPlaneUrl { get; init; }
+    public string? DecisionPlaneClientCredential { get; init; }
+    public string? DecisionPlaneClientCredentialFile { get; init; }
     public bool AllowInsecureHttp { get; init; }
     public int ReviewConcurrency { get; init; } = 4;
     public int CouncilConcurrency { get; init; } = 4;
@@ -66,6 +69,21 @@ public sealed class EngineOptions
         var openAiCredential = OptionalCredential(value, "ADVISOR_OPENAI_CREDENTIAL");
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
+        var decisionUrl = value("DECISION_PLANE_URL")?.Trim().TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(decisionUrl))
+        {
+            if (!Uri.TryCreate(decisionUrl, UriKind.Absolute, out var decisionUri)
+                || decisionUri.Scheme is not ("http" or "https"))
+                throw new ArgumentException("DECISION_PLANE_URL must be an absolute HTTP or HTTPS URL.");
+            if (decisionUri.Scheme == "http" && !decisionUri.IsLoopback && !allowInsecureHttp)
+                throw new ArgumentException("DECISION_PLANE_URL must use HTTPS unless it is loopback or ENGINE_ALLOW_INSECURE_HTTP=1.");
+        }
+        var decisionCredential = value("DECISION_PLANE_CLIENT_CREDENTIAL")?.Trim();
+        var decisionCredentialFile = value("DECISION_PLANE_CLIENT_CREDENTIAL_FILE")?.Trim();
+        if (!string.IsNullOrWhiteSpace(decisionCredential) && !string.IsNullOrWhiteSpace(decisionCredentialFile))
+            throw new ArgumentException("Configure only one of DECISION_PLANE_CLIENT_CREDENTIAL or DECISION_PLANE_CLIENT_CREDENTIAL_FILE.");
+        if (!string.IsNullOrWhiteSpace(decisionCredentialFile))
+            decisionCredential = ReadCredentialFile(decisionCredentialFile, "DECISION_PLANE_CLIENT_CREDENTIAL_FILE");
 
         return new EngineOptions
         {
@@ -73,6 +91,9 @@ public sealed class EngineOptions
             ClientId = Required(value, "CLIENT_ID"),
             ClientCredential = string.IsNullOrWhiteSpace(credential) ? null : credential,
             ClientCredentialFile = string.IsNullOrWhiteSpace(credentialFile) ? null : credentialFile,
+            DecisionPlaneUrl = decisionUrl,
+            DecisionPlaneClientCredential = string.IsNullOrWhiteSpace(decisionCredential) ? null : decisionCredential,
+            DecisionPlaneClientCredentialFile = string.IsNullOrWhiteSpace(decisionCredentialFile) ? null : decisionCredentialFile,
             AllowInsecureHttp = allowInsecureHttp,
             ReviewConcurrency = Cap(value, "REVIEW_CONCURRENCY", 4),
             CouncilConcurrency = Cap(value, "COUNCIL_CONCURRENCY", 4),

@@ -47,6 +47,7 @@ builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
+builder.Services.AddSingleton<DecisionRuleVersionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
@@ -1307,15 +1308,21 @@ app.Use(async (context, next) =>
         context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
     await next(context);
 });
-// An explicitly selected standalone Task Server owns all task data. Legacy
-// /api handlers still use TaskRepository; do not let compatibility traffic
-// create a second authority while their route migration is unfinished.
+// An explicitly selected standalone Task Server owns task data. Legacy task
+// handlers still use TaskRepository; keep them closed while Studio's decision
+// rule, receipt and runner-job routes remain on the Studio receipt plane.
 if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
 {
     app.Use(async (context, next) =>
     {
+        var path = context.Request.Path;
+        var studioDecisionPath = path.StartsWithSegments("/api/orchestration/decision-receipts")
+            || path.StartsWithSegments("/api/runner/orchestrator-decisions")
+            || (path.StartsWithSegments("/api/workspaces")
+                && path.Value?.Contains("/decision-rules", StringComparison.OrdinalIgnoreCase) == true);
         if (context.Request.Path.StartsWithSegments("/api")
-            && !context.Request.Path.StartsWithSegments("/api/v1"))
+            && !context.Request.Path.StartsWithSegments("/api/v1")
+            && !studioDecisionPath)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             await context.Response.WriteAsJsonAsync(new { code = "route-not-on-task-server" });
