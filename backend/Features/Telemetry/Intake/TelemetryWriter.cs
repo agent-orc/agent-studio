@@ -4,15 +4,17 @@ namespace AgentStudio.Telemetry;
 
 /// <summary>
 /// The only writer of the telemetry store. It drains the intake queue in
-/// batches of up to <see cref="MaxRecordsPerFlush"/> records, groups them per
-/// environment into one transaction each, masks log text, calls the export
-/// hooks, and runs the retention sweep every
-/// <see cref="TelemetryOptions.RetentionSweepMinutes"/>. Studio requests never
-/// wait for this loop.
+/// batches of up to <see cref="MaxRecordsPerFlush"/> records or
+/// <see cref="MaxBytesPerFlush"/> estimated bytes, groups them per environment
+/// into one transaction each, masks log bodies and the attribute values of logs
+/// and metrics, calls the export hooks, and runs the retention sweep and the
+/// global minute-bucket cap every <see cref="TelemetryOptions.RetentionSweepMinutes"/>.
+/// Studio requests never wait for this loop.
 /// </summary>
 public sealed class TelemetryWriter : BackgroundService
 {
     public const int MaxRecordsPerFlush = 20_000;
+    public const long MaxBytesPerFlush = 32L * 1024 * 1024;
     private readonly TelemetryIntakeQueue _queue;
     private readonly TelemetryStore _store;
     private readonly IReadOnlyList<ITelemetryExportSink> _sinks;
@@ -67,18 +69,23 @@ public sealed class TelemetryWriter : BackgroundService
     {
         var batches = new List<TelemetryIngestBatch>();
         var records = 0;
-        while (records < MaxRecordsPerFlush && _queue.TryDequeue(out var batch))
+        long bytes = 0;
+        while (records < MaxRecordsPerFlush && bytes < MaxBytesPerFlush && _queue.TryDequeue(out var batch))
         {
             batches.Add(batch);
             records += batch.RecordCount;
+            bytes += batch.EstimatedBytes;
         }
         if (batches.Count == 0) return 0;
         try
         {
+            var mask = new FlushMask(_masker);
             foreach (var group in batches.GroupBy(batch => batch.Environment))
             {
-                var metrics = group.SelectMany(batch => batch.Metrics).ToList();
-                var logs = group.SelectMany(batch => batch.Logs).Select(Mask).ToList();
+                var metrics = group.SelectMany(batch => batch.Metrics)
+                    .Select(sample => sample with { Attributes = mask.Attributes(sample.Attributes) }).ToList();
+                var logs = group.SelectMany(batch => batch.Logs)
+                    .Select(log => log with { Body = _masker.Mask(log.Body), Attributes = mask.Attributes(log.Attributes) }).ToList();
                 try
                 {
                     var result = _store.Write(group.Key, metrics, logs, _clock.GetUtcNow());
@@ -97,17 +104,18 @@ public sealed class TelemetryWriter : BackgroundService
         }
         finally
         {
-            _queue.Release(records);
+            _queue.Release(records, bytes);
         }
         return records;
     }
 
-    /// <summary>Applies retention to every environment database.</summary>
+    /// <summary>Applies retention to every environment database, then the global minute-bucket cap.</summary>
     public void SweepRetention()
     {
         var now = _clock.GetUtcNow();
         _nextSweep = now + TimeSpan.FromMinutes(_options.RetentionSweepMinutes);
-        foreach (var environment in _store.KnownEnvironments())
+        var environments = _store.KnownEnvironments();
+        foreach (var environment in environments)
         {
             try
             {
@@ -122,10 +130,19 @@ public sealed class TelemetryWriter : BackgroundService
                 _logger.LogError(ex, "Telemetry retention failed for {Environment}", environment);
             }
         }
+        try
+        {
+            var trimmed = _store.EnforceMinuteBucketCap(environments);
+            if (trimmed.Buckets > 0)
+                _logger.LogWarning(
+                    "Telemetry minute buckets exceeded {Limit} bytes; removed {Buckets} buckets older than {Cutoff:o} (hour buckets kept)",
+                    _options.MaxMinuteBucketBytes, trimmed.Buckets, trimmed.Cutoff);
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(ex, "Telemetry minute-bucket cap failed");
+        }
     }
-
-    private TelemetryLogRecord Mask(TelemetryLogRecord log)
-        => log with { Body = _masker.Mask(log.Body), Attributes = log.Attributes.MapValues(_masker.Mask) };
 
     private async Task ExportAsync(TelemetryExportBatch batch, CancellationToken cancellationToken)
     {
@@ -139,6 +156,30 @@ public sealed class TelemetryWriter : BackgroundService
             {
                 _logger.LogWarning(ex, "Telemetry export sink {Sink} failed for {Environment}", sink.Name, batch.Environment);
             }
+        }
+    }
+
+    /// <summary>
+    /// Masks attribute values for one flush. A shared resource and scope set is
+    /// masked once and stays shared, and a value string that many records refer
+    /// to is masked once.
+    /// </summary>
+    private sealed class FlushMask(ITelemetryValueMasker masker)
+    {
+        private readonly Dictionary<TelemetryAttributes, TelemetryAttributes> _sets = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<string, string> _values = new(ReferenceEqualityComparer.Instance);
+
+        public TelemetryAttributes Attributes(TelemetryAttributes attributes)
+        {
+            if (!attributes.IsShared) return attributes.MapValues(Value);
+            if (!_sets.TryGetValue(attributes, out var masked)) _sets[attributes] = masked = attributes.MapValues(Value);
+            return masked;
+        }
+
+        private string Value(string value)
+        {
+            if (!_values.TryGetValue(value, out var masked)) _values[value] = masked = masker.Mask(value);
+            return masked;
         }
     }
 }

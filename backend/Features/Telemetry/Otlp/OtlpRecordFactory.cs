@@ -28,20 +28,37 @@ internal sealed class OtlpLogFields
     public string? EventName { get; set; }
 }
 
+/// <summary>The request is larger than the intake accepts; decoding stopped at the limit.</summary>
+public sealed class OtlpLimitException(string message) : Exception(message);
+
 /// <summary>
 /// Turns decoded fields into stored records and counts what it cannot use.
 /// Shared by the protobuf and JSON decoders so both encodings accept and reject
 /// the same data.
+/// <para>It also bounds the memory of one request while the request is decoded:
+/// every resource and scope gets one shared attribute set, a record without
+/// attributes of its own refers to that set, and each record adds an estimate of
+/// the memory it holds. Past <see cref="OtlpLimits.MaxRecords"/> records or
+/// <see cref="OtlpLimits.MaxDecodedBytes"/> estimated bytes it throws
+/// <see cref="OtlpLimitException"/>, so decoding stops before the rest of the
+/// body is turned into records.</para>
 /// </summary>
 internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano)
 {
     /// <summary>OTLP DataPointFlags.FLAG_NO_RECORDED_VALUE: a staleness marker, not a value.</summary>
     private const uint NoRecordedValue = 1;
+    private const int MaxUnitChars = 63;
+    /// <summary>Object header, fields, and list slot of one record; strings and attribute sets come on top.</summary>
+    private const int RecordBytes = 160;
+    private const int StringHeaderBytes = 24;
+    private const int ReferenceBytes = 16;
 
     private readonly List<MetricSample> _metrics = [];
     private readonly List<TelemetryLogRecord> _logs = [];
     private long _rejected;
     private string? _message;
+    private long _records;
+    private long _estimatedBytes;
 
     public OtlpLimits Limits => limits;
 
@@ -52,9 +69,23 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         _message ??= reason;
     }
 
-    public void AddPoint(string name, string unit, MetricKind kind, MetricTemporality temporality,
-        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpPointFields point)
+    /// <summary>The attribute set every record of one resource and scope refers to; the scope name becomes <c>otel.scope.name</c>.</summary>
+    public TelemetryAttributes Scope(IReadOnlyList<KeyValuePair<string, string>> resource, string scopeName)
     {
+        var builder = new OtlpAttributeBuilder(limits).AddRange(resource);
+        if (scopeName.Length > 0) builder.Add("otel.scope.name", scopeName);
+        var shared = builder.Build(shared: true);
+        // The strings, the reference array, and the JSON text the store caches for a shared set.
+        long bytes = RecordBytes + ReferenceBytes * shared.Count;
+        foreach (var (key, value) in shared.Items) bytes += 2 * StringHeaderBytes + 4L * (key.Length + value.Length + 6);
+        Account(bytes);
+        return shared;
+    }
+
+    public void AddPoint(string name, string unit, MetricKind kind, MetricTemporality temporality,
+        TelemetryAttributes scope, OtlpPointFields point)
+    {
+        CountRecord();
         if (string.IsNullOrWhiteSpace(name) || name.Length > 255)
         {
             Reject("Metric name is missing or longer than 255 characters.");
@@ -88,14 +119,17 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
                 return;
             }
         }
-        var attributes = new OtlpAttributeBuilder(limits).AddRange(resource).AddRange(point.Attributes).Build();
+        var attributes = Merge(scope, point.Attributes);
+        unit = OtlpAttributeBuilder.Truncate(unit, MaxUnitChars);
+        Account(RecordBytes + StringBytes(name) + StringBytes(unit) + OwnBytes(attributes, point.Attributes));
         _metrics.Add(new MetricSample(name, unit, kind, temporality, attributes,
             point.TimeUnixNano == 0 ? receivedUnixNano : point.TimeUnixNano, point.StartTimeUnixNano,
             value, count, Finite(point.Min), Finite(point.Max)));
     }
 
-    public void AddLog(IReadOnlyList<KeyValuePair<string, string>> resource, OtlpLogFields log)
+    public void AddLog(TelemetryAttributes scope, OtlpLogFields log)
     {
+        CountRecord();
         if (log.TimeUnixNano < 0 || log.ObservedTimeUnixNano < 0)
         {
             Reject("Log record timestamp is out of range.");
@@ -108,20 +142,56 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
             : OtlpAttributeBuilder.Truncate(log.SeverityText.Trim(), 32);
         var time = log.TimeUnixNano != 0 ? log.TimeUnixNano
             : log.ObservedTimeUnixNano != 0 ? log.ObservedTimeUnixNano : receivedUnixNano;
-        var attributes = new OtlpAttributeBuilder(limits).AddRange(resource).AddRange(log.Attributes).Build();
-        _logs.Add(new TelemetryLogRecord(time, severity, severityText,
-            OtlpAttributeBuilder.Truncate(log.Body, limits.MaxBodyChars), attributes,
-            log.TraceId, log.SpanId,
-            string.IsNullOrEmpty(log.EventName) ? null : OtlpAttributeBuilder.Truncate(log.EventName, 255)));
+        var attributes = Merge(scope, log.Attributes);
+        var body = OtlpAttributeBuilder.Truncate(log.Body, limits.MaxBodyChars);
+        var eventName = string.IsNullOrEmpty(log.EventName) ? null : OtlpAttributeBuilder.Truncate(log.EventName, 255);
+        Account(RecordBytes + StringBytes(body) + StringBytes(severityText) + StringBytes(eventName)
+            + StringBytes(log.TraceId) + StringBytes(log.SpanId) + OwnBytes(attributes, log.Attributes));
+        _logs.Add(new TelemetryLogRecord(time, severity, severityText, body, attributes, log.TraceId, log.SpanId, eventName));
     }
 
-    public OtlpDecodeResult<MetricSample> Metrics() => new(_metrics, _rejected, _message);
+    public OtlpDecodeResult<MetricSample> Metrics() => new(_metrics, _rejected, _message, _estimatedBytes);
 
-    public OtlpDecodeResult<TelemetryLogRecord> Logs() => new(_logs, _rejected, _message);
+    public OtlpDecodeResult<TelemetryLogRecord> Logs() => new(_logs, _rejected, _message, _estimatedBytes);
 
     /// <summary>Lowercase hex of a trace or span id; all-zero and wrong-length ids are absent.</summary>
     public static string? Identifier(ReadOnlySpan<byte> bytes, int expectedLength)
         => bytes.Length != expectedLength || !bytes.ContainsAnyExcept((byte)0) ? null : Convert.ToHexStringLower(bytes);
+
+    /// <summary>
+    /// The shared scope set itself when the record adds nothing to it (no
+    /// attributes, or none that fit); otherwise a merged copy of references.
+    /// </summary>
+    private TelemetryAttributes Merge(TelemetryAttributes scope, List<KeyValuePair<string, string>> own)
+    {
+        if (own.Count == 0) return scope;
+        var builder = new OtlpAttributeBuilder(limits, scope).AddRange(own);
+        return builder.Changed ? builder.Build() : scope;
+    }
+
+    /// <summary>A record's own set: the reference array plus the strings decoded for this record only.</summary>
+    private static long OwnBytes(TelemetryAttributes attributes, List<KeyValuePair<string, string>> own)
+    {
+        if (attributes.IsShared) return 0;
+        long bytes = RecordBytes + ReferenceBytes * attributes.Count;
+        foreach (var (key, value) in own) bytes += StringBytes(key) + StringBytes(value);
+        return bytes;
+    }
+
+    private static long StringBytes(string? value) => value is null ? 0 : StringHeaderBytes + 2L * value.Length;
+
+    private void CountRecord()
+    {
+        if (++_records > limits.MaxRecords)
+            throw new OtlpLimitException($"The request has more than {limits.MaxRecords} data points or log records.");
+    }
+
+    private void Account(long bytes)
+    {
+        _estimatedBytes += bytes;
+        if (_estimatedBytes > limits.MaxDecodedBytes)
+            throw new OtlpLimitException($"The decoded request needs more than {limits.MaxDecodedBytes} bytes of memory.");
+    }
 
     private static double? Finite(double? value) => value is { } number && double.IsFinite(number) ? number : null;
 }

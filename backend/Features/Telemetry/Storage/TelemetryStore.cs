@@ -8,13 +8,21 @@ public sealed record TelemetryWriteResult(int StoredPoints, int RejectedSeriesPo
 
 public sealed record TelemetryRetentionResult(int MinuteBuckets, int HourBuckets, int Series, int Logs);
 
+/// <summary>Minute buckets removed by the global cap, all older than <paramref name="Cutoff"/>.</summary>
+public sealed record TelemetryMinuteCapResult(long Buckets, DateTimeOffset? Cutoff);
+
 /// <summary>
 /// Built-in single-host store: one SQLite database (WAL) per project
 /// environment under <c>&lt;TaskRepository&gt;/telemetry/&lt;project&gt;/&lt;environment&gt;.sqlite</c>.
 /// Metrics are kept as minute and hour buckets per series (count, sum, min,
 /// max, last), both written by the same transaction. Logs are rows with a
 /// running byte total; when it passes the per-environment cap, the oldest
-/// records are removed until the total is at 90 percent of the cap.
+/// records are removed until the total is at 90 percent of the cap. New series
+/// are refused past <see cref="TelemetryOptions.MaxSeriesPerEnvironment"/> series
+/// or <see cref="TelemetryOptions.MaxSeriesBytesPerEnvironment"/> bytes of names
+/// and attribute JSON. Minute buckets of all environments together are capped at
+/// <see cref="TelemetryOptions.MaxMinuteBucketBytes"/> by
+/// <see cref="EnforceMinuteBucketCap"/>, which removes the oldest hours first.
 /// <para>Writes and retention run on the single <see cref="TelemetryWriter"/>
 /// loop and are serialized by a lock; queries open their own read connection.</para>
 /// </summary>
@@ -22,6 +30,8 @@ public sealed partial class TelemetryStore
 {
     private static readonly Regex EnvironmentId = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private const string LogBytesKey = "log_bytes";
+    /// <summary>Estimated disk bytes of one minute bucket: the row plus its entry in the bucket index.</summary>
+    internal const long MinuteBucketRowBytes = 96;
     private readonly TelemetryOptions _options;
     private readonly ILogger<TelemetryStore> _logger;
     private readonly object _writeGate = new();
@@ -109,6 +119,54 @@ public sealed partial class TelemetryStore
         }
     }
 
+    /// <summary>
+    /// Keeps the minute buckets of all environments together under
+    /// <see cref="TelemetryOptions.MaxMinuteBucketBytes"/> (estimated at
+    /// <see cref="MinuteBucketRowBytes"/> per bucket). When the total is above
+    /// the cap, whole hours are removed oldest first, across every environment,
+    /// until the total is at 90 percent of the cap. Hour buckets stay, so older
+    /// ranges keep their hourly resolution.
+    /// </summary>
+    public TelemetryMinuteCapResult EnforceMinuteBucketCap(IReadOnlyList<TelemetryEnvironmentKey> environments)
+    {
+        var maxRows = _options.MaxMinuteBucketBytes / MinuteBucketRowBytes;
+        lock (_writeGate)
+        {
+            var perHour = new SortedDictionary<long, long>();
+            long total = 0;
+            foreach (var environment in environments)
+            {
+                using var connection = Open(DatabasePath(environment), create: false);
+                if (connection is null) continue;
+                using var command = Command(connection, null, "SELECT bucket / 3600 * 3600, COUNT(*) FROM metric_minute GROUP BY 1");
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var (hour, count) = (reader.GetInt64(0), reader.GetInt64(1));
+                    perHour[hour] = perHour.GetValueOrDefault(hour) + count;
+                    total += count;
+                }
+            }
+            if (total <= maxRows) return new TelemetryMinuteCapResult(0, null);
+            var target = maxRows / 10 * 9;
+            long cutoff = 0, removed = 0;
+            foreach (var (hour, count) in perHour)
+            {
+                if (total - removed <= target) break;
+                removed += count;
+                cutoff = hour + 3600;
+            }
+            foreach (var environment in environments)
+            {
+                using var connection = Open(DatabasePath(environment), create: false);
+                if (connection is null) continue;
+                Execute(connection, null, "DELETE FROM metric_minute WHERE bucket < $cutoff", ("$cutoff", cutoff));
+                Execute(connection, null, "PRAGMA incremental_vacuum");
+            }
+            return new TelemetryMinuteCapResult(removed, DateTimeOffset.FromUnixTimeSeconds(cutoff));
+        }
+    }
+
     private string Root => _options.StoreRoot
         ?? throw new InvalidOperationException("Telemetry:StoreRoot or TaskRepository is required for the telemetry store.");
 
@@ -130,17 +188,22 @@ public sealed partial class TelemetryStore
         var touched = new HashSet<SeriesEntry>();
         foreach (var sample in metrics.OrderBy(item => item.TimeUnixNano))
         {
-            var identity = (sample.Name, sample.Attributes.Json);
+            // Rendered once per point and not kept: only shared attribute sets cache their JSON.
+            var json = sample.Attributes.Json;
+            var identity = (sample.Name, json);
             if (!cache.Entries.TryGetValue(identity, out var entry))
             {
-                if (cache.Entries.Count >= _options.MaxSeriesPerEnvironment)
+                var seriesBytes = SeriesBytes(sample.Name, json);
+                if (cache.Entries.Count >= _options.MaxSeriesPerEnvironment
+                    || cache.Bytes + seriesBytes > _options.MaxSeriesBytesPerEnvironment)
                 {
                     rejected++;
                     continue;
                 }
-                Bind(insertSeries, sample.Name, sample.Attributes.Json, sample.Unit, sample.Kind.ToString(), (int)sample.Temporality, sample.TimeUnixNano);
+                Bind(insertSeries, sample.Name, json, sample.Unit, sample.Kind.ToString(), (int)sample.Temporality, sample.TimeUnixNano);
                 entry = new SeriesEntry((long)insertSeries.ExecuteScalar()!);
                 cache.Entries[identity] = entry;
+                cache.Bytes += seriesBytes;
             }
             var (contribution, state) = MetricBucketPolicy.Contribute(sample, entry.Cumulative);
             entry.Cumulative = state;
@@ -164,8 +227,9 @@ public sealed partial class TelemetryStore
             updateSeries.ExecuteNonQuery();
         }
         if (rejected > 0)
-            _logger.LogWarning("Telemetry series limit {Limit} reached in {Path}; {Rejected} points of new series were not stored",
-                _options.MaxSeriesPerEnvironment, path, rejected);
+            _logger.LogWarning(
+                "Telemetry series limit of {Limit} series or {ByteLimit} bytes reached in {Path}; {Rejected} points of new series were not stored",
+                _options.MaxSeriesPerEnvironment, _options.MaxSeriesBytesPerEnvironment, path, rejected);
         return (stored, rejected);
     }
 
@@ -179,9 +243,10 @@ public sealed partial class TelemetryStore
         long added = 0;
         foreach (var log in logs)
         {
-            var bytes = LogBytes(log);
+            var json = log.Attributes.Json;
+            var bytes = LogBytes(log, json);
             added += bytes;
-            Bind(insert, log.TimeUnixNano, log.SeverityNumber, log.SeverityText, log.Body, log.Attributes.Json,
+            Bind(insert, log.TimeUnixNano, log.SeverityNumber, log.SeverityText, log.Body, json,
                 log.TraceId, log.SpanId, log.EventName, bytes);
             insert.ExecuteNonQuery();
         }
@@ -213,8 +278,8 @@ public sealed partial class TelemetryStore
     }
 
     /// <summary>Stored payload size of one record: text columns in UTF-8 plus a fixed row overhead.</summary>
-    internal static long LogBytes(TelemetryLogRecord log)
-        => 48 + Encoding.UTF8.GetByteCount(log.Body) + Encoding.UTF8.GetByteCount(log.Attributes.Json)
+    internal static long LogBytes(TelemetryLogRecord log, string attributesJson)
+        => 48 + Encoding.UTF8.GetByteCount(log.Body) + Encoding.UTF8.GetByteCount(attributesJson)
            + log.SeverityText.Length + (log.TraceId?.Length ?? 0) + (log.SpanId?.Length ?? 0)
            + Encoding.UTF8.GetByteCount(log.EventName ?? "");
 
@@ -230,7 +295,9 @@ public sealed partial class TelemetryStore
             var entry = new SeriesEntry(reader.GetInt64(0)) { LastSeen = reader.GetInt64(3) };
             if (!reader.IsDBNull(4))
                 entry.Cumulative = new CumulativeState(reader.GetInt64(4), reader.GetDouble(5), reader.GetDouble(6), reader.GetInt64(7));
-            cache.Entries[(reader.GetString(1), reader.GetString(2))] = entry;
+            var (name, attributes) = (reader.GetString(1), reader.GetString(2));
+            cache.Entries[(name, attributes)] = entry;
+            cache.Bytes += SeriesBytes(name, attributes);
         }
         _series[path] = cache;
         return cache;
@@ -259,7 +326,7 @@ public sealed partial class TelemetryStore
     {
         using var command = Command(connection, transaction, """
             INSERT INTO meta (key, value) VALUES ($key, MAX(0, $delta))
-            ON CONFLICT (key) DO UPDATE SET value = MAX(0, value + excluded.value)
+            ON CONFLICT (key) DO UPDATE SET value = MAX(0, value + $delta)
             RETURNING value
             """, "$key", "$delta");
         Bind(command, LogBytesKey, delta);
@@ -354,9 +421,14 @@ public sealed partial class TelemetryStore
         return Convert.ToInt64(command.ExecuteScalar() ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Budget cost of one series: name and attribute JSON in UTF-8 plus a fixed entry overhead.</summary>
+    internal static long SeriesBytes(string name, string attributesJson)
+        => 64 + Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(attributesJson);
+
     private sealed class SeriesCache
     {
         public Dictionary<(string Name, string Attributes), SeriesEntry> Entries { get; } = new();
+        public long Bytes { get; set; }
     }
 
     private sealed class SeriesEntry(long id)

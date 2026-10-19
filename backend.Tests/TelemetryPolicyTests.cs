@@ -157,6 +157,23 @@ public sealed class TelemetryPolicyTests
     }
 
     [Fact]
+    public void Intake_queue_bounds_estimated_bytes_as_well_as_records()
+    {
+        var queue = new TelemetryIntakeQueue(new TelemetryOptions { MaxQueuedRecords = 100, MaxQueuedBytes = 1000 });
+        TelemetryIngestBatch Batch(long bytes)
+            => new(new TelemetryEnvironmentKey("shop", "stage"), [], [new(0, 9, "INFO", "x", TelemetryAttributes.Empty, null, null, null)], bytes);
+
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(600)));
+        Assert.Equal(TelemetryEnqueueResult.Busy, queue.TryEnqueue(Batch(600)));
+        Assert.Equal(TelemetryEnqueueResult.TooLarge, queue.TryEnqueue(Batch(1001)));
+        Assert.Equal((1L, 600L, 1L), (queue.PendingRecords, queue.PendingBytes, queue.RefusedBatches));
+
+        Assert.True(queue.TryDequeue(out var handled));
+        queue.Release(handled.RecordCount, handled.EstimatedBytes);
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(600)));
+    }
+
+    [Fact]
     public void Log_admission_uses_the_log_retention()
     {
         var now = Clock.GetUtcNow();

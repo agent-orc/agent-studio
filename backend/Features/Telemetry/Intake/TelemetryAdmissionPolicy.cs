@@ -27,6 +27,10 @@ public static class TelemetryAdmissionPolicy
         var admitted = decoded.Items.Where(item => time(item) >= lower && time(item) <= upper).ToList();
         var outside = decoded.Items.Count - admitted.Count;
         return outside == 0 ? decoded
-            : new OtlpDecodeResult<T>(admitted, decoded.Rejected + outside, decoded.RejectionMessage ?? OutsideWindowMessage);
+            : decoded with
+            {
+                Items = admitted, Rejected = decoded.Rejected + outside,
+                RejectionMessage = decoded.RejectionMessage ?? OutsideWindowMessage
+            };
     }
 }

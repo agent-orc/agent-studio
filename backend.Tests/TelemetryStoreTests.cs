@@ -117,7 +117,7 @@ public sealed class TelemetryStoreTests : IDisposable
         var logs = Enumerable.Range(0, 100)
             .Select(index => Log($"record {index:D3} " + new string('x', 100), 9, _clock.GetUtcNow().AddSeconds(index)))
             .ToList();
-        var perRecord = TelemetryStore.LogBytes(logs[0]);
+        var perRecord = TelemetryStore.LogBytes(logs[0], logs[0].Attributes.Json);
 
         var evicted = 0;
         foreach (var chunk in logs.Chunk(10)) evicted += store.Write(_stage, [], chunk, _clock.GetUtcNow()).LogsEvictedForSize;
@@ -140,6 +140,56 @@ public sealed class TelemetryStoreTests : IDisposable
 
         Assert.Equal((3, 1), (result.StoredPoints, result.RejectedSeriesPoints));
         Assert.Equal(["a", "b"], store.MetricNames(_stage).Select(item => item.Name));
+    }
+
+    [Fact]
+    public void Series_byte_budget_rejects_points_of_new_series_only()
+    {
+        var wide = new string('v', 30_000);
+        var oneSeries = TelemetryStore.SeriesBytes("a", Attributes([("k", wide)]).Json);
+        var store = Store(new TelemetryOptions { StoreRoot = _root, MaxSeriesBytesPerEnvironment = oneSeries * 2 + 10 });
+        var now = Nanos(_clock.GetUtcNow());
+
+        var result = store.Write(_stage, [Gauge("a", 1, now, ("k", wide)), Gauge("b", 1, now, ("k", wide)),
+            Gauge("c", 1, now, ("k", wide)), Gauge("a", 2, now + Second, ("k", wide))], [], _clock.GetUtcNow());
+
+        Assert.Equal((3, 1), (result.StoredPoints, result.RejectedSeriesPoints));
+        // A fresh store reloads the series and their bytes from the database; the budget is still spent.
+        var reloaded = Store(new TelemetryOptions { StoreRoot = _root, MaxSeriesBytesPerEnvironment = oneSeries * 2 + 10 });
+        var refused = reloaded.Write(_stage, [Gauge("d", 1, now, ("k", "small"))], [], _clock.GetUtcNow());
+        Assert.Equal((0, 1), (refused.StoredPoints, refused.RejectedSeriesPoints));
+        Assert.Equal(["a", "b"], reloaded.MetricNames(_stage).Select(item => item.Name));
+    }
+
+    [Fact]
+    public void Minute_bucket_cap_removes_the_oldest_hours_across_environments_and_keeps_hour_buckets()
+    {
+        // Ten minute buckets per environment and hour (two series times five minutes), over three hours.
+        var store = Store(new TelemetryOptions { StoreRoot = _root, MaxMinuteBucketBytes = 40 * TelemetryStore.MinuteBucketRowBytes });
+        var production = new TelemetryEnvironmentKey("Shop", "production");
+        var start = _clock.GetUtcNow();
+        foreach (var environment in new[] { _stage, production })
+            for (var hour = 0; hour < 3; hour++)
+            for (var minute = 0; minute < 5; minute++)
+            {
+                var at = Nanos(start.AddHours(hour).AddMinutes(minute));
+                store.Write(environment, [Gauge("cpu", 1, at), Gauge("memory", 1, at)], [], start);
+            }
+        _clock.Advance(TimeSpan.FromHours(3));
+
+        Assert.Equal(new TelemetryMinuteCapResult(0, null), Store(new TelemetryOptions { StoreRoot = _root }).EnforceMinuteBucketCap(store.KnownEnvironments()));
+        // 60 buckets exceed the cap of 40; the oldest hours go until at most 36 remain.
+        var trimmed = store.EnforceMinuteBucketCap(store.KnownEnvironments());
+
+        Assert.Equal((40L, start.AddHours(2)), (trimmed.Buckets, trimmed.Cutoff));
+        var minutes = store.QueryMetrics(_stage, new MetricQuery("cpu", new Dictionary<string, string>(), MetricBucketPolicy.Plan(_clock.GetUtcNow(),
+            start, _clock.GetUtcNow(), 60, new TelemetryOptions(), out _)!, MetricAggregation.Count, 10));
+        Assert.Equal("minute", minutes.Resolution);
+        Assert.All(Assert.Single(minutes.Series).Points, point => Assert.True(point.Time >= start.AddHours(2)));
+        Assert.Equal(5, Assert.Single(minutes.Series).Points.Count);
+        var hours = store.QueryMetrics(production, new MetricQuery("cpu", new Dictionary<string, string>(), MetricBucketPolicy.Plan(_clock.GetUtcNow(),
+            start, _clock.GetUtcNow(), 3600, new TelemetryOptions(), out _)!, MetricAggregation.Count, 10));
+        Assert.Equal([5d, 5d, 5d], Assert.Single(hours.Series).Points.Select(point => point.Value));
     }
 
     [Fact]
