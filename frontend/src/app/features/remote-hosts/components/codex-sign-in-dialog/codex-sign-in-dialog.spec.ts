@@ -21,12 +21,14 @@ const TARGET: CodexSignInTarget = {
   sshTarget: 'agent@runner-01',
   baselineAdvertisedAt: '2026-09-06T10:00:00Z',
 };
+const CODE = `${'A'.repeat(4)}-${'B'.repeat(4)}`;
 
 const STARTED: CodexSignInStartResponse = {
   handle: 'codex_session_1',
-  state: 'pending',
-  verificationUrl: 'https://auth.openai.com/codex/device',
-  userCode: 'ABCD-EFGH',
+  state: 'queued',
+  verificationUrl: null,
+  userCode: null,
+  sessionKey: 'browser-session-key',
   expiresAt: '2026-09-06T10:15:00Z',
 };
 
@@ -43,8 +45,7 @@ class FakeProviderAuth {
 
   startCodexSignIn = vi.fn(() => of(STARTED));
   codexSignInStatus = vi.fn(() => this.status.asObservable());
-  cancelCodexSignIn = vi.fn(() => of({ ...STARTED, state: 'failed' as const, detail: 'Cancelled',
-    requestedAt: '', completedAt: '' }));
+  cancelCodexSignIn = vi.fn(() => of(undefined));
   waitForFreshProbe = vi.fn(() => this.probeResult);
 }
 
@@ -75,16 +76,22 @@ describe('CodexSignInDialogComponent', () => {
   });
 
   it('shows the secure link and copy-sized one-time code while pending', async () => {
+    vi.useFakeTimers();
     store.request.set(TARGET);
     await fixture.whenStable();
+    await vi.advanceTimersByTimeAsync(500);
+    providerAuth.status.next({ handle: STARTED.handle, state: 'running', detail: null,
+      verificationUrl: 'https://auth.openai.com/codex/device', userCode: CODE,
+      expiresAt: STARTED.expiresAt });
     fixture.detectChanges();
 
     const dialog = document.querySelector('[data-testid="codex-sign-in-dialog"]') as HTMLElement;
-    expect(providerAuth.startCodexSignIn).toHaveBeenCalledWith('host-01', 'agent@runner-01');
+    expect(providerAuth.startCodexSignIn).toHaveBeenCalledWith('host-01');
     expect(dialog.querySelector('[data-testid="codex-sign-in-pending"]')).toBeTruthy();
     expect(dialog.querySelector<HTMLAnchorElement>('[data-testid="codex-sign-in-url"]')?.href)
       .toBe('https://auth.openai.com/codex/device');
-    expect(dialog.querySelector('[data-testid="codex-sign-in-code"]')?.textContent).toContain('ABCD-EFGH');
+    expect(dialog.querySelector('[data-testid="codex-sign-in-code"]')?.textContent).toContain(CODE);
+    expect(dialog.querySelector('[data-testid="codex-sign-in-countdown"]')).toBeTruthy();
     expect(dialog.textContent).toContain('Studio does not receive the resulting token');
   });
 
@@ -92,7 +99,7 @@ describe('CodexSignInDialogComponent', () => {
     store.request.set(TARGET);
     await fixture.whenStable();
     fixture.componentInstance.close();
-    expect(providerAuth.cancelCodexSignIn).toHaveBeenCalledWith('host-01', STARTED.handle);
+    expect(providerAuth.cancelCodexSignIn).toHaveBeenCalledWith(STARTED.handle, STARTED.sessionKey);
   });
 
   it('renders the failed state reported by the remote process', async () => {
@@ -101,15 +108,14 @@ describe('CodexSignInDialogComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     await vi.advanceTimersByTimeAsync(500);
-    // A restarted Studio needs the original target to finalize a pending host renewal.
-    expect(providerAuth.codexSignInStatus).toHaveBeenCalledWith('host-01', STARTED.handle, 'agent@runner-01');
+    expect(providerAuth.codexSignInStatus).toHaveBeenCalledWith(STARTED.handle, STARTED.sessionKey);
     providerAuth.status.next({
       handle: STARTED.handle,
       state: 'failed',
       detail: 'Codex sign-in did not complete or login status could not be verified.',
-      requestedAt: '2026-09-06T10:00:00Z',
+      verificationUrl: null,
+      userCode: null,
       expiresAt: STARTED.expiresAt,
-      completedAt: '2026-09-06T10:01:00Z',
     });
     fixture.detectChanges();
 
@@ -129,9 +135,9 @@ describe('CodexSignInDialogComponent', () => {
       handle: STARTED.handle,
       state: 'completed',
       detail: 'Codex sign-in completed.',
-      requestedAt: '2026-09-06T10:00:00Z',
+      verificationUrl: null,
+      userCode: null,
       expiresAt: STARTED.expiresAt,
-      completedAt: '2026-09-06T10:01:00Z',
     });
     fixture.detectChanges();
     await fixture.whenStable();

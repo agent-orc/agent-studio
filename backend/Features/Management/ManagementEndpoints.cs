@@ -256,24 +256,15 @@ public static class ManagementEndpoints
             }
             return Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
         });
-        group.MapPost("/remote-hosts/{id}/codex-sign-in", async (
+        group.MapPost("/remote-hosts/{id}/codex-sign-in", (
             HttpContext context,
-            string id,
-            CodexSignInRequest request,
-            CodexSignInCoordinator coordinator,
-            IConfiguration configuration,
-            CancellationToken ct) =>
+            IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
-            try
-            {
-                return Results.Ok(await coordinator.StartAsync(id, request, actor!, ct));
-            }
-            catch (CodexSignInException ex)
-            {
-                return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
-            }
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Json(new { error = "codex-sign-in-moved",
+                message = "Start Codex device login through the runner-polled device-logins route." },
+                statusCode: StatusCodes.Status410Gone);
         });
         group.MapGet("/remote-hosts/{id}/codex-sign-in/{handle}", async (
             HttpContext context,
