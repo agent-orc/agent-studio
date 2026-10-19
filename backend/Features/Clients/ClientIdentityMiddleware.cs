@@ -31,6 +31,8 @@ public class ClientIdentityMiddleware
         "/api/clients/register",
         "/hubs/",
         "/api/health",
+        // OTLP exporters send no X-Client-Id; the intake checks its own ingest token.
+        "/api/telemetry/otlp/",
         "/healthz",
         "/swagger",
         "/_framework",

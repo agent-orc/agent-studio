@@ -8,7 +8,7 @@ namespace AgentStudio.Security;
 /// enrollment, and Runner credential hashes only. Plaintext credentials are
 /// returned once by the operation that creates them and are never persisted.
 /// </summary>
-public sealed class AccessSecurityStore
+public sealed partial class AccessSecurityStore
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
     // __Host- verlangt Secure+HTTPS; im lokalen HTTP-Dev-Betrieb verwirft der

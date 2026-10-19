@@ -10,7 +10,7 @@ public static partial class CredentialRedactor
     [GeneratedRegex("""(?ix)(["']?(?:authorization|proxy-authorization|password|currentpassword|newpassword|temporarypassword|cookie|set-cookie|x-csrf-token|csrftoken|enrollmentcode|secret|authtoken|access_token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;}&]+)""")]
     private static partial Regex NamedSecretRegex();
 
-    [GeneratedRegex(@"\b(?:rnr|enr|ssn)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")]
+    [GeneratedRegex(@"\b(?:rnr|enr|ssn|otl)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")]
     private static partial Regex ProductSecretRegex();
 
     public static string Redact(string? value)

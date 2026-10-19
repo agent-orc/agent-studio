@@ -140,6 +140,7 @@ public sealed record SecurityState
     public List<StudioSession> Sessions { get; init; } = [];
     public List<RunnerServiceIdentity> Runners { get; init; } = [];
     public List<RunnerEnrollment> Enrollments { get; init; } = [];
+    public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
 }
 
 public sealed record StudioInvitation
@@ -150,6 +151,34 @@ public sealed record StudioInvitation
     public required DateTime ExpiresAt { get; init; }
     public DateTime? UsedAt { get; init; }
 }
+
+/// <summary>
+/// OTLP ingest credential of one project environment (IP-15). Only the hash is
+/// stored; the plaintext is returned once by the create operation.
+/// </summary>
+public sealed record TelemetryIngestToken
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public required string Project { get; init; }
+    public required string Environment { get; init; }
+    public required List<string> Signals { get; init; }
+    public required string SecretHash { get; init; }
+    public required DateTime CreatedAt { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ExpiresAt { get; init; }
+    public DateTime? LastUsedAt { get; init; }
+    public DateTime? RevokedAt { get; init; }
+}
+
+public static class TelemetrySignals
+{
+    public const string Metrics = "metrics";
+    public const string Logs = "logs";
+    public static readonly string[] All = [Metrics, Logs];
+}
+
+public sealed record TelemetryIngestPrincipal(string TokenId, string Project, string Environment, IReadOnlySet<string> Signals);
 
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
 public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);

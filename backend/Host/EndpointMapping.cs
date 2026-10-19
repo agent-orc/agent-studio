@@ -1,6 +1,7 @@
 
 using AgentStudio.Search;
 using AgentStudio.Proposals;
+using AgentStudio.Telemetry;
 
 namespace AgentStudio.Host;
 
@@ -101,6 +102,7 @@ public static class EndpointMapping
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();
+        app.MapTelemetryEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
         app.MapProjectGraphEndpoints();
