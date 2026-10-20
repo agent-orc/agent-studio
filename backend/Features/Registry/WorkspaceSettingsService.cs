@@ -59,6 +59,20 @@ public sealed class WorkspaceSettingsService
         }
     }
 
+    public void SetCodingEmergencyLimit(string workspaceId, int? seconds)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));
+        if (seconds is not null && seconds is < 1 or > AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.MaximumSeconds)
+            throw new ArgumentOutOfRangeException(nameof(seconds));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var value) ? value : new WorkspaceSettings();
+            _cache[workspaceId] = current with { CodingEmergencyLimitSeconds = seconds };
+            Persist();
+        }
+    }
+
     public void SetChatMetadataEnabled(string workspaceId, bool? enabled)
     {
         if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));

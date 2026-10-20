@@ -127,6 +127,9 @@ public record OrchestratorLogEntry
     /// <summary>Optional longer prose, rendered when the entry is expanded.</summary>
     public string? Reasoning { get; init; }
 
+    /// <summary>Typed operational finding or resolution when this entry concerns a stall.</summary>
+    public OperationalStallEvent? Stall { get; init; }
+
     /// <summary>Job that was the subject of this entry, when applicable.</summary>
     public string? JobId { get; init; }
 
@@ -160,6 +163,11 @@ public record OrchestratorLogEntry
     /// </summary>
     public OrchestratorIntervention? UserOverride { get; init; }
 }
+
+public sealed record OperationalStallEvent(
+    string Subject, string Severity, DateTime? SinceUtc, int BlockedCount,
+    IReadOnlyList<string> AffectedCards, string? SuggestedAction,
+    IReadOnlyDictionary<string, string> Evidence);
 
 // OrchestratorTokenUsage moved to AgentTaskboard.Shared (Runner/OrchestratorTokenUsage.cs)
 // so the executor-side OneShot result envelope can reference it without depending

@@ -1,7 +1,7 @@
 // One-off operator migration for the four cards named by the Decision cards Dossier.
 // Dry run is the default. Run --apply only after reviewing the printed inventory.
 // Uses the Task API; never writes workspace files. AGT-2795 is deliberately excluded.
-import http from 'node:http';
+import { taskApiRequest } from '../.agents/skills/task-api/scripts/access.js';
 import { createHash } from 'node:crypto';
 
 const ids = ['AGT-2792', 'AGT-2736', 'AGT-2737', 'AGT-2738'];
@@ -12,7 +12,7 @@ const apply = process.argv.includes('--apply');
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    const req = http.request({ hostname: host, port, path, method, headers: {
+    const req = taskApiRequest({ hostname: host, port, path, method, headers: {
       'X-Client-Id': 'local-default', 'Content-Type': 'application/json',
       ...(payload === undefined ? {} : { 'Content-Length': Buffer.byteLength(payload) }),
     } }, res => {

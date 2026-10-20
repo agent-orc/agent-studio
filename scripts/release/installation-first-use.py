@@ -6,6 +6,7 @@ Credential values are read from protected files and never printed or persisted.
 
 import argparse
 import json
+import os
 from pathlib import Path
 import secrets
 import sys
@@ -36,6 +37,7 @@ def main() -> int:
     parser.add_argument("--studio-token-file", type=Path, required=True)
     parser.add_argument("--owner-code-file", type=Path, required=True)
     parser.add_argument("--repository-url", required=True)
+    parser.add_argument("--owner-session-file", type=Path)
     args = parser.parse_args()
     try:
         bearer = args.studio_token_file.read_text().strip()
@@ -47,6 +49,10 @@ def main() -> int:
             "bootstrapCode": code,
         })
         session = owner["sessionToken"]
+        if args.owner_session_file:
+            descriptor = os.open(args.owner_session_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(session + "\n")
         workspace = post(args.server_url, bearer, "/api/v1/workspaces", {
             "name": "Installation scenario",
         }, session)

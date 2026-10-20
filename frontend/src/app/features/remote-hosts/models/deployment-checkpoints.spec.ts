@@ -33,6 +33,9 @@ describe('deployment checkpoint projections', () => {
       { id: 'PROJ-OLD', displayName: 'Old project', shortCode: 'OLD',
         workspaceId: 'workspace-1', archived: true, storageLocation: '/projects/old' },
     ])).toEqual([{ projectId: 'PROJ-002', name: 'Agent Taskboard', workspaceId: 'workspace-1' }]);
+    expect(activeRegisteredProjects([
+      { projectId: 'PROJ-003', workspaceId: 'workspace-2', name: 'Remote Demo', taskKeyPrefix: 'RDM' },
+    ])).toEqual([{ projectId: 'PROJ-003', name: 'Remote Demo', workspaceId: 'workspace-2' }]);
   });
   it('separates enrollment, connection and role readiness without awarding project eligibility', () => {
     expect(hostReadiness(host(), NOW).state).toBe('capability-ready');

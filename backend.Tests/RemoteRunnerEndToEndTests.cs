@@ -147,6 +147,42 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains("Job not found", await missing.Content.ReadAsStringAsync());
     }
 
+    [Fact]
+    public async Task Stop_endpoint_settles_a_local_lease_between_pipeline_steps()
+    {
+        const string cardKey = "AGT-LOCAL-STOP";
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 6, 31, 0, TimeSpan.Zero));
+        SeedTask(TaskStates.Progress, "local-stop-card", "Local stop", "Prompt.", publicKey: cardKey);
+        using var factory = BuildFactory(
+            authorityNow: () => clock.GetUtcNow().UtcDateTime,
+            leaseNow: () => clock.GetUtcNow().UtcDateTime,
+            clock: clock);
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var leases = factory.Services.GetRequiredService<RunLeaseService>();
+        var stops = factory.Services.GetRequiredService<RemoteRunStopRequestStore>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var local = new LocalRunClaimAdapter(leases,
+            new RunnerIdentity("local-test", "local", "host", "backend", "token", "1"),
+            NullLogger.Instance, stops);
+        var acquired = local.TryAcquire(cardKey, () => { });
+        Assert.True(acquired.Granted);
+
+        using var response = await http.PostAsync(
+            $"/api/tasks/{cardKey}/stop?project={ProjectName}&commandId=local-between-steps", null);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.True(local.StopRequested(cardKey));
+        local.Release(cardKey);
+
+        Assert.Equal("Free", leases.Peek(cardKey).Outcome);
+        Assert.Equal("stopped", authority.GetTaskProjection(cardKey).CurrentRunAttempt?.TerminalOutcome);
+        Assert.Equal("settled", stops.GetReceipt("local-between-steps")?.TerminalReason);
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob(cardKey)!;
+        var feedback = new SteeringFeedbackProjection(authority, stops).Build(card);
+        Assert.Contains(feedback.History,
+            fact => fact.CommandId == "local-between-steps" && fact.State == "consumed");
+    }
+
     public RemoteRunnerEndToEndTests()
     {
         _workspace = Path.Combine(Path.GetTempPath(), "atp-runner-e2e-" + Guid.NewGuid().ToString("N"));
