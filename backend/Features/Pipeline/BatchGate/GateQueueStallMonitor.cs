@@ -6,8 +6,10 @@ namespace AgentStudio.Pipeline;
 /// <summary>
 /// AGT-3219: the batch gate's view of the machine gate queue. Gate requests
 /// report while they wait for a slot; a queue overrun opens a stall episode
-/// that raises one <see cref="GateQueueStallEvent"/> and stays open until the
-/// queue has drained. Episodes are process memory; the events are durable.
+/// that raises one <see cref="GateQueueStallEvent"/>, raises it again every
+/// <see cref="GateQueueStallPolicy.StallReminderInterval"/> while the episode
+/// stays open, and closes once the queue has drained. Waiters are process
+/// memory; episodes and events are durable in the <see cref="BatchGateStore"/>.
 /// </summary>
 public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider time)
 {
@@ -19,7 +21,7 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
     private sealed record CachedDuration(TimeSpan Value, DateTimeOffset ReadAtUtc);
 
     private readonly ConcurrentDictionary<string, Waiter> _waiting = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, GateQueueStallEvent> _episodes = new(StringComparer.Ordinal);
+    private readonly object _episodeLock = new();
     private readonly ConcurrentDictionary<string, CachedDuration> _durations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (int Busy, int Total)> _lastSlots = new(StringComparer.Ordinal);
 
@@ -38,8 +40,8 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
     public int WaitingCount(string project)
         => _waiting.Values.Count(waiter => string.Equals(waiter.Project, project, StringComparison.Ordinal));
 
-    public GateQueueStallEvent? OpenEpisode(string project)
-        => _episodes.TryGetValue(project, out var stall) ? stall : null;
+    /// <summary>The latest event of the project's open episode, or null.</summary>
+    public GateQueueStallEvent? OpenEpisode(string project) => store.ReadQueueStallEpisode(project)?.Latest;
 
     /// <summary>
     /// Facts for <see cref="GateQueueStallPolicy"/>. <paramref name="queuedMembers"/>
@@ -62,29 +64,69 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
 
     /// <summary>
     /// Records a queue overrun. Returns the event when this overrun opened a
-    /// new episode, otherwise null: the episode already raised its event.
+    /// new episode or the open episode's reminder is due, otherwise null.
     /// </summary>
     public GateQueueStallEvent? QueueOverrun(string project, string taskKey, GateQueueFacts facts)
     {
+        lock (_episodeLock)
+        {
+            var open = store.ReadQueueStallEpisode(project);
+            if (!AgentStudio.Runner.MonolithTransitionAdapter.GateQueueStallRaisesEvent(open is not null))
+                return RemindLocked(open!, taskKey, facts);
+            var opened = Event(Guid.NewGuid().ToString("N"), project, taskKey, facts, 1, time.GetUtcNow());
+            store.WriteQueueStallEpisode(new GateQueueStallEpisode(project, opened.EpisodeId,
+                opened.EpisodeOpenedAtUtc!.Value, opened));
+            store.RecordQueueStall(opened);
+            return opened;
+        }
+    }
+
+    /// <summary>
+    /// Raises the open episode's event again when its reminder is due, even
+    /// when no further request overran; null when none is open or due.
+    /// </summary>
+    public GateQueueStallEvent? Remind(string project, GateQueueFacts facts)
+    {
+        lock (_episodeLock)
+        {
+            return store.ReadQueueStallEpisode(project) is { } open
+                ? RemindLocked(open, open.Latest.TriggerTaskKey, facts)
+                : null;
+        }
+    }
+
+    private GateQueueStallEvent? RemindLocked(GateQueueStallEpisode open, string taskKey, GateQueueFacts facts)
+    {
+        if (!AgentStudio.Runner.MonolithTransitionAdapter.GateQueueStallReminds(open.Latest.RaisedAtUtc,
+                time.GetUtcNow()))
+            return null;
+        var reminder = Event(open.EpisodeId, open.Project, taskKey, facts, open.Latest.Raise + 1, open.OpenedAtUtc);
+        store.WriteQueueStallEpisode(open with { Latest = reminder });
+        store.RecordQueueStall(reminder);
+        return reminder;
+    }
+
+    private GateQueueStallEvent Event(string episodeId, string project, string taskKey, GateQueueFacts facts,
+        int raise, DateTimeOffset? openedAtUtc)
+    {
         var assessment = AgentStudio.Runner.MonolithTransitionAdapter.GateQueue(facts);
-        var stall = new GateQueueStallEvent(Guid.NewGuid().ToString("N"), project, time.GetUtcNow(),
+        return new GateQueueStallEvent(episodeId, project, time.GetUtcNow(),
             facts.QueueDepth, (long)facts.OldestWait.TotalMilliseconds, facts.SlotsBusy, facts.SlotsTotal,
             (long)assessment.EstimatedDrain.TotalMilliseconds, (long)facts.QueueBudget.TotalMilliseconds,
-            assessment.IdleConfiguredSlots, assessment.Advisory, taskKey);
-        var open = _episodes.TryGetValue(project, out _);
-        if (!AgentStudio.Runner.MonolithTransitionAdapter.GateQueueStallRaisesEvent(open)
-            || !_episodes.TryAdd(project, stall))
-            return null;
-        store.RecordQueueStall(stall);
-        return stall;
+            assessment.IdleConfiguredSlots, assessment.Advisory, taskKey, raise, openedAtUtc);
     }
 
     /// <summary>Closes the project's episode once its queue has drained.</summary>
     public bool Observe(string project, int queuedMembers)
     {
         var depth = WaitingCount(project) + Math.Max(0, queuedMembers);
-        return AgentStudio.Runner.MonolithTransitionAdapter.GateQueueEpisodeDrained(depth)
-               && _episodes.TryRemove(project, out _);
+        if (!AgentStudio.Runner.MonolithTransitionAdapter.GateQueueEpisodeDrained(depth)) return false;
+        lock (_episodeLock)
+        {
+            if (store.ReadQueueStallEpisode(project) is null) return false;
+            store.CloseQueueStallEpisode(project);
+            return true;
+        }
     }
 
     /// <summary>

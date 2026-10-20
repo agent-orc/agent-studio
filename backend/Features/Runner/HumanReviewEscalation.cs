@@ -144,6 +144,10 @@ public static class HumanReviewEscalationCategories
     /// configured conflict-requeue budget.</summary>
     public const string IntegrationRecoveryExhausted = "integration-recovery-exhausted";
 
+    /// <summary>AGT-3219: a passed review waited its queue wait cap for a
+    /// machine gate slot. The gate host lacks capacity; the code was not judged.</summary>
+    public const string GateCapacity = AgentStudio.OrchestrationDecisions.GateQueueStallPolicy.GateCapacityCategory;
+
     /// <summary>An unanswered steer / NeedsInput question timed out (Run-Liveness
     /// Slice B, concept Rule 2) and the answer was not derivable from the task
     /// context. Routed to 5e-escalated with a clear reason instead of waiting
@@ -433,6 +437,8 @@ public sealed class HumanReviewEscalation
     {
         var c = string.IsNullOrWhiteSpace(category) ? HumanReviewEscalationCategories.UnknownLegacy : category.Trim();
         var r = (reason ?? string.Empty).Trim();
+        // A reason the caller already formatted for the lane move keeps its one prefix.
+        if (r.StartsWith($"[{c}]", StringComparison.Ordinal)) return r;
         return r.Length == 0 ? $"[{c}]" : $"[{c}] {r}";
     }
 

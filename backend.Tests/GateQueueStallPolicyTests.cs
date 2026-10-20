@@ -33,6 +33,26 @@ public sealed class GateQueueStallPolicyTests : IDisposable
         string? budget, string? phase, string lane, bool current, GateQueueOverrunAction expected)
         => Assert.Equal(expected, GateQueueStallPolicy.Decide(budget, phase, lane, current));
 
+    [Theory]
+    [InlineData(0, GateQueueOverrunAction.Requeue)]
+    [InlineData(3, GateQueueOverrunAction.Requeue)]
+    [InlineData(4, GateQueueOverrunAction.EscalateCapacity)]
+    [InlineData(5, GateQueueOverrunAction.EscalateCapacity)]
+    public void A_review_generation_escalates_as_gate_capacity_once_its_queue_wait_reaches_the_cap(
+        int budgetsWaited, GateQueueOverrunAction expected)
+    {
+        var cap = GateQueueStallPolicy.QueueWaitCap(Budget);
+
+        Assert.Equal(Budget * GateQueueStallPolicy.QueueWaitCapBudgets, cap);
+        Assert.Equal(expected, GateQueueStallPolicy.Decide("machine-gate-queue", "queue",
+            TaskStates.AutoReview, true, Budget * budgetsWaited, cap));
+        // The cap never turns an execution overrun or a stale review into a capacity park.
+        Assert.Equal(GateQueueOverrunAction.Settle, GateQueueStallPolicy.Decide("gate-run", "verification",
+            TaskStates.AutoReview, true, Budget * budgetsWaited, cap));
+        Assert.Equal(GateQueueOverrunAction.Settle, GateQueueStallPolicy.Decide("machine-gate-queue", "queue",
+            TaskStates.AutoReview, false, Budget * budgetsWaited, cap));
+    }
+
     [Fact]
     public void Sixteen_cards_behind_two_slots_are_a_backlog_and_idle_configured_slots_are_advised()
     {
@@ -95,6 +115,36 @@ public sealed class GateQueueStallPolicyTests : IDisposable
     }
 
     [Fact]
+    public void Open_episode_survives_a_restart_and_reminds_every_interval_until_the_queue_drains()
+    {
+        var store = new BatchGateStore(_root);
+        var facts = new GateQueueFacts(6, 2, 2, 2, Budget, TimeSpan.FromMinutes(35), Budget);
+        var opened = Assert.IsType<GateQueueStallEvent>(
+            new GateQueueStallMonitor(store, _clock).QueueOverrun("demo", "AGT-3213", facts));
+
+        // A new process reads the open episode from the store.
+        var restarted = new GateQueueStallMonitor(store, _clock);
+        Assert.Equal(opened.EpisodeId, restarted.OpenEpisode("demo")?.EpisodeId);
+        _clock.Advance(GateQueueStallPolicy.StallReminderInterval - TimeSpan.FromMinutes(1));
+        Assert.Null(restarted.QueueOverrun("demo", "AGT-3214", facts));
+        Assert.Null(restarted.Remind("demo", facts));
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var reminder = Assert.IsType<GateQueueStallEvent>(restarted.Remind("demo", facts));
+        Assert.Equal(opened.EpisodeId, reminder.EpisodeId);
+        Assert.Equal(2, reminder.Raise);
+        Assert.Equal(opened.RaisedAtUtc, reminder.EpisodeOpenedAtUtc);
+        Assert.Null(restarted.Remind("demo", facts));
+        _clock.Advance(GateQueueStallPolicy.StallReminderInterval);
+        Assert.Equal(3, restarted.QueueOverrun("demo", "AGT-3215", facts)?.Raise);
+
+        Assert.True(restarted.Observe("demo", queuedMembers: 0));
+        Assert.Null(new GateQueueStallMonitor(store, _clock).OpenEpisode("demo"));
+        Assert.Null(restarted.Remind("demo", facts));
+        Assert.Equal([1, 2, 3], store.ListQueueStalls("demo").Select(stall => stall.Raise));
+    }
+
+    [Fact]
     public void Look_ahead_planner_closes_a_batch_instead_of_a_per_task_gate_behind_a_backlog()
     {
         var now = _clock.GetUtcNow();
@@ -124,6 +174,49 @@ public sealed class GateQueueStallPolicyTests : IDisposable
     }
 
     [Fact]
+    public void Look_ahead_planner_ages_a_skipped_high_risk_card_out_to_its_own_gate()
+    {
+        var now = _clock.GetUtcNow();
+        var risky = new BatchPlanCard("RISKY", now.AddMinutes(-39), .9, [], []);
+        var input = new BatchPlanInput(now, [risky, Card("A", .05, now), Card("B", .05, now)], [],
+            2, 6, 20, 45, ["urgent"], "balanced", "adjacent", GateBacklog: true);
+
+        Assert.Equal("close", BatchGateLookAheadPlanner.Plan(input).Decision);
+        var aged = BatchGateLookAheadPlanner.Plan(input with { NowUtc = now.AddMinutes(1) });
+        Assert.Equal("per-task", aged.Decision);
+        Assert.Equal(["RISKY"], aged.ProposedMembers);
+    }
+
+    [Fact]
+    public void Look_ahead_planner_stops_waiting_for_a_partner_once_the_lone_card_aged_out()
+    {
+        var now = _clock.GetUtcNow();
+        var input = new BatchPlanInput(now.AddMinutes(38), [Card("A", .05, now)],
+            [new BatchPlanUpcoming("B", "review", now.AddMinutes(50), .05, [])],
+            2, 6, 20, 45, ["urgent"], "balanced", "adjacent", GateBacklog: true);
+
+        Assert.Equal("wait", BatchGateLookAheadPlanner.Plan(input).Decision);
+        Assert.Equal("per-task", BatchGateLookAheadPlanner.Plan(input with { NowUtc = now.AddMinutes(39) }).Decision);
+    }
+
+    [Fact]
+    public void Look_ahead_planner_does_not_wait_for_a_partner_whose_eta_has_passed()
+    {
+        var now = _clock.GetUtcNow();
+        var overdue = new BatchPlanInput(now.AddMinutes(30), [Card("A", .05, now)],
+            [new BatchPlanUpcoming("B", "review", now.AddMinutes(29), .05, [])],
+            2, 6, 20, 45, ["urgent"], "balanced", "adjacent", GateBacklog: true);
+
+        var decision = BatchGateLookAheadPlanner.Plan(overdue);
+
+        Assert.Equal("per-task", decision.Decision);
+        // Before its deadline, an overdue ETA no longer counts as a due partner either.
+        var early = BatchGateLookAheadPlanner.Plan(overdue with { NowUtc = now.AddMinutes(10),
+            Upcoming = [new BatchPlanUpcoming("B", "review", now.AddMinutes(5), .05, [])], IdleGateHost = true });
+        Assert.Equal("per-task", early.Decision);
+    }
+
+    [Fact]
     public void Threshold_policy_closes_at_pressure_size_and_holds_a_lone_card_behind_a_backlog()
     {
         var now = _clock.GetUtcNow();
@@ -133,11 +226,18 @@ public sealed class GateQueueStallPolicyTests : IDisposable
         Assert.Null(BatchGatePolicy.Form(pair, Scope, Sha, options, now).Manifest);
         Assert.NotNull(BatchGatePolicy.Form(pair, Scope, Sha, options, now, gateBacklog: true).Manifest);
 
-        var lone = new[] { Subject("a", now.AddMinutes(-30), 1) };
+        // Past the 15 minute default deadline, inside the age-out bound of two deadlines.
+        var lone = new[] { Subject("a", now.AddMinutes(-20), 1) };
         Assert.True(BatchGatePolicy.Form(lone, Scope, Sha, options, now).UsePerTaskGate);
         var held = BatchGatePolicy.Form(lone, Scope, Sha, options, now, reviewQueueLength: 1, gateBacklog: true);
         Assert.False(held.UsePerTaskGate);
         Assert.Null(held.Manifest);
+
+        // After two deadlines the lone card takes its own gate.
+        var deadline = TimeSpan.FromMinutes(options.DeadlineMinutes);
+        var aged = new[] { Subject("a", now - deadline * BatchGateLookAheadPlanner.BacklogAgeOutDeadlines, 1) };
+        Assert.True(BatchGatePolicy.Form(aged, Scope, Sha, options, now, reviewQueueLength: 1, gateBacklog: true)
+            .UsePerTaskGate);
     }
 
     private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

@@ -62,8 +62,17 @@ public static class MonolithTransitionAdapter
         => BatchPlanDecisionPolicy.Decide(facts);
 
     public static GateQueueOverrunAction GateQueueOverrun(string? budgetName, string? budgetPhase,
-        string? lane, bool currentGeneration)
-        => GateQueueStallPolicy.Decide(budgetName, budgetPhase, lane, currentGeneration);
+        string? lane, bool currentGeneration, TimeSpan totalQueueWait = default, TimeSpan? queueWaitCap = null)
+        => GateQueueStallPolicy.Decide(budgetName, budgetPhase, lane, currentGeneration,
+            totalQueueWait, queueWaitCap);
+
+    public static TimeSpan GateQueueWaitCap(TimeSpan queueBudget) => GateQueueStallPolicy.QueueWaitCap(queueBudget);
+
+    public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
+        => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
+
+    public static bool BatchBacklogAgedOut(DateTimeOffset readyAtUtc, DateTimeOffset nowUtc, int deadlineMinutes)
+        => BatchGateLookAheadPlanner.AgedOut(readyAtUtc, nowUtc, deadlineMinutes);
 
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 

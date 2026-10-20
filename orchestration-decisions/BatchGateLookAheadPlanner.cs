@@ -8,6 +8,17 @@ public static class BatchGateLookAheadPlanner
     /// <summary>Reason of a batch closed instead of a per-task gate because the gate queue is backlogged.</summary>
     public const string BacklogReason = "gate backlog: batch preferred over a per-task gate";
 
+    /// <summary>Deadlines a card may wait behind a gate backlog before it takes its own gate.</summary>
+    public const int BacklogAgeOutDeadlines = 2;
+
+    /// <summary>
+    /// True once a card has waited <see cref="BacklogAgeOutDeadlines"/> deadlines.
+    /// The gate backlog then no longer defers its per-task gate, so a card that
+    /// no batch takes cannot starve while other batches keep closing.
+    /// </summary>
+    public static bool AgedOut(DateTimeOffset readyAtUtc, DateTimeOffset nowUtc, int deadlineMinutes)
+        => nowUtc - readyAtUtc >= TimeSpan.FromMinutes((double)BacklogAgeOutDeadlines * Math.Max(0, deadlineMinutes));
+
     public static BatchPlanDecision Plan(BatchPlanInput input)
     {
         var waiting = input.Waiting.OrderBy(card => card.ReadyAtUtc)
@@ -25,7 +36,9 @@ public static class BatchGateLookAheadPlanner
         var candidates = (input.Overlap == "separate"
                 ? Separate(ordered) : ordered)
             .Take(input.MaximumSize).ToArray();
+        // An ETA in the past is overdue, not arriving; waiting on it has no end.
         var arriving = input.Upcoming.Where(card => card.EtaUtc is { } eta
+                && eta >= input.NowUtc
                 && eta <= input.NowUtc.AddMinutes(input.LookAheadMinutes)
                 && card.Risk < riskLimit
                 && (input.Overlap != "separate" || candidates.All(ready =>
@@ -41,10 +54,11 @@ public static class BatchGateLookAheadPlanner
         var urgent = waiting.Any(card => card.Tags.Any(tag => input.UrgentTags.Contains(tag,
             StringComparer.OrdinalIgnoreCase)));
         var highRisk = waiting[0].Risk >= riskLimit;
+        var agedOut = AgedOut(oldest.ReadyAtUtc, input.NowUtc, input.DeadlineMinutes);
         // AGT-3219: behind a gate backlog a per-task gate only joins the slot
         // queue and can overrun its wait budget. A batch of the other cards
-        // drains more of the queue per slot run.
-        if (highRisk && input.GateBacklog && candidates.Length >= input.MinimumSize)
+        // drains more of the queue per slot run, until the oldest card aged out.
+        if (highRisk && input.GateBacklog && !agedOut && candidates.Length >= input.MinimumSize)
             return new("close", BacklogReason, null,
                 candidates.Take(Math.Max(input.MinimumSize, target)).Select(card => card.TaskKey).ToArray(),
                 target, upcoming);
@@ -60,7 +74,7 @@ public static class BatchGateLookAheadPlanner
             && candidates.Length < target && !input.IdleGateHost)
             return new("wait", "waiting for target size or deadline",
                 closeAt, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
-        if (candidates.Length < input.MinimumSize && input.GateBacklog && due && !input.CloseNow)
+        if (candidates.Length < input.MinimumSize && input.GateBacklog && due && !agedOut && !input.CloseNow)
             return new("wait", "gate backlog: waiting for a batch partner instead of a per-task gate",
                 arriving.First().ReadyAtUtc, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
         if (candidates.Length < input.MinimumSize)

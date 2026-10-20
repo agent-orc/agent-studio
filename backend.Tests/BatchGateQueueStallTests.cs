@@ -158,6 +158,68 @@ public sealed partial class BatchGatePilotServiceTests
         AssertLane(stalled.Key, TaskStates.HumanReview);
     }
 
+    [Fact]
+    public async Task Queue_overruns_up_to_the_cap_escalate_as_gate_capacity_and_remind_while_the_episode_stays_open()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-QUEUE-CAP", "docs/queue-cap.md");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        _gate.Fallback = request =>
+        {
+            request.OnMachineGateSlotWaiting?.Invoke(2, 2);
+            return QueueOverrun();
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var opened = _clock;
+
+        // Three overruns stay below the cap of four queue budgets.
+        for (var overrun = 1; overrun <= 3; overrun++)
+        {
+            await pilot.TickAsync(CancellationToken.None);
+            AssertLane(member.Key, TaskStates.AutoReview);
+            Assert.Equal(overrun, store.ReadQueueWait(member.ReviewAttemptId)?.Overruns);
+            _clock = _clock.AddMinutes(155);
+        }
+        // The fourth reaches it: the card escalates under its own category.
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(4, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        var parked = scanner.FindJob(member.Key, _watchPath)!;
+        Assert.Equal(HumanReviewEscalationCategories.GateCapacity, parked.ParkedBlocker?.BlockerType);
+        Assert.StartsWith("[gate-capacity] The gate request waited", parked.ParkedBlocker?.Reason);
+        Assert.False(store.IsQueued(member.ReviewAttemptId));
+        Assert.Equal(4 * 9_327_018L, store.ReadQueueWait(member.ReviewAttemptId)?.TotalQueueWaitMs);
+
+        // One episode: opened at the first overrun, reminded once after four hours.
+        var stalls = store.ListQueueStalls(ProjectName);
+        Assert.Equal([1, 2], stalls.Select(stall => stall.Raise));
+        Assert.Single(stalls.Select(stall => stall.EpisodeId).Distinct());
+        Assert.Equal(opened, stalls[0].RaisedAtUtc);
+        Assert.Equal(opened.AddMinutes(310), stalls[1].RaisedAtUtc);
+        Assert.Equal(opened, stalls[1].EpisodeOpenedAtUtc);
+        Assert.Equal(2, factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath)
+            .Count(entry => entry.Topic == BatchGatePilotService.QueueStallTopic));
+
+        // The release returns the card with a fresh cap; the gate now reaches a slot.
+        Assert.Equal([member.Key], pilot.QueueStallReport(ProjectName).Releasable);
+        var release = await pilot.ReleaseQueueStalledAsync(ProjectName, "operator", CancellationToken.None);
+        Assert.Equal([member.Key], release.Released);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Null(store.ReadQueueWait(member.ReviewAttemptId));
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        await pilot.TickAsync(CancellationToken.None);
+        Assert.Null(pilot.QueueStalls.OpenEpisode(ProjectName));
+    }
+
     private static readonly JsonSerializerOptions QueueStallJson = new(JsonSerializerDefaults.Web);
 
     /// <summary>The escalation the per-task fallback wrote before AGT-3219.</summary>

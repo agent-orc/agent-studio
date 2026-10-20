@@ -311,20 +311,29 @@ the request never held a slot, so the card stays in Auto Review, a queued
 member keeps its pending record and sequence, and an emergency gate is admitted
 to the batch queue when the batch accepts it (otherwise its per-task marker
 stays active with a fresh start budget, so the admission retry resumes it). An
-execution-phase overrun keeps its escalation. The batch pilot raises one
-`GateQueueStallEvent` per queue episode (queue depth, oldest wait, busy and
-total slots, estimated drain time, idle configured slots and an advisory) into
-the batch store and the operator feed; the episode ends when the queue drains.
+execution-phase overrun keeps its escalation. Every requeue adds its wait to a
+durable ledger of the review generation; once the summed wait reaches
+`QueueWaitCap` (four queue budgets) the card escalates under the distinct
+`gate-capacity` category instead of looping, and an operator release resets the
+ledger. The batch pilot raises one `GateQueueStallEvent` per queue episode
+(queue depth, oldest wait, busy and total slots, estimated drain time, idle
+configured slots and an advisory) into the batch store and the operator feed.
+The episode is durable in the batch store, so a restart keeps it open; while it
+stays open `RemindsStall` raises the event again every four hours, and it ends
+when the queue drains.
 `Assess` marks the queue backlogged when the slots in use cannot drain it inside
 one request's queue budget. Both planners then prefer a batch: the look-ahead
 planner closes the other cards instead of a per-task gate for a high-risk
 oldest card and waits for a due partner instead of a lone per-task gate, and
 the threshold planner closes at pressure size and holds a lone card while
-reviews are pending. Configured but unused gate slots are only reported as an
+reviews are pending. A card deferred this way ages out to its own per-task gate
+after two batch deadlines (`BatchGateLookAheadPlanner.AgedOut`), and an ETA in
+the past never counts as a due partner, so a sustained backlog cannot starve a
+card. Configured but unused gate slots are only reported as an
 advisory; host capacity never changes. `Releasable` lets one operator action
 (`POST /api/projects/{project}/batch-gate/queue-stalls/release`, offered in the
-escalation summary) return every card an earlier build escalated for a queue
-overrun to Auto Review and the batch queue.
+escalation summary) return every card escalated for a queue overrun, by an
+earlier build or at the queue wait cap, to Auto Review and the batch queue.
 
 ## Verification and architecture guard
 

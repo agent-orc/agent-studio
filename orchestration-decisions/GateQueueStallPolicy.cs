@@ -11,6 +11,13 @@ public enum GateQueueOverrunAction
     /// and its gate request returns to the batch queue.
     /// </summary>
     Requeue,
+
+    /// <summary>
+    /// The review generation spent its total queue wait cap without reaching a
+    /// slot. The card escalates under <see cref="GateQueueStallPolicy.GateCapacityCategory"/>:
+    /// the gate host lacks capacity, the code was not judged.
+    /// </summary>
+    EscalateCapacity,
 }
 
 /// <summary>
@@ -48,6 +55,22 @@ public static class GateQueueStallPolicy
     /// <summary>The budget phase of a wait for a machine slot.</summary>
     public const string QueuePhase = "queue";
 
+    /// <summary>Escalation category of a card that spent its queue wait cap.</summary>
+    public const string GateCapacityCategory = "gate-capacity";
+
+    /// <summary>
+    /// Queue budgets one review generation may spend waiting for a slot across
+    /// all its requeues before it escalates as a gate capacity problem.
+    /// </summary>
+    public const int QueueWaitCapBudgets = 4;
+
+    /// <summary>An open stall episode raises its event again after this interval.</summary>
+    public static readonly TimeSpan StallReminderInterval = TimeSpan.FromHours(4);
+
+    /// <summary>Total queue wait cap of one review generation for a queue budget.</summary>
+    public static TimeSpan QueueWaitCap(TimeSpan queueBudget)
+        => queueBudget > TimeSpan.Zero ? queueBudget * QueueWaitCapBudgets : TimeSpan.MaxValue;
+
     /// <summary>
     /// True for a budget the request spent before it held a slot. Execution
     /// phases (preparation, verification) and an unknown phase are not.
@@ -58,15 +81,23 @@ public static class GateQueueStallPolicy
 
     /// <summary>
     /// A queue overrun of the current review generation of a card in Auto
-    /// Review is requeued. Every other result keeps its settlement path, so an
-    /// execution-phase overrun still escalates.
+    /// Review is requeued until <paramref name="totalQueueWait"/>, the queue
+    /// wait of this generation including this overrun, reaches
+    /// <paramref name="queueWaitCap"/>; then it escalates as a capacity problem.
+    /// Every other result keeps its settlement path, so an execution-phase
+    /// overrun still escalates.
     /// </summary>
     public static GateQueueOverrunAction Decide(string? budgetName, string? budgetPhase,
-        string? lane, bool currentGeneration)
-        => IsQueueOverrun(budgetName, budgetPhase) && currentGeneration
-           && string.Equals(lane, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
-            ? GateQueueOverrunAction.Requeue
-            : GateQueueOverrunAction.Settle;
+        string? lane, bool currentGeneration, TimeSpan totalQueueWait = default,
+        TimeSpan? queueWaitCap = null)
+    {
+        if (!IsQueueOverrun(budgetName, budgetPhase) || !currentGeneration
+            || !string.Equals(lane, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+            return GateQueueOverrunAction.Settle;
+        return queueWaitCap is { } cap && totalQueueWait >= cap
+            ? GateQueueOverrunAction.EscalateCapacity
+            : GateQueueOverrunAction.Requeue;
+    }
 
     /// <summary>
     /// Estimated drain is the number of slot rounds the queue needs times one
@@ -99,6 +130,14 @@ public static class GateQueueStallPolicy
     /// overrun and stays open until the queue has drained.
     /// </summary>
     public static bool RaisesStallEvent(bool episodeOpen) => !episodeOpen;
+
+    /// <summary>
+    /// An episode that stays open raises its event again once
+    /// <see cref="StallReminderInterval"/> passed since its last event, so a
+    /// sustained backlog does not go quiet after the first event.
+    /// </summary>
+    public static bool RemindsStall(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
+        => nowUtc - lastRaisedAtUtc >= StallReminderInterval;
 
     /// <summary>The episode closes once no request waits for a slot and none is queued.</summary>
     public static bool EpisodeDrained(int queueDepth) => queueDepth <= 0;

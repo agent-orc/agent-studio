@@ -2023,14 +2023,17 @@ public sealed partial class BatchGatePilotService
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                _queueStalls.Left(pending.ReviewAttemptId);
                 // The active marker stays; the next tick resumes this gate.
                 _logger.LogWarning(ex, "batch-fallback-gate-interrupted task={TaskKey} attempt={AttemptId} start={Start}",
                     pending.Subject.TaskKey, pending.ReviewAttemptId, starts + 1);
                 return;
             }
-            _queueStalls.Left(pending.ReviewAttemptId);
-            if (await RequeueAfterQueueOverrunAsync(task, pending, gate, recordInStore, ct)
+            finally
+            {
+                // Every exit, a cancellation included, ends this request's slot wait.
+                _queueStalls.Left(pending.ReviewAttemptId);
+            }
+            if (await RequeueAfterQueueOverrunAsync(task, pending, gate, evidence, recordInStore, ct)
                     .ConfigureAwait(false))
                 return;
             if (!recordInStore && !ct.IsCancellationRequested
@@ -2268,19 +2271,21 @@ public sealed partial class BatchGatePilotService
     }
 
     private async Task EscalateFallbackAsync(TaskInfo task, BatchGatePendingRecord pending,
-        string reason, bool recordInStore, CancellationToken ct)
+        string reason, bool recordInStore, CancellationToken ct,
+        string category = HumanReviewEscalationCategories.AutoReviewEscalation)
     {
+        var capacity = category == GateQueueStallPolicy.GateCapacityCategory;
         var movedRed = await _reviewJournal.EscalateAsync(task.Id,
-            task.WatchPath, task.ProjectName,
-            HumanReviewEscalationCategories.AutoReviewEscalation,
+            task.WatchPath, task.ProjectName, category,
             reason, ct).ConfigureAwait(false);
         if (movedRed.Status != MoveJobStatus.Success) return;
-        Lane(pending, "ejected", outcome: reason.StartsWith("GateInfra", StringComparison.Ordinal)
+        Lane(pending, "ejected", outcome: capacity ? "GateCapacity"
+            : reason.StartsWith("GateInfra", StringComparison.Ordinal)
             ? "GateInfra" : "GateFailed", reason: reason);
         BatchGateOwnershipStore.ClearIfReviewAttempt(
             movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
         if (recordInStore)
-            _store.ResolvePending(pending.ReviewAttemptId, "per-task-gate-red");
+            _store.ResolvePending(pending.ReviewAttemptId, capacity ? category : "per-task-gate-red");
     }
 
     private BatchGatePendingRecord Refresh(BatchGatePendingRecord pending)

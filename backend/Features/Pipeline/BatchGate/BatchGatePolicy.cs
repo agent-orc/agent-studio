@@ -166,13 +166,15 @@ public static class BatchGatePolicy
         var deadline = now - eligible[0].ReviewCompletedAtUtc >= TimeSpan.FromMinutes(options.DeadlineMinutes);
         // AGT-3219: a backlogged gate queue closes at pressure size, and a lone
         // card waits for a partner from the review queue instead of joining the
-        // slot queue alone as a per-task gate.
+        // slot queue alone as a per-task gate, until it aged out.
         var pressure = eligible.Count >= options.PressureSize
             && (reviewQueueLength >= options.ReviewQueuePressure || loadThrottled || gateBacklog);
         if (eligible.Count < options.CloseSize && !deadline && !pressure)
             return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
-            return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0);
+            return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
+                || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
+                    eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes));
 
         var selected = eligible.Take(options.MaximumSize).ToArray();
         exclusions.AddRange(eligible.Skip(options.MaximumSize)
