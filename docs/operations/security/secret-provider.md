@@ -53,7 +53,11 @@ or CLI and is not this transport. Connect exposes the
 current item, so put replaces its value and delete removes it. Historical
 version reads, rotate and version-specific revoke return a clear unsupported
 error. The item title carries `agent-studio/<scope>/<name>` and its notes
-carry Studio metadata. Do not edit these managed fields outside Studio.
+carry Studio metadata. Each value version uses the Connect item revision from
+its write; metadata-only revisions can leave gaps in the value version numbers.
+A successful workload resolution patches the last-use metadata in the item.
+If that patch fails, resolution fails and no value is issued. Do not edit these
+managed fields outside Studio.
 
 External value reads are cached for the selected 1-300 second TTL. A local
 write, revoke or delete invalidates its cached values. Backend errors are
@@ -120,6 +124,42 @@ scope `GET`, `POST` (put), `GET /{name}`, `POST /{name}/rotate`,
 `POST /{name}/revoke` and `DELETE /{name}` under `/api/secrets/workspace`,
 `/api/projects/{project}/secrets` and
 `/api/projects/{project}/environments/{environment}/secrets`.
+
+### Backend selection and health API
+
+`PUT /api/secrets/backends` selects the store for exactly one scope. The caller
+needs workspace-wide secret write rights, even when selecting a project or
+environment backend. Send a JSON `SecretBackendBinding` with these camel-case
+fields:
+
+| Field | Contract |
+|---|---|
+| `scope` | `workspace`, `<project>`, or `<project>/<environment>`; canonical names only. |
+| `kind` | `builtin`, `vault`, or `onepassword`. `builtin` removes the binding for this scope. |
+| `url` | HTTPS backend URL; HTTP is accepted only on loopback. No URL credentials, query, or fragment. |
+| `mount` | KV v2 mount path for `vault`; otherwise `null`. |
+| `vaultId` | Connect vault ID for `onepassword`; otherwise `null`. |
+| `credentialReference` | Optional built-in `secret://workspace/<name>` reference. It always bypasses external routing. |
+| `credentialEnvironmentVariable` | Optional process environment variable name. It takes precedence when both sources are set and its value is present. |
+| `ttlSeconds` | External value cache lifetime, from 1 through 300 seconds. |
+
+An external binding needs at least one credential source. The request and
+response contain the credential **source name**, never its value. A successful
+request returns the saved binding and writes a `backend-select` audit entry.
+Invalid input returns JSON `{ "error": "<code>", "message": "<reason>" }` with
+HTTP 400. A denied write returns HTTP 403. Backend reachability is checked by
+the overview, not by saving a binding.
+
+`GET /api/secrets` returns `backends` and `backendHealth` arrays alongside the
+existing `secrets`, `unreadable`, `store`, `keySource`, and `canWriteWorkspace`
+fields. Each visible binding appears in `backends` using the fields above.
+Each health entry has `scope`, `kind`, `state` (`healthy` or `unavailable`),
+and a nullable, sanitized `reason`. The overview checks the selected backend
+with its configured credential. A failed scope also appears in `unreadable`
+with `problem: "read-failed"`; secrets in other scopes remain available. Value
+operations against that scope return HTTP 503 with a stable backend error code,
+such as `backend-auth-failed`, `backend-unreachable`, or
+`backend-credential-unavailable`, and no backend response body.
 
 Workloads: `POST /api/runner/secrets/resolve` with an enrolled service
 credential. The workload block names the lease the credential runs under:

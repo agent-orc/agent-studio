@@ -83,21 +83,43 @@ public sealed class ExternalSecretStoreTests
         await store.HealthAsync(default);
         await provider.PutAsync(Scope, "API_KEY", first, Owner);
         Assert.Equal(first, (await Resolve(provider, "secret://workspace/API_KEY")).Value);
+        var persistedUse = await store.FindAsync(Scope, "API_KEY", default);
+        Assert.Equal("workload:runner", persistedUse!.LastUsedBy);
+        Assert.Equal("task:test", persistedUse.LastUsedPurpose);
+        Assert.Equal(1, Assert.Single(persistedUse.Versions).Version);
+        Assert.Contains(remote.Requests, request => request.StartsWith("PATCH ", StringComparison.Ordinal));
         var firstReads = remote.ValueReads;
         Assert.Equal(first, (await Resolve(provider, "secret://workspace/API_KEY")).Value);
         Assert.Equal(firstReads + 2, remote.ValueReads);
         clock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal(first, (await Resolve(provider, "secret://workspace/API_KEY")).Value);
         Assert.Equal(firstReads + 5, remote.ValueReads);
-        await provider.PutAsync(Scope, "API_KEY", replacement, Owner);
+        var replaced = await provider.PutAsync(Scope, "API_KEY", replacement, Owner);
+        Assert.True(replaced.Versions.Max(item => item.Version) > 2);
         Assert.Equal(replacement, (await Resolve(provider, "secret://workspace/API_KEY")).Value);
         var rotate = await Assert.ThrowsAsync<SecretBackendException>(() => provider.RotateAsync(Scope, "API_KEY", Value(), Owner));
         Assert.Equal("backend-rotation-unsupported", rotate.Code);
-        var revoke = await Assert.ThrowsAsync<SecretBackendException>(() => provider.RevokeAsync(Scope, "API_KEY", 2, Owner));
+        var revoke = await Assert.ThrowsAsync<SecretBackendException>(() => provider.RevokeAsync(Scope, "API_KEY", replaced.Versions.Max(item => item.Version), Owner));
         Assert.Equal("backend-revoke-unsupported", revoke.Code);
         Assert.Equal("onepassword", store.StoreId);
         await provider.DeleteAsync(Scope, "API_KEY", Owner);
         Assert.Null(await store.FindAsync(Scope, "API_KEY", default));
+    }
+
+    [Fact]
+    public async Task OnePassword_metadata_update_failure_fails_the_resolution_closed()
+    {
+        using var remote = new FakeRemote("onepassword");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        var store = new OnePasswordConnectSecretStore(Bind("onepassword", remote.Url), remote.Client,
+            (_, _) => Task.FromResult(remote.Token), clock);
+        var provider = Provider(store, clock);
+        await provider.PutAsync(Scope, "API_KEY", Value(), Owner);
+        remote.FailMetadataUpdates = true;
+
+        var error = await Assert.ThrowsAsync<SecretBackendException>(() => Resolve(provider, "secret://workspace/API_KEY"));
+        Assert.Equal("backend-unavailable", error.Code);
+        Assert.Null((await store.FindAsync(Scope, "API_KEY", default))!.LastUsedAt);
     }
 
     [Theory]
@@ -248,6 +270,7 @@ public sealed class ExternalSecretStoreTests
         public HttpClient Client { get; }
         public string Url => Client.BaseAddress!.ToString();
         public int ValueReads { get; private set; }
+        public bool FailMetadataUpdates { get; set; }
         public List<string> Requests { get; } = [];
 
         public FakeRemote(string kind)
@@ -362,6 +385,22 @@ public sealed class ExternalSecretStoreTests
             {
                 using var document = await JsonDocument.ParseAsync(context.Request.Body);
                 var node = JsonNode.Parse(document.RootElement.GetRawText())!.AsObject();
+                node["version"] = ++_itemVersion;
+                _item = JsonSerializer.SerializeToElement(node);
+                await context.Response.WriteAsJsonAsync(_item.Value);
+                return;
+            }
+            if (context.Request.Method == "PATCH")
+            {
+                if (FailMetadataUpdates) { context.Response.StatusCode = 503; return; }
+                if (_item is null) { context.Response.StatusCode = 404; return; }
+                using var document = await JsonDocument.ParseAsync(context.Request.Body);
+                var operation = document.RootElement.EnumerateArray().Single();
+                if (operation.GetProperty("op").GetString() != "replace"
+                    || operation.GetProperty("path").GetString() != "/notesPlain")
+                { context.Response.StatusCode = 400; return; }
+                var node = JsonNode.Parse(_item.Value.GetRawText())!.AsObject();
+                node["notesPlain"] = operation.GetProperty("value").GetString();
                 node["version"] = ++_itemVersion;
                 _item = JsonSerializer.SerializeToElement(node);
                 await context.Response.WriteAsJsonAsync(_item.Value);
