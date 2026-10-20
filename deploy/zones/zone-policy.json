@@ -1,0 +1,125 @@
+// Zone network policy for Docker hosts (AGT-3231, Dossier integrierte-plattform §4-§5).
+// Rendered and enforced by deploy/zones/apply-zone-policy.sh; see
+// docs/operations/setup/zone-network-policy.md. ${NAME} values come from the
+// host's /etc/agent-studio/zone-policy/zone-policy.env. Raise "version" with
+// every change: the daemons report it as their zone-policy capability.
+//
+// A work zone allows a named host (and its subdomains) through the
+// destination's ipset agent-zone-<destination>: work containers resolve
+// through the zone resolver on their bridge gateway, which adds every answer
+// to the set, so the allowed addresses follow what the containers resolve.
+// IPv4 addresses and CIDRs stay literal rules.
+{
+  "schemaVersion": 1,
+  "version": "2026-10-20.3",
+  "resolver": {
+    "upstreams": ["${AGENT_ZONE_DNS_RESOLVERS}"],
+    "setTimeoutSeconds": 86400
+  },
+  "destinations": {
+    "control-plane": {
+      "class": "control-plane",
+      "description": "Task Server and Studio edge (RUNNER_SERVER_URL host)",
+      "hosts": ["${AGENT_ZONE_CONTROL_PLANE_HOSTS}"],
+      "ports": [443, 5071]
+    },
+    "secret-store": {
+      "class": "secret-store",
+      "description": "Secret provider and credential manager endpoints",
+      "hosts": ["${AGENT_ZONE_SECRET_STORE_HOSTS}"]
+    },
+    "git-hosts": {
+      "class": "egress",
+      "description": "Git remotes over HTTPS and SSH",
+      "hosts": [
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com"
+      ],
+      "ports": [22, 443]
+    },
+    "package-registries": {
+      "class": "egress",
+      "description": "npm, NuGet, PyPI, .NET SDK, container image and GitHub release asset sources",
+      "hosts": [
+        "registry.npmjs.org",
+        "api.nuget.org",
+        "globalcdn.nuget.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "builds.dotnet.microsoft.com",
+        "ghcr.io",
+        "pkg-containers.githubusercontent.com",
+        "release-assets.githubusercontent.com"
+      ],
+      "ports": [443]
+    },
+    "model-providers": {
+      "class": "egress",
+      "description": "Model provider APIs and their sign-in endpoints",
+      "hosts": [
+        "api.anthropic.com",
+        "claude.ai",
+        "console.anthropic.com",
+        "platform.claude.com",
+        "api.openai.com",
+        "auth.openai.com",
+        "chatgpt.com",
+        "generativelanguage.googleapis.com",
+        "cloudcode-pa.googleapis.com",
+        "oauth2.googleapis.com"
+      ],
+      "ports": [443]
+    }
+  },
+  "zones": [
+    {
+      "name": "work",
+      "kind": "work",
+      "networks": [
+        { "name": "agent-work", "bridge": "br-agent-work", "subnet": "172.30.0.0/24" }
+      ],
+      "egress": {
+        "default": "deny",
+        "allow": ["control-plane", "git-hosts", "package-registries", "model-providers"]
+      },
+      "verify": {
+        "reachable": [
+          { "destination": "control-plane" },
+          { "destination": "git-hosts", "host": "github.com", "port": 443 }
+        ],
+        "blocked": [
+          { "host": "1.1.1.1", "port": 443 },
+          { "host": "example.com", "port": 80 }
+        ]
+      }
+    },
+    {
+      "name": "run",
+      "kind": "run",
+      "networks": [
+        { "name": "agent-run-default", "bridge": "br-run-default", "subnet": "172.31.0.0/24", "tenant": "default" }
+      ],
+      "egress": {
+        "default": "allow",
+        "deny": ["control-plane", "secret-store"]
+      },
+      "verify": {
+        "reachable": [
+          { "host": "example.com", "port": 443 }
+        ],
+        "blocked": [
+          { "destination": "control-plane" },
+          { "destination": "secret-store", "port": 443 }
+        ]
+      }
+    }
+  ],
+  "verification": {
+    "probeImage": "bash:5.2@sha256:a54fb4422b18f05dd3107c36f39d67b26334fda7ec89f4126052b45e228e2f15",
+    "timeoutSeconds": 4,
+    "controlNetwork": "bridge"
+  }
+}

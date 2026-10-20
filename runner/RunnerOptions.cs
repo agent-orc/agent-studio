@@ -292,6 +292,15 @@ public sealed class RunnerOptions
     public int LoadGateSustainedSeconds { get; init; } = 120;
 
     /// <summary>
+    /// AGT-3231: the zone policy state <c>agent-host zone-policy apply
+    /// --execute</c> records on this host. The daemon reports it as the
+    /// <c>zone-policy</c> capability; a missing file reports nothing. Only
+    /// an explicit <c>RUNNER_ZONE_POLICY_STATE</c> sets it, so a host that
+    /// never opted in reports no zone policy.
+    /// </summary>
+    public string ZonePolicyStatePath { get; init; } = "";
+
+    /// <summary>
     /// AGT-2993: filesystem whose free space admits a compose scenario review
     /// step (the Docker data root, where its images and build cache land). When
     /// the path does not exist the review workspace's filesystem is measured.
@@ -339,14 +348,23 @@ public sealed class RunnerOptions
     /// </summary>
     public bool HoldAdmission { get; init; }
 
+    /// <summary>
+    /// The environment <see cref="Env"/> reads instead of the process
+    /// environment while <see cref="Parse(string[], Func{string, string?})"/> runs.
+    /// </summary>
+    private static readonly AsyncLocal<Func<string, string?>?> InjectedEnvironment = new();
+
+    private static string? Variable(string name)
+        => InjectedEnvironment.Value is { } environment ? environment(name) : Environment.GetEnvironmentVariable(name);
+
     public static string Env(string name, string fallback = "")
     {
-        if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+        if (Variable(name) is { Length: > 0 } value)
             return value;
 
         const string bootstrapPrefix = "RUNNER_";
         if (name.StartsWith(bootstrapPrefix, StringComparison.Ordinal)
-            && Environment.GetEnvironmentVariable($"AGENT_HOST_{name[bootstrapPrefix.Length..]}") is { Length: > 0 } alias)
+            && Variable($"AGENT_HOST_{name[bootstrapPrefix.Length..]}") is { Length: > 0 } alias)
             return alias;
 
         return fallback;
@@ -378,13 +396,32 @@ public sealed class RunnerOptions
 
     public static double EnvDouble(string name, double fallback)
         => double.TryParse(
-               Environment.GetEnvironmentVariable(name),
+               Variable(name),
                NumberStyles.Float,
                CultureInfo.InvariantCulture,
                out var value)
            && value > 0
             ? value
             : fallback;
+
+    /// <summary>
+    /// <see cref="Parse(string[])"/> against <paramref name="environment"/>
+    /// instead of the process environment, so a test sees no host variable.
+    /// </summary>
+    public static (RunnerOptions Options, string? TaskKey, bool Once, bool Help) Parse(
+        string[] args, Func<string, string?> environment)
+    {
+        var previous = InjectedEnvironment.Value;
+        InjectedEnvironment.Value = environment;
+        try
+        {
+            return Parse(args);
+        }
+        finally
+        {
+            InjectedEnvironment.Value = previous;
+        }
+    }
 
     /// <summary>
     /// Build options from environment defaults, then apply <c>--key value</c> and
@@ -551,6 +588,7 @@ public sealed class RunnerOptions
             CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
             DockerDataRoot = Env("RUNNER_DOCKER_DATA_ROOT", "/var/lib/docker"),
+            ZonePolicyStatePath = Env("RUNNER_ZONE_POLICY_STATE", ""),
             ComposeScenarioMinFreePercent = Math.Min(100, EnvIntAllowingZero(
                 "RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT",
                 ComposeScenarioDiskAdmission.DefaultMinFreePercent)),
