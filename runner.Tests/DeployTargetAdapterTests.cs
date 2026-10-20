@@ -136,6 +136,40 @@ public sealed class DeployTargetAdapterTests
     }
 
     [Fact]
+    public async Task SshStatic_RedeployUsesFreshDirectoryForTheSameArtifact()
+    {
+        var (path, reference) = Package("index.html", "verified");
+        try
+        {
+            var request = new DeployTargetRequest("demo", "staging", reference, [reference],
+                new Dictionary<string, string> { ["web"] = reference },
+                Step("static-site") with { Directory = "/srv/www/demo" },
+                new DeployTarget("ssh-docker", "web-vm", "secret://demo/staging/SSH_KEY",
+                    Host: "web.example.test", User: "deploy",
+                    KnownHostsSecret: "secret://demo/staging/SSH_HOSTS"), path);
+            var commands = new FakeCommands();
+            var executor = Executor(new FakeSecrets(), commands);
+
+            await executor.DeployAsync(request, CancellationToken.None);
+            await executor.DeployAsync(request, CancellationToken.None);
+
+            Assert.Equal(6, commands.Calls.Count);
+            var firstCreate = commands.Calls[0].Arguments.Last();
+            var secondCreate = commands.Calls[3].Arguments.Last();
+            Assert.Contains("&& mkdir -m 755 ", firstCreate);
+            Assert.Contains("&& mkdir -m 755 ", secondCreate);
+            var firstRelease = firstCreate[(firstCreate.LastIndexOf(' ') + 1)..];
+            var secondRelease = secondCreate[(secondCreate.LastIndexOf(' ') + 1)..];
+            Assert.StartsWith("/srv/www/demo/.releases/" + reference[^64..] + "-", firstRelease);
+            Assert.StartsWith("/srv/www/demo/.releases/" + reference[^64..] + "-", secondRelease);
+            Assert.NotEqual(firstRelease, secondRelease);
+            Assert.EndsWith(secondRelease + "/", commands.Calls[4].Arguments.Last());
+            Assert.Contains("ln -sfn " + secondRelease + " ", commands.Calls[5].Arguments.Last());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public async Task TamperedPackage_IsRejectedBeforeSecretResolution()
     {
         var (path, reference) = Package("index.html", "verified");

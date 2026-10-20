@@ -38,10 +38,11 @@ public sealed class SshDockerDeployAdapter(IDeploySecretResolver secrets, IDeplo
         if (local is not null)
         {
             var digest = DeployArtifactVerifier.Verify(request);
-            var releaseDirectory = destination + "/.releases/" + digest;
-            await Run("ssh", [.. sshOptions, remote, "mkdir -p " + releaseDirectory], ct);
+            var releaseDirectory = destination + "/.releases/" + digest + "-" + Guid.NewGuid().ToString("N");
+            await Run("ssh", [.. sshOptions, remote,
+                "mkdir -p " + destination + "/.releases && mkdir -m 755 " + releaseDirectory], ct);
             await Run("scp", [.. sshOptions, "-r", local + "/.", remote + ":" + releaseDirectory + "/"], ct);
-            var pending = destination + "/.current-" + digest;
+            var pending = destination + "/.current-" + digest + "-" + Guid.NewGuid().ToString("N");
             await Run("ssh", [.. sshOptions, remote,
                 "ln -sfn " + releaseDirectory + " " + pending + " && mv -Tf " + pending + " " + destination + "/current"], ct);
             return;
