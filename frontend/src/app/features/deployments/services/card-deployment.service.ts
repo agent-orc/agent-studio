@@ -46,15 +46,12 @@ export class CardDeploymentService {
     });
   }
 
-  badges(task: Pick<TaskInfo, 'projectName' | 'key' | 'id'>): CardEnvironmentBadge[] {
-    // The service also feeds board filters in views that do not show badges.
-    // Start the first read only when a badge is actually observed. Reading jobs
-    // here tracks the board's task signal, so newly loaded cards retry this path.
+  observe(): void {
     this.observed = true;
-    if (this.hasTasks() && !this.initialRequested) {
-      this.initialRequested = true;
-      queueMicrotask(() => this.refresh());
-    }
+    if (this.hasTasks() && !this.initialRequested) this.refresh();
+  }
+
+  badges(task: Pick<TaskInfo, 'projectName' | 'key' | 'id'>): CardEnvironmentBadge[] {
     return this.byCard().get(this.ref(task.projectName, task.key || task.id))?.environments ?? [];
   }
 

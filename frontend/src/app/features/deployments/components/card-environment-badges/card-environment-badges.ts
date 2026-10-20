@@ -14,6 +14,8 @@ export class CardEnvironmentBadgesComponent {
   readonly task = input.required<TaskInfo>();
   readonly badges = computed(() => this.deploy.badges(this.task()));
 
+  constructor() { this.deploy.observe(); }
+
   label(name: string, kind: string, state: string): string {
     if (state === 'not-deployed') return kind === 'production' ? 'Not yet in Production' : 'Staging pending';
     if (state === 'rolled-back') return `${name} · rolled back`;

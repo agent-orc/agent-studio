@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -62,9 +62,11 @@ describe('BoardFiltersService environment state', () => {
       ['prod', { staging: true, production: true }],
       ['new', { staging: false, production: false }],
     ]);
+    const observe = vi.fn();
     TestBed.configureTestingModule({
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
         { provide: CardDeploymentService, useValue: {
+          observe,
           inEnvironment: (task: TaskInfo, kind: 'staging' | 'production') => states.get(task.id)?.[kind] ?? false,
           badges: (task: TaskInfo) => states.has(task.id) ? [{ state: 'not-deployed' }] : [],
         } }],
@@ -77,9 +79,11 @@ describe('BoardFiltersService environment state', () => {
     ]));
 
     filters.setEnvironmentFilter('staging-only');
+    expect(observe).toHaveBeenCalledOnce();
     expect(filters.filteredGrouped().ready.map(task => task.id)).toEqual(['stage']);
     expect(window.location.hash).toContain('environment%3Astaging-only');
     filters.setEnvironmentFilter('not-production');
+    expect(observe).toHaveBeenCalledTimes(2);
     expect(filters.filteredGrouped().ready.map(task => task.id)).toEqual(['stage', 'new']);
     expect(filters.activeFilterPills().at(-1)?.label).toBe('Not yet in Production');
     filters.clearAllFilters();

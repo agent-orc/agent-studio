@@ -9,7 +9,7 @@ describe('CardEnvironmentBadgesComponent', () => {
   it('shows release, deployment time, rollback and not yet in Production', async () => {
     await TestBed.configureTestingModule({ imports: [CardEnvironmentBadgesComponent], providers: [
       provideZonelessChangeDetection(),
-      { provide: CardDeploymentService, useValue: { badges: () => [
+      { provide: CardDeploymentService, useValue: { observe: () => undefined, badges: () => [
         { environmentId: 'stage', environmentName: 'Staging', kind: 'staging', state: 'rolled-back',
           releaseId: 'r1', releaseVersion: '1.0', atUtc: '2026-10-16T10:00:00Z' },
         { environmentId: 'prod', environmentName: 'Production', kind: 'production', state: 'not-deployed',

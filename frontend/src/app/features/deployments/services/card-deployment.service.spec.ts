@@ -1,4 +1,4 @@
-import { signal, provideZonelessChangeDetection } from '@angular/core';
+import { computed, signal, provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -14,7 +14,7 @@ describe('CardDeploymentService refresh', () => {
     vi.useRealTimers();
   });
 
-  it('loads badges when observed, then refreshes after task events and deployment polling', async () => {
+  it('loads badges when observed, then refreshes after task events and deployment polling', () => {
     vi.useFakeTimers();
     const task = { projectName: 'demo', key: 'DEMO-1', id: 'demo-1' } as TaskInfo;
     const jobs = signal<TaskInfo[]>([task]);
@@ -28,9 +28,10 @@ describe('CardDeploymentService refresh', () => {
     http.expectNone('/api/deploy/cards');
     taskEvents.next({ kind: 'mutated', id: task.id });
     http.expectNone('/api/deploy/cards');
-    expect(service.badges(task)).toEqual([]);
-    await Promise.resolve();
-    TestBed.tick();
+    const badges = computed(() => service.badges(task));
+    expect(badges()).toEqual([]);
+    http.expectNone('/api/deploy/cards');
+    service.observe();
     const first = http.expectOne('/api/deploy/cards');
     taskEvents.next({ kind: 'mutated', id: task.id });
     http.expectNone('/api/deploy/cards');
@@ -55,6 +56,25 @@ describe('CardDeploymentService refresh', () => {
       ],
     }]);
     expect(service.inEnvironment(task, 'production')).toBe(true);
+    http.verify();
+    taskEvents.complete();
+  });
+
+  it('starts loading after tasks arrive when a badge is observed first', () => {
+    const task = { projectName: 'demo', key: 'DEMO-1', id: 'demo-1' } as TaskInfo;
+    const jobs = signal<TaskInfo[]>([]);
+    const taskEvents = new Subject<unknown>();
+    TestBed.configureTestingModule({
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        { provide: TaskService, useValue: { jobs, taskEvents } }],
+    });
+    const service = TestBed.inject(CardDeploymentService);
+    const http = TestBed.inject(HttpTestingController);
+    service.observe();
+    http.expectNone('/api/deploy/cards');
+    jobs.set([task]);
+    taskEvents.next({ kind: 'snapshot' });
+    http.expectOne('/api/deploy/cards').flush([]);
     http.verify();
     taskEvents.complete();
   });

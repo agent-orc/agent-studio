@@ -100,7 +100,7 @@ describe('TaskSelectionService · board record reuse', () => {
         provideHttpClientTesting(),
         provideRouter([]),
         { provide: JobsHubClient, useClass: JobsHubClientStub },
-        { provide: CardDeploymentService, useValue: { badges: () => [] } },
+        { provide: CardDeploymentService, useValue: { observe: () => undefined, badges: () => [] } },
       ],
     }).compileComponents();
     selection = TestBed.inject(TaskSelectionService);

@@ -410,6 +410,7 @@ export class BoardFiltersService {
 
   setEnvironmentFilter(value: EnvironmentCardFilter): void {
     this.environmentFilter.set(value);
+    if (value !== 'all') this.deployCards.observe();
     this.writeFilterHash();
   }
 
@@ -665,6 +666,7 @@ export class BoardFiltersService {
       this.stalledIntegrationOnly.set(stalledIntegrationOnly);
       this.waitingForReleaseOnly.set(waitingForReleaseOnly);
       this.environmentFilter.set(environmentFilter);
+      if (environmentFilter !== 'all') this.deployCards.observe();
       return;
     }
     const rawLegacy = kvValueOf(hash, 'filter');
