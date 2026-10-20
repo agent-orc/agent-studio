@@ -19,13 +19,13 @@ public sealed class PublicDemoHostFixture : IAsyncLifetime
     public Task InitializeAsync()
     {
         var timer = Stopwatch.StartNew();
-        // The shared host serves every class of the collection from one client
-        // address. The route inventory test alone sends one request per
-        // execution route, so the default 120-per-minute edge limit would turn
-        // later requests into 429s. The limiter itself is not under test here.
+        // The shared host serves every test of its classes from one client
+        // address, and the execution route inventory alone sends more requests
+        // than the production ceiling of 120 per minute. The rate limit tests
+        // build their own host with an explicit limit.
         Factory = CreateFactory(_workspace, new Dictionary<string, string?>
         {
-            ["Security:PublicDemoEdge:RateLimit:PermitLimit"] = "1000",
+            ["Security:PublicDemoEdge:RateLimit:PermitLimit"] = "10000",
         });
         using var client = Factory.CreateClient();
         InitializationDuration = timer.Elapsed;

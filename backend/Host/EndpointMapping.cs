@@ -1,4 +1,5 @@
 
+using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
 
@@ -111,6 +112,7 @@ public static class EndpointMapping
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();
+        app.MapDeployEndpoints();
         app.MapProjectPipelineDefinitionEndpoints();
         app.MapEnvironmentHealthEndpoints();
         app.MapProjectCycleTimeEndpoints();
