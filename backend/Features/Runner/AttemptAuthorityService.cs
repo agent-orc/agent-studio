@@ -130,6 +130,30 @@ public sealed class AttemptAuthorityService
     };
 
     private readonly object _gate = new();
+    private readonly HashSet<string> _reviewRestartFences = new(StringComparer.Ordinal);
+
+    /// <summary>Blocks new review leases while a drained host is being restarted.</summary>
+    public IDisposable? TryFenceReviewHost(string hostId)
+    {
+        lock (_gate)
+        {
+            var now = _utcNow();
+            if (_reviewRestartFences.Contains(hostId) || _state.ReviewAttempts.Any(review =>
+                    IsCurrentReview(review) && review.State == AttemptLifecycleState.Leased
+                    && review.Lease is { } lease && lease.ExpiresAt > now && Same(lease.HostId, hostId)))
+                return null;
+            _reviewRestartFences.Add(hostId);
+            return new ReviewRestartFence(this, hostId);
+        }
+    }
+
+    private sealed class ReviewRestartFence(AttemptAuthorityService owner, string hostId) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (owner._gate) owner._reviewRestartFences.Remove(hostId);
+        }
+    }
 
     /// <summary>
     /// Per-task continuation gates. A review continuation holds its task's gate
@@ -1045,6 +1069,9 @@ public sealed class AttemptAuthorityService
         string idempotencyKey,
         string? instanceId)
     {
+        if (_reviewRestartFences.Contains(hostId))
+            return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId,
+                "Review host is drained for a service restart.", ReviewAttempt: ToDto(review));
         var deliveryKey = DeliveryKey("claim", idempotencyKey);
         if (review.IdempotencyKeys.Contains(deliveryKey))
         {
@@ -1124,6 +1151,9 @@ public sealed class AttemptAuthorityService
         {
             var review = FindReview(attemptId);
             if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId));
+            if (_reviewRestartFences.Contains(hostId))
+                return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId,
+                    "Review host is drained for a service restart.", ReviewAttempt: ToDto(review));
             var deliveryKey = DeliveryKey("reclaim", idempotencyKey);
             var payloadHash = ReviewReClaimPayloadHash(
                 executorId,

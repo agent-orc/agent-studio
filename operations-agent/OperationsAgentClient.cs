@@ -43,26 +43,41 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         renewal.EnsureSuccessStatusCode();
         attempt = await renewal.Content.ReadFromJsonAsync<OperationAttempt>(ct)
                   ?? throw new InvalidDataException("Agent lease response is empty.");
+        if (!Guid.TryParseExact(attempt.Id, "N", out _)) throw new InvalidDataException("Agent attempt identity is invalid.");
+        var restartMarker = Path.Combine(spoolDirectory, attempt.Id + ".restart-started");
+        if (attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id)
+        {
+            if (File.Exists(restartMarker))
+                throw new IOException("Restart attempt has an unresolved durable execution marker.");
+            var started = clock.GetUtcNow();
+            var uncertain = new AttemptReportRequest(bootId, attempt.Fence,
+                new OperationResult("failed", attempt.Command.InputDigest, "restart-outcome-unknown",
+                    JsonSerializer.SerializeToElement(new { }), [], true, started, started));
+            await WriteDurableAsync(restartMarker, JsonSerializer.SerializeToUtf8Bytes(uncertain, OperationsProtocol.Json), ct);
+        }
         var result = attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id
             ? await ServiceRestart.ExecuteAsync(attempt, agentId, bootId, _services, run ?? ServiceRestart.RunAsync, clock, ct)
             : HostInspection.Execute(attempt, agentId, bootId, clock.GetUtcNow());
         var reportRequest = new AttemptReportRequest(bootId, attempt.Fence, result);
-        if (!Guid.TryParseExact(attempt.Id, "N", out _)) throw new InvalidDataException("Agent attempt identity is invalid.");
         var target = Path.Combine(spoolDirectory, attempt.Id + ".json");
         if (Directory.EnumerateFiles(spoolDirectory).Take(128).Count() >= 128)
             throw new IOException("Agent evidence spool capacity reached.");
         var bytes = JsonSerializer.SerializeToUtf8Bytes(reportRequest, OperationsProtocol.Json);
         if (bytes.Length > 8192) throw new InvalidDataException("Agent evidence exceeds its output bound.");
-        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
-        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        using (var stream = new FileStream(target + ".tmp", options))
-        {
-            await stream.WriteAsync(bytes, ct);
-            stream.Flush(flushToDisk: true);
-        }
+        await WriteDurableAsync(target + ".tmp", bytes, ct);
         File.Move(target + ".tmp", target);
         await ReportAsync(attempt.Id, reportRequest, ct);
         File.Delete(target);
+        if (File.Exists(restartMarker)) File.Delete(restartMarker);
+    }
+
+    private static async Task WriteDurableAsync(string path, byte[] bytes, CancellationToken ct)
+    {
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Options = FileOptions.WriteThrough };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        using var stream = new FileStream(path, options);
+        await stream.WriteAsync(bytes, ct);
+        stream.Flush(flushToDisk: true);
     }
 
     private async Task ReplaySpoolAsync(CancellationToken ct)
@@ -76,6 +91,17 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
                          ?? throw new InvalidDataException("Agent result evidence is empty.");
             await ReportAsync(Path.GetFileNameWithoutExtension(file), report, ct);
             File.Delete(file);
+            var marker = Path.ChangeExtension(file, ".restart-started");
+            if (File.Exists(marker)) File.Delete(marker);
+        }
+        // A side effect may have completed before its result could be spooled.
+        // Report uncertainty and never recreate the service on redispatch.
+        foreach (var marker in Directory.EnumerateFiles(spoolDirectory, "*.restart-started").Order(StringComparer.Ordinal).Take(128))
+        {
+            var report = JsonSerializer.Deserialize<AttemptReportRequest>(await File.ReadAllTextAsync(marker, ct), OperationsProtocol.Json)
+                         ?? throw new InvalidDataException("Restart execution marker is empty.");
+            await ReportAsync(Path.GetFileName(marker)[..^".restart-started".Length], report, ct);
+            File.Delete(marker);
         }
     }
 

@@ -470,6 +470,20 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     [Fact]
+    public async Task Lease_that_starts_while_restart_is_queued_blocks_the_operation()
+    {
+        _h.Restarts.Allowed.Add(("kori-review-01", "review-daemon"));
+        _h.Raise(Snapshot(capacity: [new("KORI", "kori-review-01", "review", 3, 15, Now0.AddHours(-2), ["AGT-3194"])]));
+        _h.Workload.ClaimStartsBeforeFence = true;
+
+        await _h.Service.RunOnceAsync();
+
+        Assert.Empty(_h.Restarts.Calls);
+        Assert.True(_h.Workload.Reading!.RunningWork);
+        Assert.Equal(StallInterventionStatuses.Superseded, Assert.Single(_h.Store.All()).Status);
+    }
+
+    [Fact]
     public async Task Escalated_reduction_is_not_lowered_again_by_a_new_episode_and_calm_restores_the_baseline()
     {
         _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
@@ -576,6 +590,40 @@ public sealed class StallInterventionScenarioTests : IDisposable
         var record = Assert.Single(_h.Store.All());
         Assert.Equal(StallInterventionStatuses.Superseded, record.Status);
         Assert.Contains("Superseded by a person: the admission of agent-runner-01 reads 5, the plan expected 8", record.Outcome);
+    }
+
+    [Fact]
+    public async Task Admission_change_between_read_and_atomic_write_preserves_the_persons_value()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        _h.Admission.ChangeBeforeCompare = 5;
+
+        await _h.Service.RunOnceAsync();
+
+        Assert.Equal(5, _h.Admission.Hosts[ClientId].Admission);
+        Assert.Empty(_h.Admission.Writes);
+        Assert.Equal(StallInterventionStatuses.Superseded, Assert.Single(_h.Store.All()).Status);
+    }
+
+    [Fact]
+    public async Task Restore_change_between_read_and_atomic_write_preserves_the_persons_value()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        await _h.Service.RunOnceAsync();
+        _h.Clear();
+        _h.Clock.Advance(TimeSpan.FromMinutes(12));
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with
+        { Load1 = 4.0, CalmSince = _h.Now.AddMinutes(-16) };
+        _h.Admission.ChangeBeforeCompare = 5;
+
+        await _h.Service.RunOnceAsync();
+
+        Assert.Equal(5, _h.Admission.Hosts[ClientId].Admission);
+        Assert.Single(_h.Admission.Writes);
+        Assert.Equal(StallInterventionStatuses.Superseded,
+            Assert.Single(_h.Store.All(), item => item.Action == StallInterventionActions.RestoreAdmission).Status);
     }
 
     [Theory]
@@ -847,6 +895,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         public readonly List<(string ClientId, int Value)> Writes = [];
         public bool IgnoreWrites { get; set; }
         public Exception? FailAfterWrite { get; set; }
+        public int? ChangeBeforeCompare { get; set; }
 
         public HostAdmissionReading? Read(string clientId, double restoreFraction, DateTime nowUtc)
             => Hosts.TryGetValue(clientId, out var state)
@@ -856,6 +905,11 @@ public sealed class StallInterventionScenarioTests : IDisposable
 
         public bool TrySetAdmission(string clientId, int expected, int replacement)
         {
+            if (ChangeBeforeCompare is { } changed && Hosts.TryGetValue(clientId, out var current))
+            {
+                Hosts[clientId] = current with { Admission = changed };
+                ChangeBeforeCompare = null;
+            }
             if (!Hosts.TryGetValue(clientId, out var state) || state.Admission != expected) return false;
             return SetAdmission(clientId, replacement) == replacement;
         }
@@ -872,8 +926,21 @@ public sealed class StallInterventionScenarioTests : IDisposable
     private sealed class FakeWorkload : IServiceWorkload
     {
         public ServiceWorkloadReading? Reading { get; set; } = new(0, false, 15);
+        public bool ClaimStartsBeforeFence { get; set; }
 
         public ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc) => Reading;
+
+        public IDisposable? TryFenceClaims(string host, string role)
+        {
+            if (ClaimStartsBeforeFence)
+            {
+                Reading = Reading! with { RunningWork = true };
+                return null;
+            }
+            return new FakeFence();
+        }
+
+        private sealed class FakeFence : IDisposable { public void Dispose() { } }
     }
 
     private sealed class FakeRestarts : IServiceRestartControl

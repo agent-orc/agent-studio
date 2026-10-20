@@ -41,7 +41,9 @@ public sealed record RestartableServices(IReadOnlyDictionary<string, Restartable
         foreach (var (name, target) in document.Services ?? [])
         {
             if (!OperationCatalogue.ValidServiceName(name) || target is null
+                || string.IsNullOrWhiteSpace(target.ComposeFile)
                 || !Path.IsPathFullyQualified(target.ComposeFile) || !File.Exists(target.ComposeFile)
+                || string.IsNullOrWhiteSpace(target.ComposeService)
                 || !OperationCatalogue.ValidServiceName(target.ComposeService))
                 throw new InvalidDataException($"The restartable service '{name}' is invalid.");
             services[name] = target;

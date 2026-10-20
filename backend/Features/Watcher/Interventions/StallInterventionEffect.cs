@@ -364,14 +364,22 @@ public sealed class StallInterventionEffect(
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
                 if (record.Action == StallInterventionActions.LowerAdmission && LiveMismatch(record) is { } admissionMismatch)
                     return Superseded(record, now, admissionMismatch);
-                admission.SetAdmission(record.HostClientId!, record.TargetAdmission
-                    ?? throw new InvalidDataException("The admission plan has no target."));
+                if (record.PreviousAdmission is not { } expected || record.TargetAdmission is not { } target
+                    || !admission.TrySetAdmission(record.HostClientId!, expected, target))
+                    return Superseded(record, now, "the admission changed before the atomic update");
                 break;
             case StallInterventionActions.RestartService or StallInterventionActions.RetryEngineStart:
-                if (record.Action == StallInterventionActions.RestartService && LiveMismatch(record) is { } restartMismatch)
-                    return Superseded(record, now, restartMismatch);
-                var outcome = await restarts.RestartAsync(record.Host, record.Service ?? "unknown", record.WriteKey, record.Done, ct);
-                record = record with { EffectObserved = outcome.Succeeded, EffectEvidence = outcome.Evidence };
+                var role = record.Subject.Split(':') is { Length: > 2 } subjectParts ? subjectParts[2] : "coding";
+                using (var fence = record.Action == StallInterventionActions.RestartService
+                    ? workloads.TryFenceClaims(record.Host, role) : null)
+                {
+                    if (record.Action == StallInterventionActions.RestartService && fence is null)
+                        return Superseded(record, now, "a review lease started before the restart claim fence");
+                    if (record.Action == StallInterventionActions.RestartService && LiveMismatch(record) is { } restartMismatch)
+                        return Superseded(record, now, restartMismatch);
+                    var outcome = await restarts.RestartAsync(record.Host, record.Service ?? "unknown", record.WriteKey, record.Done, ct);
+                    record = record with { EffectObserved = outcome.Succeeded, EffectEvidence = outcome.Evidence };
+                }
                 break;
             case StallInterventionActions.RerouteProvider:
                 routes.Reroute(record.Host, record.Provider ?? "unknown", record.Id);

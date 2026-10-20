@@ -46,6 +46,9 @@ public sealed record ServiceWorkloadReading(int? BusySlots, bool RunningWork, in
 public interface IServiceWorkload
 {
     ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc);
+
+    /// <summary>Fence new claims on a review host until the restart attempt settles.</summary>
+    IDisposable? TryFenceClaims(string host, string role);
 }
 
 /// <summary>Outcome of one Operations Server restart; <see cref="Evidence"/> is shown in the receipt.</summary>

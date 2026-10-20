@@ -76,6 +76,11 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
     /// <summary>How long the gate host's own slot count, reported to a waiting run, stays current.</summary>
     public static readonly TimeSpan RemoteSlotsFresh = TimeSpan.FromMinutes(10);
 
+    public IDisposable? TryFenceClaims(string host, string role)
+        => role == "review" ? attempts.TryFenceReviewHost(host) : new NoopFence();
+
+    private sealed class NoopFence : IDisposable { public void Dispose() { } }
+
     public ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc)
     {
         switch (role)

@@ -55,6 +55,44 @@ public sealed class ServiceRestartTests
     }
 
     [Fact]
+    public async Task Restart_is_not_repeated_when_result_spooling_fails_after_recreation()
+    {
+        await using var f = await Start();
+        var spool = Path.Combine(f.Directory, "spool");
+        var displaced = spool + "-displaced";
+        var calls = 0;
+        var services = new RestartableServices(new Dictionary<string, RestartableService>
+        {
+            ["review-daemon"] = new(f.ComposeFile, "review"),
+        });
+        var agent = new OperationsAgentClient(f.Agent, "host-a", "boot-a", spool, f.Clock, services,
+            (start, _, _) =>
+            {
+                calls++;
+                if (calls == 2)
+                {
+                    Directory.Move(spool, displaced);
+                    File.WriteAllText(spool, "result spool unavailable");
+                }
+                return Task.FromResult(new ToolRun(0, string.Empty, false));
+            });
+        await agent.RegisterAsync(default);
+        var attempt = await f.Submit(Restart(f, "review-daemon"));
+
+        await Assert.ThrowsAnyAsync<IOException>(() => agent.PollOnceAsync(default));
+        File.Delete(spool);
+        Directory.Move(displaced, spool);
+        Assert.True(File.Exists(Path.Combine(spool, attempt.Id + ".restart-started")));
+
+        await agent.PollOnceAsync(default);
+
+        Assert.Equal(2, calls);
+        var completed = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        Assert.Equal(("failed", "restart-outcome-unknown"),
+            (completed!.State, completed.Result!.ExitClassification));
+    }
+
+    [Fact]
     public async Task Agent_without_an_allowlist_offers_no_restart()
     {
         await using var f = await Start();
@@ -120,7 +158,11 @@ public sealed class ServiceRestartTests
             File.WriteAllText(torn, "{ \"services\": ");
             Assert.Empty(RestartableServices.Load(torn, warnings.Add).Services);
             Assert.Empty(RestartableServices.Load(Path.Combine(directory, "missing.json"), warnings.Add).Services);
-            Assert.Equal(4, warnings.Count);
+            Assert.Empty(RestartableServices.Load(Write(new { services = new Dictionary<string, object>
+            {
+                ["review-daemon"] = new { composeFile = (string?)null, composeService = "review" },
+            } }), warnings.Add).Services);
+            Assert.Equal(5, warnings.Count);
             Assert.All(warnings, warning => Assert.Contains("offers no restarts", warning));
             Assert.Empty(RestartableServices.Load(null).Services);
         }

@@ -139,6 +139,29 @@ public sealed class StallInterventionAdapterTests : IDisposable
     }
 
     [Fact]
+    public void Review_restart_fence_rejects_a_claim_while_the_restart_is_queued()
+    {
+        var authority = Authority();
+        var run = Deliver(authority, "AGT-9202", reviewed: false);
+        var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest("AGT-9202", RepositoryId,
+            ResultSha, run.AttemptId, "requirements", "policy", [], "create-AGT-9202")).ReviewAttempt!;
+
+        using (var fence = authority.TryFenceReviewHost("kori-review-01"))
+        {
+            Assert.NotNull(fence);
+            var blocked = authority.ClaimReview(review.AttemptId, "kori-review-01-runner", "kori-review-01",
+                3600, "claim-while-queued");
+            Assert.Equal(AttemptWriteStatus.InvalidState, blocked.Status);
+            Assert.Empty(authority.ListActiveReviewAttempts());
+        }
+
+        var claimed = authority.ClaimReview(review.AttemptId, "kori-review-01-runner", "kori-review-01",
+            3600, "claim-after-restart");
+        Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
+        Assert.Null(authority.TryFenceReviewHost("kori-review-01"));
+    }
+
+    [Fact]
     public void A_torn_exclusions_file_never_breaks_the_review_capability_path()
     {
         var path = Path.Combine(_root, ".watcher", "provider-route-exclusions.json");
