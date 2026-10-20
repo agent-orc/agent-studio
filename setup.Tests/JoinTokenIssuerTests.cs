@@ -117,12 +117,27 @@ public sealed class JoinTokenIssuerTests
             };
         });
 
-        var credential = await SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client);
+        var credential = await SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client,
+            new FixedClock());
         Assert.Equal(issued.Credential, credential);
         Assert.NotEqual(payload.Credential, credential);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client));
+            SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client, new FixedClock()));
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Expired_join_token_is_rejected_using_the_injected_clock()
+    {
+        var enrollment = Enrollment();
+        var payload = new JoinPayload(2, "https://tasks.example.test", enrollment.EnrolmentCode,
+            "1.2.0", IssuedAt, enrollment.InstallationId, enrollment.RunnerId, enrollment.ExpiresAt);
+        using var client = Client(_ => throw new InvalidOperationException("Expired token reached the server."));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            SetupApplication.MintRunnerCredentialAsync(payload, "host-a", default, client,
+                new FixedClock(enrollment.ExpiresAt)));
+        Assert.Contains("Join token expired", error.Message);
     }
 
     [Fact]
@@ -148,10 +163,10 @@ public sealed class JoinTokenIssuerTests
         var config = Path.GetDirectoryName(temp.Request("https", payload.ServerUrl).OutputFile)!;
 
         var first = await SetupApplication.GetOrMintJoinCredentialAsync(payload, "host-a", "coding", config,
-            default, client);
+            default, client, new FixedClock());
         // A later systemd failure leaves the protected credential available to a retry.
         var retry = await SetupApplication.GetOrMintJoinCredentialAsync(payload, "host-a", "coding", config,
-            default, client);
+            default, client, new FixedClock());
 
         Assert.Equal(issued.Credential, first);
         Assert.Equal(first, retry);
@@ -165,8 +180,52 @@ public sealed class JoinTokenIssuerTests
     {
         Assert.Equal("AgentRunner-TunnelKeeper-host-a", JoinTokenIssuer.TunnelTaskName("host-a"));
         Assert.Equal("AgentRunner-TunnelKeeper-host-b", JoinTokenIssuer.TunnelTaskName("host-b"));
+        Assert.Equal(15031, JoinTokenIssuer.ResolveRemotePort("reverse-tunnel", null, null));
+        Assert.Equal(16031, JoinTokenIssuer.ResolveRemotePort("reverse-tunnel", null, "16031"));
+        Assert.Equal(16031, JoinTokenIssuer.ResolveRemotePort("reverse-tunnel", "http://127.0.0.1:16031", null));
+        Assert.Throws<ArgumentException>(() => JoinTokenIssuer.ResolveRemotePort("reverse-tunnel", "http://127.0.0.1:16031", "15031"));
+        Assert.Equal("host-a", JoinTokenIssuer.ResolveSshTarget("host-a", null));
+        Assert.Equal("host-b", JoinTokenIssuer.ResolveSshTarget("host-b", null));
+        Assert.Equal("ssh-user@remote.example", JoinTokenIssuer.ResolveSshTarget("host-a", "ssh-user@remote.example"));
+        Assert.Throws<ArgumentException>(() => JoinTokenIssuer.ResolveSshTarget("host-a", "remote host"));
         Assert.Throws<ArgumentException>(() => JoinTokenIssuer.TunnelTaskName("host a"));
     }
+
+    [Fact]
+    public async Task Two_reverse_tunnel_joins_issue_distinct_host_identifiers_with_default_targets()
+    {
+        using var temp = new TestFiles();
+        var first = temp.Request("reverse-tunnel", "http://127.0.0.1:15031");
+        var second = first with
+        {
+            RunnerId = "host-b",
+            OutputFile = Path.Combine(Path.GetDirectoryName(first.OutputFile)!, "host-b.join.token"),
+        };
+        using var firstClient = Client(message => Reply(message, "host-a"));
+        using var secondClient = Client(message => Reply(message, "host-b"));
+
+        var firstPayload = await JoinTokenIssuer.IssueAsync(first, firstClient, new FixedClock());
+        var secondPayload = await JoinTokenIssuer.IssueAsync(second, secondClient, new FixedClock());
+
+        Assert.Equal("host-a", firstPayload.RunnerId);
+        Assert.Equal("host-b", secondPayload.RunnerId);
+        Assert.Equal("host-a", JoinTokenIssuer.ResolveSshTarget(first.RunnerId, null));
+        Assert.Equal("host-b", JoinTokenIssuer.ResolveSshTarget(second.RunnerId, null));
+        Assert.Equal("AgentRunner-TunnelKeeper-host-a", JoinTokenIssuer.TunnelTaskName(first.RunnerId));
+        Assert.Equal("AgentRunner-TunnelKeeper-host-b", JoinTokenIssuer.TunnelTaskName(second.RunnerId));
+        Assert.NotEqual(await File.ReadAllTextAsync(first.OutputFile), await File.ReadAllTextAsync(second.OutputFile));
+    }
+
+    private static HttpResponseMessage Reply(HttpRequestMessage message, string hostName)
+        => message.RequestUri!.AbsolutePath switch
+        {
+            "/healthz" => new HttpResponseMessage(HttpStatusCode.OK),
+            "/api/v1/management/enrolments" => new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(Enrollment(hostName)),
+            },
+            _ => throw new InvalidOperationException("Unexpected request."),
+        };
 
     [Fact]
     public void Host_join_rejects_legacy_management_bearer_tokens()
@@ -179,9 +238,9 @@ public sealed class JoinTokenIssuerTests
             ProductSetup.ReadJoinToken(path)).Message);
     }
 
-    private static IssuedEnrolment Enrollment()
-        => new("enl_example", "runner:host-a", TaskServerPrincipalKinds.Runner,
-            "host-a", "installation-one", "enr_" + new string('e', 64), IssuedAt.AddMinutes(10));
+    private static IssuedEnrolment Enrollment(string hostName = "host-a")
+        => new("enl_example", $"runner:{hostName}", TaskServerPrincipalKinds.Runner,
+            hostName, "installation-one", "enr_" + new string('e', 64), IssuedAt.AddMinutes(10));
 
     private static HttpClient Client(Func<HttpRequestMessage, HttpResponseMessage> reply)
         => new(new Handler(reply)) { BaseAddress = new Uri("http://127.0.0.1:5071") };
@@ -192,9 +251,9 @@ public sealed class JoinTokenIssuerTests
             => Task.FromResult(reply(request));
     }
 
-    private sealed class FixedClock : TimeProvider
+    private sealed class FixedClock(DateTime? now = null) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => new(IssuedAt);
+        public override DateTimeOffset GetUtcNow() => new(now ?? IssuedAt);
     }
 
     private sealed class TestFiles : IDisposable

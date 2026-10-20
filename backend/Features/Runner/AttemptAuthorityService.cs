@@ -817,7 +817,7 @@ public sealed class AttemptAuthorityService
             run.IdempotencyKeys.Add(deliveryKey);
             run.State = normalizedOutcome is "done" or "noop"
                 ? AttemptLifecycleState.Completed
-                : normalizedOutcome is "cancelled" ? AttemptLifecycleState.Cancelled : AttemptLifecycleState.Failed;
+                : normalizedOutcome is "cancelled" or "stopped" ? AttemptLifecycleState.Cancelled : AttemptLifecycleState.Failed;
             run.TerminalAt = _utcNow();
             run.TerminalOutcome = normalizedOutcome;
             run.TerminalReason = NormalizeNull(request.Reason);

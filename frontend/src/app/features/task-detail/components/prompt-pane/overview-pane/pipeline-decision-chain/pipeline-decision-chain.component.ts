@@ -62,7 +62,7 @@ export class PipelineDecisionChainComponent implements OnDestroy {
   readonly loadError = signal<string | null>(null);
   readonly operatorIntent = signal<OperatorIntent | null>(null);
   readonly intentReason = signal('');
-  readonly raiseMinutes = signal(120);
+  readonly raiseMinutes = signal(1500);
   readonly cutMinutes = signal(30);
   readonly intentBusy = signal(false);
   readonly intentError = signal<string | null>(null);

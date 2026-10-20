@@ -234,8 +234,19 @@ test('decision chain and cost of deciding render on the card and in project usag
   await expect(ask).toContainText('Human Operator');
   await expect(ask.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
   await ask.getByRole('textbox', { name: 'Reason' }).fill('Continue only with a bounded limit');
+  const raiseLimit = ask.getByRole('spinbutton', { name: 'Raise limit to, minutes' });
+  await expect(raiseLimit).toHaveValue('1500');
+  await raiseLimit.fill('10081');
+  await expect(ask.getByRole('button', { name: 'Raise limit' })).toBeDisabled();
+  await raiseLimit.fill('1500');
+  await expect(ask.getByRole('button', { name: 'Raise limit' })).toBeEnabled();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await ask.screenshot({ path: path.join(resultsDir, `decision-emergency-limit-${theme}--mocked.png`) });
+  }
   await ask.getByRole('button', { name: 'Raise limit' }).click();
   await expect(ask.getByTestId('decision-operator-recorded')).toContainText('raise');
+  expect(operatorIntent?.['requestedEmergencyMinutes']).toBe(1500);
   await expect(ask.getByTestId('decision-operator-recorded')).toContainText('recorded, not applied');
   limitApplied = true;
   await expect(ask.getByTestId('decision-operator-recorded')).toContainText('applied to the card',

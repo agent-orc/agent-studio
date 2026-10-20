@@ -6,6 +6,39 @@ namespace AgentStudio.Management;
 
 public static class ManagementEndpoints
 {
+    public static void MapEnvironmentEndpoint(this WebApplication app)
+    {
+        app.MapGet("/api/v1/management/environment", (
+            HttpContext context,
+            IConfiguration configuration,
+            AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
+            AgentStudio.Pipeline.PullGateStore pullGates,
+            AgentStudio.Runner.OrchestrationEngineReadiness engine,
+            AgentStudio.Runtime.BuildIdentity build) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            InstallationConnectivityManifest? manifest = null;
+            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(path));
+            var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
+            return Results.Ok(new
+            {
+                controlHost = Environment.MachineName,
+                installationId = manifest?.InstallationId,
+                mode = manifest?.Mode,
+                routes = manifest?.Runners.Select(route => new { route.RunnerId, route.Route }).ToArray(),
+                machines = manifest?.Machines,
+                gateHost = string.IsNullOrWhiteSpace(gateHost) ? null : gateHost,
+                gateSlots = string.IsNullOrWhiteSpace(gateHost) ? null : gateSlots.Snapshot(),
+                gateWorkers = pullGates.Hosts(),
+                taskServer = new { build.Version, build.Commit },
+                engine = new { state = engine.State, lastContact = engine.LastContact, engineId = engine.LastEngineId },
+            });
+        });
+    }
+
     public static void MapManagementEndpoints(this WebApplication app)
     {
         app.MapGet("/recovery", () => Results.Content(RecoveryConsole.Html, "text/html"));
@@ -30,33 +63,6 @@ public static class ManagementEndpoints
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
-        });
-        group.MapGet("/environment", (
-            HttpContext context,
-            IConfiguration configuration,
-            AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
-            AgentStudio.Runner.OrchestrationEngineReadiness engine,
-            AgentStudio.Runtime.BuildIdentity build) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            InstallationConnectivityManifest? manifest = null;
-            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(path));
-            var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
-            return Results.Ok(new
-            {
-                controlHost = Environment.MachineName,
-                installationId = manifest?.InstallationId,
-                mode = manifest?.Mode,
-                routes = manifest?.Runners.Select(route => new { route.RunnerId, route.Route }).ToArray(),
-                machines = manifest?.Machines,
-                gateHost = string.IsNullOrWhiteSpace(gateHost) ? null : gateHost,
-                gateSlots = string.IsNullOrWhiteSpace(gateHost) ? null : gateSlots.Snapshot(),
-                taskServer = new { build.Version, build.Commit },
-                engine = new { state = engine.State, lastContact = engine.LastContact, engineId = engine.LastEngineId },
-            });
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,
@@ -256,24 +262,15 @@ public static class ManagementEndpoints
             }
             return Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
         });
-        group.MapPost("/remote-hosts/{id}/codex-sign-in", async (
+        group.MapPost("/remote-hosts/{id}/codex-sign-in", (
             HttpContext context,
-            string id,
-            CodexSignInRequest request,
-            CodexSignInCoordinator coordinator,
-            IConfiguration configuration,
-            CancellationToken ct) =>
+            IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
-            try
-            {
-                return Results.Ok(await coordinator.StartAsync(id, request, actor!, ct));
-            }
-            catch (CodexSignInException ex)
-            {
-                return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
-            }
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Json(new { error = "codex-sign-in-moved",
+                message = "Start Codex device login through the runner-polled device-logins route." },
+                statusCode: StatusCodes.Status410Gone);
         });
         group.MapGet("/remote-hosts/{id}/codex-sign-in/{handle}", async (
             HttpContext context,

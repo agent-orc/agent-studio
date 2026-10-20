@@ -190,6 +190,24 @@ card view hides the control until all remote attempt exit paths can hold the car
 A shadow receipt never dispatches itself. The bus projection includes billed alternate attempts, and
 late billed calls emit additional usage evidence.
 
+AGT-3066 adds eight pure signal producers for gate duration, review aspect
+duration, Watcher contingent consumption, coding run elapsed time, salvage
+continuation, review reissue, Git call use, and gate environment retries.
+Coding-completion grounds include the measurements available at settlement;
+missing review-command, Watcher, review-reissue journal, Git-call, and gate-fingerprint evidence is
+named as an omission. The gate signal carries its derivation sentence and
+sample count; an absent cohort is stated rather than presenting a made-up p95.
+Signals do not choose an action. The per-command kill ceilings, finite re-entry,
+fencing and exact-result checks remain mechanical.
+
+The coding process emergency limit resolves project override, workspace default,
+then the 24-hour platform constant. The effective value and source travel in
+the remote run spec and runner log. A Human Operator card limit still wins for
+the next run; Raise and Cut accept 1 through 10,080 minutes so Raise remains
+usable above the 24-hour default. The runner watchdog retains its typed timeout outcome and
+existing salvage ref and SHA publication. RB-S2 stepped shaping budgets are
+superseded and were not implemented.
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled

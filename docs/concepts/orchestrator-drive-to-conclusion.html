@@ -3039,6 +3039,15 @@
   <section id="plan">
     <h2>4. The plan</h2>
 
+    <h3>Local stop between pipeline steps</h3>
+    <p>A local run keeps its fenced lease after the CLI process exits. The runner checks a
+       recorded stop at each post-run step boundary and before moving the card to review.
+       The stop endpoint serializes process signalling and recording with CLI launch,
+       review moves, and local lease release. After visual QA, the UI completion path
+       checks for an accepted stop before it writes the Human Review marker or moves
+       the card. An accepted stop settles the attempt as <code>Stopped</code>, while a
+       released lease cannot accept a new stop.</p>
+
     <h3>Cancelled verification gates</h3>
     <p>A gate cancellation first checks delivery SHA, lane ownership, and pending continue intent.
        Superseded runs record evidence without an escalation. Shutdown of a current subject schedules

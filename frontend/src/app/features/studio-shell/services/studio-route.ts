@@ -26,7 +26,8 @@ export type StudioRoute =
   | { kind: 'task'; reference: string; tab: TaskDetailRouteTab; inspector: TaskInspectorRouteTab }
   | { kind: 'epics'; projectSlug: string | null }
   | { kind: 'epic'; reference: string }
-  | { kind: 'workspace-settings'; section: string; detail: string | null };
+  | { kind: 'workspace-settings'; section: string; detail: string | null }
+  | { kind: 'deployment-dashboard' };
 
 /**
  * Parse the single canonical Studio route from the shared hash segment model.
@@ -57,6 +58,9 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
   }
   if (segments.length === 1 && segments[0] === 'workbenches') {
     return { kind: 'workbenches', projectSlug: null };
+  }
+  if (segments.length === 2 && segments[0] === 'workspace' && segments[1] === 'deployments') {
+    return { kind: 'deployment-dashboard' };
   }
   if (segments.length === 2 && segments[0] === 'epics' && segments[1]) {
     return { kind: 'epic', reference: segments[1] };
@@ -141,6 +145,8 @@ export function studioRouteForTab(
       return `/epics/${encodeURIComponent(publicTaskReference || tab.epicKey)}`;
     case 'workspace-settings':
       return null;
+    case 'deployment-dashboard':
+      return '/workspace/deployments';
     default:
       return null;
   }
