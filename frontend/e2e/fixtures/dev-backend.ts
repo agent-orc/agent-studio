@@ -222,7 +222,12 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
         || (refDriftRepository && profile !== 'ref-drift')) {
         throw new Error('This spec requires the matching isolated prebuilt repository profile.');
       }
-      if (!await isHealthy() || (profile !== 'networked-monolith' && !await hasWatchPath())) {
+      await expect.poll(() => isHealthy(), {
+        message: 'The prebuilt backend is unavailable; its webServer owns the lifecycle.',
+        timeout: 30_000,
+        intervals: [500, 1000, 2000],
+      }).toBe(true);
+      if (profile !== 'networked-monolith' && !await hasWatchPath()) {
         throw new Error('The prebuilt backend is unavailable or has no watch path; its webServer owns the lifecycle.');
       }
       await use({
