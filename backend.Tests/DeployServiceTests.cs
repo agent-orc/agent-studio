@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentStudio.Deploy;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
@@ -718,6 +719,7 @@ public sealed class DeployServiceTests : IDisposable
     public void Tenant_deployments_keep_independent_lifecycle_approval_variables_and_matrix_cells()
     {
         var (deploy, environments, _) = Build();
+        WriteTenantTargets();
         WriteProjectYml("""
             tenants:
               - name: acme
@@ -751,6 +753,8 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(DeploymentStates.Queued, acmeStage.Value?.State);
         var acmeJob = environments.Claim("stage-host")!;
         Assert.Equal("acme", acmeJob.Tenant);
+        Assert.Equal("8181", acmeJob.Destination);
+        Assert.Equal("https://acme-stage.example/health", acmeJob.HealthUrl);
         Assert.Equal("premium", acmeJob.Variables["MODE"]);
         Assert.Equal("ACME_TOKEN", acmeJob.SecretVariableRefs["API_TOKEN"]);
         Assert.Contains("ACME_TOKEN", acmeJob.SecretRefs);
@@ -766,6 +770,8 @@ public sealed class DeployServiceTests : IDisposable
             new DeploymentRequest("stage") { Tenant = "beta" }, Operator);
         Assert.Equal(DeploymentStates.Queued, betaStage.Value?.State);
         var betaJob = environments.Claim("stage-host")!;
+        Assert.Equal("8182", betaJob.Destination);
+        Assert.Equal("https://beta-stage.example/health", betaJob.HealthUrl);
         Assert.Equal("base", betaJob.Variables["MODE"]);
         Assert.DoesNotContain("API_TOKEN", betaJob.SecretVariableRefs.Keys);
         Assert.True(environments.Report("demo", betaJob.Id, new(betaJob.LeaseToken!, true, "health-ok")));
@@ -778,6 +784,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(DeploymentStates.AwaitingApproval, deploy.DeploymentById("demo", betaProd.Value!.Id)?.State);
         Assert.Equal("pending", Assert.Single(environments.Read("demo")!.Promotions).Status);
         var prodJob = environments.Claim("prod-host")!;
+        Assert.Equal("8281", prodJob.Destination);
         Assert.Equal(("acme", "acme-prod"), (prodJob.Tenant, prodJob.Variables["MODE"]));
         Assert.Null(prodJob.PreviousArtifact);
         Assert.True(environments.Report("demo", prodJob.Id, new(prodJob.LeaseToken!, true, "health-ok")));
@@ -785,17 +792,77 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(DeploymentStates.Queued, deploy.Approve("demo", betaProd.Value.Id, Owner).Value?.State);
         var betaProdJob = Assert.IsType<DeployJob>(environments.Claim("prod-host"));
         Assert.Equal("beta", betaProdJob.Tenant);
+        Assert.Equal("8282", betaProdJob.Destination);
         Assert.Null(betaProdJob.PreviousArtifact);
+        Assert.True(environments.Report("demo", betaProdJob.Id,
+            new(betaProdJob.LeaseToken!, false, "health-http-failed")));
+        deploy.SyncAfterHostCall("demo");
         Assert.Equal(release.Id, deploy.Status("demo", "acme")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
         Assert.Null(deploy.Status("demo", "beta")!.Single(item => item.Environment.Id == "production").CurrentRelease);
+        Assert.Equal(EnvironmentHealth.Healthy, deploy.Status("demo", "acme")!.Single(item => item.Environment.Id == "production").Health);
+        Assert.Equal(EnvironmentHealth.Unhealthy, deploy.Status("demo", "beta")!.Single(item => item.Environment.Id == "production").Health);
         Assert.Equal(4, Assert.Single(deploy.Matrix().Projects).TenantStatuses.Count);
         Assert.Equal("acme", deploy.Log("demo", acmeProd.Value.Id, null)?.Tenant);
+    }
+
+    [Fact]
+    public void Tenant_deploy_without_a_committed_target_is_refused_before_queuing()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: []\n    environments: [staging, production]\n");
+        var release = CreateRelease(deploy, Artifact('a'), Commit("tenant-without-target"));
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        var refused = deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("stage") { Tenant = "acme" }, Operator);
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("no target", refused.Error);
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Fact]
+    public void Release_rejects_colliding_committed_tenant_targets()
+    {
+        var (deploy, environments, store) = Build();
+        WriteTenantTargets();
+        var path = Path.Combine(_repo, "docs", "deployments", "environments", "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        declaration["tenantTargets"]!["beta"]!["destination"] = "8181";
+        File.WriteAllText(path, declaration.ToJsonString());
+        var invalidCommit = Commit("colliding-tenant-targets");
+        WriteTenantTargets();
+        WriteReleaseEvidence(Artifact('a'), invalidCommit);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), invalidCommit));
+
+        var refused = deploy.CreateRelease("demo", Artifact('a'), invalidCommit, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("Tenant destinations must be isolated", refused.Error);
+        Assert.Empty(store.ReadReleases("demo"));
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Fact]
+    public void Release_rejects_an_invalid_committed_tenant_definition_before_staging()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: []\n    environments: [unknown]\n");
+        var invalidCommit = Commit("invalid-tenant");
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: []\n    environments: [staging]\n");
+        WriteReleaseEvidence(Artifact('a'), invalidCommit);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), invalidCommit));
+
+        var refused = deploy.CreateRelease("demo", Artifact('a'), invalidCommit, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("tenants[0].environments", refused.Error);
+        Assert.Empty(store.ReadReleases("demo"));
+        Assert.Null(environments.Claim("stage-host"));
     }
 
     [Fact]
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
+        WriteTenantTargets();
         WriteProjectYml("tenants:\n  - name: acme\n    tags: [premium]\n    environments: [staging, production]\n");
         Commit("tenant-definition");
         var older = Head();
@@ -1115,6 +1182,22 @@ public sealed class DeployServiceTests : IDisposable
                 address = "https://example", template = "container", destination,
                 healthUrl = "https://example/health", approval = "person", secretRefs = new[] { "DATABASE_URL" },
             }));
+
+    private void WriteTenantTargets()
+    {
+        foreach (var (environment, acmePort, betaPort) in new[]
+                 { ("stage", "8181", "8182"), ("production", "8281", "8282") })
+        {
+            var path = Path.Combine(_repo, "docs", "deployments", "environments", environment + ".json");
+            var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            declaration["tenantTargets"] = JsonSerializer.SerializeToNode(new
+            {
+                acme = new { destination = acmePort, healthUrl = $"https://acme-{environment}.example/health" },
+                beta = new { destination = betaPort, healthUrl = $"https://beta-{environment}.example/health" },
+            });
+            File.WriteAllText(path, declaration.ToJsonString());
+        }
+    }
 
     private string Head() => Git("rev-parse", "HEAD").Trim();
 

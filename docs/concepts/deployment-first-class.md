@@ -23,6 +23,13 @@ For a container, `destination` is the local port behind the existing reverse
 proxy. For a static site, it is the served release directory; the proxy serves
 its `current` symlink. Static artifacts are tar or tar.gz files in the deploy
 host's artifact store, named by their SHA-256 digest.
+An environment can declare `tenantTargets` keyed by tenant name. Each entry
+requires a `destination` and `healthUrl`; container destinations are distinct
+local proxy ports, and static destinations are disjoint absolute directories.
+Tenant targets cannot share the project target. A tenant deploy with no target
+in the release's committed environment declaration is refused before a job is
+queued. The host uses the tenant's destination, a tenant-specific container
+name, and that tenant's health URL.
 
 After the full gate passes and the release is pushed, the promotion script can
 submit the measured package digest or the gate-built image's registry digest
@@ -84,7 +91,8 @@ stays the only executor; releases and runs describe and steer it.
   `"reason":"superseded"`, logs that 409 and continues; any other refusal,
   including every other 409, stops it with exit code 9. A
   declaration snapshot that git cannot read completely also answers 409;
-  invalid input, including a malformed committed declaration, answers 400.
+  invalid input, including a malformed committed declaration or an invalid
+  committed project.yml, answers 400 before a release or Staging job is stored.
 - **Declaration snapshot.** The release file also stores the environment
   declarations (`docs/deployments/environments/*.json`) as committed at the
   release commit. Every deploy job of the release, redeploy and rollback
@@ -115,6 +123,9 @@ stays the only executor; releases and runs describe and steer it.
   automatic Staging run after integration. The host deploy queue remains shared
   by tenants of an environment, so another queued or running run can block a
   tenant's request or approval.
+  The dashboard health for a tenant comes from that tenant's latest succeeded
+  or failed run in each environment, including the host's target-specific health
+  result; another tenant's run cannot change that health cell.
 - **One environment, one direction.** A request or an approval is refused while
   another run is queued or running in the environment. The automatic Staging
   run after integration does not ask the lifecycle: it queues behind the runs
@@ -197,6 +208,12 @@ principal and host id are the same enrolled `runner_<id>` value. Its secret
 store is a local directory of
 files named by the declared `secretRefs`. Secret values never enter the API,
 job state, or audit history. The claim response carries names only.
+Container jobs also carry resolved plain `variables` and
+`secretVariableRefs` as variable-name to provider-entry-name mappings. The
+host reads the mapped secret files locally and writes a private temporary
+Docker environment file. A provider entry may have a different name from the
+workload variable. Static jobs reject workload variables because they have no
+runtime environment to bind them to.
 The managed `remote-runner-onboard.sh --role deploy` path installs the separate
 `agent-runner-deploy.service` and generated `deploy.env` for the host.
 

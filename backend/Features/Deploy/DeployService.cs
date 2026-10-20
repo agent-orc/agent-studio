@@ -117,7 +117,11 @@ public sealed class DeployService
         if (OrderRejection(repo, newestSeen, id, commit, known) is { } orderRejection)
             return DeployOutcome<Release>.Conflict(orderRejection.Error, orderRejection.Reason);
         var integrated = known || repo is null ? [] : IntegratedCards(project);
-        var definition = known || repo is null ? null : ReadDefinition(repo, commit);
+        var definitionRead = repo is null ? null : ReadDefinition(repo, commit);
+        if (definitionRead is { IsValid: false })
+            return DeployOutcome<Release>.Invalid($"The deployment definition at commit {ShortSha(commit)} is invalid: "
+                + string.Join("; ", definitionRead.Issues.Select(issue => $"{issue.Path}: {issue.Message}")));
+        var definition = definitionRead?.Definition?.Deployment;
 
         lock (_gate)
         {
@@ -286,8 +290,20 @@ public sealed class DeployService
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null) return null;
-            var hostHealth = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
-                StringComparer.Ordinal);
+            var hostHealth = tenant is null
+                ? snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
+                    StringComparer.Ordinal)
+                : snapshot.Deployments(project).Where(item => item.Tenant == tenant
+                    && item.State is DeploymentStates.Succeeded or DeploymentStates.Failed)
+                    .GroupBy(item => item.EnvironmentId, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.OrderBy(item => item.FinishedAtUtc)
+                        .ThenBy(item => item.CreatedAtUtc)
+                        .ThenBy(item => item.Id, StringComparer.Ordinal).Last().State switch
+                        {
+                            DeploymentStates.Succeeded => "healthy",
+                            DeploymentStates.Failed => "failed",
+                            _ => "unknown",
+                        }, StringComparer.Ordinal);
             var selected = tenant is null ? snapshot.Environments : snapshot.Environments
                 .Where(environment => (Tenants(project) ?? []).Any(item =>
                     item.Name == tenant && item.Environments.Contains(environment.Kind, StringComparer.Ordinal))).ToArray();
@@ -394,6 +410,8 @@ public sealed class DeployService
                 return DeployOutcome<Deployment>.Conflict($"Environment '{run.EnvironmentId}' is no longer declared.");
             var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
             if (target is null) return MissingSnapshot(release, environment);
+            if (run.Tenant is not null && !target.TenantTargets.ContainsKey(run.Tenant))
+                return DeployOutcome<Deployment>.Conflict($"Tenant '{run.Tenant}' has no target in {environment.Name} for this release.");
             var intent = StandardLifecyclePolicy.IntentFor(run.Trigger);
             var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent,
                 approve: true, actor, excludeRunId: run.Id, tenant: run.Tenant));
@@ -567,6 +585,8 @@ public sealed class DeployService
             return DeployOutcome<Deployment>.Invalid($"Tenant '{tenant}' does not participate in {environment.Name} for this release.");
         var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
         if (target is null) return MissingSnapshot(release, environment);
+        if (tenant is not null && !target.TenantTargets.ContainsKey(tenant))
+            return DeployOutcome<Deployment>.Invalid($"Tenant '{tenant}' has no target in {environment.Name} for this release.");
         var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent, approve,
             actor, excludeRunId: null, tenant: tenant));
         if (decision.Outcome == LifecycleOutcome.Reject) return Rejected(decision);
@@ -786,9 +806,9 @@ public sealed class DeployService
         { Tenants = definition?.Tenants ?? [], Variables = definition?.Variables ?? [] });
     }
 
-    private ProjectDeploymentDefinition? ReadDefinition(string repo, string commit)
+    private ProjectDefinitionReadResult? ReadDefinition(string repo, string commit)
         => _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is { } yaml
-            ? ProjectDefinitionReader.Parse(yaml).Definition?.Deployment : null;
+            ? ProjectDefinitionReader.Parse(yaml) : null;
 
     private sealed record IntegratedCard(string Key, IReadOnlyList<string> Shas);
 

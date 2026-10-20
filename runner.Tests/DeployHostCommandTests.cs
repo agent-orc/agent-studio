@@ -22,6 +22,99 @@ namespace AgentRunner.Tests;
 public sealed class DeployHostCommandTests
 {
     [Fact]
+    public async Task Tenant_executor_uses_distinct_containers_health_urls_and_variable_names()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-tenant-executor-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var paths = new List<string>();
+        var health = Task.Run(async () =>
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                using var socket = await listener.AcceptTcpClientAsync();
+                await using var stream = socket.GetStream();
+                var buffer = new byte[1024];
+                var count = await stream.ReadAsync(buffer);
+                paths.Add(Encoding.ASCII.GetString(buffer, 0, count).Split('\r')[0]);
+                await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+            }
+        });
+        try
+        {
+            var tokenFile = Path.Combine(root, "token");
+            await File.WriteAllTextAsync(tokenFile, Guid.NewGuid().ToString("N"));
+            var secretValue = "value-" + Guid.NewGuid().ToString("N");
+            await File.WriteAllTextAsync(Path.Combine(root, "provider-entry"), secretValue);
+            var claims = new Queue<object>();
+            foreach (var (tenant, destination) in new[] { ("acme", "8181"), ("beta", "8182") })
+                claims.Enqueue(new
+                {
+                    id = tenant, project = "demo", environmentId = "stage", hostId = "host",
+                    artifact = "example/image@sha256:" + new string('a', 64), template = "container",
+                    destination, healthUrl = $"http://127.0.0.1:{port}/{tenant}",
+                    secretRefs = new[] { "provider-entry" }, containerPort = 8080,
+                    previousArtifact = (string?)null, status = "claimed", leaseToken = tenant + "-lease", tenant,
+                    variables = new Dictionary<string, string> { ["MODE"] = tenant },
+                    secretVariableRefs = new Dictionary<string, string> { ["API_TOKEN"] = "provider-entry" },
+                });
+            var reports = new List<string>();
+            using var handler = new ClaimHandler(claims, reports);
+            var commands = new List<(string Name, string Publish, string Environment)>();
+            async Task RunCommand(string executable, IReadOnlyList<string> arguments, CancellationToken ct)
+            {
+                Assert.Equal("docker", executable);
+                if (arguments[0] != "run") return;
+                var args = arguments.ToArray();
+                var name = args[Array.IndexOf(args, "--name") + 1];
+                var publish = args[Array.IndexOf(args, "--publish") + 1];
+                var envFile = args[Array.IndexOf(args, "--env-file") + 1];
+                commands.Add((name, publish, await File.ReadAllTextAsync(envFile, ct)));
+            }
+            for (var i = 0; i < 2; i++)
+            {
+                using var client = new HttpClient(handler, disposeHandler: false)
+                { BaseAddress = new Uri("https://studio.test/") };
+                Assert.Equal(0, await DeployHostCommand.RunAsync(
+                    [client.BaseAddress.ToString(), "host", tokenFile, root, root], CancellationToken.None,
+                    client, RunCommand));
+            }
+            await health;
+            Assert.Equal(["GET /acme HTTP/1.1", "GET /beta HTTP/1.1"], paths);
+            Assert.Equal(["deploy-demo-stage-acme", "deploy-demo-stage-beta"], commands.Select(item => item.Name));
+            Assert.Equal(["127.0.0.1:8181:8080", "127.0.0.1:8182:8080"], commands.Select(item => item.Publish));
+            Assert.Contains("MODE=acme", commands[0].Environment);
+            Assert.Contains("MODE=beta", commands[1].Environment);
+            Assert.All(commands, item =>
+            {
+                Assert.Contains("API_TOKEN=" + secretValue, item.Environment);
+                Assert.DoesNotContain("PROVIDER_ENTRY=", item.Environment);
+            });
+            Assert.Equal(2, reports.Count);
+            Assert.All(reports, report => Assert.Contains("\"healthy\":true", report));
+        }
+        finally
+        {
+            listener.Stop();
+            Directory.Delete(root, true);
+        }
+    }
+
+    private sealed class ClaimHandler(Queue<object> claims, List<string> reports) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(claims.Dequeue()) };
+            reports.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+            return new(HttpStatusCode.NoContent);
+        }
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()
     {

@@ -8,7 +8,13 @@ public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
     IReadOnlyList<string> SecretRefs, int ContainerPort,
-    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false);
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false)
+{
+    public IReadOnlyDictionary<string, TenantDeployTarget> TenantTargets { get; init; }
+        = new Dictionary<string, TenantDeployTarget>();
+}
+
+public sealed record TenantDeployTarget(string Destination, string HealthUrl);
 
 /// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
 public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
@@ -163,7 +169,8 @@ public sealed class ProjectEnvironmentService
         {
             return ParseDeclarationCore(file, json);
         }
-        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or FormatException)
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or FormatException
+            or ArgumentException or NotSupportedException)
         {
             throw new JsonException($"Environment {file} is malformed: {ex.Message}", ex);
         }
@@ -209,10 +216,51 @@ public sealed class ProjectEnvironmentService
             : containerPortValue.ValueKind == JsonValueKind.Number && containerPortValue.TryGetInt32(out var parsedPort)
                 ? parsedPort : throw new JsonException("Invalid container port.");
         if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
+        var targets = new Dictionary<string, TenantDeployTarget>(StringComparer.Ordinal);
+        if (value.TryGetProperty("tenantTargets", out var tenantTargets))
+        {
+            if (tenantTargets.ValueKind != JsonValueKind.Object)
+                throw new JsonException("tenantTargets must be an object keyed by tenant name.");
+            foreach (var entry in tenantTargets.EnumerateObject())
+            {
+                if (!Identifier.IsMatch(entry.Name) || entry.Value.ValueKind != JsonValueKind.Object
+                    || !entry.Value.TryGetProperty("destination", out var tenantDestination)
+                    || tenantDestination.ValueKind != JsonValueKind.String
+                    || !entry.Value.TryGetProperty("healthUrl", out var tenantHealth)
+                    || tenantHealth.ValueKind != JsonValueKind.String
+                    || entry.Value.EnumerateObject().Any(property => property.Name is not ("destination" or "healthUrl")))
+                    throw new JsonException($"Invalid target for tenant '{entry.Name}'.");
+                var route = tenantDestination.GetString()!;
+                var check = tenantHealth.GetString()!;
+                if (template == "static" && (!Path.IsPathFullyQualified(route)
+                    || route.Contains("..", StringComparison.Ordinal)))
+                    throw new JsonException($"Invalid static destination for tenant '{entry.Name}'.");
+                if (template == "container" && (!int.TryParse(route, out var tenantPort)
+                    || tenantPort is < 1 or > 65535))
+                    throw new JsonException($"Invalid container destination for tenant '{entry.Name}'.");
+                if (!Uri.TryCreate(check, UriKind.Absolute, out var checkUri)
+                    || checkUri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(checkUri.UserInfo))
+                    throw new JsonException($"Invalid health URL for tenant '{entry.Name}'.");
+                if (!targets.TryAdd(entry.Name, new(route, check)))
+                    throw new JsonException($"Duplicate target for tenant '{entry.Name}'.");
+            }
+            var destinations = targets.Values.Select(target => target.Destination).Append(destination)
+                .Select(route => template == "container" ? int.Parse(route).ToString() : Path.GetFullPath(route))
+                .ToArray();
+            if (template == "container" && destinations.Distinct(StringComparer.Ordinal).Count() != destinations.Length
+                || template == "static" && destinations.Where((path, index) => destinations
+                    .Where((_, other) => other != index).Any(other => path == other
+                        || path.StartsWith(other.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                            StringComparison.Ordinal))).Any())
+                throw new JsonException("Tenant destinations must be isolated from each other and the project target.");
+            var checks = targets.Values.Select(target => target.HealthUrl).Append(healthUrl).ToArray();
+            if (checks.Distinct(StringComparer.Ordinal).Count() != checks.Length)
+                throw new JsonException("Tenant health URLs must be distinct from each other and the project URL.");
+        }
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
-            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)));
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file))) { TenantTargets = targets };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -312,8 +360,16 @@ public sealed class ProjectEnvironmentService
         {
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
+            if (tenant is not null && !target.TenantTargets.ContainsKey(tenant)) return null;
+            if (target.Template == "static" && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, tenant)
+            var routed = RouteToCurrentHost(target, current!);
+            if (tenant is not null)
+            {
+                var tenantTarget = target.TenantTargets[tenant];
+                routed = routed with { Destination = tenantTarget.Destination, HealthUrl = tenantTarget.HealthUrl };
+            }
+            var job = Queue(project, routed, artifact, state, rollback, actor, tenant)
                 with { Variables = variables ?? new Dictionary<string, string>(),
                     SecretVariableRefs = secretVariableRefs ?? new Dictionary<string, string>() };
             job = job with { SecretRefs = job.SecretRefs.Concat(job.SecretVariableRefs.Values)
