@@ -22,7 +22,13 @@ public sealed record TelemetryOptions
     public int MaxRecordsPerRequest { get; init; } = 20_000;
     /// <summary>Estimated memory of the records decoded from one request; decoding stops past it.</summary>
     public long MaxDecodedBytesPerRequest { get; init; } = 32L * 1024 * 1024;
+    /// <summary>Resources and instrumentation scopes of one request together; decoding stops past it.</summary>
+    public int MaxScopesPerRequest { get; init; } = 4096;
     public int MaxConcurrentRequests { get; init; } = 4;
+    /// <summary>Slots one project environment may hold at once, so its slow uploads cannot block the others.</summary>
+    public int MaxConcurrentRequestsPerEnvironment { get; init; } = 2;
+    /// <summary>Time from taking a slot until the body is read and decoded; past it the request gets 408 and frees the slot.</summary>
+    public int RequestDeadlineSeconds { get; init; } = 30;
     public int MaxQueuedRecords { get; init; } = 200_000;
     public long MaxQueuedBytes { get; init; } = 128L * 1024 * 1024;
     public int MaxFutureSkewMinutes { get; init; } = 10;
@@ -37,6 +43,7 @@ public sealed record TelemetryOptions
     public TimeSpan MetricHourRetention => TimeSpan.FromDays(MetricHourRetentionDays);
     public TimeSpan LogRetention => TimeSpan.FromDays(LogRetentionDays);
     public TimeSpan MaxFutureSkew => TimeSpan.FromMinutes(MaxFutureSkewMinutes);
+    public TimeSpan RequestDeadline => TimeSpan.FromSeconds(RequestDeadlineSeconds);
 
     public static TelemetryOptions From(IConfiguration configuration)
     {
@@ -49,7 +56,10 @@ public sealed record TelemetryOptions
             || options.MaxSeriesBytesPerEnvironment < 64 * 1024 || options.MaxMinuteBucketBytes < 1024 * 1024
             || options.MaxRecordsPerRequest < 1 || options.MaxRecordsPerRequest > options.MaxQueuedRecords
             || options.MaxDecodedBytesPerRequest < 1024 * 1024 || options.MaxDecodedBytesPerRequest > options.MaxQueuedBytes
-            || options.MaxConcurrentRequests < 1 || options.MaxAttributeBytesPerRecord < 256)
+            || options.MaxConcurrentRequests < 1 || options.MaxAttributeBytesPerRecord < 256
+            || options.MaxScopesPerRequest < 1 || options.MaxConcurrentRequestsPerEnvironment < 1
+            || options.MaxConcurrentRequestsPerEnvironment > options.MaxConcurrentRequests
+            || options.RequestDeadlineSeconds is < 1 or > 600)
             throw new InvalidOperationException("Telemetry configuration has an out-of-range limit or retention value.");
         return options with
         {

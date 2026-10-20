@@ -8,6 +8,9 @@ namespace AgentStudio.Telemetry;
 /// <c>ExportLogsServiceRequest</c>, opentelemetry-proto v1). Field numbers are
 /// those of the published .proto files. Fields may arrive in any order, so a
 /// message whose meaning depends on a sibling field is read in two passes.
+/// Attribute lists stop at <see cref="OtlpLimits.MaxAttributes"/> entries; later
+/// entries are skipped as raw bytes. Arrays and key-value lists inside a value
+/// stop once their JSON text is certainly longer than the value limit.
 /// </summary>
 internal static class OtlpProtobufDecoder
 {
@@ -44,7 +47,7 @@ internal static class OtlpProtobufDecoder
 
     private static void ReadResourceMetrics(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
     {
-        var resource = ReadResource(data, factory.Limits);
+        var resource = factory.Resource(ReadResource(data, factory));
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
@@ -53,8 +56,7 @@ internal static class OtlpProtobufDecoder
         }
     }
 
-    private static void ReadScopeMetrics(ReadOnlySpan<byte> data, IReadOnlyList<KeyValuePair<string, string>> resource,
-        OtlpRecordFactory factory)
+    private static void ReadScopeMetrics(ReadOnlySpan<byte> data, TelemetryAttributes resource, OtlpRecordFactory factory)
     {
         var scoped = WithScope(data, resource, factory);
         var reader = new ProtoWireReader(data);
@@ -67,6 +69,7 @@ internal static class OtlpProtobufDecoder
 
     private static void ReadMetric(ReadOnlySpan<byte> data, TelemetryAttributes scope, OtlpRecordFactory factory)
     {
+        factory.Charge();
         string name = "", unit = "";
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
@@ -111,19 +114,19 @@ internal static class OtlpProtobufDecoder
         while (reader.TryReadTag(out var field, out var type))
         {
             if (field == 1 && type == ProtoWireType.LengthDelimited)
-                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(reader.ReadBytes(), kind, layout, factory.Limits));
+                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(reader.ReadBytes(), kind, layout, factory));
             else reader.Skip(type);
         }
     }
 
-    private static OtlpPointFields ReadPoint(ReadOnlySpan<byte> data, MetricKind kind, PointLayout layout, OtlpLimits limits)
+    private static OtlpPointFields ReadPoint(ReadOnlySpan<byte> data, MetricKind kind, PointLayout layout, OtlpRecordFactory factory)
     {
         var point = new OtlpPointFields();
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
             if (field == layout.Attributes && type == ProtoWireType.LengthDelimited)
-                point.Attributes.Add(ReadKeyValue(reader.ReadBytes(), limits));
+                AddAttribute(point.Attributes, reader.ReadBytes(), factory);
             else if (field == 2 && type == ProtoWireType.Fixed64) point.StartTimeUnixNano = Nanos(reader.ReadFixed64());
             else if (field == 3 && type == ProtoWireType.Fixed64) point.TimeUnixNano = Nanos(reader.ReadFixed64());
             else if (layout.Count == 0 && field == 4 && type == ProtoWireType.Fixed64) point.Number = reader.ReadDouble();
@@ -141,7 +144,7 @@ internal static class OtlpProtobufDecoder
 
     private static void ReadResourceLogs(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
     {
-        var resource = ReadResource(data, factory.Limits);
+        var resource = factory.Resource(ReadResource(data, factory));
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
@@ -150,19 +153,18 @@ internal static class OtlpProtobufDecoder
         }
     }
 
-    private static void ReadScopeLogs(ReadOnlySpan<byte> data, IReadOnlyList<KeyValuePair<string, string>> resource,
-        OtlpRecordFactory factory)
+    private static void ReadScopeLogs(ReadOnlySpan<byte> data, TelemetryAttributes resource, OtlpRecordFactory factory)
     {
         var scoped = WithScope(data, resource, factory);
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
-            if (field == 2 && type == ProtoWireType.LengthDelimited) factory.AddLog(scoped, ReadLogRecord(reader.ReadBytes(), factory.Limits));
+            if (field == 2 && type == ProtoWireType.LengthDelimited) factory.AddLog(scoped, ReadLogRecord(reader.ReadBytes(), factory));
             else reader.Skip(type);
         }
     }
 
-    private static OtlpLogFields ReadLogRecord(ReadOnlySpan<byte> data, OtlpLimits limits)
+    private static OtlpLogFields ReadLogRecord(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
     {
         var log = new OtlpLogFields();
         var reader = new ProtoWireReader(data);
@@ -174,8 +176,8 @@ internal static class OtlpProtobufDecoder
                 case 11 when type == ProtoWireType.Fixed64: log.ObservedTimeUnixNano = Nanos(reader.ReadFixed64()); break;
                 case 2 when type == ProtoWireType.Varint: log.SeverityNumber = (int)Math.Min(reader.ReadVarint(), 1000); break;
                 case 3 when type == ProtoWireType.LengthDelimited: log.SeverityText = reader.ReadString(); break;
-                case 5 when type == ProtoWireType.LengthDelimited: log.Body = AnyValueText(reader.ReadBytes(), 0); break;
-                case 6 when type == ProtoWireType.LengthDelimited: log.Attributes.Add(ReadKeyValue(reader.ReadBytes(), limits)); break;
+                case 5 when type == ProtoWireType.LengthDelimited: log.Body = AnyValueText(reader.ReadBytes(), factory.Limits.MaxBodyChars); break;
+                case 6 when type == ProtoWireType.LengthDelimited: AddAttribute(log.Attributes, reader.ReadBytes(), factory); break;
                 case 9 when type == ProtoWireType.LengthDelimited: log.TraceId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 16); break;
                 case 10 when type == ProtoWireType.LengthDelimited: log.SpanId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 8); break;
                 case 12 when type == ProtoWireType.LengthDelimited: log.EventName = reader.ReadString(); break;
@@ -185,8 +187,8 @@ internal static class OtlpProtobufDecoder
         return log;
     }
 
-    /// <summary>Resource attributes from field 1 of ResourceMetrics or ResourceLogs.</summary>
-    private static List<KeyValuePair<string, string>> ReadResource(ReadOnlySpan<byte> data, OtlpLimits limits)
+    /// <summary>Resource attributes from field 1 of ResourceMetrics or ResourceLogs, at most <see cref="OtlpLimits.MaxAttributes"/>.</summary>
+    private static List<KeyValuePair<string, string>> ReadResource(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
     {
         var attributes = new List<KeyValuePair<string, string>>();
         var reader = new ProtoWireReader(data);
@@ -200,7 +202,7 @@ internal static class OtlpProtobufDecoder
             var resource = new ProtoWireReader(reader.ReadBytes());
             while (resource.TryReadTag(out var inner, out var innerType))
             {
-                if (inner == 1 && innerType == ProtoWireType.LengthDelimited) attributes.Add(ReadKeyValue(resource.ReadBytes(), limits));
+                if (inner == 1 && innerType == ProtoWireType.LengthDelimited) AddAttribute(attributes, resource.ReadBytes(), factory);
                 else resource.Skip(innerType);
             }
         }
@@ -208,8 +210,7 @@ internal static class OtlpProtobufDecoder
     }
 
     /// <summary>The shared set of the resource plus the instrumentation scope name (field 1 of ScopeMetrics or ScopeLogs).</summary>
-    private static TelemetryAttributes WithScope(ReadOnlySpan<byte> data,
-        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpRecordFactory factory)
+    private static TelemetryAttributes WithScope(ReadOnlySpan<byte> data, TelemetryAttributes resource, OtlpRecordFactory factory)
     {
         var scopeName = "";
         var reader = new ProtoWireReader(data);
@@ -230,21 +231,24 @@ internal static class OtlpProtobufDecoder
         return factory.Scope(resource, scopeName);
     }
 
-    private static KeyValuePair<string, string> ReadKeyValue(ReadOnlySpan<byte> data, OtlpLimits limits)
+    /// <summary>Decodes one KeyValue into <paramref name="attributes"/> unless the list is full.</summary>
+    private static void AddAttribute(List<KeyValuePair<string, string>> attributes, ReadOnlySpan<byte> data, OtlpRecordFactory factory)
     {
+        if (!factory.TakesAttribute(attributes.Count)) return;
+        var limits = factory.Limits;
         string key = "", value = "";
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
             if (field == 1 && type == ProtoWireType.LengthDelimited) key = reader.ReadString();
-            else if (field == 2 && type == ProtoWireType.LengthDelimited) value = AnyValueText(reader.ReadBytes(), 0);
+            else if (field == 2 && type == ProtoWireType.LengthDelimited) value = AnyValueText(reader.ReadBytes(), limits.MaxAttributeValueChars);
             else reader.Skip(type);
         }
-        return KeyValuePair.Create(key, OtlpAttributeBuilder.Truncate(value, limits.MaxAttributeValueChars));
+        attributes.Add(KeyValuePair.Create(key, OtlpAttributeBuilder.Truncate(value, limits.MaxAttributeValueChars)));
     }
 
-    /// <summary>Scalar AnyValue as text; arrays and key-value lists as compact JSON.</summary>
-    private static string AnyValueText(ReadOnlySpan<byte> data, int depth)
+    /// <summary>Scalar AnyValue as text; arrays and key-value lists as compact JSON, cut once longer than <paramref name="maxChars"/>.</summary>
+    private static string AnyValueText(ReadOnlySpan<byte> data, int maxChars)
     {
         var text = "";
         var reader = new ProtoWireReader(data);
@@ -256,7 +260,7 @@ internal static class OtlpProtobufDecoder
                 case 2 when type == ProtoWireType.Varint: text = reader.ReadVarint() != 0 ? "true" : "false"; break;
                 case 3 when type == ProtoWireType.Varint: text = OtlpAttributeBuilder.Number(unchecked((long)reader.ReadVarint())); break;
                 case 4 when type == ProtoWireType.Fixed64: text = OtlpAttributeBuilder.Number(reader.ReadDouble()); break;
-                case 5 or 6 when type == ProtoWireType.LengthDelimited: text = ComplexJson(reader.ReadBytes(), field == 6, depth); break;
+                case 5 or 6 when type == ProtoWireType.LengthDelimited: text = ComplexJson(reader.ReadBytes(), field == 6, maxChars); break;
                 case 7 when type == ProtoWireType.LengthDelimited: text = Convert.ToBase64String(reader.ReadBytes()); break;
                 default: reader.Skip(type); break;
             }
@@ -264,18 +268,19 @@ internal static class OtlpProtobufDecoder
         return text;
     }
 
-    private static string ComplexJson(ReadOnlySpan<byte> data, bool keyValueList, int depth)
+    private static string ComplexJson(ReadOnlySpan<byte> data, bool keyValueList, int maxChars)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer))
         {
-            if (keyValueList) WriteKeyValueList(data, writer, depth + 1);
-            else WriteArray(data, writer, depth + 1);
+            var budget = OtlpAttributeBuilder.JsonByteBudget(maxChars);
+            if (keyValueList) WriteKeyValueList(data, writer, 1, budget);
+            else WriteArray(data, writer, 1, budget);
         }
         return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
-    private static void WriteAnyValue(ReadOnlySpan<byte> data, Utf8JsonWriter writer, int depth)
+    private static void WriteAnyValue(ReadOnlySpan<byte> data, Utf8JsonWriter writer, int depth, long budget)
     {
         if (depth > MaxValueDepth) throw new OtlpFormatException("AnyValue nesting is too deep.");
         var written = false;
@@ -298,8 +303,8 @@ internal static class OtlpProtobufDecoder
                     if (double.IsFinite(number)) writer.WriteNumberValue(number);
                     else writer.WriteStringValue(OtlpAttributeBuilder.Number(number));
                     break;
-                case 5 when type == ProtoWireType.LengthDelimited: WriteArray(reader.ReadBytes(), writer, depth + 1); break;
-                case 6 when type == ProtoWireType.LengthDelimited: WriteKeyValueList(reader.ReadBytes(), writer, depth + 1); break;
+                case 5 when type == ProtoWireType.LengthDelimited: WriteArray(reader.ReadBytes(), writer, depth + 1, budget); break;
+                case 6 when type == ProtoWireType.LengthDelimited: WriteKeyValueList(reader.ReadBytes(), writer, depth + 1, budget); break;
                 case 7 when type == ProtoWireType.LengthDelimited: writer.WriteStringValue(Convert.ToBase64String(reader.ReadBytes())); break;
                 default:
                     written = false;
@@ -310,27 +315,28 @@ internal static class OtlpProtobufDecoder
         if (!written) writer.WriteNullValue();
     }
 
-    private static void WriteArray(ReadOnlySpan<byte> data, Utf8JsonWriter writer, int depth)
+    private static void WriteArray(ReadOnlySpan<byte> data, Utf8JsonWriter writer, int depth, long budget)
     {
         if (depth > MaxValueDepth) throw new OtlpFormatException("AnyValue nesting is too deep.");
         writer.WriteStartArray();
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
-            if (field == 1 && type == ProtoWireType.LengthDelimited) WriteAnyValue(reader.ReadBytes(), writer, depth);
+            if (field == 1 && type == ProtoWireType.LengthDelimited && !OtlpAttributeBuilder.IsFull(writer, budget))
+                WriteAnyValue(reader.ReadBytes(), writer, depth, budget);
             else reader.Skip(type);
         }
         writer.WriteEndArray();
     }
 
-    private static void WriteKeyValueList(ReadOnlySpan<byte> data, Utf8JsonWriter writer, int depth)
+    private static void WriteKeyValueList(ReadOnlySpan<byte> data, Utf8JsonWriter writer, int depth, long budget)
     {
         if (depth > MaxValueDepth) throw new OtlpFormatException("AnyValue nesting is too deep.");
         writer.WriteStartObject();
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
-            if (field != 1 || type != ProtoWireType.LengthDelimited)
+            if (field != 1 || type != ProtoWireType.LengthDelimited || OtlpAttributeBuilder.IsFull(writer, budget))
             {
                 reader.Skip(type);
                 continue;
@@ -345,7 +351,7 @@ internal static class OtlpProtobufDecoder
                 else pair.Skip(innerType);
             }
             writer.WritePropertyName(key);
-            WriteAnyValue(value, writer, depth);
+            WriteAnyValue(value, writer, depth, budget);
         }
         writer.WriteEndObject();
     }

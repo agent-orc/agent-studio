@@ -49,9 +49,11 @@ is rejected, not revoked: if the declarations cannot be read, the intake answers
 | Token without the signal | 403 |
 | Content type other than `application/x-protobuf` or `application/json` | 415 |
 | Body over `Telemetry:MaxRequestBytes` (8 MiB, also after gzip expansion) | 413 |
-| More than `Telemetry:MaxRecordsPerRequest` (20,000) points or records, or more than `Telemetry:MaxDecodedBytesPerRequest` (32 MiB) of estimated memory | 413 |
+| More than `Telemetry:MaxRecordsPerRequest` (20,000) points or records, more than `Telemetry:MaxScopesPerRequest` (4,096) resources and scopes together, or more than `Telemetry:MaxDecodedBytesPerRequest` (32 MiB) of estimated memory | 413 |
 | Malformed protobuf or JSON | 400 |
-| Queue full, or `Telemetry:MaxConcurrentRequests` (4) requests already in progress | 429 with `Retry-After: 2`; OTLP exporters retry |
+| Body not received and decoded within `Telemetry:RequestDeadlineSeconds` (30) | 408 |
+| Environment declarations cannot be read | 503 with `Retry-After: 2`, for 30 seconds before they are read again |
+| Queue full, `Telemetry:MaxConcurrentRequests` (4) requests already in progress, or `Telemetry:MaxConcurrentRequestsPerEnvironment` (2) of them for this environment | 429 with `Retry-After: 2`; OTLP exporters retry |
 
 Error bodies are a `google.rpc.Status` in the request's encoding. The intake
 never waits for the disk. A request is parsed, checked, and queued. One
@@ -60,16 +62,29 @@ background writer stores the queue in batches. When more than
 (128 MiB) of estimated memory are waiting, new requests get 429 until the
 writer catches up.
 
-Memory per request is bounded while it is decoded, not afterwards. Decoding
-stops with 413 at the first record past `MaxRecordsPerRequest` or once the
-estimated memory of the decoded records passes `MaxDecodedBytesPerRequest`,
-so a small gzip body that expands into many records cannot build them all.
-All records of one resource and instrumentation scope share one attribute set;
-a record with attributes of its own holds references to the shared strings.
-The attributes of one record, resource attributes included, are capped at
-`Telemetry:MaxAttributesPerRecord` (128) keys and
-`Telemetry:MaxAttributeBytesPerRecord` (16 KiB of UTF-8 keys and values);
-further attributes are dropped, which also caps the size of a series key.
+Memory and CPU time per request are bounded while it is decoded, not
+afterwards. Decoding stops with 413 at the first record past
+`MaxRecordsPerRequest`, at the first resource or scope past
+`MaxScopesPerRequest`, or once the estimated memory of the decoded records
+passes `MaxDecodedBytesPerRequest`. A small gzip body that expands into many
+records or scopes therefore cannot build them all. Every attribute list
+(resource, data point, and log record) is read up to
+`Telemetry:MaxAttributesPerRecord` (128) entries while it is decoded; later
+entries are skipped without being turned into text. Arrays and key-value lists
+inside a value stop once their text is longer than the value limit. Each
+resource's attribute set is built once, and every scope of the resource starts
+from it. All records of one resource and instrumentation scope share one
+attribute set; a record with attributes of its own holds references to the
+shared strings. The merged attributes of one record are capped at
+`MaxAttributesPerRecord` keys and `Telemetry:MaxAttributeBytesPerRecord`
+(16 KiB of UTF-8 keys and values); further attributes are dropped, which also
+caps the size of a series key. The request deadline also covers decoding: the
+decoders check it every few thousand steps.
+
+Each environment can hold at most `MaxConcurrentRequestsPerEnvironment` of the
+`MaxConcurrentRequests` slots, so slow uploads from one environment's token
+cannot block intake for the other environments. A slot is held from the start
+of the body read until the request is queued or refused.
 Configure collectors to send at most 20,000 points or records per request (for
 the batch processor, `send_batch_max_size`).
 
@@ -90,7 +105,7 @@ with `Telemetry:StoreRoot`.
 | Metrics at one-minute resolution | 14 days | `Telemetry:MetricMinuteRetentionDays` |
 | Hourly metric aggregates | 90 days | `Telemetry:MetricHourRetentionDays` |
 | Logs | 7 days, at most 256 MiB of record payload per environment | `Telemetry:LogRetentionDays`, `Telemetry:LogMaxBytesPerEnvironment` |
-| Series per environment | 10,000 series and 32 MiB of names and attribute JSON; points of further new series are dropped and logged | `Telemetry:MaxSeriesPerEnvironment`, `Telemetry:MaxSeriesBytesPerEnvironment` |
+| Series per environment | 10,000 series and 32 MiB of estimated series cache (2 bytes per character of name and attribute JSON plus 192 bytes per series); points of further new series are dropped and logged | `Telemetry:MaxSeriesPerEnvironment`, `Telemetry:MaxSeriesBytesPerEnvironment` |
 | Minute buckets of all environments together | about 2 GiB (96 bytes estimated per bucket) | `Telemetry:MaxMinuteBucketBytes` |
 
 Every bucket keeps count, sum, min, max, and last value. Gauges and sums add

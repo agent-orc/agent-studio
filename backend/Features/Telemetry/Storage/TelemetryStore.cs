@@ -19,8 +19,8 @@ public sealed record TelemetryMinuteCapResult(long Buckets, DateTimeOffset? Cuto
 /// running byte total; when it passes the per-environment cap, the oldest
 /// records are removed until the total is at 90 percent of the cap. New series
 /// are refused past <see cref="TelemetryOptions.MaxSeriesPerEnvironment"/> series
-/// or <see cref="TelemetryOptions.MaxSeriesBytesPerEnvironment"/> bytes of names
-/// and attribute JSON. Minute buckets of all environments together are capped at
+/// or <see cref="TelemetryOptions.MaxSeriesBytesPerEnvironment"/> estimated bytes
+/// of the series cache (<see cref="SeriesBytes"/>). Minute buckets of all environments together are capped at
 /// <see cref="TelemetryOptions.MaxMinuteBucketBytes"/> by
 /// <see cref="EnforceMinuteBucketCap"/>, which removes the oldest hours first.
 /// <para>Writes and retention run on the single <see cref="TelemetryWriter"/>
@@ -32,6 +32,8 @@ public sealed partial class TelemetryStore
     private const string LogBytesKey = "log_bytes";
     /// <summary>Estimated disk bytes of one minute bucket: the row plus its entry in the bucket index.</summary>
     internal const long MinuteBucketRowBytes = 96;
+    /// <summary>One series cache entry without its strings: dictionary slot, key tuple, entry object, cumulative state, and two string headers.</summary>
+    private const long SeriesEntryBytes = 192;
     private readonly TelemetryOptions _options;
     private readonly ILogger<TelemetryStore> _logger;
     private readonly object _writeGate = new();
@@ -421,9 +423,14 @@ public sealed partial class TelemetryStore
         return Convert.ToInt64(command.ExecuteScalar() ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    /// <summary>Budget cost of one series: name and attribute JSON in UTF-8 plus a fixed entry overhead.</summary>
+    /// <summary>
+    /// Budget cost of one series as the writer's cache holds it: name and
+    /// attribute JSON as UTF-16 strings plus the entry overhead. The series
+    /// table stores the same text in UTF-8, which is never larger for the
+    /// ASCII-escaped JSON and at most 1.5 times larger for other names.
+    /// </summary>
     internal static long SeriesBytes(string name, string attributesJson)
-        => 64 + Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(attributesJson);
+        => SeriesEntryBytes + 2L * (name.Length + attributesJson.Length);
 
     private sealed class SeriesCache
     {

@@ -273,6 +273,82 @@ public sealed class TelemetryOtlpDecodingTests
         Assert.Contains("bytes of memory", error.Message);
     }
 
+    [Fact]
+    public void Resource_attribute_flood_with_empty_scopes_costs_linear_work()
+    {
+        // About 1.6 million five-byte resource attributes and 130,000 empty scopes fit in 8 MiB. Every scope
+        // used to merge the whole resource list again: about 2 * 10^11 steps, an hour of CPU for one request.
+        var body = ResourceFlood(attributes: 1_600_000, emptyScopes: 130_000);
+        Assert.True(body.Length <= new TelemetryOptions().MaxRequestBytes, $"the flood is {body.Length} bytes");
+        var factory = new OtlpRecordFactory(Limits with { MaxScopes = 200_000 }, Received);
+
+        Assert.Empty(OtlpProtobufDecoder.DecodeMetrics(body, factory).Items);
+
+        // One unit per attribute entry read or skipped and per scope: the work grows with the body, not with its square.
+        Assert.True(factory.Work < 2_000_000, $"decoding took {factory.Work} work units");
+        // With the default limits the same body stops at the scope cap.
+        var error = Assert.Throws<OtlpLimitException>(() => OtlpProtobufDecoder.DecodeMetrics(body, Factory()));
+        Assert.Contains("more than 4096 resources and instrumentation scopes", error.Message);
+    }
+
+    [Fact]
+    public void Attribute_lists_are_decoded_only_up_to_the_attribute_cap()
+    {
+        // One point with 50,000 attributes of 100 characters: only the first MaxAttributes become strings.
+        var attributes = new MemoryStream();
+        for (var index = 0; index < 50_000; index++) attributes.Write(Field(7, KeyValue("point." + index, new string('p', 100))));
+        byte[] point = Field(1, [.. attributes.ToArray(), 0x21, .. BitConverter.GetBytes(1.5d)]);
+        var body = Field(1, Field(2, Field(2, [.. Text(1, "wide"), .. Field(5, point)])));
+        var factory = Factory();
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var sample = Assert.Single(OtlpProtobufDecoder.DecodeMetrics(body, factory).Items);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(Limits.MaxAttributes, sample.Attributes.Count);
+        Assert.True(allocated < 1024 * 1024, $"decoding allocated {allocated} bytes");
+        Assert.True(factory.Work < 51_000, $"decoding took {factory.Work} work units");
+    }
+
+    [Fact]
+    public void Json_attribute_lists_stop_at_the_cap_and_resource_floods_cost_linear_work()
+    {
+        var resource = string.Join(",", Enumerable.Repeat("{\"key\":\"k\"}", 300_000));
+        var scopes = string.Join(",", Enumerable.Repeat("{}", 100_000));
+        var record = "{\"attributes\":[" + string.Join(",", Enumerable.Range(0, 1000)
+            .Select(index => $"{{\"key\":\"a{index}\",\"value\":{{\"stringValue\":\"v\"}}}}")) + "]}";
+        var body = $"{{\"resourceLogs\":[{{\"resource\":{{\"attributes\":[{resource}]}},\"scopeLogs\":[{scopes},{{\"logRecords\":[{record}]}}]}}]}}";
+        var factory = new OtlpRecordFactory(Limits with { MaxAttributes = 4, MaxScopes = 200_000 }, Received);
+
+        var log = Assert.Single(OtlpJsonDecoder.DecodeLogs(Encoding.UTF8.GetBytes(body), factory).Items);
+
+        // The resource keeps its first entry (k); the record's first four entries fill the set up to four keys.
+        Assert.Equal(["a0", "a1", "a2", "k"], log.Attributes.Items.Select(item => item.Key));
+        Assert.True(factory.Work < 410_000, $"decoding took {factory.Work} work units");
+    }
+
+    [Fact]
+    public void Nested_values_stop_once_their_text_passes_the_value_limit()
+    {
+        var values = string.Join(",", Enumerable.Repeat("{\"stringValue\":\"abc\"}", 100_000));
+        var body = $"{{\"resourceLogs\":[{{\"scopeLogs\":[{{\"logRecords\":[{{\"attributes\":[{{\"key\":\"list\",\"value\":{{\"arrayValue\":{{\"values\":[{values}]}}}}}}]}}]}}]}}]}}";
+        var factory = new OtlpRecordFactory(Limits with { MaxAttributeValueChars = 16 }, Received);
+
+        var log = Assert.Single(OtlpJsonDecoder.DecodeLogs(Encoding.UTF8.GetBytes(body), factory).Items);
+
+        Assert.Equal("[\"abc\",\"abc\",\"ab…", log.Attributes.Values["list"]);
+    }
+
+    [Fact]
+    public void Decoding_stops_when_the_request_is_cancelled()
+    {
+        var factory = new OtlpRecordFactory(Limits, Received, new CancellationToken(canceled: true));
+
+        Assert.ThrowsAny<OperationCanceledException>(()
+            => OtlpProtobufDecoder.DecodeMetrics(ResourceFlood(attributes: 100_000, emptyScopes: 0), factory));
+        Assert.True(factory.Work < 10_000, $"decoding took {factory.Work} work units before it stopped");
+    }
+
     /// <summary>
     /// ExportMetricsServiceRequest with one resource of <paramref name="resourceAttributes"/> wide
     /// attributes and one gauge of <paramref name="points"/> points, each with the attribute k=v.
@@ -297,6 +373,22 @@ public sealed class TelemetryOtlpDecodingTests
         for (var index = 0; index < points; index++)
             gauge.Write(Field(1, [.. Field(7, KeyValue("wide", new string('w', 1000))), 0x21, .. BitConverter.GetBytes(1.5d)]));
         return Field(1, Field(2, Field(2, [.. Text(1, "wide"), .. Field(5, gauge.ToArray())])));
+    }
+
+    /// <summary>
+    /// One resource of <paramref name="attributes"/> five-byte attributes (key <c>k</c>, no value)
+    /// followed by <paramref name="emptyScopes"/> empty ScopeMetrics.
+    /// </summary>
+    private static byte[] ResourceFlood(int attributes, int emptyScopes)
+    {
+        var resource = new MemoryStream();
+        byte[] attribute = Field(1, Text(1, "k"));
+        for (var index = 0; index < attributes; index++) resource.Write(attribute);
+        var resourceMetrics = new MemoryStream();
+        resourceMetrics.Write(Field(1, resource.ToArray()));
+        byte[] scope = Field(2, []);
+        for (var index = 0; index < emptyScopes; index++) resourceMetrics.Write(scope);
+        return Field(1, resourceMetrics.ToArray());
     }
 
     private static byte[] KeyValue(string key, string value) => [.. Text(1, key), .. Field(2, Text(1, value))];
