@@ -109,7 +109,7 @@ public sealed class SshDeployExecutorTests
             using var retried = JsonDocument.Parse(calls[3][4..]);
             Assert.NotEqual(prepared.RootElement.GetProperty("path").GetString(),
                 retried.RootElement.GetProperty("path").GetString());
-            Assert.Contains(calls, call => call.StartsWith("scp:", StringComparison.Ordinal) && call != calls[1]);
+            Assert.Equal(2, calls.Count(call => call.StartsWith("scp:", StringComparison.Ordinal)));
             Assert.Contains("\"action\":\"switch\"", calls.Last());
         }
         finally
