@@ -2163,8 +2163,9 @@ environment variables. Scripts must exit zero to advance; failure stops the
 remaining steps. The host drains output locally and reports only step success
 or failure, so logs do not expose secret values. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
-own process group; timeout or host cancellation kills that group and waits for
-its output streams to close. Install scripts on the assigned deploy host before
+own process group; timeout or host cancellation also applies while draining
+output after the script exits, kills that group and waits for its output streams
+to close. Install scripts on the assigned deploy host before
 invoking the runbook.
 
 ## Verification

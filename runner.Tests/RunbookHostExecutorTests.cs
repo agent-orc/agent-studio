@@ -1,3 +1,4 @@
+using System.Globalization;
 using AgentRunner;
 using Xunit;
 
@@ -71,6 +72,44 @@ public sealed class RunbookHostExecutorTests
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
             await Task.Delay(1200);
             Assert.False(File.Exists(marker), "A child process kept running after cancellation.");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Host_cancellation_stops_a_child_that_keeps_output_open_after_the_script_exits()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-exited-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var ready = Path.Combine(root, "parent-pid");
+        var marker = Path.Combine(root, "child-wrote");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"),
+            "(sleep 2; printf 'escaped' > \"$MARKER\") &\nprintf '%s' \"$$\" > \"$READY\"\nexit 0\n");
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var execution = RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { ["READY"] = ready, ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, cancellation.Token);
+            for (var attempt = 0; attempt < 100 && !File.Exists(ready); attempt++)
+                await Task.Delay(20);
+            Assert.True(File.Exists(ready), "The script did not start.");
+            var parentId = int.Parse(File.ReadAllText(ready), CultureInfo.InvariantCulture);
+            for (var attempt = 0; attempt < 100 && Directory.Exists($"/proc/{parentId}"); attempt++)
+                await Task.Delay(20);
+            Assert.False(Directory.Exists($"/proc/{parentId}"), "The script did not exit.");
+            Assert.False(execution.IsCompleted, "The child did not keep an output pipe open.");
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(1)));
+            await Task.Delay(2200);
+            Assert.False(File.Exists(marker), "The child continued after host cancellation.");
         }
         finally
         {

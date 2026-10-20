@@ -90,7 +90,8 @@ public static class RunbookHostExecutor
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
-                await Task.WhenAll(output, error);
+                // A child can inherit a redirected pipe after the script exits.
+                await Task.WhenAll(output, error).WaitAsync(timeout.Token);
                 results.Add(new(index, process.ExitCode == 0));
             }
             catch (OperationCanceledException)
