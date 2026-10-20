@@ -53,6 +53,29 @@ public sealed partial class BatchGatePilotService
         return assessment.Backlogged;
     }
 
+    private bool _queueWaitersRestored;
+
+    /// <summary>
+    /// Once per process: a review that overran the queue before a restart and
+    /// whose per-task gate is to resume waits again, so the first tick does not
+    /// read a drained queue and close the open episode. Restored waiters that
+    /// no longer wait are dropped on every tick.
+    /// </summary>
+    private void RestoreQueueWaiters()
+    {
+        var active = _store.ListPending().Select(Refresh)
+            .Where(item => item.Subject.ActivePerTaskGate && item.Subject.OwningBatchId is null)
+            .ToDictionary(item => item.ReviewAttemptId, StringComparer.Ordinal);
+        if (!_queueWaitersRestored)
+        {
+            _queueWaitersRestored = true;
+            foreach (var ledger in _store.ListQueueWaits())
+                if (active.TryGetValue(ledger.ReviewAttemptId, out var item))
+                    _queueStalls.Restore(item.Subject.Project, ledger.ReviewAttemptId, ledger.LastOverrunAtUtc);
+        }
+        _queueStalls.PruneRestored(active.ContainsKey);
+    }
+
     private void ObserveQueueEpisodes(IReadOnlyList<BatchGatePendingRecord> waiting)
     {
         foreach (var project in waiting.Select(item => item.Subject.Project)
@@ -100,17 +123,24 @@ public sealed partial class BatchGatePilotService
     }
 
     /// <summary>
-    /// Applies the queue overrun rule to a per-task gate result. A requeued
-    /// request returns to the durable batch queue: a queued member keeps its
-    /// record and sequence, an emergency gate is admitted now when the batch
-    /// accepts it. Otherwise its marker stays active with a fresh start budget,
-    /// so the admission retry resumes the gate. Every overrun adds its wait to
-    /// the review generation's durable ledger; at the cap the card escalates
-    /// as a gate capacity problem instead of looping.
+    /// Re-reads the generation after a per-task gate returned. A result of any
+    /// verdict for a review that is no longer current, or for a card that left
+    /// Auto Review, resolves as superseded and never escalates. A queue overrun
+    /// of the current review returns to the durable batch queue: a queued
+    /// member keeps its record and sequence, an emergency gate is admitted now
+    /// when the batch accepts it. Otherwise its marker stays active with a
+    /// fresh start budget, so the admission retry resumes the gate. Every
+    /// overrun adds its wait to the review generation's durable ledger; at the
+    /// cap the card escalates as a gate capacity problem instead of looping.
+    /// Returns false when the result is the card's to settle or a cancellation.
     /// </summary>
-    private async Task<bool> RequeueAfterQueueOverrunAsync(TaskInfo task, BatchGatePendingRecord pending,
-        BuildTestGateResult gate, string evidence, bool recordInStore, CancellationToken ct)
+    private async Task<bool> ResolveBeforeSettlementAsync(TaskInfo task, BatchGatePendingRecord pending,
+        BuildTestGateResult gate, string evidence, DateTimeOffset started, bool recordInStore, CancellationToken ct)
     {
+        // GateCancellationPolicy classifies a cancelled gate, a stale one
+        // included; the escalation itself refuses a generation that is not current.
+        if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
+            return false;
         var live = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
         var current = Refresh(pending).Subject.CurrentGeneration;
         var waitedMs = Math.Max(0, gate.ViolatedBudget?.ConsumedMs ?? gate.GateQueueWaitMs);
@@ -123,6 +153,21 @@ public sealed partial class BatchGatePilotService
             gate.ViolatedBudget?.Phase, live?.State, current, TimeSpan.FromMilliseconds(priorWaitMs + waitedMs), cap);
         if (action == GateQueueOverrunAction.Settle)
             return false;
+        if (action == GateQueueOverrunAction.Supersede)
+        {
+            _logger.LogWarning(
+                "batch-fallback-result-superseded task={TaskKey} attempt={AttemptId} verdict={Verdict} lane={Lane} pending_intent={PendingIntent}",
+                pending.Subject.TaskKey, pending.ReviewAttemptId, gate.Verdict, live?.State ?? "missing",
+                live?.PendingIntent is not null);
+            // A gate that reached a slot still cost host minutes. The evidence
+            // follows the card's folder; a moved card must not regain its old one.
+            if (live is not null
+                && !MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
+                RecordFallbackExecution(pending, gate,
+                    Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence)), started);
+            SupersedeFallbackResult(live ?? task, pending, recordInStore);
+            return true;
+        }
         var ledger = _store.AddQueueWait(pending.ReviewAttemptId, pending.Subject.TaskKey, waitedMs,
             _time.GetUtcNow());
         if (action == GateQueueOverrunAction.EscalateCapacity)
@@ -175,6 +220,57 @@ public sealed partial class BatchGatePilotService
             recordInStore, ct, GateQueueStallPolicy.GateCapacityCategory).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// A batch candidate whose request spent the machine gate queue budget never
+    /// ran. The batch is abandoned and its members return to the queue for the
+    /// next batch, with no same-candidate retry. Each member's wait counts
+    /// toward its review generation's queue wait cap, and the overrun feeds the
+    /// project's stall episode.
+    /// </summary>
+    private async Task RequeueBatchAfterQueueOverrunAsync(BatchGateManifest manifest, BuildTestGateResult gate,
+        IReadOnlyList<BatchGatePendingRecord> gated, long fence, CancellationToken ct)
+    {
+        State(manifest, BatchPhase.Abandoned, null, fence, "gate-queue-overrun: " + gate.Reason);
+        ReturnToPending(manifest);
+        var waitedMs = Math.Max(0, gate.ViolatedBudget?.ConsumedMs ?? gate.GateQueueWaitMs);
+        var cap = MonolithTransitionAdapter.GateQueueWaitCap(gate.ViolatedBudget is { LimitMs: > 0 } budget
+            ? TimeSpan.FromMilliseconds(budget.LimitMs) : QueueBudget(manifest.Scope.Project));
+        foreach (var member in gated)
+        {
+            var live = _scanner.FindJob(member.Subject.TaskKey, member.WatchPath);
+            var priorWaitMs = _store.ReadQueueWait(member.ReviewAttemptId)?.TotalQueueWaitMs ?? 0;
+            var action = MonolithTransitionAdapter.GateQueueOverrun(gate.ViolatedBudget?.Name,
+                gate.ViolatedBudget?.Phase, live?.State, Refresh(member).Subject.CurrentGeneration,
+                TimeSpan.FromMilliseconds(priorWaitMs + waitedMs), cap);
+            if (action == GateQueueOverrunAction.Supersede)
+            {
+                ResolveSuperseded(member, "superseded");
+                continue;
+            }
+            var ledger = _store.AddQueueWait(member.ReviewAttemptId, member.Subject.TaskKey, waitedMs,
+                _time.GetUtcNow());
+            if (action == GateQueueOverrunAction.EscalateCapacity)
+            {
+                var evidence = Path.Combine(TaskPaths.LogsDir(live!.FolderPath),
+                    $"batch-fallback-{member.ReviewAttemptId}.json");
+                await EscalateGateCapacityAsync(live, member, gate, evidence, ledger, cap, recordInStore: true, ct)
+                    .ConfigureAwait(false);
+                continue;
+            }
+            Lane(member, "gate-queue-stalled", queueWaitMs: waitedMs, outcome: "requeued",
+                reason: $"batch:{manifest.BatchId}");
+        }
+        _logger.LogWarning(
+            "batch-gate-queue-overrun batch={BatchId} project={Project} members={Members} waited_ms={WaitedMs}",
+            manifest.BatchId, manifest.Scope.Project, gated.Count, waitedMs);
+        var queuedMembers = _store.ListPending().Select(Refresh).Count(item =>
+            string.Equals(item.Subject.Project, manifest.Scope.Project, StringComparison.Ordinal) && Queued(item));
+        var facts = QueueFacts(manifest.Scope.Project, queuedMembers, TimeSpan.FromMilliseconds(waitedMs));
+        if (gated.Count > 0
+            && _queueStalls.QueueOverrun(manifest.Scope.Project, gated[0].Subject.TaskKey, facts) is { } stall)
+            RaiseQueueStall(stall, gated[0].WatchPath);
+    }
+
     private BatchGatePendingRecord? AdmitAfterQueueOverrun(BatchGatePendingRecord pending)
     {
         var options = _settings.Get(pending.Subject.Project).BatchGate;
@@ -209,9 +305,10 @@ public sealed partial class BatchGatePilotService
     private static long Minutes(long milliseconds) => (long)Math.Ceiling(milliseconds / 60_000d);
 
     public GateQueueStallReport QueueStallReport(string project)
-        => new(project, QueueStalledEscalations(project).Select(item => item.Task.Key ?? item.Task.Id).ToArray(),
+        => new(project, QueueStalledEscalations(project).Where(item => item.Refusal is null)
+                .Select(item => item.Task.Key ?? item.Task.Id).ToArray(),
             _queueStalls.OpenEpisode(project),
-            _store.ListQueueStalls(project).TakeLast(RecentQueueStalls).ToArray());
+            _store.ListQueueStalls(project, RecentQueueStalls));
 
     /// <summary>
     /// Returns every card of the project that was escalated for a machine gate
@@ -229,9 +326,14 @@ public sealed partial class BatchGatePilotService
         await _tick.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            foreach (var (task, review, source) in QueueStalledEscalations(project))
+            foreach (var (task, review, source, refusal) in QueueStalledEscalations(project))
             {
                 var key = task.Key ?? task.Id;
+                if (refusal is not null)
+                {
+                    refused.Add(new(key, RefusalText(refusal.Value)));
+                    continue;
+                }
                 var reviewedAt = ReviewedAt(review);
                 var candidate = BuildPending(task, review, source, reviewedAt);
                 if (BatchGatePolicy.Exclusion(candidate.Subject with { EnqueueSequence = 1 },
@@ -283,12 +385,15 @@ public sealed partial class BatchGatePilotService
     /// <summary>
     /// Escalated cards of the project whose current, passed review lost its
     /// per-task gate to a queue overrun: the gate evidence names the queue
-    /// budget and the park reason is that overrun.
+    /// budget and the park reason is that overrun. A card whose last move into
+    /// Escalated was not the fallback's escalation out of Auto Review, or that
+    /// carries a follow-up, is listed with its refusal.
     /// </summary>
-    private IReadOnlyList<(TaskInfo Task, ReviewAttemptDto Review, RunAttemptDto Source)>
+    private IReadOnlyList<(TaskInfo Task, ReviewAttemptDto Review, RunAttemptDto Source,
+            GateQueueReleaseRefusal? Refusal)>
         QueueStalledEscalations(string project)
     {
-        var found = new List<(TaskInfo, ReviewAttemptDto, RunAttemptDto)>();
+        var found = new List<(TaskInfo, ReviewAttemptDto, RunAttemptDto, GateQueueReleaseRefusal?)>();
         foreach (var task in _scanner.ScanAllJobs().Where(task => task.State == TaskStates.Escalated
                      && string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)))
         {
@@ -302,12 +407,37 @@ public sealed partial class BatchGatePilotService
                 && reason.Contains("phase=" + GateQueueStallPolicy.QueuePhase, StringComparison.Ordinal);
             var passed = review.Outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect
                 && review.Subject.Plan?.BuildTestDeferredToBatch == true;
-            if (parkedForQueue && MonolithTransitionAdapter.GateQueueStallReleasable(task.State,
-                    gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase, currentGeneration: true, passed))
-                found.Add((task, review, source));
+            if (!parkedForQueue) continue;
+            var escalation = LastEscalation(task);
+            var refusal = MonolithTransitionAdapter.GateQueueStallReleaseRefusal(new GateQueueReleaseFacts(
+                task.State, gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase, CurrentGeneration: true, passed,
+                Detail(escalation, "from"), Detail(escalation, LaneChangeCauses.DetailKey),
+                Detail(escalation, LaneChangeCauses.DetailQualifierKey),
+                task.PendingIntent is not null || _mutations.ReadStashedPendingIntent(task.FolderPath) is not null));
+            // Only a queue overrun of the current passed review is listed at all.
+            if (refusal is null or GateQueueReleaseRefusal.NotFallbackEscalation or GateQueueReleaseRefusal.PendingIntent)
+                found.Add((task, review, source, refusal));
         }
         return found;
     }
+
+    private TimelineEvent? LastEscalation(TaskInfo task)
+        => _timeline?.ReadAll(task.FolderPath).LastOrDefault(row =>
+            string.Equals(row.Kind, TimelineEventKinds.LaneChanged, StringComparison.Ordinal)
+            && Detail(row, "to") == TaskStates.Escalated);
+
+    private static string? Detail(TimelineEvent? row, string key)
+        => row?.Details is { } details && details.TryGetValue(key, out var value) ? value : null;
+
+    private static string RefusalText(GateQueueReleaseRefusal refusal) => refusal switch
+    {
+        GateQueueReleaseRefusal.NotFallbackEscalation =>
+            $"The card was not escalated out of {TaskStates.AutoReview} by the per-task gate; "
+            + "its delivery may predate a later lane move, so it is not returned to the gate queue.",
+        GateQueueReleaseRefusal.PendingIntent =>
+            "A follow-up waits on the card; it must run before the card returns to the gate queue.",
+        _ => $"The card is not releasable: {refusal}.",
+    };
 
     private BuildTestGateResult? ReadFallbackEvidence(TaskInfo task, string reviewAttemptId)
     {

@@ -68,6 +68,9 @@ public static class MonolithTransitionAdapter
 
     public static TimeSpan GateQueueWaitCap(TimeSpan queueBudget) => GateQueueStallPolicy.QueueWaitCap(queueBudget);
 
+    public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
+        => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
+
     public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
         => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
 
@@ -80,9 +83,8 @@ public static class MonolithTransitionAdapter
 
     public static bool GateQueueEpisodeDrained(int queueDepth) => GateQueueStallPolicy.EpisodeDrained(queueDepth);
 
-    public static bool GateQueueStallReleasable(string? lane, string? budgetName, string? budgetPhase,
-        bool currentGeneration, bool reviewPassed)
-        => GateQueueStallPolicy.Releasable(lane, budgetName, budgetPhase, currentGeneration, reviewPassed);
+    public static GateQueueReleaseRefusal? GateQueueStallReleaseRefusal(GateQueueReleaseFacts facts)
+        => GateQueueStallPolicy.ReleaseRefusal(facts);
 
     public static RemoteReviewContinuationStep ContinuationReplay(IEnumerable<RoundTimelineFact> ledger,
         string attemptId, string cause, string moveKey, string currentState)

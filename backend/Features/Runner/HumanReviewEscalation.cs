@@ -245,7 +245,8 @@ public sealed class HumanReviewEscalation
         string jobId, string watchPath, string project,
         string category, string reason, CancellationToken ct = default,
         AttemptWriteReference? authorityWrite = null,
-        string? statusDetail = null)
+        string? statusDetail = null,
+        string? expectedSourceState = null)
     {
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         // Write the Result scaffold before the lane mutation. The folder moves
@@ -262,6 +263,9 @@ public sealed class HumanReviewEscalation
             reason: reason,
             authorityWrite: authorityWrite,
             suppressProductExecution: authorityWrite is not null,
+            // A caller that read the source lane passes it, so a concurrent
+            // move (an operator drag, a follow-up) refuses the escalation.
+            expectedSourceState: expectedSourceState,
             transitionCause: LaneChangeCauses.Escalated,
             transitionDetail: category);
         if (outcome.Status == MoveJobStatus.Success)

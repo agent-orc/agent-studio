@@ -9,7 +9,9 @@ namespace AgentStudio.Pipeline;
 /// that raises one <see cref="GateQueueStallEvent"/>, raises it again every
 /// <see cref="GateQueueStallPolicy.StallReminderInterval"/> while the episode
 /// stays open, and closes once the queue has drained. Waiters are process
-/// memory; episodes and events are durable in the <see cref="BatchGateStore"/>.
+/// memory; the host restores them on start from the durable queue wait
+/// ledgers, so a restart does not read as a drained queue. Episodes and events
+/// are durable in the <see cref="BatchGateStore"/>.
 /// </summary>
 public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider time)
 {
@@ -17,7 +19,7 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
     private static readonly TimeSpan DurationCacheLifetime = TimeSpan.FromMinutes(5);
     private const int DurationSamples = 20;
 
-    private sealed record Waiter(string Project, DateTimeOffset SinceUtc, int Busy, int Total);
+    private sealed record Waiter(string Project, DateTimeOffset SinceUtc, int Busy, int Total, bool Restored = false);
     private sealed record CachedDuration(TimeSpan Value, DateTimeOffset ReadAtUtc);
 
     private readonly ConcurrentDictionary<string, Waiter> _waiting = new(StringComparer.Ordinal);
@@ -31,7 +33,23 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
         _lastSlots[project] = (busy, total);
         _waiting.AddOrUpdate(requestKey,
             _ => new Waiter(project, time.GetUtcNow(), busy, total),
-            (_, prior) => prior with { Busy = busy, Total = total });
+            (_, prior) => prior with { Busy = busy, Total = total, Restored = false });
+    }
+
+    /// <summary>
+    /// After a restart: a request that overran the queue before the process
+    /// stopped waits again from <paramref name="sinceUtc"/>. A live report keeps
+    /// that start.
+    /// </summary>
+    public void Restore(string project, string requestKey, DateTimeOffset sinceUtc)
+        => _waiting.TryAdd(requestKey, new Waiter(project, sinceUtc, 0, 0, Restored: true));
+
+    /// <summary>Drops restored waiters that no live request reported and that no longer wait.</summary>
+    public void PruneRestored(Func<string, bool> stillWaiting)
+    {
+        foreach (var (key, waiter) in _waiting)
+            if (waiter.Restored && !stillWaiting(key))
+                _waiting.TryRemove(new KeyValuePair<string, Waiter>(key, waiter));
     }
 
     /// <summary>The request holds a slot or ended; it no longer waits.</summary>

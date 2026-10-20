@@ -7,6 +7,13 @@ public enum GateQueueOverrunAction
     Settle,
 
     /// <summary>
+    /// The result, whatever its verdict, belongs to a review generation that is
+    /// no longer current or to a card that left Auto Review. It resolves as
+    /// superseded; it never moves or escalates the card.
+    /// </summary>
+    Supersede,
+
+    /// <summary>
     /// The request never reached a machine slot. The card stays in Auto Review
     /// and its gate request returns to the batch queue.
     /// </summary>
@@ -59,6 +66,15 @@ public static class GateQueueStallPolicy
     public const string GateCapacityCategory = "gate-capacity";
 
     /// <summary>
+    /// Escalation category the per-task fallback used for a queue overrun
+    /// before AGT-3219; it still uses it for a red suite.
+    /// </summary>
+    public const string FallbackEscalationCategory = "auto-review-escalation";
+
+    /// <summary>Lane change cause of an escalation move.</summary>
+    public const string EscalatedCause = "escalated";
+
+    /// <summary>
     /// Queue budgets one review generation may spend waiting for a slot across
     /// all its requeues before it escalates as a gate capacity problem.
     /// </summary>
@@ -80,19 +96,21 @@ public static class GateQueueStallPolicy
            && string.Equals(budgetName, QueueBudgetName, StringComparison.Ordinal);
 
     /// <summary>
-    /// A queue overrun of the current review generation of a card in Auto
-    /// Review is requeued until <paramref name="totalQueueWait"/>, the queue
-    /// wait of this generation including this overrun, reaches
-    /// <paramref name="queueWaitCap"/>; then it escalates as a capacity problem.
-    /// Every other result keeps its settlement path, so an execution-phase
-    /// overrun still escalates.
+    /// Read after the gate returned. A result of a review generation that is
+    /// no longer current, or of a card outside Auto Review, is superseded,
+    /// whatever its verdict. A queue overrun of the current generation is
+    /// requeued until <paramref name="totalQueueWait"/>, the queue wait of this
+    /// generation including this overrun, reaches <paramref name="queueWaitCap"/>;
+    /// then it escalates as a capacity problem. Every other result keeps its
+    /// settlement path, so an execution-phase overrun still escalates.
     /// </summary>
     public static GateQueueOverrunAction Decide(string? budgetName, string? budgetPhase,
         string? lane, bool currentGeneration, TimeSpan totalQueueWait = default,
         TimeSpan? queueWaitCap = null)
     {
-        if (!IsQueueOverrun(budgetName, budgetPhase) || !currentGeneration
-            || !string.Equals(lane, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+        if (!currentGeneration || !string.Equals(lane, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+            return GateQueueOverrunAction.Supersede;
+        if (!IsQueueOverrun(budgetName, budgetPhase))
             return GateQueueOverrunAction.Settle;
         return queueWaitCap is { } cap && totalQueueWait >= cap
             ? GateQueueOverrunAction.EscalateCapacity
@@ -144,10 +162,50 @@ public static class GateQueueStallPolicy
 
     /// <summary>
     /// An escalated card returns to the queue only when its escalation was a
-    /// queue overrun of the review that is still current and passed.
+    /// queue overrun of the review that is still current and passed, its last
+    /// move into Escalated was the fallback's escalation out of Auto Review,
+    /// and no follow-up waits. A card a stale gate outcome parked from another
+    /// lane would otherwise return to Auto Review with an outdated delivery.
     /// </summary>
-    public static bool Releasable(string? lane, string? budgetName, string? budgetPhase,
-        bool currentGeneration, bool reviewPassed)
-        => string.Equals(lane, TaskStates.Escalated, StringComparison.OrdinalIgnoreCase)
-           && IsQueueOverrun(budgetName, budgetPhase) && currentGeneration && reviewPassed;
+    public static bool Releasable(GateQueueReleaseFacts facts)
+        => ReleaseRefusal(facts) is null;
+
+    /// <summary>Why <see cref="Releasable"/> refuses the card, or null.</summary>
+    public static GateQueueReleaseRefusal? ReleaseRefusal(GateQueueReleaseFacts facts)
+    {
+        if (!string.Equals(facts.Lane, TaskStates.Escalated, StringComparison.OrdinalIgnoreCase))
+            return GateQueueReleaseRefusal.NotEscalated;
+        if (!IsQueueOverrun(facts.BudgetName, facts.BudgetPhase))
+            return GateQueueReleaseRefusal.NotQueueOverrun;
+        if (!facts.CurrentGeneration || !facts.ReviewPassed)
+            return GateQueueReleaseRefusal.ReviewNotCurrent;
+        if (!string.Equals(facts.EscalatedFromLane, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(facts.EscalationCause, EscalatedCause, StringComparison.Ordinal)
+            || facts.EscalationCategory is not (FallbackEscalationCategory or GateCapacityCategory))
+            return GateQueueReleaseRefusal.NotFallbackEscalation;
+        return facts.PendingIntent ? GateQueueReleaseRefusal.PendingIntent : null;
+    }
+}
+
+/// <summary>
+/// Facts of one escalated card for the queue stall release. The escalation
+/// fields describe the card's last lane change into Escalated.
+/// </summary>
+public sealed record GateQueueReleaseFacts(
+    string? Lane, string? BudgetName, string? BudgetPhase,
+    bool CurrentGeneration, bool ReviewPassed,
+    string? EscalatedFromLane, string? EscalationCause, string? EscalationCategory,
+    bool PendingIntent);
+
+public enum GateQueueReleaseRefusal
+{
+    NotEscalated,
+    NotQueueOverrun,
+    ReviewNotCurrent,
+
+    /// <summary>The last move into Escalated was not the fallback's escalation out of Auto Review.</summary>
+    NotFallbackEscalation,
+
+    /// <summary>A follow-up waits; the card must not resume its pre-follow-up delivery.</summary>
+    PendingIntent,
 }

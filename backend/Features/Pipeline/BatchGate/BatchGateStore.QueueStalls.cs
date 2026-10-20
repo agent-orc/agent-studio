@@ -29,16 +29,41 @@ public sealed record GateQueueWaitLedger(
 
 public sealed partial class BatchGateStore
 {
-    private readonly object _queueWaitLock = new();
+    /// <summary>Stall events kept per project; older ones are pruned when a new one is recorded.</summary>
+    internal const int RetainedQueueStalls = 50;
 
+    private readonly object _queueWaitLock = new();
+    private readonly object _queueStallLock = new();
+
+    /// <summary>
+    /// Records a stall event in the project's folder. File names start with the
+    /// raise time, so the history sorts by name and reads only the newest files.
+    /// </summary>
     public void RecordQueueStall(GateQueueStallEvent stall)
     {
-        var folder = Path.Combine(_root, "queue-stalls");
-        Directory.CreateDirectory(folder);
-        var name = stall.Raise <= 1 ? stall.EpisodeId : $"{stall.EpisodeId}-{stall.Raise}";
-        var path = Path.Combine(folder, SafeName(name) + ".json");
-        if (!File.Exists(path)) WriteOnce(path, stall);
+        lock (_queueStallLock)
+        {
+            var folder = QueueStallFolder(stall.Project);
+            Directory.CreateDirectory(folder);
+            var name = $"{stall.RaisedAtUtc.UtcTicks:D19}-{SafeName(stall.EpisodeId)}-{stall.Raise}";
+            var path = Path.Combine(folder, name + ".json");
+            if (!File.Exists(path)) WriteOnce(path, stall);
+            PruneQueueStalls(folder);
+        }
     }
+
+    private void PruneQueueStalls(string folder)
+    {
+        foreach (var stale in Directory.EnumerateFiles(folder, "*.json").Order(StringComparer.Ordinal)
+                     .SkipLast(RetainedQueueStalls).ToArray())
+            File.Delete(stale);
+        // The first AGT-3219 builds kept every project's events in one flat
+        // folder that was read whole for each report; that layout is retired.
+        foreach (var legacy in Directory.EnumerateFiles(Path.Combine(_root, "queue-stalls"), "*.json").ToArray())
+            File.Delete(legacy);
+    }
+
+    private string QueueStallFolder(string project) => Path.Combine(_root, "queue-stalls", SafeName(project));
 
     public GateQueueStallEpisode? ReadQueueStallEpisode(string project)
     {
@@ -50,7 +75,7 @@ public sealed partial class BatchGateStore
     {
         var path = QueueStallEpisodePath(episode.Project);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        Replace(path, episode);
+        ReplaceQueueStallRecord(path, episode);
     }
 
     public void CloseQueueStallEpisode(string project)
@@ -85,12 +110,15 @@ public sealed partial class BatchGateStore
                 };
             var path = QueueWaitPath(reviewAttemptId);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            Replace(path, ledger);
+            ReplaceQueueStallRecord(path, ledger);
             return ledger;
         }
     }
 
-    /// <summary>An operator release grants the review generation a fresh queue wait cap.</summary>
+    /// <summary>
+    /// Ends the review generation's queue wait ledger: the review passed or was
+    /// superseded, or an operator release grants it a fresh queue wait cap.
+    /// </summary>
     public void ClearQueueWait(string reviewAttemptId)
     {
         lock (_queueWaitLock)
@@ -100,10 +128,19 @@ public sealed partial class BatchGateStore
         }
     }
 
+    /// <summary>Every open queue wait ledger; read once when the host starts.</summary>
+    public IReadOnlyList<GateQueueWaitLedger> ListQueueWaits()
+    {
+        var folder = Path.Combine(_root, "queue-waits");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<GateQueueWaitLedger>).ToArray()
+            : [];
+    }
+
     private string QueueWaitPath(string reviewAttemptId)
         => Path.Combine(_root, "queue-waits", SafeName(reviewAttemptId) + ".json");
 
-    private static void Replace<T>(string path, T value)
+    private static void ReplaceQueueStallRecord<T>(string path, T value)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -132,15 +169,15 @@ public sealed partial class BatchGateStore
         return File.Exists(path) && !File.Exists(path + ".resolved");
     }
 
-    public IReadOnlyList<GateQueueStallEvent> ListQueueStalls(string project)
+    /// <summary>The project's newest <paramref name="take"/> stall events, oldest first.</summary>
+    public IReadOnlyList<GateQueueStallEvent> ListQueueStalls(string project, int take = RetainedQueueStalls)
     {
-        var folder = Path.Combine(_root, "queue-stalls");
+        var folder = QueueStallFolder(project);
         return Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
+                .Order(StringComparer.Ordinal)
+                .TakeLast(Math.Max(0, take))
                 .Select(Read<GateQueueStallEvent>)
-                .Where(stall => string.Equals(stall.Project, project, StringComparison.Ordinal))
-                .OrderBy(stall => stall.RaisedAtUtc)
-                .ThenBy(stall => stall.Raise)
                 .ToArray()
             : [];
     }
