@@ -158,6 +158,13 @@ public sealed class GateResultCache
             Mode = mode.ToString(),
             Commands = commands,
         }, Json);
+        // AGT-3232: a host part ran only some shards; its verdict must never
+        // answer a later whole-gate lookup. A whole gate keeps its digest. The
+        // timing snapshot decides the plan, so a part cached under another
+        // snapshot cannot be merged with fresh siblings planned from this one.
+        if (request.Sharding?.Part is { } part)
+            payload += $"|shard-part={part.Index}/{part.Count}" +
+                       $"|shard-timings={(request.Sharding.Timings ?? GateShardTimingSnapshot.Empty).Digest()}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
     }
 
