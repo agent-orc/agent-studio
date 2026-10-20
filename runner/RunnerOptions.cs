@@ -405,11 +405,6 @@ public sealed class RunnerOptions
             : fallback;
 
     /// <summary>
-    /// Build options from environment defaults, then apply <c>--key value</c> and
-    /// <c>--flag</c> command-line overrides. The single positional argument (if any)
-    /// is the task key. Returns the parsed task key alongside the options.
-    /// </summary>
-    /// <summary>
     /// <see cref="Parse(string[])"/> against <paramref name="environment"/>
     /// instead of the process environment, so a test sees no host variable.
     /// </summary>
@@ -428,6 +423,11 @@ public sealed class RunnerOptions
         }
     }
 
+    /// <summary>
+    /// Build options from environment defaults, then apply <c>--key value</c> and
+    /// <c>--flag</c> command-line overrides. The single positional argument (if any)
+    /// is the task key. Returns the parsed task key alongside the options.
+    /// </summary>
     public static (RunnerOptions Options, string? TaskKey, bool Once, bool Help) Parse(string[] args)
     {
         var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

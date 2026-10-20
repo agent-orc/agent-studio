@@ -411,6 +411,14 @@ public sealed class ZonePolicyRenderingTests
         { "$.version", "\"2026-10-20.3\\n-A INPUT -j ACCEPT\"", "version 2026-10-20.3\\n-A INPUT -j ACCEPT must match ^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$" },
         { "$.version", "\"2026-10-20\\\" x\"", "version 2026-10-20\\\" x must match" },
         { "$.version", "\".hidden\"", "version .hidden must match" },
+        // $ would accept a trailing line break; the patterns end in \z.
+        { "$.version", "\"2026-10-20.3\\n\"", "version 2026-10-20.3\\n must match" },
+        { "$.zones[0].name", "\"work\\n\"", "zone work\\n: names match" },
+        { "$.zones[0].networks[0].name", "\"agent-work\\n\"", "network name agent-work\\n: names match" },
+        { "$.zones[1].networks[0].tenant", "\"default\\n\"", "tenant default\\n: names match" },
+        { "$.verification.probeImage", "\"bash:5.2@sha256:a54fb4422b18f05dd3107c36f39d67b26334fda7ec89f4126052b45e228e2f15\\n\"",
+            "verification.probeImage must be pinned by digest" },
+        { "$.verification.controlNetwork", "\"bridge\\n\"", "verification.controlNetwork must name a Docker network" },
         { "$.verification.probeImage", "\"-v/:/host@sha256:a54fb4422b18f05dd3107c36f39d67b26334fda7ec89f4126052b45e228e2f15\"",
             "verification.probeImage must not start with '-'" },
         { "$.zones[1].networks[0].bridge", "\"br-agent-run-default\"", "at most 15 characters" },
@@ -451,6 +459,7 @@ public sealed class ZonePolicyRenderingTests
     [Theory]
     [InlineData("git\"hosts", "git\\\"hosts")]
     [InlineData("git\nhosts", "git\\nhosts")]
+    [InlineData("git-hosts\n", "git-hosts\\n")]
     [InlineData("Git-Hosts", "Git-Hosts")]
     [InlineData("-git-hosts", "-git-hosts")]
     public void A_destination_name_with_a_quote_a_newline_or_capitals_is_rejected(string name, string shown)

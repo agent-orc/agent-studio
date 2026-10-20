@@ -215,11 +215,35 @@ public sealed class ZonePolicyApplyTests : IDisposable
         Assert.Equal(["iptables:DOCKER-USER>AGENT-ZONE-FWD", "iptables:INPUT>AGENT-ZONE-IN"], host.Jumps.Order(StringComparer.Ordinal));
         Assert.Equal("started", report.Steps[^1].Status);
 
-        // A remove on the same host skips the IPv6 family as well.
+        // A remove on the same host skips the IPv6 family as well, without asking ip6tables.
         var removed = await new ZonePolicyRemover(host).RemoveAsync(execute: true, CancellationToken.None);
         Assert.True(removed.Succeeded, string.Join("\n", removed.Steps));
-        Assert.All(removed.Steps.Where(step => step.Name.StartsWith("ip6tables", StringComparison.Ordinal)),
-            step => Assert.Equal("skipped", step.Status));
+        var ipv6Steps = removed.Steps.Where(step => step.Name.StartsWith("ip6tables", StringComparison.Ordinal)).ToList();
+        Assert.Equal(5, ipv6Steps.Count);
+        Assert.All(ipv6Steps, step => Assert.Equal("skipped", step.Status));
+        Assert.DoesNotContain(host.Commands, command => command.StartsWith("ip6tables", StringComparison.Ordinal));
+        Assert.Empty(host.Jumps);
+    }
+
+    [Fact]
+    public async Task A_missing_ip6tables_filter_table_on_a_kernel_with_ipv6_fails_the_apply()
+    {
+        var host = new FakeZoneHost { Ip6FilterTableMissing = true };
+
+        var dryRun = await Applier(host).ApplyAsync(await RulesAsync(), execute: false, CancellationToken.None);
+        var report = await Applier(host).ApplyAsync(await RulesAsync(), execute: true, CancellationToken.None);
+
+        var planned = dryRun.Steps.Single(step => step.Name.StartsWith("ip6tables-restore", StringComparison.Ordinal));
+        Assert.Equal("failed", planned.Status);
+        Assert.False(dryRun.Succeeded);
+        Assert.False(report.Succeeded);
+        var restore = report.Steps.Single(step => step.Name.StartsWith("ip6tables-restore", StringComparison.Ordinal));
+        Assert.Equal("failed", restore.Status);
+        Assert.Contains("Table does not exist", restore.Detail);
+        Assert.DoesNotContain(report.Steps, step => step.Status == "skipped");
+        // The IPv4 rules and jumps still went in first.
+        Assert.Contains("iptables:INPUT>AGENT-ZONE-IN", host.Jumps);
+        Assert.Contains("iptables:DOCKER-USER>AGENT-ZONE-FWD", host.Jumps);
     }
 
     [Fact]

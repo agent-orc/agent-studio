@@ -182,21 +182,21 @@ public static class ZonePolicyParser
     /// <c>#</c> lines and <c>--comment</c> values of the iptables-restore
     /// payload, so they carry no quote, space or line break.
     /// </summary>
-    private static readonly Regex NamePattern = new("^[a-z0-9][a-z0-9-]{0,47}$", RegexOptions.CultureInvariant);
+    private static readonly Regex NamePattern = new("^[a-z0-9][a-z0-9-]{0,47}\\z", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The version goes verbatim into the <c>#</c> lines of both payloads and
     /// the resolver configuration; a line break would inject restore lines.
     /// </summary>
-    private static readonly Regex VersionPattern = new("^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$", RegexOptions.CultureInvariant);
+    private static readonly Regex VersionPattern = new("^[0-9A-Za-z][0-9A-Za-z._-]{0,63}\\z", RegexOptions.CultureInvariant);
 
     /// <summary>A DNS name as the zone resolver's configuration lines carry it.</summary>
     private static readonly Regex HostNamePattern = new(
-        "^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
+        "^(?=.{1,253}\\z)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\\z",
         RegexOptions.CultureInvariant);
 
-    private static readonly Regex DigestPinnedImage = new("^[^\\s@]+@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant);
-    private static readonly Regex DockerNetworkName = new("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$", RegexOptions.CultureInvariant);
+    private static readonly Regex DigestPinnedImage = new("^[^\\s@]+@sha256:[0-9a-f]{64}\\z", RegexOptions.CultureInvariant);
+    private static readonly Regex DockerNetworkName = new("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\\z", RegexOptions.CultureInvariant);
 
     private static readonly JsonSerializerOptions Json = new()
     {

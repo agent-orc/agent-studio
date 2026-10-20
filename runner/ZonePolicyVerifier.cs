@@ -349,14 +349,14 @@ public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath 
 
     /// <summary>
     /// ip6tables on a kernel built or booted without IPv6: the address family
-    /// or the filter table is not there.
+    /// is not supported. A missing filter table ("Table does not exist") on a
+    /// kernel with /proc/net/if_inet6 is no such case: IPv6 traffic flows
+    /// there, so a payload that cannot load is a failure.
     /// </summary>
     internal static bool IsIpv6Unsupported(ZoneCommandResult result)
         => !result.Succeeded
            && (result.Error.Contains("Address family not supported", StringComparison.OrdinalIgnoreCase)
-               || result.Error.Contains("Protocol not supported", StringComparison.OrdinalIgnoreCase)
-               || result.Error.Contains("Table does not exist", StringComparison.OrdinalIgnoreCase)
-               || result.Error.Contains("can't initialize ip6tables table", StringComparison.OrdinalIgnoreCase));
+               || result.Error.Contains("Protocol not supported", StringComparison.OrdinalIgnoreCase));
 
     private async Task<ZoneApplyStep> EnsureJumpAsync(ZoneChainJump jump, bool execute, CancellationToken ct)
     {
@@ -476,8 +476,17 @@ public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath 
         var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
         Directory.CreateDirectory(directory);
         var temporary = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
-        File.WriteAllText(temporary, content);
-        File.Move(temporary, path, overwrite: true);
+        try
+        {
+            File.WriteAllText(temporary, content);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch
+        {
+            // The caller records the failure; only the temp file is ours to clean up.
+            File.Delete(temporary);
+            throw;
+        }
     }
 
     private async Task<ZoneApplyStep> EnsureNetworkAsync(ZoneNetworkSpec network, bool execute, CancellationToken ct)

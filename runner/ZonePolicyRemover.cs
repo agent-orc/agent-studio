@@ -14,6 +14,8 @@ public sealed class ZonePolicyRemover(IZoneHost host)
     /// <summary>Each jump was inserted once; more copies come only from manual edits.</summary>
     private const int MaxJumpCopies = 8;
 
+    private const string NoIpv6 = "the kernel has no IPv6";
+
     private static readonly (string Family, string Chain, string Target)[] Jumps =
     [
         (ZonePolicyRules.Ipv4, ZonePolicyRules.DockerUserChain, ZonePolicyRules.ForwardChain),
@@ -26,14 +28,20 @@ public sealed class ZonePolicyRemover(IZoneHost host)
     public async Task<ZoneApplyReport> RemoveAsync(bool execute, CancellationToken ct)
     {
         var steps = new List<ZoneApplyStep>();
+        // Without /proc/net/if_inet6 the kernel has no IPv6 and no ip6tables rules.
+        var ipv6 = host.PathExists(ZonePolicyApplier.Ipv6InterfacesPath);
         // A chain cannot be deleted while a rule still jumps to it.
         foreach (var (family, chain, target) in Jumps)
-            steps.Add(await RemoveJumpAsync(ZonePolicyRules.Iptables(family), chain, target, execute, ct));
+            steps.Add(family == ZonePolicyRules.Ipv6 && !ipv6
+                ? new ZoneApplyStep($"{ZonePolicyRules.Iptables(family)} {chain} -j {target}", "skipped", NoIpv6)
+                : await RemoveJumpAsync(ZonePolicyRules.Iptables(family), chain, target, execute, ct));
         if (steps.Any(step => step.Failed)) return new ZoneApplyReport(execute, steps);
         foreach (var family in new[] { ZonePolicyRules.Ipv4, ZonePolicyRules.Ipv6 })
         {
             foreach (var chain in new[] { ZonePolicyRules.ForwardChain, ZonePolicyRules.InputChain })
-                steps.Add(await RemoveChainAsync(ZonePolicyRules.Iptables(family), chain, execute, ct));
+                steps.Add(family == ZonePolicyRules.Ipv6 && !ipv6
+                    ? new ZoneApplyStep($"{ZonePolicyRules.Iptables(family)} chain {chain}", "skipped", NoIpv6)
+                    : await RemoveChainAsync(ZonePolicyRules.Iptables(family), chain, execute, ct));
         }
         return new ZoneApplyReport(execute, steps);
     }
@@ -49,7 +57,7 @@ public sealed class ZonePolicyRemover(IZoneHost host)
             if (!check.Succeeded)
             {
                 if (ZonePolicyApplier.IsPermissionOrNoTool(check)) return ZonePolicyApplier.Unchecked(name, check, execute);
-                if (executable == "ip6tables" && ZonePolicyApplier.IsIpv6Unsupported(check)) return new ZoneApplyStep(name, "skipped", "the kernel has no IPv6");
+                if (executable == "ip6tables" && ZonePolicyApplier.IsIpv6Unsupported(check)) return new ZoneApplyStep(name, "skipped", NoIpv6);
                 // No such rule, or no such parent chain (the IPv6 DOCKER-USER
                 // without Docker's ip6tables support): nothing to delete.
                 return removed == 0 ? new ZoneApplyStep(name, "unchanged") : new ZoneApplyStep(name, "deleted", Copies(removed));
@@ -72,7 +80,7 @@ public sealed class ZonePolicyRemover(IZoneHost host)
             return ZonePolicyApplier.IsPermissionOrNoTool(exists)
                 ? ZonePolicyApplier.Unchecked(name, exists, execute)
                 : executable == "ip6tables" && ZonePolicyApplier.IsIpv6Unsupported(exists)
-                    ? new ZoneApplyStep(name, "skipped", "the kernel has no IPv6")
+                    ? new ZoneApplyStep(name, "skipped", NoIpv6)
                     : new ZoneApplyStep(name, "unchanged", "not present");
         if (!execute) return new ZoneApplyStep(name, "would-delete");
         foreach (var args in new string[][] { ["-F", chain], ["-X", chain] })

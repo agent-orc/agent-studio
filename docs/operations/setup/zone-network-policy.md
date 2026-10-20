@@ -122,9 +122,12 @@ two chains and drops every packet on a zone bridge, in and out. Its
 `AGENT-ZONE-FWD` hangs off the IPv6 `DOCKER-USER`, or off `FORWARD` when
 Docker runs without ip6tables support and that chain does not exist. Its
 `AGENT-ZONE-IN` hangs off the IPv6 `INPUT`. On a kernel without IPv6 (no
-`/proc/net/if_inet6`, or `ip6tables` reports that the address family or the
-filter table is not supported), apply reports the IPv6 payload and its jumps
-as `skipped`. There is no IPv6 traffic to drop on such a host.
+`/proc/net/if_inet6`, or `ip6tables` reports that the address family is not
+supported), apply and remove report the IPv6 payload and its jumps as
+`skipped`. There is no IPv6 traffic to drop on such a host. A kernel with
+`/proc/net/if_inet6` but without the ip6tables filter table ("Table does not
+exist") does carry IPv6, so there the IPv6 step fails: load `ip6table_filter`
+and apply again.
 
 ### Apply order
 
@@ -237,11 +240,18 @@ policy.
 ## Verification
 
 `--execute` ends with the verification. `--verify` repeats it at any time, and
-`--verify --record` also updates the recorded result. Apply, verify and remove
-hold an exclusive `flock` on `/run/lock/agent-zone-policy.lock` (set
+`--verify --record` also updates the recorded result. The mutating runs
+(`--execute`, `--verify --record` and `--remove --execute`) run as root and
+hold an exclusive `flock` on `/run/agent-zone-policy.lock` (set
 `ZONE_POLICY_LOCK` to change it), so the timer's apply and an operator's run
-never interleave. A second run waits up to 600 seconds
-(`ZONE_POLICY_LOCK_WAIT`) and then gives up with exit code 2. For each zone
+never interleave. A second mutating run waits up to 600 seconds
+(`ZONE_POLICY_LOCK_WAIT`) and then gives up with exit code 2. The lock lives in
+root-owned `/run`, not in the world-writable `/run/lock`: there, any local user
+could create or hold the file, and with `fs.protected_regular` (the Ubuntu
+default) root could no longer open a file another user created. The script
+refuses a lock file that is a symbolic link or belongs to another user. Dry
+runs, a plain `--verify` and `--render` take no lock, so a non-root dry run
+never blocks a later root apply. For each zone
 network, one throw-away container (`bash:5.2` pinned by digest, label
 `org.agent-studio.zone-probe=true`) opens each probe connection with bash's
 `/dev/tcp` under `timeout`. On a work network the container uses the zone

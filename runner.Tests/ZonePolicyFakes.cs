@@ -329,6 +329,9 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
 
     /// <summary>ip6tables reports that the IPv6 filter table is not there.</summary>
     public bool Ip6TablesUnsupported { get; set; }
+
+    /// <summary>The kernel has IPv6, but the ip6tables filter table is not loaded.</summary>
+    public bool Ip6FilterTableMissing { get; set; }
     public bool ResolverStartFails { get; set; }
     public Dictionary<string, string> Networks { get; } = new(StringComparer.Ordinal);
     public HashSet<string> Jumps { get; } = new(StringComparer.Ordinal);
@@ -403,6 +406,9 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
         if (executable.StartsWith("ip6tables", StringComparison.Ordinal) && (Ip6TablesUnsupported || !Ipv6Kernel))
             return new ZoneCommandResult(3, "", $"{executable} v1.8.10 (legacy): can't initialize ip6tables table `filter': "
                                                 + "Address family not supported by protocol");
+        if (executable.StartsWith("ip6tables", StringComparison.Ordinal) && Ip6FilterTableMissing)
+            return new ZoneCommandResult(3, "", $"{executable} v1.8.10 (legacy): can't initialize ip6tables table `filter': "
+                                                + "Table does not exist (do you need to insmod?)");
         if (executable == "ipset")
         {
             return args switch
