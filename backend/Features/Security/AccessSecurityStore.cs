@@ -83,12 +83,12 @@ public sealed class AccessSecurityStore
         lock (_gate)
         {
             var now = Now;
-            if ((_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
-                || UsernameBudgetSpentLocked(normalized, now))
-                throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
-
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Username == normalized);
+            if ((_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
+                || (user is not null && UsernameBudgetSpentLocked(normalized, now)))
+                throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
+
             var passwordCandidate = password ?? string.Empty;
             var passwordLengthAllowed = passwordCandidate.Length <= 128;
             var passwordMatches = passwordLengthAllowed && PasswordSecretHasher.VerifyPassword(
@@ -98,7 +98,7 @@ public sealed class AccessSecurityStore
             if (!valid)
             {
                 RegisterLoginFailureLocked(throttleKey, now);
-                RegisterUsernameFailureLocked(normalized, now);
+                if (user is not null) RegisterUsernameFailureLocked(normalized, now);
                 throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
             }
 
@@ -669,8 +669,8 @@ public sealed class AccessSecurityStore
     {
         if (!_usernameFailures.TryGetValue(username, out var failures))
         {
-            // Guessed usernames each add an entry; drop the expired ones
-            // before the table grows past a bounded size.
+            // Only accounts in the security state reach this table. Prune
+            // expired budgets when the account set is unusually large.
             if (_usernameFailures.Count >= 4096)
                 foreach (var stale in _usernameFailures.Where(entry => now - entry.Value.Last() >= UsernameFailureWindow)
                              .Select(entry => entry.Key).ToList())

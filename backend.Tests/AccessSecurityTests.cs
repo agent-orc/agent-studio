@@ -396,6 +396,32 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Equal(429, throttled.Status);
     }
 
+    [Fact]
+    public void Guessed_usernames_do_not_grow_the_account_failure_table()
+    {
+        var (store, _, _) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2"
+        });
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+
+        for (var index = 0; index < 8; index++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login($"guessed.user.{index}", "wrong password", $"unknown|{index}")).Status);
+
+        var field = typeof(AccessSecurityStore).GetField("_usernameFailures",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var budgets = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
+        Assert.Empty(budgets);
+
+        for (var index = 0; index < 2; index++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("first.owner", "wrong password", $"owner|{index}")).Status);
+        Assert.Single(budgets);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+    }
+
     [Theory]
     [InlineData("Authorization: Bearer rnr.abc.abcdefghijklmnopqrstuvwxyz012345")]
     [InlineData("password=super-secret")]
