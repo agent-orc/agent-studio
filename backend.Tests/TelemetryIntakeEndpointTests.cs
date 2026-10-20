@@ -152,8 +152,20 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         var harness = await Start(new TelemetryOptions { MaxSeriesPerEnvironment = 1 });
         var token = (await CreateToken(harness)).Secret;
         var time = TelemetryAdmissionPolicy.UnixNanos(_clock.GetUtcNow());
-        byte[] Export(string name) => Encoding.UTF8.GetBytes(
-            $$"""{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"{{name}}","gauge":{"dataPoints":[{"timeUnixNano":"{{time}}","asDouble":1}]}}]}]}]}""");
+        byte[] Export(string name) => JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            resourceMetrics = new[] { new
+            {
+                scopeMetrics = new[] { new
+                {
+                    metrics = new[] { new
+                    {
+                        name,
+                        gauge = new { dataPoints = new[] { new { timeUnixNano = time.ToString(System.Globalization.CultureInfo.InvariantCulture), asDouble = 1 } } }
+                    } }
+                } }
+            } }
+        });
 
         Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Export("first"), token, "application/json")).StatusCode);
         var refused = await Send(harness, Metrics, Export("second"), token, "application/json");
