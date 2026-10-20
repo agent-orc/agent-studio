@@ -61,12 +61,9 @@ public sealed class EngineApplierEffectProbe(
         var runId = occurrence.Run.RunId;
         var completion = occurrence.Completion;
         var action = occurrence.EngineReceipt?.Action ?? completion?.Action.ToString() ?? "unknown";
+        if (occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan) return BatchPlan(occurrence, applying);
         if (occurrence.Run.Status != "completed" || completion is null || occurrence.EngineReceipt is null)
             return NotApplied(occurrence, action, since ?? occurrence.Run.CreatedAt, applying);
-        if (occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan)
-            return Result(occurrence, EngineApplierContract.BatchPlanAction,
-                BatchPlanStored(occurrence, out var planEvidence) ? [] : [nameof(EngineApplierEffectKind.BatchPlanIntent)],
-                planEvidence);
         // An active choice that holds the card hands it to the AI Operator,
         // which keeps the wait marker on purpose.
         if (AiOperatorDecisionQueue.HasCustody(configuration, runId))
@@ -137,8 +134,6 @@ public sealed class EngineApplierEffectProbe(
         DateTime since, bool applying)
     {
         var receipt = nameof(EngineApplierEffectKind.DecisionReceipt);
-        if (occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan)
-            return Result(occurrence, action, [receipt], Unapplied(occurrence, applying));
         var task = Card(occurrence);
         if (task is null) return CardNotFound(occurrence, action);
         var key = task.Key ?? task.Id;
@@ -168,6 +163,24 @@ public sealed class EngineApplierEffectProbe(
         return Result(occurrence, action, [receipt],
             (ended is null ? "" : $"The integration of {key} ended {ended.Kind} at {ended.AtUtc:u}; ")
             + Unapplied(occurrence, applying), integrationEndedAt: ended?.AtUtc.UtcDateTime);
+    }
+
+    /// <summary>
+    /// A batch plan counts only once its occurrence completed with an engine
+    /// receipt: the applier writes the durable intent before the occurrence
+    /// completes, so an intent alone does not show an applied decision.
+    /// </summary>
+    private EngineEffectCheck BatchPlan(MonolithOrchestrationOccurrence occurrence, bool applying)
+    {
+        var action = EngineApplierContract.BatchPlanAction;
+        if (occurrence.Run.Status != "completed" || occurrence.Run.CompletedAt is null
+            || occurrence.Completion is null || occurrence.EngineReceipt is null)
+            return Result(occurrence, action, [nameof(EngineApplierEffectKind.DecisionReceipt)],
+                (occurrence.EngineReceipt is null ? "The plan has no engine receipt. " : "")
+                + Unapplied(occurrence, applying));
+        return Result(occurrence, action,
+            BatchPlanStored(occurrence, out var evidence) ? [] : [nameof(EngineApplierEffectKind.BatchPlanIntent)],
+            evidence);
     }
 
     private static string Unapplied(MonolithOrchestrationOccurrence occurrence, bool applying)

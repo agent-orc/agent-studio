@@ -481,6 +481,69 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>
+    /// The review of 20.10.2026: the applier writes a batch plan's durable
+    /// intent before the occurrence completes. While the occurrence applies,
+    /// that intent proves nothing: the check stays unverified and the canary,
+    /// which needs only this one decision, is not promoted. Once the
+    /// occurrence completed with its engine receipt, the same intent counts.
+    /// </summary>
+    [Fact]
+    public async Task Applier_canary_does_not_count_a_batch_plan_whose_occurrence_has_not_completed()
+    {
+        using var factory = BuildFactory(configuration: new Dictionary<string, string?>(OneMatchThreshold)
+        {
+            [OrchestrationRolloutStore.CanaryDecisionsKey] = "1",
+        });
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        rollout.Switch("BatchPlan", "shadow", "operator", "compare batch plans");
+        var receipt = OrchestrationRolloutStore.Receipt("plan-shadow", "batch-plan", "{}", "wait",
+            "Members are still arriving.", "monolith");
+        rollout.Compare("BatchPlan", receipt, receipt with { Decider = "engine" });
+        var held = new HeldApplier(factory.Services.GetRequiredService<IMonolithOrchestrationApplier>());
+        var slow = new MonolithOrchestrationStore(Path.Combine(_workspace, "held-plans"),
+            factory.Services.GetRequiredService<TimeProvider>(), held, rollout);
+        Assert.Equal("canary", slow.SwitchProfile("BatchPlan", "canary", "operator", "shadow matched").State);
+        var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services, slow);
+        await slow.RecoverApplyingAsync(CancellationToken.None);
+
+        var arranged = ArrangeBatchPlan();
+        var run = slow.Create(ProjectName, arranged.TaskId, arranged.Stage, arranged.Payload,
+            arranged.IdempotencyKey, arranged.SourceState, arranged.AuthorityAttemptId, arranged.Fence,
+            arranged.Epoch, profile: "BatchPlan");
+        var claim = slow.Claim(new Contract.OrchestrationClaimRequest("engine", "instance", [arranged.Stage]));
+        Assert.Equal(run.RunId, claim.Run!.RunId);
+        var deciding = slow.CompleteAsync(run.RunId, new Contract.CompleteOrchestrationStageRequest("engine",
+            "instance", claim.Lease!.LeaseId, claim.Lease.Fence, arranged.Stage, arranged.StageAction,
+            arranged.Output, "complete:" + run.RunId), CancellationToken.None);
+        // The intent the applier writes before the occurrence completes.
+        var batchQueue = factory.Services.GetRequiredService<BatchGateStore>();
+        batchQueue.WriteEngineIntent(new BatchGateEngineIntent(run.RunId, arranged.TaskId,
+            new BatchPlanDecision("wait", "Members are still arriving.", null, [], 4, []), _clock));
+        Assert.Equal("applying", slow.GetOccurrence(run.RunId)!.Run.Status);
+
+        var unapplied = factory.Services.GetRequiredService<EngineApplierEffectProbe>()
+            .Check(slow.GetOccurrence(run.RunId)!);
+        Assert.Equal((false, (DateTime?)null), (unapplied.Verified, unapplied.CompletedAt));
+        Assert.Equal([nameof(EngineApplierEffectKind.DecisionReceipt)], unapplied.Missing);
+        Assert.Equal(0, canary.CheckOnce());
+        var watching = rollout.GetProfiles().Single(item => item.Profile == "BatchPlan");
+        Assert.Equal(("canary", "watching", 0), (watching.State, watching.Canary!.Status, watching.Canary.Verified));
+        Assert.Equal("pending", Assert.Single(watching.Canary.Observations).Status);
+        Assert.False(watching.LastEffectCheck!.Verified);
+        Assert.Equal(OrchestrationExecutionMode.Engine, MonolithTransitionSwitch.For(
+            factory.Services.GetRequiredService<IConfiguration>(), "BatchPlan"));
+
+        held.Release.SetResult();
+        Assert.Equal("completed", (await deciding.WaitAsync(TimeSpan.FromMinutes(2))).Status);
+        Assert.Equal(0, canary.CheckOnce());
+        var passed = rollout.GetProfiles().Single(item => item.Profile == "BatchPlan");
+        Assert.Equal(("engine", "passed", 1), (passed.State, passed.Canary!.Status, passed.Canary.Verified));
+        Assert.NotNull(passed.LastEffectCheck!.CompletedAt);
+    }
+
+    /// <summary>
     /// The card leaves Auto Review by a move this decision did not write (a
     /// person, or any other writer) while the engine decides; the applier
     /// refuses the decision with a source-state mismatch on purpose. That is no

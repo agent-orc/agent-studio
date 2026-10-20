@@ -27,8 +27,8 @@ public static class ApplierCanaryPolicy
         TimeSpan effectWindow, TimeSpan applyDeadline, DateTime? processStartedAt = null)
     {
         if (EngineEffectBasis.Refused(check.Basis)) return ApplierCanaryVerdict.NotCounted;
-        if (check.Verified)
-            return check.Basis == EngineEffectBasis.Row ? ApplierCanaryVerdict.Verified : ApplierCanaryVerdict.NotCounted;
+        if (check.Verified && check.CompletedAt is not null)
+            return Counts(check) ? ApplierCanaryVerdict.Verified : ApplierCanaryVerdict.NotCounted;
         var started = processStartedAt ?? DateTime.MinValue;
         var observed = observedAt > started ? observedAt : started;
         if (check.WaitingOn is not null)
@@ -47,6 +47,13 @@ public static class ApplierCanaryPolicy
         var effectsFrom = completedAt > started ? completedAt : started;
         return now - effectsFrom >= allowed ? ApplierCanaryVerdict.Missing : ApplierCanaryVerdict.Waiting;
     }
+
+    /// <summary>
+    /// Only a verified row check of a completed occurrence counts toward a
+    /// canary; effects the applier left before it completed prove nothing yet.
+    /// </summary>
+    public static bool Counts(EngineEffectCheck check)
+        => check.Verified && check.Basis == EngineEffectBasis.Row && check.CompletedAt is not null;
 }
 
 /// <summary>

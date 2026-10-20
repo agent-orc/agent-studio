@@ -110,6 +110,7 @@ public sealed class EngineApplierContractGuardTests
         // case, basis, verified, completed, minutes since completion (or since the observation), downstream,
         // waiting on, verdict
         { "verified row", EngineEffectBasis.Row, true, true, 0, false, null, "Verified" },
+        { "verified row not completed", EngineEffectBasis.Row, true, false, 0, false, null, "Waiting" },
         { "ask", EngineEffectBasis.Ask, true, true, 0, false, null, "NotCounted" },
         { "checkpoint", EngineEffectBasis.Checkpoint, true, true, 0, false, null, "NotCounted" },
         { "review-input handoff", EngineEffectBasis.ReviewInputHandoff, true, true, 0, false, null, "NotCounted" },

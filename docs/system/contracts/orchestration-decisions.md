@@ -515,8 +515,12 @@ The canary rule:
   never applies is watched too; `engine_rollback` completions do not count.
   Every switch to `canary` or `engine` starts a new watch.
 - `EngineApplierCanaryService` probes each watched decision every five
-  seconds. Only a verified row check counts toward the required number. These
-  are `not-counted`, and the next engine decision takes their place:
+  seconds. Only a verified row check of a completed occurrence counts toward
+  the required number. A BatchPlan counts only once its occurrence completed
+  with the engine receipt: the applier writes the durable intent before the
+  occurrence completes, so an intent of an applying plan is no applied
+  decision. These are `not-counted`, and the next engine decision takes their
+  place:
   - an ask, a checkpoint, a review-input handoff and an agent round handoff;
   - a refusal by design: the card left the source lane by a move this
     decision's write key did not write (a person, a runner, another

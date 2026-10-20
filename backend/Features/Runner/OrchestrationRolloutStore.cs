@@ -274,10 +274,11 @@ public sealed class OrchestrationRolloutStore
             if (canary is null || index < 0 || canary.Observations[index].Status != "pending")
                 return Status(profile, item);
             var observation = canary.Observations[index];
-            var status = (verdict ?? (check.Verified && check.Basis == EngineEffectBasis.Row
+            var status = (verdict ?? (ApplierCanaryPolicy.Counts(check)
                 ? ApplierCanaryVerdict.Verified : ApplierCanaryVerdict.Waiting)) switch
             {
-                ApplierCanaryVerdict.Verified => "verified",
+                // A check that does not count never promotes the canary.
+                ApplierCanaryVerdict.Verified => ApplierCanaryPolicy.Counts(check) ? "verified" : "pending",
                 ApplierCanaryVerdict.NotCounted => "not-counted",
                 ApplierCanaryVerdict.Missing => throw new ArgumentException(
                     "A missing effect fails the canary; call FailCanary.", nameof(verdict)),

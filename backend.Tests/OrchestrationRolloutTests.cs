@@ -308,6 +308,12 @@ public sealed class OrchestrationRolloutTests
         foreach (var run in decided.Take(2))
             fixture.Rollout.RecordEffectCheck("GateResult", Applied(fixture, run.RunId));
         Assert.Equal("canary", Profile(fixture).State);
+        // A verified check of an occurrence that has not completed never counts, not even as a forced verdict.
+        var uncompleted = Applied(fixture, decided[2].RunId) with { CompletedAt = null };
+        fixture.Rollout.RecordEffectCheck("GateResult", uncompleted);
+        fixture.Rollout.RecordEffectCheck("GateResult", uncompleted, ApplierCanaryVerdict.Verified);
+        Assert.Equal(("canary", "watching", 2), (Profile(fixture).State, Profile(fixture).Canary!.Status,
+            Profile(fixture).Canary!.Verified));
         var passed = fixture.Rollout.RecordEffectCheck("GateResult", Applied(fixture, decided[2].RunId));
         Assert.Equal(("engine", "passed", 3), (passed.State, passed.Canary!.Status, passed.Canary.Verified));
         Assert.True(passed.Canary.PassedOnThisInstance);
@@ -463,7 +469,8 @@ public sealed class OrchestrationRolloutTests
     }
 
     private static EngineEffectCheck Applied(Fixture fixture, string runId)
-        => new(runId, "Continue", true, [], "The gate continued.", fixture.Time.GetUtcNow().UtcDateTime);
+        => new(runId, "Continue", true, [], "The gate continued.", fixture.Time.GetUtcNow().UtcDateTime,
+            CompletedAt: fixture.Time.GetUtcNow().UtcDateTime);
 
     private static OrchestrationDecisionReceipt Matching(string occurrence)
         => OrchestrationRolloutStore.Receipt(occurrence, "gate-result", "{}", "Continue", "passed", "monolith");
