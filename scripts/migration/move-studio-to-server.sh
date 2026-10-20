@@ -11,6 +11,8 @@
 #               copy of staging, run the smoke checks, and tear it down.
 #   --apply     stop Stable, send the final delta, switch the server stack to
 #               the relocated copy, check it, and print the rollback command.
+#               It runs once: the server keeps a moved marker and the
+#               workstation a guard that Stable's api.sh refuses to start past.
 #
 # Run it on the workstation from Git Bash (or any POSIX shell with Git, GNU
 # tar, gzip, curl, ssh, and Node). The workstation workspace is only read.
@@ -23,6 +25,8 @@ self="$script_dir/$(basename -- "$0")"
 
 log() { printf '[move-studio] %s\n' "$*"; }
 fail() { printf '[move-studio] ERROR: %s\n' "$*" >&2; exit 1; }
+# Exit 87 (distinct from tool exit codes): the server refused before it touched live data.
+refuse() { printf '[move-studio] ERROR: %s\n' "$*" >&2; exit 87; }
 
 # Single-quote one argument for the remote shell.
 sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
@@ -82,16 +86,42 @@ server_preflight() {
   else
     printf 'staging: empty\n'
   fi
+  if [ -f "$root/moved-to-server" ]; then
+    printf 'moved: %s (a second --apply needs --force)\n' "$(tr '\n' ' ' <"$root/moved-to-server")"
+  fi
   df -h "$root" | tail -n 1
+}
+
+server_moved_state() { if [ -f "$1/moved-to-server" ]; then tr '\n' ' ' <"$1/moved-to-server"; fi; }
+
+# Staging and the data directory hold .security/access-state.json (accounts and
+# sessions). Nothing below them may be readable by other accounts.
+private_dir() { mkdir -p "$1" && chmod 700 "$1"; }
+
+protect_access_state() {
+  if [ -d "$1/.security" ]; then
+    chmod 700 "$1/.security"
+    find "$1/.security" -type f -exec chmod 600 {} +
+  fi
+}
+
+server_receive_archive() {
+  umask 077
+  mkdir -p "$1"
+  gzip -dc | tar -C "$1" --no-same-permissions -xf -
+  protect_access_state "$1"
 }
 
 server_clone_workspace() {
   dir=$1; url=$2
+  umask 077
+  private_dir "$(dirname "$dir")"
   if [ -d "$dir/.git" ]; then
+    # Also replaces a URL with credentials an earlier version stored.
+    git -C "$dir" remote set-url origin "$url"
     git -C "$dir" fetch -q --prune origin
     echo existing
   else
-    mkdir -p "$(dirname "$dir")"
     git clone -q "$url" "$dir" || fail "cannot clone the workspace remote on the server; give the server its own Git credential first"
     echo cloned
   fi
@@ -105,10 +135,12 @@ server_sync_workspace() {
 
 server_clone_checkout() {
   dir=$1; url=$2
+  umask 077
+  mkdir -p "$(dirname "$dir")"
   if [ -d "$dir/.git" ]; then
+    git -C "$dir" remote set-url origin "$url"
     git -C "$dir" fetch -q --prune origin
   else
-    mkdir -p "$(dirname "$dir")"
     git clone -q "$url" "$dir" || fail "cannot clone $url on the server"
   fi
 }
@@ -286,12 +318,24 @@ EOF
 }
 
 server_apply() {
-  root=$1; stamp=$2
+  root=$1; stamp=$2; force=${3:-}
   stack="$root/stack"
+  marker="$root/moved-to-server"
   data_dir=$(env_value STUDIO_DATA_DIR "$stack/.env")
   domain=$(env_value STUDIO_DOMAIN "$stack/.env")
-  [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the final pass did not run'
-  docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" stop >/dev/null 2>&1 || true
+  live() { docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" "$@"; }
+  if [ -f "$marker" ] && [ "$force" != force ]; then
+    refuse "Studio already moved here ($(tr '\n' ' ' <"$marker")); another apply would replace the live server data with the workstation snapshot"
+  fi
+  [ -d "$root/move-staging/workspace/.git" ] || refuse 'staging is empty; the final pass did not run'
+  live stop >/dev/null || refuse 'docker compose stop failed; the live data was not touched'
+  running=$(live ps --status running --quiet) || refuse 'cannot list the server stack after stop; the live data was not touched'
+  [ -z "$running" ] || refuse "the server stack still runs after stop ($(echo $running)); the live data was not touched"
+  echo 'check: server stack stopped'
+  for name in workspace projects; do
+    [ ! -e "$data_dir/$name.pre-move-$stamp" ] || refuse "$data_dir/$name.pre-move-$stamp already exists"
+  done
+  umask 077
   for name in workspace projects; do
     if [ -e "$data_dir/$name" ]; then mv "$data_dir/$name" "$data_dir/$name.pre-move-$stamp"; fi
   done
@@ -300,8 +344,9 @@ server_apply() {
   if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$data_dir/projects/"; fi
   server_relocate "$root" "$data_dir/workspace" "$data_dir/projects"
   echo 'check: path relocation ok (0 unresolved)'
+  protect_access_state "$data_dir/workspace"
   as_service_owner 10001:10001 "$data_dir" /site/workspace /site/projects /site/home
-  docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" up -d --quiet-pull >/dev/null
+  live up -d --quiet-pull >/dev/null
   attempt=0
   until curl --silent --fail --insecure --max-time 10 --resolve "$domain:443:127.0.0.1" "https://$domain/api/auth/status" >"$root/move-bin/status.json" 2>/dev/null; do
     attempt=$((attempt + 1))
@@ -315,7 +360,12 @@ server_apply() {
   else
     echo "check: https://$domain answers locally; the workstation had no accounts, so the first visit needs STUDIO_BOOTSTRAP_CODE from $stack/.env"
   fi
-  docker compose --project-directory "$stack" -f "$stack/compose.yaml" --env-file "$stack/.env" ps --format '{{.Service}} {{.State}}'
+  printf 'moved_at=%s\ndata_dir=%s\n' "$stamp" "$data_dir" >"$marker"
+  echo "moved: marker $marker written"
+  # Staging is a second full copy of the access state; the data directory now has it.
+  rm -rf "$root/move-staging"
+  echo 'staging: removed'
+  live ps --format '{{.Service}} {{.State}}'
 }
 
 if [ "${1:-}" = --server-side ]; then
@@ -323,9 +373,10 @@ if [ "${1:-}" = --server-side ]; then
   command=$1; shift
   case "$command" in
     preflight) server_preflight "$@" ;;
+    moved-state) server_moved_state "$@" ;;
     clone-workspace) server_clone_workspace "$@" ;;
     sync-workspace) server_sync_workspace "$@" ;;
-    receive-archive) mkdir -p "$1"; gzip -dc | tar -C "$1" -xf - ;;
+    receive-archive) server_receive_archive "$@" ;;
     remove-paths) cd "$1" && xargs -0 rm -f -- ;;
     clone-checkout) server_clone_checkout "$@" ;;
     rehearse) server_rehearse "$@" ;;
@@ -350,8 +401,9 @@ Usage: move-studio-to-server.sh [--dry-run | --transfer | --rehearse | --apply] 
   --rehearsal-port N     loopback port for the rehearsal stack (default: 18443)
   --rehearsal-subnet P   first three octets of the rehearsal network (default: 172.30.84)
   --yes                  skip the interactive confirmation of --apply
+  --force                apply again although Studio already moved (discards the server's state)
 Environment: MOVE_STABLE_STOP, MOVE_STABLE_START, MOVE_STABLE_HEALTH_URL,
-  MOVE_REHEARSAL_OWNER_USERNAME, MOVE_REHEARSAL_OWNER_PASSWORD.
+  STABLE_MAINTENANCE_FILE, MOVE_REHEARSAL_OWNER_USERNAME, MOVE_REHEARSAL_OWNER_PASSWORD.
 EOF
 }
 
@@ -364,6 +416,7 @@ extra_mapping=${MOVE_EXTRA_MAPPING:-}
 rehearsal_port=${MOVE_REHEARSAL_PORT:-18443}
 rehearsal_subnet=${MOVE_REHEARSAL_SUBNET:-172.30.84}
 assume_yes=0
+force=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) mode=dry-run; shift ;;
@@ -371,6 +424,7 @@ while [ "$#" -gt 0 ]; do
     --rehearse) mode=rehearse; shift ;;
     --apply) mode=apply; shift ;;
     --yes) assume_yes=1; shift ;;
+    --force) force=1; shift ;;
     --workspace|--server|--server-root|--state-dir|--extra-mapping|--rehearsal-port|--rehearsal-subnet)
       [ "$#" -ge 2 ] || fail "$1 needs a value"
       case "$1" in
@@ -396,6 +450,12 @@ devspace=$(dirname -- "$workspace")
 stable_stop=${MOVE_STABLE_STOP:-$devspace/stop-stable.sh}
 stable_start=${MOVE_STABLE_START:-$devspace/start-stable.sh}
 stable_health=${MOVE_STABLE_HEALTH_URL:-http://127.0.0.1:5031/healthz}
+stable_checkout="$devspace/agent-taskboard-stable"
+# watchdog-stable.sh skips restarts while this file exists.
+stable_maintenance=${STABLE_MAINTENANCE_FILE:-$devspace/.stable-maintenance}
+# Stable's api.sh refuses to start while this file exists (studio-moved-to-server-guard).
+stable_guard="$devspace/.studio-moved-to-server"
+maintenance_ours=0
 safe_path "$server_root" '--server-root'
 case "$rehearsal_port" in ''|*[!0-9]*) fail '--rehearsal-port must be a number' ;; esac
 case "$rehearsal_subnet" in *[!0-9.]*|'') fail '--rehearsal-subnet must be three dotted octets' ;; esac
@@ -416,6 +476,9 @@ upload() {
   tr -d '\r' <"$1" | ssh -o BatchMode=yes "$server" "mkdir -p $(sq "$server_root/move-bin") && cat > $(sq "$server_root/move-bin/$2")"
 }
 
+# Repository URL on stdin without credentials, for logs, plan files, and the server's Git config.
+strip_url() { node "$script_dir/move-studio-to-server.mjs" strip-url; }
+
 for tool in git node tar gzip ssh curl; do
   command -v "$tool" >/dev/null 2>&1 || fail "missing local tool: $tool"
 done
@@ -428,7 +491,7 @@ inventory() {
   node "$script_dir/move-studio-to-server.mjs" projects --workspace "$(native_path "$workspace")" >"$state_dir/projects.tsv"
   tab=$(printf '\t')
   while IFS="$tab" read -r project_id repository; do
-    url=$(git -C "$repository" remote get-url origin 2>/dev/null || true)
+    url=$(git -C "$repository" remote get-url origin 2>/dev/null | strip_url)
     [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
   done <"$state_dir/projects.tsv"
   set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
@@ -448,7 +511,8 @@ transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
   upload "$state_dir/path-map.json" path-map.json
-  workspace_url=$(git -C "$workspace" remote get-url origin) || fail 'the workspace has no origin remote to clone on the server'
+  git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
+  workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
   clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")
   # A fresh clone invalidates what earlier passes recorded as sent.
   [ "$clone_state" != cloned ] || rm -f "$state_dir/manifest.json"
@@ -489,9 +553,46 @@ server_side_preflight() {
 stable_running() { curl --silent --fail --max-time 5 "$stable_health" >/dev/null 2>&1; }
 
 rollback_hint() {
-  log 'Rollback: stop the server stack and restart Stable from the untouched workstation workspace:'
-  printf '  ssh %s %s && %s\n' "$server" \
-    "$(sq "docker compose --project-directory $server_root/stack stop")" "$(sq "$stable_start")"
+  lift="rm -f $(sq "$stable_guard")"
+  [ "$maintenance_ours" -ne 1 ] || lift="$lift $(sq "$stable_maintenance")"
+  log 'Rollback: stop the server stack, lift the guard, and restart Stable from the untouched workstation workspace:'
+  printf '  ssh %s %s && %s && %s\n' "$server" \
+    "$(sq "docker compose --project-directory $server_root/stack stop")" "$lift" "$(sq "$stable_start")"
+  [ "$maintenance_ours" -eq 1 ] || [ ! -e "$stable_maintenance" ] \
+    || log "$stable_maintenance was set before this apply; remove it too once the watchdog may restart Stable."
+  log "After a completed apply the server keeps $server_root/moved-to-server, so a later --apply needs --force."
+}
+
+# Nothing on the server changed yet, so Stable comes back on its own.
+restart_stable() {
+  log 'apply stopped before the server switch; the live server data is untouched, restarting Stable'
+  rm -f "$stable_guard"
+  [ "$maintenance_ours" -ne 1 ] || rm -f "$stable_maintenance"
+  if [ -x "$stable_start" ] && DETACH=1 "$stable_start"; then
+    log 'Stable restarted; fix the error above and run --apply again'
+  else
+    log "Stable did not restart; run $stable_start by hand"
+  fi
+}
+
+apply_exit() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ]; then
+    case "$phase" in
+      guard|stop|final) restart_stable ;;
+      switch) rollback_hint ;;
+    esac
+  fi
+  exit "$status"
+}
+
+guard_moved() { [ -f "$stable_guard" ] && grep -qx 'status=moved' "$stable_guard"; }
+
+write_guard() {
+  printf 'status=%s\nserver=%s:%s\nsince=%s\nlift=docs/operations/setup/move-studio-to-server.md#rollback\n' \
+    "$1" "$server" "$server_root" "$stamp" >"$stable_guard.next"
+  mv -f "$stable_guard.next" "$stable_guard"
 }
 
 log "mode: $mode; workspace $workspace; server $server:$server_root; state $state_dir"
@@ -506,6 +607,7 @@ case "$mode" in
       log "server preflight did not pass (see above); fix it before --rehearse"
     fi
     if stable_running; then log "Stable answers at $stable_health"; else log "Stable does not answer at $stable_health"; fi
+    [ ! -f "$stable_guard" ] || log "moved-to-server guard present: $(tr '\n' ' ' <"$stable_guard")"
     log 'Dry run only: nothing was copied, stopped, or started.'
     log 'Next: --rehearse (Stable keeps running), then --apply in the outage window.'
     ;;
@@ -528,21 +630,51 @@ case "$mode" in
     ;;
   apply)
     server_side_preflight
+    moved=$(server_side moved-state "$server_root")
+    if [ -n "$moved" ] || guard_moved; then
+      [ "$force" -eq 1 ] || fail "Studio already moved (server: ${moved:-no marker}; workstation guard: $stable_guard). Another apply would replace the live server data with this workstation snapshot. Roll back first, or pass --force to discard the server's state on purpose."
+      log 'warning: --force replaces the live server data with this workstation snapshot'
+    fi
+    [ -x "$stable_stop" ] || fail "Stable stop script is not executable: $stable_stop"
+    grep -Fq 'studio-moved-to-server-guard' "$stable_checkout/api.sh" 2>/dev/null \
+      || fail "Stable's api.sh ($stable_checkout/api.sh) does not honour the moved-to-server guard yet; update Stable first"
     if [ "$assume_yes" -ne 1 ]; then
       printf 'Stop Stable on this workstation and switch Studio to %s? Type "move" to continue: ' "$server"
       IFS= read -r answer || answer=
       [ "$answer" = move ] || fail 'apply cancelled'
     fi
-    [ -x "$stable_stop" ] || fail "Stable stop script is not executable: $stable_stop"
-    trap 'status=$?; [ "$status" -eq 0 ] || rollback_hint; exit "$status"' EXIT
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    phase=guard
+    trap apply_exit EXIT
+    trap 'exit 130' HUP INT TERM
+    # Maintenance first, so the watchdog does not restart the backend that is stopped next.
+    if [ ! -e "$stable_maintenance" ]; then
+      printf 'move-studio-to-server apply %s\n' "$stamp" >"$stable_maintenance"
+      maintenance_ours=1
+    fi
+    write_guard switching
+    log "maintenance marker $stable_maintenance and guard $stable_guard set"
+    phase=stop
     log 'stopping Stable'
     "$stable_stop"
     ! stable_running || fail "Stable still answers at $stable_health"
+    phase=final
     log 'final inventory and delta with Stable stopped'
     inventory
     transfer_pass
-    server_side apply "$server_root" "$(date -u +%Y%m%dT%H%M%SZ)"
-    log 'Studio now runs on the server. Do not start Stable against the workstation workspace while it does.'
+    phase=switch
+    apply_status=0
+    if [ "$force" -eq 1 ]; then
+      server_side apply "$server_root" "$stamp" force || apply_status=$?
+    else
+      server_side apply "$server_root" "$stamp" || apply_status=$?
+    fi
+    # Exit 87: refused before the live data was touched, so Stable may come back.
+    [ "$apply_status" -ne 87 ] || phase=final
+    [ "$apply_status" -eq 0 ] || exit "$apply_status"
+    write_guard moved
+    phase=done
+    log 'Studio now runs on the server. Stable stays stopped: the watchdog is in maintenance and api.sh refuses to start past the guard.'
     rollback_hint
     log 'Then: sign in at the public URL, re-point remote runners, and complete the credential replacements listed above.'
     ;;

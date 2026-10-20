@@ -1,22 +1,36 @@
 // Run: node --test scripts/migration/move-studio-to-server.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  buildInventory, classifyPath, classifyWorkspace, credentialChecklist, generateMapping,
-  readProjectRegistry, runCli, scanWorkspace, selectDelta,
+  buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
+  readProjectRegistry, runCli, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials,
 } from './move-studio-to-server.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/move-studio-workspace.json', import.meta.url), 'utf8'));
 const fixedClock = () => new Date('2026-10-19T08:30:00.000Z');
+// Token-shaped values are assembled at runtime so no provider-shaped literal lands in the repository.
+const fakeToken = {
+  github: () => ['gh', 'p_', 'x'.repeat(36)].join(''),
+  githubPat: () => ['github', '_pat_', 'y'.repeat(40)].join(''),
+  anthropic: () => ['sk', '-ant-', 'z'.repeat(40)].join(''),
+  openai: () => ['sk', '-proj-', 'w'.repeat(40)].join(''),
+  aws: () => ['AK', 'IA', 'Q'.repeat(16)].join(''),
+  google: () => ['AI', 'za', 'v'.repeat(35)].join(''),
+  slack: () => ['xo', 'xb-', '1'.repeat(12)].join(''),
+  npm: () => ['np', 'm_', 'u'.repeat(36)].join(''),
+  privateKey: () => ['-----BEGIN', 'OPENSSH', 'PRIVATE', 'KEY-----'].join(' '),
+};
 // Credential-shaped files are created at runtime so no such file lands in the repository.
 const credentialFiles = {
   '.git-credentials': ['https://operator', 'fake-' + 'value@example.invalid'].join(':') + '\n',
   'projects/demo/.codex/auth.json': JSON.stringify({ token: 'fake-' + 'runtime' }),
   'notes/deploy.pem': 'not a real key',
+  'runner.env': 'RUNNER_TOKEN=fake-' + 'runtime\n',
+  '.runtime/cli-output/AGT-9.log': `pushing with ${fakeToken.github()}\n`,
 };
 
 async function materialize(files) {
@@ -57,6 +71,17 @@ test('classifies workspace areas and Git state into transfer routes', () => {
     ['config/.env.production', { tracked: true, dirty: true }, 'other', 'tracked-modified', 'exclude'],
     ['config/.env.example', {}, 'other', 'untracked', 'archive'],
     ['config/server.pem', { tracked: true }, 'other', 'tracked', 'git'],
+    ['runner.env', {}, 'other', 'untracked', 'exclude'],
+    ['home/.remote-execution.env', {}, 'other', 'untracked', 'exclude'],
+    ['secrets/ci.token', {}, 'other', 'untracked', 'exclude'],
+    ['.npmrc', {}, 'other', 'untracked', 'exclude'],
+    ['home/.config/gh/hosts.yml', {}, 'other', 'untracked', 'exclude'],
+    ['home/AppData/Roaming/GitHub CLI/hosts.yml', {}, 'other', 'untracked', 'exclude'],
+    ['home/.config/github-copilot/apps.json', {}, 'other', 'untracked', 'exclude'],
+    ['home/.docker/config.json', {}, 'other', 'untracked', 'exclude'],
+    ['docs/hosts.yml', {}, 'other', 'untracked', 'archive'],
+    ['projects/demo/config.json', {}, 'other', 'untracked', 'archive'],
+    ['runner.env.template', {}, 'other', 'untracked', 'archive'],
   ];
   for (const [relative, git, area, state, transfer] of cases) {
     const result = classifyPath(relative, git);
@@ -79,7 +104,7 @@ test('scans the fixture workspace without Git internals and joins tracked and di
     assert.equal(byPath['projects/demo/tasks/3-done/AGT-2/task.md'].transfer, 'remove');
     assert.equal(byPath['notes/scratch.md'].transfer, 'archive');
     assert.deepEqual(entries.filter(entry => entry.reason === 'credential').map(entry => entry.path).sort(),
-      ['.git-credentials', 'notes/deploy.pem', 'projects/demo/.codex/auth.json']);
+      ['.git-credentials', 'notes/deploy.pem', 'projects/demo/.codex/auth.json', 'runner.env']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -151,6 +176,92 @@ test('credential checklist names a replacement for every login it does not copy'
   assert.equal(items.every(item => item.replacement.length > 20), true);
   assert.equal(credentialChecklist({ home, exists: () => false, credentialHelper: 'store' })
     .find(item => item.id === 'git-credential-manager').present, false);
+});
+
+test('finds known token shapes and leaves ordinary text alone', () => {
+  const positives = [
+    ['github-token', `token ${fakeToken.github()}`],
+    ['github-token', fakeToken.githubPat()],
+    ['anthropic-key', `ANTHROPIC_API_KEY=${fakeToken.anthropic()}`],
+    ['openai-key', `"key":"${fakeToken.openai()}"`],
+    ['aws-access-key', `aws_access_key_id = ${fakeToken.aws()}`],
+    ['google-api-key', fakeToken.google()],
+    ['slack-token', fakeToken.slack()],
+    ['npm-token', `//registry.npmjs.org/:_authToken=${fakeToken.npm()}`],
+    ['private-key', `${fakeToken.privateKey()}\nAAAA`],
+    ['url-credentials', ['https://operator', 'fake-value@github.com/example/demo.git'].join(':')],
+  ];
+  for (const [name, text] of positives) assert.equal(findTokenPattern(text), name, text);
+  for (const text of ['git clone ssh://git@github.com/example/demo.git', 'git@github.com:example/demo.git',
+    'sk-short', 'ghp_short', 'risk-assessment-for-the-quarterly-report-and-more', '{"Users":[]}']) {
+    assert.equal(findTokenPattern(text), null, text);
+  }
+});
+
+test('token screen excludes archive files with a token, keeps the access state, and reuses unchanged results', () => {
+  const entry = (file, size, mtimeMs, extra = {}) => ({ path: file, size, mtimeMs, area: 'runtime', state: 'untracked', transfer: 'archive', ...extra });
+  const scanned = [];
+  const scan = file => { scanned.push(file); return file.includes('leak') ? 'github-token' : null; };
+  const entries = [
+    entry('.runtime/leak.log', 10, 1000),
+    entry('.runtime/clean.log', 10, 1000),
+    entry('.security/access-state.json', 10, 1000, { area: 'access-state' }),
+    entry('projects/demo/tasks/AGT-1/task.md', 10, 1000, { transfer: 'git', state: 'tracked' }),
+  ];
+  const first = screenTokens(entries, { scan });
+  assert.deepEqual(scanned, ['.runtime/leak.log', '.runtime/clean.log']);
+  assert.deepEqual(first.map(item => [item.path, item.transfer, item.reason ?? null, item.token ?? null]), [
+    ['.runtime/leak.log', 'exclude', 'token-pattern', 'github-token'],
+    ['.runtime/clean.log', 'archive', null, null],
+    ['.security/access-state.json', 'archive', null, null],
+    ['projects/demo/tasks/AGT-1/task.md', 'git', null, null],
+  ]);
+
+  scanned.length = 0;
+  const second = screenTokens([entry('.runtime/leak.log', 10, 1000), entry('.runtime/clean.log', 12, 2000)], { scan, previous: first });
+  assert.deepEqual(scanned, ['.runtime/clean.log']);
+  assert.equal(second[0].reason, 'token-pattern');
+  assert.equal(second[1].transfer, 'archive');
+});
+
+test('file token scan finds a token across a chunk border and skips symbolic links', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-studio-scan-'));
+  try {
+    const file = path.join(root, 'big.log');
+    await writeFile(file, 'a'.repeat((1 << 20) - 8) + ' ' + fakeToken.github() + '\n');
+    assert.equal(fileTokenPattern(file), 'github-token');
+    const clean = path.join(root, 'clean.log');
+    await writeFile(clean, 'b'.repeat((1 << 20) + 100));
+    assert.equal(fileTokenPattern(clean), null);
+    await symlink(file, path.join(root, 'link.log'));
+    assert.equal(fileTokenPattern(path.join(root, 'link.log')), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('strips credentials from repository URLs before they are logged or planned', () => {
+  const secret = 'fake-' + 'secret';
+  const cases = [
+    [`https://operator:${secret}@github.com/example/demo.git`, 'https://github.com/example/demo.git'],
+    [`https://${secret}@github.com/example/demo.git`, 'https://github.com/example/demo.git'],
+    [`ssh://git:${secret}@example.invalid:2222/demo.git`, 'ssh://git@example.invalid:2222/demo.git'],
+    ['ssh://git@example.invalid/demo.git', 'ssh://git@example.invalid/demo.git'],
+    ['git@github.com:example/demo.git', 'git@github.com:example/demo.git'],
+    ['  https://github.com/example/demo.git\n', 'https://github.com/example/demo.git'],
+  ];
+  for (const [input, expected] of cases) assert.equal(stripUrlCredentials(input), expected, input);
+
+  const projects = readRegistryFromFixture().slice(0, 2);
+  projects[0].urls = [{ id: 'repo', label: 'Repository', url: `https://operator:${secret}@github.com/example/demo.git` }];
+  const plan = generateMapping({ workspace: fixture.workspace, projects, remotes: { 'PROJ-002': 'https://github.com/example/demo.git' } });
+  assert.deepEqual(plan.issues, []);
+  assert.equal(plan.checkouts[0].repositoryUrl, 'https://github.com/example/demo.git');
+  assert.equal(plan.checkouts[0].strippedCredentials, true);
+
+  const output = [];
+  assert.equal(runCli(['strip-url'], { write: text => output.push(text), stdin: () => `https://${secret}@example.invalid/w.git\n` }), 0);
+  assert.deepEqual(output, ['https://example.invalid/w.git\n']);
 });
 
 test('delta selection sends new and changed files once and removes vanished ones', () => {
@@ -225,6 +336,8 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     assert.equal(run(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--tracked', path.join(state, 'tracked.z'), '--dirty', path.join(state, 'dirty.z'),
       '--remotes', path.join(state, 'remotes.tsv'), '--extra-mapping', path.join(state, 'extra.json'), '--home', fixture.home, '--out-dir', state]), 0);
     assert.match(output.join(''), /not copied \(credential\): \.git-credentials/);
+    assert.match(output.join(''), /not copied \(credential\): runner\.env/);
+    assert.match(output.join(''), /not copied \(contains a github-token\): \.runtime\/cli-output\/AGT-9\.log/);
     const checkouts = await readFile(path.join(state, 'checkouts.tsv'), 'utf8');
     assert.equal(checkouts.split('\n').filter(Boolean).length, 3);
 
@@ -234,6 +347,9 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     const firstCopy = (await readFile(path.join(state, 'copy.z'), 'utf8')).split('\0').filter(Boolean);
     assert.equal(firstCopy.includes('.security/access-state.json'), true);
     assert.equal(firstCopy.includes('.git-credentials'), false);
+    assert.equal(firstCopy.includes('runner.env'), false);
+    assert.equal(firstCopy.includes('.runtime/cli-output/AGT-9.log'), false);
+    assert.equal(firstCopy.includes('.runtime/cli-output/AGT-1.log'), true);
     assert.equal(firstCopy.includes('projects/demo/tasks/3-done/AGT-1/write.json.tmp'), false);
     assert.equal(JSON.parse(await readFile(path.join(state, 'manifest.json'), 'utf8')).generatedAt, '2026-10-19T08:30:00.000Z');
 

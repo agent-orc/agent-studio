@@ -3,7 +3,7 @@
 // classification, path mapping generation, and delta selection. The shell
 // script owns every process, SSH, Git, tar, and Docker side effect; this module
 // only reads the workspace and writes plan files into the local state directory.
-import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -22,15 +22,64 @@ const isUnder = (value, prefix) => {
 const skippedDirectories = new Set(['.git', 'node_modules']);
 const credentialNames = new Set([
   '.git-credentials', '.credentials.json', 'credentials.json', 'oauth_creds.json', 'auth.json',
-  'provider-auth.env', 'id_rsa', 'id_ecdsa', 'id_ed25519', 'id_dsa', '.netrc', '_netrc',
+  'provider-auth.env', 'runner.env', '.npmrc', 'id_rsa', 'id_ecdsa', 'id_ed25519', 'id_dsa', '.netrc', '_netrc',
 ]);
-const credentialExtensions = ['.pem', '.key', '.pfx', '.p12'];
+// `.env` also covers runner.env, provider-auth.env, and other `<name>.env` files.
+const credentialExtensions = ['.pem', '.key', '.pfx', '.p12', '.token', '.env'];
+// Credential stores whose file name alone is too common to exclude everywhere.
+const credentialPaths = [
+  /(?:^|\/)(?:gh|github cli)\/hosts\.yml$/i,
+  /(?:^|\/)github-copilot\/(?:apps|hosts)\.json$/i,
+  /(?:^|\/)\.docker\/config\.json$/i,
+];
 
-function isCredentialName(name) {
-  const lower = name.toLowerCase();
+function isCredentialPath(relative) {
+  const lower = path.posix.basename(relative).toLowerCase();
   if (credentialNames.has(lower)) return true;
-  if (lower === '.env' || (lower.startsWith('.env.') && lower !== '.env.example')) return true;
-  return credentialExtensions.some(extension => lower.endsWith(extension));
+  if (lower.startsWith('.env.') && lower !== '.env.example') return true;
+  if (credentialExtensions.some(extension => lower.endsWith(extension))) return true;
+  return credentialPaths.some(pattern => pattern.test(relative));
+}
+
+// Known token shapes. A file that would travel in the archive and contains one
+// stays on the workstation; Git history is not rewritten.
+const tokenPatterns = [
+  ['github-token', /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/],
+  ['github-token', /\bgithub_pat_[A-Za-z0-9_]{30,}/],
+  ['anthropic-key', /\bsk-ant-[A-Za-z0-9_-]{20,}/],
+  ['openai-key', /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}/],
+  ['aws-access-key', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
+  ['google-api-key', /\bAIza[0-9A-Za-z_-]{35}/],
+  ['slack-token', /\bxox[abposr]-[A-Za-z0-9-]{10,}/],
+  ['npm-token', /\bnpm_[A-Za-z0-9]{36}/],
+  ['private-key', /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
+  ['url-credentials', /\b(?:https?|git|ssh|ftp):\/\/[^\s/:@'"]+:[^\s/@'"]+@[^\s/@'"]+/i],
+];
+
+/** Name of the first known token shape in the text, or null. */
+export function findTokenPattern(text) {
+  for (const [name, pattern] of tokenPatterns) {
+    if (pattern.test(text)) return name;
+  }
+  return null;
+}
+
+/**
+ * Removes credentials from a repository URL before it is logged, written to a
+ * plan file, or handed to the server. HTTP(S) and git URLs lose their whole
+ * user part (a bare token is often sent as the user name); ssh URLs keep the
+ * user name and lose only a password. scp-style remotes carry no secret.
+ */
+export function stripUrlCredentials(value) {
+  const trimmed = (value ?? '').trim();
+  const match = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*@)(.*)$/i.exec(trimmed);
+  if (!match) return trimmed;
+  const [, scheme, userinfo, rest] = match;
+  if (/^ssh:/i.test(scheme)) {
+    const user = userinfo.slice(0, -1).split(':')[0];
+    return `${scheme}${user ? user + '@' : ''}${rest}`;
+  }
+  return scheme + rest;
 }
 
 function isTransient(relative) {
@@ -64,12 +113,12 @@ export function classifyPath(relative, { tracked = false, dirty = false, present
   const area = areaOf(value);
   if (tracked && !present) return { area, state: 'tracked-deleted', transfer: 'remove' };
   if (tracked && !dirty) {
-    return isCredentialName(path.posix.basename(value))
+    return isCredentialPath(value)
       ? { area, state: 'tracked', transfer: 'git', reason: 'credential-shaped file already in Git history' }
       : { area, state: 'tracked', transfer: 'git' };
   }
   const state = tracked ? 'tracked-modified' : 'untracked';
-  if (isCredentialName(path.posix.basename(value))) return { area, state, transfer: 'exclude', reason: 'credential' };
+  if (isCredentialPath(value)) return { area, state, transfer: 'exclude', reason: 'credential' };
   if (isTransient(value)) return { area, state, transfer: 'exclude', reason: 'transient' };
   if (area === 'access-state') return { area, state, transfer: 'archive', reason: 'Studio accounts and sessions; protect as credential material' };
   return { area, state, transfer: 'archive' };
@@ -106,6 +155,47 @@ export function classifyWorkspace({ files, tracked = [], dirty = [] }) {
     if (!seen.has(relative)) entries.push({ path: relative, size: 0, mtimeMs: 0, ...classifyPath(relative, { tracked: true, present: false }) });
   }
   return entries;
+}
+
+const scanChunk = 1 << 20;
+const scanOverlap = 4096;
+
+/** Token shape found in one regular file, read in overlapping chunks so a token across a chunk border still counts. */
+export function fileTokenPattern(file) {
+  if (!lstatSync(file).isFile()) return null;
+  const descriptor = openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(scanChunk);
+    let tail = '';
+    for (;;) {
+      const read = readSync(descriptor, buffer, 0, scanChunk, null);
+      if (read === 0) return null;
+      const text = tail + buffer.toString('latin1', 0, read);
+      const found = findTokenPattern(text);
+      if (found) return found;
+      tail = text.slice(-scanOverlap);
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/**
+ * Moves archive entries that contain a known token shape to the exclusions.
+ * The access state is exempt: it is the account store the move must carry.
+ * A previous screened entry with the same size and modification time is reused,
+ * so a delta pass reads only new and changed files.
+ */
+export function screenTokens(entries, { scan, previous = [] }) {
+  const before = new Map(previous.map(entry => [entry.path, entry]));
+  return entries.map(entry => {
+    if (entry.transfer !== 'archive' || entry.area === 'access-state') return entry;
+    const last = before.get(entry.path);
+    const known = last && last.size === entry.size && last.mtimeMs === entry.mtimeMs
+      && (last.transfer === 'archive' || last.reason === 'token-pattern');
+    const token = known ? last.token ?? null : scan(entry.path);
+    return token ? { ...entry, transfer: 'exclude', reason: 'token-pattern', token } : entry;
+  });
 }
 
 export function summarize(entries) {
@@ -197,7 +287,11 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
     const checkout = byCheckout.get(key) ?? { source: repository, projects: [], urls: [] };
     checkout.projects.push(project.id);
     const url = registryRepositoryUrl(project) ?? (isUsableRemote(remotes[project.id]) ? remotes[project.id].trim() : null);
-    if (url) checkout.urls.push(url);
+    if (url) {
+      const stripped = stripUrlCredentials(url);
+      checkout.urls.push(stripped);
+      if (stripped !== url) checkout.strippedCredentials = true;
+    }
     byCheckout.set(key, checkout);
   }
 
@@ -214,7 +308,10 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
       if (urls.length === 0) issues.push({ code: 'missing-repository-url', projects: checkout.projects, path: checkout.source });
       if (urls.length > 1) issues.push({ code: 'conflicting-repository-urls', projects: checkout.projects, urls });
       if (windowsPath.test(checkout.source)) mapping[checkout.source] = target;
-      return { name, source: checkout.source, target, repositoryUrl: urls[0] ?? null, projects: checkout.projects };
+      return {
+        name, source: checkout.source, target, repositoryUrl: urls[0] ?? null, projects: checkout.projects,
+        ...(checkout.strippedCredentials ? { strippedCredentials: true } : {}),
+      };
     });
 
   const mapped = value => covered(value) || checkouts.some(checkout => isUnder(value, checkout.source));
@@ -298,13 +395,22 @@ export function assertSafeRelative(relative) {
     throw new Error(`Unsafe workspace path: ${JSON.stringify(relative)}`);
 }
 
-/** Inventory plan for the state directory. The clock is injected so the plan is reproducible in tests. */
-export function buildInventory({ workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now }) {
-  const entries = classifyWorkspace({ files, tracked, dirty });
+/**
+ * Inventory plan for the state directory. The clock is injected so the plan is
+ * reproducible in tests. `scanTokens` (relative path -> token shape or null)
+ * screens the archive; `previousEntries` are the entries of the last screened plan.
+ */
+export function buildInventory({
+  workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
+  scanTokens = null, previousEntries = [],
+}) {
+  const classified = classifyWorkspace({ files, tracked, dirty });
+  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, previous: previousEntries }) : classified;
   const plan = generateMapping({ workspace, projects, remotes, extra });
   return {
     generatedAt: now().toISOString(),
     workspace,
+    tokenScreened: Boolean(scanTokens),
     summary: summarize(entries),
     projects: projects.map(project => ({
       id: project.id, displayName: project.displayName, archived: project.archived,
@@ -326,8 +432,8 @@ export function formatInventory(inventory) {
   for (const [area, value] of Object.entries(inventory.summary.areas).sort()) {
     lines.push(`  ${area.padEnd(20)} ${String(value.files).padStart(7)} files ${mb(value.bytes).padStart(10)}  tracked ${value.tracked}, untracked ${value.untracked}`);
   }
-  for (const entry of inventory.entries.filter(item => item.transfer === 'exclude' && item.reason === 'credential')) {
-    lines.push(`  not copied (credential): ${entry.path}`);
+  for (const entry of inventory.entries.filter(item => item.transfer === 'exclude' && item.reason !== 'transient')) {
+    lines.push(`  not copied (${entry.reason === 'token-pattern' ? `contains a ${entry.token}` : entry.reason}): ${entry.path}`);
   }
   lines.push('Registered projects:');
   for (const project of inventory.projects) {
@@ -339,7 +445,10 @@ export function formatInventory(inventory) {
   lines.push('Path mapping:');
   for (const [from, to] of Object.entries(inventory.mapping)) lines.push(`  ${from} -> ${to}`);
   lines.push('Server checkouts (cloned, not copied):');
-  for (const checkout of inventory.checkouts) lines.push(`  ${checkout.target} <- ${checkout.repositoryUrl ?? 'NO REPOSITORY URL'} (${checkout.projects.join(', ')})`);
+  for (const checkout of inventory.checkouts) {
+    const note = checkout.strippedCredentials ? '; credentials removed from the URL, the server uses its own' : '';
+    lines.push(`  ${checkout.target} <- ${checkout.repositoryUrl ?? 'NO REPOSITORY URL'} (${checkout.projects.join(', ')}${note})`);
+  }
   lines.push('Credentials that are not copied:');
   for (const item of inventory.credentials) lines.push(`  ${item.present ? '[found]' : '[absent]'} ${item.label}: ${item.replacement}`);
   if (inventory.issues.length) {
@@ -371,9 +480,16 @@ function readRemotes(file) {
   return remotes;
 }
 
-export function runCli(argv, { now = () => new Date(), write = text => process.stdout.write(text) } = {}) {
+export function runCli(argv, {
+  now = () => new Date(), write = text => process.stdout.write(text), stdin = () => readFileSync(0, 'utf8'),
+} = {}) {
   const [command, ...rest] = argv;
   const options = parseArgs(rest);
+  if (command === 'strip-url') {
+    // The URL arrives on stdin so a token in it never shows up in a process list.
+    write(stripUrlCredentials(stdin()) + '\n');
+    return 0;
+  }
   if (command === 'projects') {
     for (const project of readProjectRegistry(options.workspace)) {
       const repository = project.repositoryPath ?? project.rootPath;
@@ -382,6 +498,8 @@ export function runCli(argv, { now = () => new Date(), write = text => process.s
     return 0;
   }
   if (command === 'inventory') {
+    const out = options['out-dir'];
+    const previous = readJson(path.join(out, 'inventory.json'), null);
     const inventory = buildInventory({
       // The registry records the workspace in its Windows form; Git Bash may hand a different spelling to --workspace.
       workspace: options['source-workspace'] ?? options.workspace,
@@ -395,8 +513,9 @@ export function runCli(argv, { now = () => new Date(), write = text => process.s
       exists: existsSync,
       credentialHelper: options['credential-helper'] ?? '',
       now,
+      scanTokens: relative => fileTokenPattern(path.join(options.workspace, ...relative.split('/'))),
+      previousEntries: previous?.tokenScreened ? previous.entries : [],
     });
-    const out = options['out-dir'];
     writeFileSync(path.join(out, 'inventory.json'), JSON.stringify(inventory, null, 2) + '\n');
     writeFileSync(path.join(out, 'path-map.json'), JSON.stringify(inventory.mapping, null, 2) + '\n');
     writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts.map(item => `${item.name}\t${item.repositoryUrl ?? ''}\n`).join(''));
@@ -413,7 +532,7 @@ export function runCli(argv, { now = () => new Date(), write = text => process.s
     write(`Delta: ${delta.copy.length} to copy, ${delta.remove.length} to remove, ${delta.unchanged} unchanged\n`);
     return 0;
   }
-  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta [--option value]...');
+  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta|strip-url [--option value]...');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

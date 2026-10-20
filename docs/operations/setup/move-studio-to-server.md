@@ -14,9 +14,9 @@ Application lifecycle D15, option B (decided 17.10.2026): Studio leaves Stable o
 | `--dry-run` (default) | keeps running | Inventory, path mapping, credential checklist, and server preflight. Nothing is written on either host except the local state directory. |
 | `--transfer` | keeps running | One transfer pass into server staging. Repeat it as often as you like. Each pass sends only the delta. |
 | `--rehearse` | keeps running | Transfer pass, then a separate Compose project (`studio-move-rehearsal`) on `127.0.0.1:18443` against a copy of staging, smoke checks, teardown. |
-| `--apply` | stopped | Stops Stable, sends the final delta, switches the server stack to the relocated copy, checks it, and prints the rollback command. |
+| `--apply` | stopped | Stops Stable, sends the final delta, switches the server stack to the relocated copy, checks it, and prints the rollback command. It runs once: a second apply needs `--force`. |
 
-Run the script on the workstation from Git Bash or another POSIX shell. It needs Git, GNU tar, gzip, curl, ssh, and Node. The server needs Docker Compose 2.24 or later (the rehearsal override uses `!override`), Git, Node, and curl. The workstation workspace is only read. Options: `--workspace`, `--server` (SSH alias, default `agent-runner-01`), `--server-root` (default `/srv/agent-studio`), `--state-dir` (default `<workspace>.move-state`), `--extra-mapping`, `--rehearsal-port`, `--rehearsal-subnet`, and `--yes`. `--help` lists them.
+Run the script on the workstation from Git Bash or another POSIX shell. It needs Git, GNU tar, gzip, curl, ssh, and Node. The server needs Docker Compose 2.24 or later (the rehearsal override uses `!override`), Git, Node, and curl. The workstation workspace is only read. Options: `--workspace`, `--server` (SSH alias, default `agent-runner-01`), `--server-root` (default `/srv/agent-studio`), `--state-dir` (default `<workspace>.move-state`), `--extra-mapping`, `--rehearsal-port`, `--rehearsal-subnet`, `--yes`, and `--force`. `--help` lists them.
 
 ## What moves and how
 
@@ -24,8 +24,9 @@ The inventory classifies every workspace file by area (`.metadata` attempt autho
 
 - Git history: the server clones the workspace from its own remote. The workstation then pushes its `HEAD`, including commits the remote does not have yet, into `refs/move/source-head` on the server, and the staging checkout is reset to it.
 - Untracked state and modified tracked files: a streamed `tar | gzip | ssh` archive. A manifest of size and modification time in the state directory makes later passes send only new and changed files and remove files that disappeared. Modified tracked files and deleted tracked files are handled again on every pass because the Git reset restores them.
-- Never copied: credential-shaped files (`.git-credentials`, `auth.json`, `.credentials.json`, `oauth_creds.json`, private keys, `.env` files) and transient files (`*.tmp`, relocation backups). The inventory lists each one.
-- `.security/access-state.json` (Studio accounts and sessions) is copied. Treat staging and the server data directory as credential material.
+- Never copied: credential-shaped files (`.git-credentials`, `auth.json`, `.credentials.json`, `oauth_creds.json`, private keys, `.env` and `*.env` files such as `runner.env`, `*.token`, `.npmrc`, `.netrc`, GitHub CLI `hosts.yml`, Copilot `apps.json`, Docker `.docker/config.json`), any file that would travel in the archive and contains a known token shape (GitHub, Anthropic, OpenAI, AWS, Google, Slack, and npm tokens, private key blocks, URLs with a password), and transient files (`*.tmp`, relocation backups). The inventory lists each exclusion with its reason. The token screen reuses its result for files whose size and modification time did not change, so a delta pass only reads new and changed files. Files that are already in the workspace's Git history still arrive through Git.
+- Repository URLs lose embedded credentials before they are logged, written to `checkouts.tsv`, or passed to the server. HTTP(S) URLs drop the whole user part and ssh URLs drop the password. Existing staging clones get the stripped URL on the next pass.
+- `.security/access-state.json` (Studio accounts and sessions) is copied. Staging is mode 700, the server extracts archives and copies the data with `umask 077`, and `.security` stays owner-only (700, files 600). A successful apply removes staging. Treat the server data directory as credential material.
 - Project checkouts are not copied. Each checkout outside the workspace becomes `/data/projects/<name>`, cloned on the server from the project's repository URL (the registry `repo` URL, otherwise the workstation checkout's `origin`). Uncommitted work in workstation checkouts stays there.
 
 Staging on the server (`<server-root>/move-staging`) always holds the raw transferred state. Relocation only ever runs on copies of it, so the delta logic stays valid across passes.
@@ -61,17 +62,27 @@ sh scripts/migration/move-studio-to-server.sh --apply         # in the outage wi
 
 1. Dry run. Resolve every blocking issue it prints. `missing-repository-url` means a checkout has no usable remote: add a `repo` URL to the project. `unmapped-path` means a registry path lies outside the workspace and every checkout: pass `--extra-mapping FILE` with a JSON object such as `{"G:\\Elsewhere\\root": "/data/projects/demo/root"}`.
 2. Rehearse. The rehearsal copies staging, relocates paths (it fails on any unresolved Windows path and leaves the report in `<server-root>/move-bin/relocate-report.json`), disables Git pushes in the copy, starts the stack with `WorkspaceEvidence__Push=false` under a private hostname on the loopback port, and checks health, sign-in, a board read, and one runner claim. The claim uses a runner credential enrolled for the test and reports zero free slots, so it authenticates without leasing a card. By default the copy's access state is validated and set aside, and a disposable test owner is bootstrapped. To sign in with an existing owner instead, set `MOVE_REHEARSAL_OWNER_USERNAME` and `MOVE_REHEARSAL_OWNER_PASSWORD`. The login is passed on stdin. On failure the last Compose logs are kept in `<server-root>/move-bin/rehearsal-failure.log`. The stack and the copy are always removed.
-3. Apply. The script asks for confirmation (`--yes` skips it) and runs `stop-stable.sh` beside the workspace (override with `MOVE_STABLE_STOP`). It verifies that `MOVE_STABLE_HEALTH_URL` (default `http://127.0.0.1:5031/healthz`) no longer answers, then repeats the inventory and sends the final delta. On the server it moves the previous `workspace` and `projects` aside as `*.pre-move-<UTC stamp>`, copies staging into the data directory, relocates paths, sets UID 10001 ownership, and starts the stack. It then checks `https://robert.omgai.dev/api/auth/status` locally and expects the moved accounts. Stop every other writer to the workspace, such as a dev backend, before you apply.
+3. Apply. Stable's checkout (`<devspace>/agent-taskboard-stable`) must have an `api.sh` that honours the moved-to-server guard; otherwise apply refuses before it stops anything. The script asks for confirmation (`--yes` skips it). It then sets the maintenance marker `<devspace>/.stable-maintenance` (the file `watchdog-stable.sh` honours, override with `STABLE_MAINTENANCE_FILE`) and the guard `<devspace>/.studio-moved-to-server`, and runs `stop-stable.sh` beside the workspace (override with `MOVE_STABLE_STOP`). It verifies that `MOVE_STABLE_HEALTH_URL` (default `http://127.0.0.1:5031/healthz`) no longer answers, then repeats the inventory and sends the final delta. On the server it stops the stack and verifies that no container still runs. Only then does it move the previous `workspace` and `projects` aside as `*.pre-move-<UTC stamp>`, copy staging into the data directory, relocate paths, set UID 10001 ownership, and start the stack. It checks `https://robert.omgai.dev/api/auth/status` locally and expects the moved accounts, then writes `<server-root>/moved-to-server` and removes staging. Stop every other writer to the workspace, such as a dev backend, before you apply.
+
+   If anything fails before the server switch (a blocking issue in the final inventory, a failed transfer, or a server stack that would not stop), the live server data is untouched. The script then lifts the guard and the maintenance marker it set and restarts Stable with `DETACH=1 start-stable.sh` (override with `MOVE_STABLE_START`). A failure after the switch began leaves Stable stopped behind the guard and prints the rollback command.
+
+## Guards against two Studios
+
+Two Studios against the same remotes and runners would race each other. After apply, three things keep Stable down:
+
+- The maintenance marker stops `watchdog-stable.sh` from restarting the backend. The script removes it on rollback only if it set it.
+- The guard `<devspace>/.studio-moved-to-server` makes `api.sh start` in the stable checkout refuse. `start-stable.sh`, the watchdog, and the Update Service all start the backend through it. The guard records `status=moved` (or `status=switching` while an apply runs), the server, and the time.
+- The server marker `<server-root>/moved-to-server` makes a second `--apply` refuse before it stops anything, because it would replace the live server data with the old workstation snapshot. `--force` overrides both the marker and a `status=moved` guard. Use it only to discard the server's state on purpose, for example to move again after a rollback.
 
 ## Rollback
 
-Apply prints the rollback command, and prints it again if any step after stopping Stable fails:
+Apply prints the rollback command, and prints it again if a step after the server switch fails:
 
 ```sh
-ssh agent-runner-01 'docker compose --project-directory /srv/agent-studio/stack stop' && '<devspace>/start-stable.sh'
+ssh agent-runner-01 'docker compose --project-directory /srv/agent-studio/stack stop' && rm -f '<devspace>/.studio-moved-to-server' '<devspace>/.stable-maintenance' && '<devspace>/start-stable.sh'
 ```
 
-The workstation workspace was never modified, so Stable resumes from the exact state it had when it stopped. Work done on the server after the switch is not carried back. Never run both instances against their copies at the same time.
+Order matters: stop the server stack first, then lift the guard, then start Stable. The command lists `.stable-maintenance` only when this apply set it; a marker that was there before stays until you remove it. The workstation workspace was never modified, so Stable resumes from the exact state it had when it stopped. Work done on the server after the switch is not carried back. Never run both instances against their copies at the same time. The server keeps `moved-to-server` after a rollback, so moving again later needs `--apply --force`.
 
 ## After the move
 
@@ -79,4 +90,4 @@ Sign in at `https://robert.omgai.dev`, complete the credential replacements, poi
 
 ## Tests
 
-`node --test scripts/migration/move-studio-to-server.test.mjs` covers the pure parts (inventory classification, mapping generation, delta selection) with the fixture in `scripts/migration/fixtures/move-studio-workspace.json` and an injected clock. `sh scripts/migration/move-studio-to-server.test.sh` runs the dry run, three transfer passes, a rehearsal, and an apply against local repositories, with fake `ssh`, `docker`, and `curl`. No real host is contacted.
+`node --test scripts/migration/move-studio-to-server.test.mjs` covers the pure parts (inventory classification, mapping generation, delta selection) with the fixture in `scripts/migration/fixtures/move-studio-workspace.json` and an injected clock. The same suite covers the wider credential exclusion, the token screen, and URL credential stripping. `sh scripts/migration/move-studio-to-server.test.sh` runs the dry run, three transfer passes, a rehearsal, and the apply cases against local repositories, with fake `ssh`, `docker`, and `curl` and a copy of `api.sh` as Stable: refusal for a Stable without the guard, automatic restart after a blocking final inventory and after a server stack that keeps running, a failed apply followed by the printed rollback, a successful apply with the marker and the guard, refusal of a second apply, and `--force`. No real host is contacted.
