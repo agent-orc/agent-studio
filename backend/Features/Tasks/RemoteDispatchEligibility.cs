@@ -41,6 +41,7 @@ public static class RemoteDispatchEligibility
 
         return ProjectExecutionPolicy.AllowsAutomaticPickup(project)
                && !TaskKinds.IsDecision(task.Kind)
+               && !RetiredContainerTask.IsRetired(task)
                && ProjectExecutionPolicy.IsAssignedRemote(project, runnerId, runnerName)
                && AgentTypes.IsAutoPickupEligible(task.Agent)
                && !TaskSlugs.IsHumanDecisionNeeded(task.Id)

@@ -8930,6 +8930,7 @@ public class ProjectRunner
            && !job.Fixture
            && !job.WaitingForEngineDecision
            && !IsUnpickableDecision(job)
+           && !RetiredContainerTask.IsRetired(job)
            // Hard safety net for the human-decision-needed marker:
            // never auto-run such a card even if the 2-ready->5e-escalated
            // relocation sweep failed to move it. Running it just NOOP-burns
@@ -9100,7 +9101,7 @@ public class ProjectRunner
         if (!AgentTypes.IsAutoPickupEligible(candidate.Info.Agent))
             return null;
 
-        if (IsUnpickableDecision(candidate.Info))
+        if (IsUnpickableDecision(candidate.Info) || RetiredContainerTask.IsRetired(candidate.Info))
             return null;
 
         // Rapid-crash backoff: a progress folder that just crashed fast is
@@ -9776,6 +9777,8 @@ public class ProjectRunner
             if (!AgentTypes.IsAutoPickupEligible(candidate.Info.Agent))
                 continue;
             if (candidate.Info.WaitingForEngineDecision)
+                continue;
+            if (IsUnpickableDecision(candidate.Info) || RetiredContainerTask.IsRetired(candidate.Info))
                 continue;
 
             // Rapid-crash backoff: a progress folder that just crashed fast is
@@ -10637,6 +10640,7 @@ public class ProjectRunner
            && !job.Fixture
            && !job.WaitingForEngineDecision
            && !TaskKinds.IsDecision(job.Kind)
+           && !RetiredContainerTask.IsRetired(job)
            && !TaskSlugs.IsHumanDecisionNeeded(job.Id)
            && IsPickupAllowed(job, intakeEnabled)
            && !HoldsOnWaitsOn(job, waitsOnIndex);

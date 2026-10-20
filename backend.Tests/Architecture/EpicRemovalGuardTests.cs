@@ -39,7 +39,7 @@ public sealed class EpicRemovalGuardTests
             ],
             ["backend/Shared/Models/RetiredContainerTask.cs"] =
             [
-                "state == TaskStates.Archive && string.Equals(kind, \"epic\", StringComparison.OrdinalIgnoreCase)",
+                "string.Equals(kind, \"epic\", StringComparison.OrdinalIgnoreCase)",
                 "? \"epic\"",
                 "string.Equals(task.Kind, \"epic\", StringComparison.OrdinalIgnoreCase);",
             ],

@@ -214,4 +214,25 @@ public class DecisionCardPolicyTests
         Assert.False(RemoteDispatchEligibility.IsAssignedAndRoutable(
             dependant, settings, "runner-1", null, index));
     }
+
+    [Fact]
+    public void RemoteClaim_RefusesHistoricalParentInReadyLane()
+    {
+        var settings = new ProjectSettings
+        {
+            PickupMode = PickupModes.Auto,
+            ExecutionLocation = "runner-1",
+        };
+        var parent = new TaskInfo
+        {
+            Id = "old-parent", Kind = RetiredContainerTask.NormalizeForRead("epic"),
+            State = TaskStates.Ready,
+        };
+        var index = TaskReferenceIndex.Build([parent]);
+
+        Assert.True(RemoteDispatchEligibility.IsAssignedAndRoutable(
+            parent with { Kind = TaskKinds.Task }, settings, "runner-1", null, index));
+        Assert.False(RemoteDispatchEligibility.IsAssignedAndRoutable(
+            parent, settings, "runner-1", null, index));
+    }
 }
