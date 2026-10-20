@@ -9,7 +9,8 @@ public sealed record ManagedRepositoryMutationResult(
     string? CommitSha,
     bool PushQueued,
     string? Error,
-    bool PreflightBlocked = false)
+    bool PreflightBlocked = false,
+    bool PreconditionFailed = false)
 {
     public static ManagedRepositoryMutationResult Failed(string error, bool preflightBlocked = false) =>
         new(false, false, false, null, false, error, preflightBlocked);
@@ -43,6 +44,10 @@ public sealed class ManagedRepositoryMutationService
         _logger = logger;
     }
 
+    /// <param name="precondition">
+    /// Runs inside the repository gate before <paramref name="write"/>; a non-null
+    /// reason refuses the mutation with <see cref="ManagedRepositoryMutationResult.PreconditionFailed"/>.
+    /// </param>
     public ManagedRepositoryMutationResult Execute(
         string projectName,
         string repositoryRoot,
@@ -50,7 +55,8 @@ public sealed class ManagedRepositoryMutationService
         string commitMessage,
         IReadOnlyCollection<string> repositoryRelativePaths,
         Action write,
-        bool requireCleanCheckoutAndPush = false)
+        bool requireCleanCheckoutAndPush = false,
+        Func<string?>? precondition = null)
     {
         ArgumentNullException.ThrowIfNull(write);
         if (string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
@@ -100,6 +106,11 @@ public sealed class ManagedRepositoryMutationService
                         $"Refusing to overwrite pre-existing changes: {string.Join(", ", alreadyDirty)}.");
                 }
             }
+
+            // Compare-and-write: the caller's check of the current file state runs
+            // under the same gate as the write, so no other managed write lands between.
+            if (precondition?.Invoke() is { } refusal)
+                return ManagedRepositoryMutationResult.Failed(refusal) with { PreconditionFailed = true };
 
             try
             {

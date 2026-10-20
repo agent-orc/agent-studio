@@ -302,15 +302,6 @@
                 }
               }
             }
-            @case ('epics') {
-              @if (studioTabState.activeTab(); as tab) {
-                @if (tab.kind === 'epics') {
-                  <app-epic-overview-screen
-                    [scopedProject]="activeEpicScopedProject()" [mutationsBlocked]="updateClient.mutationsBlocked()"
-                    (openTask)="onEpicOverviewOpenTask($event)" />
-                }
-              }
-            }
             @case ('workbenches') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'workbenches') {

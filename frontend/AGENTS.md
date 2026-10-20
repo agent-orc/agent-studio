@@ -234,7 +234,7 @@ The Explorer tree's per-project Board metrics (`<app-explorer-lane-dashboard>`,
 numbers **and** dots) are a projection of the flat lane board, so they must count
 exactly what the board draws. `buildProjectSidebarRows` therefore runs the board's
 own `excludeEpics` over the grouped feed instead of re-deriving `kind !== 'epic'`;
-an epic is a container with its own Epics view, not a board work-item. Deriving the
+an epic is a legacy container, not a board work-item. Deriving the
 same number twice is what caused the reported bug: an epic parked in
 `5-human-review` lit a lane dot on a project whose every board lane read 0.
 
