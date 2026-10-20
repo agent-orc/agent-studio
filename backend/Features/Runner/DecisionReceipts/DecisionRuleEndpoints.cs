@@ -6,9 +6,16 @@ namespace AgentStudio.Runner;
 /// <summary>Human Operator API for drafts, counterfactual replay, activation and rollback.</summary>
 public static class DecisionRuleEndpoints
 {
-    public static void MapDecisionRuleEndpoints(this WebApplication app)
+    /// <param name="proxyProfile">
+    /// True when a standalone Task Server owns workspaces; every rule route
+    /// then answers the typed 409 instead of reading Studio's local registry.
+    /// </param>
+    public static void MapDecisionRuleEndpoints(this WebApplication app, bool proxyProfile = false)
     {
         var api = app.MapGroup("/api/workspaces/{workspaceId}/decision-rules");
+        if (proxyProfile)
+            api.AddEndpointFilter((_, _) => ValueTask.FromResult<object?>(
+                OrchestratorDecisionEndpoints.ProxyProfileConflict()));
         api.MapGet("", (HttpContext context, string workspaceId, string? projectId,
             WorkspaceRegistry workspaces, ProjectRegistry projects, DecisionRuleVersionStore store) =>
             Scope(context, workspaceId, projectId, workspaces, projects, false) is { } error ? error
@@ -49,8 +56,12 @@ public static class DecisionRuleEndpoints
             DecisionRuleVersionStore store, OrchestratorDecisionStore receipts) =>
         {
             if (Scope(context, workspaceId, projectId, workspaces, projects, false) is { } error) return error;
-            try { return Results.Ok(store.DryRun(workspaceId, projectId, versionId,
-                receipts.RecentReceipts(workspaceId, projectId))); }
+            // Same access predicate as the receipt list. Receipts name a card's
+            // project by its registry name; overlays use the project id.
+            var replayed = receipts.RecentReceipts(workspaceId, receipt =>
+                OrchestratorDecisionEndpoints.AllowsProject(context, receipt.Scope.ProjectId, projects)
+                && (projectId is null || ProjectIdOf(receipt.Scope.ProjectId, projects) == projectId));
+            try { return Results.Ok(store.DryRun(workspaceId, projectId, versionId, replayed)); }
             catch (KeyNotFoundException) { return Results.NotFound(); }
         });
     }
@@ -69,6 +80,10 @@ public static class DecisionRuleEndpoints
         }
         return null;
     }
+
+    internal static string? ProjectIdOf(string? receiptProject, ProjectRegistry projects)
+        => string.IsNullOrWhiteSpace(receiptProject) ? null
+            : projects.FindByIdOrDisplayName(receiptProject)?.Id ?? receiptProject;
 
     private static string Actor(HttpContext context)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human

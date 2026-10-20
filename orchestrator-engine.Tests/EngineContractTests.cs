@@ -103,6 +103,40 @@ public sealed class EngineContractTests
         Assert.Equal("studio-engine-secret", client.DefaultRequestHeaders.Authorization?.Parameter);
     }
 
+    [Fact]
+    public void Decision_plane_client_never_carries_the_task_server_credential()
+    {
+        var options = new EngineOptions
+        {
+            ServerUrl = "https://task-server.test",
+            ClientId = "engine-a",
+            ClientCredential = "task-server-secret",
+            DecisionPlaneUrl = "http://127.0.0.1:5000",
+        };
+        using var client = EngineTaskServerClient.CreateHttpClient(options, decisionPlane: true);
+        Assert.Null(client.DefaultRequestHeaders.Authorization);
+    }
+
+    [Fact]
+    public void Separate_non_loopback_decision_plane_requires_its_own_credential()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "https://tasks.example.test",
+            ["CLIENT_ID"] = "engine-a",
+            ["CLIENT_CREDENTIAL"] = "task-server-secret",
+            ["DECISION_PLANE_URL"] = "https://studio.example.test",
+        };
+        var error = Assert.Throws<ArgumentException>(() => EngineOptions.Parse(key => values.GetValueOrDefault(key)));
+        Assert.Contains("DECISION_PLANE_CLIENT_CREDENTIAL", error.Message);
+        values["DECISION_PLANE_URL"] = "https://tasks.example.test/";
+        Assert.Null(EngineOptions.Parse(key => values.GetValueOrDefault(key)).DecisionPlaneUrl);
+        values["DECISION_PLANE_URL"] = "http://127.0.0.1:5000";
+        var loopback = EngineOptions.Parse(key => values.GetValueOrDefault(key));
+        Assert.Equal("http://127.0.0.1:5000", loopback.DecisionPlaneUrl);
+        Assert.Null(loopback.DecisionPlaneClientCredential);
+    }
+
     private sealed class CaptureHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond)
         : HttpMessageHandler
     {

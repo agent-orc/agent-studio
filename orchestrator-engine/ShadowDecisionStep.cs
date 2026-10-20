@@ -191,7 +191,11 @@ public sealed class ShadowDecisionService(
         {
             var input = await plane.GetGroundsInputAsync(occurrenceId, ct);
             if (input is null) return;
-            var receipt = await step.RecordAsync(occurrenceId, ct, input.Mode);
+            // Only a card-free occurrence is recorded active here; a card input in
+            // another mode is refused by the step as decision-mode-mismatch.
+            var mode = input.Grounds.Scope.Kind == "card" ? DecisionReceiptPolicy.ShadowMode
+                : DecisionReceiptPolicy.ActiveMode;
+            var receipt = await step.RecordAsync(occurrenceId, ct, mode);
             if (receipt is not null)
                 logger.LogInformation(
                     "shadow decision recorded; occurrence={Occurrence} receipt={Receipt} call={Call} matches={Matches}",

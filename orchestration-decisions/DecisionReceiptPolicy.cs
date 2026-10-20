@@ -39,6 +39,7 @@ public static class DecisionReceiptPolicy
 {
     public const string SchemaVersion = "orchestrator-decision-receipt.v1";
     public const string PromptVersion = "od-s1.step-transition.v1";
+    public const string HostPromptVersion = "od-s6.host-occurrence.v1";
     public const string ShadowMode = "shadow";
     public const string ActiveMode = "active";
     public const string ShadowDispatch = "not-dispatched:shadow";
@@ -56,11 +57,18 @@ public static class DecisionReceiptPolicy
 
     public static string EvidenceRef(string receiptId) => ReceiptRoute + receiptId;
 
+    /// <summary>The card prompt stays byte-identical; a host occurrence has its own versioned prompt.</summary>
+    public static string PromptVersionFor(DecisionGroundsV1 grounds)
+        => grounds.Scope.Kind == "card" ? PromptVersion : HostPromptVersion;
+
     public static string RenderPrompt(DecisionGroundsV1 grounds)
+        => grounds.Scope.Kind == "card" ? RenderCardPrompt(grounds) : RenderHostPrompt(grounds);
+
+    private static string RenderCardPrompt(DecisionGroundsV1 grounds)
     {
         var maxActions = grounds.Scope.Kind == "card" ? "exactly one" : "zero to three";
         return $$"""
-            You decide one bounded orchestrator occurrence in Agent Studio.
+            You decide the next typed action of one orchestrator transition in Agent Studio.
             Read only the frozen decision grounds below. Do not run tools, read files or query sessions.
             Choose {{maxActions}} action from the alternatives whose "available" is true.
             Signals are questions to weigh, not commands. Missing or unpriced cost raises uncertainty;
@@ -73,14 +81,35 @@ public static class DecisionReceiptPolicy
              "reasoning":"<at most 120 words>",
              "citedFacts":["<fact id>"],
              "prediction":"<expected next receipt, chance of completion, incremental spend and time>",
-             "uncertainty":"<missing evidence or none>",
-             "assessment":"<periodic assessment when applicable>",
-             "report":"<periodic report, at most 600 characters>"}
+             "uncertainty":"<missing evidence or none>"}
 
             Decision grounds ({{grounds.SchemaVersion}}, digest {{grounds.ContentDigest}}):
             {{JsonSerializer.Serialize(grounds, DecisionGroundsPolicy.Json)}}
             """;
     }
+
+    private static string RenderHostPrompt(DecisionGroundsV1 grounds)
+        => $$"""
+            You decide one bounded orchestrator occurrence in Agent Studio.
+            Read only the frozen decision grounds below. Do not run tools, read files or query sessions.
+            Choose zero to three actions from the alternatives whose "available" is true.
+            Signals are questions to weigh, not commands. Missing or unpriced cost raises uncertainty;
+            it is never evidence that a run was cheap. Cite the fact ids your reasoning relies on.
+
+            Answer with one JSON object and nothing else:
+            {"chosenActions":[{"action":"<one of {{string.Join('|', DecisionActionKinds.All)}}>","target":"<target of that alternative>"}],
+             "alternatives":[{"action":"<rejected action>","rejectionReason":"<why>"}],
+             "confidence":<0..1>,
+             "reasoning":"<at most 120 words>",
+             "citedFacts":["<fact id>"],
+             "prediction":"<expected next receipt, chance of completion, incremental spend and time>",
+             "uncertainty":"<missing evidence or none>",
+             "assessment":"<periodic assessment>",
+             "report":"<periodic report, at most 600 characters>"}
+
+            Decision grounds ({{grounds.SchemaVersion}}, digest {{grounds.ContentDigest}}):
+            {{JsonSerializer.Serialize(grounds, DecisionGroundsPolicy.Json)}}
+            """;
 
     public static DecisionModelResponse Parse(string? text, DecisionGroundsV1 grounds)
     {
@@ -230,7 +259,7 @@ public static class DecisionReceiptPolicy
             facts.DeterministicReason,
             matches,
             grounds.PolicyVersion,
-            PromptVersion,
+            PromptVersionFor(grounds),
             grounds.ModelRoute,
             call,
             dispatch,

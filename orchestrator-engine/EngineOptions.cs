@@ -70,12 +70,18 @@ public sealed class EngineOptions
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
         var decisionUrl = value("DECISION_PLANE_URL")?.Trim().TrimEnd('/');
+        // The same origin as SERVER_URL is not a separate decision plane.
+        if (string.Equals(decisionUrl, serverUrl, StringComparison.OrdinalIgnoreCase)) decisionUrl = null;
+        var decisionLoopback = false;
         if (!string.IsNullOrWhiteSpace(decisionUrl))
         {
             if (!Uri.TryCreate(decisionUrl, UriKind.Absolute, out var decisionUri)
                 || decisionUri.Scheme is not ("http" or "https"))
                 throw new ArgumentException("DECISION_PLANE_URL must be an absolute HTTP or HTTPS URL.");
-            if (decisionUri.Scheme == "http" && !decisionUri.IsLoopback && !allowInsecureHttp)
+            decisionLoopback = decisionUri.IsLoopback
+                               || IPAddress.TryParse(decisionUri.Host, out var decisionAddress)
+                               && IPAddress.IsLoopback(decisionAddress);
+            if (decisionUri.Scheme == "http" && !decisionLoopback && !allowInsecureHttp)
                 throw new ArgumentException("DECISION_PLANE_URL must use HTTPS unless it is loopback or ENGINE_ALLOW_INSECURE_HTTP=1.");
         }
         var decisionCredential = value("DECISION_PLANE_CLIENT_CREDENTIAL")?.Trim();
@@ -84,6 +90,11 @@ public sealed class EngineOptions
             throw new ArgumentException("Configure only one of DECISION_PLANE_CLIENT_CREDENTIAL or DECISION_PLANE_CLIENT_CREDENTIAL_FILE.");
         if (!string.IsNullOrWhiteSpace(decisionCredentialFile))
             decisionCredential = ReadCredentialFile(decisionCredentialFile, "DECISION_PLANE_CLIENT_CREDENTIAL_FILE");
+        // The Task Server credential is never sent to another origin.
+        if (!string.IsNullOrWhiteSpace(decisionUrl) && !decisionLoopback && string.IsNullOrWhiteSpace(decisionCredential))
+            throw new ArgumentException(
+                "DECISION_PLANE_CLIENT_CREDENTIAL or DECISION_PLANE_CLIENT_CREDENTIAL_FILE is required for a "
+                + "non-loopback DECISION_PLANE_URL that differs from SERVER_URL.");
 
         return new EngineOptions
         {

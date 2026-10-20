@@ -263,7 +263,10 @@ public sealed record DecisionShadowInputV1(
     string DeterministicReason,
     string Mode = "shadow");
 
-/// <summary>Engine-created host occurrence; Task Server freezes a workspace rule pin.</summary>
+/// <summary>
+/// Engine-created host occurrence. Studio's receipt plane freezes it with the
+/// workspace rule pin; <c>Cadence</c> (scheduled or event) is required.
+/// </summary>
 public sealed record HostDecisionOccurrenceRequestV1(
     string OccurrenceId, string WorkspaceId, string HostId, string TriggerKind,
     string Profile, DateTime ObservedAt, IReadOnlyList<GroundsFactV1> Facts,

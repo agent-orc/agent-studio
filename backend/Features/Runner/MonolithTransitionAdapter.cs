@@ -165,8 +165,14 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<GroundsFactV1> DecisionRulePolicySignals(IReadOnlyList<DecisionRuleV1> rules, string trigger, IReadOnlyList<GroundsFactV1> facts, string policyVersion, DateTime observedAt)
         => DecisionRulePolicy.Signals(rules, trigger, facts, policyVersion, observedAt);
 
-    public static DecisionRuleValidation DecisionRulePolicyValidate(IReadOnlyList<DecisionRuleV1> rules, bool projectOverlay)
-        => DecisionRulePolicy.Validate(rules, projectOverlay);
+    public static DecisionRuleValidation DecisionRulePolicyValidate(IReadOnlyList<DecisionRuleV1> rules, bool projectOverlay, DecisionRuleModelCatalogue models)
+        => DecisionRulePolicy.Validate(rules, projectOverlay, models);
+
+    public static string? DecisionRulePolicyCardAlternativeRefusal(IReadOnlyList<DecisionRuleV1> rules)
+        => DecisionRulePolicy.CardAlternativeRefusal(rules);
+
+    public static string? DecisionRulePolicyModelRefusal(string model, DecisionRuleModelCatalogue models)
+        => DecisionRulePolicy.ModelRefusal(model, models);
 
     public static string? GateEnvironmentRetryPolicyOperatorReplayRefusal(GateEnvironmentRetryFacts facts)
         => GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts);

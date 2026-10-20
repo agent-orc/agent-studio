@@ -17,7 +17,7 @@ test('workspace rules can be drafted, replayed and activated with a reason', asy
       missingDataBehavior: 'ask', freshnessMinutes: 60,
     }],
   };
-  await page.route(/\/api\/workspaces(?:\?.*)?$/, route => route.fulfill({ json: [{
+  await page.route(/\/api\/v1\/workspaces(?:\?.*)?$/, route => route.fulfill({ json: [{
     id: 'ws-test', displayName: 'Test workspace', sortOrder: 0, isDefault: true,
     color: null, createdAt: '2026-10-15T10:00:00Z', projects: [],
   }] }));

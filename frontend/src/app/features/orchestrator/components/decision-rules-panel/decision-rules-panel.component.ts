@@ -2,6 +2,10 @@ import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
+import { TaskService } from '../../../../services/task.service';
+
+/** Triggers a live decision path reads; the API refuses any other trigger. */
+export const DECISION_RULE_TRIGGERS = ['step-transition', 'CodingCompletion', 'capacity-check'] as const;
 
 interface Rule {
   id: string;
@@ -29,6 +33,8 @@ interface RuleView {
   activeVersionId: string | null;
   versions: Version[];
   hardFloors: { id: string; scope: string; value: string; source: string; owner: string; version: string }[];
+  degraded?: boolean;
+  quarantined?: string[] | null;
 }
 
 interface Replay {
@@ -69,6 +75,8 @@ interface Spend {
 })
 export class DecisionRulesPanelComponent implements OnInit {
   private readonly http = inject(HttpClient);
+  private readonly tasks = inject(TaskService);
+  readonly triggers = DECISION_RULE_TRIGGERS;
   readonly workspaces = signal<RegistryWorkspaceListItem[]>([]);
   readonly workspaceId = signal('');
   readonly selectedProjects = computed(() => this.workspaces().find(w => w.id === this.workspaceId())?.projects ?? []);
@@ -98,7 +106,8 @@ export class DecisionRulesPanelComponent implements OnInit {
 
   async loadWorkspaces(): Promise<void> {
     try {
-      const rows = await firstValueFrom(this.http.get<RegistryWorkspaceListItem[]>('/api/workspaces'));
+      // The workspace authority of the active profile, as in the rest of Studio.
+      const rows = await firstValueFrom(this.tasks.getRegistryWorkspaces());
       this.workspaces.set(rows);
       if (rows.length) { this.workspaceId.set(rows[0].id); await this.refresh(); }
     } catch { this.error.set('Could not load workspaces.'); }
@@ -138,13 +147,13 @@ export class DecisionRulesPanelComponent implements OnInit {
       this.draftId.set(null);
       this.replay.set(null);
       this.error.set(null);
-    } catch { this.error.set('Could not load decision rules.'); }
+    } catch (error) { this.error.set(this.message(error, 'Could not load decision rules.')); }
   }
 
   addRule(): void {
     this.rules.update(rows => [...rows, {
       id: '', trigger: 'capacity-check', factId: '', warningThreshold: null,
-      candidateActions: ['observe'], autonomyClass: 'A1', model: 'gpt-5.6-sol',
+      candidateActions: ['observe'], autonomyClass: 'A1', model: null,
       missingDataBehavior: 'ask', freshnessMinutes: 60,
     }]);
   }
@@ -198,8 +207,8 @@ export class DecisionRulesPanelComponent implements OnInit {
     } catch (error) { this.error.set(this.message(error)); }
   }
 
-  private message(error: unknown): string {
-    const failure = error as { error?: { reasons?: string[]; reason?: string } };
-    return failure.error?.reasons?.join(' ') ?? failure.error?.reason ?? 'Rule operation failed.';
+  private message(error: unknown, fallback = 'Rule operation failed.'): string {
+    const failure = error as { error?: { reasons?: string[]; reason?: string; message?: string } };
+    return failure.error?.reasons?.join(' ') ?? failure.error?.reason ?? failure.error?.message ?? fallback;
   }
 }

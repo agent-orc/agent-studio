@@ -192,32 +192,42 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     }
 
     [Fact]
-    public async Task Proxy_profile_records_card_free_decisions_on_the_engine_visible_receipt_plane()
+    public async Task Proxy_profile_keeps_the_receipt_plane_and_refuses_rule_and_host_routes()
     {
         var upstream = new RecordingUpstream();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 8, 0, 0, TimeSpan.Zero));
         using var factory = BuildFactory("http://task-server.invalid", upstream, clock);
-        var workspace = factory.Services.GetRequiredService<WorkspaceRegistry>().Create("Capacity", clock: clock);
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();
         var engine = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
             "engine-one", [RunnerScopes.Orchestration], null, null)).Code);
         using var browser = CreateClient(factory);
         browser.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
-        Assert.Equal(HttpStatusCode.OK,
-            (await browser.GetAsync($"/api/workspaces/{workspace.Id}/decision-rules")).StatusCode);
+        // The Task Server owns this workspace id; Studio's local registry does not know it.
+        var rules = await browser.GetAsync("/api/workspaces/ws-task-server/decision-rules");
+        Assert.Equal(HttpStatusCode.Conflict, rules.StatusCode);
+        Assert.Contains(OrchestratorDecisionEndpoints.ProxyProfileRefusal, await rules.Content.ReadAsStringAsync());
+        var at = clock.GetUtcNow().UtcDateTime;
+        var refusedHost = await browser.PostAsJsonAsync("/api/v1/orchestration/host-decisions",
+            new HostDecisionOccurrenceRequestV1("capacity:host-1:refused", "ws-task-server", "host-1",
+                "capacity-check", "capacity-check", at, [], [], [], "scheduled"));
+        Assert.Equal(HttpStatusCode.Conflict, refusedHost.StatusCode);
+        Assert.Contains(OrchestratorDecisionEndpoints.ProxyProfileRefusal, await refusedHost.Content.ReadAsStringAsync());
+        // The operator intent moves cards through TaskRepository and stays closed.
+        var intent = await browser.PostAsJsonAsync("/api/orchestration/decision-receipts/odr_missing/operator-intent",
+            new { action = "ask", reason = "closed in proxy profile" });
+        Assert.Equal(HttpStatusCode.NotFound, intent.StatusCode);
+        Assert.Contains("route-not-on-task-server", await intent.Content.ReadAsStringAsync());
+
         var occurrence = "capacity:host-1:sample";
-        var response = await browser.PostAsJsonAsync("/api/v1/orchestration/host-decisions",
-            new HostDecisionOccurrenceRequestV1(occurrence, workspace.Id, "host-1",
-                "capacity-check", "capacity-check", clock.GetUtcNow().UtcDateTime, [], [], [], "scheduled"));
-        response.EnsureSuccessStatusCode();
-        var frozen = await response.Content.ReadFromJsonAsync<DecisionShadowInputV1>();
-        Assert.NotNull(frozen);
-        Assert.Equal("host", frozen.Grounds.Scope.Kind);
+        factory.Services.GetRequiredService<OrchestratorDecisionStore>().FreezeInputs(new(
+            HostGrounds(occurrence, at), DecisionActionKinds.Observe, "host-1", "Host occurrence",
+            DecisionReceiptPolicy.ActiveMode));
         Assert.Equal([occurrence], await browser.GetFromJsonAsync<string[]>(
             "/api/v1/orchestration/decision-grounds/pending?limit=10"));
-        var read = await browser.GetFromJsonAsync<DecisionShadowInputV1>(
+        var frozen = await browser.GetFromJsonAsync<DecisionShadowInputV1>(
             $"/api/v1/orchestration/runs/{occurrence}/grounds-input");
-        Assert.Equal(occurrence, read?.Grounds.OccurrenceId);
+        Assert.NotNull(frozen);
+        Assert.Equal("host", frozen.Grounds.Scope.Kind);
         var grounds = DecisionGroundsPolicy.Freeze(frozen.Grounds);
         var jobResponse = await browser.PostAsJsonAsync("/api/v1/orchestration/decision-jobs",
             new OrchestratorDecisionJobRequest(occurrence, "", "", 1, grounds.ContentDigest,
@@ -237,7 +247,7 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
             new OrchestratorDecisionJobCompletion(claim.JobId, claim.ClaimToken, "runner-1", true,
                 """{"chosenActions":[],"confidence":0.8,"reasoning":"Capacity is stable.","citedFacts":[],"assessment":"Stable","report":"No action needed."}""",
                 grounds.ModelRoute.Model, [new("call-1", grounds.ModelRoute.Model, 100, 0, 0, 20, false)],
-                clock.GetUtcNow().UtcDateTime, clock.GetUtcNow().UtcDateTime.AddSeconds(2), null, false));
+                at, at.AddSeconds(2), null, false));
         completionResponse.EnsureSuccessStatusCode();
         job = await browser.GetFromJsonAsync<OrchestratorDecisionJobDto>(
             $"/api/v1/orchestration/decision-jobs/{job.JobId}");
@@ -261,8 +271,72 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
             || path.Contains("decision-jobs", StringComparison.Ordinal)
             || path.Contains("decision-receipt", StringComparison.Ordinal)
             || path.Contains("host-decisions", StringComparison.Ordinal)
-            || path.Contains("orchestrator-decisions", StringComparison.Ordinal));
+            || path.Contains("orchestrator-decisions", StringComparison.Ordinal)
+            || path.Contains("decision-rules", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task Local_profile_bounds_card_free_host_occurrences()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 8, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory(null, clock: clock);
+        var workspace = factory.Services.GetRequiredService<WorkspaceRegistry>().Create("Capacity", clock: clock);
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var engine = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "engine-one", [RunnerScopes.Orchestration], null, null)).Code);
+        var hostId = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "agent-runner-01", [RunnerScopes.Claim], null, null)).Code).Runner.Id;
+        using var browser = CreateClient(factory);
+        browser.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
+        var at = clock.GetUtcNow().UtcDateTime;
+        var fact = new GroundsFactV1("host.queue", "capacity", "Eligible queue", "6", "cards",
+            new("capacity-snapshot", "snapshot:host"), at, "complete", GroundsReliability.Reliable);
+        HostDecisionOccurrenceRequestV1 Request(string id, string? cadence = "event") => new(id, workspace.Id,
+            hostId, "capacity-check", "capacity-check", at, [fact],
+            [new(DecisionActionKinds.Observe, "host", "reversible", "A0", true)], [], cadence);
+        async Task<(HttpStatusCode Status, string Body)> Post(HostDecisionOccurrenceRequestV1 request)
+        {
+            var response = await browser.PostAsJsonAsync("/api/v1/orchestration/host-decisions", request);
+            return (response.StatusCode, await response.Content.ReadAsStringAsync());
+        }
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await Post(Request("no-cadence", null))).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Post(Request("skewed") with
+            { ObservedAt = at.AddMinutes(11) })).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Post(Request("scout") with
+            { TriggerKind = "improvement-scout", Profile = "improvement-scout" })).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Post(Request("raw-fact") with
+            { Facts = [fact with { Id = "host.raw-log" }] })).Status);
+        var unknownHost = await Post(Request("unknown-host") with { HostId = "runner_unknown" });
+        Assert.Equal(HttpStatusCode.BadRequest, unknownHost.Status);
+        Assert.Contains("unknown-host", unknownHost.Body);
+
+        var first = await Post(Request("capacity:event:0"));
+        Assert.Equal(HttpStatusCode.OK, first.Status);
+        using (var frozen = JsonDocument.Parse(first.Body))
+        {
+            var route = frozen.RootElement.GetProperty("grounds").GetProperty("modelRoute");
+            var configured = DecisionGroundsCollector.Route(factory.Services.GetRequiredService<IConfiguration>());
+            Assert.Equal(configured.Cli, route.GetProperty("cli").GetString());
+            Assert.Equal(configured.Model, route.GetProperty("model").GetString());
+        }
+        for (var index = 1; index < DecisionCostCapPolicy.MaxEventCallsPerHostDay; index++)
+            Assert.Equal(HttpStatusCode.OK, (await Post(Request($"capacity:event:{index}"))).Status);
+        var exhausted = await Post(Request("capacity:event:over"));
+        Assert.Equal(HttpStatusCode.TooManyRequests, exhausted.Status);
+        Assert.Contains("host-day-cap-exhausted", exhausted.Body);
+        // A replay of an admitted occurrence returns its frozen input, and the scheduled bucket is separate.
+        Assert.Equal(HttpStatusCode.OK, (await Post(Request("capacity:event:0"))).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Post(Request("capacity:scheduled:0", "scheduled"))).Status);
+    }
+
+    private static DecisionGroundsInputV1 HostGrounds(string occurrence, DateTime at)
+        => new(occurrence, new("capacity-check", "capacity-check", at, "scheduled"),
+            new("host", null, null, null, null, null, "host-1", "ws-task-server"), null, null, "platform.v1",
+            new("codex", "gpt-6-sol", "medium", DecisionModelCustody.RunnerHostJob), [], [], [],
+            new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0, DecisionTokenUsageV1.Zero, 0, 0, 0, [],
+                DecisionPriceStatuses.NoUsage, "host", []),
+            new("host.v1", "Host occurrence has no card rounds.", null, 0, 0, 0), []);
 
     private static async Task AssertSameBodyAsync(HttpClient client, string versioned, string legacy)
     {

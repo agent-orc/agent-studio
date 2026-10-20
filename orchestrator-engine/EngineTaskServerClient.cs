@@ -172,13 +172,9 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
 
     internal static HttpClient CreateHttpClient(EngineOptions options, bool decisionPlane = false)
     {
-        var decisionCredentialConfigured = decisionPlane
-            && (options.DecisionPlaneClientCredential is not null
-                || options.DecisionPlaneClientCredentialFile is not null);
-        var credentialFile = decisionCredentialConfigured
-            ? options.DecisionPlaneClientCredentialFile : options.ClientCredentialFile;
-        var credential = decisionCredentialConfigured
-            ? options.DecisionPlaneClientCredential : options.ClientCredential;
+        // A decision plane client carries only its own credential, never the Task Server one.
+        var credentialFile = decisionPlane ? options.DecisionPlaneClientCredentialFile : options.ClientCredentialFile;
+        var credential = decisionPlane ? options.DecisionPlaneClientCredential : options.ClientCredential;
         HttpMessageHandler handler = new HttpClientHandler();
         if (!string.IsNullOrWhiteSpace(credentialFile))
             handler = new EngineCredentialReloadHandler(credentialFile, handler);

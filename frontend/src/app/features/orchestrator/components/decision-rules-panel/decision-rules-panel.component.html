@@ -25,6 +25,10 @@
     </label>
   </div>
   <p>Active version: <code>{{ view()?.activeVersionId ?? 'platform defaults' }}</code></p>
+  @if (view()?.degraded) {
+    <p role="alert" data-testid="decision-rules-degraded">Some stored rule records were unreadable and are quarantined:
+      {{ view()?.quarantined?.join(', ') }}. Review the active version before activating another.</p>
+  }
   <details class="rules__floors">
     <summary>Authority floors</summary>
     @for (floor of view()?.hardFloors ?? []; track floor.id) {
@@ -36,14 +40,18 @@
     <p>Project rules are overlays. Host-wide decisions use workspace rules.</p>
     @for (rule of inherited(); track rule.id) {
       <p>Inherited <code>{{ rule.id }}</code>: {{ rule.trigger }} · {{ rule.factId }} ·
-        {{ rule.model ?? 'workspace model' }} ·
+        {{ rule.model ?? 'configured model' }} ·
         effective {{ isOverridden(rule.id) ? 'project override' : 'workspace' }}</p>
     }
   }
   @for (rule of rules(); track $index; let index = $index) {
     <div class="rules__row">
       <label>Rule id <input [value]="rule.id" (input)="updateRule(index, 'id', $any($event.target).value)" /></label>
-      <label>Trigger <input [value]="rule.trigger" (input)="updateRule(index, 'trigger', $any($event.target).value)" /></label>
+      <label>Trigger
+        <select [value]="rule.trigger" (change)="updateRule(index, 'trigger', $any($event.target).value)">
+          @for (trigger of triggers; track trigger) { <option [value]="trigger">{{ trigger }}</option> }
+        </select>
+      </label>
       <label>Fact id <input [value]="rule.factId" (input)="updateRule(index, 'factId', $any($event.target).value)" /></label>
       <label>Warning threshold <input [value]="rule.warningThreshold ?? ''" (input)="updateRule(index, 'warningThreshold', $any($event.target).value)" /></label>
       <label>Actions <input [value]="rule.candidateActions.join(', ')" (input)="updateRule(index, 'candidateActions', $any($event.target).value)" /></label>

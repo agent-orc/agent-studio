@@ -144,40 +144,66 @@ receipt with grounds and response, and `outcomeLink` shows the applied action.
 In Shadow, the model choice is never dispatched. In Engine mode, the coding
 completion profile freezes the same grounds before activating its occurrence.
 OD-S6 adds API-owned immutable rule drafts under
-`<TaskRepository>/.metadata/orchestrator-rules`. An activation is an append-only
+`<TaskRepository>/.metadata/orchestrator-rules`. Records are written through a
+flushed temporary file. An unreadable record is moved to `quarantine/` with a
+logged error at startup, and the rule view reports `degraded`; the store never
+fails the runner completion path that reads it. An activation is an append-only
 actor, reason, version and time record; rollback creates and activates a new
 version. The workspace version governs host-wide decisions. A project overlay
 can add or replace soft signals but cannot govern a host-wide trigger or edit
 the hard authority floors. The Rules editor drafts, replays up to 100 receipts
 from 30 days, labels the model result counterfactual, and requires explicit
 activation. An occurrence freezes the active rule version in its grounds, so
-later activation does not rewrite its receipt.
+later activation does not rewrite its receipt. A card occurrence without an
+active rule version keeps the unchanged OD-S1 policy version and prompt.
+
+`DecisionRulePolicy.Validate` refuses a rule whose trigger is outside the closed
+list that live paths read (`step-transition` and `CodingCompletion` for cards,
+`capacity-check` for hosts), a rule without candidate actions, and a `hold`
+rule whose fact is not a known fact of its trigger. A card-trigger version,
+and a project overlay merged with its workspace rules, must leave at least one
+available non-ask coding completion alternative within the A0/A1 floor. A rule
+model must be one the configured `Orchestration:DecisionModel` CLI serves and
+that the Token Economy model catalogue rates frontier and selectable. The rule
+replaces only the model of the configured route, so its thinking level and the
+alternate transport retry stay configured.
 
 Studio owns `GET /api/workspaces/{workspaceId}/decision-rules` and its
 `POST /versions`, `POST /versions/{versionId}/activate`,
 `POST /versions/{versionId}/rollback`, and
 `GET /versions/{versionId}/dry-run` subroutes. Each accepts an optional
-`projectId` query parameter for a project overlay. Studio receipt and spend
+`projectId` query parameter for a project overlay. The dry run replays only
+receipts the caller may read, and matches a receipt's registry project name to
+the overlay's project id. Studio receipt and spend
 queries at `/api/orchestration/decision-receipts` and its `/spend` subroute
 accept `workspaceId` as well as `hostId` and card or project filters.
 
 The engine can submit a card-free `capacity-check` host occurrence through
 `/api/v1/orchestration/host-decisions`. Its scope has a host and workspace id
-with null card, attempt and fence. Studio handles this route on its receipt
-plane in both local and Task Server proxy profiles; the Task Server has no
-host-decision handler. Studio pins the workspace rules,
-resolves the configured strong model, bounds source references and freezes the
-grounds. In a Task Server proxy deployment, set the engine's
-`DECISION_PLANE_URL` to the Studio origin and enroll an `engine_` principal there;
-use `DECISION_PLANE_CLIENT_CREDENTIAL_FILE` if its credential differs from the
-Task Server engine credential. The engine keeps stage claims on `SERVER_URL`,
-but polls pending grounds, reads frozen input, creates and reads decision jobs,
-and writes receipts through `DECISION_PLANE_URL`. Studio serves those receipt
-routes from its own store in both profiles, so a host submission can complete
-without entering the Task Server proxy. Runner hosts that execute decision jobs
-must reach Studio's `/api/runner/orchestrator-decisions` claim and completion
-routes. The engine's receipt loop records zero to three offered actions with
-assessment and report content. The receipt remains immutable; host history is
+with null card, attempt and fence. The host id must name an enrolled, active
+runner host; `cadence` (`scheduled` or `event`) is required; `observedAt` must
+be within 10 minutes of the server clock; facts come from the capacity check
+vocabulary. When the host-day bucket of the cadence is exhausted, the route
+answers 429 `host-day-cap-exhausted`; frozen occurrences that still wait for
+their job reserve one call and the full per-call envelope. Studio pins the
+workspace rules, builds the configured decision route, bounds source references
+and freezes the grounds with prompt version `od-s6.host-occurrence.v1`.
+
+With a standalone Task Server (`TaskServer:BaseUrl`), the Task Server owns
+workspaces and Studio cannot resolve their ids. The rule routes and
+`host-decisions` then answer 409 `decision-rules-not-on-proxy-profile`. Studio
+keeps only the receipt GET routes, the engine receipt routes and
+`/api/runner/orchestrator-decisions` open in that profile; the operator-intent
+POST moves cards through the legacy task store and stays closed. The engine
+keeps stage claims on `SERVER_URL`. `DECISION_PLANE_URL` selects a separate
+receipt plane for pending grounds, frozen input, decision jobs and receipts; a
+non-loopback value that differs from `SERVER_URL` requires
+`DECISION_PLANE_CLIENT_CREDENTIAL` or `DECISION_PLANE_CLIENT_CREDENTIAL_FILE`,
+and the Task Server credential is never sent there. Runner hosts that execute
+decision jobs must reach the receipt plane's `/api/runner/orchestrator-decisions`
+claim and completion routes. The engine's receipt loop records zero to three
+offered actions with assessment and report content. The receipt remains
+immutable; host history is
 `/api/orchestration/decision-receipts?hostId=...` and the same receipt enters
 workspace spend. A host decision action in this seam is proposed for the
 Fluid capacity authority adapter; Fluid capacity owns scheduling, allocation,

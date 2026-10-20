@@ -1,7 +1,12 @@
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using AgentStudio.TestSupport;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -149,6 +154,201 @@ public sealed class DecisionRuleVersionTests : IDisposable
         Assert.Equal("counterfactual-model-result", row.ModelResultLabel);
         Assert.Contains("queue: 6 (warning)", row.NewSignals);
         Assert.Empty(row.OldSignals);
+    }
+
+    [Fact]
+    public void Empty_candidates_unknown_triggers_and_unreadable_hold_facts_are_refused()
+    {
+        var codex = DecisionRuleModelCatalogueSource.For("codex");
+        var refusals = DecisionRulePolicy.Validate(
+        [
+            Rule("empty") with { CandidateActions = [] },
+            Rule("review") with { Trigger = "review-decision" },
+            Rule("batch") with { Trigger = "BatchPlan" },
+            Rule("typo") with { Trigger = "capacity-chek" },
+            Rule("hold") with { FactId = "host.nonexistent", MissingDataBehavior = "hold" },
+            Rule("card-hold") with { Trigger = DecisionRuleTriggers.StepTransition, FactId = "host.queue",
+                CandidateActions = ["prepare", "retry"], MissingDataBehavior = "hold" },
+        ], false, codex).Refusals;
+        Assert.Contains(refusals, value => value.Contains("empty needs at least one candidate action"));
+        foreach (var trigger in new[] { "review-decision", "BatchPlan", "capacity-chek" })
+            Assert.Contains(refusals, value => value.Contains($"trigger {trigger}, which no live decision path reads"));
+        Assert.Contains(refusals, value => value.Contains("host.nonexistent, which is not a known fact of capacity-check"));
+        Assert.Contains(refusals, value => value.Contains("host.queue, which is not a known fact of step-transition"));
+        Assert.True(DecisionRulePolicy.Validate([Rule("known") with { MissingDataBehavior = "hold" }], false, codex).Accepted);
+    }
+
+    [Fact]
+    public void Card_fact_vocabulary_is_emitted_by_the_coding_completion_collector()
+    {
+        var root = RepositoryRoot.Find();
+        var emitted = Regex.Matches(
+                File.ReadAllText(Path.Combine(root, "backend/Features/Runner/DecisionReceipts/DecisionGroundsCollector.cs"))
+                + File.ReadAllText(Path.Combine(root, "orchestration-decisions/PolicySignalProducers.cs")),
+                @"Fact\(""(?<id>[a-z][a-z0-9.-]+)""")
+            .Select(match => match.Groups["id"].Value).ToHashSet(StringComparer.Ordinal);
+        Assert.Empty(DecisionRuleTriggers.CodingCompletionFacts.Where(id => !emitted.Contains(id)));
+    }
+
+    [Fact]
+    public void Card_rules_must_leave_a_non_ask_coding_completion_alternative()
+    {
+        var codex = DecisionRuleModelCatalogueSource.For("codex");
+        var card = Rule("card") with { Trigger = DecisionRuleTriggers.CodingCompletion,
+            FactId = "ledger.tokens", CandidateActions = ["prepare", "retry"] };
+        Assert.True(DecisionRulePolicy.Validate([card], false, codex).Accepted);
+        foreach (var blocking in new[]
+                 {
+                     card with { CandidateActions = ["observe"] },
+                     card with { CandidateActions = ["ask"] },
+                     card with { AutonomyClass = "A3" },
+                     card with { AutonomyClass = "A2" },
+                 })
+            Assert.Contains(DecisionRulePolicy.Validate([blocking], false, codex).Refusals,
+                value => value.Contains("no available non-ask CodingCompletion alternative"));
+
+        var store = new DecisionRuleVersionStore(_root, _time);
+        var workspace = store.Draft("workspace", null, new(null, "operator", "card rules", [card]));
+        store.Activate("workspace", null, workspace.VersionId, new("operator", "enable"));
+        // An overlay that replaces the only card rule with an unavailable action
+        // would send every card of that project to ask.
+        var error = Assert.Throws<ArgumentException>(() => store.Draft("workspace", "project",
+            new(null, "operator", "overlay", [card with { CandidateActions = ["halt"] }])));
+        Assert.Contains("Project overlay project", error.Message);
+        var overlay = store.Draft("workspace", "project", new(null, "operator", "overlay",
+            [card with { Id = "card-checkpoint", CandidateActions = ["checkpoint"] }]));
+        store.Activate("workspace", "project", overlay.VersionId, new("operator", "enable overlay"));
+    }
+
+    [Fact]
+    public void Rule_models_must_be_served_by_the_configured_cli_at_the_catalogue_floor()
+    {
+        var codex = DecisionRuleModelCatalogueSource.For("codex");
+        Assert.Null(DecisionRulePolicy.ModelRefusal("gpt-6.1-sol", codex));
+        Assert.Null(DecisionRulePolicy.ModelRefusal("gpt-6-sol", codex));
+        Assert.Contains("cannot serve", DecisionRulePolicy.ModelRefusal("claude-opus-5", codex));
+        Assert.Contains("below the trusted correctness floor", DecisionRulePolicy.ModelRefusal("gpt-6-luna", codex));
+        Assert.Contains("does not know", DecisionRulePolicy.ModelRefusal("gpt-unknown-1", codex));
+        var claude = DecisionRuleModelCatalogueSource.For("claude");
+        Assert.Null(DecisionRulePolicy.ModelRefusal("claude-opus-5", claude));
+        Assert.Contains("cannot serve", DecisionRulePolicy.ModelRefusal("gpt-6.1-sol", claude));
+
+        // The route keeps the configured CLI, thinking level and alternate retry.
+        var configured = new DecisionModelRouteV1("codex", "gpt-6-sol", "medium", DecisionModelCustody.RunnerHostJob,
+            "claude", "claude-opus-5", "high");
+        var route = DecisionGroundsCollector.RuleRoute(configured,
+            [Rule("unserved") with { Model = "claude-opus-5" }, Rule("served") with { Model = "gpt-6.1-sol" }],
+            codex, "capacity-check");
+        Assert.Equal(configured with { Model = "gpt-6.1-sol" }, route);
+    }
+
+    [Fact]
+    public void A_truncated_rule_file_is_quarantined_without_failing_the_store()
+    {
+        var store = new DecisionRuleVersionStore(_root, _time);
+        var version = store.Draft("workspace", null, new(null, "operator", "initial rules", [Rule("queue")]));
+        store.Activate("workspace", null, version.VersionId, new("operator", "enable"));
+        var path = Path.Combine(_root, "version-" + version.VersionId + ".json");
+        var bytes = File.ReadAllBytes(path);
+        File.WriteAllBytes(path, bytes[..(bytes.Length / 2)]);
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp"));
+
+        var restarted = new DecisionRuleVersionStore(_root, _time);
+        var view = restarted.View("workspace");
+        Assert.True(view.Degraded);
+        Assert.Equal(["version-" + version.VersionId + ".json"], view.Quarantined);
+        Assert.False(File.Exists(path));
+        Assert.Single(Directory.GetFiles(Path.Combine(_root, DecisionRuleVersionStore.QuarantineFolder)));
+        Assert.Empty(restarted.EffectiveRules("workspace"));
+        Assert.False(new DecisionRuleVersionStore(_root, _time).View("workspace").Degraded);
+    }
+
+    [Fact]
+    public void Card_prompt_stays_byte_identical_and_host_prompt_is_versioned_separately()
+    {
+        var at = _time.GetUtcNow().UtcDateTime;
+        var host = DecisionGroundsPolicy.Freeze(new DecisionGroundsInputV1("capacity:host-1",
+            new("capacity-check", "capacity-check", at, "scheduled"),
+            new("host", null, null, null, null, null, "host-1", "workspace"), null, null, "platform.v1",
+            new("codex", "gpt-6-sol", "medium", DecisionModelCustody.RunnerHostJob), [], [], [],
+            new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0, DecisionTokenUsageV1.Zero, 0, 0, 0, [],
+                DecisionPriceStatuses.NoUsage, "host", []), new("host.v1", "No card rounds", null, 0, 0, 0), []));
+        var card = host with { Scope = new("card", "Project", "AGT-1", "attempt-1", 1, 1, null) };
+        var cardPrompt = DecisionReceiptPolicy.RenderPrompt(card);
+        Assert.StartsWith("You decide the next typed action of one orchestrator transition in Agent Studio.\n"
+            + "Read only the frozen decision grounds below. Do not run tools, read files or query sessions.\n"
+            + "Choose exactly one action from the alternatives whose \"available\" is true.", cardPrompt);
+        Assert.Contains("\"uncertainty\":\"<missing evidence or none>\"}\n\nDecision grounds", cardPrompt);
+        Assert.DoesNotContain("assessment", cardPrompt);
+        Assert.Equal(DecisionReceiptPolicy.PromptVersion, DecisionReceiptPolicy.PromptVersionFor(card));
+        Assert.Equal("od-s1.step-transition.v1", DecisionReceiptPolicy.PromptVersion);
+        var hostPrompt = DecisionReceiptPolicy.RenderPrompt(host);
+        Assert.StartsWith("You decide one bounded orchestrator occurrence in Agent Studio.", hostPrompt);
+        Assert.Contains("\"report\":\"<periodic report, at most 600 characters>\"", hostPrompt);
+        Assert.Equal(DecisionReceiptPolicy.HostPromptVersion, DecisionReceiptPolicy.PromptVersionFor(host));
+    }
+
+    [Fact]
+    public void Host_occurrence_admission_reserves_waiting_occurrences_per_cadence()
+    {
+        var at = _time.GetUtcNow().UtcDateTime;
+        var store = new OrchestratorDecisionStore((string?)null, _time, TokenTestServices.Pricing());
+        DecisionShadowInputV1 Input(string id, string cadence) => new(new DecisionGroundsInputV1(id,
+                new("capacity-check", "capacity-check", at, cadence),
+                new("host", null, null, null, null, null, "host-1", "workspace"), null, null, "platform.v1",
+                new("codex", "gpt-6-sol", "medium", DecisionModelCustody.RunnerHostJob), [], [], [],
+                new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0, DecisionTokenUsageV1.Zero, 0, 0, 0, [],
+                    DecisionPriceStatuses.NoUsage, "host", []), new("host.v1", "No card rounds", null, 0, 0, 0), []),
+            DecisionActionKinds.Observe, "host-1", "host occurrence", DecisionReceiptPolicy.ActiveMode);
+        for (var index = 0; index < DecisionCostCapPolicy.MaxEventCallsPerHostDay; index++)
+            Assert.NotNull(store.FreezeHostInputs(Input($"event-{index}", "event")).Input);
+        var refused = store.FreezeHostInputs(Input("event-over", "event"));
+        Assert.Null(refused.Input);
+        Assert.Contains("12 event decision calls", refused.CapReason);
+        Assert.Null(store.GetInputs("event-over"));
+        Assert.NotNull(store.FreezeHostInputs(Input("event-0", "event")).Input);
+        // Waiting occurrences also reserve their full token envelope in the shared day contingent.
+        var scheduled = 0;
+        while (store.FreezeHostInputs(Input($"scheduled-{scheduled}", "scheduled")).Input is not null) scheduled++;
+        Assert.Equal((int)(DecisionCostCapPolicy.MaxInputTokensPerHostDay / DecisionGroundsPolicy.MaxCallInputTokens)
+            - DecisionCostCapPolicy.MaxEventCallsPerHostDay, scheduled);
+        Assert.Contains("decision input tokens", store.FreezeHostInputs(Input("scheduled-over", "scheduled")).CapReason);
+    }
+
+    [Fact]
+    public void Host_occurrence_boundary_requires_cadence_known_facts_and_a_fresh_observation()
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var fact = new GroundsFactV1("host.queue", "capacity", "Queue", "6", null,
+            new("capacity-snapshot", "snapshot:host-1"), now, "complete", GroundsReliability.Reliable);
+        var valid = new HostDecisionOccurrenceRequestV1("capacity:host-1", "workspace", "runner_1",
+            "capacity-check", "capacity-check", now, [fact], [], [], "scheduled");
+        Assert.Null(OrchestratorDecisionEndpoints.HostOccurrenceRefusal(valid, now));
+        Assert.Null(OrchestratorDecisionEndpoints.HostOccurrenceRefusal(valid with { ObservedAt = now.AddMinutes(-10) }, now));
+        Assert.Contains("cadence", OrchestratorDecisionEndpoints.HostOccurrenceRefusal(valid with { Cadence = null }, now));
+        Assert.Contains("within 10 minutes", OrchestratorDecisionEndpoints.HostOccurrenceRefusal(
+            valid with { ObservedAt = now.AddMinutes(-11) }, now));
+        Assert.Contains("trigger", OrchestratorDecisionEndpoints.HostOccurrenceRefusal(
+            valid with { TriggerKind = "host-wide", Profile = "host-wide" }, now));
+        Assert.Contains("vocabulary", OrchestratorDecisionEndpoints.HostOccurrenceRefusal(
+            valid with { Facts = [fact with { Id = "filesystem.root" }] }, now));
+    }
+
+    [Fact]
+    public void Dry_run_matches_receipt_project_names_to_overlay_project_ids()
+    {
+        var registry = Path.Combine(_root, "registry");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = registry,
+        }).Build();
+        var projects = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var project = projects.EnsureProjectForStorage(Path.Combine(registry, "agent-studio"), "Agent Studio",
+            "workspace", _time);
+        Assert.Equal(project.Id, DecisionRuleEndpoints.ProjectIdOf("Agent Studio", projects));
+        Assert.Equal(project.Id, DecisionRuleEndpoints.ProjectIdOf(project.Id, projects));
+        Assert.Equal("Unregistered", DecisionRuleEndpoints.ProjectIdOf("Unregistered", projects));
+        Assert.Null(DecisionRuleEndpoints.ProjectIdOf(null, projects));
     }
 
     private static DecisionRuleV1 Rule(string id, string autonomy = "A1")

@@ -22,6 +22,53 @@ public sealed record DecisionRuleReplaySignals(IReadOnlyList<string> Signals,
 public sealed record DecisionAuthorityFloorV1(string Id, string Scope, string Value,
     string Source, string Owner = "platform", string Version = "platform.v1");
 
+/// <summary>One catalogue model, the CLI that serves it, and whether it clears the trusted floor.</summary>
+public sealed record DecisionModelOptionV1(string Model, string Cli, bool Trusted);
+
+/// <summary>The models the configured decision CLI can be asked to run.</summary>
+public sealed record DecisionRuleModelCatalogue(string Cli, IReadOnlyList<DecisionModelOptionV1> Models);
+
+/// <summary>
+/// The closed trigger list. Each entry is read by a live decision path: the
+/// coding completion step transition, or the card-free capacity check.
+/// </summary>
+public static class DecisionRuleTriggers
+{
+    public const string StepTransition = "step-transition";
+    public const string CodingCompletion = "CodingCompletion";
+    public const string CapacityCheck = "capacity-check";
+
+    public static readonly IReadOnlyList<string> Card = [StepTransition, CodingCompletion];
+    public static readonly IReadOnlyList<string> Host = [CapacityCheck];
+    public static readonly IReadOnlyList<string> All = [.. Card, .. Host];
+
+    /// <summary>Facts every coding completion occurrence carries.</summary>
+    public static readonly IReadOnlyList<string> CodingCompletionFacts =
+    [
+        "run.outcome", "attempt.fence", "attempt.epoch", "card.lane", "transition.proposed-next",
+        "result.sha", "result.base-sha", "result.envelope", "result.ref", "review.last-outcome",
+        "ledger.tokens", "ledger.priced-usd", "ledger.price-status", "ledger.unpriced-rows",
+        "ledger.excluded-duplicates", "progress.rounds-without-progress", "progress.exhaustions",
+        "progress.last-verified-tree", "signal.gate-duration", "signal.review-aspect",
+        "signal.coding-run", "signal.salvage-continuation",
+    ];
+
+    /// <summary>The capacity check evidence vocabulary; a host occurrence submits no other fact.</summary>
+    public static readonly IReadOnlyList<string> CapacityCheckFacts =
+    [
+        "host.load-band", "host.cpu-percent", "host.load15", "host.memory-percent",
+        "host.role-occupancy", "host.role-throttling", "host.queue", "host.oldest-wait-minutes",
+        "host.admission-verdicts", "host.allocation-changes",
+    ];
+
+    public static bool IsCard(string? trigger) => trigger is not null && Card.Contains(trigger, StringComparer.Ordinal);
+
+    public static bool IsHost(string? trigger) => trigger is not null && Host.Contains(trigger, StringComparer.Ordinal);
+
+    public static IReadOnlyList<string> KnownFacts(string? trigger)
+        => IsCard(trigger) ? CodingCompletionFacts : IsHost(trigger) ? CapacityCheckFacts : [];
+}
+
 /// <summary>Checks editable rules before the API can persist or activate a version.</summary>
 public static class DecisionRulePolicy
 {
@@ -114,7 +161,8 @@ public static class DecisionRulePolicy
                 source is null ? GroundsReliability.Unreliable : source.Reliability);
         }).ToArray();
 
-    public static DecisionRuleValidation Validate(IReadOnlyList<DecisionRuleV1> rules, bool projectOverlay)
+    public static DecisionRuleValidation Validate(IReadOnlyList<DecisionRuleV1> rules, bool projectOverlay,
+        DecisionRuleModelCatalogue models)
     {
         var refusals = new List<string>();
         if (rules is null) return new(["Rules are required."]);
@@ -123,14 +171,16 @@ public static class DecisionRulePolicy
                      .GroupBy(rule => rule.Id, StringComparer.Ordinal)
                      .Where(group => group.Count() > 1))
             refusals.Add($"Duplicate rule id: {duplicate.Key}.");
+        var complete = true;
         foreach (var rule in rules)
         {
-            if (rule is null) { refusals.Add("A rule entry is null."); continue; }
+            if (rule is null) { refusals.Add("A rule entry is null."); complete = false; continue; }
             if (rule.Id is null || rule.Trigger is null || rule.FactId is null
                 || rule.CandidateActions is null || rule.AutonomyClass is null
                 || rule.MissingDataBehavior is null)
             {
                 refusals.Add("A rule has a missing required field.");
+                complete = false;
                 continue;
             }
             if (string.IsNullOrWhiteSpace(rule.Id) || rule.Id.Length > 80
@@ -138,10 +188,14 @@ public static class DecisionRulePolicy
                 || string.IsNullOrWhiteSpace(rule.Trigger) || rule.Trigger.Length > 80
                 || string.IsNullOrWhiteSpace(rule.FactId) || rule.FactId.Length > 100)
                 refusals.Add($"Rule {rule.Id} has an invalid id, trigger, or fact id.");
+            if (!DecisionRuleTriggers.All.Contains(rule.Trigger, StringComparer.Ordinal))
+                refusals.Add($"Rule {rule.Id} uses trigger {rule.Trigger}, which no live decision path reads.");
             if (rule.Id.StartsWith("floor.", StringComparison.OrdinalIgnoreCase)
                 || rule.FactId.Contains("raw-session", StringComparison.OrdinalIgnoreCase)
                 || rule.FactId.Contains("filesystem", StringComparison.OrdinalIgnoreCase))
                 refusals.Add($"Rule {rule.Id} cannot edit authority floors or read raw sessions or paths.");
+            if (rule.CandidateActions.Count == 0)
+                refusals.Add($"Rule {rule.Id} needs at least one candidate action.");
             if (rule.CandidateActions.Count > 9 || rule.CandidateActions.Any(action =>
                     !DecisionActionKinds.All.Contains(action, StringComparer.Ordinal)))
                 refusals.Add($"Rule {rule.Id} has an action outside the closed union.");
@@ -149,26 +203,62 @@ public static class DecisionRulePolicy
                 refusals.Add($"Rule {rule.Id} has an invalid autonomy class.");
             if (rule.MissingDataBehavior is not ("ask" or "hold" or "signal"))
                 refusals.Add($"Rule {rule.Id} has an invalid missing-data behavior.");
+            // A hold on a fact the trigger never carries would hold every occurrence.
+            if (rule.MissingDataBehavior == "hold"
+                && !DecisionRuleTriggers.KnownFacts(rule.Trigger).Contains(rule.FactId, StringComparer.Ordinal))
+                refusals.Add($"Hold rule {rule.Id} reads {rule.FactId}, which is not a known fact of {rule.Trigger}.");
             if (rule.FreshnessMinutes is < 1 or > 1440)
                 refusals.Add($"Rule {rule.Id} has an unbounded freshness window.");
             if (rule.WarningThreshold is { Length: > 0 } threshold
                 && !decimal.TryParse(threshold, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
                 refusals.Add($"Rule {rule.Id} needs a numeric warning threshold.");
-            if (projectOverlay && rule.Trigger is ("capacity-check" or "host-wide"))
+            if (projectOverlay && DecisionRuleTriggers.IsHost(rule.Trigger))
                 refusals.Add($"Project rule {rule.Id} cannot govern host-wide actions.");
-            if (rule.Model is { Length: > 0 } model && !TrustedModel(model))
-                refusals.Add($"Rule {rule.Id} sets a model below the trusted correctness floor or an unknown model.");
+            if (rule.Model is { Length: > 0 } model && ModelRefusal(model, models) is { } modelRefusal)
+                refusals.Add($"Rule {rule.Id} {modelRefusal}");
         }
+        // A project overlay is checked against its merged workspace rules by the caller.
+        if (complete && !projectOverlay && CardAlternativeRefusal(rules) is { } cardRefusal)
+            refusals.Add(cardRefusal);
         return new(refusals);
     }
 
-    // The registry's exact model routing remains authoritative at call time. The
-    // editor accepts only the strong model families chosen for this decision role.
-    private static bool TrustedModel(string model)
-        => model.StartsWith("gpt-5.6-sol", StringComparison.OrdinalIgnoreCase)
-            || model.StartsWith("gpt-6-sol", StringComparison.OrdinalIgnoreCase)
-            || model.StartsWith("gpt-6-astra", StringComparison.OrdinalIgnoreCase)
-            || model.StartsWith("claude-opus", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Null when the card rules still leave a non-ask coding completion
+    /// alternative inside the A0/A1 floor once their facts are present.
+    /// Without one, every card falls to ask.
+    /// </summary>
+    public static string? CardAlternativeRefusal(IReadOnlyList<DecisionRuleV1> rules)
+    {
+        var card = rules.Where(rule => DecisionRuleTriggers.IsCard(rule.Trigger)).ToArray();
+        if (card.Length == 0) return null;
+        var at = DateTime.UnixEpoch;
+        var facts = card.Select(rule => rule.FactId).Distinct(StringComparer.Ordinal)
+            .Select(id => new GroundsFactV1(id, "rule", id, "0", null, new("rule-check", id), at,
+                "complete", GroundsReliability.Reliable)).ToArray();
+        var offered = DecisionGroundsPolicy.CodingCompletionAlternatives(
+            new TransitionDecision(TransitionAction.ReturnToReady, "rule check",
+                new DecisionReceipt("rule-check", "", "", 0, 0, []), [], []),
+            hasSettledEnvelope: true, "verified-tree", "result-sha", "result-ref");
+        var applied = Apply(card, DecisionRuleTriggers.StepTransition, DecisionRuleTriggers.CodingCompletion,
+            facts, offered, at);
+        return applied.Any(candidate => candidate.Available && candidate.Action != DecisionActionKinds.Ask
+                && candidate.RequiredApproval is "A0" or "A1")
+            ? null
+            : "Card rules leave no available non-ask CodingCompletion alternative within the A0/A1 floor.";
+    }
+
+    /// <summary>Null when the configured decision CLI serves the model at the trusted floor.</summary>
+    public static string? ModelRefusal(string model, DecisionRuleModelCatalogue models)
+    {
+        var option = models.Models.FirstOrDefault(candidate =>
+            string.Equals(candidate.Model, model.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (option is null) return $"sets model {model}, which the model catalogue does not know.";
+        if (!string.Equals(option.Cli, models.Cli, StringComparison.OrdinalIgnoreCase))
+            return $"sets model {model}, which the configured decision CLI {models.Cli} cannot serve.";
+        return option.Trusted ? null
+            : $"sets model {model}, which is below the trusted correctness floor.";
+    }
 
     private static string ThresholdState(DecisionRuleV1 rule, string value)
     {

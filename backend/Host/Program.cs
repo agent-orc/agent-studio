@@ -1328,17 +1328,20 @@ app.Use(async (context, next) =>
     await next(context);
 });
 // An explicitly selected standalone Task Server owns task data. Legacy task
-// handlers still use TaskRepository; keep them closed while Studio's decision
-// rule, receipt and runner-job routes remain on the Studio receipt plane.
+// handlers still use TaskRepository; keep them closed. Studio's receipt reads,
+// runner decision-job routes and the rule routes (which answer a typed 409)
+// stay on the Studio receipt plane. The operator-intent POST moves cards
+// through TaskRepository and stays closed.
 if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
 {
     app.Use(async (context, next) =>
     {
         var path = context.Request.Path;
-        var studioDecisionPath = path.StartsWithSegments("/api/orchestration/decision-receipts")
+        var segments = path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
+        var studioDecisionPath = (HttpMethods.IsGet(context.Request.Method)
+                && path.StartsWithSegments("/api/orchestration/decision-receipts"))
             || path.StartsWithSegments("/api/runner/orchestrator-decisions")
-            || (path.StartsWithSegments("/api/workspaces")
-                && path.Value?.Contains("/decision-rules", StringComparison.OrdinalIgnoreCase) == true);
+            || segments is ["api", "workspaces", _, "decision-rules", ..];
         if (context.Request.Path.StartsWithSegments("/api")
             && !context.Request.Path.StartsWithSegments("/api/v1")
             && !studioDecisionPath)

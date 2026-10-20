@@ -58,6 +58,28 @@ public sealed class OrchestratorDecisionStore
         }
     }
 
+    /// <summary>
+    /// Freezes a card-free occurrence unless the host-day bucket of its cadence
+    /// is exhausted. A replay returns the first frozen input.
+    /// </summary>
+    public HostDecisionFreezeResult FreezeHostInputs(DecisionShadowInputV1 input)
+    {
+        var occurrenceId = input.Grounds.OccurrenceId;
+        ArgumentException.ThrowIfNullOrWhiteSpace(occurrenceId);
+        lock (_gate)
+        {
+            if (_inputs.TryGetValue(occurrenceId, out var existing)) return new(existing, null);
+            var now = _time.GetUtcNow().UtcDateTime;
+            var (maxInput, maxOutput) = MonolithTransitionAdapter.DecisionCostCapPolicyEnvelope(0, 0);
+            var reason = HostDayReasonLocked(input.Grounds, now, maxInput, maxOutput,
+                EstimatedEnvelopePrice(input.Grounds.ModelRoute.Model, maxInput, maxOutput, now), reserveWaiting: true);
+            if (reason is not null) return new(null, reason);
+            Save("inputs", occurrenceId, input);
+            _inputs.Add(occurrenceId, input);
+            return new(input, null);
+        }
+    }
+
     public DecisionShadowInputV1? GetInputs(string occurrenceId)
     {
         lock (_gate) return _inputs.GetValueOrDefault(occurrenceId);
@@ -106,16 +128,7 @@ public sealed class OrchestratorDecisionStore
                 capReason = MonolithTransitionAdapter.DecisionCostCapPolicyCardReason(
                     Spend(_jobs.Values.Where(job => job.Dto.TaskId == request.TaskId)), estimatedUsd);
             else if (capReason is null)
-            {
-                var day = MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(input.Scope, now);
-                var hostDay = _jobs.Values.Where(job => _inputs.GetValueOrDefault(job.Dto.OccurrenceId)?.Grounds is { } grounds
-                    && !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(grounds.Scope)
-                    && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(grounds.Scope, job.Dto.CreatedAt) == day).ToArray();
-                bool Scheduled(JobRecord job) => MonolithTransitionAdapter.DecisionCostCapPolicyIsScheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger);
-                capReason = MonolithTransitionAdapter.DecisionCostCapPolicyHostDayReason(Spend(hostDay.Where(Scheduled)),
-                    Spend(hostDay.Where(job => !Scheduled(job))), MonolithTransitionAdapter.DecisionCostCapPolicyIsScheduled(input.Trigger),
-                    maxInput, maxOutput, estimatedUsd);
-            }
+                capReason = HostDayReasonLocked(input, now, maxInput, maxOutput, estimatedUsd, reserveWaiting: false);
             var record = new JobRecord
             {
                 Dto = new($"odj_{Guid.NewGuid():N}", request.OccurrenceId, request.ProjectId, request.TaskId,
@@ -542,12 +555,12 @@ public sealed class OrchestratorDecisionStore
         }
     }
 
+    /// <summary>Newest receipts of a workspace that pass the caller's project filter.</summary>
     public IReadOnlyList<OrchestratorDecisionReceiptV1> RecentReceipts(string? workspaceId,
-        string? projectId, int limit = 100)
+        Func<OrchestratorDecisionReceiptV1, bool> include, int limit = 100)
     {
         lock (_gate) return _receipts.Values.Where(item =>
-                (workspaceId is null || item.Scope.WorkspaceId == workspaceId)
-                && (projectId is null || item.Scope.ProjectId == projectId))
+                (workspaceId is null || item.Scope.WorkspaceId == workspaceId) && include(item))
             .OrderByDescending(item => item.EndedAt).Take(Math.Clamp(limit, 1, 100)).ToArray();
     }
 
@@ -555,6 +568,38 @@ public sealed class OrchestratorDecisionStore
     /// A call counts once a runner claimed it or while it may still be claimed.
     /// Settled calls add measured usage; open calls reserve their envelope.
     /// </summary>
+    /// <summary>
+    /// Host-day admission. With <paramref name="reserveWaiting"/>, every frozen
+    /// host occurrence that still waits for its job reserves one call and the
+    /// full per-call envelope, so admission at submission cannot outrun the cap.
+    /// </summary>
+    private string? HostDayReasonLocked(DecisionGroundsInputV1 input, DateTime now, int maxInput, int maxOutput,
+        decimal estimatedUsd, bool reserveWaiting)
+    {
+        var day = MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(input.Scope, now);
+        var hostDay = _jobs.Values.Where(job => _inputs.GetValueOrDefault(job.Dto.OccurrenceId)?.Grounds is { } grounds
+            && !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(grounds.Scope)
+            && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(grounds.Scope, job.Dto.CreatedAt) == day).ToArray();
+        bool Scheduled(GroundsTriggerV1 trigger) => MonolithTransitionAdapter.DecisionCostCapPolicyIsScheduled(trigger);
+        var waiting = reserveWaiting
+            ? _inputs.Values.Select(item => item.Grounds).Where(grounds =>
+                    !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(grounds.Scope)
+                    && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(grounds.Scope, grounds.Trigger.ObservedAt) == day
+                    && !_receipts.ContainsKey(grounds.OccurrenceId)
+                    && _jobs.Values.All(job => job.Dto.OccurrenceId != grounds.OccurrenceId))
+                .ToArray()
+            : [];
+        DecisionSpendSnapshot Reserve(DecisionSpendSnapshot spend, int calls) => calls == 0 ? spend
+            : new(spend.Calls + calls, spend.Tokens.Add(new(maxInput * (long)calls, 0, 0, maxOutput * (long)calls)),
+                spend.PricedUsd + estimatedUsd * calls);
+        return MonolithTransitionAdapter.DecisionCostCapPolicyHostDayReason(
+            Reserve(Spend(hostDay.Where(job => Scheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger))),
+                waiting.Count(grounds => Scheduled(grounds.Trigger))),
+            Reserve(Spend(hostDay.Where(job => !Scheduled(_inputs[job.Dto.OccurrenceId].Grounds.Trigger))),
+                waiting.Count(grounds => !Scheduled(grounds.Trigger))),
+            Scheduled(input.Trigger), maxInput, maxOutput, estimatedUsd);
+    }
+
     private DecisionSpendSnapshot Spend(IEnumerable<JobRecord> jobs)
     {
         var counted = jobs.Where(job => job.Dto.ClaimedAt is not null
@@ -630,6 +675,8 @@ public sealed class OrchestratorDecisionStore
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+
+    public sealed record HostDecisionFreezeResult(DecisionShadowInputV1? Input, string? CapReason);
 
     public sealed class JobRecord
     {
