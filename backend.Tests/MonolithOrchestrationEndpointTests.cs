@@ -350,6 +350,59 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             .FindJob(card, projectPath)!.WaitingForEngineDecision);
     }
 
+    [Fact]
+    public void Recovery_pass_without_marker_changes_does_not_force_a_task_index_rescan()
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-IDLE-RECOVERY";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        var cardFolder = Path.Combine(projectPath, TaskStates.Ready, card);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Idle recovery", state = TaskStates.Ready,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Nothing to recover.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                // The test owns every recovery pass; no host loop runs beside it.
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(factory.Services);
+        Assert.NotNull(scanner.FindJob(card, projectPath));
+        var scans = index.Misses;
+        var invalidations = index.MutationInvalidations;
+
+        recovery.RecoverOnce();
+        recovery.RecoverOnce();
+
+        // Neither pass wrote or removed a wait marker, so the published snapshot
+        // stays current and the next freshness read needs no workspace walk.
+        Assert.Equal(invalidations, index.MutationInvalidations);
+        Assert.False(scanner.FindJob(card, projectPath)!.WaitingForEngineDecision);
+        Assert.Equal(scans, index.Misses);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);

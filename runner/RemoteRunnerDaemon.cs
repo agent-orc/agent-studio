@@ -453,6 +453,10 @@ public sealed class RemoteRunnerDaemon
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
         var interactivePoll = interactiveChat.PollAsync(shutdown);
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(shutdown);
+        var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
+            new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(shutdown);
+        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log).PollAsync(shutdown);
+        var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(shutdown);
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -943,6 +947,9 @@ public sealed class RemoteRunnerDaemon
             await Task.WhenAll(codingHandoffs);
         await interactivePoll;
         await decisionPoll;
+        await repositoryProbePoll;
+        await deviceLoginPoll;
+        await gitSetupPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }

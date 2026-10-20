@@ -20,8 +20,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TaskRepository: /data/workspace
-      RemoteGate__SshHost: ${MONOLITH_REMOTE_GATE_SSH_HOST:?Set MONOLITH_REMOTE_GATE_SSH_HOST to the SSH host alias}
-      RemoteGate__WorkerPath: ${MONOLITH_REMOTE_GATE_WORKER_PATH:?Set MONOLITH_REMOTE_GATE_WORKER_PATH to the absolute remote OrchestratorApi.dll path}
+      RemoteGate__SshHost: ${MONOLITH_REMOTE_GATE_SSH_HOST:-}
+      RemoteGate__WorkerPath: ${MONOLITH_REMOTE_GATE_WORKER_PATH:-}
       HOME: /data/home
       GIT_CONFIG_COUNT: "2"
       GIT_CONFIG_KEY_0: credential.helper

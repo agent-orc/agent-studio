@@ -118,29 +118,28 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  startCodexSignIn(hostId: string, sshTarget: string): Observable<CodexSignInStartResponse> {
+  startCodexSignIn(hostId: string): Observable<CodexSignInStartResponse> {
     if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
-    const idempotencyKey = `signin-${crypto.randomUUID()}`;
     return this.http.post<CodexSignInStartResponse>(
-      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in`,
-      { sshTarget, idempotencyKey },
+      '/api/v1/management/device-logins',
+      { hostId, provider: 'codex' },
     );
   }
 
-  codexSignInStatus(hostId: string, handle: string, sshTarget?: string): Observable<CodexSignInStatusResponse> {
+  codexSignInStatus(handle: string, sessionKey: string): Observable<CodexSignInStatusResponse> {
     if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
-    // The target lets a restarted Studio finalize a pending host renewal.
     return this.http.get<CodexSignInStatusResponse>(
-      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in/${encodeURIComponent(handle)}` +
-        (sshTarget ? `?sshTarget=${encodeURIComponent(sshTarget)}` : ''),
+      `/api/v1/management/device-logins/${encodeURIComponent(handle)}`,
+      { headers: { 'X-Device-Login-Session': sessionKey } },
     );
   }
 
-  cancelCodexSignIn(hostId: string, handle: string): Observable<CodexSignInStatusResponse> {
+  cancelCodexSignIn(handle: string, sessionKey: string): Observable<void> {
     if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
-    return this.http.post<CodexSignInStatusResponse>(
-      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in/${encodeURIComponent(handle)}/cancel`,
+    return this.http.post<void>(
+      `/api/v1/management/device-logins/${encodeURIComponent(handle)}/cancel`,
       {},
+      { headers: { 'X-Device-Login-Session': sessionKey } },
     );
   }
 

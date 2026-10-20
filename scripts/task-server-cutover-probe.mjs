@@ -102,7 +102,7 @@ async function run() {
   const directStatus = await probe(`${value.taskServerUrl}/api/v1/management/status`, headers, deadline, 'Task Server management plane');
   await verifyVersion(directStatus, value.expectedSha, 'Task Server management plane');
   if (!value.directOnly) {
-    const proxyStatus = await probe(`${value.backendUrl}/api/v1/management/status`, {}, deadline, 'OrchestratorApi Task Server proxy');
+    const proxyStatus = await probe(`${value.backendUrl}/api/v1/management/status`, headers, deadline, 'OrchestratorApi Task Server proxy');
     await verifyVersion(proxyStatus, value.expectedSha, 'OrchestratorApi Task Server proxy');
   }
   console.log(`[task-server-cutover-probe] ${value.directOnly ? 'Task Server' : 'Task Server and proxy'} are healthy.`);

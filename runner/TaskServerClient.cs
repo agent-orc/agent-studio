@@ -25,6 +25,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
+    private readonly string _deviceLoginRunnerId;
     // Per-run caches, evicted on release after pre-settlement evidence transport
     // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
@@ -53,6 +54,7 @@ public sealed class TaskServerClient : IDisposable
     public TaskServerClient(RunnerOptions options)
     {
         _options = options;
+        _deviceLoginRunnerId = options.RunnerId;
         _http = new HttpClient(CreateServiceHandler(options))
         {
             BaseAddress = new Uri(options.ServerUrl),
@@ -120,6 +122,7 @@ public sealed class TaskServerClient : IDisposable
     {
         _http = http;
         _options = options;
+        _deviceLoginRunnerId = runnerId;
         if (options is not null)
         {
             var configuredTimeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds);
@@ -1019,6 +1022,80 @@ public sealed class TaskServerClient : IDisposable
         return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
     }
 
+    public async Task<Contract.ProjectRepositoryStatusDto?> GetProjectRepositoryAsync(
+        string projectId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/repository", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.ProjectRepositoryStatusDto>(
+            TaskServerContractJson, ct);
+    }
+
+    public async Task<Contract.ProjectRepositoryProbeDto> ReportProjectRepositoryProbeAsync(
+        string runnerId, string projectId, Contract.ProjectRepositoryProbeRequest request,
+        CancellationToken ct)
+        => await PostJsonAsync<Contract.ProjectRepositoryProbeRequest, Contract.ProjectRepositoryProbeDto>(
+               $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/project-probes/{Uri.EscapeDataString(projectId)}",
+               request, ct)
+           ?? throw new TaskServerException(500, "Empty repository probe response.");
+
+    public async Task<Contract.RunnerDeviceLoginWork?> ClaimDeviceLoginAsync(
+        string runnerId, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/claim", new { }, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.RunnerDeviceLoginWork>(
+            TaskServerContractJson, ct);
+    }
+
+    public async Task ReportDeviceLoginInstructionsAsync(string runnerId, string id,
+        Contract.ReportRunnerDeviceInstructionsRequest request, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/instructions",
+            request, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReportDeviceLoginResultAsync(string runnerId, string id, bool verified, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/result",
+            new Contract.ReportRunnerDeviceResultRequest(verified), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<Contract.RunnerGitSetupWork?> ClaimGitSetupAsync(string runnerId, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/claim", new { }, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
+            TaskServerContractJson, ct);
+    }
+
+    public async Task ReportGitSetupKeyAsync(string runnerId, string id, string publicKey, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/{Uri.EscapeDataString(id)}/key",
+            new Contract.ReportRunnerGitKeyRequest(publicKey), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReportGitSetupProofAsync(string runnerId, string id, string step,
+        bool fetchVerified, bool pushVerified, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/{Uri.EscapeDataString(id)}/{step}",
+            new Contract.ReportRunnerGitProofRequest(fetchVerified, pushVerified), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
     public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)
     {
@@ -1201,6 +1278,28 @@ public sealed class TaskServerClient : IDisposable
                    "/api/runner/project-chat/claim", stamped, ct)
                ?? new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
     }
+
+    public async Task<Contract.DeviceLoginClaimDto?> ClaimDeviceLoginAsync(CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/claim",
+            new { }, Json, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.DeviceLoginClaimDto>(Json, ct);
+    }
+
+    public async Task ReportDeviceLoginInstructionsAsync(string handle,
+        Contract.DeviceLoginInstructionsRequest instructions, CancellationToken ct)
+        => await PostJsonWithoutResponseAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/instructions",
+            instructions, ct);
+
+    public async Task CompleteDeviceLoginAsync(string handle,
+        Contract.DeviceLoginCompletionRequest completion, CancellationToken ct)
+        => await PostJsonWithoutResponseAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/completion",
+            completion, ct);
 
     public async Task<bool> RenewProjectChatWorkAsync(
         RemoteChatWorkRenewRequest request,
@@ -2020,6 +2119,33 @@ public sealed class TaskServerClient : IDisposable
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>Fetch a task attachment through the same authenticated HTTP client as the claim.</summary>
+    public async Task<byte[]> ReadTaskAttachmentAsync(
+        string taskKey, string fileName, long maxBytes, CancellationToken ct)
+    {
+        if (maxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        var url = _useV1
+            ? $"/api/v1/runner/tasks/{Uri.EscapeDataString(taskKey)}/attachments/{Uri.EscapeDataString(fileName)}"
+            : $"/api/tasks/{Uri.EscapeDataString(taskKey)}/attachments/{Uri.EscapeDataString(fileName)}";
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode,
+                $"GET task attachment '{fileName}' failed with {(int)response.StatusCode}.");
+        if (response.Content.Headers.ContentLength > maxBytes)
+            throw new InvalidDataException($"Task attachment '{fileName}' exceeds the server request limit.");
+        await using var source = await response.Content.ReadAsStreamAsync(ct);
+        using var destination = new MemoryStream();
+        var buffer = new byte[81920];
+        int count;
+        while ((count = await source.ReadAsync(buffer, ct)) > 0)
+        {
+            if (destination.Length + count > maxBytes)
+                throw new InvalidDataException($"Task attachment '{fileName}' exceeds the server request limit.");
+            await destination.WriteAsync(buffer.AsMemory(0, count), ct);
+        }
+        return destination.ToArray();
     }
 
     public async Task<ProviderComparisonSnapshot> ReadProviderComparisonAsync(

@@ -51,6 +51,14 @@ Every mutating request **must** carry the `X-Client-Id: local-default` header.
 The `ClientIdentityMiddleware` rejects mutations without it as 401. Read
 requests do not need the header but it is harmless to include.
 
+For a `networked` installation, set `TASKBOARD_URL` to its HTTPS origin and
+`AGENT_STUDIO_API_TOKEN` to an owner-created operator token scoped to the
+target project. The reference scripts add `Authorization: Bearer` from that
+environment variable and keep `X-Client-Id` for local attribution. A client
+ID alone does not authenticate a networked request. Use a viewer token only
+for read-only scripts. Never put the token value in a command argument, task
+body, output file, or repository source.
+
 **Use `/api/tasks`.** The route is canonical; the former `/api/jobs`
 compatibility alias has been removed (see
 [ADR-0057](../../../docs/system/architecture/decisions/adr-archive.md#adr-0057---apijobs-compatibility-alias-removed-route-is-apitasks-only-2026-06-22)).
@@ -146,7 +154,7 @@ location. This is the forward-looking contract (watchPath encapsulation, Phase
 wins. Using `project` also sidesteps the 409 watchPath-mismatch trap below.
 
 ```js
-const http = require('http');
+import { taskApiRequest } from './access.js';
 
 const task = {
   id: 'my-stable-slug',
@@ -166,7 +174,7 @@ const task = {
 };
 
 const body = JSON.stringify(task);
-const req = http.request({
+const req = taskApiRequest({
   hostname: '127.0.0.1', port: 5031, path: '/api/tasks/', method: 'POST',
   headers: {
     'Content-Type': 'application/json',

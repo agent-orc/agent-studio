@@ -519,7 +519,7 @@ public sealed class RunnerOptions
                                           && drainTimeoutValue > 0
                 ? drainTimeoutValue
                 : EnvInt("RUNNER_DRAIN_TIMEOUT_SECONDS", 3600),
-            RunTimeoutSeconds = EnvInt("RUNNER_RUN_TIMEOUT_SECONDS", 3600),
+            RunTimeoutSeconds = EnvInt("RUNNER_RUN_TIMEOUT_SECONDS", AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.DefaultSeconds),
             HostMaxParallelism = hostMaxParallelism,
             HostCodingSlots = EnvIntAllowingZero("RUNNER_HOST_CODING_SLOTS", hostMaxParallelism),
             HostReviewSlots = EnvIntAllowingZero("RUNNER_HOST_REVIEW_SLOTS", hostMaxParallelism),
