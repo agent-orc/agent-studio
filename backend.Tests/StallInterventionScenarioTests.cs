@@ -139,6 +139,28 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     [Fact]
+    public async Task Queued_restart_keeps_claims_fenced_after_a_status_read_failure_until_terminal_recovery()
+    {
+        _h.Restarts.Allowed.Add(("kori-review-01", "review-daemon"));
+        _h.Restarts.ReadFailsAfterQueue = true;
+        _h.Raise(Snapshot(capacity: [new("KORI", "kori-review-01", "review", 3, 15,
+            Now0.AddHours(-2), ["AGT-3194"])]));
+
+        await _h.Service.RunOnceAsync();
+
+        Assert.True(_h.Workload.Fenced);
+        Assert.Equal(StallInterventionStatuses.Escalated, Assert.Single(_h.Store.All()).Status);
+        _h.Restart(); // New Studio services read the same retained claim fence.
+        _h.Clear();
+        _h.Restarts.Terminal = true;
+        await _h.Service.RunOnceAsync();
+
+        Assert.False(_h.Workload.Fenced);
+        Assert.Single(_h.Restarts.Calls);
+        Assert.Contains("new claims may start", Assert.Single(_h.Store.All()).Outcome);
+    }
+
+    [Fact]
     public async Task Restart_without_an_operations_agent_becomes_a_proposal_for_a_person()
     {
         _h.Raise(Snapshot(capacity: [new("KORI", "kori-review-01", "review", 3, 15, Now0.AddHours(-2), ["AGT-3194"])]));
@@ -927,20 +949,32 @@ public sealed class StallInterventionScenarioTests : IDisposable
     {
         public ServiceWorkloadReading? Reading { get; set; } = new(0, false, 15);
         public bool ClaimStartsBeforeFence { get; set; }
+        public bool Fenced { get; private set; }
 
         public ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc) => Reading;
 
         public IDisposable? TryFenceClaims(string host, string role)
         {
+            if (Fenced) return null;
             if (ClaimStartsBeforeFence)
             {
                 Reading = Reading! with { RunningWork = true };
                 return null;
             }
-            return new FakeFence();
+            Fenced = true;
+            return new FakeFence(this);
         }
 
-        private sealed class FakeFence : IDisposable { public void Dispose() { } }
+        public bool HasRestartFence(string host, string role) => Fenced;
+        public void ReleaseRestartFence(string host, string role) => Fenced = false;
+
+        private sealed class FakeFence(FakeWorkload owner) : IRestartClaimFence
+        {
+            private bool _retained;
+            public void Retain() => _retained = true;
+            public void ConfirmTerminal() => _retained = false;
+            public void Dispose() { if (!_retained) owner.Fenced = false; }
+        }
     }
 
     private sealed class FakeRestarts : IServiceRestartControl
@@ -950,6 +984,8 @@ public sealed class StallInterventionScenarioTests : IDisposable
         public readonly List<string> Keys = [];
         public bool Succeeds { get; set; } = true;
         public bool StopAfterRestart { get; set; }
+        public bool ReadFailsAfterQueue { get; set; }
+        public bool? Terminal { get; set; } = false;
 
         public bool CanRestart(string host, string service) => Allowed.Contains((host, service));
 
@@ -960,10 +996,15 @@ public sealed class StallInterventionScenarioTests : IDisposable
             Keys.Add(idempotencyKey);
             // The process stops after the container was recreated, before the receipt settles.
             if (StopAfterRestart) throw new OperationCanceledException("host stopping");
+            if (ReadFailsAfterQueue)
+                return Task.FromResult(new ServiceRestartOutcome(false, "queued attempt status unreadable", false));
             return Task.FromResult(Succeeds
                 ? new ServiceRestartOutcome(true, $"Operations Server attempt succeeded for {service}")
                 : new ServiceRestartOutcome(false, "Operations Server attempt failed (configuration-invalid)"));
         }
+
+        public Task<bool?> IsTerminalAsync(string idempotencyKey, CancellationToken ct)
+            => Task.FromResult(Terminal);
     }
 
     private sealed class FakeRoutes : IProviderRouteControl

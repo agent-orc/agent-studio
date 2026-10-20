@@ -49,14 +49,13 @@ public sealed class StallInterventionEffect(
             var role = record.Subject.Split(':') is { Length: > 2 } parts ? parts[2] : "coding";
             if (!workloads.HasRestartFence(record.Host, role)) continue;
             var terminal = await restarts.IsTerminalAsync(record.WriteKey, ct);
-            // An absent attempt can only be declared safe after the command's
-            // submission deadline and the interrupted-record window have passed.
-            if (terminal != true && !(terminal is null
-                    && time.GetUtcNow().UtcDateTime - record.DecidedAtUtc > InterruptedAfter)) continue;
+            // An absent attempt is ambiguous after a principal rotation or
+            // a server restore. Keep the fence for a person's inspection.
+            if (terminal != true) continue;
             workloads.ReleaseRestartFence(record.Host, role);
             if (workloads.HasRestartFence(record.Host, role)) continue;
             var updated = record with { Outcome = (record.Outcome ?? string.Empty)
-                + " The remote restart attempt is terminal or its submission window expired; new claims may start."
+                + " The remote restart attempt is terminal; new claims may start."
                 + " The service effect still needs its own check." };
             store.Save(updated);
             receipts.Publish(updated, store.All());

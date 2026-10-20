@@ -198,15 +198,27 @@ public sealed class StallInterventionAdapterTests : IDisposable
             new BuildTestGateRequest("source.git", BaseSha, "test")
             { InfrastructureTimeout = TimeSpan.FromMinutes(1) },
             null, null, PostStepMode.Fail, 60, 120), bundle);
+        var gateConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:SshHost"] = "kori-gate",
+        }).Build();
+        var slots = new GateSlotUsageTracker(gateConfig, _clock);
         var reader = new ServiceWorkloadReader(new V1ReviewExecutorRegistry(_clock,
                 new ProviderRouteExclusions(() => _root)), Authority(),
             new BatchGateStore(Path.Combine(_root, "gates")),
-            new GateSlotUsageTracker(_configuration, _clock), pull, _configuration);
+            slots, pull, gateConfig);
 
         Assert.Equal((0, 1), (reader.Read("kori-gate", "gate", Now)!.BusySlots,
             reader.Read("kori-gate", "gate", Now)!.ClaimableWaiting));
+        using (var queued = slots.TryBeginDispatch("gate-already-queued"))
+        {
+            Assert.NotNull(queued);
+            Assert.Equal(1, reader.Read("kori-gate", "gate", Now)!.BusySlots);
+            Assert.Null(reader.TryFenceClaims("kori-gate", "gate"));
+        }
         var fence = Assert.IsAssignableFrom<IRestartClaimFence>(reader.TryFenceClaims("kori-gate", "gate"));
         Assert.Null(pull.Claim("kori-gate"));
+        Assert.Null(slots.TryBeginDispatch("gate-arriving-while-restart-queued"));
         fence.Dispose();
         Assert.NotNull(pull.Claim("kori-gate"));
         Assert.Equal((1, 0), (reader.Read("kori-gate", "gate", Now)!.BusySlots,
@@ -275,6 +287,22 @@ public sealed class StallInterventionAdapterTests : IDisposable
 
         Assert.Null(control.PinLastDelivery("AGT-9010", "si-race"));
         Assert.Equal(human, ContinuationBaseStore.Read(folder));
+    }
+
+    [Fact]
+    public void Requeue_refuses_a_card_moved_out_of_ready_after_candidate_selection()
+    {
+        var folder = WriteCard(TaskStates.Ready, "rate-limited-lane-race", "AGT-9011");
+        var authority = Authority();
+        Deliver(authority, "AGT-9011", reviewed: true);
+        _clock.Advance(TimeSpan.FromHours(1));
+        Fail(authority, "AGT-9011", "codex: rate limit exceeded (429 Too Many Requests)");
+        var moved = Path.Combine(ProjectPath, TaskStates.HumanReview, Path.GetFileName(folder));
+        var control = new DeliveryContinuationControl(Scanner(), authority, _clock,
+            () => Directory.Move(folder, moved));
+
+        Assert.Null(control.PinLastDelivery("AGT-9011", "si-lane-race"));
+        Assert.Null(ContinuationBaseStore.Read(moved));
     }
 
     [Fact]

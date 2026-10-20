@@ -36,15 +36,18 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly string _localRoot;
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
+    private readonly PullGateStore? _pullGates;
     private readonly Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> _runProcess;
     private readonly string _section;
     private long _lastSweepTicks = NeverSwept;
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
-        TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null)
+        TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null,
+        PullGateStore? pullGates = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
-            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage)
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
+            pullGates: pullGates)
     {
     }
 
@@ -65,7 +68,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory,
         GateSlotUsageTracker? slotUsage = null,
-        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null)
+        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null,
+        PullGateStore? pullGates = null)
     {
         _section = RemoteGateOptions.PrimarySection;
         _configuration = configuration;
@@ -74,6 +78,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         _localRoot = localRoot;
         _deleteDirectory = deleteDirectory;
         _slotUsage = slotUsage ?? new GateSlotUsageTracker(clock: timeProvider);
+        _pullGates = pullGates;
         _runProcess = runProcess ?? RemoteGateProcess.RunAsync;
     }
 
@@ -84,6 +89,10 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         var options = RemoteGateOptions.Read(_configuration, _section);
         _slotUsage.Configure(options.GateSlots);
         var runId = Guid.NewGuid().ToString("N");
+        using var dispatch = _slotUsage.TryBeginDispatch(runId)
+            ?? throw new IOException("The gate host is drained for a service restart.");
+        if (_pullGates?.HasRestartFence(options.Host) == true)
+            throw new IOException("The gate host is drained for a service restart.");
         var local = Path.Combine(_localRoot, runId);
         var remote = options.Root + "/" + runId;
         var infra = request.InfrastructureTimeout > TimeSpan.Zero

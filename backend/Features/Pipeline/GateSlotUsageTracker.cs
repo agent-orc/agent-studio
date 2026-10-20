@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
 
@@ -8,6 +9,9 @@ public sealed record GateSlotUsage(int Busy, int Total);
 public sealed class GateSlotUsageTracker
 {
     private readonly ConcurrentDictionary<string, byte> _active = new();
+    private readonly object _dispatchGate = new();
+    private readonly HashSet<string> _dispatching = new(StringComparer.Ordinal);
+    private bool _restartFenced;
     private readonly TimeProvider _clock;
     private readonly object _reachabilityLock = new();
     private int _total;
@@ -24,6 +28,46 @@ public sealed class GateSlotUsageTracker
     }
 
     public GateSlotUsage Snapshot() => new(_active.Count, Volatile.Read(ref _total));
+
+    public int Dispatching { get { lock (_dispatchGate) return _dispatching.Count; } }
+
+    public IDisposable? TryBeginDispatch(string runId)
+    {
+        lock (_dispatchGate)
+        {
+            if (_restartFenced) return null;
+            _dispatching.Add(runId);
+            return new DispatchLease(this, runId);
+        }
+    }
+
+    public IRestartClaimFence? TryFenceDispatch()
+    {
+        lock (_dispatchGate)
+        {
+            if (_restartFenced || _dispatching.Count > 0 || !_active.IsEmpty) return null;
+            _restartFenced = true;
+            return new DispatchFence(this);
+        }
+    }
+
+    public void ReleaseRestartFence()
+    {
+        lock (_dispatchGate) _restartFenced = false;
+    }
+
+    private sealed class DispatchLease(GateSlotUsageTracker owner, string runId) : IDisposable
+    {
+        public void Dispose() { lock (owner._dispatchGate) owner._dispatching.Remove(runId); }
+    }
+
+    private sealed class DispatchFence(GateSlotUsageTracker owner) : IRestartClaimFence
+    {
+        private bool _retained;
+        public void Retain() => _retained = true;
+        public void ConfirmTerminal() => _retained = false;
+        public void Dispose() { if (!_retained) owner.ReleaseRestartFence(); }
+    }
 
     public DateTimeOffset? LastReachedAt { get { lock (_reachabilityLock) return _lastReachedAt; } }
     public DateTimeOffset? LastFailureAt { get { lock (_reachabilityLock) return _lastFailureAt; } }

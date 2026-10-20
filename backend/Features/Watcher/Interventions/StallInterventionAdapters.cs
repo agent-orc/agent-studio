@@ -77,8 +77,25 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
     public static readonly TimeSpan RemoteSlotsFresh = TimeSpan.FromMinutes(10);
 
     public IDisposable? TryFenceClaims(string host, string role)
-        => role == "review" ? attempts.TryFenceReviewHost(host)
-            : role == "gate" ? pullGates.TryFenceHostClaims(host) : null;
+    {
+        if (role == "review") return attempts.TryFenceReviewHost(host);
+        if (role != "gate") return null;
+        var pull = pullGates.TryFenceHostClaims(host);
+        if (pull is null) return null;
+        if (!string.Equals(configuration["RemoteGate:SshHost"], host, StringComparison.OrdinalIgnoreCase))
+            return pull;
+        var ssh = gateSlots.TryFenceDispatch();
+        if (ssh is not null) return new CombinedRestartFence((IRestartClaimFence)pull, ssh);
+        pull.Dispose();
+        return null;
+    }
+
+    private sealed class CombinedRestartFence(IRestartClaimFence pull, IRestartClaimFence ssh) : IRestartClaimFence
+    {
+        public void Retain() { pull.Retain(); ssh.Retain(); }
+        public void ConfirmTerminal() { pull.ConfirmTerminal(); ssh.ConfirmTerminal(); }
+        public void Dispose() { ssh.Dispose(); pull.Dispose(); }
+    }
 
     public bool HasRestartFence(string host, string role)
         => role == "review" ? attempts.HasReviewRestartFence(host)
@@ -87,7 +104,11 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
     public void ReleaseRestartFence(string host, string role)
     {
         if (role == "review") attempts.ReleaseReviewRestartFence(host);
-        else if (role == "gate") pullGates.ReleaseRestartFence(host);
+        else if (role == "gate")
+        {
+            pullGates.ReleaseRestartFence(host);
+            if (!pullGates.HasRestartFence(host)) gateSlots.ReleaseRestartFence();
+        }
     }
 
     public ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc)
@@ -113,9 +134,11 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
                 {
                     var active = BatchGateInterventionControl.ActiveBatchProjects(gates).Count > 0
                         || gates.ListPending().Any(item => item.Subject.ActivePerTaskGate);
-                    return new ServiceWorkloadReading(pull.Busy, active, pull.Queued,
+                    var sshDispatch = string.Equals(configuration["RemoteGate:SshHost"], host,
+                        StringComparison.OrdinalIgnoreCase) ? gateSlots.Dispatching : 0;
+                    return new ServiceWorkloadReading(pull.Busy + sshDispatch, active, pull.Queued,
                         new StallGateSlotFacts(pullGates.Hosts().First(item => item.Id == host).Slots,
-                            pull.Busy, pull.Busy, active));
+                            pull.Busy + sshDispatch, pull.Busy + sshDispatch, active));
                 }
                 var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
                 if (string.IsNullOrWhiteSpace(gateHost) || !string.Equals(gateHost, host, StringComparison.OrdinalIgnoreCase))
@@ -150,6 +173,8 @@ public sealed class OperationsServerRestartControl(
 
     public async Task<bool?> IsTerminalAsync(string idempotencyKey, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(configuration["Operations:Url"])
+            || string.IsNullOrWhiteSpace(configuration["Operations:ServiceTokenFile"])) return false;
         try
         {
             using var client = Client();
@@ -160,8 +185,9 @@ public sealed class OperationsServerRestartControl(
             var attempt = await response.Content.ReadFromJsonAsync<OperationAttempt>(OperationsProtocol.Json, ct);
             return attempt?.State is "succeeded" or "failed" or "cancelled" or "timed-out";
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException
-            or InvalidDataException or TaskCanceledException && !ct.IsCancellationRequested)
+        catch (Exception exception) when (exception is HttpRequestException or IOException or UnauthorizedAccessException
+            or JsonException or InvalidDataException or UriFormatException
+            or TaskCanceledException && !ct.IsCancellationRequested)
         {
             logger.LogWarning(exception, "stall-intervention-restart-recovery-read-failed");
             return false;
@@ -444,7 +470,7 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
 /// only the start of one of the card's attempts and never a result with work.
 /// </summary>
 public sealed class DeliveryContinuationControl(TaskScannerService scanner, AttemptAuthorityService authority,
-    TimeProvider time, Action? beforePin = null) : IContinuationControl
+    TimeProvider time, Action? beforePin = null, LaneMutexRegistry? laneMutex = null) : IContinuationControl
 {
     public const string Reason = "rate-limit-last-delivery";
 
@@ -470,6 +496,8 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
             || candidate.BaseKind is not (StallContinuationBases.Missing or StallContinuationBases.EmptySalvage)
             || candidate.LastDeliveryRef is null || candidate.LastDeliverySha is null) return null;
         beforePin?.Invoke();
+        using var lane = (laneMutex ?? LaneMutexRegistry.NullSingleton).TryAcquireStrict(job.WatchPath);
+        if (lane is null) return null;
         if (!ContinuationBaseStore.TrySaveWhen(job.FolderPath, expectedBase,
                 new ContinuationBaseRecord(candidate.LastDeliveryRef, candidate.LastDeliverySha,
                     Reason, interventionId, time.GetUtcNow().UtcDateTime),

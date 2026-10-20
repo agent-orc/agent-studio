@@ -95,7 +95,7 @@ public sealed class PullGateStore
 
     public bool HasRestartFence(string hostId)
     {
-        lock (_gate) return _restartFences.Contains(hostId);
+        lock (_gate) return _restartFences.Contains("*") || _restartFences.Contains(hostId);
     }
 
     public void ReleaseRestartFence(string hostId)

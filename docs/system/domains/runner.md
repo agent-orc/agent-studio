@@ -2186,14 +2186,16 @@ compare-and-set against the planned before-value, so a capacity edit made by a
 person between the live read and the write is preserved. The restart path
 fences new review or pull gate claims, confirms the host is drained using fresh slot
 telemetry and active leases, then holds the durable fence through the Operations Server
-attempt. If the attempt status cannot be read, the fence survives a Studio restart.
+attempt. For the gate host the same drain also blocks SSH fallback dispatches.
+If the attempt status cannot be read, the fence survives a Studio restart.
 The next intervention pass reads the attempt by its idempotency key and releases
-the fence only after terminal confirmation; an absent attempt releases it only
-after the command submission window has expired. The agent writes a durable restart-started marker before Docker runs;
+the fence only after terminal confirmation. An absent or unreadable attempt leaves
+the fence in place for a person to inspect. The agent writes a durable restart-started marker before Docker runs;
 if result spooling fails after recreation, replay reports an unknown outcome
 and never recreates the service a second time. The rate-limit continuation pin
-compares the live Ready folder and continuation base under the base store's write
-lock, preserving a person's concurrent base edit.
+compares the live Ready folder and continuation base while holding the lane mutex
+and the base store's write lock, preserving a person's concurrent lane move or
+base edit.
 
 An action whose effect cannot be measured right after it ran is escalated at
 once and not reported as done; an admission change, a reroute or a pinned base
