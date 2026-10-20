@@ -103,9 +103,78 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
             store.Login("invented", "wrong", "192.0.2.1")).Status);
 
         Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
-        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("owner", "wrong", "192.0.2.2")).Status);
         Assert.Equal((1, 1, 1, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Full_failure_tables_bound_wrong_password_hashes_for_a_known_account()
+    {
+        var hashes = 0;
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2",
+            ["Security:LoginThrottle:ClientLockoutMinutes"] = "1",
+            ["Security:LoginThrottle:WindowMinutes"] = "1",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "2"
+        }, (password, _) => { Interlocked.Increment(ref hashes); return password == Password; });
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "192.0.2.1")).Status);
+        var initialHashes = hashes;
+
+        for (var i = 0; i < 2; i++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", "wrong", "192.0.2." + (i + 2))).Status);
+        Assert.Equal(initialHashes + 2, hashes);
+        for (var i = 0; i < 20; i++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", "wrong", "198.51.100." + i)).Status);
+        Assert.Equal(initialHashes + 2, hashes);
+        Assert.Equal((1, 1, 0, 1), store.LoginStateCounts);
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal("owner", store.Login("owner", Password, "203.0.113.1").User.Username);
+        Assert.Equal(initialHashes + 3, hashes);
+    }
+
+    [Fact]
+    public void New_client_can_sign_in_after_overflow_delay_when_delay_table_is_full()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxDelayEntries"] = "1",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "1",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "3"
+        }, (password, _) => password == Password);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", "wrong", "192.0.2.1")).Status);
+        Assert.Equal(1, store.LoginStateCounts.Delays);
+
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.2")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.3")).Status);
+        _clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.3")).Status);
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.3")).Status);
+        _clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.3").User.Username);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.4")).Status);
+        _clock.Advance(TimeSpan.FromSeconds(7));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.5")).Status);
+        _clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.5").User.Username);
+        Assert.Equal(1, store.LoginStateCounts.Delays);
     }
 
     [Fact]
