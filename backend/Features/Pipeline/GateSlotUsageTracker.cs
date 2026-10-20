@@ -14,6 +14,7 @@ public sealed class GateSlotUsageTracker
     private DateTimeOffset? _lastReachedAt;
     private DateTimeOffset? _lastFailureAt;
     private bool? _lastSucceeded;
+    private (GateSlotUsage Usage, DateTimeOffset At)? _remote;
 
     public GateSlotUsageTracker(IConfiguration? configuration = null, TimeProvider? clock = null)
     {
@@ -56,6 +57,23 @@ public sealed class GateSlotUsageTracker
             _lastFailureAt = _clock.GetUtcNow();
             _lastSucceeded = false;
         }
+    }
+
+    /// <summary>
+    /// The gate host's own slot count, reported to a run of this process that
+    /// waits for a slot (AGT-3207). Unlike <see cref="Snapshot"/> it includes
+    /// slots held by gate workers of an earlier Studio process.
+    /// </summary>
+    public void RemoteWaiting(int busy, int total)
+    {
+        lock (_reachabilityLock) _remote = (new GateSlotUsage(busy, total), _clock.GetUtcNow());
+    }
+
+    /// <summary>The last remote slot count, or null when none was reported within <paramref name="maxAge"/>.</summary>
+    public GateSlotUsage? RemoteSnapshot(TimeSpan maxAge)
+    {
+        lock (_reachabilityLock)
+            return _remote is { } remote && _clock.GetUtcNow() - remote.At <= maxAge ? remote.Usage : null;
     }
 
     public void Configure(int total) => Volatile.Write(ref _total, total);

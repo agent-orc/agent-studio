@@ -16,7 +16,7 @@ public sealed record HostHeartbeatFact(string Host, string Role, DateTime LastSe
 
 public sealed record HostStallFact(string Host, DateTime SinceUtc, double? LoadPerCore,
     double? CpuPercent, double? MemoryUsedPercent, double? SwapBytesPerSecond,
-    int BlockedCards = 0, string? Evidence = null, double? TargetPercent = null);
+    int BlockedCards = 0, string? Evidence = null, double? TargetPercent = null, string? ClientId = null);
 public sealed record CapacityStallFact(string Project, string Host, string Role, int FreeSlots,
     int WaitingCount, DateTime OldestWaitUtc, IReadOnlyList<string> Cards);
 public sealed record ClaimStallFact(string Project, string Reason, DateTime SinceUtc,
@@ -67,12 +67,14 @@ public static class OperationalStallDetector
                 Add("host-overload", $"host:{host.Host}", "critical", host.SinceUtc,
                     $"Host {host.Host} exceeds its {target:0}% CPU target.",
                     host.BlockedCards, "Reduce admission or move work to a host with headroom.", host.Evidence,
-                    ("loadPerCore", host.LoadPerCore), ("cpuPercent", host.CpuPercent), ("targetPercent", target));
+                    ("loadPerCore", host.LoadPerCore), ("cpuPercent", host.CpuPercent), ("targetPercent", target),
+                    ("clientId", host.ClientId));
             if (sustained && memory)
                 Add("memory-pressure", $"host:{host.Host}", "critical", host.SinceUtc,
                     $"Host {host.Host} is under memory pressure.", host.BlockedCards,
                     "Reduce admission and inspect memory or swap usage.", host.Evidence,
-                    ("memoryUsedPercent", host.MemoryUsedPercent), ("swapBytesPerSecond", host.SwapBytesPerSecond));
+                    ("memoryUsedPercent", host.MemoryUsedPercent), ("swapBytesPerSecond", host.SwapBytesPerSecond),
+                    ("clientId", host.ClientId));
         }
         foreach (var capacity in facts.Capacity.Where(x => x.FreeSlots > 0 && x.WaitingCount > 0
             && nowUtc - x.OldestWaitUtc >= TimeSpan.FromMinutes(thresholds.IdleWaitMinutes)))

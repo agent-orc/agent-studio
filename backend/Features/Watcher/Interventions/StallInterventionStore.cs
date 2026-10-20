@@ -65,9 +65,7 @@ public sealed class StallInterventionStore
         {
             System.IO.Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, record.Id + ".json");
-            var temporary = path + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
-            File.Move(temporary, path, overwrite: true);
+            WriteDurably(path, JsonSerializer.Serialize(record, Json));
             return record;
         }
     }
@@ -78,13 +76,37 @@ public sealed class StallInterventionStore
         var directory = Directory();
         if (directory is null) return 0;
         var removed = 0;
-        foreach (var record in All().Where(item => item.Status != StallInterventionStatuses.Applied
-            && nowUtc - (item.ResolvedAtUtc ?? item.DecidedAtUtc) > Retention))
+        foreach (var record in All().Where(item => !StallInterventionStatuses.Pending.Contains(item.Status)
+            && !item.AdmissionInForce && nowUtc - (item.ResolvedAtUtc ?? item.DecidedAtUtc) > Retention))
         {
-            lock (_gate) File.Delete(Path.Combine(directory, record.Id + ".json"));
-            removed++;
+            try
+            {
+                lock (_gate) File.Delete(Path.Combine(directory, record.Id + ".json"));
+                removed++;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _logger?.LogWarning(exception, "stall-intervention-prune-failed id={Id}", record.Id);
+            }
         }
         return removed;
+    }
+
+    /// <summary>
+    /// Writes through a flushed temporary file and renames it, so a crash
+    /// leaves either the old or the new record, never a torn or unflushed one.
+    /// </summary>
+    internal static void WriteDurably(string path, string content)
+    {
+        var temporary = path + ".tmp";
+        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
+        {
+            writer.Write(content);
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, path, overwrite: true);
     }
 
     private string? Directory()

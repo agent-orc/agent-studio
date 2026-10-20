@@ -14,11 +14,27 @@ public sealed record RestartableServices(IReadOnlyDictionary<string, Restartable
 
     /// <summary>
     /// Reads <c>{ "services": { "review-daemon": { "composeFile": "/abs/compose.yaml", "composeService": "review" } } }</c>.
-    /// Names, absolute paths and compose service names are validated; an invalid file advertises nothing.
+    /// Names, absolute paths and compose service names are validated. An
+    /// unreadable or invalid file advertises nothing and is reported through
+    /// <paramref name="warn"/>; it never stops the agent, which still serves its other operations.
     /// </summary>
-    public static RestartableServices Load(string? path)
+    public static RestartableServices Load(string? path, Action<string>? warn = null)
     {
         if (string.IsNullOrWhiteSpace(path)) return Empty;
+        try
+        {
+            return Parse(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or JsonException or InvalidDataException or NotSupportedException)
+        {
+            warn?.Invoke($"operations-agent: restartable services file {path} is invalid and offers no restarts: {exception.Message}");
+            return Empty;
+        }
+    }
+
+    private static RestartableServices Parse(string path)
+    {
         var document = JsonSerializer.Deserialize<ServicesDocument>(File.ReadAllText(path), OperationsProtocol.Json)
             ?? throw new InvalidDataException("The restartable services file is empty.");
         var services = new Dictionary<string, RestartableService>(StringComparer.Ordinal);
@@ -81,7 +97,11 @@ public static class ServiceRestart
             Output(name, restarted: succeeded, configurationValid: true), now, clock.GetUtcNow());
     }
 
-    /// <summary>The process runner the agent uses; it hides the console window and kills the tree on timeout.</summary>
+    /// <summary>
+    /// The process runner the agent uses; it hides the console window and kills
+    /// the process tree on timeout and on the caller's cancellation, so a
+    /// stopping agent never leaves a docker call running.
+    /// </summary>
     public static async Task<ToolRun> RunAsync(ProcessStartInfo start, TimeSpan timeout, CancellationToken ct)
     {
         using var process = new Process { StartInfo = start };
@@ -94,10 +114,11 @@ public static class ServiceRestart
         {
             await process.WaitForExitAsync(limit.Token);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
+            ct.ThrowIfCancellationRequested();
             return new ToolRun(-1, "timeout", true);
         }
         var text = (await stdout) + (await stderr);

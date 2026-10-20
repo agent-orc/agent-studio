@@ -71,7 +71,7 @@ public sealed class StallInterventionReceipts(
     public static StallInterventionReceiptEvent View(StallInterventionRecord record)
         => new(record.Id, record.Subject, record.Action, record.Autonomy, record.Status, record.Observed,
             record.Done, record.Why, record.Before, record.After, record.Undo, record.Proposal, record.Chain,
-            record.Undoable && record.UndoneAtUtc is null, record.EffectEvidence, record.Outcome);
+            (record.Undoable || record.AdmissionInForce) && record.UndoneAtUtc is null, record.EffectEvidence, record.Outcome);
 
     /// <summary>One line for the feed: who, which class, and the action in plain words.</summary>
     public static string Headline(StallInterventionRecord record) => record.Status switch

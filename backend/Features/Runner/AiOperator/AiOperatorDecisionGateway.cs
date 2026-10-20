@@ -124,6 +124,18 @@ public sealed class AiOperatorDecisionGateway
     }
 
     /// <summary>
+    /// Evaluates the shared decision library in process without recording an
+    /// occurrence (AGT-3207). A periodic decider submits only the decisions
+    /// that act, propose or ask: a held decision changes nothing, and asking
+    /// the engine for it would add one occurrence per subject and period.
+    /// </summary>
+    public AiOperatorDecision Preview(AiOperatorDecisionPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        return MonolithTransitionAdapter.Operator(payload);
+    }
+
+    /// <summary>
     /// A subject key that names the exact facts: unchanged facts map to the
     /// same occurrence, so an engine Hold is not asked again until a fact
     /// changes, and the effect can tell that the card moved on.

@@ -15,11 +15,14 @@ export class StallInterventionReceiptComponent {
 
   statusLabel(status: string): string {
     switch (status) {
+      case 'applying': return 'Being applied';
       case 'applied': return 'Applied, follow-up pending';
       case 'verified': return 'Verified by its effect';
       case 'escalated': return 'Handed to a person';
       case 'proposed': return 'Proposal for a person';
       case 'undone': return 'Undone';
+      case 'superseded': return 'Superseded, nothing changed';
+      case 'observed': return 'Observe mode, nothing changed';
       default: return status;
     }
   }

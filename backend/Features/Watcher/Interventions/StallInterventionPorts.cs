@@ -18,13 +18,29 @@ public sealed record HostAdmissionReading(
     double? LoadPerCore,
     DateTime? CalmSinceUtc);
 
-/// <summary>Coding host admission (Settings &gt; Capacity). Running work is never stopped.</summary>
+/// <summary>
+/// Coding host admission (Settings &gt; Capacity), addressed by the host's
+/// client identity id; a display name is never resolved. Running work is never stopped.
+/// </summary>
 public interface IHostAdmissionControl
 {
-    HostAdmissionReading? Read(string host, double restoreFraction, DateTime nowUtc);
+    HostAdmissionReading? Read(string clientId, double restoreFraction, DateTime nowUtc);
 
     /// <summary>Sets the host's maximum parallel runs and returns the value read back afterwards.</summary>
-    int? SetAdmission(string host, int maxParallelism);
+    int? SetAdmission(string clientId, int maxParallelism);
+}
+
+/// <summary>
+/// What a review daemon or gate worker runs now and which waiting items it can
+/// claim itself. <see cref="BusySlots"/> is null when the worker's load is unknown.
+/// </summary>
+public sealed record ServiceWorkloadReading(int? BusySlots, bool RunningWork, int ClaimableWaiting,
+    StallGateSlotFacts? GateSlots = null);
+
+/// <summary>Reads a worker's running and claimable work, so a restart never ends work in flight.</summary>
+public interface IServiceWorkload
+{
+    ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc);
 }
 
 /// <summary>Outcome of one Operations Server restart; <see cref="Evidence"/> is shown in the receipt.</summary>
@@ -45,6 +61,10 @@ public interface IProviderRouteControl
 {
     IReadOnlyList<string> HealthyHosts(string provider, string exceptHost);
 
+    /// <summary>True when the host has a review registration; only a review host's attempts are routed by provider.</summary>
+    bool IsReviewHost(string host);
+
+    /// <summary>True only for a review host whose provider capability is excluded and no longer admitted.</summary>
     bool IsRerouted(string host, string provider);
 
     void Reroute(string host, string provider, string interventionId);
@@ -57,10 +77,13 @@ public interface IBatchGateControl
 {
     StallGateFacts? Read(string project, DateTime nowUtc);
 
-    /// <summary>Drops completed or stale members and returns the cards that left the queue.</summary>
-    IReadOnlyList<string> Drop(string project, IReadOnlyList<string> cards, string reason);
+    /// <summary>
+    /// Drops exactly the frozen review attempts whose card the authority key
+    /// still names as completed or stale; returns the attempts that left the queue.
+    /// </summary>
+    IReadOnlyList<string> Drop(string project, IReadOnlyList<string> reviewAttemptIds, string reason);
 
-    bool IsPending(string project, string card);
+    bool IsPending(string project, string reviewAttemptId);
 
     /// <summary>Closes the forming batch now so its members run; true when the request is recorded.</summary>
     bool CloseNow(string project);
@@ -74,7 +97,11 @@ public interface IContinuationControl
 {
     IReadOnlyList<StallRequeueCandidate> RateLimitedRuns(IReadOnlyList<string> cards);
 
-    /// <summary>Pins the card's last real delivery as its next run's base; returns the pin read back.</summary>
+    /// <summary>
+    /// Pins the card's last completed, reviewed delivery as its next run's
+    /// base after re-checking that the card still waits in Ready after a
+    /// rate-limited run with no base or an empty salvage; returns the pin read back.
+    /// </summary>
     ContinuationPin? PinLastDelivery(string card, string interventionId);
 
     ContinuationPin? Read(string card);

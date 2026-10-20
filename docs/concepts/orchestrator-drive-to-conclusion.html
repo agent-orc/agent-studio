@@ -3025,7 +3025,7 @@
           <td><code>AGT-3176 / AGT-3177</code><br><span class="small">rate-limit-empty-salvage-requeue (AGT-3207)</span></td>
           <td>A codex rate limit at 08:12Z ended both runs. They were requeued and started from empty salvage refs, lost their delivered work and escalated. Nobody saw it until the operator asked how the run was going.</td>
           <td>The requeue had no continuation base, so the next round started from the base branch. No stall event led to an automatic, verified intervention.</td>
-          <td>The observed terminal was Escalated. The AI Operator now reacts to the <code>provider-rate-limited</code> stall (A1): each affected card that waits in Ready without a salvage gets its last real delivery (immutable result ref and SHA) pinned as <code>continuation-base.json</code>. The receipt names the ref and SHA; the pin is read back before the intervention counts, and Undo clears it.</td>
+          <td>The observed terminal was Escalated. The AI Operator now reacts to the <code>provider-rate-limited</code> stall (A1): each affected card that waits in Ready, whose last run ended on a rate limit and whose next run would start without a base or from an empty salvage (a base commit that is only the start of an earlier attempt), gets its last completed, reviewed delivery (immutable result ref and SHA) pinned as <code>continuation-base.json</code>. The card is read by its authority key and re-checked when the pin is written. The receipt names the ref and SHA; the pin is read back before the intervention counts, and Undo clears it.</td>
         </tr>
       </tbody>
     </table>

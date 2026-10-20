@@ -51,4 +51,17 @@ describe('StallInterventionReceiptComponent', () => {
     expect(element.querySelector('[data-testid="stall-intervention-undo"]')).toBeNull();
     expect(element.textContent).toContain('Verified by its effect');
   });
+
+  it('labels an observe-mode receipt as a change that was not made', async () => {
+    TestBed.configureTestingModule({
+      imports: [StallInterventionReceiptComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(StallInterventionReceiptComponent);
+    fixture.componentRef.setInput('row', row(false, 'observed'));
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('[data-testid="stall-intervention-undo"]')).toBeNull();
+    expect(element.textContent).toContain('Observe mode, nothing changed');
+  });
 });

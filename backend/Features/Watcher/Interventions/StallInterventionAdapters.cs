@@ -2,16 +2,25 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Clients;
 using AgentStudio.Operations.Contracts;
+using AgentStudio.Pipeline;
+using AgentStudio.Runner;
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Watcher;
 
-/// <summary>Coding host admission through the identity store that the claim path reads on every poll.</summary>
+/// <summary>
+/// Coding host admission through the identity store that the claim path reads
+/// on every poll. A host is addressed by its client identity id only: display
+/// names are not unique and are never resolved.
+/// </summary>
 public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, HostTelemetryStore telemetry)
     : IHostAdmissionControl
 {
-    public HostAdmissionReading? Read(string host, double restoreFraction, DateTime nowUtc)
+    public HostAdmissionReading? Read(string clientId, double restoreFraction, DateTime nowUtc)
     {
-        var identity = Find(host);
+        var identity = Find(clientId);
         if (identity is null) return null;
         var target = identity.RunnerTargetLoadPercent ?? 80;
         var points = telemetry.Query(identity.Id, "1h", nowUtc).Points
@@ -36,17 +45,58 @@ public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, 
             last is null ? null : PerCore(last), calmSince);
     }
 
-    public int? SetAdmission(string host, int maxParallelism)
+    public int? SetAdmission(string clientId, int maxParallelism)
     {
-        var identity = Find(host);
+        var identity = Find(clientId);
         if (identity is null) return null;
         clients.SetRunnerCapacity(identity.Id, maxParallelism, null, null);
         return clients.Find(identity.Id)?.RunnerDesiredMaxParallelism;
     }
 
-    private ClientIdentity? Find(string host) => clients.ListAll().FirstOrDefault(item =>
-        item.Kind != ClientIdentityKind.Retired
-        && (string.Equals(item.DisplayName, host, StringComparison.OrdinalIgnoreCase) || item.Id == host));
+    private ClientIdentity? Find(string clientId)
+        => clients.Find(clientId) is { } identity && identity.Kind != ClientIdentityKind.Retired ? identity : null;
+}
+
+/// <summary>
+/// What a review daemon or the remote gate worker runs now. A review host's
+/// busy slots come from its last telemetry and its claimable items are the
+/// pending review attempts it can claim with its admitted capabilities. The
+/// gate worker claims nothing itself (batch members wait for the batch plan);
+/// it runs work while this Studio holds a gate slot, a batch is active or a
+/// per-task gate is in flight.
+/// </summary>
+public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, AttemptAuthorityService attempts,
+    BatchGateStore gates, GateSlotUsageTracker gateSlots, IConfiguration configuration) : IServiceWorkload
+{
+    /// <summary>How long the gate host's own slot count, reported to a waiting run, stays current.</summary>
+    public static readonly TimeSpan RemoteSlotsFresh = TimeSpan.FromMinutes(10);
+
+    public ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc)
+    {
+        switch (role)
+        {
+            case "review":
+                var snapshots = registry.ListCapabilitySnapshots().Where(item => item.HostId == host).ToArray();
+                if (snapshots.Length == 0) return null;
+                int? busy = snapshots.All(item => item.Telemetry is not null)
+                    ? snapshots.Sum(item => item.Telemetry!.ActiveSlots) : null;
+                var claimable = attempts.ListPendingReviewAttempts()
+                    .Count(attempt => snapshots.Any(snapshot => OperationalStallProbe.CanClaim(registry, snapshot, attempt)));
+                return new ServiceWorkloadReading(busy, false, claimable);
+            case "gate":
+                var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
+                if (string.IsNullOrWhiteSpace(gateHost) || !string.Equals(gateHost, host, StringComparison.OrdinalIgnoreCase))
+                    return null;
+                var own = gateSlots.Snapshot();
+                var running = BatchGateInterventionControl.ActiveBatchProjects(gates).Count > 0
+                    || gates.ListPending().Any(item => item.Subject.ActivePerTaskGate);
+                var remote = gateSlots.RemoteSnapshot(RemoteSlotsFresh);
+                return new ServiceWorkloadReading(own.Busy, running, 0,
+                    new StallGateSlotFacts(remote?.Total ?? own.Total, own.Busy, remote?.Busy, running));
+            default:
+                return null;
+        }
+    }
 }
 
 /// <summary>
@@ -142,12 +192,18 @@ public sealed class ProviderRouteExclusions
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly Func<string?> _root;
+    private readonly ILogger<ProviderRouteExclusions>? _logger;
     private readonly object _gate = new();
     private Dictionary<string, string>? _entries;
 
-    public ProviderRouteExclusions(IConfiguration configuration) : this(() => configuration["TaskRepository"]) { }
+    public ProviderRouteExclusions(IConfiguration configuration, ILogger<ProviderRouteExclusions> logger)
+        : this(() => configuration["TaskRepository"], logger) { }
 
-    public ProviderRouteExclusions(Func<string?> workspaceRoot) => _root = workspaceRoot;
+    public ProviderRouteExclusions(Func<string?> workspaceRoot, ILogger<ProviderRouteExclusions>? logger = null)
+    {
+        _root = workspaceRoot;
+        _logger = logger;
+    }
 
     public bool IsExcluded(string? hostId, string runnerId, string provider)
     {
@@ -163,8 +219,11 @@ public sealed class ProviderRouteExclusions
     {
         lock (_gate)
         {
-            Load()[Key(host, provider)] = interventionId;
-            Save();
+            var entries = new Dictionary<string, string>(Load(), StringComparer.Ordinal)
+            {
+                [Key(host, provider)] = interventionId,
+            };
+            Save(entries);
         }
     }
 
@@ -172,28 +231,41 @@ public sealed class ProviderRouteExclusions
     {
         lock (_gate)
         {
-            if (Load().Remove(Key(host, provider))) Save();
+            var entries = new Dictionary<string, string>(Load(), StringComparer.Ordinal);
+            if (entries.Remove(Key(host, provider))) Save(entries);
         }
     }
 
     private static string Key(string host, string provider) => $"{host}|{provider}";
 
-    private Dictionary<string, string> Load()
+    /// <summary>
+    /// The review registry calls this inside its capability path, so an
+    /// unreadable or torn file must never throw there: it is logged and read
+    /// as empty, and read again on the next call.
+    /// </summary>
+    private IReadOnlyDictionary<string, string> Load()
     {
         if (_entries is not null) return _entries;
         var path = Path();
-        _entries = path is not null && File.Exists(path)
-            ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path), Json) ?? []
-            : [];
-        return _entries;
+        if (path is null || !File.Exists(path)) return _entries = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            var read = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path), Json);
+            return _entries = new Dictionary<string, string>(read ?? [], StringComparer.Ordinal);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger?.LogWarning(exception, "provider-route-exclusions-unreadable path={Path}", path);
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
     }
 
-    private void Save()
+    private void Save(Dictionary<string, string> entries)
     {
         var path = Path() ?? throw new InvalidOperationException("TaskRepository is not configured.");
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
-        File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(_entries, Json));
-        File.Move(path + ".tmp", path, overwrite: true);
+        StallInterventionStore.WriteDurably(path, JsonSerializer.Serialize(entries, Json));
+        _entries = entries;
     }
 
     private string? Path()
@@ -218,13 +290,15 @@ public sealed class ReviewProviderRouteControl(V1ReviewExecutorRegistry registry
             .Select(snapshot => snapshot.HostId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
     }
 
+    public bool IsReviewHost(string host) => registry.ListCapabilitySnapshots().Any(snapshot => snapshot.HostId == host);
+
+    /// <summary>A host without a review registration is never rerouted: nothing routes its attempts by provider.</summary>
     public bool IsRerouted(string host, string provider)
     {
         var snapshots = registry.ListCapabilitySnapshots().Where(snapshot => snapshot.HostId == host).ToArray();
-        return snapshots.Length == 0
-            ? exclusions.IsExcluded(host, host, provider)
-            : snapshots.All(snapshot => !registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)
-                .Contains("provider-auth:" + provider)) && exclusions.IsExcluded(host, host, provider);
+        return snapshots.Length > 0 && exclusions.IsExcluded(host, host, provider)
+            && snapshots.All(snapshot => !registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)
+                .Contains("provider-auth:" + provider));
     }
 
     public void Reroute(string host, string provider, string interventionId) => exclusions.Exclude(host, provider, interventionId);
@@ -232,48 +306,53 @@ public sealed class ReviewProviderRouteControl(V1ReviewExecutorRegistry registry
     public void Restore(string host, string provider) => exclusions.Include(host, provider);
 }
 
-/// <summary>The batch gate queue through the pilot, which owns ownership markers and lane events.</summary>
+/// <summary>
+/// The batch gate queue through the pilot, which owns ownership markers and
+/// lane events. A member's card is resolved by the key the attempt authority
+/// files it under (<see cref="TaskIdentity.AuthorityKey(TaskInfo)"/>); a member
+/// whose card is not found has state null and is never dropped.
+/// </summary>
 public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGatePilotService pilot,
-    TaskScannerService scanner) : IBatchGateControl
+    TaskScannerService scanner, GateSlotUsageTracker gateSlots) : IBatchGateControl
 {
     public StallGateFacts? Read(string project, DateTime nowUtc)
     {
         var pending = store.ListPending().Where(item => string.Equals(item.Subject.Project, project,
             StringComparison.OrdinalIgnoreCase)).ToArray();
         if (pending.Length == 0) return null;
-        var jobs = scanner.ScanAllJobs();
-        string? State(string card) => jobs.FirstOrDefault(job => job.Id == card || job.TaskKey == card)?.State;
-        var completed = pending.Where(item => State(item.Subject.TaskKey) == TaskStates.Completed)
-            .Select(item => item.Subject.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
-        var stale = pending.Where(item => State(item.Subject.TaskKey) is not (TaskStates.AutoReview or TaskStates.Completed))
-            .Select(item => item.Subject.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
-        var remaining = pending.Where(item => !completed.Contains(item.Subject.TaskKey)
-            && !stale.Contains(item.Subject.TaskKey)).ToArray();
-        var active = store.ListManifests().Any(manifest => string.Equals(manifest.Scope.Project, project,
-                StringComparison.OrdinalIgnoreCase) && HasState(manifest.BatchId)
-            && store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Assembling
-                or BatchPhase.Assembled or BatchPhase.Running or BatchPhase.Publishing);
+        var jobs = scanner.ScanAllJobsWithArchive();
+        var members = pending.Select(item => new StallGateMember(item.Subject.TaskKey, item.ReviewAttemptId,
+            StateOf(jobs, item.Subject.TaskKey))).ToArray();
+        var active = ActiveBatchProjects(store).Contains(project);
+        var reviewing = pending.Where(item => StateOf(jobs, item.Subject.TaskKey) == TaskStates.AutoReview).ToArray();
         var oldest = pending.Min(item => item.EnqueuedAtUtc.UtcDateTime);
-        double? remainingWait = remaining.Length == 0 || active ? null
-            : (nowUtc - remaining.Min(item => item.EnqueuedAtUtc.UtcDateTime)).TotalHours;
-        return new StallGateFacts(project, pending.Length, completed, stale, (nowUtc - oldest).TotalHours,
-            !active, remainingWait is null ? null : $"{project}:forming", remainingWait);
+        double? remainingWait = reviewing.Length == 0 || active ? null
+            : (nowUtc - reviewing.Min(item => item.EnqueuedAtUtc.UtcDateTime)).TotalHours;
+        var own = gateSlots.Snapshot();
+        var remote = gateSlots.RemoteSnapshot(ServiceWorkloadReader.RemoteSlotsFresh);
+        var running = active || store.ListPending().Any(item => item.Subject.ActivePerTaskGate);
+        return new StallGateFacts(project, pending.Length, members, (nowUtc - oldest).TotalHours,
+            !active, remainingWait is null ? null : $"{project}:forming", remainingWait,
+            new StallGateSlotFacts(remote?.Total ?? own.Total, own.Busy, remote?.Busy, running));
     }
 
-    public IReadOnlyList<string> Drop(string project, IReadOnlyList<string> cards, string reason)
+    /// <summary>Drops only the frozen attempts whose card is still positively completed or stale now.</summary>
+    public IReadOnlyList<string> Drop(string project, IReadOnlyList<string> reviewAttemptIds, string reason)
     {
+        var jobs = scanner.ScanAllJobsWithArchive();
         var dropped = new List<string>();
-        foreach (var card in cards)
+        foreach (var attemptId in reviewAttemptIds.Distinct(StringComparer.Ordinal))
         {
-            var entries = store.ListPending().Where(item => item.Subject.TaskKey == card
-                && string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (entries.Length > 0 && entries.All(item => pilot.DropPendingMember(item.ReviewAttemptId, reason)))
-                dropped.Add(card);
+            var pending = store.ListPending().FirstOrDefault(item => item.ReviewAttemptId == attemptId
+                && string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase));
+            if (pending is null || !StallGateMembers.Droppable(StateOf(jobs, pending.Subject.TaskKey))) continue;
+            if (pilot.DropPendingMember(attemptId, reason)) dropped.Add(attemptId);
         }
         return dropped;
     }
 
-    public bool IsPending(string project, string card) => store.ListPending().Any(item => item.Subject.TaskKey == card
+    public bool IsPending(string project, string reviewAttemptId) => store.ListPending().Any(item =>
+        item.ReviewAttemptId == reviewAttemptId
         && string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase));
 
     public bool CloseNow(string project)
@@ -282,14 +361,34 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
         return store.HasCloseNow(project);
     }
 
-    private bool HasState(string batchId)
+    /// <summary>Projects with a formed, assembling, running or publishing batch.</summary>
+    public static IReadOnlySet<string> ActiveBatchProjects(BatchGateStore store)
+        => store.ListManifests().Where(manifest => HasState(store, manifest.BatchId)
+                && store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Assembling
+                    or BatchPhase.Assembled or BatchPhase.Running or BatchPhase.Publishing)
+            .Select(manifest => manifest.Scope.Project).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The state of exactly one card that the authority key (or the legacy folder id) names; null otherwise.</summary>
+    private static string? StateOf(IReadOnlyList<TaskInfo> jobs, string key)
+    {
+        var matches = jobs.Where(job => string.Equals(TaskIdentity.AuthorityKey(job), key, StringComparison.Ordinal)
+            || string.Equals(job.Id, key, StringComparison.Ordinal)).Take(2).ToArray();
+        return matches.Length == 1 ? matches[0].State : null;
+    }
+
+    private static bool HasState(BatchGateStore store, string batchId)
     {
         var path = Path.Combine(store.BatchDirectory(batchId), "state");
         return Directory.Exists(path) && Directory.EnumerateFiles(path, "*.json").Any();
     }
 }
 
-/// <summary>Continuation bases from the authority's last real delivery.</summary>
+/// <summary>
+/// Continuation bases from the authority's last completed, reviewed delivery.
+/// The authority projection is read by <see cref="TaskIdentity.AuthorityKey(TaskInfo)"/>,
+/// so keyed cards resolve. A pinned base is an empty salvage when its commit is
+/// only the start of one of the card's attempts and never a result with work.
+/// </summary>
 public sealed class DeliveryContinuationControl(TaskScannerService scanner, AttemptAuthorityService authority,
     TimeProvider time) : IContinuationControl
 {
@@ -301,11 +400,8 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
         var candidates = new List<StallRequeueCandidate>();
         foreach (var card in cards.Distinct(StringComparer.Ordinal).Take(50))
         {
-            var job = jobs.FirstOrDefault(item => item.Id == card || item.TaskKey == card);
-            if (job is null) continue;
-            var delivery = LastDelivery(job.TaskKey ?? job.Id);
-            candidates.Add(new StallRequeueCandidate(job.Id, job.State, ContinuationBaseStore.Read(job.FolderPath) is null,
-                delivery?.Ref, delivery?.Sha));
+            var job = Find(jobs, card);
+            if (job is not null) candidates.Add(Candidate(card, job));
         }
         return candidates;
     }
@@ -313,11 +409,13 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
     public ContinuationPin? PinLastDelivery(string card, string interventionId)
     {
         var job = Job(card);
-        if (job is null || job.State != TaskStates.Ready) return null;
-        var delivery = LastDelivery(job.TaskKey ?? job.Id);
-        if (delivery is null) return null;
-        ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord(delivery.Value.Ref, delivery.Value.Sha,
-            Reason, interventionId, time.GetUtcNow().UtcDateTime));
+        if (job is null) return null;
+        var candidate = Candidate(card, job);
+        if (candidate.State != TaskStates.Ready || !candidate.LastRunRateLimited
+            || candidate.BaseKind is not (StallContinuationBases.Missing or StallContinuationBases.EmptySalvage)
+            || candidate.LastDeliveryRef is null || candidate.LastDeliverySha is null) return null;
+        if (!ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord(candidate.LastDeliveryRef,
+                candidate.LastDeliverySha, Reason, interventionId, time.GetUtcNow().UtcDateTime))) return null;
         return Read(card);
     }
 
@@ -325,7 +423,7 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
     {
         var job = Job(card);
         var record = job is null ? null : ContinuationBaseStore.Read(job.FolderPath);
-        return record is null || job is null ? null : new ContinuationPin(job.Id, record.Ref, record.CommitSha, record.Reason);
+        return record is null || job is null ? null : new ContinuationPin(card, record.Ref, record.CommitSha, record.Reason);
     }
 
     public bool LeftReady(string card) => Job(card) is { } job && job.State != TaskStates.Ready;
@@ -339,14 +437,44 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
         return true;
     }
 
-    private TaskInfo? Job(string card) => scanner.ScanAllJobs().FirstOrDefault(item => item.Id == card || item.TaskKey == card);
-
-    private (string Ref, string Sha)? LastDelivery(string taskKey)
+    private StallRequeueCandidate Candidate(string card, TaskInfo job)
     {
-        var attempt = authority.GetTaskProjection(taskKey).RunAttempts
-            .Where(item => !string.IsNullOrWhiteSpace(item.ResultEnvelope?.ImmutableRemoteRef)
-                && !string.IsNullOrWhiteSpace(item.ResultEnvelope?.ResultSha))
-            .OrderByDescending(item => item.TerminalAt ?? item.CreatedAt).FirstOrDefault();
-        return attempt is null ? null : (attempt.ResultEnvelope!.ImmutableRemoteRef!, attempt.ResultEnvelope.ResultSha!);
+        var projection = authority.GetTaskProjection(TaskIdentity.AuthorityKey(job));
+        var delivery = LastReviewedDelivery(projection);
+        var pinned = ContinuationBaseStore.Read(job.FolderPath);
+        var kind = pinned is null ? StallContinuationBases.Missing
+            : string.Equals(pinned.CommitSha, delivery?.ResultEnvelope?.ResultSha, StringComparison.OrdinalIgnoreCase)
+                ? StallContinuationBases.Delivery
+            : EmptySalvage(pinned.CommitSha, projection) ? StallContinuationBases.EmptySalvage
+            : StallContinuationBases.Other;
+        var last = projection.RunAttempts.OrderByDescending(item => item.CreatedAt).FirstOrDefault();
+        var rateLimited = last is { State: AttemptLifecycleState.Failed or AttemptLifecycleState.Cancelled }
+            && Contract.ProviderAccessClassifier.Classify(1, last.TerminalReason, last.TerminalOutcome).Kind
+                == Contract.ProviderAccessEvidenceKind.RateLimited;
+        return new StallRequeueCandidate(card, job.State, kind, rateLimited,
+            delivery?.ResultEnvelope?.ImmutableRemoteRef, delivery?.ResultEnvelope?.ResultSha, pinned?.CommitSha);
     }
+
+    /// <summary>The last completed run with a result beyond its base whose review settled.</summary>
+    private static RunAttemptDto? LastReviewedDelivery(AttemptAuthorityProjection projection)
+        => projection.RunAttempts
+            .Where(run => run.State == AttemptLifecycleState.Completed
+                && !string.IsNullOrWhiteSpace(run.ResultEnvelope?.ImmutableRemoteRef)
+                && !string.IsNullOrWhiteSpace(run.ResultEnvelope?.ResultSha)
+                && !string.Equals(run.ResultEnvelope.ResultSha, run.ResultEnvelope.BaseSha, StringComparison.OrdinalIgnoreCase)
+                && projection.ReviewAttempts.Any(review => review.SourceRunAttemptId == run.AttemptId
+                    && review.State == AttemptLifecycleState.Completed && review.Outcome is not null))
+            .OrderByDescending(run => run.TerminalAt ?? run.CreatedAt).FirstOrDefault();
+
+    private static bool EmptySalvage(string commitSha, AttemptAuthorityProjection projection)
+        => projection.RunAttempts.Any(run => string.Equals(run.ResultEnvelope?.BaseSha, commitSha, StringComparison.OrdinalIgnoreCase))
+           && !projection.RunAttempts.Any(run => run.ResultEnvelope is { } envelope
+               && string.Equals(envelope.ResultSha, commitSha, StringComparison.OrdinalIgnoreCase)
+               && !string.Equals(envelope.ResultSha, envelope.BaseSha, StringComparison.OrdinalIgnoreCase));
+
+    private TaskInfo? Job(string card) => Find(scanner.ScanAllJobs(), card);
+
+    private static TaskInfo? Find(IReadOnlyList<TaskInfo> jobs, string card)
+        => jobs.FirstOrDefault(item => string.Equals(TaskIdentity.AuthorityKey(item), card, StringComparison.Ordinal))
+           ?? jobs.FirstOrDefault(item => item.Id == card || item.Key == card || item.TaskKey == card);
 }

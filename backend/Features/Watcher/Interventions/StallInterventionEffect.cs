@@ -5,11 +5,15 @@ public sealed record StallInterventionUndoResult(bool Undone, string Message, St
 
 /// <summary>
 /// AGT-3207: applies the AI Operator's <c>stall-intervention</c> decision,
-/// in process (Monolith) or from the engine receipt (Engine). Every applied
-/// action is measured afterwards; an action whose effect cannot be observed is
-/// escalated at once instead of being reported as done. The effect is
-/// idempotent per write key, and a stall that cleared before an engine receipt
-/// arrived is settled without an action.
+/// in process (Monolith) or from the engine receipt (Engine). The record is
+/// written ahead as <c>applying</c> before any side effect and settled after
+/// it, so an exception or a restart in between never repeats the action. The
+/// write key comes from the case, its episode, the action and the repeat
+/// index, so a replayed or duplicated receipt maps to the same record. Before
+/// it acts, the effect compares the live value with the plan's before-value
+/// and records a person's change as superseded instead of acting. Every
+/// applied action is measured afterwards; an action whose effect cannot be
+/// observed is escalated at once instead of being reported as done.
 /// </summary>
 public sealed class StallInterventionEffect(
     StallInterventionStore store,
@@ -17,14 +21,41 @@ public sealed class StallInterventionEffect(
     StallInterventionFactsBuilder facts,
     IHostAdmissionControl admission,
     IServiceRestartControl restarts,
+    IServiceWorkload workloads,
     IProviderRouteControl routes,
     IBatchGateControl gate,
     IContinuationControl continuations,
     StallInterventionReceipts receipts,
     IConfiguration configuration,
-    TimeProvider time) : IAiOperatorProposalEffect
+    TimeProvider time,
+    ILogger<StallInterventionEffect> logger) : IAiOperatorProposalEffect
 {
+    /// <summary>An <c>applying</c> record older than this was interrupted; it is measured and settled, never repeated.</summary>
+    public static readonly TimeSpan InterruptedAfter = TimeSpan.FromMinutes(10);
+
     public string Decider => AiOperatorDeciders.StallIntervention;
+
+    /// <summary>
+    /// The idempotency key of one decision: case id, episode start, action and
+    /// repeat index for a stall, the checked intervention for a follow-up or
+    /// restore. The Operations Server receives the same key.
+    /// </summary>
+    public static string WriteKey(StallInterventionFacts stall, string action, bool observe)
+    {
+        var key = stall.Trigger switch
+        {
+            StallInterventionTriggers.FollowUp or StallInterventionTriggers.Restore
+                => $"{stall.Trigger}:{stall.FollowUp?.InterventionId}:{action}",
+            _ => $"stall:{stall.CaseId ?? stall.Subject}:{stall.SinceUtc?.ToString("O") ?? "none"}:{action}:"
+                + stall.History.Count(item => item.Subject == stall.Subject && item.Action == action
+                    && (stall.SinceUtc is not { } since || item.AppliedUtc >= since)),
+        };
+        return (observe ? "observe:" : string.Empty) + "stall-intervention:" + key;
+    }
+
+    /// <summary>True when the mutating plan only writes a "would do" receipt (observe mode or a switched-off action).</summary>
+    public static bool Observes(StallInterventionOptions options, string action)
+        => StallInterventionActions.Mutating.Contains(action) && !options.Acts(action);
 
     public async Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
     {
@@ -32,31 +63,35 @@ public sealed class StallInterventionEffect(
             ?? throw new InvalidDataException("The stall-intervention receipt has no plan.");
         var stall = application.Payload.StallIntervention
             ?? throw new InvalidDataException("The stall-intervention occurrence has no facts.");
-        if (application.Decision.Disposition == AiOperatorDisposition.Hold
-            || store.FindByWriteKey(application.WriteKey) is not null) return;
+        if (application.Decision.Disposition == AiOperatorDisposition.Hold) return;
         var options = StallInterventionOptions.FromConfiguration(configuration);
+        var observe = Observes(options, plan.Action);
+        var writeKey = WriteKey(stall, plan.Action, observe);
+        if (store.FindByWriteKey(writeKey) is not null) return;
         var now = time.GetUtcNow().UtcDateTime;
         var all = store.All();
         var original = stall.FollowUp is { } check ? all.FirstOrDefault(item => item.Id == check.InterventionId) : null;
-        var watcherCase = Case(stall.Subject, original?.Fingerprint);
+        var watcherCase = Case(stall.Subject, original?.Fingerprint, stall.CaseId);
         if (stall.Trigger == StallInterventionTriggers.Stall
-            && (watcherCase is null || !StallInterventionFactsBuilder.IsOpen(watcherCase))) return;
+            && (watcherCase is null || !StallInterventionFactsBuilder.IsActionable(watcherCase))) return;
         if (stall.Trigger == StallInterventionTriggers.FollowUp && original?.Status != StallInterventionStatuses.Applied) return;
+        if (stall.Trigger == StallInterventionTriggers.Restore && original?.AdmissionInForce != true) return;
 
         var previous = original ?? all.LastOrDefault(item => item.Subject == stall.Subject
             && now - item.DecidedAtUtc <= TimeSpan.FromHours(options.Limits.LoopWindowHours));
         var record = new StallInterventionRecord
         {
-            Id = StallInterventionStore.IdFor(application.WriteKey),
-            WriteKey = application.WriteKey,
+            Id = StallInterventionStore.IdFor(writeKey),
+            WriteKey = writeKey,
             Subject = stall.Subject,
             Kind = stall.Kind,
             Host = plan.HostName,
+            HostClientId = plan.HostId ?? original?.HostClientId,
             Action = plan.Action,
             Autonomy = plan.Autonomy.ToString(),
             Disposition = application.Decision.Disposition.ToString(),
             ReasonCode = plan.ReasonCode,
-            Status = StallInterventionStatuses.Applied,
+            Status = StallInterventionStatuses.Applying,
             Project = watcherCase?.Project ?? original?.Project ?? QuotaProbeSignalProbe.WorkspaceProject,
             CaseId = watcherCase?.Id ?? original?.CaseId,
             Fingerprint = watcherCase?.Fingerprint ?? original?.Fingerprint,
@@ -73,6 +108,7 @@ public sealed class StallInterventionEffect(
             Proposal = plan.Proposal,
             AffectedCards = (original?.AffectedCards ?? stall.AffectedCards.ToList()).Take(50).ToList(),
             Members = plan.Members?.ToList() ?? [],
+            AttemptIds = plan.AttemptIds?.ToList() ?? [],
             Service = plan.Service,
             Provider = plan.Provider,
             BatchId = plan.BatchId,
@@ -84,7 +120,7 @@ public sealed class StallInterventionEffect(
             Chain = previous is null ? [] : previous.Chain.Append(previous.Id).TakeLast(10).ToList(),
         };
 
-        record = application.Decision.Disposition switch
+        var settled = application.Decision.Disposition switch
         {
             AiOperatorDisposition.Propose => record with { Status = StallInterventionStatuses.Proposed, ResolvedAtUtc = now },
             AiOperatorDisposition.Ask => record with { Status = StallInterventionStatuses.Escalated, ResolvedAtUtc = now },
@@ -92,8 +128,64 @@ public sealed class StallInterventionEffect(
             {
                 Status = StallInterventionStatuses.Verified, ResolvedAtUtc = now, EffectObserved = true,
             },
-            _ => await ActAsync(record, application.WriteKey, ct),
+            _ when observe => WouldDo(record, options, now),
+            _ => null,
         };
+        if (settled is not null)
+        {
+            store.Save(settled);
+            if (original is not null && settled.Status != StallInterventionStatuses.Observed) Settle(original, settled, now);
+            receipts.Publish(settled, store.All());
+            return;
+        }
+
+        // Apply-time checks: one pending intervention per subject, and the
+        // live value must still be the plan's before-value.
+        var other = all.FirstOrDefault(item => item.Subject == stall.Subject && item.Id != original?.Id
+            && StallInterventionStatuses.Pending.Contains(item.Status));
+        if (other is not null)
+        {
+            logger.LogInformation("stall-intervention-refused subject={Subject} pending={Pending} action={Action}",
+                stall.Subject, other.Id, plan.Action);
+            return;
+        }
+        if (LiveMismatch(record) is { } mismatch)
+        {
+            var superseded = record with
+            {
+                Status = StallInterventionStatuses.Superseded,
+                ResolvedAtUtc = now,
+                FollowUpDueUtc = null,
+                EffectEvidence = mismatch,
+                Outcome = $"Superseded by a person: {mismatch}. I did not act.",
+            };
+            store.Save(superseded);
+            if (original is not null) Settle(original, superseded, now);
+            receipts.Publish(superseded, store.All());
+            return;
+        }
+
+        store.Save(record);
+        try
+        {
+            record = await ActAsync(record, ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The record stays undoable: part of the change may be in force.
+            logger.LogWarning(exception, "stall-intervention-action-failed id={Id} action={Action}", record.Id, record.Action);
+            record = record with
+            {
+                Status = StallInterventionStatuses.Escalated,
+                EffectObserved = false,
+                EffectEvidence = $"the action failed: {exception.Message}",
+                ResolvedAtUtc = time.GetUtcNow().UtcDateTime,
+                Undoable = UndoableAction(record.Action),
+                Outcome = $"The action failed ({exception.Message}); I handed the event to a person.",
+            };
+        }
+        if (record.Status == StallInterventionStatuses.Applying)
+            record = record with { Status = StallInterventionStatuses.Applied };
         if (record.Status == StallInterventionStatuses.Applied && record.FollowUpDueUtc is null)
             record = record with { Status = StallInterventionStatuses.Verified, ResolvedAtUtc = now };
         store.Save(record);
@@ -101,21 +193,81 @@ public sealed class StallInterventionEffect(
         receipts.Publish(record, store.All());
     }
 
-    /// <summary>A person's undo. Restarts and escalations have nothing to undo.</summary>
+    /// <summary>
+    /// Settles an <c>applying</c> record whose process ended between action and
+    /// receipt. The action is measured, never repeated: an observed effect
+    /// continues to its follow-up, anything else goes to a person.
+    /// </summary>
+    public StallInterventionRecord RecoverInterrupted(StallInterventionRecord record)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        var options = StallInterventionOptions.FromConfiguration(configuration);
+        var observed = facts.Effect(record, options, now, out var evidence, out _);
+        var recovered = observed && record.FollowUpDueUtc is not null
+            ? record with
+            {
+                Status = StallInterventionStatuses.Applied,
+                EffectObserved = true,
+                EffectEvidence = evidence,
+                Undoable = UndoableAction(record.Action),
+                Outcome = "The action was interrupted before its receipt settled; its effect is observed, so I did not repeat it.",
+            }
+            : record with
+            {
+                Status = StallInterventionStatuses.Escalated,
+                EffectObserved = observed,
+                EffectEvidence = evidence,
+                ResolvedAtUtc = now,
+                Undoable = UndoableAction(record.Action),
+                Outcome = "The action was interrupted (a restart or failure) before its receipt settled"
+                    + (observed ? "" : " and its effect is not observed") + "; I did not repeat it and handed the event to a person.",
+            };
+        store.Save(recovered);
+        if (record.Trigger != StallInterventionTriggers.Stall
+            && store.Find(record.PreviousInterventionId ?? string.Empty) is { } original)
+            Settle(original, recovered, now);
+        receipts.Publish(recovered, store.All());
+        return recovered;
+    }
+
+    /// <summary>
+    /// The admission no longer reads the lowered value (a person changed it,
+    /// or the write never took): the reduction is no longer in force and is
+    /// never restored over the live value.
+    /// </summary>
+    public StallInterventionRecord ReleaseLowering(StallInterventionRecord record, string evidence)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        var released = record with
+        {
+            RevertedBy = $"admission changed: {evidence}",
+            Undoable = false,
+            Status = record.Status == StallInterventionStatuses.Applied ? StallInterventionStatuses.Verified : record.Status,
+            ResolvedAtUtc = record.ResolvedAtUtc ?? now,
+            Outcome = $"The admission no longer reads the lowered value ({evidence}); the reduction is no longer in force "
+                + "and I do not restore over it.",
+        };
+        store.Save(released);
+        return released;
+    }
+
+    /// <summary>A person's undo. Restarts, gate drops and escalations have nothing to undo.</summary>
     public StallInterventionUndoResult Undo(string id, string actor)
     {
         var record = store.Find(id);
         if (record is null) return new(false, "intervention-not-found", null);
-        if (!record.Undoable || record.UndoneAtUtc is not null)
-            return new(false, record.UndoneAtUtc is null ? "intervention-not-undoable" : "intervention-already-undone", record);
+        if (record.UndoneAtUtc is not null) return new(false, "intervention-already-undone", record);
+        if (!record.Undoable && !record.AdmissionInForce) return new(false, "intervention-not-undoable", record);
         var now = time.GetUtcNow().UtcDateTime;
         string evidence;
         bool undone;
         switch (record.Action)
         {
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
-                var value = admission.SetAdmission(record.Host, record.PreviousAdmission ?? 1);
-                undone = value == record.PreviousAdmission;
+                if (record.HostClientId is not { } clientId || record.PreviousAdmission is not { } previousAdmission)
+                    return new(false, "intervention-not-undoable", record);
+                var value = admission.SetAdmission(clientId, previousAdmission);
+                undone = value == previousAdmission;
                 evidence = $"admission of {record.Host} reads {value?.ToString() ?? "unknown"}";
                 break;
             case StallInterventionActions.RerouteProvider:
@@ -125,7 +277,8 @@ public sealed class StallInterventionEffect(
                 break;
             case StallInterventionActions.RequeueFromDelivery:
                 var cleared = record.Members.Where(card => continuations.Clear(card, record.Id)).ToArray();
-                undone = record.Members.All(card => continuations.Read(card) is null || continuations.LeftReady(card));
+                undone = record.Members.All(card => continuations.Read(card) is not { } pin
+                    || pin.Reason != DeliveryContinuationControl.Reason || continuations.LeftReady(card));
                 evidence = $"cleared the base on {cleared.Length} of {record.Members.Count} cards";
                 break;
             default:
@@ -138,6 +291,8 @@ public sealed class StallInterventionEffect(
             UndoneAtUtc = now,
             UndoneBy = actor,
             ResolvedAtUtc = now,
+            Undoable = false,
+            RevertedBy = record.RevertedBy ?? $"undo: {actor}",
             Outcome = $"Undone by {actor}: {evidence}.",
         };
         store.Save(updated);
@@ -145,45 +300,101 @@ public sealed class StallInterventionEffect(
         return new(true, "undone", updated);
     }
 
-    private async Task<StallInterventionRecord> ActAsync(StallInterventionRecord record, string writeKey, CancellationToken ct)
+    private StallInterventionRecord WouldDo(StallInterventionRecord record, StallInterventionOptions options, DateTime now)
     {
-        bool undoable = false;
+        var why = options.Mode == StallInterventionModes.Act
+            ? $"The action {record.Action} is switched off (StallIntervention:Actions:{record.Action})"
+            : "The AI Operator runs in observe mode (StallIntervention:Mode)";
+        var done = $"{why}, so nothing was changed. I would have done this: {record.Done}";
+        return record with
+        {
+            Status = StallInterventionStatuses.Observed,
+            Done = done,
+            Undo = "Nothing to undo.",
+            Receipt = string.Join(" ", new[] { record.Observed, done, record.Why,
+                record.Before.Length == 0 && record.After.Length == 0 ? string.Empty
+                    : $"Would change: {record.Before} to {record.After}." }.Where(part => part.Length > 0)),
+            FollowUpDueUtc = null,
+            ResolvedAtUtc = now,
+        };
+    }
+
+    /// <summary>The live value differs from the plan's before-value: someone acted first.</summary>
+    private string? LiveMismatch(StallInterventionRecord record)
+    {
+        var options = StallInterventionOptions.FromConfiguration(configuration);
+        var now = time.GetUtcNow().UtcDateTime;
         switch (record.Action)
         {
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
-                admission.SetAdmission(record.Host, record.TargetAdmission
+                if (record.HostClientId is not { } clientId) return "the host has no client identity to set the admission on";
+                var live = admission.Read(clientId, options.Limits.RestoreBelowTargetFraction, now)?.Admission;
+                return live == record.PreviousAdmission ? null
+                    : $"the admission of {record.Host} reads {live?.ToString() ?? "unknown"}, the plan expected {record.PreviousAdmission}";
+            case StallInterventionActions.RerouteProvider:
+                return routes.IsRerouted(record.Host, record.Provider ?? "unknown")
+                    ? $"{record.Provider} is already routed away from {record.Host}" : null;
+            case StallInterventionActions.RestartService:
+                var parts = record.Subject.Split(':');
+                var workload = workloads.Read(record.Host, parts.Length > 2 ? parts[2] : "coding", now);
+                return workload is { BusySlots: 0, RunningWork: false, ClaimableWaiting: > 0 } ? null
+                    : $"{record.Service} on {record.Host} now runs "
+                        + (workload?.BusySlots?.ToString() ?? "unknown") + " items"
+                        + (workload?.RunningWork == true ? " and an active gate" : string.Empty)
+                        + $" with {workload?.ClaimableWaiting ?? 0} claimable waiting";
+            default:
+                return null;
+        }
+    }
+
+    private async Task<StallInterventionRecord> ActAsync(StallInterventionRecord record, CancellationToken ct)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        switch (record.Action)
+        {
+            case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
+                admission.SetAdmission(record.HostClientId!, record.TargetAdmission
                     ?? throw new InvalidDataException("The admission plan has no target."));
-                undoable = true;
                 break;
             case StallInterventionActions.RestartService or StallInterventionActions.RetryEngineStart:
-                var outcome = await restarts.RestartAsync(record.Host, record.Service ?? "unknown", writeKey, record.Done, ct);
+                var outcome = await restarts.RestartAsync(record.Host, record.Service ?? "unknown", record.WriteKey, record.Done, ct);
                 record = record with { EffectObserved = outcome.Succeeded, EffectEvidence = outcome.Evidence };
                 break;
             case StallInterventionActions.RerouteProvider:
                 routes.Reroute(record.Host, record.Provider ?? "unknown", record.Id);
-                undoable = true;
                 break;
             case StallInterventionActions.ReconcileBatchGate:
-                var dropped = gate.Drop(record.Project, record.Members, $"ai-operator:{record.Id}");
+                // Only the attempts frozen at decision time, re-checked against their card now.
+                var dropped = gate.Drop(record.Project, record.AttemptIds, $"ai-operator:{record.Id}");
+                if (dropped.Count == 0 && record.BatchId is null)
+                    return Superseded(record, now, "every frozen member changed state before I acted; nothing was dropped");
                 var closed = record.BatchId is null || gate.CloseNow(record.Project);
                 record = record with
                 {
-                    Outcome = $"dropped {dropped.Count} of {record.Members.Count} members"
+                    AttemptIds = dropped.ToList(),
+                    Outcome = $"dropped {dropped.Count} of {record.AttemptIds.Count} frozen members"
                         + (record.BatchId is null ? string.Empty : closed ? "; close-now recorded" : "; close-now refused"),
                     EffectObserved = closed ? null : false,
                     EffectEvidence = closed ? null : "the close-now request was refused",
                 };
                 break;
             case StallInterventionActions.RequeueFromDelivery:
-                foreach (var card in record.Members) continuations.PinLastDelivery(card, record.Id);
-                undoable = true;
+                var pinned = record.Members.Where(card => continuations.PinLastDelivery(card, record.Id) is not null).ToList();
+                if (pinned.Count == 0)
+                    return Superseded(record, now, "no card still waited in Ready without a base after a rate-limited run");
+                record = record with
+                {
+                    Outcome = pinned.Count == record.Members.Count ? null
+                        : $"pinned {pinned.Count} of {record.Members.Count} cards; the others changed before I acted",
+                    Members = pinned,
+                };
                 break;
             default:
                 throw new InvalidOperationException($"Unknown stall intervention {record.Action}.");
         }
 
         // 17.10.2026 lesson: an automatic action counts only by its measured effect.
-        var now = time.GetUtcNow().UtcDateTime;
+        now = time.GetUtcNow().UtcDateTime;
         var observed = facts.Effect(record, StallInterventionOptions.FromConfiguration(configuration), now,
             out var evidence, out _);
         if (record.EffectObserved == false)
@@ -191,50 +402,78 @@ public sealed class StallInterventionEffect(
             observed = false;
             evidence = record.EffectEvidence ?? "the action failed";
         }
+        var undoable = UndoableAction(record.Action);
         if (observed)
             return record with { EffectObserved = true, EffectEvidence = evidence, Undoable = undoable };
+        // A partial change may be in force: the record keeps its Undo.
         return record with
         {
             Status = StallInterventionStatuses.Escalated,
             EffectObserved = false,
             EffectEvidence = evidence,
             ResolvedAtUtc = now,
-            Undoable = false,
-            Outcome = $"The effect was not observed ({evidence}); I handed the event to a person.",
+            Undoable = undoable,
+            Outcome = $"The effect was not observed ({evidence}); I handed the event to a person"
+                + (undoable ? "; Undo reverts whatever part of the change is in force." : "."),
         };
     }
 
-    /// <summary>The follow-up closes the intervention it checked.</summary>
+    private static StallInterventionRecord Superseded(StallInterventionRecord record, DateTime now, string evidence)
+        => record with
+        {
+            Status = StallInterventionStatuses.Superseded,
+            ResolvedAtUtc = now,
+            FollowUpDueUtc = null,
+            EffectEvidence = evidence,
+            Outcome = $"Superseded: {evidence}. I did not act.",
+        };
+
+    private static bool UndoableAction(string action) => action is StallInterventionActions.LowerAdmission
+        or StallInterventionActions.RestoreAdmission or StallInterventionActions.RerouteProvider
+        or StallInterventionActions.RequeueFromDelivery;
+
+    /// <summary>The follow-up or restore closes the intervention it checked.</summary>
     private void Settle(StallInterventionRecord original, StallInterventionRecord followUp, DateTime now)
     {
+        if (followUp.Action == StallInterventionActions.RestoreAdmission
+            && followUp.Status == StallInterventionStatuses.Superseded)
+        {
+            ReleaseLowering(original, followUp.EffectEvidence ?? "the admission changed");
+            return;
+        }
+        var restored = followUp.Action == StallInterventionActions.RestoreAdmission
+            && followUp.Status is StallInterventionStatuses.Applied or StallInterventionStatuses.Verified;
         var status = followUp.Action switch
         {
+            _ when followUp.Trigger == StallInterventionTriggers.Restore => original.Status,
             StallInterventionActions.Escalate => StallInterventionStatuses.Escalated,
-            StallInterventionActions.ConfirmCleared or StallInterventionActions.RestoreAdmission
-                => StallInterventionStatuses.Verified,
+            StallInterventionActions.ConfirmCleared => StallInterventionStatuses.Verified,
+            StallInterventionActions.RestoreAdmission => restored ? StallInterventionStatuses.Verified : StallInterventionStatuses.Escalated,
             _ => original.Status,
         };
-        if (status == original.Status) return;
+        if (status == original.Status && !restored) return;
         if (original.Action == StallInterventionActions.RerouteProvider
             && followUp.Action == StallInterventionActions.ConfirmCleared)
             routes.Restore(original.Host, original.Provider ?? "unknown");
         store.Save(original with
         {
             Status = status,
-            ResolvedAtUtc = now,
+            ResolvedAtUtc = original.ResolvedAtUtc ?? now,
             Outcome = $"{followUp.Id}: {followUp.Done}",
-            // Undo is offered while the intervention is in force; a settled one
-            // was confirmed, reverted by the follow-up or handed to a person.
-            Undoable = false,
+            RevertedBy = restored ? followUp.Id : original.RevertedBy,
+            // Undo stays while a change is in force (an escalated reduction
+            // keeps it through AdmissionInForce); a confirmed or restored one has none.
+            Undoable = status == StallInterventionStatuses.Escalated && !restored && original.Undoable,
         });
     }
 
-    private WatcherCase? Case(string subject, string? fingerprint)
+    private WatcherCase? Case(string subject, string? fingerprint, string? caseId)
     {
         var root = configuration["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root)) return null;
         var all = cases.All(root);
-        return (fingerprint is null ? null : all.FirstOrDefault(item => item.Fingerprint == fingerprint))
+        return (caseId is null ? null : all.FirstOrDefault(item => item.Id == caseId))
+            ?? (fingerprint is null ? null : all.FirstOrDefault(item => item.Fingerprint == fingerprint))
             ?? all.Where(item => item.Subject == subject && StallInterventionFactsBuilder.KindOf(item) is not null)
                 .OrderByDescending(item => item.LastSeenUtc).FirstOrDefault();
     }
