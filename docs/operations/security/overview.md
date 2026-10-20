@@ -102,8 +102,9 @@ that is already allowed to edit that project's checkout.
   independent revocation. Rotation creates an overlapping credential so the
   old one can remain valid until the new daemon is proven.
 - Settings > Access lets the owner invite, update, reset, or disable users;
-  create and revoke named API tokens; create runner enrollment codes; and
-  revoke enrolled runners. API tokens use the operator or viewer role and an
+  manage role bindings, groups, and service accounts; create and revoke named
+  API tokens; create, list, and revoke runner enrollment codes; and revoke
+  enrolled runners. API tokens use the operator or viewer role and an
   explicit project list (`*` grants all projects). The creation response shows
   the secret once; subsequent lists expose metadata only: creator, expiry,
   last use, and revocation. The existing `.security/access-state.json` holds
@@ -117,11 +118,173 @@ that is already allowed to edit that project's checkout.
   origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
   attribution only. API tokens cannot call access administration, versioned
   Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
-  Each mapped API route declares its token project scope. Routes without a
-  project address, including workspace timelines, expensive-jobs lists, and
-  screenshots, require the `*` project grant. A `?project=` query cannot turn
-  a workspace route into a project route.
+  API tokens are service accounts and pass the same named-permission check.
+  Routes without a project address, including workspace timelines,
+  expensive-jobs lists, and screenshots, require the `*` project grant. A
+  `?project=` query cannot turn a workspace route into a project route.
 - A Runner never receives a human password or session cookie.
+
+### Rights model: role bindings per scope (IP-8)
+
+The networked profile authorizes every human and service-account request
+through role bindings (Dossier integrierte-plattform §9.5, decision IP-D9 A).
+A binding is a principal (user, group, or service account) times a role times
+a scope (the workspace, one project, or one environment of one project). The
+effective permission set is the union of a principal's bindings, direct and
+through its groups. Code: `backend/Features/Security/Iam/`.
+
+| Role | Bindable at | Holds |
+|---|---|---|
+| Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
+| Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
+| Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
+| Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
+| Viewer | workspace, project, environment | reads, secret metadata included |
+| Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
+
+- Every route declares one named permission, such as `project.cards.write`,
+  `environment.production.deploy.approve`, `secrets.write`, or
+  `secrets.resolve`: explicitly with `RequirePermission(...)` (or
+  `RequirePermissions(read, write)` for the Task Server proxy
+  `/api/v1/{**path}`: `workspace.read` and `workspace.operate`) or through one
+  rule of `RoutePermissionCatalog`. `RoutePermissionInventoryTests` fails for
+  any mapped route without a declaration, in the local, networked, and
+  standalone-Task-Server host profiles. The middleware refuses an undeclared
+  route with `permission-undeclared`; a method mismatch keeps its 405.
+- The route decides the addressed project as before, read from the matched
+  route pattern: a literal segment after `/api/tasks/` names no task, so the
+  board (`/api/tasks/grouped`, also `/api/v1/studio/board`),
+  `code-review/defaults`, and `commit-owner/{sha}` are unaddressed reads and
+  `DELETE /api/tasks/orphan-folder` is workspace-wide (`workspace.operate`).
+  `/api/analysis/{project}`, `/api/drift/{project}`, `/api/supervisor/{project}`,
+  `/api/bus/{project}`, and `/api/runtime/{project}` address that project. A
+  supervisor `cancel-run` or `force-fail` refuses (404 `job-not-in-project`,
+  no intervention record) a job id that is not a card of the route project,
+  because the intervention stops the run its job id names anywhere. The
+  workspace health overview `/api/environment/health` lists only environments
+  of projects the caller's bindings grant the read on. A binding covers a
+  project route when its scope is the workspace or that project; workspace-wide
+  routes need a workspace binding. Unaddressed reads accept any binding because
+  their handlers filter per project. Unaddressed writes need a workspace
+  binding, except task creation, reorder, batch-move, and the title and prompt
+  helpers, whose handlers check the route's permission for every project they
+  touch (`ProjectAccessAuthorization.AllowsTasks(context, projects,
+  permission)`). Decision receipt lists filter by `project.read`; recording an
+  operator intent also requires `project.runs.operate` on the receipt's own
+  project. An environment binding grants its environment-level
+  permissions in that environment and read access to the project.
+- Environment scopes name the environment kind of the project's declarations
+  (`docs/deployments/environments/*.json`): `stage`, `production`, or
+  `other`, never an environment id. Releases address `stage`, promotions and
+  the card release flag address `production`, and a rollback resolves its
+  `environmentId` to the kind of that declaration (an undeclared id resolves
+  to no environment, so only workspace and project bindings grant it). The
+  store refuses any other environment key with `invalid-scope`.
+- Deployment status, release, deployment, log, and audit reads require
+  `project.read`. Deployment actions require a deploy permission. Production
+  approve and reject routes require `environment.production.deploy.approve`;
+  a human Approver bound at the workspace, project, or production environment
+  may decide in scope. Service accounts cannot approve. The deployment
+  lifecycle still checks the approval when it processes the decision.
+- Workspace secret metadata requires `secrets.read` on the workspace.
+  `/api/secrets` and `/api/secrets/audit` filter each entry by its actual
+  workspace, project, or declared environment scope. A service account with
+  `secrets.write` may manage secrets in scope; records and audit entries name
+  it as `service-account:<id>`.
+- Requests never authorize through the stored legacy fields. After the
+  permission decision the middleware gives the handler a projected principal
+  for this request: `role` is the strongest role among the workspace and
+  project bindings that grant the route's permission on the addressed
+  project(s) (Admin and Developer appear as `operator`, Approver as `viewer`),
+  and `projects` are the projects where the route's permission holds. An
+  environment binding ranks as its role only for a request in its own
+  environment and as Viewer elsewhere. A user who is Product in one project
+  and Developer in another project, or Developer of one of its environments,
+  therefore meets the Product lane rules in the first.
+- Operator authority belongs to Admin and Owner. An `operatorOverride`
+  completion needs Admin or Owner on the card's project (else 403
+  `operator-authority-required`), and a decision card for `role:operator`
+  accepts Admin and Owner only. Developer acts as `operator` for the other
+  handler checks but decides a card only as `role:developer`. The Task Server proxy forwards `owner` for
+  the Owner, `operator` only with `workspace.operate` on the workspace, and
+  `viewer` otherwise.
+- **Tightening for legacy operators.** `workspace.settings.write` and
+  `workspace.operate` are workspace-level permissions. A legacy operator with
+  a project list becomes Admin of those projects and keeps every project
+  permission there, but can no longer change workspace, model, quota, prompt,
+  or tag settings, create projects, or operate the installation (Task Server
+  management, hosts, sweeps, recovery). The same holds for unaddressed writes
+  in general. Give such a user Admin on the workspace to restore it. Only
+  the Owner reads or manages access, as before the rights model.
+- Service accounts are non-human principals with their own bearer tokens
+  (`sat.` prefix), stored as hashes with expiry (default 90 days, at most one
+  year), last use, and revocation. They need no CSRF token, can hold Admin,
+  Developer, or Viewer, never hold a production approval, and need a
+  workspace binding on unaddressed routes. They never call access
+  administration or the versioned `/api/v1` plane. Handlers, audit records,
+  and card timelines all see them as the one non-human actor
+  `service-account:<id>`, which is also the actor of rollbacks and
+  moves they trigger. Because that actor is not `human:`, a lane move by a
+  service account or API token no longer counts as an operator requeue out of
+  a decision lane or as an operator lane verdict, as a human operator's move
+  does; the automated review path treats it like any other non-human
+  transition. Runners and the engine keep their enrollment credentials and
+  Runner scopes.
+- API tokens (AGT-3186) are service accounts with one `api.` token, created
+  under `/api/auth/api-tokens` with Admin (`operator`) or Viewer bindings for
+  the requested projects. They keep the API-token limits: no
+  installation-wide writes even with `*`, and no use once the creating user is
+  disabled.
+- Secret routes (AGT-3222) declare `secrets.read` for metadata reads and
+  `secrets.write` for put, rotate, revoke, and delete, at the workspace
+  (`/api/secrets/workspace`, which needs a workspace binding), project
+  (`/api/projects/{project}/secrets`), or environment scope
+  (`/api/projects/{project}/environments/{environment}/secrets`, whose
+  environment id resolves to its kind like a rollback). No human route returns
+  a value (write without read, IP-D8 A): `POST /api/runner/secrets/resolve`
+  accepts only a Runner credential bound to a live lease (`runner.service`).
+  `secrets.resolve` is declared for workload identities and grants no route
+  yet.
+- Migration: loading an older access state migrates a copy and replaces the
+  live state only after a backup and the save succeed. Each migration writes
+  its own backup `.security/access-state.v<from>.<UTC timestamp>.json`; older
+  backups stay untouched. From version 0, owner becomes Owner on the
+  workspace, operator becomes Admin, viewer stays Viewer, the Product role
+  becomes Product per assigned project plus Approver on the `production`
+  environment of each production-approval project, and the `*` entry becomes
+  the workspace scope. An operator or viewer with an empty project list held
+  no project and receives no binding. API tokens become service accounts that
+  keep their token id and secret hash, so existing `api.` secrets keep
+  working. Sessions, runners, enrollments, and invitations are unchanged. A
+  single-user installation migrates its owner and needs no setup; a fresh
+  bootstrap binds the first owner directly.
+- Each user record keeps `role`, `projects`, and `productionApprovalProjects`
+  as a downgrade-safe summary: only Admin is summarized as `operator` (with
+  the Admin projects), Product as `contributor`, everything else as `viewer`,
+  and a user without bindings as a viewer of no project. **Downgrade:** an
+  older binary reads only this summary and drops role bindings, groups, and
+  service accounts (API tokens included) the first time it saves the file;
+  restore the migration backup to return to the old state. A later upgrade
+  migrates again from that summary, so bindings, groups, and service accounts
+  made under the rights model would be lost. Before a downgrade, copy the
+  current `.security/access-state.json` (version 2) aside; before upgrading
+  again, restore that copy.
+- The legacy user endpoint keeps working: `PUT /api/auth/users/{id}` renames
+  or disables without touching bindings when `role`, `projects`, and
+  production approvals equal the current summary. A real role change replaces
+  the user's direct bindings and keeps group bindings; it returns 409
+  `bindings-managed` when the direct bindings cannot be expressed as a legacy
+  role (for example Developer or Approver). Invitations accept explicit
+  `bindings`. Validation runs on a copy; a refused update changes nothing.
+- Access administration lives under `/api/auth/iam` and in Studio under
+  Settings → Access, which also lists API tokens, runner enrollments, and
+  runners. The store refuses any change that would leave the installation
+  without an active Owner or that removes the acting Owner's own Owner role.
+  With a standalone Task Server the Studio's accounts are the Task Server's;
+  this area then reports that and manages nothing.
+- `.security/iam-audit.jsonl` records every binding, group, membership,
+  service-account, token, and legacy role change with the acting user and the
+  time, append-only.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,
 `runner.events`, `runner.artifacts`, and `runner.completion`. Reading the prompt
@@ -151,8 +314,11 @@ Runner identity plus credential id. Security state and audit files are written
 with owner-only permissions on Unix.
 
 Each authenticated API-token call appends its token id, creator, method, route,
-and response status to `<TaskRepository>/.security/api-token-audit.jsonl`.
-Token values and query strings are omitted from that audit.
+and response status to `<TaskRepository>/.security/api-token-audit.jsonl`;
+other service-account calls go to `service-account-audit.jsonl` with the same
+fields and the actor `service-account:<id>`. Refused calls are recorded too. Token values
+and query strings are omitted from that audit. IAM changes go to
+`iam-audit.jsonl`.
 
 Known credential shapes and named authorization, cookie, and password fields
 are redacted from Runner log ingestion. Production exceptions omit stack

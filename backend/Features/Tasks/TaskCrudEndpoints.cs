@@ -765,6 +765,9 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
+                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
+                    statusCode: StatusCodes.Status403Forbidden);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
             if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
@@ -804,6 +807,9 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
+                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
+                    statusCode: StatusCodes.Status403Forbidden);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
             if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
@@ -981,7 +987,9 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            // The Product role's lane limit applies per project: a user with
+            // Developer elsewhere is still a Contributor in this one.
+            if (ProjectAccessAuthorization.IsProductRoleIn(ctx, string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project)
                 && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(req.Title))
@@ -1006,7 +1014,7 @@ public static class TaskCrudEndpoints
             if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             {
                 var requestedProject = string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project;
-                if (!ProjectAccessAuthorization.Allows(human.User, requestedProject, projects))
+                if (!ProjectAccessAuthorization.AllowsTasks(ctx, [requestedProject], IamPermissions.ProjectCardsWrite, projects))
                     return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the requested project." }, statusCode: StatusCodes.Status403Forbidden);
                 req = req with { OwnerClientId = human.User.Id };
             }
@@ -1048,6 +1056,13 @@ public static class TaskCrudEndpoints
                     });
                 }
 
+                // Routing may move the card to another project; that one must
+                // grant the same permission and lane limit.
+                if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal
+                    && (!ProjectAccessAuthorization.AllowsTasks(ctx, [resolvedRouting.StorageProjectId], IamPermissions.ProjectCardsWrite, projects)
+                        || (ProjectAccessAuthorization.IsProductRoleIn(ctx, resolvedRouting.StorageProjectId)
+                            && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))))
+                    return Results.Json(new { error = "project-scope-denied", message = "This account cannot create cards in the routed project." }, statusCode: StatusCodes.Status403Forbidden);
                 var prompt = AppendDeliveryAcceptanceCriteria(req.PromptMarkdown, resolvedRouting);
                 req = req with
                 {
@@ -1117,10 +1132,11 @@ public static class TaskCrudEndpoints
             // project-scope enforcement to here. A scoped non-owner human may only
             // reorder tasks inside its own projects; resolve every affected task's
             // project and fail closed on any that is out of scope or unresolvable.
-            if (!ProjectAccessAuthorization.AllowsTasks(
-                    ctx,
-                    jobs.Select(j => scanner.FindJob(j.JobId, string.IsNullOrWhiteSpace(j.WatchPath) ? null : j.WatchPath)?.ProjectName),
-                    projects))
+            var reorderProjects = jobs
+                .Select(j => scanner.FindJob(j.JobId, string.IsNullOrWhiteSpace(j.WatchPath) ? null : j.WatchPath)?.ProjectName)
+                .ToList();
+            if (!ProjectAccessAuthorization.AllowsTasks(ctx, reorderProjects, IamPermissions.ProjectCardsWrite, projects)
+                || reorderProjects.Any(project => ProjectAccessAuthorization.IsProductRoleIn(ctx, project)))
                 return Results.Json(
                     new { error = "project-scope-denied", message = "This account is not a member of every task in the reorder set." },
                     statusCode: StatusCodes.Status403Forbidden);
@@ -1297,7 +1313,7 @@ public static class TaskCrudEndpoints
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.DecideAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
-                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+                ProjectAccessAuthorization.DecisionRole(ctx)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/decision/reopen", async (HttpContext ctx, string jobId, string? project, string? watchPath,
@@ -1306,7 +1322,7 @@ public static class TaskCrudEndpoints
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.ReopenAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
-                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+                ProjectAccessAuthorization.DecisionRole(ctx)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Operator-run one-off conversion. The prompt digest makes a reviewed
@@ -1533,6 +1549,9 @@ public static class TaskCrudEndpoints
         + $"{CompletionContractPolicy.MinimumOverrideReasonLength} characters. It is stored on the "
         + "card and shown wherever the card claims completion.";
 
+    internal static readonly string OperatorAuthorityRequired =
+        "operatorOverride needs the Admin or Owner role in this project.";
+
     private static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
@@ -1587,6 +1606,8 @@ public static class TaskCrudEndpoints
 
     internal static string OperatorActor(HttpContext context)
     {
+        if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+            return TimelineActors.ServiceAccount(account.AccountId);
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string

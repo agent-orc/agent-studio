@@ -24,8 +24,10 @@ public static class OrchestrationRolloutEndpoints
                 && context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal
                     { User.Role: StudioRoles.Owner or StudioRoles.Operator })
                 return Results.StatusCode(403);
-            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                ? human.User.Username : "local-operator";
+            var actor = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is null
+                && context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                    ? human.User.Username
+                    : AccessSecurityMiddleware.ActorId(context, "local-operator");
             try { return Results.Ok(store.SwitchProfile(profile, request.Target, actor, request.Reason)); }
             catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }
             catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }

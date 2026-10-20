@@ -497,13 +497,15 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         foreach (var path in new[] { other.EvidenceRef, $"{other.EvidenceRef}/outcome",
                      $"{other.EvidenceRef}/operator-intent" })
             Assert.Equal(System.Net.HttpStatusCode.NotFound, (await http.GetAsync(path)).StatusCode);
-        Assert.Equal(System.Net.HttpStatusCode.NotFound,
-            (await http.PostAsJsonAsync($"{other.EvidenceRef}/operator-intent",
-                new DecisionOperatorIntentRequest("stop", "Wrong project"))).StatusCode);
+        var foreignIntent = await http.PostAsJsonAsync($"{other.EvidenceRef}/operator-intent",
+            new DecisionOperatorIntentRequest("stop", "Wrong project"));
+        Assert.Contains(foreignIntent.StatusCode,
+            new[] { System.Net.HttpStatusCode.Forbidden, System.Net.HttpStatusCode.NotFound });
         Assert.Null(decisions.GetOperatorIntent(other.ReceiptId));
         var answer = await http.PostAsJsonAsync($"{own.EvidenceRef}/operator-intent",
             new DecisionOperatorIntentRequest("stop", "Stop this card"));
-        Assert.Equal(System.Net.HttpStatusCode.Conflict, answer.StatusCode);
+        Assert.True(answer.StatusCode == System.Net.HttpStatusCode.Conflict,
+            $"Expected the in-project intent handler to run, got {(int)answer.StatusCode}: {await answer.Content.ReadAsStringAsync()}");
         Assert.Contains("stop-not-available", await answer.Content.ReadAsStringAsync());
         Assert.Null(decisions.GetOperatorIntent(own.ReceiptId));
         Assert.DoesNotContain($"operator-response:{own.ReceiptId}", decisions.PendingReceipts(10));

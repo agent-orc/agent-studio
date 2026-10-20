@@ -1,0 +1,77 @@
+<section class="access" data-testid="access-area">
+  <header class="access__head">
+    <div>
+      <h2>Access</h2>
+      <p>Users, groups, and service accounts hold roles in a scope: the workspace, one project, or one environment. Effective access is the union of those role bindings; Owner is the break-glass role.</p>
+    </div>
+    <button type="button" class="access-secondary" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="access.load()">Reload</button>
+  </header>
+
+  @if (access.error(); as message) { <p class="access-error" role="alert" data-testid="access-error">{{ message }}</p> }
+  @if (access.projectsError(); as message) { <p class="access-error" role="alert" data-testid="access-projects-error">{{ message }}</p> }
+
+  @if (overview(); as data) {
+    <p class="access__summary access-numeric" data-testid="access-summary">
+      @for (item of summary(); track item) { <span>{{ item }}</span> }
+    </p>
+    @if (singleUser()) {
+      <p class="access-hint" data-testid="access-single-user">You are the only user and hold Owner on the workspace. Nothing needs to be set up; invite people, create groups, or add service accounts when you need them.</p>
+    }
+
+    <section class="access__section" aria-labelledby="access-users-title">
+      <header><h3 id="access-users-title">Users</h3><p class="access-hint">People with their own sign-in. Invitations reuse the one-time sign-in link.</p></header>
+      @if (temporaryPassword(); as reset) {
+        <div class="access__issued" data-testid="access-temporary-password" role="status">
+          <p>Temporary password for {{ reset.username }}. Copy it now; it is not shown again.</p>
+          <p class="access-secret">{{ reset.value }}</p>
+          <div class="access-row"><button type="button" class="access-secondary" (click)="temporaryPassword.set(null)">Done</button></div>
+        </div>
+      }
+      <table data-testid="access-users">
+        <thead><tr><th scope="col">Name</th><th scope="col">Username</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+          @for (user of data.users; track user.id) {
+            <tr [attr.data-testid]="'access-user-' + user.username">
+              <td>{{ user.displayName }}</td>
+              <td>{{ user.username }}</td>
+              <td>
+                <span class="access__grants">
+                  @for (grant of grants(user); track grant) { <span class="access-badge">{{ grant }}</span> } @empty { <span class="access-hint">No role</span> }
+                </span>
+              </td>
+              <td><span class="access-badge" [attr.data-tone]="status(user) === 'Active' ? null : 'muted'">{{ status(user) }}</span></td>
+              <td class="access-actions">
+                <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="resetPassword(user)">Reset password</button>
+                <button type="button" class="access-quiet" [attr.data-testid]="'access-user-toggle-' + user.username" [disabled]="access.busy()" (click)="toggleDisabled(user)">{{ user.disabled ? 'Enable' : 'Disable' }}</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <h4>Invite a person</h4>
+      <app-access-invite-form />
+    </section>
+
+    <section class="access__section" aria-labelledby="access-bindings-title">
+      <header><h3 id="access-bindings-title">Role bindings per scope</h3><p class="access-hint">Deeper scopes add to the workspace. An environment binding grants its deploy and secret permissions there and read access to the project.</p></header>
+      <app-access-bindings />
+    </section>
+
+    <section class="access__section" aria-labelledby="access-groups-title">
+      <header><h3 id="access-groups-title">Groups</h3><p class="access-hint">Bind a role once to a group instead of to each person.</p></header>
+      <app-access-groups />
+    </section>
+
+    <section class="access__section" aria-labelledby="access-accounts-title">
+      <header><h3 id="access-accounts-title">Service accounts and API tokens</h3><p class="access-hint">Scripts and jobs use a service account with its own tokens, expiry, and revocation. API tokens are service accounts with one token.</p></header>
+      <app-access-service-accounts />
+    </section>
+
+    <section class="access__section" aria-labelledby="access-runners-title">
+      <header><h3 id="access-runners-title">Runner enrollments and runners</h3><p class="access-hint">Runners and the engine enroll with a one-time code and keep their own credentials and Runner scopes.</p></header>
+      <app-access-runners />
+    </section>
+  } @else if (access.state() === 'loading') {
+    <p class="access-hint">Loading access settings…</p>
+  }
+</section>
