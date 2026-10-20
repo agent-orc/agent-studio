@@ -1377,7 +1377,10 @@ public static class V1ReviewPlaneEndpoints
                         logger.LogError(fallbackError,
                             "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
                     }
-                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                    // AGT-3219: a queue overrun of the emergency gate admits the
+                    // review to the batch queue; the card stays in Auto Review.
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated)
+                        && !batchPilot.IsQueuedForBatch(settled.ReviewAttempt.AttemptId))
                         return Results.Json(new Contract.ApiError(
                             "batch-gate-evidence-missing",
                             "The settled review could not enter the durable batch queue or finish its per-task gate."),
