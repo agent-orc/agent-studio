@@ -239,6 +239,13 @@ public static class RoutePermissionCatalog
         Environment("R", IamPermissions.SecretsRead, "/api/projects/{}/environments/{}/secrets/**", null, "environment");
         Environment("W", IamPermissions.SecretsWrite, "/api/projects/{}/environments/{}/secrets/**", null, "environment");
 
+        // Receipt handlers filter reads and check the receipt's project before
+        // recording an intent. A scoped operator can therefore use its own
+        // receipts without an installation-wide operation binding.
+        Add("R", IamPermissions.ProjectRead, "/api/orchestration/decision-receipts/**");
+        AddProjectChecked("POST", IamPermissions.ProjectRunsOperate,
+            "/api/orchestration/decision-receipts/{}/operator-intent");
+
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
         Add("POST", IamPermissions.WorkspaceAdminister, "/api/projects/path-import");
@@ -254,7 +261,7 @@ public static class RoutePermissionCatalog
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
             "/api/maintenance/**", "/api/attempts/**", "/api/cause-breakers/**", "/api/watcher/**",
-            "/api/orchestration/decision-receipts/**", "/api/devtools/**", "/api/_internal/**", "/api/tasks/orphan-folder");
+            "/api/devtools/**", "/api/_internal/**", "/api/tasks/orphan-folder");
         Add("R", IamPermissions.WorkspaceRead,
             "/api/system/**", "/api/environment/**", "/api/cli/**", "/api/clients/**", "/api/watch-paths/**",
             "/api/workspaces/**", "/api/workspace/**", "/api/tags/**", "/api/search/**", "/api/usage/**",

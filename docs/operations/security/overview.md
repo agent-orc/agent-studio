@@ -169,7 +169,9 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   binding, except task creation, reorder, batch-move, and the title and prompt
   helpers, whose handlers check the route's permission for every project they
   touch (`ProjectAccessAuthorization.AllowsTasks(context, projects,
-  permission)`). An environment binding grants its environment-level
+  permission)`). Decision receipt lists filter by `project.read`; recording an
+  operator intent also requires `project.runs.operate` on the receipt's own
+  project. An environment binding grants its environment-level
   permissions in that environment and read access to the project.
 - Environment scopes name the environment kind of the project's declarations
   (`docs/deployments/environments/*.json`): `stage`, `production`, or

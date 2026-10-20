@@ -106,6 +106,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/runner/secrets/resolve", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/projects/{projectName}/pipeline-definition/migration", IamPermissions.ProjectSettingsWrite)]
     [InlineData("GET", "/api/bus/{project}/messages", IamPermissions.ProjectRead)]
+    [InlineData("GET", "/api/orchestration/decision-receipts/{receiptId}", IamPermissions.ProjectRead)]
+    [InlineData("POST", "/api/orchestration/decision-receipts/{receiptId}/operator-intent", IamPermissions.ProjectRunsOperate)]
     public void Representative_routes_resolve_to_their_permission(string method, string pattern, string permission)
     {
         var resolved = RoutePermissionCatalog.Resolve(method,
@@ -162,6 +164,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/batch-move")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/reorder")?.ProjectBindingsSuffice);
+        Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/orchestration/decision-receipts/{}/operator-intent")?.ProjectBindingsSuffice);
         Assert.False(RoutePermissionCatalog.Resolve("POST", "/api/supervisor/{}")?.ProjectBindingsSuffice);
         Assert.False(RoutePermissionCatalog.Resolve("PUT", "/api/workspaces/{}/autonomy")?.ProjectBindingsSuffice);
     }
