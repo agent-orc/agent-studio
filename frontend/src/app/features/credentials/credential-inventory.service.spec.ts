@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CredentialInventoryService } from './credential-inventory.service';
+import { AuthSessionState } from '../../services/auth.service';
 
 describe('CredentialInventoryService', () => {
   beforeEach(() => {
@@ -30,6 +31,20 @@ describe('CredentialInventoryService', () => {
     vi.advanceTimersByTime(60_000);
     http.expectOne(url).flush({ generatedAt: 'third', items: [] });
     expect(service.inventory()?.items).toHaveLength(0);
+    http.verify();
+  });
+
+  it('does not request Task Server inventory in the local profile', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'local', bootstrapRequired: false, authenticated: false,
+    });
+    const service = TestBed.inject(CredentialInventoryService);
+    const http = TestBed.inject(HttpTestingController);
+    service.ensureLoaded();
+    service.load();
+    vi.advanceTimersByTime(60_000);
+    http.expectNone('/api/v1/management/credential-inventory');
+    expect(service.state()).toBe('unsupported');
     http.verify();
   });
 });

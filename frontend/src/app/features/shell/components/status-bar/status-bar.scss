@@ -39,6 +39,7 @@ app-status-bar {
   color: var(--studio-fg-dim, rgba(255, 255, 255, 0.70));
   letter-spacing: 0;
   overflow: hidden;
+  white-space: nowrap;
 }
 
 .statusbar__group {
@@ -82,6 +83,15 @@ app-status-bar {
   max-width: 100%;
   overflow: hidden;
 }
+
+.statusbar__quota .uhp app-header-quota {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar__quota .uhp__chat-trigger { flex: 0 0 auto; }
+.statusbar__quota .uhp__chat { white-space: normal; }
 
 .statusbar .statusbar__quota .hquota {
   display: flex;
@@ -231,7 +241,18 @@ app-status-bar {
   max-width: 15ch;
 }
 
-@container statusbar (width <= 1180px) {
+@container statusbar (width <= 1320px) {
+  .statusbar .uhp__chat-trigger {
+    min-width: var(--statusbar-item-height);
+    padding-inline: var(--studio-spacing-1);
+    font-size: 0;
+  }
+
+  .statusbar .uhp__chat-trigger::before {
+    content: '◎';
+    font-size: var(--statusbar-font-size);
+  }
+
   .statusbar .hquota__bar {
     display: none;
   }
@@ -311,6 +332,11 @@ app-status-bar {
 }
 
 @container statusbar (width <= 460px) {
+  .statusbar__group--left app-statusbar-item:nth-of-type(3),
+  .statusbar .hquota {
+    display: none;
+  }
+
   .statusbar__item {
     padding-inline: var(--studio-spacing-1);
   }

@@ -295,7 +295,8 @@ test.describe('Execution Hosts settings section', () => {
     await page.setViewportSize({ width: 1600, height: 950 });
     // Most coverage uses the legacy modal; the scroll ownership regression
     // exercises the editor tab that owns studio-editor__main.
-    const editorLayout = testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields'
+    const editorLayout = testInfo.title.includes('responsive Environment geometry')
+      || testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields'
       || testInfo.title.includes('shows open operational stalls');
     await page.addInitScript((value) => { try { localStorage.setItem('atp.flag.vsCodeLayout', value); } catch { /* ignore */ } }, editorLayout ? '1' : '0');
     await stubBackgroundApis(page);
@@ -318,9 +319,79 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Environment');
   });
 
+  test('responsive Environment geometry, status bar and local credential route at 1280 and 390', async ({ page }) => {
+    await stubGroupedHostApis(page);
+    let inventoryRequests = 0;
+    await page.route('**/api/v1/management/credential-inventory', route => {
+      inventoryRequests++;
+      return route.fulfill({ status: 404 });
+    });
+    const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(output, { recursive: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto('/#/workspace/settings/execution-hosts');
+      const panel = page.getByTestId('remote-hosts-panel');
+      await expect(panel).toBeVisible();
+      if (width === 1280) await expect(page.getByTestId('studio-sidebar')).toBeVisible();
+      else {
+        await page.getByTestId('studio-ab-explorer').click();
+        await expect(page.getByTestId('studio-sidebar')).toBeHidden();
+      }
+      const header = panel.locator('app-environment-header');
+      await header.scrollIntoViewIfNeeded();
+      await expect(header).toBeInViewport();
+      const geometry = await header.evaluate(element => {
+        const head = element.querySelector('header')!;
+        const intro = head.children[0].getBoundingClientRect();
+        const actions = head.children[1].getBoundingClientRect();
+        const content = element.getBoundingClientRect();
+        return { wraps: actions.top >= intro.bottom - 1, width: content.width,
+          right: actions.right, contentRight: content.right };
+      });
+      if (geometry.width <= 760) expect(geometry.wraps).toBe(true);
+      expect(geometry.right).toBeLessThanOrEqual(geometry.contentRight + 1);
+      const loads = panel.getByTestId('remote-host-load');
+      if (width === 1280) {
+        await expect(loads.filter({ hasText: '%' }).first()).toBeVisible();
+        for (const cell of await loads.all()) {
+          if (!(await cell.isVisible())) continue;
+          const sizes = await cell.evaluate(el => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+          expect(sizes.scroll).toBeLessThanOrEqual(sizes.client + 1);
+        }
+      }
+      const bar = page.getByTestId('status-bar');
+      const chat = bar.getByTestId('usage-chat-trigger');
+      await expect(chat).toBeInViewport();
+      const fits = await chat.evaluate(el => {
+        const item = el.getBoundingClientRect();
+        const bar = el.closest('[data-testid="status-bar"]')!.getBoundingClientRect();
+        return { whiteSpace: getComputedStyle(el).whiteSpace, height: item.height,
+          top: item.top, bottom: item.bottom, barTop: bar.top, barBottom: bar.bottom };
+      });
+      expect(fits.whiteSpace).toBe('nowrap');
+      expect(fits.top).toBeGreaterThanOrEqual(fits.barTop - 1);
+      expect(fits.bottom).toBeLessThanOrEqual(fits.barBottom + 1);
+      for (const id of ['status-bar-running', 'status-bar-usage', 'status-bar-settings']) {
+        const item = bar.getByTestId(id);
+        await expect(item).toHaveCSS('white-space', 'nowrap');
+      }
+      await page.screenshot({ path: join(output, `environment-responsive-${width}-light.png`), animations: 'disabled' });
+      await setTheme(page, 'dark');
+      await page.screenshot({ path: join(output, `environment-responsive-${width}-dark.png`), animations: 'disabled' });
+      await setTheme(page, 'light');
+      await page.goto('/#/workspace/settings/credentials');
+      await expect(page.getByTestId('credential-inventory')).toContainText('requires a Task Server connection');
+      expect(inventoryRequests).toBe(0);
+    }
+  });
+
   test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/auth/status', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true }),
+    }));
     await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
       contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
         { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
@@ -353,6 +424,9 @@ test.describe('Execution Hosts settings section', () => {
         engine: { state: 'ready', lastContact: new Date().toISOString(), engineId: 'engine-1' },
       }),
     }));
+    // The shared setup already loaded a local session. Reload after changing
+    // the auth route so this networked inventory fixture is actually fetched.
+    await page.reload();
     await page.goto('/#/workspace/settings/environment');
     await dismissDevErrorDialog(page);
     await page.getByTestId('environment-map-toggle').click();
