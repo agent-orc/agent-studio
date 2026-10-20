@@ -25,7 +25,8 @@ test('open orchestrator sheet fills the phone body with the sidebar present', as
   await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'Healthy' }));
 
   await page.goto('/');
-  await expect(page.getByTestId('studio-sidebar')).toBeVisible();
+  // The sidebar stays enabled in the DOM; the phone grid hides its Explorer track.
+  await expect(page.getByTestId('studio-sidebar')).toBeAttached();
   await page.getByTestId('orch-side-sheet-toggle').click();
 
   const sheetHost = page.locator('app-orchestrator-side-sheet');

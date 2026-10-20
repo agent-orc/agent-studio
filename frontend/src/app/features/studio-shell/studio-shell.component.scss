@@ -441,20 +441,21 @@
 }
 
 @media (max-width: 600px) {
+  // The Explorer track otherwise leaves a project pane only about 100 px wide
+  // on a phone. Keep the activity bar available and give the editor the rest.
+  .studio-body, .studio--sidebar-hidden .studio-body {
+    grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
+  }
+  .studio-sidebar { display: none; }
   .studio-body:has(> app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
   .studio-body:has(> app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
     grid-column: 1;
     grid-row: 1;
   }
-  .studio-body:has(> app-orchestrator-side-sheet.is-open) > .studio-sidebar {
+  .studio-body:has(> app-orchestrator-side-sheet.is-open) > .studio-editor {
     grid-column: 2;
     grid-row: 1;
   }
-  .studio-body:has(> app-orchestrator-side-sheet.is-open) > .studio-editor {
-    grid-column: 3;
-    grid-row: 1;
-  }
-  .studio--sidebar-hidden .studio-body:has(> app-orchestrator-side-sheet.is-open) > .studio-editor { grid-column: 2; }
   .studio-body > app-orchestrator-side-sheet.is-open {
     grid-column: 1 / -1;
     grid-row: 1;
