@@ -193,7 +193,9 @@ test.describe('Project Deploy area (mocked)', () => {
     await operations.getByTestId('operations-search-logs').click();
     await expect.poll(() => Boolean(finishSearch)).toBe(true);
     await operations.getByPlaceholder('Search text').fill('new');
+    const staleResponse = page.waitForResponse(response => response.url().includes('/operations/logs') && response.status() === 200);
     finishSearch!();
+    await staleResponse;
     await expect(operations).not.toContainText('Stale stage error');
     await operations.getByTestId(`operations-release-${release.id}`).click();
     await expect(page.getByTestId('deploy-release-detail')).toContainText(release.version);
