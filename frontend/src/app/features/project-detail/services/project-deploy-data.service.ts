@@ -1,122 +1,126 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, forkJoin, map, of } from 'rxjs';
+import { Observable, catchError, map, of, startWith } from 'rxjs';
+import { TaskService } from '../../../services/task.service';
+import type { ProjectEnvironments } from '../../../models/project-overview.model';
+import type {
+  DeployPanel,
+  DeployRunAction,
+  Deployment,
+  DeploymentLogLine,
+  DeploymentLogResponse,
+  EnvironmentStatus,
+  Release,
+  DeployRunFilter,
+} from '../state/deploy-area.model';
+import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
+import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
+import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
 
-export interface Environment {
-  id: string;
-  projectId: string;
-  name: string;
-  order: number;
-  kind: 'staging' | 'production';
+export interface DeployPage<T> { items: T[]; offset: number; limit: number; total: number }
+
+/**
+ * A 404 without an `error` body: the route is not on this server. AGT-3201 and
+ * AGT-3221 answer an unknown project or deployment with `{ error }`, which
+ * stays an error.
+ */
+export function isMissingRoute(error: unknown): boolean {
+  if (!(error instanceof HttpErrorResponse) || error.status !== 404) return false;
+  const body: unknown = error.error;
+  return !(body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string');
 }
 
-export interface Release {
-  id: string;
-  projectId: string;
-  version: string;
-  commitSha: string;
-  artifactDigests: string[];
-  processVersion: string;
-  variablesVersion: string;
-  cardKeys: string[];
-  createdAtUtc: string;
-  channel: string;
+/** The server's `{ error }` message, if it sent one. */
+export function serverMessage(error: unknown): string | null {
+  const body: unknown = error instanceof HttpErrorResponse ? error.error : null;
+  const message = body && typeof body === 'object' ? (body as { error?: unknown }).error : null;
+  return typeof message === 'string' && message.trim() ? message : null;
 }
 
-export type DeploymentState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'awaiting-approval';
-
-export interface DeploymentStep {
-  name: string;
-  state: DeploymentState | 'pending' | 'skipped';
-  startedAtUtc: string | null;
-  finishedAtUtc: string | null;
-  logRef: string | null;
-}
-
-export interface Deployment {
-  id: string;
-  releaseId: string;
-  environmentId: string;
-  state: DeploymentState;
-  startedAtUtc: string | null;
-  finishedAtUtc: string | null;
-  approvedBy: string | null;
-  steps: DeploymentStep[];
-}
-
-export interface EnvironmentStatus {
-  environment: Environment;
-  currentRelease: Release | null;
-  currentDeployment: Deployment | null;
-  newerRelease: Release | null;
-  cardsSinceLastDeploy: string[];
-  health: 'healthy' | 'unhealthy' | 'unknown';
-}
-
-export interface ProjectDeploySnapshot {
-  environments: EnvironmentStatus[];
-  releases: Release[];
-  deployments: Deployment[];
-  source: 'fixture' | 'api';
-}
-
+/**
+ * Reads for the project Deploy area. Every panel loads on its own, so one
+ * missing or failing source leaves the others intact. Nothing here invents
+ * data: a route that is not on this server reports `unavailable`, and every
+ * other failure reports `error`.
+ */
 @Injectable({ providedIn: 'root' })
 export class ProjectDeployDataService {
-  private readonly http = inject(HttpClient, { optional: true });
+  private readonly http = inject(HttpClient);
+  private readonly tasks = inject(TaskService);
+  private readonly definitions = inject(ProjectPipelineDefinitionService);
+  private readonly healthService = inject(EnvironmentHealthService);
 
-  load(projectId: string): Observable<ProjectDeploySnapshot> {
-    if (this.http) {
-      const root = `/api/projects/${encodeURIComponent(projectId)}/deploy`;
-      return forkJoin({
-        environments: this.http.get<EnvironmentStatus[]>(`${root}/status`),
-        releases: this.http.get<Release[]>(`${root}/releases`),
-        deployments: this.http.get<Deployment[]>(`${root}/deployments`),
-      }).pipe(
-        map(data => ({ ...data, source: 'api' as const })),
-      );
+  /** Declared environments, host history, and promotions (AGT-3176). */
+  environments(projectName: string): Observable<DeployPanel<ProjectEnvironments>> {
+    return panel(this.tasks.getProjectEnvironments(projectName), 'Environments could not be loaded.', false);
+  }
+
+  /** One AGT-3201 status per environment: current and newer release, latest run, health. */
+  statuses(projectName: string): Observable<DeployPanel<EnvironmentStatus[]>> {
+    return panel(this.http.get<EnvironmentStatus[]>(`${deployRoot(projectName)}/status`),
+      'Environment status could not be loaded.', true);
+  }
+
+  releases(projectName: string): Observable<DeployPanel<Release[]>> {
+    return panel(this.http.get<Release[]>(`${deployRoot(projectName)}/releases`), 'Releases could not be loaded.', true);
+  }
+
+  releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {
+    return panel(this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`,
+      { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
+  }
+
+  /** AGT-3201 deploy runs, newest first. */
+  deployments(projectName: string): Observable<DeployPanel<Deployment[]>> {
+    return panel(this.http.get<Deployment[]>(`${deployRoot(projectName)}/deployments`),
+      'Deploy runs could not be loaded.', true);
+  }
+
+  deploymentPage(projectName: string, offset: number, filter?: DeployRunFilter, now?: number): Observable<DeployPanel<DeployPage<Deployment>>> {
+    const params: Record<string, string | number> = { offset, limit: 25 };
+    if (filter?.environmentId && filter.environmentId !== 'all') params['environmentId'] = filter.environmentId;
+    if (filter?.state && filter.state !== 'all') params['state'] = filter.state;
+    if (filter?.period && filter.period !== 'all' && now !== undefined) {
+      const days = filter.period === '24h' ? 1 : filter.period === '7d' ? 7 : 30;
+      params['sinceUtc'] = new Date(now - days * 86_400_000).toISOString();
     }
-    return this.fixture(projectId);
+    return panel(this.http.get<DeployPage<Deployment>>(`${deployRoot(projectName)}/deployments/page`, { params }),
+      'Deploy runs could not be loaded.', true);
   }
 
-  notes(projectId: string, releaseId: string): Observable<ReleaseNotes> {
-    if (!this.http) return of({ releaseId, version: '', preview: true, notes: [] });
-    return this.http.get<ReleaseNotes>(`/api/projects/${encodeURIComponent(projectId)}/deploy/releases/${encodeURIComponent(releaseId)}/notes`);
+  deploymentLog(projectName: string, deploymentId: string): Observable<DeployPanel<DeploymentLogLine[]>> {
+    const request = this.http
+      .get<DeploymentLogResponse>(`${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/log`)
+      .pipe(map(body => body.lines));
+    return panel(request, 'The step log could not be loaded.', true);
   }
 
-  fixture(projectId: string): Observable<ProjectDeploySnapshot> {
-    const releases: Release[] = [
-      { id: 'release-4', projectId, version: '2026.10.16.4', commitSha: '6b8a34d', artifactDigests: ['sha256:6b8a34d-demo-bundle'], processVersion: 'project.yml@6b8a34d', variablesVersion: 'project.yml@6b8a34d', cardKeys: ['WEB-36'], createdAtUtc: '2026-10-16T10:42:00Z', channel: 'standard' },
-      { id: 'release-3', projectId, version: '2026.10.16.3', commitSha: '4f1c2e0', artifactDigests: ['sha256:4f1c2e0-demo-bundle'], processVersion: 'project.yml@4f1c2e0', variablesVersion: 'project.yml@4f1c2e0', cardKeys: ['WEB-33', 'WEB-34', 'WEB-35'], createdAtUtc: '2026-10-16T09:45:00Z', channel: 'standard' },
-      { id: 'release-2', projectId, version: '2026.10.15.2', commitSha: '9c8b7a6', artifactDigests: ['sha256:9c8b7a6-demo-bundle'], processVersion: 'project.yml@9c8b7a6', variablesVersion: 'project.yml@9c8b7a6', cardKeys: ['WEB-29', 'WEB-30'], createdAtUtc: '2026-10-15T20:10:00Z', channel: 'standard' },
-    ];
-    const staging: Environment = { id: `${projectId}-staging`, projectId, name: 'Staging', order: 1, kind: 'staging' };
-    const production: Environment = { id: `${projectId}-production`, projectId, name: 'Production', order: 2, kind: 'production' };
-    const deployments: Deployment[] = [
-      { id: 'deploy-stage-3', releaseId: releases[1].id, environmentId: staging.id, state: 'succeeded', startedAtUtc: '2026-10-16T10:00:00Z', finishedAtUtc: '2026-10-16T10:04:00Z', approvedBy: null, steps: [
-        { name: 'Publish static bundle', state: 'succeeded', startedAtUtc: '2026-10-16T10:00:00Z', finishedAtUtc: '2026-10-16T10:03:00Z', logRef: null },
-        { name: 'Health check', state: 'succeeded', startedAtUtc: '2026-10-16T10:03:00Z', finishedAtUtc: '2026-10-16T10:04:00Z', logRef: null },
-      ] },
-      { id: 'deploy-prod-2', releaseId: releases[2].id, environmentId: production.id, state: 'succeeded', startedAtUtc: '2026-10-15T22:10:00Z', finishedAtUtc: '2026-10-15T22:14:00Z', approvedBy: 'Owner', steps: [
-        { name: 'Approval', state: 'succeeded', startedAtUtc: '2026-10-15T22:10:00Z', finishedAtUtc: '2026-10-15T22:11:00Z', logRef: null },
-        { name: 'Publish static bundle', state: 'succeeded', startedAtUtc: '2026-10-15T22:11:00Z', finishedAtUtc: '2026-10-15T22:13:00Z', logRef: null },
-        { name: 'Health check', state: 'succeeded', startedAtUtc: '2026-10-15T22:13:00Z', finishedAtUtc: '2026-10-15T22:14:00Z', logRef: null },
-      ] },
-    ];
-    return of({
-      environments: [
-        { environment: staging, currentRelease: releases[1], currentDeployment: deployments[0], newerRelease: releases[0], cardsSinceLastDeploy: releases[0].cardKeys, health: 'unknown' },
-        { environment: production, currentRelease: releases[2], currentDeployment: deployments[1], newerRelease: releases[1], cardsSinceLastDeploy: releases[1].cardKeys, health: 'unknown' },
-      ],
-      releases,
-      deployments,
-      source: 'fixture' as const,
-    });
+  /** Approve, reject, or cancel a run; the server checks role and state. */
+  act(projectName: string, deploymentId: string, action: DeployRunAction): Observable<Deployment> {
+    return this.http.post<Deployment>(
+      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${action}`, {});
+  }
+
+  pipeline(projectName: string): Observable<DeployPanel<PipelineDefinitionResponse>> {
+    return panel(this.definitions.read(projectName), 'The project.yml pipeline could not be loaded.', true);
+  }
+
+  health(projectName: string): Observable<DeployPanel<EnvironmentHealthResponse>> {
+    return panel(this.healthService.project(projectName), 'Environment health could not be loaded.', true);
   }
 }
 
-export interface ReleaseNotes {
-  releaseId: string;
-  version: string;
-  preview: boolean;
-  notes: { cardKey: string; text: string }[];
+function deployRoot(projectName: string): string {
+  return `/api/projects/${encodeURIComponent(projectName)}/deploy`;
+}
+
+function panel<T>(source: Observable<T>, message: string, missingRouteIsUnavailable: boolean): Observable<DeployPanel<T>> {
+  return source.pipe(
+    map(value => ({ status: 'ready', value }) as DeployPanel<T>),
+    catchError((error: unknown) => of<DeployPanel<T>>(
+      missingRouteIsUnavailable && isMissingRoute(error)
+        ? { status: 'unavailable' }
+        : { status: 'error', message: serverMessage(error) ?? message })),
+    startWith<DeployPanel<T>>({ status: 'loading' }),
+  );
 }

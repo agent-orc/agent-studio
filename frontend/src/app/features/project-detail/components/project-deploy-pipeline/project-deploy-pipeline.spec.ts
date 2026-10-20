@@ -1,54 +1,40 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { describe, expect, it } from 'vitest';
 import { ProjectDeployPipelineComponent } from './project-deploy-pipeline';
+import { pipelineDefinitionFixture } from '../../testing/deploy-fixtures';
+
+async function render(panel: unknown): Promise<HTMLElement> {
+  const fixture = TestBed.createComponent(ProjectDeployPipelineComponent);
+  fixture.componentRef.setInput('panel', panel);
+  fixture.detectChanges();
+  await fixture.whenStable();
+  return fixture.nativeElement as HTMLElement;
+}
 
 describe('ProjectDeployPipelineComponent', () => {
-  it('renders the project definition returned by the API', async () => {
-    await TestBed.configureTestingModule({
-      imports: [ProjectDeployPipelineComponent],
-      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(ProjectDeployPipelineComponent);
-    fixture.componentRef.setInput('projectName', 'Website');
-    fixture.detectChanges();
-    TestBed.inject(HttpTestingController).expectOne('/api/projects/Website/pipeline-definition').flush({
-      project: 'Website', path: '.agent-studio/project.yml', exists: true, schemaVersion: 2,
-      valid: true, issues: [], migrationAvailable: false,
-      diagram: {
-        schemaVersion: 2,
-        gate: { source: 'pipeline', build: ['npm run website-build'], test: ['npm run website-test'], testSuites: [] },
-        artifacts: [{ path: 'artifacts[0]', name: 'site', type: 'static', source: 'dist' }],
-        environmentsDefaulted: false, lifecycleDefaulted: false,
-        environments: [{ path: 'environments[0]', name: 'production', order: 0,
-          protected: true, automatic: false, approval: ['Maintainer'], requires: null,
-          steps: [{ path: 'deploy[0]', kind: 'publish-static', artifact: 'site', target: 'web-vm' }],
-          variables: [] }],
-      },
-    });
-    fixture.detectChanges();
-    const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelector('[data-testid="pipeline-node-gate"]')?.textContent).toContain('npm run website-build');
-    expect(host.querySelector('[data-testid="pipeline-node-production"]')?.textContent).toContain('Publish to deploy branch');
-    expect(host.textContent).not.toContain('commands.build');
-    TestBed.inject(HttpTestingController).verify();
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ imports: [ProjectDeployPipelineComponent], providers: [provideZonelessChangeDetection()] }).compileComponents();
+  });
+  it('shows loading, unavailable, and server-error states', async () => {
+    expect((await render({ status: 'loading' })).querySelector('app-loading-surface')).not.toBeNull();
+    expect((await render({ status: 'unavailable' })).textContent).toContain('Pipeline definition unavailable');
+    expect((await render({ status: 'error', message: 'Broken file' })).textContent).toContain('Broken file');
   });
 
-  it('shows a load failure instead of a synthetic pipeline', async () => {
-    await TestBed.configureTestingModule({
-      imports: [ProjectDeployPipelineComponent],
-      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(ProjectDeployPipelineComponent);
-    fixture.componentRef.setInput('projectName', 'Website');
-    fixture.detectChanges();
-    TestBed.inject(HttpTestingController).expectOne('/api/projects/Website/pipeline-definition')
-      .flush({ error: 'Unavailable' }, { status: 503, statusText: 'Unavailable' });
-    fixture.detectChanges();
-    expect((fixture.nativeElement as HTMLElement).querySelector('[role="alert"]')?.textContent)
-      .toContain('could not be loaded');
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="pipeline-node-gate"]')).toBeNull();
+  it('uses the AGT-3221 diagram for gate, artifacts, Staging, and Production', async () => {
+    const host = await render({ status: 'ready', value: pipelineDefinitionFixture() });
+    expect(host.querySelector('[data-testid="pipeline-node-gate"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="pipeline-node-artifacts"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="pipeline-node-staging"]')?.textContent).toContain('Static site');
+    expect(host.querySelector('[data-testid="pipeline-node-production"]')?.textContent).toContain('Compose service');
+  });
+
+  it('shows the parsed diagram beside validation issues on an invalid file', async () => {
+    const value = { ...pipelineDefinitionFixture(), valid: false, issues: [
+      { path: 'deploy[0]', code: 'invalid-step', message: 'Invalid step', line: 12 },
+    ] };
+    const host = await render({ status: 'ready', value });
+    expect(host.querySelector('[data-testid="deploy-pipeline-issues"]')?.textContent).toContain('Invalid step');
+    expect(host.querySelector('[data-testid="pipeline-diagram"]')).not.toBeNull();
   });
 });

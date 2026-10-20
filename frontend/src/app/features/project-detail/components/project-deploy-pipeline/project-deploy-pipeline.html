@@ -1,14 +1,24 @@
-<section class="deploy-section" data-testid="deploy-pipeline">
-  <header><h2>From CI to Production</h2><p class="deploy-muted">Pipeline from this project's project.yml</p></header>
-  @if (loadError()) {
-    <p role="alert">The pipeline definition could not be loaded.</p>
-  } @else if (definition(); as current) {
-    @if (current.diagram; as diagram) {
-      <app-project-pipeline-diagram [diagram]="diagram" [issues]="current.issues" />
-    } @else {
-      <p data-testid="deploy-pipeline-empty">No pipeline definition is available for this project.</p>
+<section class="pipeline" data-testid="deploy-pipeline" aria-labelledby="deploy-pipeline-title">
+  <header class="pipeline__head"><h2 id="deploy-pipeline-title">Lifecycle</h2>
+    <p>Read from .agent-studio/project.yml. Edit the file in the repository to change it.</p></header>
+  @switch (panel().status) {
+    @case ('loading') { <app-loading-surface kind="list" label="Loading the project.yml pipeline…" /> }
+    @case ('unavailable') { <app-empty-state icon="branch" title="Pipeline definition unavailable" testid="deploy-pipeline-unavailable" body="The pipeline definition route is not available on this server." /> }
+    @case ('error') { <app-empty-state icon="warn" title="The pipeline could not be loaded" testid="deploy-pipeline-error" [body]="errorMessage()" /> }
+  }
+  @if (definition(); as definition) {
+    @if (definition.issues.length) {
+      <div class="pipeline__issues" data-testid="deploy-pipeline-issues" role="group" aria-label="Project file validation issues">
+        <h3>project.yml has {{ definition.issues.length }} validation {{ definition.issues.length === 1 ? 'issue' : 'issues' }}</h3>
+        <ul>@for (issue of definition.issues; track issue.path + issue.code) {
+          <li><code>{{ issue.path }}@if (issue.line) {:{{ issue.line }}}</code> {{ issue.message }}</li>
+        }</ul>
+      </div>
     }
-  } @else {
-    <p role="status">Loading pipeline definition...</p>
+    @if (definition.diagram; as diagram) {
+      <app-project-pipeline-diagram [diagram]="diagram" [issues]="definition.issues" />
+    } @else {
+      <app-empty-state icon="branch" title="No pipeline diagram" testid="deploy-pipeline-undeclared" body="Add the pipeline and deployment lifecycle to .agent-studio/project.yml." />
+    }
   }
 </section>

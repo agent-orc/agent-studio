@@ -192,6 +192,28 @@ public sealed class GateShardRunnerTests : IDisposable
         Assert.Equal(GateShardDetails.TestRunAborted, crashed.Detail);
     }
 
+    [SkippableTheory]
+    [InlineData("zero")]
+    [InlineData("failed0")]
+    [InlineData("early1")]
+    public async Task An_unverified_shard_is_infrastructure_without_quarantine_or_rerun(string mode)
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, mode);
+
+        var result = await RunGateAsync(shardLanes: 2);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        Assert.False(result.RetryPerformed);
+        Assert.Empty(result.FlakyQuarantinedFailures);
+        var bad = Assert.Single(Assert.Single(result.TestShards).Shards,
+            shard => shard.Outcome == GateShardOutcomes.Infrastructure);
+        Assert.Equal(mode == "early1" ? GateShardDetails.NoTestReport : GateShardDetails.UnverifiedTestReport,
+            bad.Detail);
+        Assert.Null(bad.Rerun);
+    }
+
     [SkippableFact]
     public async Task A_rerun_whose_filter_matches_no_test_is_not_green()
     {
@@ -359,6 +381,8 @@ public sealed class GateShardRunnerTests : IDisposable
             # One append per lane: parallel lanes must not interleave a line and its newline.
             if [ -n "$settings" ]; then printf '%s\n' "$(tr -d '\n' < "$settings")" >> "{{ShellPath(SettingsLog)}}"; fi
             if [ "$mode" = oom ]; then case "$run" in *GammaTests*) exit 137;; esac; fi
+            if [ "$mode" = early1 ] && [ -n "$settings" ]; then case "$run" in *FlakyTests*) exit 1;; esac; fi
+            if [ "$mode" = zero ] && [ -n "$settings" ]; then case "$run" in *FlakyTests*) run="";; esac; fi
             # nomatch: the targeted re-run's filter matches nothing, VSTest still exits 0.
             if [ "$mode" = nomatch ] && [ -z "$settings" ]; then run=""; fi
             failed=""; summary=Completed; aborted=""
@@ -372,6 +396,7 @@ public sealed class GateShardRunnerTests : IDisposable
                   flaky|nomatch|abort) if [ -n "$settings" ]; then outcome=Failed; failed=1; fi;;
                   mismatch) if [ -n "$settings" ]; then failed=1; fi;;
                   abort0) aborted=1;;
+                  failed0) if [ -n "$settings" ]; then outcome=Failed; fi;;
                 esac
                 if [ "$mode" = abort ] && [ -n "$settings" ]; then aborted=1; summary=Aborted; fi
               fi
