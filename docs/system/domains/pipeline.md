@@ -95,7 +95,11 @@ under local application data. The record includes the run id, host, remote
 root, start time, persistent installation id, and owning Studio process
 identity (PID and process start time). The id comes from `RemoteGate:InstallationId`,
 the configured connectivity manifest, or a generated id in a directory scoped
-to the Studio installation path under local application data. Startup and the
+to the Studio installation's stable working directory under local application
+data. `RemoteGate:InstallationRoot` can select that stable path explicitly.
+Versioned prebuilt release directories do not affect the scope. First-time id
+publication is atomic across Studio processes; contenders read the same
+persisted id. Startup and the
 one-minute recovery sweep touch the worker's `cancel` marker only after the
 owning process is gone. Recovery is scoped to
 the installation id and recorded host/root; the primary and every configured

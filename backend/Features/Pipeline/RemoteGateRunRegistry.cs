@@ -92,16 +92,38 @@ internal sealed class RemoteGateRunRegistry
         lock (Locks.GetOrAdd(path, _ => new object()))
         {
             if (File.Exists(path))
+                return ReadInstallationId(path);
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
             {
-                var existing = File.ReadAllText(path).Trim();
-                if (existing.Length is >= 16 and <= 64 && existing.All(Uri.IsHexDigit)) return existing;
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(Guid.NewGuid().ToString("N"));
+                    writer.Flush();
+                    stream.Flush(flushToDisk: true);
+                }
+                try { File.Move(temporary, path); }
+                catch (IOException exception) when (File.Exists(path))
+                {
+                    // Another process published first. Never replace its id.
+                    AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate installation id published by another process");
+                }
+                return ReadInstallationId(path);
             }
-            var id = Guid.NewGuid().ToString("N");
-            var temporary = path + ".tmp";
-            File.WriteAllText(temporary, id);
-            File.Move(temporary, path, overwrite: true);
-            return id;
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
         }
+    }
+
+    private static string ReadInstallationId(string path)
+    {
+        var id = File.ReadAllText(path).Trim();
+        if (id.Length is >= 16 and <= 64 && id.All(Uri.IsHexDigit)) return id;
+        throw new InvalidDataException("Remote gate installation id is invalid: " + path);
     }
 }
 

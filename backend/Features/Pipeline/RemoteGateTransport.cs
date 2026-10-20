@@ -333,9 +333,14 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     internal static RemoteGateRunRegistry CreateDefaultRegistry(TimeProvider time, IConfiguration configuration,
         string? installationDirectory = null, string? dataDirectory = null)
     {
+        // The service working directory belongs to the installation. Prebuilt
+        // releases live below changing versioned directories, so BaseDirectory
+        // would strand the previous release's run records after an upgrade.
+        var configuredRoot = configuration["RemoteGate:InstallationRoot"];
+        var installation = Path.GetFullPath(installationDirectory
+            ?? (string.IsNullOrWhiteSpace(configuredRoot) ? Directory.GetCurrentDirectory() : configuredRoot));
         var data = dataDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var root = string.IsNullOrWhiteSpace(data) ? AppContext.BaseDirectory : data;
-        var installation = Path.GetFullPath(installationDirectory ?? AppContext.BaseDirectory);
+        var root = string.IsNullOrWhiteSpace(data) ? installation : data;
         var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(installation))).ToLowerInvariant();
         var installationId = configuration["RemoteGate:InstallationId"]?.Trim();
         if (string.IsNullOrEmpty(installationId)

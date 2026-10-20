@@ -113,6 +113,64 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task New_prebuilt_release_recovers_records_from_the_same_installation()
+    {
+        var data = Path.Combine(_root, "shared-account");
+        var installation = Path.Combine(_root, "studio-a");
+        var otherInstallation = Path.Combine(_root, "studio-b");
+        var firstRelease = Path.Combine(installation, "releases", "17");
+        var nextRelease = Path.Combine(installation, "releases", "18");
+        Directory.CreateDirectory(firstRelease);
+        Directory.CreateDirectory(nextRelease);
+        var firstConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:InstallationRoot"] = installation,
+            ["RemoteGate:WorkerPath"] = Path.Combine(firstRelease, "worker.dll"),
+        }).Build();
+        var nextConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:InstallationRoot"] = installation,
+            ["RemoteGate:WorkerPath"] = Path.Combine(nextRelease, "worker.dll"),
+        }).Build();
+        var otherConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:InstallationRoot"] = otherInstallation,
+        }).Build();
+        var old = RemoteGateTransport.CreateDefaultRegistry(_clock, firstConfig, dataDirectory: data);
+        var record = old.Record(new string('c', 32), "gate-a", "/srv/gates");
+
+        var current = RemoteGateTransport.CreateDefaultRegistry(_clock, nextConfig, dataDirectory: data);
+        var fallbackOld = RemoteGateTransport.CreateDefaultRegistry(_clock, firstConfig, dataDirectory: "");
+        var fallbackNew = RemoteGateTransport.CreateDefaultRegistry(_clock, nextConfig, dataDirectory: "");
+        var other = RemoteGateTransport.CreateDefaultRegistry(_clock, otherConfig, dataDirectory: data);
+        var implicitScope = RemoteGateTransport.CreateDefaultRegistry(_clock,
+            new ConfigurationBuilder().Build(), dataDirectory: data);
+        var workingDirectoryScope = RemoteGateTransport.CreateDefaultRegistry(_clock,
+            new ConfigurationBuilder().Build(), Directory.GetCurrentDirectory(), data);
+
+        Assert.Equal(old.InstallationId, current.InstallationId);
+        Assert.Equal(fallbackOld.InstallationId, fallbackNew.InstallationId);
+        Assert.Equal(record, Assert.Single(current.ReadAll()));
+        Assert.NotEqual(current.InstallationId, other.InstallationId);
+        Assert.Empty(other.ReadAll());
+        Assert.Equal(workingDirectoryScope.InstallationId, implicitScope.InstallationId);
+
+        var remoteExists = true;
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            var command = args.Last();
+            if (command.Contains("rm -rf --", StringComparison.Ordinal)) remoteExists = false;
+            if (command.StartsWith("test ! -e", StringComparison.Ordinal) && remoteExists)
+                throw new IOException("remote directory remains");
+            return Task.CompletedTask;
+        }
+        await Transport(current, Run).CancelOrphanedRunsAsync();
+        Assert.False(remoteExists);
+        Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
     public async Task Runs_from_other_installations_are_never_cancelled()
     {
         var foreign = new RemoteGateRunRegistry(_root, _clock, new string('e', 32), new string('f', 32));
