@@ -209,7 +209,9 @@ revision restarts five times (Docker's and the host's restarts together)
 within 10 minutes and a previous revision is kept, the host restores the
 previous revision behind the same health check. It reports `crash-rollback`
 with the crashing artifact, then Studio queues a rollback job to the last
-healthy artifact. Until then the host does not return to the crashing
+healthy artifact. Studio acts on each `crash-rollback` event once, so an
+event still in the host's event list does not roll back a later redeploy of
+the same artifact. Until then the host does not return to the crashing
 revision; only a new deploy job brings it back. Apps get `cpus`,
 `mem_limit`, `memswap_limit`, `pids_limit`, and `no-new-privileges`. They
 publish no port, use no host network, and mount nothing from the host other
