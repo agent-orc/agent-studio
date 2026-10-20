@@ -367,6 +367,20 @@ describe('ProjectDeployAreaComponent', () => {
     expect(data.requests).toContain('releases:25');
   });
 
+  it('keeps server history filters when moving between Deploy views', async () => {
+    data.serveEverything();
+    await settle();
+    await click('deploy-tab-history');
+    const select = byTestId('deploy-history-filter-environment') as HTMLSelectElement;
+    select.value = 'production';
+    select.dispatchEvent(new Event('change'));
+    await settle();
+    await click('deploy-tab-releases');
+    await click('deploy-tab-history');
+    expect((byTestId('deploy-history-filter-environment') as HTMLSelectElement).value).toBe('production');
+    expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(2);
+  });
+
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
     data.requests.length = 0;
     await click('deploy-refresh');

@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, model, output } from '@angular/core';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import {
@@ -40,10 +40,9 @@ export class ProjectDeployHistoryComponent {
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
   readonly openRun = output<string>();
-  readonly filterChange = output<DeployRunFilter>();
   readonly pageChange = output<number>();
 
-  readonly filter = signal<DeployRunFilter>(ALL_DEPLOY_RUNS);
+  readonly filter = model<DeployRunFilter>(ALL_DEPLOY_RUNS);
   readonly visible = computed(() => filterDeployRuns(this.runs(), this.filter(), this.now()));
   readonly filtered = computed(() => {
     const value = this.filter();
@@ -67,5 +66,5 @@ export class ProjectDeployHistoryComponent {
   }
   setPeriod(period: string): void { this.setFilter({ ...this.filter(), period: period as DeployPeriod }); }
   reset(): void { this.setFilter(ALL_DEPLOY_RUNS); }
-  private setFilter(filter: DeployRunFilter): void { this.filter.set(filter); this.filterChange.emit(filter); }
+  private setFilter(filter: DeployRunFilter): void { this.filter.set(filter); }
 }
