@@ -121,6 +121,20 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void RewrittenCommitWithoutCardKey_UsesDurableIntegrationVerification()
+    {
+        var (deploy, _, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        Card("DEMO-5", new string('0', 40));
+        var rewritten = Commit("Improve the product after integration");
+
+        var release = CreateRelease(deploy, Artifact('b'), rewritten);
+
+        Assert.Equal(["DEMO-5"], release.CardKeys);
+        Assert.Equal(release.CardKeys, deploy.ReleaseDetail("demo", release.Id)!.Release.CardKeys);
+    }
+
+    [Fact]
     public void Production_WaitsForApproval_ByOwnerOrMaintainerOnly()
     {
         var (deploy, environments, _) = Build();

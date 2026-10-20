@@ -254,8 +254,11 @@ public sealed class DeployService
         lock (_gate)
         {
             var snapshot = SyncLocked(project);
-            return snapshot is null ? null : CardDeploymentProjection.Project(project, snapshot.Environments,
-                snapshot.Releases, snapshot.Deployments(project), cardKeys);
+            if (snapshot is null) return null;
+            var repo = _git.ResolveRepoRootForProject(project);
+            return CardDeploymentProjection.Project(project, snapshot.Environments,
+                snapshot.Releases, snapshot.Deployments(project), cardKeys,
+                (origin, target) => repo is not null && _git.IsAncestor(repo, origin.CommitSha, target.CommitSha));
         }
     }
 
@@ -753,9 +756,12 @@ public sealed class DeployService
         var existing = _store.ReadReleaseRecords(project);
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
         var previous = existing.LastOrDefault()?.Release;
-        var priorKeys = existing.SelectMany(item => item.Release.CardKeys)
+        var priorKeys = existing.Where(item => repo is not null &&
+                _git.IsAncestor(repo, item.Release.CommitSha, commit))
+            .SelectMany(item => item.Release.CardKeys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var cardKeys = repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated, priorKeys);
+        var cardKeys = repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated, priorKeys, now,
+            previous?.CreatedAtUtc);
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
@@ -770,26 +776,31 @@ public sealed class DeployService
         => _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is { } yaml
             ? ProjectDefinitionReader.Parse(yaml).Definition?.Deployment : null;
 
-    private sealed record IntegratedCard(string Key, string Title, IReadOnlyList<string> Shas);
+    private sealed record IntegratedCard(string Key, string Title, IReadOnlyList<string> Shas,
+        DateTime RecordedAtUtc);
 
     /// <summary>Cards of the project with an integration verification and the commits it names.</summary>
     private IReadOnlyList<IntegratedCard> IntegratedCards(string project)
         => _scanner.ScanAllJobsWithArchive()
             .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
             .Select(task => (Task: task, Record: IntegrationVerificationStore.Read(task.FolderPath)))
-            .Where(item => item.Record is not null)
+            .Where(item => item.Record is { State: IntegrationVerificationStates.Verified })
             .Select(item => new IntegratedCard(
                 string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key,
                 item.Task.Title,
-                [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas]))
+                [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas],
+                item.Record.RecordedAtUtc.UtcDateTime))
             .ToArray();
 
     /// <summary>
-    /// Cards whose integration verification names a commit this release adds:
-    /// reachable from the release commit and not from the previous release.
+    /// The integration verification is the durable card mapping. A rewritten
+    /// merge, rebase or squash may retain the verified work without retaining
+    /// either its SHA or the card key in a commit message. The verification
+    /// timestamp places that card in the next release after integration.
     /// </summary>
     private IReadOnlyList<string> CardKeys(string repo, string commit, string? previousCommit,
-        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys)
+        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys, DateTime now,
+        DateTime? previousCreatedAt)
     {
         var revisions = _git.ListRevisions(repo, commit, previousCommit,
                 previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow)
@@ -798,8 +809,10 @@ public sealed class DeployService
         var messages = _git.ListRevisionMessages(repo, commit, previousCommit,
             previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow);
         var mentioned = ReleaseCardAttribution.FindKeys(messages);
-        return integrated.Where(card => ReleaseCardAttribution.Includes(card.Key, card.Shas,
-                revisions, mentioned, priorKeys))
+        return integrated.Where(card => !priorKeys.Contains(card.Key) &&
+                (card.Shas.Any(revisions.Contains) || mentioned.Contains(card.Key)
+                 || card.RecordedAtUtc <= now &&
+                    (previousCreatedAt is null || card.RecordedAtUtc > previousCreatedAt)))
             .Select(card => card.Key)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.Ordinal)

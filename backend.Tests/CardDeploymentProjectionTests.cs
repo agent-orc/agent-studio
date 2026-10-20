@@ -45,6 +45,35 @@ public sealed class CardDeploymentProjectionTests
     }
 
     [Fact]
+    public void DivergentRelease_DoesNotInheritCardsFromAnEarlierRelease()
+    {
+        var views = CardDeploymentProjection.Project("demo", [Production], [R1, R2],
+            [Run("d1", R1, Production, DeploymentStates.Succeeded, 1),
+             Run("d2", R2, Production, DeploymentStates.Succeeded, 2)],
+            releaseContains: (_, _) => false);
+
+        Assert.Equal(CardDeploymentProjection.NotDeployed,
+            Assert.Single(views.Where(item => item.CardKey == "WEB-1")).Environments[0].State);
+        Assert.Equal(DeploymentStates.Succeeded,
+            Assert.Single(views.Where(item => item.CardKey == "WEB-2")).Environments[0].State);
+    }
+
+    [Theory]
+    [InlineData(DeploymentStates.Queued)]
+    [InlineData(DeploymentStates.Failed)]
+    public void RollbackMark_SurvivesLaterUnsuccessfulAttempt(string attemptedState)
+    {
+        var views = CardDeploymentProjection.Project("demo", [Production], [R1, R2],
+            [Run("d1", R2, Production, DeploymentStates.Succeeded, 1),
+             Run("d2", R1, Production, DeploymentStates.Succeeded, 2) with { Trigger = DeploymentTriggers.Rollback },
+             Run("d3", R2, Production, attemptedState, 3)]);
+
+        var badge = Assert.Single(views.Where(item => item.CardKey == "WEB-2")).Environments[0];
+        Assert.Equal((CardDeploymentProjection.RolledBack, R2.Id, At.AddHours(2)),
+            (badge.State, badge.ReleaseId, badge.AtUtc));
+    }
+
+    [Fact]
     public void Notes_UseIncludedCardTitles_AndMissingCardsKeepTheirKeys()
     {
         var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["WEB-2"] = "Faster page loading" };

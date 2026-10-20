@@ -1,5 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, effect, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { finalize, interval } from 'rxjs';
 import type { TaskInfo } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import type { CardDeploymentView, CardEnvironmentBadge } from '../models/card-deployment.model';
@@ -9,19 +11,42 @@ export class CardDeploymentService {
   private readonly http = inject(HttpClient);
   private readonly tasks = inject(TaskService);
   private readonly byCard = signal<ReadonlyMap<string, CardDeploymentView>>(new Map());
-  private requested = false;
+  private initialRequested = false;
+  private inFlight = false;
+  private pending = false;
 
   constructor() {
     effect(() => {
-      if (this.tasks.jobs().length && !this.requested) this.refresh();
+      if (this.tasks.jobs().length && !this.initialRequested) {
+        this.initialRequested = true;
+        this.refresh();
+      }
+    });
+    this.tasks.taskEvents.pipe(takeUntilDestroyed()).subscribe(() => {
+      if (this.tasks.jobs().length) this.refresh();
+    });
+    // Deployments can change without a task event. Reconcile the badges on the
+    // same 30-second fallback cadence as the board while the board is active.
+    interval(30_000).pipe(takeUntilDestroyed()).subscribe(() => {
+      if (this.tasks.jobs().length) this.refresh();
     });
   }
 
   refresh(): void {
-    this.requested = true;
-    this.http.get<CardDeploymentView[]>('/api/deploy/cards').subscribe({
+    if (this.inFlight) {
+      this.pending = true;
+      return;
+    }
+    this.inFlight = true;
+    this.http.get<CardDeploymentView[]>('/api/deploy/cards').pipe(finalize(() => {
+      this.inFlight = false;
+      if (this.pending) {
+        this.pending = false;
+        this.refresh();
+      }
+    })).subscribe({
       next: views => this.byCard.set(new Map(views.map(view => [this.ref(view.projectId, view.cardKey), view]))),
-      error: () => { this.requested = false; },
+      error: () => { this.initialRequested = false; },
     });
   }
 

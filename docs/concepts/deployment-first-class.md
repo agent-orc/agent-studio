@@ -64,10 +64,12 @@ stays the only executor; releases and runs describe and steer it.
   cards it adds, and channel `default`. Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
-  project, commit and artifacts always resolve to the same release. Cards are
-  those whose integration verification names a commit reachable from the release
-  commit and not from the previous release (at most 200 commits for the first
-  release).
+  project, commit and artifacts always resolve to the same release. Card
+  attribution reads verified integration records, including their recorded
+  integration time. A matching commit or card key in the release delta is used
+  when present; the verification record also keeps the mapping when a rebase or
+  squash rewrites both the SHA and commit message. Cards already included by an
+  ancestor release are excluded from the new release's added cards.
 - **Release order.** Releases never move back in history. A commit that is a
   strict ancestor of the newest release's commit is refused with 409 and
   `"reason":"superseded"`, so a gate
@@ -167,7 +169,9 @@ for one project. Each card has `projectId`, `cardKey` and `environments`; each
 badge has `environmentId`, `environmentName`, `kind`, `state`, `releaseId`,
 `releaseVersion` and `atUtc`. Badge `state` is `not-deployed`, `queued`,
 `running`, `succeeded`, `failed`, `cancelled`, `awaiting-approval` or
-`rolled-back`. `rolled-back` marks a card withdrawn by a successful rollback;
+`rolled-back`. Card presence follows the ancestry of the deployed release,
+including divergent release histories. `rolled-back` marks a card withdrawn by
+a successful rollback and stays visible through later queued or failed attempts;
 `not-deployed` means the card has no deployment in that environment. The
 release notes response has `releaseId`, `version`, `preview` and `notes` entries
 with `cardKey` and product-facing `text` captured from the included cards.
