@@ -41,8 +41,8 @@ The Linux script checks the distribution and architecture, verifies the setup
 executable against `SHA256SUMS`, then offers a one-box Docker or native systemd
 install, or an agent host that joins an existing Studio. Native setup serves
 the UI locally and guides provider login and GitHub access for the execution
-user. Windows users
-download `agent-studio-setup.exe` and verify it against `SHA256SUMS`.
+user. Windows users download `agent-studio-setup.exe` and verify it against
+`SHA256SUMS`; its native package includes the browser UI and local runner.
 See the [install guide](./docs/operations/setup/install.md) for Windows commands,
 the native and connector profiles, unattended answers, update, rollback, uninstall, and remote topologies.
 

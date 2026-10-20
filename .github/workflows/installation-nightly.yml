@@ -134,6 +134,7 @@ jobs:
 
   windows-candidate:
     name: Build and play Windows candidate
+    needs: linux-candidate
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -141,6 +142,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-linux-candidate
+          path: artifacts/linux-release
       - name: Build release-shaped native candidate
         shell: pwsh
         run: |
@@ -155,24 +160,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Engine publish failed.' }
           dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
           if ($LASTEXITCODE -ne 0) { throw 'Studio connector publish failed.' }
+          dotnet publish backend/OrchestratorApi.csproj @common --output artifacts/publish/studio-backend
+          if ($LASTEXITCODE -ne 0) { throw 'Studio backend publish failed.' }
+          dotnet publish runner/AgentRunner.csproj @common --output artifacts/publish/agent-host
+          if ($LASTEXITCODE -ne 0) { throw 'Agent host publish failed.' }
           dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
           if ($LASTEXITCODE -ne 0) { throw 'Setup publish failed.' }
           New-Item -ItemType Directory -Path artifacts/release -Force | Out-Null
           Copy-Item artifacts/publish/setup/agent-studio-setup.exe artifacts/release/
-          $component = "agent-orchestrator-$version-win-x64"
-          $root = "artifacts/package/$component"
-          New-Item -ItemType Directory -Path $root -Force | Out-Null
-          Copy-Item artifacts/publish/task-server/task-server.exe $root
-          Copy-Item artifacts/publish/orchestrator-engine/orchestrator-engine.exe $root
-          Copy-Item artifacts/publish/studio-bff/agent-studio-bff.exe $root
-          Copy-Item deploy/windows "$root/deploy-windows" -Recurse
-          New-Item -ItemType Directory -Path "$root/config" -Force | Out-Null
-          Copy-Item deploy/release/agent-orchestrator/config/*.template "$root/config/"
-          Set-Content -LiteralPath "$root/VERSION" -Value $version -NoNewline -Encoding ascii
-          Set-Content -LiteralPath "$root/RELEASE-SHA" -Value $sha -NoNewline -Encoding ascii
-          @('component=agent-orchestrator', "version=$version", "gitSha=$sha", 'runtimeIdentifiers=win-x64',
-            'protocolMinimum=1', 'protocolMaximum=2') | Set-Content -LiteralPath "$root/RELEASE" -Encoding ascii
-          Compress-Archive -Path $root -DestinationPath "artifacts/release/$component.zip"
+          ./scripts/release/package-release-windows.ps1 -Version $version -Sha $sha `
+            -PublishRoot artifacts/publish -LinuxReleaseRoot artifacts/linux-release -OutputRoot artifacts/release
           Get-ChildItem artifacts/release -File | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
           } | Set-Content artifacts/release/SHA256SUMS -Encoding ascii
