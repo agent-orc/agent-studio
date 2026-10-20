@@ -44,10 +44,30 @@ Every production release needs a person in Studio (BD-1). The declaration value
 production on its own. An approval expires after 24 hours.
 Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
+An environment with guided failure enabled pauses that rollback until an
+approver decides or the intervention window expires.
 After the deploy, the control plane keeps probing each environment from outside
 its host; see [environment health checks](../operations/environment-health-checks.md).
 
 ### Releases, standard lifecycle and deploy runs (BD-1)
+
+Guided failure (P2) is opt-in through `guidedFailure: true` in an environment
+declaration. `interventionTimeoutMinutes` defaults to 60 and accepts 1 to
+10080. A deployment or environment action may override the boolean per run.
+When the host reports a failed deploy or health step, the run enters
+`waiting-for-intervention` and records the failed step, deadline, log line,
+and audit entry. An Owner or Maintainer sends `retry`, `skip` with a nonempty
+reason, or `abort` to
+`POST /api/projects/{project}/deploy/deployments/{id}/intervention`.
+Retry queues the failed deploy step again under the same run. A failed health
+step retries only the health check, without redeploying the artifact. Abort and timeout
+use the existing automatic rollback rule, including its host-lost exception.
+The control plane checks deadlines each minute, including when the dashboard
+is closed.
+Skipping closes this host job and records the step as skipped. The run does not
+count as a deployed release or satisfy a promotion prerequisite because the
+host job did not complete successfully. Its decision and actor remain on the
+run, environment status card, log, and audit trail.
 
 Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
 adds a release layer in `backend/Features/Deploy/`. The host deploy queue above

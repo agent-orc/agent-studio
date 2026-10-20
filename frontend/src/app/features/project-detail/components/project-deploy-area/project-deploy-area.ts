@@ -156,7 +156,7 @@ export class ProjectDeployAreaComponent {
     if (opener?.isConnected) queueMicrotask(() => opener.focus());
   }
 
-  act(action: DeployRunAction): void {
+  act(action: DeployRunAction, reason?: string): void {
     const runId = this.selectedRunId();
     if (!runId || this.mutationAction) return;
     const run = this.selectedRun();
@@ -164,9 +164,9 @@ export class ProjectDeployAreaComponent {
     const production = ready(this.statusPanel())?.some(item => item.environment.id === run.environmentId && item.environment.kind === 'production')
       || ready(this.environmentPanel())?.environments.some(item => item.declaration.id === run.environmentId && item.declaration.kind === 'production')
       || run.environmentName.toLowerCase() === 'production';
-    if ((action === 'cancel' && run.state === 'running') ||
+    if ((action === 'cancel' && run.state === 'running') || action === 'abort' ||
       (production && (action === 'approve' || action === 'reject'))) {
-      const verb = action === 'cancel' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
+      const verb = action === 'cancel' || action === 'abort' ? 'Abort' : action === 'approve' ? 'Approve' : 'Reject';
       if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?`)) return;
     }
     const project = this.projectName();
@@ -174,7 +174,7 @@ export class ProjectDeployAreaComponent {
     this.runReads.unsubscribe();
     this.readGeneration++;
     this.actionState.set({ busy: action, error: null });
-    this.mutations.add(this.data.act(project, runId, action).subscribe({
+    this.mutations.add(this.data.act(project, runId, action, reason).subscribe({
       next: () => {
         this.mutationAction = null;
         this.actionState.set(IDLE);

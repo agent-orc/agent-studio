@@ -37,7 +37,7 @@ import {
  * Copied from AGT-3201 backend/Features/Deploy/DeployContract.cs. A new server
  * state belongs in these lists; the mapping tests then fail until the UI maps it.
  */
-const SERVER_DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval'];
+const SERVER_DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval', 'waiting-for-intervention'];
 const SERVER_STEP_ONLY_STATES = ['pending', 'skipped'];
 const SERVER_TRIGGERS = ['deploy', 'redeploy', 'rollback', 'automatic-rollback'];
 
@@ -104,6 +104,7 @@ describe('deploy area model', () => {
       expect(actions).toEqual({
         queued: ['cancel'], running: ['cancel'], succeeded: [], failed: [], cancelled: [],
         'awaiting-approval': ['approve', 'reject', 'cancel'], unknown: [],
+        'waiting-for-intervention': ['retry', 'abort'],
       });
     });
   });
@@ -189,6 +190,19 @@ describe('deploy area model', () => {
       const card = buildEnvironmentCards(sources)[0];
       expect(card).toMatchObject({ artifact: host.deployedArtifact, releaseVersion: null,
         deployedAt: '2026-10-19T11:58:00Z', cards: { status: 'unknown', reason: 'No release record for this artifact' } });
+    });
+
+    it('keeps the last successful release on a card while a guided failure is pending', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].deployedArtifact = ARTIFACT_B;
+      sources.statuses![0].currentRelease = deployReleasesFixture()[2];
+      sources.statuses![0].intervention = {
+        deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: '2026-10-19T13:00:00Z',
+        decision: null, decidedBy: null,
+      };
+      const card = buildEnvironmentCards(sources)[0];
+      expect(card.releaseVersion).toBe('2026.10.18.1');
+      expect(card.intervention?.failedStep).toBe('health');
     });
 
     it('uses currentDeployment when host history is absent, and host history when release runs are empty', () => {

@@ -5,7 +5,8 @@ public sealed record ReconcileInput(
     IReadOnlyList<ReleaseRecord> Releases,
     IReadOnlyList<DeploymentRecord> Deployments,
     IReadOnlyList<DeployJob> Jobs,
-    IReadOnlyList<EnvironmentPromotion> Promotions);
+    IReadOnlyList<EnvironmentPromotion> Promotions,
+    DateTime? NowUtc = null);
 
 public sealed record ReconcileResult(
     IReadOnlyList<DeploymentRecord> Deployments,
@@ -39,6 +40,7 @@ public static class DeploymentReconciler
         FollowJobs(input, runs, releases, environments, log, audit);
         RequestPromotionApprovals(input, runs, environments, log, audit);
         CloseDecidedPromotions(input, runs, releases, log, audit);
+        ExpireInterventions(input, runs, log, audit);
 
         for (var i = 0; i < runs.Count; i++)
         {
@@ -68,7 +70,8 @@ public static class DeploymentReconciler
         IReadOnlyDictionary<string, DeployEnvironment> environments,
         List<DeploymentLogEntry> log, List<DeployAuditEntry> audit)
     {
-        var linked = runs.Where(item => item.JobId is not null).Select(item => item.JobId!).ToHashSet(StringComparer.Ordinal);
+        var linked = runs.Where(item => item.JobId is not null).Select(item => item.JobId!)
+            .Concat(runs.SelectMany(item => item.PriorJobIds)).ToHashSet(StringComparer.Ordinal);
         foreach (var job in input.Jobs.Where(item => !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
         {
             if (!environments.TryGetValue(job.EnvironmentId, out var environment)) continue;
@@ -102,6 +105,8 @@ public static class DeploymentReconciler
                 : actor == "automatic-rollback" ? DeploymentTriggers.AutomaticRollback : DeploymentTriggers.Rollback;
             var needsApproval = StandardLifecyclePolicy.RequiresApproval(environment)
                 && trigger != DeploymentTriggers.AutomaticRollback;
+            var timeout = input.Releases.FirstOrDefault(item => item.Release.Id == release.Id)?.Environments
+                .FirstOrDefault(item => item.Id == environment.Id)?.InterventionTimeoutMinutes ?? 60;
             var run = new DeploymentRecord
             {
                 Id = job.Id, ReleaseId = release.Id, EnvironmentId = environment.Id,
@@ -109,6 +114,8 @@ public static class DeploymentReconciler
                 DeployStep = DeployStepNames.ForTemplate(job.Template), NeedsApproval = needsApproval,
                 RequestedBy = actor, ApprovedBy = needsApproval ? actor : null,
                 ApprovedAtUtc = needsApproval ? job.CreatedAt : null, JobId = job.Id, CreatedAtUtc = job.CreatedAt,
+                GuidedFailure = job.GuidedFailure,
+                InterventionTimeoutMinutes = timeout,
             };
             runs.Add(run);
             linked.Add(job.Id);
@@ -190,7 +197,7 @@ public static class DeploymentReconciler
         {
             var run = runs[i];
             if (run.JobId is null || !jobs.TryGetValue(run.JobId, out var job)) continue;
-            if (DeploymentStates.IsFinished(run.State)) continue;
+            if (DeploymentStates.IsFinished(run.State) || run.State == DeploymentStates.WaitingForIntervention) continue;
             var state = StateForJob(job.Status);
             var version = releases.TryGetValue(run.ReleaseId, out var release) ? release.Version : run.ReleaseId;
             var environmentName = environments.TryGetValue(run.EnvironmentId, out var environment)
@@ -217,12 +224,35 @@ public static class DeploymentReconciler
                 if (!ReferenceEquals(updated, run)) runs[i] = updated;
                 continue;
             }
+            if (GuidedFailurePolicy.ShouldPause(run.GuidedFailure, state, job.IsRollback))
+            {
+                var at = job.FinishedAt ?? job.ClaimedAt ?? job.CreatedAt;
+                var step = job.Evidence == DeployEvidence.HealthFailed ? DeployStepNames.Health : run.DeployStep;
+                var expires = at.AddMinutes(Math.Clamp(run.InterventionTimeoutMinutes, 1, 10080));
+                updated = updated with { State = DeploymentStates.WaitingForIntervention,
+                    Evidence = job.Evidence, FailedStep = step, InterventionExpiresAtUtc = expires,
+                    InterventionDecision = null, InterventionDecidedBy = null };
+                if (job.RetryStep == DeployStepNames.Health)
+                    log.Add(new(run.Id, step, at,
+                        $"Health check failed on retry ({job.Evidence ?? DeployEvidence.HealthFailed})."));
+                else AddResultLog(updated with { State = DeploymentStates.Failed }, at, log);
+                log.Add(new(run.Id, step, at, $"Waiting for intervention until {expires:O}."));
+                audit.Add(new(at, HostActor, "intervention-requested", run.ReleaseId, run.Id, run.EnvironmentId,
+                    $"{step} failed. Waiting for an approver until {expires:O}."));
+                runs[i] = updated;
+                continue;
+            }
             updated = updated with { State = state };
             if (DeploymentStates.IsFinished(state))
             {
                 var at = job.FinishedAt ?? job.ClaimedAt ?? job.CreatedAt;
                 updated = updated with { FinishedAtUtc = at, Evidence = job.Evidence };
-                AddResultLog(updated, at, log);
+                if (job.RetryStep == DeployStepNames.Health
+                    && state is (DeploymentStates.Succeeded or DeploymentStates.Failed))
+                    log.Add(new(run.Id, DeployStepNames.Health, at,
+                        $"Health check {(state == DeploymentStates.Succeeded ? "passed" : "failed")} on retry "
+                        + $"({updated.Evidence ?? DeployEvidence.HealthOk})."));
+                else AddResultLog(updated, at, log);
                 var actor = state == DeploymentStates.Cancelled ? run.CancelledBy ?? HostActor : job.HostId;
                 if (state != DeploymentStates.Cancelled || run.CancelledBy is null)
                     audit.Add(new(at, actor, "deployment-" + state, run.ReleaseId, run.Id, run.EnvironmentId,
@@ -230,6 +260,23 @@ public static class DeploymentReconciler
                         + (job.Evidence is null ? "." : $" ({job.Evidence}).")));
             }
             runs[i] = updated;
+        }
+    }
+
+    private static void ExpireInterventions(ReconcileInput input, List<DeploymentRecord> runs,
+        List<DeploymentLogEntry> log, List<DeployAuditEntry> audit)
+    {
+        if (input.NowUtc is not { } now) return;
+        for (var i = 0; i < runs.Count; i++)
+        {
+            var run = runs[i];
+            if (run.State != DeploymentStates.WaitingForIntervention || run.InterventionExpiresAtUtc is not { } expires
+                || now < expires) continue;
+            runs[i] = run with { State = DeploymentStates.Failed, FinishedAtUtc = expires,
+                InterventionDecision = "timeout", InterventionDecidedBy = LifecycleActor };
+            log.Add(new(run.Id, run.FailedStep ?? run.DeployStep, expires, "Intervention timed out; deployment failed."));
+            audit.Add(new(expires, LifecycleActor, "intervention-expired", run.ReleaseId, run.Id, run.EnvironmentId,
+                "Intervention timed out; normal failure and rollback rules resumed."));
         }
     }
 

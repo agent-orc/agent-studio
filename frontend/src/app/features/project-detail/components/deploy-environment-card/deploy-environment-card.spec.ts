@@ -69,6 +69,14 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(events.runs).toEqual(['run-c-stage-redeploy']);
   });
 
+  it('shows a guided failure decision and its actor on the environment card', async () => {
+    await render({ ...fullCards()[0], intervention: {
+      deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: null,
+      decision: 'skip', decidedBy: 'local.owner',
+    } });
+    expect(text('deploy-environment-intervention')).toBe('health: skip by local.owner.');
+  });
+
   it('without the deploy service: names the artifact, reads host health, and routes a promotion to the tools', async () => {
     await render(hostCards()[1]);
     const events = emitted();

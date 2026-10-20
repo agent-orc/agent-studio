@@ -14,6 +14,28 @@ public sealed class DeploymentReconcilerTests
     private static readonly Release R1 = new("r1", "demo", "2026.10.16.1", new string('1', 40), [Artifact],
         "process", "variables", ["AGT-1"], T0, ReleaseSnapshot.DefaultChannel);
 
+    [Theory]
+    [InlineData(true, "failed", false, true)]
+    [InlineData(false, "failed", false, false)]
+    [InlineData(true, "succeeded", false, false)]
+    [InlineData(true, "failed", true, false)]
+    public void GuidedFailurePolicy_PausesOnlyEnabledFailedNonRollbackJobs(
+        bool enabled, string state, bool rollback, bool expected)
+        => Assert.Equal(expected, GuidedFailurePolicy.ShouldPause(enabled, state, rollback));
+
+    [Fact]
+    public void GuidedFailurePolicy_RequiresApproverAndSkipReason()
+    {
+        Assert.NotNull(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "retry", approver: false, reason: null));
+        Assert.NotNull(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "skip", approver: true, " "));
+        Assert.Null(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "skip", approver: true, "Known optional check"));
+        Assert.Null(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "abort", approver: true, null));
+    }
+
     [Fact]
     public void AdoptsQueueJob_ThenFollowsClaimAndReport_WithStepsLogAndAudit()
     {

@@ -23,6 +23,7 @@ public sealed record DeploymentRecord
     public DateTime? ApprovedAtUtc { get; init; }
     public string? CancelledBy { get; init; }
     public string? JobId { get; init; }
+    public List<string> PriorJobIds { get; init; } = [];
     public string? HostId { get; init; }
     /// <summary>Claims of the job seen so far; a higher count on the job is a reclaim.</summary>
     public int HostClaims { get; init; }
@@ -32,6 +33,12 @@ public sealed record DeploymentRecord
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? StartedAtUtc { get; init; }
     public DateTime? FinishedAtUtc { get; init; }
+    public bool GuidedFailure { get; init; }
+    public int InterventionTimeoutMinutes { get; init; } = 60;
+    public DateTime? InterventionExpiresAtUtc { get; init; }
+    public string? FailedStep { get; init; }
+    public string? InterventionDecidedBy { get; init; }
+    public string? InterventionDecision { get; init; }
     public List<DeploymentStepRecord> Steps { get; init; } = [];
 }
 
@@ -86,8 +93,10 @@ public static class DeploymentStepPlan
         var deployState = run.State switch
         {
             DeploymentStates.Running => DeploymentStates.Running,
+            DeploymentStates.Succeeded when run.InterventionDecision == "skip" && !healthFailed => DeploymentStepStates.Skipped,
             DeploymentStates.Succeeded => DeploymentStates.Succeeded,
             DeploymentStates.Failed => healthFailed ? DeploymentStates.Succeeded : DeploymentStates.Failed,
+            DeploymentStates.WaitingForIntervention => healthFailed ? DeploymentStates.Succeeded : DeploymentStates.Failed,
             DeploymentStates.Cancelled => DeploymentStates.Cancelled,
             _ => DeploymentStepStates.Pending,
         };
@@ -96,8 +105,10 @@ public static class DeploymentStepPlan
 
         var healthState = run.State switch
         {
+            DeploymentStates.Succeeded when run.InterventionDecision == "skip" => DeploymentStepStates.Skipped,
             DeploymentStates.Succeeded => DeploymentStates.Succeeded,
             DeploymentStates.Failed => healthFailed ? DeploymentStates.Failed : DeploymentStepStates.Skipped,
+            DeploymentStates.WaitingForIntervention => healthFailed ? DeploymentStates.Failed : DeploymentStepStates.Skipped,
             DeploymentStates.Cancelled => DeploymentStates.Cancelled,
             _ => DeploymentStepStates.Pending,
         };

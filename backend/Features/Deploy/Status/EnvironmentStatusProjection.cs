@@ -43,7 +43,16 @@ public static class EnvironmentStatusProjection
                 "failed" => EnvironmentHealth.Unhealthy,
                 _ => EnvironmentHealth.Unknown,
             } : EnvironmentHealth.Unknown;
-            return new EnvironmentStatus(environment, current, latest, newer, cards, health);
+            var intervention = latest?.State == DeploymentStates.WaitingForIntervention
+                || latest?.InterventionDecision is not null ? latest
+                : latest?.Trigger == DeploymentTriggers.AutomaticRollback
+                    ? runs.Where(item => item.InterventionDecision is "abort" or "timeout")
+                        .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
+                        .LastOrDefault() : null;
+            return new EnvironmentStatus(environment, current, latest, newer, cards, health,
+                intervention is null ? null : new(intervention.Id, intervention.FailedStep ?? "run",
+                    intervention.InterventionExpiresAtUtc, intervention.InterventionDecision,
+                    intervention.InterventionDecidedBy));
         }).ToArray();
     }
 
@@ -55,7 +64,7 @@ public static class EnvironmentStatusProjection
     }
 
     public static Deployment? LastSucceeded(IEnumerable<Deployment> environmentRuns)
-        => environmentRuns.Where(item => item.State == DeploymentStates.Succeeded)
+        => environmentRuns.Where(item => item.State == DeploymentStates.Succeeded && item.InterventionDecision != "skip")
             .OrderBy(item => item.FinishedAtUtc).ThenBy(item => item.CreatedAtUtc)
             .ThenBy(item => item.Id, StringComparer.Ordinal).LastOrDefault();
 
@@ -68,7 +77,7 @@ public static class EnvironmentStatusProjection
         var runs = environmentRuns.ToArray();
         var current = CurrentRelease(runs, releases);
         if (current is null) return null;
-        return runs.Where(item => item.State == DeploymentStates.Succeeded)
+        return runs.Where(item => item.State == DeploymentStates.Succeeded && item.InterventionDecision != "skip")
             .OrderBy(item => item.FinishedAtUtc).ThenBy(item => item.CreatedAtUtc)
             .ThenBy(item => item.Id, StringComparer.Ordinal)
             .Select(item => releases.GetValueOrDefault(item.ReleaseId))
@@ -83,7 +92,7 @@ public static class EnvironmentStatusProjection
 
     public static bool SucceededIn(IEnumerable<Deployment> deployments, string releaseId, string environmentId)
         => deployments.Any(item => item.ReleaseId == releaseId && item.EnvironmentId == environmentId
-            && item.State == DeploymentStates.Succeeded);
+            && item.State == DeploymentStates.Succeeded && item.InterventionDecision != "skip");
 
     /// <summary>
     /// Releases order by creation, then id. <see cref="DeployService.CreateRelease"/>
