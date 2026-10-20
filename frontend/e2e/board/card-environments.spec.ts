@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import { setTheme } from '../helpers/theme';
 
 test('card environments and Staging-only board filter show the same deployment state', async ({ page }) => {
+  await page.clock.install();
+  let productionLive = false;
   const selected = {
     id: 'demo-deploy-card', key: 'DEMO-1', title: 'Faster page loading', projectName: 'Demo', state: '2-ready',
     watchPath: '/fixtures/demo', folderPath: '/fixtures/demo/2-ready/demo-deploy-card',
@@ -27,8 +29,11 @@ test('card environments and Staging-only board filter show the same deployment s
       environments: [
         { environmentId: 'stage', environmentName: 'Staging', kind: 'staging', state: 'succeeded',
           releaseId: 'release-1', releaseVersion: '1.0', atUtc: '2026-10-16T10:00:00Z' },
-        { environmentId: 'production', environmentName: 'Production', kind: 'production', state: 'not-deployed',
-          releaseId: null, releaseVersion: null, atUtc: null },
+        { environmentId: 'production', environmentName: 'Production', kind: 'production',
+          state: productionLive ? 'succeeded' : 'not-deployed',
+          releaseId: productionLive ? 'release-2' : null,
+          releaseVersion: productionLive ? '2.0' : null,
+          atUtc: productionLive ? '2026-10-16T11:00:00Z' : null },
       ] }]),
   }));
   await page.goto('/');
@@ -48,4 +53,7 @@ test('card environments and Staging-only board filter show the same deployment s
     await setTheme(page, theme);
     await board.screenshot({ path: path.join(results, `agt-3202-card-environments-${theme}.png`) });
   }
+  productionLive = true;
+  await page.clock.fastForward(30_000);
+  await expect(selectedCard.getByTestId('card-environment-production')).toContainText('Production · live · 2.0');
 });
