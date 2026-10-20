@@ -63,13 +63,19 @@ public sealed class ZonePolicyVerifier(IZoneNetworkProbe probe, TimeProvider clo
                             target.Expectation, Observed(ZoneProbeOutcome.Unresolved), Passed: false, unresolved));
                         continue;
                     }
-                    var observation = await probe.ConnectAsync(network.Name, dns, target.Address, target.Port, ct);
+                    var observation = target.RequireControl
+                        ? await probe.ConnectAsync(network.Name, dns, target.Address, target.Port, ct)
+                        : await probe.ConnectWithLocalDenyAsync(network.Name, target.Address, target.Port, ct);
                     checks.Add(new ZoneCheck(zone.Name, network.Name, target.Expectation, Endpoint(target),
                         target.Expectation, Observed(observation.Outcome),
-                        Satisfies(target.Expectation, observation.Outcome), observation.Detail));
+                        target.RequireControl
+                            ? Satisfies(target.Expectation, observation.Outcome)
+                            : observation.Outcome == ZoneProbeOutcome.Rejected && observation.LocalDenyObserved,
+                        observation.Detail));
                 }
             }
-            foreach (var target in zone.Probes.Where(target => target is { Expectation: ZoneProbeExpectations.Blocked, Unresolved: null })
+            foreach (var target in zone.Probes.Where(target => target is { Expectation: ZoneProbeExpectations.Blocked,
+                                                                           Unresolved: null, RequireControl: true })
                          .DistinctBy(target => (target.Address, target.Port)))
             {
                 if (!controls.TryGetValue((target.Address, target.Port), out var control))
@@ -108,8 +114,10 @@ public sealed class ZonePolicyVerifier(IZoneNetworkProbe probe, TimeProvider clo
 
     /// <summary>
     /// A reachable probe passes only on a completed connection. A blocked
-    /// probe passes only on the zone's own reject ("No route to host", from
-    /// <c>icmp-admin-prohibited</c>) or a drop (a timeout). "Connection
+    /// probe with an outside control passes on the zone's reject ("No route
+    /// to host", from <c>icmp-admin-prohibited</c>) or a drop (a timeout).
+    /// A metadata probe without a control also needs a local deny counter.
+    /// "Connection
     /// refused" is a reset from the real destination, so nothing blocked the
     /// connection; it fails, like an unresolved name or a failed probe.
     /// </summary>
