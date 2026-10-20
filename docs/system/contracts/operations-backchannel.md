@@ -166,7 +166,11 @@ runs `docker compose -f <file> config --quiet` (30 seconds); an invalid
 configuration fails the attempt as `configuration-invalid` and leaves the
 container untouched. Otherwise it runs `docker compose -f <file> up -d
 --force-recreate --no-deps <service>` (120 seconds, process tree killed on
-timeout). Every child process hides its console window. The output is exactly
+timeout and when the agent itself stops). An allowlist file that is missing,
+unreadable or invalid is logged; the agent then offers no restart and keeps
+serving its other operations. The caller restarts a worker only while it runs
+no work; the backend sends the intervention's write key as the idempotency
+key, so a replayed decision never recreates the container twice. Every child process hides its console window. The output is exactly
 `service`, `restarted` and `configurationValid`; success requires both flags.
 The agent's capacity of 1 serializes restarts, so two never overlap. The
 caller needs the `service.restart` and `maintenance.execute` scopes, the agent

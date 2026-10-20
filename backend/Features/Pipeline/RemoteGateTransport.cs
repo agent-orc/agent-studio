@@ -238,6 +238,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             if (usage.Length == 2 && int.TryParse(usage[0], out var busy)
                 && int.TryParse(usage[1], out var total) && busy >= 0 && total > 0 && busy <= total)
             {
+                _slotUsage.RemoteWaiting(busy, total);
                 request.OnMachineGateWaiting?.Invoke();
                 request.OnMachineGateSlotWaiting?.Invoke(busy, total);
             }

@@ -99,7 +99,13 @@ limit, a repeat limit per subject and action in the loop window, and a hold
 while a proposal, escalation or undo of the current stall episode waits for a
 person. It reads no clock; the observation time is a frozen fact. An effect
 that implements `IAiOperatorProposalEffect` also receives the engine's Propose
-receipts.
+receipts. A periodic decider may call `AiOperatorDecisionGateway.Preview` to
+evaluate the same library in process and submit only decisions that act,
+propose or ask; `stall-intervention` does, so a held subject creates no engine
+occurrence. Restart, gate-drop and requeue rules are decided positively from
+frozen facts (busy slots and claimable work, the card state the authority key
+names, the last run's rate limit and the reviewed delivery); an unknown fact
+holds or proposes.
 ## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it

@@ -2135,42 +2135,77 @@ AGT-3206 every `StallIntervention:IntervalSeconds` (60) and submits frozen
 facts through `AiOperatorDecisionGateway` as the AI Operator decider
 `stall-intervention`. `StallInterventionPolicy` in the decision library
 decides; the `OperatorDecision` switch selects whether the monolith decides in
-process (default) or the Orchestrator Engine does. `StallIntervention:Enabled`
-(default `true`) is the kill switch. The policy follows the Nordstern autonomy
-classes: A0 and A1 act, A2 is a proposal for a person, and no stall plans an
-A3 action.
+process (default) or the Orchestrator Engine does. The policy follows the
+Nordstern autonomy classes: A0 and A1 act, A2 is a proposal for a person, and
+no stall plans an A3 action.
+
+`StallIntervention:Mode` selects how far it goes: `observe` (the default)
+decides and writes one "would do" receipt per case episode and action without
+changing anything, `act` lets A0/A1 interventions act, and `off` (or the old
+`Enabled=false`) stops the service. In `act` mode each mutating action has its
+own switch, `StallIntervention:Actions:<action>` (for example
+`lower-admission=false`); a switched-off action writes a "would do" receipt.
+Proposals and escalations are recorded in every mode except `off`.
 
 | Stall | Intervention | Class | Effect measured afterwards |
 |---|---|---|---|
-| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter (8 to 6), floor `MinAdmission` (1) | A1 | The identity store reads the new value back |
-| Load back after a lowering | Restore the previous admission once the load per core stayed under target x `RestoreBelowTargetFraction` (0.8) for `CalmMinutesBeforeRestore` (15) | A1 | Same |
-| `host-offline`, `idle-capacity` of a review daemon, gate worker or engine | Restart the allowlisted service through the Operations Server (`service.restart`) | A1 | The Operations Server attempt reports `restarted` |
-| `provider-auth-invalid` with healthy hosts | Route the provider away from the host until its login works again, and propose the renewal | A1 + A2 | The review registry no longer admits `provider-auth:<provider>` on the host |
-| `provider-rate-limited` | Pin the last real delivery (immutable result ref and SHA) as the next run's base of each card that waits in Ready with an empty salvage | A1 | `continuation-base.json` holds the pin, or the card already started from it |
-| `batch-gate-stuck` | Drop completed or stale members; close the forming batch when its oldest member waits past `GateMemberDeadlineHours` (6) | A1 | No dropped member is still pending |
-| `deploy-drift` with a start error | Start the service again through the Operations Server, which validates the compose configuration first | A1 | The attempt reports `restarted` |
-| Coding host offline, admission at its floor, no Operations Agent, missing toolchain, missing variables, credential refusal | Proposal: move work for longer, start the host, add the toolchain to the review image, set the variables, renew the login | A2 | None; a person decides |
-| `lane-stall` | Reported only; the card deciders own it | A0 | None |
+| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter of the person's baseline (8 to 6), floor `MinAdmission` (1). The host is addressed by its client identity id (`clientId` on the case), never by display name. An admission the AI Operator already lowered is never lowered again: a new episode becomes a proposal | A1 | The identity store reads the new value back |
+| Load back after a lowering | Restore the baseline once the load per core stayed under target x `RestoreBelowTargetFraction` (0.8) for `CalmMinutesBeforeRestore` (15). This also runs for a reduction whose follow-up already escalated, as long as the live admission still reads the lowered value; a value a person changed is never restored over | A1 | Same |
+| `host-offline`, `idle-capacity` of a review daemon | Restart the allowlisted service through the Operations Server (`service.restart`), only while it runs no work (busy slots 0, no active batch or per-task gate) and some waiting item is claimable by that worker | A1 | The Operations Server attempt reports `restarted` |
+| The same with running or unknown work, or nothing claimable (pending batch gate members wait for the batch plan, not for the gate worker) | Proposal to restart once the work finished or to check the worker | A2 | None |
+| Gate host reports every slot busy while this Studio holds none and runs no batch or per-task gate (orphaned gate workers after a Studio restart) | Proposal to stop the orphaned workers (`propose-release-gate-slots`; the automatic release is AGT-3237) | A2 | None |
+| `provider-auth-invalid` on a review host with healthy hosts | Route the provider away from the host until its login works again, and propose the renewal | A1 + A2 | The review registry no longer admits `provider-auth:<provider>` on the host |
+| `provider-auth-invalid` on a coding host | Proposal to renew the login | A2 | None |
+| `provider-rate-limited` | For each affected card in Ready whose last run ended on a rate limit and whose next run would start without a base or from an empty salvage: pin the last completed, reviewed delivery (immutable result ref and SHA) as `continuation-base.json` | A1 | The pin reads back, or the card already started from it |
+| `batch-gate-stuck` | Drop the frozen review attempts whose card (found by its authority key) is completed or positively left review; close the forming batch when its oldest Auto Review member waits past `GateMemberDeadlineHours` (6). A member with no readable card holds; Human Review and Escalated members stay with the pilot | A1 | No dropped attempt is still pending |
+| `deploy-drift` with a start error and no known missing variable | Start the service again through the Operations Server, which validates the compose configuration first | A1 | The attempt reports `restarted` |
+| `deploy-drift` with known missing variables, or without a retry path | Proposal `propose-deploy-fix`: set the variables, then deploy again | A2 | None |
+| Admission at its floor, no Operations Agent, missing toolchain, credential refusal | Proposal: move work for longer, add the toolchain to the review image, renew the login | A2 | None |
+| `lane-stall` | Never submitted; the card deciders own it | - | None |
 
 Every intervention writes a receipt (`.watcher/interventions/<id>.json`): what
 was observed with numbers, what was done, why, before and after, and how to
 undo it. The receipt appears in the Activity feed next to the finding (typed
 field `intervention`), as a `stall_intervention_recorded` timeline entry on
 each affected card, and on Execution Hosts next to the stall
-(`GET /api/watcher/interventions`). An action whose effect cannot be measured
-right after it ran is escalated at once and not reported as done. Each applied
-intervention has a follow-up check (15 minutes for admission, 10 for restarts,
-20 for rerouting, 60 for requeues). If the condition has not cleared by then,
-the follow-up escalates to a person with the receipt chain. A reroute waits
-for the login renewal and routes back once the provider stall clears.
+(`GET /api/watcher/interventions`). The record is written ahead as `applying`
+before any side effect and settled afterwards; an `applying` record holds its
+subject like a pending one, and one older than ten minutes was interrupted: it
+is measured and settled (its follow-up continues when the effect is observed,
+otherwise it goes to a person), never repeated. The write key, which is also
+the Operations Server idempotency key, is derived from the case id, the
+episode start, the action and the repeat index, so a replayed or duplicated
+engine receipt maps to the same record. Before it acts, the effect refuses a
+second pending intervention on the subject and compares the live value
+(admission, route, the worker's running work) with the plan's before-value; on
+a mismatch it records `superseded` and does nothing. Cards and gate members are
+re-checked at apply time as well.
 
-Loop protection is part of the policy: one pending intervention per subject;
-at most `MaxPerHostPerHour` (3) mutating interventions per host and hour; the
-same action on the same subject at most `MaxRepeatsPerSubject` (2) times in
-`LoopWindowHours` (6) before it escalates instead; and a proposal, escalation
-or undo of the current stall episode holds the subject until the stall clears
-and returns. `POST /api/watcher/interventions/{id}/undo` reverts an admission
-change, a reroute or a pinned base while the intervention is in force; a
+An action whose effect cannot be measured right after it ran is escalated at
+once and not reported as done; an admission change, a reroute or a pinned base
+keeps its Undo in that case. Each applied intervention has a follow-up check
+(15 minutes for admission, 10 for restarts, 20 for rerouting, 60 for
+requeues). If the condition has not cleared by then, the follow-up escalates to
+a person with the receipt chain. A lowered admission does not escalate while
+more runs are active than it admits (running work drains), up to
+`MaxCalmWaitHours` (4). A reroute waits for the login renewal and routes back
+once the provider stall clears.
+
+Loop protection is part of the policy: one pending (`applying` or `applied`)
+intervention per subject; at most `MaxPerHostPerHour` (3) mutating
+interventions per host and hour; the same action on the same subject at most
+`MaxRepeatsPerSubject` (2) times in `LoopWindowHours` (6) before it escalates
+instead; at most `MaxActionsPerCard` (1) card-changing intervention (requeue,
+gate drop) per card in the loop window; and a proposal, escalation or undo of
+the current stall episode holds the subject until the stall clears and
+returns. "Would do" and superseded receipts changed nothing and do not count.
+Each pass evaluates the pure policy in process first: only decisions that act,
+propose or ask count toward the budget of 20 per pass and reach the engine, so
+a held subject adds no occurrence. Actionable kinds are ordered overload,
+memory, provider login, offline, idle capacity, batch gate, rate limit, deploy,
+claim refusal; a case in `decision-required` belongs to a person and is left
+alone. `POST /api/watcher/interventions/{id}/undo` reverts an admission change
+(also an escalated one that is still in force), a reroute or a pinned base; a
 restart, a gate reconciliation and an escalation have nothing to undo.
 
 Restarts need `Operations:Url`, `Operations:ServiceTokenFile` (a service
@@ -2179,8 +2214,10 @@ and `Operations:Agents:<host>` naming the host's Operations Agent;
 `Operations:RestartableServices:<host>` can mirror the agent allowlist.
 `StallIntervention:Services:<role>` maps a stalled role to the agent's service
 name (`review-daemon`, `gate-worker`, `orchestrator-engine`). Without that
-configuration a restart becomes an A2 proposal. Provider rerouting applies to
-review claims; coding claims still follow the per-card claim failure budget.
+configuration a restart becomes an A2 proposal. An agent whose allowlist file
+is unreadable or invalid logs it, offers no restarts and keeps serving its
+other operations. Provider rerouting applies to review claims; coding claims
+still follow the per-card claim failure budget.
 
 ## Verification
 

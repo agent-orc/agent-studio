@@ -46,17 +46,17 @@ public sealed class StallInterventionPolicyTests
 
     [Theory]
     [InlineData(StallKinds.IdleCapacity, "review", false, false, true, AiOperatorDisposition.Act, StallInterventionActions.RestartService)]
-    [InlineData(StallKinds.HostOffline, "gate", false, false, true, AiOperatorDisposition.Act, StallInterventionActions.RestartService)]
+    [InlineData(StallKinds.HostOffline, "review", false, false, true, AiOperatorDisposition.Act, StallInterventionActions.RestartService)]
     [InlineData(StallKinds.IdleCapacity, "review", true, false, true, AiOperatorDisposition.Hold, StallInterventionActions.None)]
-    [InlineData(StallKinds.HostOffline, "review", false, true, true, AiOperatorDisposition.Propose, StallInterventionActions.ProposeMoveWork)]
+    [InlineData(StallKinds.HostOffline, "review", false, true, true, AiOperatorDisposition.Propose, StallInterventionActions.ProposeRestartService)]
     [InlineData(StallKinds.HostOffline, "coding", false, false, false, AiOperatorDisposition.Propose, StallInterventionActions.ProposeMoveWork)]
-    public void Stuck_review_daemon_or_gate_worker_restarts_through_the_operations_server(string kind, string role,
+    public void Stuck_review_daemon_restarts_through_the_operations_server(string kind, string role,
         bool providerStalled, bool stoppedByOperator, bool restartable, AiOperatorDisposition disposition, string effect)
     {
         var decision = Decide(Facts(kind, $"host:kori-review-01:{role}") with
         {
             Service = new StallServiceFacts("kori-review-01", role, role + "-daemon", restartable, stoppedByOperator,
-                Now.AddMinutes(-40), WaitingCount: 15, FreeSlots: 3, providerStalled),
+                Now.AddMinutes(-40), WaitingCount: 15, FreeSlots: 3, providerStalled, BusySlots: 0, ClaimableWaiting: 15),
         });
 
         Assert.Equal((disposition, effect), (decision.Disposition, decision.Effect));
@@ -66,6 +66,58 @@ public sealed class StallInterventionPolicyTests
             Assert.Contains("restarted", decision.Intervention.Done);
             Assert.Contains("Nothing to undo", decision.Intervention.Undo);
         }
+    }
+
+    /// <summary>
+    /// docker compose up --force-recreate ends the container's work: a worker
+    /// that still runs work, runs a gate, has unknown load or nothing it can
+    /// claim is proposed for a restart, never restarted.
+    /// </summary>
+    [Theory]
+    [InlineData("review", 2, false, 15, "running-work")]
+    [InlineData("review", null, false, 15, "running-work")]
+    [InlineData("gate", 0, true, 0, "running-work")]
+    [InlineData("review", 0, false, 0, "nothing-claimable")]
+    [InlineData("gate", 0, false, 0, "nothing-claimable")]
+    public void A_worker_with_running_or_unclaimable_work_is_proposed_for_a_restart_not_restarted(string role,
+        int? busy, bool runningWork, int claimable, string reason)
+    {
+        var decision = Decide(Facts(StallKinds.IdleCapacity, $"host:kori-gate:{role}") with
+        {
+            Service = new StallServiceFacts("kori-gate", role, role + "-worker", true, false, Now.AddMinutes(-40),
+                WaitingCount: 19, FreeSlots: 1, false, busy, runningWork, claimable),
+        });
+
+        Assert.Equal((AiOperatorDisposition.Propose, AutonomyClass.A2, StallInterventionActions.ProposeRestartService, reason),
+            (decision.Disposition, decision.Autonomy, decision.Effect, decision.ReasonCode));
+        Assert.Contains("nothing was changed", decision.Intervention!.Done);
+    }
+
+    [Fact]
+    public void Orphaned_remote_gate_workers_holding_every_slot_are_proposed_for_release()
+    {
+        var orphaned = new StallGateSlotFacts(Total: 2, OwnBusy: 0, RemoteBusy: 2, BatchOrGateRunning: false);
+        var service = Decide(Facts(StallKinds.IdleCapacity, "host:kori-gate:gate") with
+        {
+            Service = new StallServiceFacts("kori-gate", "gate", "gate-worker", true, false, Now.AddMinutes(-40),
+                WaitingCount: 19, FreeSlots: 2, false, BusySlots: 0, GateSlots: orphaned),
+        });
+        var gate = Decide(Facts(StallKinds.BatchGateStuck, "gate:KORI:pending") with
+        {
+            Gate = new StallGateFacts("KORI", 19, [new("AGT-3200", "review-1", TaskStates.AutoReview)], 3, true, null, null, orphaned),
+        });
+        var ownGate = Decide(Facts(StallKinds.BatchGateStuck, "gate:KORI:pending") with
+        {
+            Gate = new StallGateFacts("KORI", 19, [new("AGT-3200", "review-1", TaskStates.AutoReview)], 3, true, null, null,
+                orphaned with { OwnBusy = 2 }),
+        });
+
+        Assert.Equal((AiOperatorDisposition.Propose, StallInterventionActions.ProposeReleaseGateSlots, "orphaned-gate-workers"),
+            (service.Disposition, service.Effect, service.ReasonCode));
+        Assert.Contains("2 of 2 gate slots busy (0 free)", service.Intervention!.Observed);
+        Assert.Contains("AGT-3237", service.Intervention.Proposal);
+        Assert.Equal(StallInterventionActions.ProposeReleaseGateSlots, gate.Effect);
+        Assert.Equal(AiOperatorDisposition.Hold, ownGate.Disposition);
     }
 
     [Fact]
@@ -82,26 +134,62 @@ public sealed class StallInterventionPolicyTests
     }
 
     [Fact]
+    public void Invalid_login_on_a_coding_host_is_a_renewal_proposal_not_a_reroute()
+    {
+        var facts = Provider(["kori-review-02"], alreadyRerouted: false);
+        var decision = Decide(facts with { Provider = facts.Provider! with { Host = "agent-runner-01", ReviewHost = false } });
+
+        Assert.Equal((AiOperatorDisposition.Propose, StallInterventionActions.ProposeProviderLogin, "coding-host-login"),
+            (decision.Disposition, decision.Effect, decision.ReasonCode));
+        Assert.Contains("Renew the codex login on agent-runner-01", decision.Intervention!.Proposal);
+    }
+
+    [Fact]
     public void Rate_limited_runs_requeue_from_their_last_delivery_only_from_an_empty_salvage_in_ready()
     {
         var facts = Facts(StallKinds.ProviderRateLimited, "host:agent-runner-01:codex") with
         {
             Requeue =
             [
-                new("AGT-3176", TaskStates.Ready, SalvageEmpty: true, "refs/heads/agent-results/AGT-3176/r2", "0123456789abcdef"),
-                new("AGT-3177", TaskStates.Ready, SalvageEmpty: false, "refs/heads/agent-results/AGT-3177/r1", "fedcba9876543210"),
-                new("AGT-3178", TaskStates.HumanReview, SalvageEmpty: true, "refs/heads/agent-results/AGT-3178/r1", "aaaaaaaaaaaaaaaa"),
-                new("AGT-3179", TaskStates.Ready, SalvageEmpty: true, null, null),
+                new("AGT-3176", TaskStates.Ready, StallContinuationBases.Missing, true, "refs/heads/agent-results/AGT-3176/r2", "0123456789abcdef"),
+                new("AGT-3177", TaskStates.Ready, StallContinuationBases.EmptySalvage, true, "refs/heads/agent-results/AGT-3177/r1", "fedcba9876543210", "base000000001"),
+                new("AGT-3178", TaskStates.HumanReview, StallContinuationBases.Missing, true, "refs/heads/agent-results/AGT-3178/r1", "aaaaaaaaaaaaaaaa"),
+                new("AGT-3179", TaskStates.Ready, StallContinuationBases.Missing, true, null, null),
+                new("AGT-3180", TaskStates.Ready, StallContinuationBases.Missing, false, "refs/heads/agent-results/AGT-3180/r1", "bbbbbbbbbbbbbbbb"),
+                new("AGT-3181", TaskStates.Ready, StallContinuationBases.Other, true, "refs/heads/agent-results/AGT-3181/r1", "cccccccccccccccc"),
+                new("AGT-3182", TaskStates.Ready, StallContinuationBases.Delivery, true, "refs/heads/agent-results/AGT-3182/r1", "dddddddddddddddd"),
             ],
         };
 
         var decision = Decide(facts);
-        var none = Decide(facts with { Requeue = [facts.Requeue[1]] });
+        var none = Decide(facts with { Requeue = facts.Requeue.Skip(2).ToArray() });
 
         Assert.Equal((AiOperatorDisposition.Act, StallInterventionActions.RequeueFromDelivery), (decision.Disposition, decision.Effect));
-        Assert.Equal(["AGT-3176"], decision.Intervention!.Members);
+        Assert.Equal(["AGT-3176", "AGT-3177"], decision.Intervention!.Members);
         Assert.Contains("AGT-3176 from refs/heads/agent-results/AGT-3176/r2 at 012345678", decision.Intervention.Done);
+        Assert.Contains("AGT-3176 with no continuation base; AGT-3177 with an empty salvage base at base00000", decision.Intervention.Observed);
+        Assert.Contains("ended their last run on a provider rate limit", decision.Intervention.Observed);
         Assert.Equal((AiOperatorDisposition.Hold, "wait-for-provider-reset"), (none.Disposition, none.ReasonCode));
+    }
+
+    [Fact]
+    public void A_card_that_already_had_a_card_intervention_in_the_loop_window_is_not_touched_again()
+    {
+        var facts = Facts(StallKinds.ProviderRateLimited, "host:agent-runner-01:codex") with
+        {
+            Requeue = [new("AGT-3176", TaskStates.Ready, StallContinuationBases.Missing, true, "refs/heads/r", "0123456789abcdef")],
+            History = [new("si-gate", "gate:KORI:pending", "gate:KORI", StallInterventionActions.ReconcileBatchGate,
+                Now.AddHours(-1), StallInterventionStatuses.Verified, ["AGT-3176"])],
+        };
+
+        var bound = Decide(facts);
+        var observedOnly = Decide(facts with
+        {
+            History = [facts.History[0] with { Status = StallInterventionStatuses.Observed }],
+        });
+
+        Assert.Equal((AiOperatorDisposition.Hold, StallInterventionPolicy.CardBound), (bound.Disposition, bound.ReasonCode));
+        Assert.Equal(AiOperatorDisposition.Act, observedOnly.Disposition);
     }
 
     [Fact]
@@ -120,8 +208,11 @@ public sealed class StallInterventionPolicyTests
     [Fact]
     public void Stuck_batch_gate_drops_completed_and_stale_members_and_closes_the_overdue_batch()
     {
-        var gate = new StallGateFacts("KORI", 19, ["AGT-3097", "AGT-3044"], ["AGT-3110"], 79, PlanIdle: true,
-            "KORI:forming", OpenBatchWaitHours: 26);
+        var gate = new StallGateFacts("KORI", 19,
+            [
+                new("AGT-3097", "review-3097", TaskStates.Completed), new("AGT-3044", "review-3044", TaskStates.Completed),
+                new("AGT-3110", "review-3110", TaskStates.Ready), new("AGT-3164", "review-3164", TaskStates.AutoReview),
+            ], 79, PlanIdle: true, "KORI:forming", OpenBatchWaitHours: 26);
         var decision = Decide(Facts(StallKinds.BatchGateStuck, "gate:KORI:pending") with { Gate = gate });
         var young = Decide(Facts(StallKinds.BatchGateStuck, "gate:KORI:pending") with
         {
@@ -129,24 +220,51 @@ public sealed class StallInterventionPolicyTests
         });
         var nothing = Decide(Facts(StallKinds.BatchGateStuck, "gate:KORI:pending") with
         {
-            Gate = gate with { CompletedMembers = [], StaleMembers = [], OpenBatchWaitHours = 1 },
+            Gate = gate with { Members = [gate.Members[3]], OpenBatchWaitHours = 1 },
         });
 
         Assert.Equal((AiOperatorDisposition.Act, StallInterventionActions.ReconcileBatchGate), (decision.Disposition, decision.Effect));
         Assert.Equal(["AGT-3097", "AGT-3044", "AGT-3110"], decision.Intervention!.Members);
+        Assert.Equal(["review-3097", "review-3044", "review-3110"], decision.Intervention.AttemptIds);
         Assert.Equal("KORI:forming", decision.Intervention.BatchId);
         Assert.Contains("19 pending members while its plan is idle", decision.Intervention.Observed);
-        Assert.Equal("16 pending, the overdue batch closed and its members queue again", decision.Intervention.After);
+        Assert.Contains("AGT-3110 in 2-ready", decision.Intervention.Observed);
+        Assert.Equal("16 pending, the overdue batch closes now and its members run", decision.Intervention.After);
+        Assert.Contains("No automatic undo", decision.Intervention.Undo);
+        Assert.DoesNotContain("Undo queues", decision.Intervention.Undo);
         Assert.Null(young.Intervention!.BatchId);
         Assert.Equal(AiOperatorDisposition.Hold, nothing.Disposition);
+    }
+
+    [Fact]
+    public void Gate_members_with_an_unknown_card_or_with_the_pilot_are_never_dropped()
+    {
+        var decision = Decide(Facts(StallKinds.BatchGateStuck, "gate:KORI:pending") with
+        {
+            Gate = new StallGateFacts("KORI", 3,
+            [
+                new("AGT-9001", "review-a", null), new("AGT-9002", "review-b", TaskStates.HumanReview),
+                new("AGT-9003", "review-c", TaskStates.Escalated),
+            ], 30, PlanIdle: true, null, null),
+        });
+
+        Assert.Equal((AiOperatorDisposition.Hold, StallInterventionPolicy.ObserveOnly), (decision.Disposition, decision.ReasonCode));
+        Assert.Contains("2 wait in Human Review or Escalated for the pilot; 1 have no readable card and stay", decision.Detail);
     }
 
     [Fact]
     public void Failed_engine_start_is_retried_only_through_a_validating_restart()
     {
         var deploy = new StallDeployFacts("kori-gate", "orchestrator-engine", "0.9.6", "0.9.5",
-            "SERVER_URL: ${ENGINE_SERVER_URL:?set ENGINE_SERVER_URL}", ["ENGINE_SERVER_URL"], StartRetryAvailable: true);
+            "engine exited during start: connection refused", [], StartRetryAvailable: true);
         var retried = Decide(Facts(StallKinds.DeployDrift, "container:kori-gate:engine") with { Deploy = deploy });
+        var missing = Decide(Facts(StallKinds.DeployDrift, "container:kori-gate:engine") with
+        {
+            Deploy = deploy with
+            {
+                StartError = "SERVER_URL: ${ENGINE_SERVER_URL:?set ENGINE_SERVER_URL}", MissingVariables = ["ENGINE_SERVER_URL"],
+            },
+        });
         var proposed = Decide(Facts(StallKinds.DeployDrift, "container:kori-gate:engine") with
         {
             Deploy = deploy with { StartRetryAvailable = false },
@@ -154,8 +272,11 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal((AiOperatorDisposition.Act, StallInterventionActions.RetryEngineStart), (retried.Disposition, retried.Effect));
         Assert.Contains("validates the configuration", retried.Intervention!.Done);
-        Assert.Equal(AiOperatorDisposition.Propose, proposed.Disposition);
-        Assert.Contains("Set ENGINE_SERVER_URL", proposed.Intervention!.Proposal);
+        Assert.Equal((AiOperatorDisposition.Propose, StallInterventionActions.ProposeDeployFix, "missing-variables"),
+            (missing.Disposition, missing.Effect, missing.ReasonCode));
+        Assert.Contains("Set ENGINE_SERVER_URL", missing.Intervention!.Proposal);
+        Assert.Contains("a start retry would fail the same way", missing.Intervention.Proposal);
+        Assert.Equal((AiOperatorDisposition.Propose, StallInterventionActions.ProposeDeployFix), (proposed.Disposition, proposed.Effect));
     }
 
     [Fact]
@@ -195,6 +316,41 @@ public sealed class StallInterventionPolicyTests
     }
 
     [Fact]
+    public void Observed_and_superseded_receipts_changed_nothing_and_never_count_as_repeats()
+    {
+        var decision = Decide(Overload(admission: 8) with
+        {
+            History =
+            [
+                new("si-1", "host:agent-runner-01", "agent-runner-01", StallInterventionActions.LowerAdmission, Now.AddHours(-3), StallInterventionStatuses.Observed),
+                new("si-2", "host:agent-runner-01", "agent-runner-01", StallInterventionActions.LowerAdmission, Now.AddHours(-2), StallInterventionStatuses.Superseded),
+            ],
+        });
+
+        Assert.Equal((AiOperatorDisposition.Act, StallInterventionActions.LowerAdmission), (decision.Disposition, decision.Effect));
+    }
+
+    [Fact]
+    public void An_admission_the_AI_Operator_already_lowered_is_never_lowered_again_without_a_person()
+    {
+        var facts = Overload(admission: 6);
+        var decision = Decide(facts with { Host = facts.Host! with { AiLoweredFrom = 8, AiLoweringId = "si-lowered" } });
+
+        Assert.Equal((AiOperatorDisposition.Propose, StallInterventionActions.ProposeMoveWork, "already-lowered"),
+            (decision.Disposition, decision.Effect, decision.ReasonCode));
+        Assert.Contains("from 8 to 6 (si-lowered)", decision.Intervention!.Proposal);
+    }
+
+    [Fact]
+    public void Lowering_carries_the_client_identity_the_admission_is_set_on()
+    {
+        var facts = Overload(admission: 8);
+        var decision = Decide(facts with { Host = facts.Host! with { ClientId = "client-runner-01" } });
+
+        Assert.Equal("client-runner-01", decision.Intervention!.HostId);
+    }
+
+    [Fact]
     public void Host_rate_limit_holds_a_fourth_intervention_in_the_same_hour()
     {
         StallInterventionHistoryEntry Entry(string id, string subject, int minutesAgo)
@@ -202,7 +358,8 @@ public sealed class StallInterventionPolicyTests
                 StallInterventionStatuses.Verified);
         var facts = Facts(StallKinds.IdleCapacity, "host:kori-review-01:review") with
         {
-            Service = new StallServiceFacts("kori-review-01", "review", "review-daemon", true, false, Now, 4, 2, false),
+            Service = new StallServiceFacts("kori-review-01", "review", "review-daemon", true, false, Now, 4, 2, false,
+                BusySlots: 0, ClaimableWaiting: 4),
         };
 
         var limited = Decide(facts with
@@ -242,7 +399,13 @@ public sealed class StallInterventionPolicyTests
             History = [new("si-2", "host:agent-runner-01", "agent-runner-01", StallInterventionActions.ProposeMoveWork, Now.AddMinutes(-5), StallInterventionStatuses.Proposed)],
         });
 
+        var applying = Decide(Overload(admission: 6) with
+        {
+            History = [new("si-0", "host:agent-runner-01", "agent-runner-01", StallInterventionActions.LowerAdmission, Now.AddMinutes(-50), StallInterventionStatuses.Applying)],
+        });
+
         Assert.Equal(StallInterventionPolicy.AwaitingFollowUp, pending.ReasonCode);
+        Assert.Equal(StallInterventionPolicy.AwaitingFollowUp, applying.ReasonCode);
         Assert.Equal(StallInterventionPolicy.WaitingForPerson, proposal.ReasonCode);
         Assert.Equal(StallInterventionPolicy.WaitingForPerson, undone.ReasonCode);
         Assert.Equal(AiOperatorDisposition.Propose, newEpisode.Disposition);
@@ -268,6 +431,46 @@ public sealed class StallInterventionPolicyTests
         }
         if (effect == StallInterventionActions.Escalate)
             Assert.Contains("receipt chain (3 receipts)", decision.Intervention!.Done);
+    }
+
+    [Fact]
+    public void Persisting_overload_while_more_runs_are_active_than_the_new_admission_drains_instead_of_escalating()
+    {
+        var draining = FollowUp(StallInterventionActions.LowerAdmission, cleared: false, effectObserved: true, 0, 3.9);
+        draining = draining with { FollowUp = draining.FollowUp! with { ActiveSlotsNow = 8 } };
+        var drained = draining with { FollowUp = draining.FollowUp! with { ActiveSlotsNow = 6 } };
+        var overdue = draining with { ObservedAtUtc = Now.AddHours(5) };
+
+        Assert.Equal((AiOperatorDisposition.Hold, StallInterventionPolicy.Draining), (Decide(draining).Disposition, Decide(draining).ReasonCode));
+        Assert.Contains("still runs 8 runs above the lowered admission of 6", Decide(draining).Detail);
+        Assert.Equal(StallInterventionPolicy.ConditionPersists, Decide(drained).ReasonCode);
+        Assert.Equal(StallInterventionPolicy.ConditionPersists, Decide(overdue).ReasonCode);
+    }
+
+    [Theory]
+    [InlineData(false, 20, 40.0, 6, AiOperatorDisposition.Act, StallInterventionPolicy.ConditionCleared)]
+    [InlineData(true, 20, 40.0, 6, AiOperatorDisposition.Hold, StallInterventionPolicy.WaitingForCalm)]
+    [InlineData(false, 5, 40.0, 6, AiOperatorDisposition.Hold, StallInterventionPolicy.WaitingForCalm)]
+    [InlineData(false, 20, 40.0, 8, AiOperatorDisposition.Hold, StallInterventionPolicy.NothingToRestore)]
+    public void An_escalated_reduction_still_in_force_is_restored_once_calm_and_never_escalated_again(bool overloaded,
+        int calmMinutes, double loadPercent, int admissionNow, AiOperatorDisposition disposition, string reason)
+    {
+        var facts = FollowUp(StallInterventionActions.LowerAdmission, !overloaded, effectObserved: true, calmMinutes,
+            loadPercent / 100) with { Trigger = StallInterventionTriggers.Restore, ObservedAtUtc = Now.AddHours(9) };
+        facts = facts with
+        {
+            FollowUp = facts.FollowUp! with { AdmissionNow = admissionNow, CalmSinceUtc = Now.AddHours(9).AddMinutes(-calmMinutes) },
+        };
+
+        var decision = Decide(facts);
+
+        Assert.Equal(disposition, decision.Disposition);
+        if (disposition == AiOperatorDisposition.Act)
+        {
+            Assert.Equal((StallInterventionActions.RestoreAdmission, 8), (decision.Effect, decision.Intervention!.TargetAdmission));
+            Assert.Contains("from 6 back to 8", decision.Intervention.Done);
+        }
+        else Assert.Equal(reason, decision.ReasonCode);
     }
 
     [Fact]
@@ -335,12 +538,15 @@ public sealed class StallInterventionPolicyTests
     [
         Overload(8), Overload(1), Overload(null),
         Facts(StallKinds.IdleCapacity, "host:h:review") with { Service = new("h", "review", "review-daemon", true, false, Now, 1, 1, false) },
+        Facts(StallKinds.IdleCapacity, "host:h:review") with { Service = new("h", "review", "review-daemon", true, false, Now, 1, 1, false, 0, false, 1) },
+        Facts(StallKinds.IdleCapacity, "host:h:gate") with { Service = new("h", "gate", "gate-worker", true, false, Now, 1, 1, false, 0, false, 0, new(2, 0, 2, false)) },
         Facts(StallKinds.HostOffline, "host:h:coding") with { Service = new("h", "coding", "coding", false, true, Now, 1, 0, false) },
         Provider(["b"], false), Provider([], true),
         Facts(StallKinds.ProviderRateLimited, "host:h:codex") with { Requeue = [] },
         Facts(StallKinds.ClaimRefusal, "queue:x") with { ClaimReason = "x" },
-        Facts(StallKinds.BatchGateStuck, "gate:p:plan") with { Gate = new("p", 2, ["a"], [], 3, true, null, null) },
+        Facts(StallKinds.BatchGateStuck, "gate:p:plan") with { Gate = new("p", 2, [new("a", "r-a", TaskStates.Completed)], 3, true, null, null) },
         Facts(StallKinds.DeployDrift, "container:h:engine") with { Deploy = new("h", "orchestrator-engine", "2", "1", null, [], false) },
+        Facts(StallKinds.DeployDrift, "container:h:engine") with { Deploy = new("h", "orchestrator-engine", "2", "1", "X_URL missing", ["X_URL"], true) },
         Facts(StallKinds.LaneStall, "card:a:lane"),
     ];
 
@@ -361,7 +567,7 @@ public sealed class StallInterventionPolicyTests
     private static StallInterventionFacts Provider(IReadOnlyList<string> healthy, bool alreadyRerouted)
         => Facts(StallKinds.ProviderAuthInvalid, "host:kori-review-01:codex") with
         {
-            Provider = new StallProviderFacts("kori-review-01", "codex", "auth-invalid", healthy, 15, alreadyRerouted),
+            Provider = new StallProviderFacts("kori-review-01", "codex", "auth-invalid", healthy, 15, alreadyRerouted, ReviewHost: true),
         };
 
     private static StallInterventionFacts FollowUp(string action, bool cleared, bool effectObserved,

@@ -106,20 +106,50 @@ public sealed class ServiceRestartTests
                 ["review-daemon"] = new { composeFile = compose, composeService = "review" },
             } }));
             Assert.Equal("review", valid.Services["review-daemon"].ComposeService);
-            Assert.Throws<InvalidDataException>(() => RestartableServices.Load(Write(new { services = new Dictionary<string, object>
+            // An invalid allowlist offers no restart and is reported; it never stops the agent.
+            var warnings = new List<string>();
+            Assert.Empty(RestartableServices.Load(Write(new { services = new Dictionary<string, object>
             {
                 ["review-daemon"] = new { composeFile = "compose.yaml", composeService = "review" },
-            } })));
-            Assert.Throws<InvalidDataException>(() => RestartableServices.Load(Write(new { services = new Dictionary<string, object>
+            } }), warnings.Add).Services);
+            Assert.Empty(RestartableServices.Load(Write(new { services = new Dictionary<string, object>
             {
                 ["review daemon; rm"] = new { composeFile = compose, composeService = "review" },
-            } })));
+            } }), warnings.Add).Services);
+            var torn = Path.Combine(directory, "torn.json");
+            File.WriteAllText(torn, "{ \"services\": ");
+            Assert.Empty(RestartableServices.Load(torn, warnings.Add).Services);
+            Assert.Empty(RestartableServices.Load(Path.Combine(directory, "missing.json"), warnings.Add).Services);
+            Assert.Equal(4, warnings.Count);
+            Assert.All(warnings, warning => Assert.Contains("offers no restarts", warning));
             Assert.Empty(RestartableServices.Load(null).Services);
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Outer_cancellation_kills_the_running_tool_instead_of_leaving_it_behind()
+    {
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "ping" : "sleep")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in OperatingSystem.IsWindows() ? ["-n", "60", "127.0.0.1"] : new[] { "60" })
+            start.ArgumentList.Add(argument);
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => ServiceRestart.RunAsync(start, TimeSpan.FromMinutes(5), stop.Token));
+
+        // Without the kill the runner would wait for the 60 s tool to exit.
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(30), $"the tool kept running for {elapsed.Elapsed}");
     }
 
     private static async Task<Fixture> Start()

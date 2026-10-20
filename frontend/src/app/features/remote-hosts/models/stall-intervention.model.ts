@@ -4,7 +4,8 @@ export interface StallInterventionReceipt {
   subject: string;
   action: string;
   autonomy: 'A0' | 'A1' | 'A2' | string;
-  status: 'applied' | 'verified' | 'escalated' | 'proposed' | 'undone' | 'failed' | string;
+  status: 'applying' | 'applied' | 'verified' | 'escalated' | 'proposed' | 'undone' | 'failed'
+    | 'superseded' | 'observed' | string;
   observed: string;
   done: string;
   why: string;

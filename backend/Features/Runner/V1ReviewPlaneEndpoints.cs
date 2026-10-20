@@ -4066,6 +4066,11 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             if (!_registrations.TryGetValue(runnerId, out var registration)
                 || registration.InstanceId != instanceId) return new HashSet<string>(StringComparer.Ordinal);
             var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
+            // AGT-3207: the AI Operator rerouted this provider away from the host
+            // until its login works again, whether or not the host advertised yet.
+            if (_routeExclusions is not null)
+                admitted.RemoveWhere(key => key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                    && _routeExclusions.IsExcluded(registration.HostId, runnerId, key["provider-auth:".Length..]));
             if (!_capabilityStates.TryGetValue(runnerId, out var state)
                 || state.InstanceId != instanceId)
             {
@@ -4083,11 +4088,6 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                         "credential_invalid" or "provider_incident" or "indeterminate";
                 if (unavailable) admitted.Remove(capability.Key);
             }
-            // AGT-3207: the AI Operator rerouted this provider away from the host
-            // until its login works again.
-            if (_routeExclusions is not null)
-                admitted.RemoveWhere(key => key.StartsWith("provider-auth:", StringComparison.Ordinal)
-                    && _routeExclusions.IsExcluded(registration.HostId, runnerId, key["provider-auth:".Length..]));
             // AGT-3077: a registered repository-read key names a configured
             // credential, not a working one. Admit it only while the current
             // advertisement reports a fresh read proof for it.
