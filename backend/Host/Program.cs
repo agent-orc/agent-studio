@@ -55,6 +55,7 @@ builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
+builder.Services.AddSingleton<DecisionRuleVersionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
@@ -345,6 +346,12 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
+builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretAuditLog>();
+builder.Services.AddSingleton<SecretValueScrubber>();
+builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
 builder.Services.AddSingleton<IRunnerLinkProcessLauncher, RunnerLinkProcessLauncher>();
@@ -519,6 +526,26 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
+// IP-14: environment health checks run here, in the control plane, not on the app host.
+builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
+{
+    // The probe applies the per-check timeout on the injected clock.
+    client.Timeout = Timeout.InfiniteTimeSpan;
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("AgentStudio-HealthCheck/1.0");
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    // Refuses loopback, link-local, metadata and (without the environment's opt-in) private addresses.
+    services.GetRequiredService<HealthCheckConnector>().CreateHandler());
+builder.Services.AddSingleton(_ => new HealthCheckConnector());
+builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
+builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddSingleton<EnvironmentHealthService>();
+// Test hosts never probe the addresses their fixture declarations name.
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<EnvironmentHealthWorker>();
 builder.Services.AddSingleton<ProjectDeploymentCompiler>();
 builder.Services.AddSingleton<TestRunStore>();
 builder.Services.AddSingleton<TestRunService>();
@@ -1286,6 +1313,10 @@ hostTimeline.Checkpoint("entryToBuild");
 var app = builder.Build();
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
+// Capture the secrets key-encryption key now, before any hosted service starts
+// a child process: the source removes the variable from the process
+// environment so CLI runs, build gates and project processes never inherit it.
+app.Services.GetRequiredService<IKeyEncryptionKeySource>();
 
 if (connectorProfile)
 {
@@ -1332,15 +1363,24 @@ app.Use(async (context, next) =>
         context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
     await next(context);
 });
-// An explicitly selected standalone Task Server owns all task data. Legacy
-// /api handlers still use TaskRepository; do not let compatibility traffic
-// create a second authority while their route migration is unfinished.
+// An explicitly selected standalone Task Server owns task data. Legacy task
+// handlers still use TaskRepository; keep them closed. Studio's receipt reads,
+// runner decision-job routes and the rule routes (which answer a typed 409)
+// stay on the Studio receipt plane. The operator-intent POST moves cards
+// through TaskRepository and stays closed.
 if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
 {
     app.Use(async (context, next) =>
     {
+        var path = context.Request.Path;
+        var segments = path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
+        var studioDecisionPath = (HttpMethods.IsGet(context.Request.Method)
+                && path.StartsWithSegments("/api/orchestration/decision-receipts"))
+            || path.StartsWithSegments("/api/runner/orchestrator-decisions")
+            || segments is ["api", "workspaces", _, "decision-rules", ..];
         if (context.Request.Path.StartsWithSegments("/api")
-            && !context.Request.Path.StartsWithSegments("/api/v1"))
+            && !context.Request.Path.StartsWithSegments("/api/v1")
+            && !studioDecisionPath)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             await context.Response.WriteAsJsonAsync(new { code = "route-not-on-task-server" });

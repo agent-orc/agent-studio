@@ -11,19 +11,29 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
+    private readonly HttpClient _decisions;
 
     public EngineTaskServerClient(EngineOptions options)
-        : this(CreateHttpClient(options))
+        : this(CreateHttpClient(options), string.IsNullOrWhiteSpace(options.DecisionPlaneUrl)
+            ? null : CreateHttpClient(options, decisionPlane: true))
     {
     }
 
-    internal EngineTaskServerClient(HttpClient http)
+    internal EngineTaskServerClient(HttpClient http, HttpClient? decisions = null)
     {
         _http = http;
+        _decisions = decisions ?? http;
         if (!_http.DefaultRequestHeaders.Contains(TaskServerProtocol.HeaderName))
             _http.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
         if (!_http.DefaultRequestHeaders.Contains(TaskServerProtocol.ClientVersionHeaderName))
             _http.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, EngineVersion.ProductVersion);
+        if (!ReferenceEquals(_decisions, _http))
+        {
+            _decisions.DefaultRequestHeaders.TryAddWithoutValidation(TaskServerProtocol.HeaderName,
+                TaskServerProtocol.Current.ToString());
+            _decisions.DefaultRequestHeaders.TryAddWithoutValidation(TaskServerProtocol.ClientVersionHeaderName,
+                EngineVersion.ProductVersion);
+        }
     }
 
     public async Task EnsureCompatibleAsync(CancellationToken ct)
@@ -99,15 +109,15 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
         => await GetAsync<ReviewSubjectDto>($"/api/v1/gates/review-sources/{Uri.EscapeDataString(subjectId)}", ct);
 
     /// <summary>
-    /// Empty when the authority host has no decision plane, for example the
-    /// standalone Task Server, so the shadow step stays idle instead of failing.
+    /// Empty when the selected receipt host has no decision plane. A Task Server
+    /// proxy deployment selects Studio through DECISION_PLANE_URL.
     /// </summary>
     public async Task<IReadOnlyList<string>> GetPendingDecisionGroundsAsync(int limit, CancellationToken ct)
     {
         try
         {
             return await GetAsync<IReadOnlyList<string>>(
-                $"/api/v1/orchestration/decision-grounds/pending?limit={limit}", ct);
+                $"/api/v1/orchestration/decision-grounds/pending?limit={limit}", ct, _decisions);
         }
         catch (EngineTaskServerException exception) when (exception.StatusCode == 404) { return []; }
     }
@@ -118,7 +128,7 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
         try
         {
             return await GetAsync<DecisionShadowInputV1>(
-                $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/grounds-input", ct);
+                $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/grounds-input", ct, _decisions);
         }
         catch (EngineTaskServerException exception) when (exception.StatusCode == 404) { return null; }
     }
@@ -126,11 +136,11 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
     public Task<OrchestratorDecisionJobDto> CreateDecisionJobAsync(
         OrchestratorDecisionJobRequest request, CancellationToken ct)
         => PostAsync<OrchestratorDecisionJobRequest, OrchestratorDecisionJobDto>(
-            "/api/v1/orchestration/decision-jobs", request, ct);
+            "/api/v1/orchestration/decision-jobs", request, ct, client: _decisions);
 
     public Task<OrchestratorDecisionJobDto> GetDecisionJobAsync(string jobId, CancellationToken ct)
         => GetAsync<OrchestratorDecisionJobDto>(
-            $"/api/v1/orchestration/decision-jobs/{Uri.EscapeDataString(jobId)}", ct);
+            $"/api/v1/orchestration/decision-jobs/{Uri.EscapeDataString(jobId)}", ct, _decisions);
 
     /// <summary>Read an immutable run artefact by IDs through the authorized Task Server route.</summary>
     public Task<ArtifactContentDto> GetArtifactContentAsync(string runId, string artifactId, CancellationToken ct)
@@ -140,7 +150,7 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
     public async Task<OrchestratorDecisionReceiptV1> PutDecisionReceiptAsync(
         OrchestratorDecisionReceiptV1 receipt, CancellationToken ct)
     {
-        using var response = await _http.PutAsJsonAsync(
+        using var response = await _decisions.PutAsJsonAsync(
             $"/api/v1/orchestration/runs/{Uri.EscapeDataString(receipt.OccurrenceId)}/decision-receipt",
             receipt, Json, ct);
         var content = await response.Content.ReadAsStringAsync(ct);
@@ -150,9 +160,9 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
             ?? throw new EngineTaskServerException(500, "Task Server returned an empty response.");
     }
 
-    private async Task<T> GetAsync<T>(string path, CancellationToken ct)
+    private async Task<T> GetAsync<T>(string path, CancellationToken ct, HttpClient? client = null)
     {
-        using var response = await _http.GetAsync(path, ct);
+        using var response = await (client ?? _http).GetAsync(path, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new EngineTaskServerException((int)response.StatusCode, body);
@@ -160,23 +170,26 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
             ?? throw new EngineTaskServerException(500, "Task Server returned an empty response.");
     }
 
-    private static HttpClient CreateHttpClient(EngineOptions options)
+    internal static HttpClient CreateHttpClient(EngineOptions options, bool decisionPlane = false)
     {
+        // A decision plane client carries only its own credential, never the Task Server one.
+        var credentialFile = decisionPlane ? options.DecisionPlaneClientCredentialFile : options.ClientCredentialFile;
+        var credential = decisionPlane ? options.DecisionPlaneClientCredential : options.ClientCredential;
         HttpMessageHandler handler = new HttpClientHandler();
-        if (!string.IsNullOrWhiteSpace(options.ClientCredentialFile))
-            handler = new EngineCredentialReloadHandler(options.ClientCredentialFile, handler);
+        if (!string.IsNullOrWhiteSpace(credentialFile))
+            handler = new EngineCredentialReloadHandler(credentialFile, handler);
         var client = new HttpClient(handler)
         {
-            BaseAddress = new Uri(options.ServerUrl),
+            BaseAddress = new Uri(decisionPlane ? options.DecisionPlaneUrl! : options.ServerUrl),
             Timeout = TimeSpan.FromSeconds(60),
         };
         client.DefaultRequestHeaders.Add("X-Client-Id", options.ClientId);
         client.DefaultRequestHeaders.Add("X-Principal-Consumer-Id", options.ClientId);
         client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
         client.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, EngineVersion.ProductVersion);
-        if (!string.IsNullOrWhiteSpace(options.ClientCredential) && string.IsNullOrWhiteSpace(options.ClientCredentialFile))
+        if (!string.IsNullOrWhiteSpace(credential) && string.IsNullOrWhiteSpace(credentialFile))
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.ClientCredential);
+                new AuthenticationHeaderValue("Bearer", credential);
         return client;
     }
 
@@ -184,9 +197,10 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
         string path,
         TRequest request,
         CancellationToken ct,
-        bool allowUpgradeRequired = false)
+        bool allowUpgradeRequired = false,
+        HttpClient? client = null)
     {
-        using var response = await _http.PostAsJsonAsync(path, request, Json, ct);
+        using var response = await (client ?? _http).PostAsJsonAsync(path, request, Json, ct);
         var content = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode && !(allowUpgradeRequired && (int)response.StatusCode == 426))
             throw new EngineTaskServerException((int)response.StatusCode, content);
@@ -203,7 +217,11 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtif
         }
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        if (!ReferenceEquals(_decisions, _http)) _decisions.Dispose();
+        _http.Dispose();
+    }
 }
 
 public sealed class EngineTaskServerException(int statusCode, string message) : Exception(message)

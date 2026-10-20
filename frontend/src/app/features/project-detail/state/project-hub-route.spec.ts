@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isDeployStepsQuery,
   isProjectHubRoute,
   parseProjectHubRoute,
   projectHubRoute,
@@ -41,6 +42,14 @@ describe('Project Hub URL contract', () => {
     });
   });
 
+  it('resolves the first-class Deploy and Operations project routes', () => {
+    for (const section of ['deploy', 'operations'] as const) {
+      expect(projectHubRoute('PROJ-002', section)).toBe(`/projects/PROJ-002/${section}`);
+      expect(parseProjectHubRoute(`#/projects/PROJ-002/${section}`, PROJECTS)?.section)
+        .toBe(section);
+    }
+  });
+
   it('resolves a canonical Dossier detail under the Project Hub', () => {
     expect(parseProjectHubRoute(
       '#/projects/PROJ-002/workbenches/task-detail-usage-panel', PROJECTS,
@@ -50,9 +59,27 @@ describe('Project Hub URL contract', () => {
     });
   });
 
+  it.each([
+    ['deployment', 'deploy', ''],
+    ['pipeline', 'deploy', '?view=steps'],
+    ['observability', 'operations', ''],
+  ])('maps the retired %s section to its new area for a canonical rewrite', (retired, section, query) => {
+    expect(parseProjectHubRoute(`#/projects/PROJ-002/${retired}`, PROJECTS)).toEqual({
+      project: PROJECTS[0], section, legacySlug: false, query, workbenchId: null, legacySection: true,
+    });
+  });
+
+  it('keeps the Run steps view as a Deploy query', () => {
+    const target = parseProjectHubRoute('#/projects/PROJ-002/deploy?view=steps', PROJECTS);
+    expect(target).toEqual({
+      project: PROJECTS[0], section: 'deploy', legacySlug: false, query: '?view=steps', workbenchId: null,
+    });
+    expect(isDeployStepsQuery(target!.query)).toBe(true);
+    expect(isDeployStepsQuery('')).toBe(false);
+  });
+
   it('rejects unknown projects, rails, and malformed identifiers', () => {
     expect(parseProjectHubRoute('#/projects/PROJ-999', PROJECTS)).toBeNull();
-    expect(parseProjectHubRoute('#/projects/PROJ-002/deployment', PROJECTS)?.section).toBe('deploy');
     expect(parseProjectHubRoute('#/projects/PROJ-002/not-a-rail', PROJECTS)).toBeNull();
     expect(parseProjectHubRoute('#/projects/%E0%A4%A', PROJECTS)).toBeNull();
   });

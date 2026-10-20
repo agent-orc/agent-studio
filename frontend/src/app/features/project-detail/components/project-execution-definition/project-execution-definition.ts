@@ -1,11 +1,13 @@
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, inject, input, signal } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { ProjectPipelineDefinitionComponent } from '../project-pipeline-definition/project-pipeline-definition';
 
 interface DefinitionIssue {
   path: string;
   code: string;
   message: string;
+  line?: number | null;
 }
 
 interface CacheManifest {
@@ -52,7 +54,7 @@ interface ExecutionDefinitionResponse {
 @Component({
   selector: 'app-project-execution-definition',
   standalone: true,
-  imports: [PendingButtonDirective],
+  imports: [PendingButtonDirective, ProjectPipelineDefinitionComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-execution-definition.html',
   styleUrl: './project-execution-definition.scss',

@@ -13,3 +13,10 @@
   height: 100%;
   min-height: 0;
 }
+
+.project-area {
+  height: 100%;
+  overflow: auto;
+  color: var(--studio-fg);
+  background: var(--studio-bg-surface);
+}

@@ -126,6 +126,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | GateEnvironmentRetryHostedService | !PD | decide, operator | AI Operator decider `gate-environment-retry` (`GateEnvironmentRetryPolicy`). Effect: `GateEnvironmentRetryService` replays or parks. The operator's Retry integration intent is validated, not decided. |
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
+| EnvironmentHealthWorker | !PD, not Test | report | Authority host (IP-14 environment health checks; opens incident and certificate cards in Backlog and comments on them, no lane move) |
 | OrphanReaperHostedService | !PD | infra | Authority host |
 | CleanContextRetentionHostedService | !PD | infra | Authority host |
 | StaleProgressSweepHostedService | !PD | decide, operator | AI Operator decider `stale-progress` (`StaleProgressPolicy`). Effect: `StaleProgressArchiver`. Folders without `task.json` are not cards; removing or archiving them stays authority filesystem recovery. |

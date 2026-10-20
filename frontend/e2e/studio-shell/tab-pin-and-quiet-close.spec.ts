@@ -25,7 +25,7 @@ const TABS = [
   { kind: 'board', projectName: '__all__' },
   { kind: 'hub', projectName: 'Agent Taskboard', section: 'overview' },
   { kind: 'hub', projectName: 'Beta Service', section: 'overview' },
-  { kind: 'epics', projectName: null },
+  { kind: 'workbenches', projectName: null },
   { kind: 'workspace-settings' },
   { kind: 'hub', projectName: 'Gamma Tools', section: 'overview' },
 ];
@@ -144,8 +144,8 @@ test.describe('studio-shell · pinned tabs', () => {
     await tab(page, GAMMA).click({ button: 'middle' });
     await expect(tab(page, GAMMA)).toHaveCount(1);
 
-    await tab(page, 'epics:__all__').click({ button: 'middle' });
-    await expect(tab(page, 'epics:__all__')).toHaveCount(0);
+    await tab(page, 'workbenches:__all__').click({ button: 'middle' });
+    await expect(tab(page, 'workbenches:__all__')).toHaveCount(0);
   });
 
   test('Close Others keeps pinned tabs; the pin survives a reload', async ({ page }, testInfo) => {
@@ -219,7 +219,7 @@ test.describe('studio-shell · quiet close affordance', () => {
     await restPointer(page);
 
     await expect(page.getByTestId(`studio-explorer-unpin-${GAMMA}`)).toBeVisible();
-    const explorerRow = page.getByTestId(`studio-explorer-open-tab-${'epics:__all__'}`);
+    const explorerRow = page.getByTestId(`studio-explorer-open-tab-${'workbenches:__all__'}`);
     await expect(explorerRow).toBeVisible();
     await expect(explorerRow.locator('.studio-tree-row__close')).toHaveCSS('opacity', '0');
     await explorerRow.hover();

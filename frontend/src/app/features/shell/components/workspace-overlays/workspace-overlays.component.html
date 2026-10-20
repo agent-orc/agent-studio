@@ -124,6 +124,11 @@
         @case ('credentials') {
           <app-credential-inventory />
         }
+        @case ('secrets') {
+          @defer (on immediate) {
+            <app-secrets-panel [projects]="watchPaths()" />
+          }
+        }
         @case ('remote-hosts') {
           <app-remote-hosts-panel [workspaces]="watchPaths()" (openTask)="openJobDetail.emit($event)" />
         }
@@ -142,6 +147,7 @@
             </header>
             <app-orchestrator-logic-panel />
             <app-transition-rollout-panel />
+            <app-decision-rules-panel />
           </section>
         }
         @case ('caps') {

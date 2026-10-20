@@ -1,0 +1,30 @@
+<section class="project-environments" data-testid="project-operations-environments">
+  <header class="project-environments__head">
+    <h1>Operations</h1>
+    <p>Application health by environment and project activity.</p>
+  </header>
+  @if (loading()) {
+    <p role="status">Loading environments…</p>
+  } @else if (failed()) {
+    <p role="alert">Environment inventory could not be loaded. Try opening this view again.</p>
+  } @else if (environments().length === 0) {
+    <div class="project-environments__empty" data-testid="project-environments-empty">
+      <h2>No environments configured</h2>
+      <p>Set up an environment to see deployment and health status here.</p>
+      <button type="button" class="studio-button studio-button--primary" (click)="openDeploy.emit()">Set up environments in Deploy</button>
+    </div>
+  } @else {
+    <section aria-label="Environments">
+      <h2>Environments</h2>
+      <div class="project-environments__grid">
+        @for (environment of environments(); track environment.declaration.id) {
+          <article class="project-environments__card" [attr.data-testid]="'project-environment-' + environment.declaration.id">
+            <h3>{{ environment.declaration.name }}</h3>
+            <span class="project-environments__state" [attr.data-health]="environment.health">{{ healthLabel(environment.health) }}</span>
+            <p>{{ environment.deployedArtifact ? 'Running ' + environment.deployedArtifact : 'Nothing deployed yet' }}</p>
+          </article>
+        }
+      </div>
+    </section>
+  }
+</section>

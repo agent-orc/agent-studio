@@ -162,6 +162,22 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             turns.Enqueue("global", new OrchestratorTurnRequest("forged chat")));
 
         var routes = ExecutionRoutes(factory.Services);
+        foreach (var (routePath, admissionPath) in new[]
+        {
+            ("/api/quota/admission/{project}", ExecutionAdmissionPath.Claim),
+            ("/api/workspaces/{workspaceId}/quota/admission", ExecutionAdmissionPath.Preview),
+            ("/api/workspaces/{workspaceId}/quota", ExecutionAdmissionPath.Preview),
+            ("/api/workspaces/{workspaceId}/projects/{projectId}/quota", ExecutionAdmissionPath.Preview),
+            ("/api/workspaces/{workspaceId}/quota/audit", ExecutionAdmissionPath.Preview),
+            ("/api/workspaces/{workspaceId}/quota", ExecutionAdmissionPath.Start),
+            ("/api/workspaces/{workspaceId}/projects/{projectId}/quota", ExecutionAdmissionPath.Start),
+            ("/api/workspaces/{workspaceId}/quota/override", ExecutionAdmissionPath.Start),
+            ("/api/workspaces/{workspaceId}/projects/{projectId}/quota/override", ExecutionAdmissionPath.Start)
+        })
+        {
+            Assert.Contains(routes, route => route.RoutePattern.RawText == routePath
+                && route.Metadata.GetMetadata<ExecutionRouteMetadata>()?.Path == admissionPath);
+        }
         var allRoutes = factory.Services.GetServices<EndpointDataSource>()
             .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
         Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/auth/invitations");
@@ -194,7 +210,16 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3175 adds one Start route for new projects from a template.
         // AGT-3176 added the gate release handoff on Start. It records the
         // artifact digest and queues stage, so public demo must deny it.
-        Assert.Equal(112, routes.Count);
+        // AGT-3201 (BD-1) added deploy runs: deploy a release, redeploy and
+        // rollback on Start; approve, reject and cancel a run on Continue.
+        // AGT-3221 added the project.yml schema 2 migration confirm on PostStep:
+        // it commits and pushes project.yml through the managed repository write.
+        // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
+        // and maps the engine decision-job (Start) and receipt (Continue) routes in
+        // every profile.
+        // AGT-3177 adds workspace quota admission (Claim), quota views/audit
+        // (Preview), and quota settings/owner overrides (Start).
+        Assert.Equal(135, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -208,15 +233,33 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         {
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/redeploy", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/rollback", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/environments/{environmentId}/stop", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
-            ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue)
+            ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue),
+            ("/api/workspaces/{workspaceId}/decision-rules/versions", ExecutionAdmissionPath.Continue),
+            ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/activate", ExecutionAdmissionPath.Continue),
+            ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/rollback", ExecutionAdmissionPath.Continue),
+            ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start),
+            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start)
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
             Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
+        var receiptRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/v1/orchestration/runs/{runId}/decision-receipt");
+        Assert.Equal(ExecutionAdmissionPath.Continue,
+            receiptRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Contains("PUT", receiptRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         var migrationRoute = Assert.Single(routes, route =>
             route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
         Assert.Equal(ExecutionAdmissionPath.Preview,
@@ -234,13 +277,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 9,
-                [ExecutionAdmissionPath.Start] = 19,
-                [ExecutionAdmissionPath.Continue] = 22,
+                [ExecutionAdmissionPath.Claim] = 10,
+                [ExecutionAdmissionPath.Start] = 28,
+                [ExecutionAdmissionPath.Continue] = 30,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
-                [ExecutionAdmissionPath.Preview] = 28,
-                [ExecutionAdmissionPath.PostStep] = 16,
+                [ExecutionAdmissionPath.Preview] = 32,
+                [ExecutionAdmissionPath.PostStep] = 17,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
