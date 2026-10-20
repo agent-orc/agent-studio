@@ -661,10 +661,11 @@ if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$r
     --max-time 30 -X POST -H 'Content-Type: application/json' \
     -H "@$deploy_header_file" \
     --data "$deploy_body" "$api/api/deploy/gate-releases") || { log 'stage queue request failed'; exit 9; }
-  # Main is already pushed here. A 409 that names the newest release means a
+  # Main is already pushed here. A 409 with "reason":"superseded" means a
   # later commit already has a release (BD-1 release order), so this release is
   # superseded: log it and continue. Any other refusal exits 9.
-  if [[ "$deploy_http_code" == 409 ]] && grep -Fq 'newest release' "$evidence_dir/deploy-queue-response.json"; then
+  if [[ "$deploy_http_code" == 409 ]] \
+    && grep -Eq '"reason"[[:space:]]*:[[:space:]]*"superseded"' "$evidence_dir/deploy-queue-response.json"; then
     log "stage queue skipped: release of commit=$candidate_sha is superseded by a newer release (HTTP 409)"
   else
     [[ "$deploy_http_code" == 202 ]] || { log "stage queue request returned HTTP $deploy_http_code"; exit 9; }

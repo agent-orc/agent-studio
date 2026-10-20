@@ -6,11 +6,13 @@ namespace AgentStudio.Deploy;
 /// <summary><c>Invalid</c> is a request the input decides (400); <c>Conflict</c> one the stored state decides (409).</summary>
 public enum DeployOutcomeKind { Ok, NotFound, Conflict, Forbidden, Invalid }
 
-public sealed record DeployOutcome<T>(DeployOutcomeKind Kind, T? Value, string? Error)
+/// <param name="Reason">A machine-readable refusal reason, such as <see cref="DeployRefusalReasons.Superseded"/>.</param>
+public sealed record DeployOutcome<T>(DeployOutcomeKind Kind, T? Value, string? Error, string? Reason = null)
 {
     public static DeployOutcome<T> Ok(T value) => new(DeployOutcomeKind.Ok, value, null);
     public static DeployOutcome<T> NotFound(string error) => new(DeployOutcomeKind.NotFound, default, error);
-    public static DeployOutcome<T> Conflict(string error) => new(DeployOutcomeKind.Conflict, default, error);
+    public static DeployOutcome<T> Conflict(string error, string? reason = null)
+        => new(DeployOutcomeKind.Conflict, default, error, reason);
     public static DeployOutcome<T> Forbidden(string error) => new(DeployOutcomeKind.Forbidden, default, error);
     public static DeployOutcome<T> Invalid(string error) => new(DeployOutcomeKind.Invalid, default, error);
 }
@@ -78,8 +80,7 @@ public sealed class DeployService
         {
             declarations = _environments.DeclarationsAtCommit(project, commit);
         }
-        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException
-                                       or FormatException)
+        catch (JsonException ex)
         {
             return DeployOutcome<Release>.Invalid(
                 $"The environment declarations at commit {ShortSha(commit)} are invalid: {ex.Message}");
@@ -97,8 +98,8 @@ public sealed class DeployService
         var existing = _store.ReadReleaseRecords(project);
         var known = existing.Any(item => item.Release.Id == id);
         var newestSeen = existing.LastOrDefault()?.Release;
-        var orderRejection = OrderRejection(repo, newestSeen, id, commit, known);
-        if (orderRejection is not null) return DeployOutcome<Release>.Conflict(orderRejection);
+        if (OrderRejection(repo, newestSeen, id, commit, known) is { } orderRejection)
+            return DeployOutcome<Release>.Conflict(orderRejection.Error, orderRejection.Reason);
         var integrated = known || repo is null ? [] : IntegratedCards(project);
         var definition = known || repo is null ? null : ReadDefinition(repo, commit);
 
@@ -108,7 +109,7 @@ public sealed class DeployService
             var newest = current.LastOrDefault()?.Release;
             if (newest?.Id != newestSeen?.Id && OrderRejection(repo, newest, id, commit,
                     current.Any(item => item.Release.Id == id)) is { } raced)
-                return DeployOutcome<Release>.Conflict(raced);
+                return DeployOutcome<Release>.Conflict(raced.Error, raced.Reason);
             var now = _clock.GetUtcNow().UtcDateTime;
             var (record, created) = FindOrCreateRelease(project, id, commit, [artifact], declarations, definition,
                 repo, integrated, now);
@@ -146,23 +147,25 @@ public sealed class DeployService
     /// <paramref name="newest"/>, or null. A rebuild of the newest commit and
     /// a commit unrelated in history stay allowed. The check fails closed: when
     /// git cannot answer the ancestry, the release is refused. The two
-    /// "newest release" refusals are the superseded-release answer that
-    /// scripts/release/promote-develop-to-main.sh logs and continues on.
+    /// "newest release" refusals carry <see cref="DeployRefusalReasons.Superseded"/>,
+    /// which scripts/release/promote-develop-to-main.sh logs and continues on.
     /// </summary>
-    private string? OrderRejection(string? repo, Release? newest, string id, string commit, bool known)
+    private (string Error, string? Reason)? OrderRejection(string? repo, Release? newest, string id, string commit,
+        bool known)
     {
         if (newest is null || newest.Id == id) return null;
         if (known)
-            return $"The release of commit {ShortSha(commit)} is older than the newest release {newest.Version}. "
-                   + "Staging runs only the newest release; use rollback to move back.";
+            return ($"The release of commit {ShortSha(commit)} is older than the newest release {newest.Version}. "
+                    + "Staging runs only the newest release; use rollback to move back.", DeployRefusalReasons.Superseded);
         if (newest.CommitSha == commit || repo is null) return null;
         return _git.TryIsAncestor(repo, commit, newest.CommitSha) switch
         {
             false => null,
-            true => $"Commit {ShortSha(commit)} is an ancestor of commit {ShortSha(newest.CommitSha)} of the newest release "
-                    + $"{newest.Version}. A release never moves back in history; use rollback.",
-            null => $"Git could not compare commit {ShortSha(commit)} with commit {ShortSha(newest.CommitSha)} "
-                    + $"of release {newest.Version}. Retry once the repository is readable.",
+            true => ($"Commit {ShortSha(commit)} is an ancestor of commit {ShortSha(newest.CommitSha)} of the newest "
+                     + $"release {newest.Version}. A release never moves back in history; use rollback.",
+                DeployRefusalReasons.Superseded),
+            null => ($"Git could not compare commit {ShortSha(commit)} with commit {ShortSha(newest.CommitSha)} "
+                     + $"of release {newest.Version}. Retry once the repository is readable.", null),
         };
     }
 
@@ -686,7 +689,7 @@ public sealed class DeployService
         var previous = existing.LastOrDefault()?.Release;
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
-            ReleaseSnapshot.VariablesVersion(declarations),
+            ReleaseSnapshot.VariablesVersion(definition, declarations),
             repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated), now, ReleaseSnapshot.DefaultChannel);
         return _store.AppendRelease(project, new(release, declarations));
     }

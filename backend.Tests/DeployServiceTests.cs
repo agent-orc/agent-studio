@@ -469,6 +469,7 @@ public sealed class DeployServiceTests : IDisposable
         var late = deploy.CreateRelease("demo", Artifact('d'), middle, "release-gate");
         Assert.Equal(DeployOutcomeKind.Conflict, late.Kind);
         Assert.Contains("ancestor", late.Error);
+        Assert.Equal(DeployRefusalReasons.Superseded, late.Reason);
         Assert.Equal([rA.Id, rB.Id], store.ReadReleases("demo").Select(item => item.Id));
 
         // Production takes the newest release, which closes the older
@@ -482,6 +483,7 @@ public sealed class DeployServiceTests : IDisposable
         var repost = deploy.CreateRelease("demo", Artifact('a'), a, "release-gate");
         Assert.Equal(DeployOutcomeKind.Conflict, repost.Kind);
         Assert.Contains("Staging runs only the newest release", repost.Error);
+        Assert.Equal(DeployRefusalReasons.Superseded, repost.Reason);
         Assert.Null(environments.Claim("stage-host"));
         Assert.Equal(2, deploy.Deployments("demo", "stage")!.Count);
 
@@ -570,6 +572,8 @@ public sealed class DeployServiceTests : IDisposable
         var refused = deploy.CreateRelease("demo", Artifact('c'), c, "release-gate");
         Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
         Assert.Contains("Git could not compare", refused.Error);
+        // Not superseded: the release driver must stop on this refusal.
+        Assert.Null(refused.Reason);
         Assert.Equal([r1.Id], store.ReadReleases("demo").Select(item => item.Id));
         Assert.Null(environments.Claim("stage-host"));
     }
@@ -653,6 +657,41 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(release.Id, row.Statuses[1].NewerRelease?.Id);
     }
 
+    [Theory]
+    [InlineData("""{"id":"production","name":"Production","kind":"production","targetHostId":"prod-host","address":"https://example","template":"container","destination":"8082","healthUrl":"https://example/health","secretRefs":"DATABASE_URL"}""")]
+    [InlineData("""{"id":"production","name":"Production","kind":"production","targetHostId":"prod-host","address":"https://example","template":"container","destination":"8082","healthUrl":"https://example/health","containerPort":"8080"}""")]
+    [InlineData("""{"id":"production","name":"Production","kind":"production","targetHostId":"prod-host","address":"https://example","template":"container","destination":"8082","healthUrl":"https://example/health","healthChecks":[{"id":7}]}""")]
+    [InlineData("""["production"]""")]
+    public void Matrix_WithAMalformedDeclaration_ReportsTheProjectInsteadOfFailing(string production)
+    {
+        var (deploy, _, _) = Build();
+        File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"), production);
+
+        var row = Assert.Single(deploy.Matrix().Projects);
+        Assert.Equal("demo", row.ProjectId);
+        Assert.Empty(row.Statuses);
+        Assert.Contains("production.json", row.Error);
+    }
+
+    [Fact]
+    public void VariablesVersion_FollowsTheProjectYmlVariablesAtTheReleaseCommit()
+    {
+        var (deploy, environments, _) = Build();
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        WriteProjectYml("variables:\n  - name: LOG_LEVEL\n    value: info\n");
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("variables"));
+        Report(deploy, environments, "stage-host", healthy: true);
+        var r3 = CreateRelease(deploy, Artifact('c'), Commit("unrelated"));
+        Report(deploy, environments, "stage-host", healthy: true);
+        WriteProjectYml("variables:\n  - name: LOG_LEVEL\n    value: debug\n");
+        var r4 = CreateRelease(deploy, Artifact('d'), Commit("debug"));
+
+        Assert.NotEqual(r1.VariablesVersion, r2.VariablesVersion);
+        Assert.Equal(r2.VariablesVersion, r3.VariablesVersion);
+        Assert.NotEqual(r2.VariablesVersion, r4.VariablesVersion);
+    }
+
     [Fact]
     public async Task Routes_ServeTheSharedContract()
     {
@@ -701,7 +740,11 @@ public sealed class DeployServiceTests : IDisposable
         using var backwards = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
             new ReleaseArtifactRequest(Artifact('b'), older));
         Assert.Equal(HttpStatusCode.Conflict, backwards.StatusCode);
-        Assert.Contains("ancestor", await backwards.Content.ReadAsStringAsync());
+        using (var refusal = JsonDocument.Parse(await backwards.Content.ReadAsStringAsync()))
+        {
+            Assert.Contains("ancestor", refusal.RootElement.GetProperty("error").GetString());
+            Assert.Equal("superseded", refusal.RootElement.GetProperty("reason").GetString());
+        }
 
         using var status = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/status"));
         var staging = status.RootElement[0];
@@ -871,6 +914,28 @@ public sealed class DeployServiceTests : IDisposable
             }));
 
     private string Head() => Git("rev-parse", "HEAD").Trim();
+
+    private void WriteProjectYml(string sections)
+    {
+        Directory.CreateDirectory(Path.Combine(_repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"), """
+            schemaVersion: 2
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build: [npm run build]
+              test: [npm test]
+              lint: []
+            testSuites:
+            cachePaths: []
+            capabilities: [git]
+            environment:
+            project:
+              id: demo
+
+            """ + sections);
+    }
 
     // Git for Windows writes loose objects read-only, so File.Delete alone throws there.
     private void DeleteLooseObject(string sha)

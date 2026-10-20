@@ -441,41 +441,60 @@ grep -Fq '"gate":"passed"' "$auto_root/releases/$auto_sha/promotion-record.json"
 printf '%s\n' 'gate-built artifact queued to stage passed'
 
 # A 409 for a superseded release comes after main is pushed: the driver logs
-# it and continues instead of exiting 9.
-superseded_operator=$(make_fixture package-superseded pass)
-superseded_root="$test_root/package-superseded"
-superseded_curl_bin="$superseded_root/fake-curl-bin"
-mkdir -p "$superseded_curl_bin"
-printf '%s\n' test-gate-credential > "$superseded_root/deploy.token"
-cat > "$superseded_curl_bin/curl" <<'FAKE'
+# it and continues instead of exiting 9. It matches the machine-readable
+# reason, so any other 409 (also one whose message names the newest release)
+# still exits 9.
+run_gate_release_409() {
+  local name="$1" body="$2"
+  local operator root curl_bin
+  operator=$(make_fixture "$name" pass)
+  root="$test_root/$name"
+  curl_bin="$root/fake-curl-bin"
+  mkdir -p "$curl_bin"
+  printf '%s\n' test-gate-credential > "$root/deploy.token"
+  printf '%s\n' "$body" > "$root/gate-release-response.json"
+  cat > "$curl_bin/curl" <<FAKE
 #!/usr/bin/env bash
 set -eu
 out=
 url=
-while (($#)); do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    http*) url="$1"; shift ;;
+while ((\$#)); do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    http*) url="\$1"; shift ;;
     *) shift ;;
   esac
 done
-if [[ "$url" == */api/deploy/gate-releases ]]; then
-  printf '%s\n' '{"error":"Commit 1234567 is an ancestor of commit 89abcde of the newest release 3."}' > "$out"
+if [[ "\$url" == */api/deploy/gate-releases ]]; then
+  cat '$root/gate-release-response.json' > "\$out"
   printf 409
 else
-  printf '{}\n' > "$out"
+  printf '{}\n' > "\$out"
   printf 200
 fi
 FAKE
-chmod +x "$superseded_curl_bin/curl"
-superseded_output=$(FAKE_DOTNET_LOG="$superseded_root/dotnet.log" \
-  PATH="$superseded_curl_bin:$fake_dotnet_bin:$PATH" \
-  "$superseded_operator/scripts/release/promote-develop-to-main.sh" --execute \
-  --tag release/test-package-superseded --evidence-dir "$superseded_root/evidence" \
-  --release-dir "$superseded_root/releases" --deploy-artifact-store "$superseded_root/artifact-store" \
-  --deploy-token-file "$superseded_root/deploy.token" --project Demo 2>&1)
+  chmod +x "$curl_bin/curl"
+  FAKE_DOTNET_LOG="$root/dotnet.log" \
+    PATH="$curl_bin:$fake_dotnet_bin:$PATH" \
+    "$operator/scripts/release/promote-develop-to-main.sh" --execute \
+    --tag "release/test-$name" --evidence-dir "$root/evidence" \
+    --release-dir "$root/releases" --deploy-artifact-store "$root/artifact-store" \
+    --deploy-token-file "$root/deploy.token" --project Demo 2>&1
+}
+superseded_output=$(run_gate_release_409 package-superseded \
+  '{"error":"Commit 1234567 is an ancestor of commit 89abcde of the newest release 3.","reason":"superseded"}')
 grep -Fq 'superseded by a newer release (HTTP 409)' <<<"$superseded_output"
 printf '%s\n' 'superseded release 409 continues passed'
+
+set +e
+other_conflict_output=$(run_gate_release_409 package-other-conflict \
+  '{"error":"Git could not compare commit 1234567 with commit 89abcde of release 3 (the newest release)."}')
+other_conflict_status=$?
+set -e
+[[ "$other_conflict_status" == 9 ]]
+grep -Fq 'stage queue request returned HTTP 409' <<<"$other_conflict_output"
+if grep -Fq 'superseded by a newer release' <<<"$other_conflict_output"; then exit 1; fi
+printf '%s\n' 'other release 409 exits 9 passed'
 
 # The image handoff builds from the gated checkout and uses the build output
 # digest. A caller-supplied image reference is only a destination tag.

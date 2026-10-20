@@ -4579,12 +4579,7 @@ public partial class GitService
     /// branch before dropping it, so unmerged conflict work is never discarded.
     /// </summary>
     public bool IsAncestor(string repoRoot, string ancestor, string descendant)
-    {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
-        if (!IsLikelyBranchName(ancestor) || !IsLikelyBranchName(descendant)) return false;
-        var (_, _, code) = RunGitArgs(repoRoot, "merge-base", "--is-ancestor", ancestor, descendant);
-        return code == 0;
-    }
+        => TryIsAncestor(repoRoot, ancestor, descendant) == true;
 
     /// <summary>
     /// The merge-base (fork point) SHA of two refs, or null when either ref is

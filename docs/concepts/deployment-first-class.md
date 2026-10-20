@@ -58,7 +58,9 @@ stays the only executor; releases and runs describe and steer it.
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
   version (hash of the project.yml schema 2 artifacts, standard lifecycle and
   deploy steps at the release commit plus the environment declarations), a
-  variables version (hash of the secret reference names per environment), the
+  variables version (hash of the project.yml schema 2 `variables` section at the
+  release commit, where a secret counts only by name, and of the secret
+  reference names per environment), the
   cards it adds, and channel `default`. Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
@@ -67,16 +69,19 @@ stays the only executor; releases and runs describe and steer it.
   commit and not from the previous release (at most 200 commits for the first
   release).
 - **Release order.** Releases never move back in history. A commit that is a
-  strict ancestor of the newest release's commit is refused with 409, so a gate
+  strict ancestor of the newest release's commit is refused with 409 and
+  `"reason":"superseded"`, so a gate
   run that finishes after the run of a later commit cannot create an older
   release after a newer one. Re-posting an existing release starts Staging again
-  only while it is the newest release; an older one answers 409 and moves back
+  only while it is the newest release; an older one answers the same
+  superseded 409 and moves back
   only through rollback. A rebuild of the newest commit and a commit unrelated in
   history stay allowed. Creation order is therefore commit order for every
   release the lifecycle compares. The ancestry check fails closed: when git
   cannot answer it (an error, a timeout or an exhausted process budget), the
-  release answers 409. The promotion script logs a 409 for a superseded
-  release and continues; any other refusal stops it with exit code 9. A
+  release answers 409 without a reason. The promotion script matches
+  `"reason":"superseded"`, logs that 409 and continues; any other refusal,
+  including every other 409, stops it with exit code 9. A
   declaration snapshot that git cannot read completely also answers 409;
   invalid input, including a malformed committed declaration, answers 400.
 - **Declaration snapshot.** The release file also stores the environment

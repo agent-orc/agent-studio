@@ -38,6 +38,13 @@ public static class DeploymentTriggers
     public const string AutomaticRollback = "automatic-rollback";
 }
 
+/// <summary>The machine-readable <c>reason</c> of a refusal body.</summary>
+public static class DeployRefusalReasons
+{
+    /// <summary>A newer release exists, so this release never starts Staging.</summary>
+    public const string Superseded = "superseded";
+}
+
 public static class EnvironmentHealth
 {
     public const string Healthy = "healthy";

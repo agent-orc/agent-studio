@@ -136,12 +136,13 @@ public static class ProjectOperatorDashboardEndpoints
 
     /// <summary>
     /// 202 with the release; 409 when the stored releases refuse it (an older
-    /// commit than the newest release, or an unreadable declaration
-    /// snapshot); 400 for every invalid input, as before BD-1.
+    /// commit than the newest release, with <c>"reason":"superseded"</c>, or an
+    /// unreadable declaration snapshot); 400 for every invalid input, as before BD-1.
     /// </summary>
     private static IResult ReleaseCreated(DeployOutcome<Release> outcome, string invalid) => outcome switch
     {
         { Kind: DeployOutcomeKind.Ok } => Results.Accepted(value: outcome.Value),
+        { Kind: DeployOutcomeKind.Conflict, Reason: { } reason } => Results.Conflict(new { error = outcome.Error, reason }),
         { Kind: DeployOutcomeKind.Conflict } => Results.Conflict(new { error = outcome.Error }),
         _ => Results.BadRequest(new { error = invalid }),
     };

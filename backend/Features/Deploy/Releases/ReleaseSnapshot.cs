@@ -56,15 +56,24 @@ public static class ReleaseSnapshot
         });
 
     /// <summary>
-    /// P1 has no variables section yet, so the variable set is the secret
-    /// reference names each environment hands to the deploy host. Values never
-    /// enter the hash.
+    /// The variable set: the project.yml schema 2 <c>variables</c> section
+    /// (AGT-3221) at the release commit, plus the secret reference names each
+    /// environment hands to the deploy host. A secret enters the hash only by
+    /// its name, never by its value.
     /// </summary>
-    public static string VariablesVersion(IEnumerable<EnvironmentDeclaration> declarations)
-        => Hash(declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
+    public static string VariablesVersion(ProjectDeploymentDefinition? definition,
+        IEnumerable<EnvironmentDeclaration> declarations)
+        => Hash(new
         {
-            item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal),
-        }));
+            variables = (definition?.Variables ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new
+            {
+                item.Name, item.Value, item.Secret, environments = item.Environments.Order(StringComparer.Ordinal),
+            }),
+            environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
+            {
+                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal),
+            }),
+        });
 
     private static string Hash(object value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))))[..12]

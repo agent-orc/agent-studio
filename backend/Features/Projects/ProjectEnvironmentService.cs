@@ -148,7 +148,23 @@ public sealed class ProjectEnvironmentService
             .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
     }
 
+    /// <summary>
+    /// Parses one declaration. Every malformed input surfaces as <see cref="JsonException"/>, so one
+    /// broken project never turns a release, the deploy matrix or health monitoring into a 500.
+    /// </summary>
     private static EnvironmentDeclaration ParseDeclaration(string file, string json)
+    {
+        try
+        {
+            return ParseDeclarationCore(file, json);
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            throw new JsonException($"Environment {file} is malformed: {ex.Message}", ex);
+        }
+    }
+
+    private static EnvironmentDeclaration ParseDeclarationCore(string file, string json)
     {
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement;
