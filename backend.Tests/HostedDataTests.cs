@@ -149,4 +149,25 @@ public sealed class HostedDataTests : IDisposable
         Assert.NotNull(previous);
         Assert.Equal("live-before-restore", File.ReadAllText(Path.Combine(previous!, "data.txt")));
     }
+
+    [Fact]
+    public void RestartRecoversLiveVolumeAfterInterruptedDirectorySwap()
+    {
+        var volumeRoot = Path.Combine(_root, "volumes");
+        var archiveRoot = Path.Combine(_root, "archives");
+        var engine = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot, clock: _clock);
+        var path = engine.VolumePath(new("demo", "stage", "uploads"));
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "live-before-restore");
+        var restoreId = Guid.NewGuid().ToString("N");
+
+        engine.MoveLiveAside(path, restoreId);
+        Assert.False(Directory.Exists(path));
+        Assert.True(File.Exists(path + ".restore-pending"));
+
+        _ = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot, clock: _clock);
+        Assert.Equal("live-before-restore", File.ReadAllText(Path.Combine(path, "data.txt")));
+        Assert.False(File.Exists(path + ".restore-pending"));
+        Assert.False(Directory.Exists(path + ".previous-" + restoreId));
+    }
 }

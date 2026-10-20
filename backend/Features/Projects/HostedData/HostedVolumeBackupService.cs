@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace AgentStudio.Projects;
 
@@ -15,6 +16,8 @@ public sealed record HostedVolumeScheduleRequest(int? HourUtc);
 
 public static class HostedVolumeSchedulePolicy
 {
+    public const int MaxBackups = 14;
+
     public static bool IsDue(HostedVolumeSchedule schedule, DateTimeOffset now)
         => schedule.HourUtc is { } hour && now.UtcDateTime.Hour >= hour
             && schedule.LastAttemptAt?.UtcDateTime.Date != now.UtcDateTime.Date;
@@ -26,6 +29,7 @@ public sealed class HostedVolumeBackupService(
     IHostedVolumeBackupEngine engine, TimeProvider clock, ILogger<HostedVolumeBackupService> logger)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentDictionary<HostedVolumeKey, SemaphoreSlim> _volumeGates = new();
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public async Task<HostedVolumeState?> ReadAsync(string project, CancellationToken cancellationToken)
@@ -63,29 +67,51 @@ public sealed class HostedVolumeBackupService(
         string actor, CancellationToken cancellationToken)
     {
         ValidateVolume(project, environment, volume);
-        await _gate.WaitAsync(cancellationToken);
+        var key = new HostedVolumeKey(project, environment, volume);
+        var volumeGate = _volumeGates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await volumeGate.WaitAsync(cancellationToken);
         try
         {
-            var state = ReadState(project);
-            var schedule = state.Schedules.FirstOrDefault(item => item.Environment == environment && item.Volume == volume)
-                ?? new HostedVolumeSchedule(project, environment, volume, null, null, null, []);
             var now = clock.GetUtcNow();
+            HostedVolumeBackup backup;
             try
             {
-                var backup = await engine.BackupAsync(new(project, environment, volume), now, cancellationToken);
-                var updated = schedule with { LastAttemptAt = now, LastError = null,
-                    Backups = schedule.Backups.Append(backup).ToArray() };
-                Save(project, state, updated, new(now, actor, "backup", environment, volume, backup.Id, "succeeded"));
-                return backup;
+                backup = await engine.BackupAsync(key, now, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Save(project, state, schedule with { LastAttemptAt = now, LastError = ex.Message },
-                    new(now, actor, "backup", environment, volume, null, "failed"));
+                await _gate.WaitAsync(cancellationToken);
+                try
+                {
+                    var state = ReadState(project);
+                    var schedule = FindSchedule(state, key);
+                    Save(project, state, schedule with { LastAttemptAt = now, LastError = ex.Message },
+                        new(now, actor, "backup", environment, volume, null, "failed"));
+                }
+                finally { _gate.Release(); }
                 throw;
             }
+            IReadOnlySet<string> retainedIds;
+            await _gate.WaitAsync(CancellationToken.None);
+            try
+            {
+                var state = ReadState(project);
+                var schedule = FindSchedule(state, key);
+                var updated = schedule with { LastAttemptAt = now, LastError = null,
+                    Backups = schedule.Backups.Append(backup).TakeLast(HostedVolumeSchedulePolicy.MaxBackups).ToArray() };
+                Save(project, state, updated, new(now, actor, "backup", environment, volume, backup.Id, "succeeded"));
+                retainedIds = updated.Backups.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            }
+            finally { _gate.Release(); }
+            try { await engine.PruneBackupsAsync(key, retainedIds, CancellationToken.None); }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not prune hosted volume archives for {Project}/{Environment}/{Volume}",
+                    project, environment, volume);
+            }
+            return backup;
         }
-        finally { _gate.Release(); }
+        finally { volumeGate.Release(); }
     }
 
     public async Task RestoreAsync(string project, string environment, string volume, string backupId,
@@ -146,6 +172,7 @@ public sealed class HostedVolumeBackupService(
     {
         var root = StoreRoot();
         if (!Directory.Exists(root)) return;
+        var due = new List<(string Project, HostedVolumeSchedule Schedule)>();
         foreach (var file in Directory.EnumerateFiles(root, "*.json"))
         {
             var project = Path.GetFileNameWithoutExtension(file);
@@ -153,17 +180,24 @@ public sealed class HostedVolumeBackupService(
             if (state is null) continue;
             var now = clock.GetUtcNow();
             foreach (var schedule in state.Schedules.Where(item => HostedVolumeSchedulePolicy.IsDue(item, now)))
+                due.Add((project, schedule));
+        }
+        await Parallel.ForEachAsync(due, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
+            async (item, token) =>
             {
-                try { await BackupAsync(project, schedule.Environment, schedule.Volume, "schedule", cancellationToken); }
+                try { await BackupAsync(item.Project, item.Schedule.Environment, item.Schedule.Volume, "schedule", token); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // BackupAsync records the failed attempt so the sweep is bounded until the next UTC day.
                     logger.LogWarning(ex, "Hosted volume backup failed for {Project}/{Environment}/{Volume}",
-                        project, schedule.Environment, schedule.Volume);
+                        item.Project, item.Schedule.Environment, item.Schedule.Volume);
                 }
-            }
-        }
+            });
     }
+
+    private static HostedVolumeSchedule FindSchedule(HostedVolumeState state, HostedVolumeKey key)
+        => state.Schedules.FirstOrDefault(item => item.Environment == key.Environment && item.Volume == key.Volume)
+            ?? new HostedVolumeSchedule(key.Project, key.Environment, key.Volume, null, null, null, []);
 
     private void ValidateVolume(string project, string environment, string volume)
     {

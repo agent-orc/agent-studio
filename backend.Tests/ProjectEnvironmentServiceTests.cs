@@ -83,6 +83,69 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task VolumeBackupRetentionBoundsMetadataAndArchives()
+    {
+        var (environments, config, key, path) = PrepareVolumeBackups();
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), clock: _clock);
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var ids = new List<string>();
+        for (var index = 0; index < HostedVolumeSchedulePolicy.MaxBackups + 2; index++)
+        {
+            File.WriteAllText(Path.Combine(path, "data.txt"), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            ids.Add((await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None)).Id);
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        var state = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        var retained = Assert.Single(state.Schedules).Backups.Select(item => item.Id).ToArray();
+        Assert.Equal(ids.Skip(2), retained);
+        var archives = Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads"), "*.zip")
+            .Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(retained.Order(StringComparer.Ordinal), archives);
+    }
+
+    [Fact]
+    public async Task CancelledBackupRemovesTemporaryArchive()
+    {
+        var (_, _, key, _) = PrepareVolumeBackups();
+        var reader = new BlockingReadStream(_clock);
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            path => Directory.Delete(path, recursive: true), _clock, _ => reader);
+        using var cancellation = new CancellationTokenSource();
+        var backup = engine.BackupAsync(key, _clock.GetUtcNow(), cancellation.Token);
+        await reader.Entered;
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => backup);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads")));
+    }
+
+    [Fact]
+    public async Task TimedOutBackupDoesNotBlockOtherVolumeOperations()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var reader = new BlockingReadStream(_clock);
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            path => Directory.Delete(path, recursive: true), _clock, _ => reader);
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var backup = service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        await reader.Entered;
+
+        var schedule = service.SetScheduleAsync(key.Project, key.Environment, key.Volume, 8, "owner", CancellationToken.None);
+        Assert.True(schedule.IsCompleted);
+        await schedule;
+        _clock.Advance(LocalHostedVolumeBackupEngine.BackupTimeout);
+        await Assert.ThrowsAsync<TimeoutException>(() => backup);
+        var state = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.Contains("time limit", Assert.Single(state.Schedules).LastError);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads")));
+    }
+
+    [Fact]
     public void ConsecutiveDeployJobsRetainVolumeIdentityAndDatabaseBinding()
     {
         var (service, repo, _) = Build();
@@ -437,6 +500,54 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         {
             project, commit, artifact, sourceSha256 = digest,
         }));
+    }
+
+    private (ProjectEnvironmentService Environments, IConfiguration Config, HostedVolumeKey Key, string Path) PrepareVolumeBackups()
+    {
+        var (environments, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "stage.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } } },
+            }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+        }).Build();
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var path = Path.Combine(_root, "volumes", key.Project, key.Environment, key.Volume);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "initial");
+        return (environments, config, key, path);
+    }
+
+    private sealed class BlockingReadStream : Stream
+    {
+        private readonly TimeProvider _clock;
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public BlockingReadStream(TimeProvider clock) => _clock = clock;
+        public Task Entered => _entered.Task;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, _clock, cancellationToken);
+            return 0;
+        }
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
