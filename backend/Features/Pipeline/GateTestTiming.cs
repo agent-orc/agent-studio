@@ -7,14 +7,69 @@ namespace AgentStudio.Pipeline;
 
 public sealed record GateSlowTest(string Name, double DurationMs, string Source);
 
+/// <summary>
+/// What a test process's TRX report says about the run (AGT-3232): counts,
+/// failed test names, the classes that ran, the summed test duration per
+/// namespace-qualified class name, and whether the test run was aborted.
+/// </summary>
+public sealed record GateTestReport(GateTestCounts Counts, IReadOnlyList<string> FailedTests)
+{
+    /// <summary>Feeds the next shard plan; kept off the serialized process evidence.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyDictionary<string, double> ClassDurationsMs { get; init; } =
+        new Dictionary<string, double>(StringComparer.Ordinal);
+
+    /// <summary>Every class key with a test result in the report; proves which classes a shard ran.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyCollection<string> Classes { get; init; } = [];
+
+    /// <summary>
+    /// The first <c>ResultSummary</c> outcome that is not a normal completion
+    /// (<c>Aborted</c>, <c>Error</c>, <c>Timeout</c>), or null when every
+    /// report completed. A test host crash aborts the run.
+    /// </summary>
+    public string? AbortedOutcome { get; init; }
+
+    /// <summary>
+    /// The class key of a TRX <c>className</c>: the namespace-qualified name
+    /// exactly as the test framework reports it, so a nested class
+    /// (<c>Ns.Outer+Inner</c>) keeps its own key.
+    /// </summary>
+    internal static string ClassKey(string className) => className.Trim();
+}
+
 /// <summary>Retains red signals and the top ten timings independently of the output tail.</summary>
 internal sealed class GateTestTiming
 {
     private readonly object _sync = new();
     private readonly List<GateSlowTest> _slowest = [];
+    private readonly Dictionary<string, double> _classDurations = new(StringComparer.Ordinal);
+    private readonly SortedSet<string> _failedTests = new(StringComparer.Ordinal);
+    private readonly SortedSet<string> _classes = new(StringComparer.Ordinal);
+    private GateTestCounts? _counts;
+    private string? _abortedOutcome;
     private bool _failed;
     internal bool Failed { get { lock (_sync) return _failed; } }
     internal IReadOnlyList<GateSlowTest> Slowest { get { lock (_sync) return _slowest.ToArray(); } }
+
+    /// <summary>The TRX summary, or null when no report was read.</summary>
+    internal GateTestReport? Report
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _counts is null
+                    ? null
+                    : new GateTestReport(_counts, _failedTests.ToArray())
+                    {
+                        ClassDurationsMs = new Dictionary<string, double>(_classDurations, StringComparer.Ordinal),
+                        Classes = _classes.ToArray(),
+                        AbortedOutcome = _abortedOutcome,
+                    };
+            }
+        }
+    }
 
     private static readonly Regex Ansi = new(@"\x1b\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
     // Keep this deliberately format-based rather than test-framework-specific.
@@ -35,6 +90,14 @@ internal sealed class GateTestTiming
     private static readonly Regex DotNetTiming = new(
         @"^\s*(?:Passed|Failed|Skipped)\s+(?<name>.+?)\s+\[(?:(?<value>[\d.,]+)\s*(?<unit>ms|s|m|h)\s*)+\]\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly HashSet<string> FailedOutcomes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Failed", "Error", "Timeout", "Aborted",
+    };
+    private static readonly HashSet<string> AbortedRunOutcomes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Aborted", "Error", "Timeout",
+    };
     private static readonly Regex VitestTiming = new(
         @"^\s*[✓✔√×❯]\s+(?<name>.+?)\s+(?<value>[\d.,]+)\s*(?<unit>ms|s)\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -75,14 +138,41 @@ internal sealed class GateTestTiming
                 DtdProcessing = DtdProcessing.Prohibit, MaxCharactersInDocument = 64 * 1024 * 1024,
             });
             var document = XDocument.Load(reader);
+            var classes = document.Descendants()
+                .Where(e => e.Name.LocalName == "UnitTest")
+                .Select(test => (
+                    Id: (string?)test.Attribute("id"),
+                    Class: (string?)test.Elements().FirstOrDefault(e => e.Name.LocalName == "TestMethod")?.Attribute("className")))
+                .Where(test => test.Id is not null && !string.IsNullOrWhiteSpace(test.Class))
+                .GroupBy(test => test.Id!, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => GateTestReport.ClassKey(group.First().Class!), StringComparer.Ordinal);
+            var runOutcome = (string?)document.Descendants()
+                .FirstOrDefault(e => e.Name.LocalName == "ResultSummary")?.Attribute("outcome");
             lock (_sync)
             {
+                if (runOutcome is not null && AbortedRunOutcomes.Contains(runOutcome)) _abortedOutcome ??= runOutcome;
+                var counts = _counts ?? GateTestCounts.None;
                 foreach (var result in document.Descendants().Where(e => e.Name.LocalName == "UnitTestResult"))
                 {
-                    _failed |= string.Equals((string?)result.Attribute("outcome"), "Failed", StringComparison.OrdinalIgnoreCase);
+                    var outcome = (string?)result.Attribute("outcome");
+                    var name = (string?)result.Attribute("testName") ?? "unnamed test";
+                    var failed = outcome is not null && FailedOutcomes.Contains(outcome);
+                    _failed |= string.Equals(outcome, "Failed", StringComparison.OrdinalIgnoreCase);
+                    if (failed) _failedTests.Add(name);
+                    counts = counts.Add(failed ? new(1, 0, 1, 0)
+                        : string.Equals(outcome, "Passed", StringComparison.OrdinalIgnoreCase) ? new(1, 1, 0, 0)
+                        : new(1, 0, 0, 1));
+                    var key = (string?)result.Attribute("testId") is { } testId
+                              && classes.TryGetValue(testId, out var className) ? className : null;
+                    if (key is not null) _classes.Add(key);
                     if (TimeSpan.TryParse((string?)result.Attribute("duration"), CultureInfo.InvariantCulture, out var duration))
-                        Add(new((string?)result.Attribute("testName") ?? "unnamed test", duration.TotalMilliseconds, "trx"));
+                    {
+                        Add(new(name, duration.TotalMilliseconds, "trx"));
+                        if (key is not null)
+                            _classDurations[key] = _classDurations.GetValueOrDefault(key) + duration.TotalMilliseconds;
+                    }
                 }
+                _counts = counts;
             }
         }
         catch (Exception ex) when (ex is IOException or XmlException or UnauthorizedAccessException)
