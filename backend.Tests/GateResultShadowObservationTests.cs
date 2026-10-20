@@ -103,6 +103,48 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     [Fact]
+    public async Task Passed_fallback_gate_waits_for_the_human_review_move_before_comparison()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var rollout = ShadowGateResult(factory);
+        var member = SeedMember(factory, "CODE-GR-PASS-BLOCKED", "src/gr-pass-blocked.cs",
+            settleReview: false);
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var source = authority.GetRun(member.RunAttemptId)!;
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path prevents the move.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review, source,
+            _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+        var observed = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Null(observed.MonolithReceipt);
+        Assert.Null(observed.MonolithIntent);
+        await DecideGateResultAsEngineAsync(factory, observed.Run.RunId);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        File.Delete(blocker);
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review, source,
+            _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Equal(1, _gate.FallbackRuns);
+        var compared = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal(observed.Run.RunId, compared.Run.RunId);
+        Assert.Equal(nameof(TransitionAction.Continue), compared.MonolithReceipt?.Action);
+        Assert.Equal((1, 0), (rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak,
+            rollout.GetProfiles().Single(item => item.Profile == "GateResult").MismatchCount));
+    }
+
+    [Fact]
     public async Task Gate_result_mismatch_carries_the_monolith_and_the_engine_receipt()
     {
         using var factory = BuildFactory();

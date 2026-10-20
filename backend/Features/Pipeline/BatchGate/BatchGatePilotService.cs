@@ -2116,14 +2116,6 @@ public sealed partial class BatchGatePilotService
                 FallbackTestedSha: gate.TestedSha,
                 FallbackEvidencePath: Path.GetFileName(evidence));
             BatchGateOwnershipStore.Write(task.FolderPath, ownership);
-            RecordFallbackGateShadowOutcome(task, pending, containedInSha);
-        }
-        else if (alreadyPassed)
-        {
-            // Recovery can find the durable gate evidence after a restart.
-            // The gate result is still a real observation even if its
-            // integration handoff has not settled yet.
-            RecordFallbackGateShadowOutcome(task, pending, containedInSha);
         }
         if (!patchEquivalent)
         {
@@ -2287,21 +2279,6 @@ public sealed partial class BatchGatePilotService
         if (HasBatchShadowReceipt(shadow)) return;
         var decision = BatchShadowDecision(task, reviewAttemptId, outcome);
         shadow.Store.RecordMonolithDecision(shadow.RunId, decision.Action.ToString(), decision.Reason);
-    }
-
-    private void RecordFallbackGateShadowOutcome(TaskInfo task, BatchGatePendingRecord pending,
-        string? containedInSha)
-    {
-        if (_configuration is null
-            || MonolithTransitionSwitch.For(_configuration, "GateResult")
-                != OrchestrationExecutionMode.Shadow) return;
-        var outcome = new BatchGateOutcome(FallbackReleaseKey(pending, containedInSha),
-            containedInSha is null
-                ? "Per-task fallback gate passed on the immutable result SHA."
-                : "The integration branch already contained the result SHA.");
-        if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, outcome)) return;
-        RecordBatchShadowIntent(task, pending.ReviewAttemptId, outcome);
-        RecordBatchShadowOutcome(task, pending.ReviewAttemptId, outcome);
     }
 
     private static bool HasBatchShadowReceipt((MonolithOrchestrationStore Store, string RunId) shadow)
