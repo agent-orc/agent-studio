@@ -59,6 +59,27 @@ export interface ServiceAccount {
   createdAt: string;
   disabledAt?: string | null;
   tokens: readonly ServiceAccountToken[];
+  /** 'api-token' for an API token (one `api.` token, bound to its creator). */
+  origin?: string | null;
+  createdBy?: string | null;
+}
+
+export interface RunnerEnrollment {
+  id: string;
+  name: string;
+  scopes: readonly string[];
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string | null;
+}
+
+export interface EnrolledRunner {
+  id: string;
+  name: string;
+  createdAt: string;
+  revokedAt?: string | null;
+  lastSeenAt?: string | null;
+  credentials: readonly { id: string; scopes: readonly string[]; revokedAt?: string | null }[];
 }
 
 export interface RoleBinding {

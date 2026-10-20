@@ -20,6 +20,8 @@ describe('AccessService', () => {
   async function flushLoad(): Promise<void> {
     http.expectOne('/api/auth/iam').flush(accessOverview());
     http.expectOne('/api/projects').flush([{ id: 'PROJ-001', displayName: 'Website', shortCode: 'WEB' }]);
+    http.expectOne('/api/auth/runner-enrollments').flush([]);
+    http.expectOne('/api/auth/runners').flush([{ id: 'runner_1', name: 'coding-host', createdAt: '2026-10-20T09:00:00Z', credentials: [] }]);
     await Promise.resolve();
     await Promise.resolve();
   }
@@ -31,12 +33,15 @@ describe('AccessService', () => {
     expect(service.state()).toBe('ready');
     expect(service.projects()).toEqual([{ id: 'PROJ-001', displayName: 'Website' }]);
     expect(service.pendingInvitations().has('usr_dev')).toBe(true);
+    expect(service.runners().map(runner => runner.id)).toEqual(['runner_1']);
   });
 
   it('reports a denied overview without an error dump', async () => {
     const loading = service.load();
     http.expectOne('/api/auth/iam').flush({ error: 'permission-denied' }, { status: 403, statusText: 'Forbidden' });
     http.expectOne('/api/projects').flush([]);
+    http.expectOne('/api/auth/runner-enrollments').flush({ error: 'permission-denied' }, { status: 403, statusText: 'Forbidden' });
+    http.expectOne('/api/auth/runners').flush([]);
     await loading;
     expect(service.state()).toBe('denied');
     expect(service.error()).toBe('Your account cannot view access settings.');
@@ -52,6 +57,17 @@ describe('AccessService', () => {
     await Promise.resolve();
     await flushLoad();
     expect((await invited)?.signInLink).toBe('/?invite=inv.x');
+  });
+
+  it('disables a user with a body that cannot rewrite role bindings', async () => {
+    const disabling = service.setUserDisabled('usr_dev', true);
+    const request = http.expectOne('/api/auth/users/usr_dev');
+    expect(request.request.method).toBe('PUT');
+    expect(request.request.body).toEqual({ disabled: true });
+    request.flush({});
+    await Promise.resolve();
+    await flushLoad();
+    await disabling;
   });
 
   it('keeps the server message when a mutation is refused', async () => {

@@ -26,8 +26,22 @@ describe('AccessAreaComponent', () => {
     expect(developer).toContain('Approver · Website · production (group)');
     expect(developer).toContain('Invited');
     expect(element.querySelector('[data-testid="access-single-user"]')).toBeNull();
-    for (const section of ['access-users', 'access-bindings', 'access-groups', 'access-service-accounts', 'access-invite-form'])
+    for (const section of ['access-users', 'access-bindings', 'access-groups', 'access-service-accounts', 'access-invite-form', 'access-runners'])
       expect(element.querySelector(`[data-testid="${section}"]`)).toBeTruthy();
+  });
+
+  it('resets a password once and disables a user without touching role bindings', async () => {
+    const access = fakeAccessService();
+    const element = await render(access);
+    const row = element.querySelector('[data-testid="access-user-dev.user"]') as HTMLElement;
+    (Array.from(row.querySelectorAll('button')).find(button => button.textContent?.includes('Reset password')) as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+    TestBed.tick();
+    expect(access.resetPassword).toHaveBeenCalledWith('usr_dev');
+    expect(element.querySelector('[data-testid="access-temporary-password"]')?.textContent).toContain('dev.user');
+    (element.querySelector('[data-testid="access-user-toggle-dev.user"]') as HTMLButtonElement).click();
+    expect(access.setUserDisabled).toHaveBeenCalledWith('usr_dev', true);
   });
 
   it('tells a single owner that nothing needs to be set up', async () => {

@@ -7,6 +7,7 @@ const resultDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
 const json = (route: Route, body: unknown, status = 200) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 const oneTimeToken = ['sat', 'tok_e2e', 'one-time-value'].join('.');
+const enrollmentCode = ['enr', 'e2e', 'one-time-code'].join('.');
 const created = '2026-10-20T09:00:00Z';
 
 const roles = [
@@ -28,7 +29,12 @@ function accessState() {
       { id: 'usr_product', username: 'product.lead', displayName: 'Product Lead', role: 'contributor', projects: ['PROJ-001'], disabled: false, mustChangePassword: false },
     ],
     groups: [{ id: 'grp_web', name: 'Team Website', description: 'Everyone on the website', members: ['usr_product'], createdAt: created }],
-    serviceAccounts: [{ id: 'sa_deploy', name: 'deploy-bot', description: 'Stage deploys from CI', createdAt: created, tokens: [] }],
+    serviceAccounts: [
+      { id: 'sa_deploy', name: 'deploy-bot', description: 'Stage deploys from CI', createdAt: created, tokens: [] },
+      { id: 'sa_tok_build', name: 'build bot', description: 'Migrated API token.', createdAt: created, origin: 'api-token', createdBy: 'usr_owner', tokens: [
+        { id: 'tok_build', name: 'build bot', createdAt: created, expiresAt: '2026-11-19T09:00:00Z', lastUsedAt: null, revokedAt: null },
+      ] },
+    ],
     bindings: [
       { id: 'rb_owner', principalKind: 'user', principalId: 'usr_owner', role: 'owner', scope: { kind: 'workspace' }, source: 'migration', createdAt: created },
       { id: 'rb_product', principalKind: 'user', principalId: 'usr_product', role: 'contributor', scope: { kind: 'project', project: 'PROJ-001' }, source: 'migration', createdAt: created },
@@ -62,6 +68,12 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     ])
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
+  await page.route('**/api/auth/runner-enrollments', route => route.request().method() === 'POST'
+    ? json(route, { enrollmentCode, name: 'build-host', scopes: [], expiresAt: '2026-10-20T09:15:00Z' })
+    : json(route, []));
+  await page.route('**/api/auth/runners', route => json(route, [
+    { id: 'runner_coding', name: 'coding-host', createdAt: created, revokedAt: null, credentials: [{ id: 'cred_1', scopes: ['runner.claim'] }] },
+  ]));
   await page.route('**/api/auth/invitations', async route => {
     const body = route.request().postDataJSON() as { username: string; displayName: string; bindings: Array<{ role: string; scope: object }> };
     const user = { id: 'usr_new', username: body.username, displayName: body.displayName || body.username, role: 'operator', projects: ['PROJ-002'], disabled: false, mustChangePassword: true };
@@ -87,7 +99,7 @@ async function openAccess(page: Page) {
   return access;
 }
 
-test('owner sees users, groups, service accounts, and role bindings per scope', async ({ page }) => {
+test('owner sees users, groups, service accounts with API tokens, runners, and role bindings per scope', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
@@ -99,6 +111,8 @@ test('owner sees users, groups, service accounts, and role bindings per scope', 
   await expect(access.getByTestId('access-scope-environment:proj-001/production')).toContainText('Approver');
   await expect(access.getByTestId('access-scope-environment:proj-001/stage')).toContainText('deploy-bot');
   await expect(access.getByTestId('access-group-grp_web')).toContainText('Product Lead');
+  await expect(access.getByTestId('access-service-account-sa_tok_build')).toContainText('API token');
+  await expect(access.getByTestId('access-runner-runner_coding')).toContainText('coding-host');
 
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
@@ -132,4 +146,11 @@ test('owner invites a developer through the invitation flow and issues a service
   await access.getByRole('button', { name: 'Done' }).click();
   await expect(access).not.toContainText(oneTimeToken);
   await expect(access.getByTestId('access-service-account-sa_deploy')).toContainText('deploy-bot token');
+
+  await access.getByTestId('access-enrollment-name').fill('build-host');
+  await access.getByTestId('access-enrollment-create').click();
+  await expect(access.getByTestId('access-enrollment-code')).toContainText(enrollmentCode);
+  await access.getByTestId('access-runners').scrollIntoViewIfNeeded();
+  await setTheme(page, 'light');
+  await page.screenshot({ path: join(resultDir, 'access-area-1920-light-runners.png'), fullPage: true });
 });

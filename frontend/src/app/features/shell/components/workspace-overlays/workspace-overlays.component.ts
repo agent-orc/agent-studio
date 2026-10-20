@@ -124,7 +124,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'overview', label: 'Overview', description: 'Everything in one place, split into Global and Workspace.', icon: 'grid', group: 'general' },
     { key: 'first-run', label: 'First-run checklist', description: 'Set up access, a project, an execution host, and a proof card.', icon: 'list', group: 'general' },
     { key: 'appearance', label: 'Appearance', description: 'Theme and activity-bar side. Applies to you everywhere.', icon: 'sun', group: 'global' },
-    { key: 'access', label: 'Access', description: 'Users, groups, service accounts, and role bindings per scope.', icon: 'settings', group: 'global' },
+    { key: 'access', label: 'Access', description: 'Users, groups, service accounts, API tokens, role bindings, and runner enrollments.', icon: 'settings', group: 'global' },
     { key: 'updates', label: 'Updates', description: 'Keep this instance in sync with stable.', icon: 'refresh', group: 'global' },
     { key: 'workspaces', label: 'Workspaces', description: 'Manage every workspace and its projects.', icon: 'folder', group: 'global' },
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },

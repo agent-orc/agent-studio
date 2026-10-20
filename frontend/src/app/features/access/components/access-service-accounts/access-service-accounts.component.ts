@@ -7,6 +7,7 @@ import {
   type ServiceAccount,
   type ServiceAccountToken,
 } from '../../models/access.model';
+import { ACCESS_CLOCK } from '../../services/access-clock';
 import { AccessService } from '../../services/access.service';
 import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
 
@@ -15,6 +16,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Non-human principals with their own API tokens. A token is shown once at
  * creation; the store keeps only its hash, expiry, last use, and revocation.
+ * API tokens (AGT-3186) are listed here too: one `api.` token each, revocable,
+ * and replaced rather than reissued.
  */
 @Component({
   selector: 'app-access-service-accounts',
@@ -26,6 +29,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 })
 export class AccessServiceAccountsComponent {
   readonly access = inject(AccessService);
+  private readonly now = inject(ACCESS_CLOCK);
   readonly name = signal('');
   readonly description = signal('');
   readonly grant = signal<IamGrant | null>(null);
@@ -41,6 +45,15 @@ export class AccessServiceAccountsComponent {
     return overview.bindings
       .filter(binding => binding.principalKind === 'service-account' && binding.principalId === account.id)
       .map(binding => `${overview.roles.find(role => role.id === binding.role)?.displayName ?? binding.role} · ${scopeLabel(binding.scope, this.access.projects())}`);
+  }
+
+  isApiToken(account: ServiceAccount): boolean {
+    return account.origin === 'api-token';
+  }
+
+  creator(account: ServiceAccount): string {
+    const id = account.createdBy;
+    return this.access.overview()?.users.find(user => user.id === id)?.displayName ?? id ?? '';
   }
 
   activeTokens(account: ServiceAccount): ServiceAccountToken[] {
@@ -59,7 +72,7 @@ export class AccessServiceAccountsComponent {
 
   async issue(account: ServiceAccount): Promise<void> {
     if (this.access.busy()) return;
-    const expiresAt = new Date(Date.now() + this.tokenDays() * DAY_MS).toISOString();
+    const expiresAt = new Date(this.now() + this.tokenDays() * DAY_MS).toISOString();
     this.issued.set(await this.access.createToken(account.id, `${account.name} token`, expiresAt));
   }
 

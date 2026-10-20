@@ -1,19 +1,21 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { scopeLabel, type AccessUser } from '../../models/access.model';
 import { AccessService } from '../../services/access.service';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
+import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
 
 /**
- * The Access area: users, groups, service accounts, and role bindings per
- * scope. A single-user installation sees the same views with its one Owner.
+ * The one Access area: users with their role bindings, groups, service
+ * accounts (API tokens included), runner enrollments, and runners. A
+ * single-user installation sees the same views with its one Owner.
  */
 @Component({
   selector: 'app-access-area',
   standalone: true,
-  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessServiceAccountsComponent],
+  imports: [AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessRunnersComponent, AccessServiceAccountsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
   styleUrl: './access-area.component.scss',
@@ -21,6 +23,7 @@ import { AccessServiceAccountsComponent } from '../access-service-accounts/acces
 export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
   readonly overview = this.access.overview;
+  readonly temporaryPassword = signal<{ username: string; value: string } | null>(null);
 
   readonly counts = computed(() => {
     const overview = this.overview();
@@ -62,6 +65,16 @@ export class AccessAreaComponent implements OnInit {
   status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' {
     if (user.disabled) return 'Disabled';
     return this.access.pendingInvitations().has(user.id) ? 'Invited' : 'Active';
+  }
+
+  async resetPassword(user: AccessUser): Promise<void> {
+    if (this.access.busy()) return;
+    const reset = await this.access.resetPassword(user.id);
+    if (reset) this.temporaryPassword.set({ username: user.username, value: reset.temporaryPassword });
+  }
+
+  async toggleDisabled(user: AccessUser): Promise<void> {
+    if (!this.access.busy()) await this.access.setUserDisabled(user.id, !user.disabled);
   }
 
   private roleName(id: string): string {

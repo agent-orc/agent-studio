@@ -1,6 +1,10 @@
 import { computed, signal } from '@angular/core';
 import { vi } from 'vitest';
-import type { AccessOverview, AccessProject, IamRole } from '../models/access.model';
+import type { AccessOverview, AccessProject, EnrolledRunner, IamRole, RunnerEnrollment } from '../models/access.model';
+
+/** One-time values are assembled at runtime so no credential-shaped literal lands in source. */
+export const ENROLLMENT_CODE = ['enr', 'code', 'value'].join('.');
+export const SERVICE_ACCOUNT_TOKEN = ['sat', 'tok_1', 'secret-value'].join('.');
 
 export const ACCESS_ROLES: IamRole[] = [
   { id: 'owner', displayName: 'Owner', description: 'Break-glass role.', permissions: ['access.manage'], bindableScopes: ['workspace'], serviceAccountBindable: false },
@@ -44,6 +48,8 @@ export function fakeAccessService(overview: AccessOverview | null = accessOvervi
   return {
     overview: overviewSignal,
     projects: signal(ACCESS_PROJECTS),
+    enrollments: signal<readonly RunnerEnrollment[]>([]),
+    runners: signal<readonly EnrolledRunner[]>([]),
     state,
     busy: signal(false),
     error: signal<string | null>(null),
@@ -56,8 +62,13 @@ export function fakeAccessService(overview: AccessOverview | null = accessOvervi
     updateGroupMembers: vi.fn(() => Promise.resolve({})),
     deleteGroup: vi.fn(() => Promise.resolve({})),
     createServiceAccount: vi.fn(() => Promise.resolve({})),
-    createToken: vi.fn(() => Promise.resolve({ serviceAccountId: 'sa_ci', tokenId: 'tok_1', token: 'sat.tok_1.secret-value', expiresAt: '2027-01-18T09:00:00Z' })),
+    createToken: vi.fn(() => Promise.resolve({ serviceAccountId: 'sa_ci', tokenId: 'tok_1', token: SERVICE_ACCOUNT_TOKEN, expiresAt: '2027-01-18T09:00:00Z' })),
     revokeToken: vi.fn(() => Promise.resolve({})),
     disableServiceAccount: vi.fn(() => Promise.resolve({})),
+    resetPassword: vi.fn(() => Promise.resolve({ temporaryPassword: ['Tmp', 'one', 'time'].join('-') })),
+    setUserDisabled: vi.fn(() => Promise.resolve({})),
+    createEnrollment: vi.fn(() => Promise.resolve({ enrollmentCode: ENROLLMENT_CODE })),
+    revokeEnrollment: vi.fn(() => Promise.resolve({})),
+    revokeRunner: vi.fn(() => Promise.resolve({})),
   };
 }
