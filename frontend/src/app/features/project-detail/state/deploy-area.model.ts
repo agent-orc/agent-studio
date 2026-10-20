@@ -360,12 +360,9 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
     const report = base.view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded'
       && (!base.view?.deployedArtifact || row.artifact === base.view.deployedArtifact)) ?? null;
     const releaseDigest = status?.currentRelease?.artifactDigests[0] ?? null;
-    const interventionArtifact = releaseDigest
-      ? base.view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest))?.artifact ?? releaseDigest
-      : null;
     const artifact = status?.intervention
-      ? interventionArtifact
-      : base.view?.deployedArtifact ?? status?.currentRelease?.artifactDigests[0] ?? null;
+      ? base.view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest ?? ''))?.artifact ?? releaseDigest
+      : base.view?.deployedArtifact ?? releaseDigest;
     const statusRelease = status?.currentRelease ?? null;
     const release = releaseForArtifact(artifact, sources.releases)
       ?? (statusRelease?.artifactDigests.some(item => digestOf(item) === digestOf(artifact ?? '')) ? statusRelease : null);
