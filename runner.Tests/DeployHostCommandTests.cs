@@ -144,9 +144,6 @@ public sealed class DeployHostCommandTests
                 SecretScope.ForEnvironment(project, "stage"), "DATABASE_URL", value, SecretActor.Human("owner"));
             factory.Services.GetRequiredService<ProjectSecretBindings>().Bind(project, "stage", "DATABASE_URL",
                 $"secret://{project}/stage/DATABASE_URL", "human:owner", null);
-            Git(repo, "add", ".");
-            Git(repo, "commit", "-m", "deployment declarations");
-            commit = Git(repo, "rev-parse", "HEAD").Trim();
             WriteReleaseEvidence(root, project, image, commit);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
             using var queued = await client.PostAsJsonAsync("/api/deploy/gate-releases",
