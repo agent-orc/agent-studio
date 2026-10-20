@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace AgentStudio.Telemetry;
 
 /// <summary>Fields of one OTLP data point, whichever encoding they came from.</summary>
@@ -42,6 +44,13 @@ public sealed class OtlpLimitException(string message) : Exception(message);
 /// <see cref="OtlpLimits.MaxDecodedBytes"/> estimated bytes it throws
 /// <see cref="OtlpLimitException"/>, so decoding stops before the rest of the
 /// body is turned into records.</para>
+/// <para>It bounds what the writer stores for one request as well. A shared
+/// set costs its memory once, but the writer renders its JSON for every point
+/// and writes it into every log row. So each record charges the bytes the
+/// writer stores and renders for it (attribute JSON, measured once per shared
+/// set and once per merged set, plus name, unit, body, severity text, event
+/// name, and ids) to <see cref="OtlpLimits.MaxStoredBytes"/>, and decoding
+/// stops with <see cref="OtlpLimitException"/> past it.</para>
 /// <para>It bounds the CPU time of one request as well. The decoders read at
 /// most <see cref="OtlpLimits.MaxAttributes"/> entries of every attribute list
 /// (<see cref="TakesAttribute"/>) and skip the rest without creating strings.
@@ -57,6 +66,8 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
     private const int MaxUnitChars = 63;
     /// <summary>Object header, fields, and list slot of one record; strings and attribute sets come on top.</summary>
     private const int RecordBytes = 160;
+    /// <summary>The minute and the hour bucket row one data point updates.</summary>
+    private const int StoredPointBytes = 192;
     private const int StringHeaderBytes = 24;
     private const int ReferenceBytes = 16;
     private const int CancellationCheckInterval = 4096;
@@ -68,6 +79,7 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
     private long _records;
     private int _scopes;
     private long _estimatedBytes;
+    private long _storedBytes;
     private long _work;
     private long _nextCancellationCheck = CancellationCheckInterval;
 
@@ -177,6 +189,7 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         var attributes = Merge(scope, point.Attributes);
         unit = OtlpAttributeBuilder.Truncate(unit, MaxUnitChars);
         Account(RecordBytes + StringBytes(name) + StringBytes(unit) + OwnBytes(attributes, point.Attributes));
+        Store(StoredPointBytes + Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(unit) + attributes.JsonBytes);
         _metrics.Add(new MetricSample(name, unit, kind, temporality, attributes,
             point.TimeUnixNano == 0 ? receivedUnixNano : point.TimeUnixNano, point.StartTimeUnixNano,
             value, count, Finite(point.Min), Finite(point.Max)));
@@ -202,12 +215,14 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         var eventName = string.IsNullOrEmpty(log.EventName) ? null : OtlpAttributeBuilder.Truncate(log.EventName, 255);
         Account(RecordBytes + StringBytes(body) + StringBytes(severityText) + StringBytes(eventName)
             + StringBytes(log.TraceId) + StringBytes(log.SpanId) + OwnBytes(attributes, log.Attributes));
-        _logs.Add(new TelemetryLogRecord(time, severity, severityText, body, attributes, log.TraceId, log.SpanId, eventName));
+        var record = new TelemetryLogRecord(time, severity, severityText, body, attributes, log.TraceId, log.SpanId, eventName);
+        Store(record.StoredBytes(attributes.JsonBytes));
+        _logs.Add(record);
     }
 
-    public OtlpDecodeResult<MetricSample> Metrics() => new(_metrics, _rejected, _message, _estimatedBytes);
+    public OtlpDecodeResult<MetricSample> Metrics() => new(_metrics, _rejected, _message, _estimatedBytes, _storedBytes);
 
-    public OtlpDecodeResult<TelemetryLogRecord> Logs() => new(_logs, _rejected, _message, _estimatedBytes);
+    public OtlpDecodeResult<TelemetryLogRecord> Logs() => new(_logs, _rejected, _message, _estimatedBytes, _storedBytes);
 
     /// <summary>Lowercase hex of a trace or span id; all-zero and wrong-length ids are absent.</summary>
     public static string? Identifier(ReadOnlySpan<byte> bytes, int expectedLength)
@@ -255,6 +270,13 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         _estimatedBytes += bytes;
         if (_estimatedBytes > limits.MaxDecodedBytes)
             throw new OtlpLimitException($"The decoded request needs more than {limits.MaxDecodedBytes} bytes of memory.");
+    }
+
+    private void Store(long bytes)
+    {
+        _storedBytes += bytes;
+        if (_storedBytes > limits.MaxStoredBytes)
+            throw new OtlpLimitException($"The request would store more than {limits.MaxStoredBytes} bytes.");
     }
 
     private static double? Finite(double? value) => value is { } number && double.IsFinite(number) ? number : null;

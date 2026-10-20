@@ -9,12 +9,12 @@ namespace AgentStudio.Telemetry;
 /// unbounded text nor build unbounded memory before the intake refuses it.
 /// </summary>
 public sealed record OtlpLimits(int MaxAttributes, int MaxAttributeValueChars, int MaxBodyChars,
-    int MaxAttributeBytes, int MaxRecords, long MaxDecodedBytes, int MaxScopes)
+    int MaxAttributeBytes, int MaxRecords, long MaxDecodedBytes, int MaxScopes, long MaxStoredBytes)
 {
     public static OtlpLimits From(TelemetryOptions options)
         => new(options.MaxAttributesPerRecord, options.MaxAttributeValueChars, options.MaxLogBodyChars,
             options.MaxAttributeBytesPerRecord, options.MaxRecordsPerRequest, options.MaxDecodedBytesPerRequest,
-            options.MaxScopesPerRequest);
+            options.MaxScopesPerRequest, options.MaxStoredBytesPerRequest);
 }
 
 /// <summary>

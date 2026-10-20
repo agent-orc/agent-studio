@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace AgentStudio.Telemetry;
@@ -22,14 +23,20 @@ public enum MetricTemporality { Unspecified = 0, Delta = 1, Cumulative = 2 }
 /// a record without attributes of its own shares the set of its resource and
 /// scope (<see cref="IsShared"/>), and a record with its own attributes refers
 /// to the same strings. Only shared sets cache their JSON text, so a queued
-/// batch never holds one JSON text per record.
+/// batch never holds one JSON text per record. The JSON escapes only what JSON
+/// requires (quotes, backslashes, control characters), so a value of
+/// <c>&lt;</c> or non-ASCII text stores about as many bytes as it has.
 /// </summary>
 public sealed class TelemetryAttributes
 {
     public static readonly TelemetryAttributes Empty = new([], shared: true);
+    private static readonly JsonWriterOptions WriterOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    [ThreadStatic] private static ArrayBufferWriter<byte>? _measureBuffer;
+    [ThreadStatic] private static Utf8JsonWriter? _measureWriter;
 
     private readonly KeyValuePair<string, string>[] _items;
     private string? _json;
+    private int? _jsonBytes;
 
     private TelemetryAttributes(KeyValuePair<string, string>[] items, bool shared)
     {
@@ -58,6 +65,9 @@ public sealed class TelemetryAttributes
 
     /// <summary>Canonical JSON object; equal sets have equal text.</summary>
     public string Json => IsShared ? _json ??= Render() : Render();
+
+    /// <summary>UTF-8 length of <see cref="Json"/>, measured once without keeping the text of a set that is not shared.</summary>
+    public int JsonBytes => _jsonBytes ??= IsShared ? Encoding.UTF8.GetByteCount(Json) : Measure();
 
     public static TelemetryAttributes From(IEnumerable<KeyValuePair<string, string>> values, bool shared = false)
     {
@@ -92,13 +102,27 @@ public sealed class TelemetryAttributes
     private string Render()
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
-        {
-            writer.WriteStartObject();
-            foreach (var (key, value) in _items) writer.WriteString(key, value);
-            writer.WriteEndObject();
-        }
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) Write(writer);
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// <summary>Renders into a buffer the thread reuses, so measuring every record's set allocates nothing per record.</summary>
+    private int Measure()
+    {
+        var buffer = _measureBuffer ??= new ArrayBufferWriter<byte>();
+        buffer.ResetWrittenCount();
+        var writer = _measureWriter ??= new Utf8JsonWriter(buffer, WriterOptions);
+        writer.Reset(buffer);
+        Write(writer);
+        return buffer.WrittenCount;
+    }
+
+    private void Write(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        foreach (var (key, value) in _items) writer.WriteString(key, value);
+        writer.WriteEndObject();
+        writer.Flush();
     }
 }
 
@@ -114,18 +138,26 @@ public sealed record MetricSample(
 
 public sealed record TelemetryLogRecord(
     long TimeUnixNano, int SeverityNumber, string SeverityText, string Body,
-    TelemetryAttributes Attributes, string? TraceId, string? SpanId, string? EventName);
+    TelemetryAttributes Attributes, string? TraceId, string? SpanId, string? EventName)
+{
+    /// <summary>Stored payload size: text columns in UTF-8 plus a fixed row overhead.</summary>
+    public long StoredBytes(long attributesJsonBytes)
+        => 48 + Encoding.UTF8.GetByteCount(Body) + attributesJsonBytes + Encoding.UTF8.GetByteCount(SeverityText)
+           + (TraceId?.Length ?? 0) + (SpanId?.Length ?? 0) + Encoding.UTF8.GetByteCount(EventName ?? "");
+}
 
 /// <summary>
 /// What one OTLP request produced: accepted items, a count of rejected ones,
-/// and the estimated memory the items hold (see <see cref="OtlpRecordFactory"/>).
+/// the estimated memory the items hold, and the bytes the writer will store
+/// and render for them (see <see cref="OtlpRecordFactory"/>).
 /// </summary>
-public sealed record OtlpDecodeResult<T>(IReadOnlyList<T> Items, long Rejected, string? RejectionMessage, long EstimatedBytes = 0);
+public sealed record OtlpDecodeResult<T>(IReadOnlyList<T> Items, long Rejected, string? RejectionMessage, long EstimatedBytes = 0,
+    long StoredBytes = 0);
 
 /// <summary>One accepted request, waiting for the background writer.</summary>
 public sealed record TelemetryIngestBatch(
     TelemetryEnvironmentKey Environment, IReadOnlyList<MetricSample> Metrics, IReadOnlyList<TelemetryLogRecord> Logs,
-    long EstimatedBytes)
+    long EstimatedBytes, long StoredBytes = 0)
 {
     public int RecordCount => Metrics.Count + Logs.Count;
 }

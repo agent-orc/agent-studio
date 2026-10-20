@@ -9,10 +9,11 @@ public sealed record OtlpIntakeOutcome(int StatusCode, byte[] Body, string Conte
 
 /// <summary>
 /// OTLP/HTTP intake for <c>/v1/metrics</c> and <c>/v1/logs</c>. Order: media
-/// type, ingest token, a still-declared environment, signal scope, a free
-/// request slot (in total and for the environment), bounded body read (gzip
-/// allowed), decoding with record, scope, attribute, and memory caps,
-/// time-window admission, then a non-blocking enqueue. Body read and decoding
+/// type, ingest token, a still-declared environment, signal scope, room in the
+/// queue for the environment, a free request slot (in total and for the
+/// environment), bounded body read (gzip allowed), decoding with record, scope,
+/// attribute, memory, and stored-byte caps, time-window admission, then a
+/// non-blocking enqueue. Body read and decoding
 /// share one deadline; past it the request gets 408 and frees its slot.
 /// Nothing here touches the store; a full queue or no free slot answers 429
 /// with Retry-After.
@@ -65,6 +66,7 @@ public sealed class TelemetryIntakeService
 
         // Body, decoded records, and the JSON document live only while a slot is held.
         var environment = new TelemetryEnvironmentKey(principal.Project, principal.Environment);
+        if (!_queue.HasRoom(environment)) return Busy(encoding.Value);
         using var slot = _slots.TryAcquire(environment);
         if (slot is null) return Busy(encoding.Value);
         using var deadline = new CancellationTokenSource(_options.RequestDeadline, _clock);
@@ -111,8 +113,8 @@ public sealed class TelemetryIntakeService
                     ? OtlpProtobufDecoder.DecodeMetrics(payload, factory)
                     : OtlpJsonDecoder.DecodeMetrics(payload, factory);
                 var admitted = TelemetryAdmissionPolicy.AdmitMetrics(decoded, now, _options);
-                (batch, rejected, message) = (new TelemetryIngestBatch(environment, admitted.Items, [], admitted.EstimatedBytes),
-                    admitted.Rejected, admitted.RejectionMessage);
+                (batch, rejected, message) = (new TelemetryIngestBatch(environment, admitted.Items, [], admitted.EstimatedBytes,
+                    admitted.StoredBytes), admitted.Rejected, admitted.RejectionMessage);
             }
             else
             {
@@ -120,8 +122,8 @@ public sealed class TelemetryIntakeService
                     ? OtlpProtobufDecoder.DecodeLogs(payload, factory)
                     : OtlpJsonDecoder.DecodeLogs(payload, factory);
                 var admitted = TelemetryAdmissionPolicy.AdmitLogs(decoded, now, _options);
-                (batch, rejected, message) = (new TelemetryIngestBatch(environment, [], admitted.Items, admitted.EstimatedBytes),
-                    admitted.Rejected, admitted.RejectionMessage);
+                (batch, rejected, message) = (new TelemetryIngestBatch(environment, [], admitted.Items, admitted.EstimatedBytes,
+                    admitted.StoredBytes), admitted.Rejected, admitted.RejectionMessage);
             }
         }
         catch (OtlpFormatException ex)
@@ -218,7 +220,8 @@ public sealed class TelemetryIntakeService
         => Error(encoding, 429, 14, "Telemetry intake is busy; retry later.") with { RetryAfterSeconds = RetryAfterSeconds };
 
     private OtlpIntakeOutcome TooLarge(OtlpEncoding encoding)
-        => Error(encoding, 413, 8, $"The request is larger than the intake limit of {_options.MaxRequestBytes} bytes or {_options.MaxQueuedRecords} records.");
+        => Error(encoding, 413, 8,
+            $"The request is larger than the intake limit of {_options.MaxRequestBytes} bytes or {_options.MaxQueuedRecordsPerEnvironment} records.");
 
     private static OtlpIntakeOutcome Error(OtlpEncoding encoding, int status, int code, string message)
         => new(status, OtlpResponses.Status(encoding, code, message), OtlpResponses.ContentType(encoding));

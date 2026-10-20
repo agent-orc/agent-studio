@@ -165,7 +165,7 @@ public sealed class TelemetryStoreTests : IDisposable
     public void Minute_bucket_cap_removes_the_oldest_hours_across_environments_and_keeps_hour_buckets()
     {
         // Ten minute buckets per environment and hour (two series times five minutes), over three hours.
-        var store = Store(new TelemetryOptions { StoreRoot = _root, MaxMinuteBucketBytes = 40 * TelemetryStore.MinuteBucketRowBytes });
+        var store = Store(new TelemetryOptions { StoreRoot = _root, MaxMinuteBucketBytes = 40 * TelemetryStore.BucketRowBytes });
         var production = new TelemetryEnvironmentKey("Shop", "production");
         var start = _clock.GetUtcNow();
         foreach (var environment in new[] { _stage, production })
@@ -177,7 +177,7 @@ public sealed class TelemetryStoreTests : IDisposable
             }
         _clock.Advance(TimeSpan.FromHours(3));
 
-        Assert.Equal(new TelemetryMinuteCapResult(0, null), Store(new TelemetryOptions { StoreRoot = _root }).EnforceMinuteBucketCap(store.KnownEnvironments()));
+        Assert.Equal(new TelemetryBucketCapResult(0, null), Store(new TelemetryOptions { StoreRoot = _root }).EnforceMinuteBucketCap(store.KnownEnvironments()));
         // 60 buckets exceed the cap of 40; the oldest hours go until at most 36 remain.
         var trimmed = store.EnforceMinuteBucketCap(store.KnownEnvironments());
 
@@ -190,6 +190,34 @@ public sealed class TelemetryStoreTests : IDisposable
         var hours = store.QueryMetrics(production, new MetricQuery("cpu", new Dictionary<string, string>(), MetricBucketPolicy.Plan(_clock.GetUtcNow(),
             start, _clock.GetUtcNow(), 3600, new TelemetryOptions(), out _)!, MetricAggregation.Count, 10));
         Assert.Equal([5d, 5d, 5d], Assert.Single(hours.Series).Points.Select(point => point.Value));
+    }
+
+    [Fact]
+    public void Hour_bucket_cap_removes_the_oldest_days_of_points_older_than_the_minute_retention()
+    {
+        // Points 28 to 30 days old write only hour buckets: 2 environments x 3 days x 4 hours x 2 series = 48.
+        var store = Store(new TelemetryOptions { StoreRoot = _root, MaxHourBucketBytes = 30 * TelemetryStore.BucketRowBytes });
+        var production = new TelemetryEnvironmentKey("Shop", "production");
+        var start = new DateTimeOffset(2026, 9, 16, 0, 0, 0, TimeSpan.Zero);
+        foreach (var environment in new[] { _stage, production })
+            for (var day = 0; day < 3; day++)
+            for (var hour = 1; hour <= 4; hour++)
+            {
+                var at = Nanos(start.AddDays(day).AddHours(hour));
+                store.Write(environment, [Gauge("cpu", 1, at), Gauge("memory", 1, at)], [], _clock.GetUtcNow());
+            }
+
+        Assert.Equal(new TelemetryBucketCapResult(0, null), store.EnforceMinuteBucketCap(store.KnownEnvironments()));
+        Assert.Equal(new TelemetryBucketCapResult(0, null), Store().EnforceHourBucketCap(store.KnownEnvironments()));
+        // 48 buckets exceed the cap of 30; whole days go, oldest first, until at most 27 remain.
+        var trimmed = store.EnforceHourBucketCap(store.KnownEnvironments());
+
+        Assert.Equal((32L, start.AddDays(2)), (trimmed.Buckets, trimmed.Cutoff));
+        Assert.Equal(new TelemetryBucketCapResult(0, null), store.EnforceHourBucketCap(store.KnownEnvironments()));
+        var hours = store.QueryMetrics(production, new MetricQuery("cpu", new Dictionary<string, string>(), MetricBucketPolicy.Plan(_clock.GetUtcNow(),
+            start, _clock.GetUtcNow(), 3600, new TelemetryOptions(), out _)!, MetricAggregation.Count, 10));
+        Assert.Equal(4, Assert.Single(hours.Series).Points.Count);
+        Assert.All(hours.Series[0].Points, point => Assert.True(point.Time >= start.AddDays(2)));
     }
 
     [Fact]

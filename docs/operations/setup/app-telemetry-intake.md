@@ -49,18 +49,22 @@ is rejected, not revoked: if the declarations cannot be read, the intake answers
 | Token without the signal | 403 |
 | Content type other than `application/x-protobuf` or `application/json` | 415 |
 | Body over `Telemetry:MaxRequestBytes` (8 MiB, also after gzip expansion) | 413 |
-| More than `Telemetry:MaxRecordsPerRequest` (20,000) points or records, more than `Telemetry:MaxScopesPerRequest` (4,096) resources and scopes together, or more than `Telemetry:MaxDecodedBytesPerRequest` (32 MiB) of estimated memory | 413 |
-| Malformed protobuf or JSON | 400 |
+| More than `Telemetry:MaxRecordsPerRequest` (20,000) points or records, more than `Telemetry:MaxScopesPerRequest` (4,096) resources and scopes together, more than `Telemetry:MaxDecodedBytesPerRequest` (32 MiB) of estimated memory, or more than `Telemetry:MaxStoredBytesPerRequest` (64 MiB) to store | 413 |
+| Malformed protobuf or JSON, including a JSON string with a lone surrogate escape (`"\uD800"`) or a number outside the double range (`1e400`) | 400 |
 | Body not received and decoded within `Telemetry:RequestDeadlineSeconds` (30) | 408 |
 | Environment declarations cannot be read | 503 with `Retry-After: 2`, for 30 seconds before they are read again |
-| Queue full, `Telemetry:MaxConcurrentRequests` (4) requests already in progress, or `Telemetry:MaxConcurrentRequestsPerEnvironment` (2) of them for this environment | 429 with `Retry-After: 2`; OTLP exporters retry |
+| Queue full, this environment's share of the queue full, `Telemetry:MaxConcurrentRequests` (4) requests already in progress, or `Telemetry:MaxConcurrentRequestsPerEnvironment` (2) of them for this environment | 429 with `Retry-After: 2`; OTLP exporters retry |
 
 Error bodies are a `google.rpc.Status` in the request's encoding. The intake
 never waits for the disk. A request is parsed, checked, and queued. One
 background writer stores the queue in batches. When more than
 `Telemetry:MaxQueuedRecords` (200,000) records or `Telemetry:MaxQueuedBytes`
 (128 MiB) of estimated memory are waiting, new requests get 429 until the
-writer catches up.
+writer catches up. One environment may fill only
+`Telemetry:MaxQueueSharePercentPerEnvironment` (50 percent) of each budget, so
+it cannot keep the queue full for the others; a request larger than that share
+gets 413. An environment whose share is already full gets 429 before its body
+is read.
 
 Memory and CPU time per request are bounded while it is decoded, not
 afterwards. Decoding stops with 413 at the first record past
@@ -80,6 +84,17 @@ shared strings. The merged attributes of one record are capped at
 (16 KiB of UTF-8 keys and values); further attributes are dropped, which also
 caps the size of a series key. The request deadline also covers decoding: the
 decoders check it every few thousand steps.
+
+What a request stores is bounded by the request as well. A shared attribute set
+costs its memory once, but every log row stores its attribute JSON and every
+data point renders its series key. So each record counts the bytes the writer
+stores and renders for it (attribute JSON, body, severity text, event name, ids,
+metric name and unit, plus a fixed row size) toward
+`Telemetry:MaxStoredBytesPerRequest` (64 MiB, at most a quarter of
+`LogMaxBytesPerEnvironment`). Decoding stops with 413 past it. The writer also
+stores at most about one such budget per flush. Attribute JSON escapes only
+quotes, backslashes, and control characters, so `<`, `&`, or non-ASCII text
+store about as many bytes as they have.
 
 Each environment can hold at most `MaxConcurrentRequestsPerEnvironment` of the
 `MaxConcurrentRequests` slots, so slow uploads from one environment's token
@@ -107,6 +122,7 @@ with `Telemetry:StoreRoot`.
 | Logs | 7 days, at most 256 MiB of record payload per environment | `Telemetry:LogRetentionDays`, `Telemetry:LogMaxBytesPerEnvironment` |
 | Series per environment | 10,000 series and 32 MiB of estimated series cache (2 bytes per character of name and attribute JSON plus 192 bytes per series); points of further new series are dropped and logged | `Telemetry:MaxSeriesPerEnvironment`, `Telemetry:MaxSeriesBytesPerEnvironment` |
 | Minute buckets of all environments together | about 2 GiB (96 bytes estimated per bucket) | `Telemetry:MaxMinuteBucketBytes` |
+| Hour buckets of all environments together | about 1 GiB (96 bytes estimated per bucket) | `Telemetry:MaxHourBucketBytes` |
 
 Every bucket keeps count, sum, min, max, and last value. Gauges and sums add
 their value as one observation. Delta histograms add count and sum. Cumulative
@@ -119,7 +135,11 @@ sweep then checks the minute buckets of all environments against
 `MaxMinuteBucketBytes`. Above the cap it removes whole hours of minute buckets,
 oldest first across every environment, until the total is at 90 percent of the
 cap. Hourly aggregates stay, so a minute-resolution query over a trimmed range
-shows only what is left; ask for `step=3600` to read the hourly data.
+shows only what is left; ask for `step=3600` to read the hourly data. Points
+15 to 90 days old write only hour buckets, so the same sweep checks the hour
+buckets of all environments against `MaxHourBucketBytes`. Above that cap it
+removes whole days of hour buckets, oldest first across every environment,
+until the total is at 90 percent of the cap.
 
 ## Query API
 

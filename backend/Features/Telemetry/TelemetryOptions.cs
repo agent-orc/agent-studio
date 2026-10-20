@@ -18,10 +18,17 @@ public sealed record TelemetryOptions
     public long MaxSeriesBytesPerEnvironment { get; init; } = 32L * 1024 * 1024;
     /// <summary>Estimated disk size of the minute buckets of all environments together, enforced by the retention sweep.</summary>
     public long MaxMinuteBucketBytes { get; init; } = 2L * 1024 * 1024 * 1024;
+    /// <summary>Estimated disk size of the hour buckets of all environments together, enforced by the retention sweep.</summary>
+    public long MaxHourBucketBytes { get; init; } = 1L * 1024 * 1024 * 1024;
     public int MaxRequestBytes { get; init; } = 8 * 1024 * 1024;
     public int MaxRecordsPerRequest { get; init; } = 20_000;
     /// <summary>Estimated memory of the records decoded from one request; decoding stops past it.</summary>
     public long MaxDecodedBytesPerRequest { get; init; } = 32L * 1024 * 1024;
+    /// <summary>
+    /// Bytes the writer stores and renders for the records of one request (attribute JSON, body, and other text
+    /// of every record, a shared set counted for each record); decoding stops past it.
+    /// </summary>
+    public long MaxStoredBytesPerRequest { get; init; } = 64L * 1024 * 1024;
     /// <summary>Resources and instrumentation scopes of one request together; decoding stops past it.</summary>
     public int MaxScopesPerRequest { get; init; } = 4096;
     public int MaxConcurrentRequests { get; init; } = 4;
@@ -31,6 +38,8 @@ public sealed record TelemetryOptions
     public int RequestDeadlineSeconds { get; init; } = 30;
     public int MaxQueuedRecords { get; init; } = 200_000;
     public long MaxQueuedBytes { get; init; } = 128L * 1024 * 1024;
+    /// <summary>Share of <see cref="MaxQueuedRecords"/> and <see cref="MaxQueuedBytes"/> one project environment may fill.</summary>
+    public int MaxQueueSharePercentPerEnvironment { get; init; } = 50;
     public int MaxFutureSkewMinutes { get; init; } = 10;
     public int MaxLogBodyChars { get; init; } = 16 * 1024;
     public int MaxAttributeValueChars { get; init; } = 1024;
@@ -44,6 +53,8 @@ public sealed record TelemetryOptions
     public TimeSpan LogRetention => TimeSpan.FromDays(LogRetentionDays);
     public TimeSpan MaxFutureSkew => TimeSpan.FromMinutes(MaxFutureSkewMinutes);
     public TimeSpan RequestDeadline => TimeSpan.FromSeconds(RequestDeadlineSeconds);
+    public long MaxQueuedRecordsPerEnvironment => Math.Max(1, (long)MaxQueuedRecords * MaxQueueSharePercentPerEnvironment / 100);
+    public long MaxQueuedBytesPerEnvironment => Math.Max(1, MaxQueuedBytes * MaxQueueSharePercentPerEnvironment / 100);
 
     public static TelemetryOptions From(IConfiguration configuration)
     {
@@ -54,8 +65,11 @@ public sealed record TelemetryOptions
             || options.MaxLogBodyChars < 64 || options.MaxAttributeValueChars < 16 || options.MaxAttributesPerRecord < 1
             || options.RetentionSweepMinutes < 1 || options.MaxFutureSkewMinutes < 0
             || options.MaxSeriesBytesPerEnvironment < 64 * 1024 || options.MaxMinuteBucketBytes < 1024 * 1024
-            || options.MaxRecordsPerRequest < 1 || options.MaxRecordsPerRequest > options.MaxQueuedRecords
-            || options.MaxDecodedBytesPerRequest < 1024 * 1024 || options.MaxDecodedBytesPerRequest > options.MaxQueuedBytes
+            || options.MaxQueueSharePercentPerEnvironment is < 1 or > 100
+            || options.MaxRecordsPerRequest < 1 || options.MaxRecordsPerRequest > options.MaxQueuedRecordsPerEnvironment
+            || options.MaxDecodedBytesPerRequest < 1024 * 1024 || options.MaxDecodedBytesPerRequest > options.MaxQueuedBytesPerEnvironment
+            || options.MaxStoredBytesPerRequest < 64 * 1024 || options.MaxStoredBytesPerRequest > options.LogMaxBytesPerEnvironment / 4
+            || options.MaxHourBucketBytes < 1024 * 1024
             || options.MaxConcurrentRequests < 1 || options.MaxAttributeBytesPerRecord < 256
             || options.MaxScopesPerRequest < 1 || options.MaxConcurrentRequestsPerEnvironment < 1
             || options.MaxConcurrentRequestsPerEnvironment > options.MaxConcurrentRequests
