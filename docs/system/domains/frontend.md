@@ -363,7 +363,8 @@ occur. It is not a claim about tunnel transfer time.
   Dossier. Task detail and board surfaces no longer expose parent-card rollups
   or assignment controls. Legacy `#/epics` and `#/projects/<project>/epics`
   routes and restored Epics tabs open the Dossiers overview tab and rewrite to
-  its URL; the parent-card data, routes, and API behavior are retired.
+  its URL; parent-card data and assignment routes are retired. Incoming
+  `epicId` is ignored with a deprecation warning for one API version.
 - The Deploy overview reads declared environments from AGT-3176 and status,
   releases, deploy runs, and step logs from `/api/projects/<project>/deploy`.
   Release and run lists request `/releases/page` and `/deployments/page` with
