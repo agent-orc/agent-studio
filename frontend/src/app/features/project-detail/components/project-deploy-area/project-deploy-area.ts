@@ -189,6 +189,7 @@ export class ProjectDeployAreaComponent {
     if (resetSelection) {
       this.selectedRunId.set(null);
       this.actionState.set(IDLE);
+      this.historyFilter.set(ALL_DEPLOY_RUNS);
       this.historyOffset.set(0);
       this.releaseOffset.set(0);
     }
