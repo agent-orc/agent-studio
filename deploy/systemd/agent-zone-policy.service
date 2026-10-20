@@ -1,0 +1,28 @@
+# AGT-3231: renders the zone network policy, ensures the zone Docker networks,
+# ipsets and resolver, replaces the AGENT-ZONE-* iptables and ip6tables chains
+# and verifies them with probe containers. Rerunning with an unchanged policy
+# changes nothing. Enabled for multi-user.target, it restores the rules at boot;
+# the timer reruns it so a flushed chain or a stopped resolver comes back.
+# Install steps: docs/operations/setup/zone-network-policy.md.
+[Unit]
+Description=Agent Studio zone network policy
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ZONE_POLICY_FILE=/etc/agent-studio/zone-policy/zone-policy.json
+# Installation addresses (AGENT_ZONE_*) and AGENT_ZONES=work on a work host.
+EnvironmentFile=-/etc/agent-studio/zone-policy/zone-policy.env
+ExecStart=/usr/local/libexec/agent-apply-zone-policy --execute
+# Root is needed for iptables, ipset, systemctl and the Docker socket; nothing
+# else is written except the applied state and the resolver configuration
+# below /var/lib/agent-studio/zone-policy.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+SyslogIdentifier=agent-zone-policy
+
+[Install]
+WantedBy=multi-user.target

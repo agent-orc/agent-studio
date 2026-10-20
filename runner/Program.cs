@@ -55,6 +55,10 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
 
+// AGT-3231: render, apply and verify the zone network policy on this host.
+if (args is ["zone-policy", ..])
+    return await ZonePolicyCommand.RunAsync(args[1..], Console.Out, Console.Error, CancellationToken.None);
+
 // AGT-3074: scheduled release-category coverage run, started by agent-coverage-run.timer.
 if (args is ["coverage-run", ..])
 {
