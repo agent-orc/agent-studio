@@ -10,6 +10,20 @@ const TASK_ID = 'route-restoration-task';
 const WATCH_PATH = '/tmp/route-project';
 const TASK_KEY = `${WATCH_PATH}::${TASK_ID}`;
 const WORKBENCH_KEY = 'ROU-W4';
+const WORKBENCH = {
+  id: 'route-lab',
+  key: WORKBENCH_KEY,
+  title: 'Route Lab',
+  summary: 'Deep-link restoration proof.',
+  status: 'active',
+  phase: 'testing',
+  updatedAtUtc: '2026-07-24T10:00:00Z',
+  entryPath: 'docs/concepts/route-lab.html',
+  valid: true,
+  error: null,
+  sourceTaskKeys: [TASK_REFERENCE],
+  relatedTaskKeys: [],
+};
 
 const EMPTY_GROUPED = {
   backlog: [], preparation: [], orchestratorPrep: [],
@@ -85,6 +99,13 @@ async function stubRouteData(page: Page): Promise<void> {
     }]);
     if (url.pathname === '/api/v1/projects') return json([]);
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
+    if (url.pathname === '/api/usage/cockpit') return json({
+      snapshotVersion: 1, workspaceId: 'WS-ROUTE', timeZone: 'Europe/Berlin', weekStart: 1,
+      generatedAt: '2026-07-24T10:00:00Z',
+      calendar: { timeZone: 'Europe/Berlin', weekStart: 1,
+        dayStartUtc: '', dayEndUtc: '', weekStartUtc: '', weekEndUtc: '' },
+      clis: [], cost: null, runs: [], slots: [], sources: {},
+    });
     if (url.pathname.startsWith('/api/runner/token-summary-aggregate')) {
       return json({
         projects: 0,
@@ -229,25 +250,21 @@ async function stubRouteData(page: Page): Promise<void> {
       });
     }
     if (url.pathname.endsWith('/wiki/home')) return json({ sections: [] });
+    if (url.pathname === '/api/workbenches') {
+      return json({
+        projectName: url.searchParams.get('project'),
+        count: 1,
+        currentCount: 1,
+        historyCount: 0,
+        items: [{ projectName: PROJECT, workbench: WORKBENCH }],
+      });
+    }
     if (url.pathname.endsWith('/workbenches')) {
       return json({
         projectName: PROJECT,
         includesHistory: false,
         count: 1,
-        items: [{
-          id: 'route-lab',
-          key: WORKBENCH_KEY,
-          title: 'Route Lab',
-          summary: 'Deep-link restoration proof.',
-          status: 'active',
-          phase: 'testing',
-          updatedAtUtc: '2026-07-24T10:00:00Z',
-          entryPath: 'docs/concepts/route-lab.html',
-          valid: true,
-          error: null,
-          sourceTaskKeys: [TASK_REFERENCE],
-          relatedTaskKeys: [],
-        }],
+        items: [WORKBENCH],
       });
     }
     if (url.pathname.endsWith('/workbenches/route-lab')) {
@@ -325,6 +342,22 @@ test.describe('Studio route restoration', () => {
   test.beforeEach(async ({ page }) => {
     await stubRouteData(page);
   });
+
+  for (const legacy of [
+    { path: '/epics', canonical: '/workbenches', tab: 'workbenches:__all__' },
+    { path: `/projects/${PROJECT_SLUG}/epics`, canonical: `/projects/${PROJECT_SLUG}/workbenches`, tab: `workbenches:${PROJECT}` },
+  ]) {
+    test(`retired overview ${legacy.path} restores the Dossiers tab and canonical URL`, async ({ page }, testInfo) => {
+      await page.goto(`/#${legacy.path}`, { waitUntil: 'commit' });
+      await expect(page.getByTestId(`studio-tab-${legacy.tab}`)).toBeVisible();
+      await expect.poll(() => new URL(page.url()).hash).toBe(`#${legacy.canonical}`);
+      await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+      await page.screenshot({
+        path: evidencePath(testInfo, legacy.tab.endsWith('__all__')
+          ? 'retired-overview-global--mocked.png' : 'retired-overview-project--mocked.png'),
+      });
+    });
+  }
 
   test('Task detail route restores its tab state and survives reload', async ({ page }, testInfo) => {
     await page.goto(`/#/tasks/${TASK_REFERENCE}?view=evidence%3Aprotocol`, { waitUntil: 'commit' });

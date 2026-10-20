@@ -96,6 +96,7 @@ public sealed record TaskCycleAnalysis(TaskCycleTime? Row, string? ExclusionReas
     public IReadOnlyList<DateTime> Deliveries { get; init; } = [];
     public const string ExcludedNoCompletion = "no-completion-timestamp";
     public const string ExcludedNotCompleted = "not-completed";
+    public const string ExcludedRetiredContainer = "retired-container";
     /// <summary>Terminal before the requested window; the service skips its files and only counts it.</summary>
     public const string ExcludedBeforeWindow = "before-window";
 }
@@ -166,6 +167,9 @@ public static class TaskCycleTimeAnalyzer
         IReadOnlyList<FlowSegment>? gateEvidence = null,
         IReadOnlyList<ReviewAttemptDto>? reviewAuthority = null)
     {
+        if (RetiredContainerTask.IsRetired(task))
+            return new TaskCycleAnalysis(null, TaskCycleAnalysis.ExcludedRetiredContainer);
+
         var isTerminal = string.Equals(task.State, TaskStates.Completed, StringComparison.Ordinal)
                          || string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal);
         if (!isTerminal)

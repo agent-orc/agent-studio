@@ -21,7 +21,7 @@ export type StudioRoute =
   /** Retired Chat History tab; the app redirects it to the sidebar Chats panel. */
   | { kind: 'chat-history' }
   | { kind: 'hub'; projectSlug: string; section: string; page: string | null; folder: string | null }
-  | { kind: 'workbenches'; projectSlug: string | null }
+  | { kind: 'workbenches'; projectSlug: string | null; legacy?: true }
   | { kind: 'workbench'; projectSlug: string; workbenchId: string }
   | { kind: 'task'; reference: string; tab: TaskDetailRouteTab; inspector: TaskInspectorRouteTab }
   | { kind: 'workspace-settings'; section: string; detail: string | null }
@@ -50,6 +50,9 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
   }
   if (segments.length === 1 && segments[0] === 'chat-history') {
     return { kind: 'chat-history' };
+  }
+  if (segments.length === 1 && segments[0] === 'epics') {
+    return { kind: 'workbenches', projectSlug: null, legacy: true };
   }
   if (segments.length === 1 && segments[0] === 'workbenches') {
     return { kind: 'workbenches', projectSlug: null };
@@ -83,6 +86,9 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
   const projectSlug = segments[1];
   if (segments.length === 3 && segments[2] === 'board') {
     return { kind: 'board', projectSlug };
+  }
+  if (segments.length === 3 && segments[2] === 'epics') {
+    return { kind: 'workbenches', projectSlug, legacy: true };
   }
   if (segments.length === 3 && segments[2] === 'workbenches') {
     return { kind: 'workbenches', projectSlug };

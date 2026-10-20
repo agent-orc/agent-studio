@@ -52,6 +52,12 @@ describe('Studio route contract', () => {
       kind: 'workbenches',
       projectSlug: null,
     });
+    expect(parseStudioRoute('#/epics')).toEqual({
+      kind: 'workbenches', projectSlug: null, legacy: true,
+    });
+    expect(parseStudioRoute('#/projects/agent-studio/epics')).toEqual({
+      kind: 'workbenches', projectSlug: 'agent-studio', legacy: true,
+    });
     expect(parseStudioRoute('#/tasks/AGT-2291?view=timeline%3Aactivity')).toEqual({
       kind: 'task',
       reference: 'AGT-2291',

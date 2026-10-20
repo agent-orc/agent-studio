@@ -40,7 +40,8 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
 
     private EnvironmentFlowSnapshot BuildCore(DateTime now)
     {
-        var tasks = scanner.ScanAllAutomationJobsWithArchive();
+        var tasks = scanner.ScanAllAutomationJobsWithArchive()
+            .Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
         var events = new Dictionary<string, IReadOnlyList<TimelineEvent>>(StringComparer.Ordinal);
         foreach (var task in tasks.Where(task => task.LastActivity >= now.AddHours(-24)
                      || task.EnteredLaneAt >= now.AddHours(-24) || task.CreatedAt >= now.Date))
@@ -67,6 +68,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         IReadOnlyList<DateTimeOffset>? batchPending = null, IReadOnlyList<DateTime>? gateQueued = null,
         int? batchReleasedLast24h = null)
     {
+        tasks = tasks.Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
         var now = nowUtc.ToUniversalTime();
         var since = now.AddHours(-24);
         var dayStart = now.Date;

@@ -37,6 +37,27 @@ public sealed class EpicRemovalGuardTests
                 "\"SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name = 'epic_id';\", ct);",
                 "await ExecuteAsync(connection, \"ALTER TABLE task_studio_fields DROP COLUMN epic_id;\", ct);",
             ],
+            ["backend/Shared/Models/RetiredContainerTask.cs"] =
+            [
+                "state == TaskStates.Archive && string.Equals(kind, \"epic\", StringComparison.OrdinalIgnoreCase)",
+                "? \"epic\"",
+                "string.Equals(task.Kind, \"epic\", StringComparison.OrdinalIgnoreCase);",
+            ],
+            ["scripts/backfill-cycle-time-completions.mjs"] =
+            [
+                "return task.kind?.toLowerCase() === 'epic';",
+            ],
+            ["frontend/src/app/features/studio-shell/services/studio-route.ts"] =
+            [
+                "if (segments.length === 1 && segments[0] === 'epics') {",
+                "if (segments.length === 3 && segments[2] === 'epics') {",
+            ],
+            ["frontend/src/app/features/studio-shell/services/studio-tab-state.service.ts"] =
+            [
+                "return legacy?.kind === 'epics'",
+                "const activeKey = parsed.activeKey?.startsWith('epics:')",
+                "? `workbenches:${parsed.activeKey.slice('epics:'.length)}`",
+            ],
         };
         var violations = new List<string>();
         foreach (var relativeRoot in roots)
@@ -48,7 +69,8 @@ public sealed class EpicRemovalGuardTests
                 if (relative.Split('/').Any(part => part is "bin" or "obj" or "node_modules")) continue;
                 if (!new[] { ".cs", ".ts", ".html", ".scss", ".md", ".mjs", ".json" }
                     .Contains(Path.GetExtension(file))) continue;
-                if (relative.EndsWith(".spec.ts", StringComparison.Ordinal)) continue;
+                if (relative.EndsWith(".spec.ts", StringComparison.Ordinal)
+                    || relative.EndsWith(".test.mjs", StringComparison.Ordinal)) continue;
 
                 if (Regex.IsMatch(relative, @"\bepic|Epic|EPIC"))
                     violations.Add(relative);
@@ -69,7 +91,7 @@ public sealed class EpicRemovalGuardTests
             violations.Add("frontend/angular.json");
 
         Assert.True(violations.Count == 0,
-            "Epic concepts may only occur in the temporary API compatibility and schema cleanup paths:\n  "
+            "Epic concepts may only occur in temporary compatibility, historical data exclusion, and schema cleanup paths:\n  "
             + string.Join("\n  ", violations));
     }
 }

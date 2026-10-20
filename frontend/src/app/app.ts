@@ -1836,6 +1836,11 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'workbenches':
         this.studioTabState.open({ kind: 'workbenches', projectName });
+        if (route.legacy) {
+          replaceStudioRoute(projectName
+            ? `/projects/${studioProjectSlug(projectName)}/workbenches`
+            : '/workbenches');
+        }
         break;
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });

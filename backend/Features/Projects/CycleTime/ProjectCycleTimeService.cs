@@ -216,6 +216,7 @@ public sealed class ProjectCycleTimeService
     private List<TaskInfo> ProjectTasks(WatchPathEntry entry) =>
         _scanner.ScanAllAutomationJobsWithArchive()
             .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, entry.Path))
+            .Where(task => !RetiredContainerTask.IsRetired(task))
             .ToList();
 
     /// <summary>Pure aggregation over analysed tasks; exposed for tests.</summary>

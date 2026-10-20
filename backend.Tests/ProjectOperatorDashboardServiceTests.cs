@@ -31,7 +31,8 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
         var completedTwice = Task("completed-twice", TaskStates.Archive, now.AddDays(-6));
         var tooOld = Task("too-old", TaskStates.Completed, now.AddDays(-8));
         var reopened = Task("reopened", TaskStates.Ready, now.AddMinutes(-10));
-        var tasks = new[] { archivedWithHistory, archivedLegacy, currentLegacy, completedTwice, tooOld, reopened };
+        var retiredParent = Task("old-parent", TaskStates.Archive, now.AddHours(-1)) with { Kind = "epic" };
+        var tasks = new[] { archivedWithHistory, archivedLegacy, currentLegacy, completedTwice, tooOld, reopened, retiredParent };
 
         var events = new Dictionary<string, IReadOnlyList<TimelineEvent>>(StringComparer.Ordinal)
         {
@@ -45,6 +46,7 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
             ],
             [tooOld.Id] = [LaneChange(now.AddDays(-8), TaskStates.Completed)],
             [reopened.Id] = [LaneChange(now.AddMinutes(-10), TaskStates.Completed)],
+            [retiredParent.Id] = [LaneChange(now.AddHours(-1), TaskStates.Completed)],
         };
 
         var result = ProjectThroughputService.BuildSummary(

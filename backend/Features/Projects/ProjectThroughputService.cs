@@ -85,6 +85,7 @@ public sealed class ProjectThroughputService
 
         foreach (var task in tasks)
         {
+            if (RetiredContainerTask.IsRetired(task)) continue;
             if (!string.Equals(task.State, TaskStates.Completed, StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(task.State, TaskStates.Archive, StringComparison.OrdinalIgnoreCase))
                 continue;

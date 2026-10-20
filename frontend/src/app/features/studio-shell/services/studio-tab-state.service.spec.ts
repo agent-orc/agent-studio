@@ -110,6 +110,28 @@ describe('StudioTabStateService', () => {
     expect(panels.visible()).toBe(true);
   });
 
+  it('migrates persisted Epics overviews and their active key without losing project scope', () => {
+    TestBed.resetTestingModule();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      v: 1,
+      tabs: [
+        { kind: 'epics', projectName: null },
+        { kind: 'workbenches', projectName: null },
+        { kind: 'epics', projectName: 'Agent Studio' },
+        { kind: 'workbenches', projectName: 'Agent Studio' },
+      ],
+      activeKey: 'epics:Agent Studio',
+    }));
+    TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+    const restored = TestBed.inject(StudioTabStateService);
+
+    expect(restored.tabs()).toEqual([
+      { kind: 'workbenches', projectName: null },
+      { kind: 'workbenches', projectName: 'Agent Studio' },
+    ]);
+    expect(restored.activeKey()).toBe('workbenches:Agent Studio');
+  });
+
   it('retargets open project tabs and preserves the active settings tab after rename', () => {
     svc.open({ kind: 'board', projectName: 'Old Name' });
     svc.open({ kind: 'hub', projectName: 'Old Name', section: 'settings' });

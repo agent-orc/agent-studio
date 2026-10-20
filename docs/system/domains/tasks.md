@@ -1365,7 +1365,8 @@ The former parent-card routes and rollups are removed. For one API version,
 `epicId`, ignore it, and return `Deprecation: true` with a `Warning` header.
 Existing Task Server databases drop the former parent tables and metadata field
 on startup. Archived historical task files are left intact and their retired
-fields are ignored by the active model.
+fields are ignored by the active model. Historical parent cards are excluded
+from completion backfill, cycle time, throughput, and environment flow metrics.
 
 ## Key Code
 

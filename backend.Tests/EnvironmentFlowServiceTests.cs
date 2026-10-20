@@ -45,6 +45,25 @@ public sealed class EnvironmentFlowServiceTests
         Assert.Equal(1d / 24d, result.Queues.Single(q => q.Queue == "Gate").ThroughputPerHour);
     }
 
+    [Fact]
+    public void Aggregate_ExcludesArchivedHistoricalParent_FromAllWorkMetrics()
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var work = Task("work", TaskStates.Completed, now.AddHours(-3));
+        var parent = Task("parent", TaskStates.Archive, now.AddHours(-2)) with { Kind = "epic" };
+        var events = new[] {
+            Move(now.AddHours(-2), TaskStates.HumanReview, TaskStates.Completed),
+        };
+
+        var result = EnvironmentFlowService.Aggregate([work, parent], _ => events, now);
+        var control = EnvironmentFlowService.Aggregate([work], _ => events, now);
+
+        Assert.Equal(control.Today, result.Today);
+        Assert.Equal(control.Lanes, result.Lanes);
+        Assert.Equal(control.Queues, result.Queues);
+        Assert.Equal(control.WaitingReasons, result.WaitingReasons);
+    }
+
 
     private static TaskInfo Task(string id, string lane, DateTime at) => new()
     {
