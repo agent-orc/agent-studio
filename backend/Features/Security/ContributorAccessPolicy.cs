@@ -2,14 +2,56 @@ using AgentStudio.Shared;
 
 namespace AgentStudio.Security;
 
-/// <summary>Small, fail-closed browser route surface for the Product role.</summary>
+/// <summary>
+/// Small, fail-closed browser route surface for the Product role. The
+/// Product-session decision lives in <see cref="IsProductSession(StudioUser)"/>
+/// so AGT-3228 can replace the role check with role bindings.
+/// </summary>
 public static class ContributorAccessPolicy
 {
     private static readonly HashSet<string> DeniedSegments = new(StringComparer.OrdinalIgnoreCase)
     {
         "credentials", "hosts", "settings", "quotas", "security", "tokens", "usage",
         "logs", "raw-logs", "merges", "promotions", "secrets", "integration",
-        "output", "trace", "session-events", "agent-work-detail"
+        "output", "trace", "session-events", "agent-work-detail", "conversation"
+    };
+
+    private static readonly HashSet<string> ReadableResultExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".html", ".htm", ".md"
+    };
+
+    public static bool IsProductSession(StudioUser user) => user.Role == StudioRoles.Contributor;
+
+    public static StudioUser? ProductSessionUser(HttpContext context)
+        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+            && IsProductSession(human.User)
+            ? human.User
+            : null;
+
+    public static bool IsProductSession(HttpContext context) => ProductSessionUser(context) is not null;
+
+    /// <summary>Screenshots, HTML reports and Markdown; never logs, TRX, JSONL or other raw output.</summary>
+    public static bool AllowsResultFile(string path) => ReadableResultExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>
+    /// A Product wish carries no run controls: project defaults choose the CLI,
+    /// model, thinking level, mode, web access and integration, and the card
+    /// records the signed-in user as its creator.
+    /// </summary>
+    public static CreateTaskRequest ForProductCreate(CreateTaskRequest request, string userId) => request with
+    {
+        Model = null,
+        CliType = null,
+        ThinkingLevel = null,
+        ModelExplicit = null,
+        ThinkingLevelExplicit = null,
+        Mode = null,
+        AllowWebAccess = null,
+        NoBranchExpected = false,
+        RequiresIntegration = null,
+        Fixture = false,
+        CreatedBy = userId,
     };
 
     public static bool AllowsTransition(string? currentState, string? targetState, bool operatorOverride, bool archiveOverride)
@@ -30,6 +72,9 @@ public static class ContributorAccessPolicy
 
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
         {
+            if (segments.Length >= 5 && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+                && segments[3].Equals("results", StringComparison.OrdinalIgnoreCase))
+                return AllowsResultFile(path);
             if (path.StartsWith("/api/runner/", StringComparison.OrdinalIgnoreCase))
                 return path.Contains("/orchestrator-chat", StringComparison.OrdinalIgnoreCase);
             if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))

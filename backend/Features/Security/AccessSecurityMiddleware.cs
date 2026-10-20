@@ -340,7 +340,7 @@ public sealed class AccessSecurityMiddleware
             }
         }
 
-        if (human.User.Role == StudioRoles.Contributor)
+        if (ContributorAccessPolicy.IsProductSession(human.User))
         {
             var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
                 ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
@@ -364,7 +364,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         await _next(context);
-        if (human.User.Role == StudioRoles.Contributor
+        if (ContributorAccessPolicy.IsProductSession(human.User)
             && !safeMethod && context.Response.StatusCode is >= 200 and < 400
             && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
             && _timeline is not null)

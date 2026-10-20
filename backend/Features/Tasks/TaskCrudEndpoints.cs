@@ -753,7 +753,7 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -792,7 +792,7 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -981,9 +981,12 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
-                && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (ContributorAccessPolicy.ProductSessionUser(ctx) is { } productUser)
+            {
+                if (req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                req = ContributorAccessPolicy.ForProductCreate(req, productUser.Id);
+            }
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))

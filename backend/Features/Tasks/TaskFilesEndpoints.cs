@@ -171,11 +171,16 @@ public static class TaskFilesEndpoints
         // report HTML inline plus nested result artifacts linked from Activity,
         // Task, Result, and Docs. Unknown types retain octet-stream/download
         // behavior. ResolveResult confines every path to the current task.
-        group.MapGet("/{jobId}/results/{**path}", (string jobId, string path, string? project, string? watchPath, HttpResponse response, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapGet("/{jobId}/results/{**path}", (string jobId, string path, string? project, string? watchPath, HttpContext ctx, HttpResponse response, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            var product = ContributorAccessPolicy.IsProductSession(ctx);
+            if (product && !ContributorAccessPolicy.AllowsResultFile(path))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var (resolved, contentType) = scanner.ResolveResult(jobId, path, watchPath);
             if (resolved is null) return Results.NotFound();
+            if (product && !ContributorAccessPolicy.AllowsResultFile(resolved))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (contentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true)
             {
                 response.Headers.ContentDisposition = "inline";
