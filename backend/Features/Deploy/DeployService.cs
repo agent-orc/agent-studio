@@ -181,6 +181,16 @@ public sealed class DeployService
         }
     }
 
+    public DeployPage<Release>? ReleasePage(string project, int offset, int limit)
+    {
+        lock (_gate)
+        {
+            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+                .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
+            return releases is null ? null : Page(releases, offset, limit);
+        }
+    }
+
     public ReleaseDetailResponse? ReleaseDetail(string project, string releaseId)
     {
         lock (_gate)
@@ -201,6 +211,30 @@ public sealed class DeployService
                 .OrderByDescending(item => item.CreatedAtUtc).ThenByDescending(item => item.Id, StringComparer.Ordinal)
                 .ToArray();
         }
+    }
+
+    public DeployPage<Deployment>? DeploymentPage(string project, string? environmentId, string? state,
+        DateTime? sinceUtc, int offset, int limit)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            if (snapshot is null) return null;
+            var runs = snapshot.Deployments(project)
+                .Where(item => environmentId is null || item.EnvironmentId == environmentId)
+                .Where(item => state is null || item.State == state)
+                .Where(item => sinceUtc is null || item.CreatedAtUtc >= sinceUtc)
+                .OrderByDescending(item => item.CreatedAtUtc).ThenByDescending(item => item.Id, StringComparer.Ordinal)
+                .ToArray();
+            return Page(runs, offset, limit);
+        }
+    }
+
+    private static DeployPage<T> Page<T>(IReadOnlyList<T> items, int offset, int limit)
+    {
+        var safeOffset = Math.Max(0, offset);
+        var safeLimit = Math.Clamp(limit, 1, 50);
+        return new(items.Skip(safeOffset).Take(safeLimit).ToArray(), safeOffset, safeLimit, items.Count);
     }
 
     public Deployment? DeploymentById(string project, string deploymentId)
