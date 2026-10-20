@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Deploy;
@@ -22,15 +23,17 @@ public sealed class RunbookService
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
     private readonly TimeProvider _clock;
+    private readonly ILogger<RunbookService> _logger;
 
     public RunbookService(ProjectEnvironmentService environments, DeployStore store, GitService git,
-        ProjectSettingsService settings, TimeProvider clock)
+        ProjectSettingsService settings, TimeProvider clock, ILogger<RunbookService> logger)
     {
         _environments = environments;
         _store = store;
         _git = git;
         _settings = settings;
         _clock = clock;
+        _logger = logger;
     }
 
     public IReadOnlyList<ProjectRunbookDefinition>? Definitions(string project)
@@ -165,7 +168,14 @@ public sealed class RunbookService
 
     public void SyncAfterHostCall(string project)
     {
-        lock (_gate) Sync(project);
+        try
+        {
+            lock (_gate) Sync(project);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            _logger.LogWarning(ex, "Runbook runs for {Project} were not reconciled after a host call", project);
+        }
     }
 
     private List<RunbookRun> Sync(string project)

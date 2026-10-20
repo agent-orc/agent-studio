@@ -81,18 +81,20 @@ public static class RunbookHostExecutor
             start.ArgumentList.Add(script);
             foreach (var (name, value) in values) start.Environment[name] = value;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Runbook step could not start.");
-            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null, timeout.Token);
-            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null, timeout.Token);
+            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null);
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
                 await Task.WhenAll(output, error);
                 results.Add(new(index, process.ExitCode == 0));
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync(CancellationToken.None);
+                await Task.WhenAll(output, error);
+                cancellationToken.ThrowIfCancellationRequested();
                 results.Add(new(index, false));
             }
             if (!results[^1].Success) break;

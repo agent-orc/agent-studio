@@ -117,6 +117,31 @@ public sealed class DeployServiceTests : IDisposable
         Assert.NotNull(environments.Claim("stage-host"));
     }
 
+    [Fact]
+    public void Corrupt_runbook_store_does_not_fail_host_claim_or_report_and_later_reconciles()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: backup\n    steps: [backup]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+        var requested = runbooks.Request("demo", "stage", "backup", Operator).Value!;
+        var file = Path.Combine(_root, "workspace", "deployments", "projects", "demo", "runbooks.json");
+        File.WriteAllText(file, "{invalid-json");
+
+        var claimed = environments.Claim("stage-host")!;
+        runbooks.SyncAfterHostCall("demo");
+        Assert.Equal(requested.Id, claimed.RunbookRunId);
+        Assert.True(environments.Report("demo", claimed.Id, new(claimed.LeaseToken!, true, "health-ok",
+            [new(0, true)])));
+        runbooks.SyncAfterHostCall("demo");
+        Assert.Equal("healthy", environments.Read("demo")!.Jobs.Single().Status);
+
+        File.Delete(file);
+        Assert.Equal(DeploymentStates.Succeeded, runbooks.Run("demo", requested.Id)!.State);
+        Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-succeeded"
+            && entry.DeploymentId == requested.Id);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
@@ -1003,7 +1028,8 @@ public sealed class DeployServiceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        return new RunbookService(environments, store, git, settings, _clock);
+        return new RunbookService(environments, store, git, settings, _clock,
+            NullLogger<RunbookService>.Instance);
     }
 
     private void WriteProduction(string host, string destination)

@@ -46,4 +46,36 @@ public sealed class RunbookHostExecutorTests
             "demo", "stage", "8081", ["../escape"], new Dictionary<string, string>(),
             new Dictionary<string, string>(), [], "/tmp", "/tmp", CancellationToken.None));
     }
+
+    [Fact]
+    public async Task Host_cancellation_kills_the_script_and_its_child_before_it_can_write()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-cancel-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var ready = Path.Combine(root, "ready");
+        var marker = Path.Combine(root, "child-wrote");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"),
+            "(sleep 1; printf 'escaped' > \"$MARKER\") &\nprintf 'started' > \"$READY\"\nwait\n");
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var execution = RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { ["READY"] = ready, ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, cancellation.Token);
+            for (var attempt = 0; attempt < 250 && !File.Exists(ready); attempt++)
+                await Task.Delay(20);
+            Assert.True(File.Exists(ready), "The script did not start.");
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
+            await Task.Delay(1200);
+            Assert.False(File.Exists(marker), "A child process kept running after cancellation.");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Directory.Delete(root, true);
+        }
+    }
 }
