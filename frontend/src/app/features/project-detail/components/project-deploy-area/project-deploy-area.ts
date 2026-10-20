@@ -103,7 +103,7 @@ export class ProjectDeployAreaComponent {
         this.releaseTotal.set(panel.value.total);
       }
       this.releasePanel.set(this.items(panel));
-    });
+    }));
   }
 
   openCard(key: string): void {
