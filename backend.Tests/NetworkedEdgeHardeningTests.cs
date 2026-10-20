@@ -120,6 +120,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         var resultsPath = Path.Combine(_workspace, "projects", ProjectName, "3-progress", TaskKey, "results");
         Directory.CreateDirectory(resultsPath);
         File.WriteAllText(Path.Combine(resultsPath, "report.html"), "<html><body>report</body></html>");
+        File.WriteAllBytes(Path.Combine(resultsPath, "image.png"), [1, 2, 3]);
         File.WriteAllText(Path.Combine(resultsPath, "..", "x.html"), "<html><body><script>alert(document.cookie)</script></body></html>");
         Directory.CreateDirectory(Path.Combine(_workspace, "projects", ProjectName, "docs"));
         File.WriteAllText(Path.Combine(_workspace, "projects", ProjectName, "docs", "diagram.svg"),
@@ -144,7 +145,8 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             $"/api/projects/{project.Id}/urls/{url.Id}/preview/", owner.SessionToken);
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         Assert.Contains("preview body", await preview.Content.ReadAsStringAsync());
-        Assert.Equal("sandbox allow-scripts; form-action 'none'", Header(preview, "Content-Security-Policy"));
+        Assert.Equal("sandbox allow-scripts; form-action 'none'; frame-ancestors 'self'", Header(preview, "Content-Security-Policy"));
+        Assert.Contains("frame-ancestors 'self'", Header(preview, "Content-Security-Policy"));
         Assert.False(preview.Headers.Contains("X-Frame-Options"));
         Assert.Equal("nosniff", Header(preview, "X-Content-Type-Options"));
         Assert.Equal(StudioResponseHeaderPolicy.StrictTransportSecurity, Header(preview, "Strict-Transport-Security"));
@@ -153,6 +155,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             $"/api/tasks/{TaskKey}/results/report.html", owner.SessionToken);
         Assert.Equal(HttpStatusCode.OK, report.StatusCode);
         Assert.StartsWith("sandbox allow-scripts; default-src 'none'", Header(report, "Content-Security-Policy"));
+        Assert.Contains("frame-ancestors 'self'", Header(report, "Content-Security-Policy"));
         Assert.False(report.Headers.Contains("X-Frame-Options"));
         Assert.Equal(StudioResponseHeaderPolicy.PermissionsPolicy, Header(report, "Permissions-Policy"));
 
@@ -164,6 +167,14 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             Assert.Equal(HttpStatusCode.OK, svg.StatusCode);
             Assert.Equal("image/svg+xml", svg.Content.Headers.ContentType?.MediaType);
             AssertSandboxedDocument(svg);
+            Assert.Equal("no-store", Header(svg, "Cache-Control"));
+        }
+
+        using (var image = await SendAsync(client, HttpMethod.Get,
+                   $"/api/tasks/{TaskKey}/results/image.png", owner.SessionToken))
+        {
+            Assert.Equal(HttpStatusCode.OK, image.StatusCode);
+            Assert.Equal("no-store", Header(image, "Cache-Control"));
         }
 
         // The networked boundary keeps task files Runner-only (prompt.md under
@@ -192,7 +203,8 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
 
         using var html = await client.GetAsync($"/api/tasks/{TaskKey}/files/x.html");
 
-        Assert.Equal(HttpStatusCode.OK, html.StatusCode);
+        Assert.True(html.StatusCode == HttpStatusCode.OK,
+            $"Expected a rendered task result, got {(int)html.StatusCode}: {await html.Content.ReadAsStringAsync()}");
         Assert.Equal("text/html", html.Content.Headers.ContentType?.MediaType);
         AssertSandboxedDocument(html);
         Assert.Equal(StudioResponseHeaderPolicy.StrictTransportSecurity, Header(html, "Strict-Transport-Security"));
@@ -230,6 +242,21 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         foreach (var deletion in logout.Headers.GetValues("Set-Cookie"))
             Assert.DoesNotContain("domain=", deletion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Networked_profile_ignores_legacy_domain_cookie_name()
+    {
+        using var factory = BuildFactory();
+        var owner = factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", Password, null));
+        using var client = NewClient(factory);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/session");
+        request.Headers.Add("Cookie", $"{AccessSecurityStore.InsecureSessionCookieName}={owner.SessionToken}");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -414,6 +441,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         Assert.Equal("nosniff", Header(response, "X-Content-Type-Options"));
         Assert.Equal("same-origin", Header(response, "Referrer-Policy"));
         Assert.Equal(StudioResponseHeaderPolicy.StrictTransportSecurity, Header(response, "Strict-Transport-Security"));
+        Assert.Contains("no-store", Header(response, "Cache-Control").Split(',', StringSplitOptions.TrimEntries));
     }
 
     private static async Task<HttpResponseMessage> SendAsync(

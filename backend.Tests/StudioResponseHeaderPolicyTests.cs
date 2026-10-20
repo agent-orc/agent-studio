@@ -25,6 +25,7 @@ public sealed class StudioResponseHeaderPolicyTests
         Assert.Equal("SAMEORIGIN", headers.XFrameOptions.ToString());
         Assert.Equal("same-origin", headers["Cross-Origin-Opener-Policy"].ToString());
         Assert.Equal(StudioResponseHeaderPolicy.PermissionsPolicy, headers["Permissions-Policy"].ToString());
+        Assert.Equal("no-store", headers["Cache-Control"].ToString());
         Assert.Equal("same-origin", headers["Referrer-Policy"].ToString());
         Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
     }
@@ -94,6 +95,19 @@ public sealed class StudioResponseHeaderPolicyTests
 
         Assert.Equal("DENY", headers.XFrameOptions.ToString());
         Assert.Equal("no-referrer", headers["Referrer-Policy"].ToString());
+    }
+
+    [Fact]
+    public void Endpoint_cache_policy_is_preserved_and_missing_policy_defaults_to_no_store()
+    {
+        IHeaderDictionary explicitPolicy = new HeaderDictionary { ["Cache-Control"] = "private, max-age=3600" };
+        IHeaderDictionary absentPolicy = new HeaderDictionary();
+
+        StudioResponseHeaderPolicy.Apply(explicitPolicy);
+        StudioResponseHeaderPolicy.Apply(absentPolicy);
+
+        Assert.Equal("private, max-age=3600", explicitPolicy["Cache-Control"].ToString());
+        Assert.Equal("no-store", absentPolicy["Cache-Control"].ToString());
     }
 
     [Fact]

@@ -127,7 +127,8 @@ public sealed class AccessSecurityMiddleware
         // hosts of the same site, and a WebSocket upgrade to an event stream
         // is a GET that carries the cookie too (AGT-3230).
         var browserCredential = context.Request.Cookies.ContainsKey(AccessSecurityStore.SessionCookieName)
-                                || context.Request.Cookies.ContainsKey(AccessSecurityStore.InsecureSessionCookieName)
+                                || (!SecurityProfiles.IsNetworked(_configuration)
+                                    && context.Request.Cookies.ContainsKey(AccessSecurityStore.InsecureSessionCookieName))
                                 || BrowserOriginPolicy.IsBrowserSignIn(path);
         var origin = BrowserOriginPolicy.Decide(
             context.Request.Method,
@@ -149,9 +150,11 @@ public sealed class AccessSecurityMiddleware
         context.Items[AttributionClientIdItem] = context.Request.Headers["X-Client-Id"].FirstOrDefault();
         if (path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
             context.Response.Headers.CacheControl = "no-store";
-        var human = _store.AuthenticateSession(
-            context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-            ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
+        var sessionToken = context.Request.Cookies[AccessSecurityStore.SessionCookieName]
+                           ?? (SecurityProfiles.IsNetworked(_configuration)
+                               ? null
+                               : context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
+        var human = _store.AuthenticateSession(sessionToken);
         var bearer = presentedBearer;
         var runner = _store.AuthenticateRunner(bearer);
         var apiToken = human is null ? _store.AuthenticateApiToken(bearer) : null;

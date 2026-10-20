@@ -249,9 +249,7 @@ public static class AccessSecurityEndpoints
 
     private static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
-           ?? store.AuthenticateSession(
-               context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-               ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName])
+           ?? store.AuthenticateSession(ReadSessionToken(context))
            ?? throw new SecurityOperationException(401, "authentication-required", "A human session is required.");
 
     private static HumanPrincipal RequireOwner(HttpContext context, AccessSecurityStore store)
@@ -266,9 +264,16 @@ public static class AccessSecurityEndpoints
     {
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal)
             return principal;
-        var token = context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-                    ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
+        var token = ReadSessionToken(context);
         return store.AuthenticateSession(token, touch);
+    }
+
+    private static string? ReadSessionToken(HttpContext context)
+    {
+        var secureToken = context.Request.Cookies[AccessSecurityStore.SessionCookieName];
+        if (SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>()))
+            return secureToken;
+        return secureToken ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
     }
 
     // Only a direct loopback connection may skip the installer code; a

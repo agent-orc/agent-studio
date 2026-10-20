@@ -77,6 +77,7 @@ public static class StudioResponseHeaderPolicy
         SetDefault(headers, "Cross-Origin-Opener-Policy", "same-origin");
         SetDefault(headers, "Permissions-Policy", PermissionsPolicy);
         SetDefault(headers, "Referrer-Policy", "same-origin");
+        SetDefault(headers, "Cache-Control", "no-store");
         headers.XContentTypeOptions = "nosniff";
     }
 

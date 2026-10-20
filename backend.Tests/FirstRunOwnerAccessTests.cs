@@ -163,6 +163,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     {
         request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
         request.Headers.Add("X-CSRF-Token", csrf);
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
     }
 
     private static void Bearer(HttpRequestMessage request, string secret)
