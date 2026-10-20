@@ -217,7 +217,7 @@ public sealed class DeployTargetAdapterTests
     }
 
     [Fact]
-    public async Task Kubernetes_HelmRendersPinnedImageBeforeUpgrade()
+    public async Task Kubernetes_HelmAppliesExactlyTheVerifiedRendering()
     {
         var (path, package) = Package("chart/Chart.yaml", "name: web\n");
         try
@@ -228,12 +228,19 @@ public sealed class DeployTargetAdapterTests
                     Namespace: "staging", ManifestPath: "chart", HelmRelease: "web", ImageResource: "web"),
                 ReleaseArtifacts = [Image, package], PackagePath = path, PackageArtifact = package,
             };
-            var calls = new FakeCommands { Output = "kind: Deployment\nmetadata:\n  name: web\n"
-                + "spec:\n  template:\n    spec:\n      containers:\n      - image: " + Image + "\n",
-                DryRunOutput = DeploymentObject(Image) };
+            var rendered = "kind: Deployment\nmetadata:\n  name: web\n"
+                + "spec:\n  template:\n    spec:\n      containers:\n      - image: " + Image + "\n";
+            var calls = new FakeCommands { Output = rendered, DryRunOutput = DeploymentObject(Image) };
             await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
-            Assert.Equal(new[] { "helm", "kubectl", "helm" }, calls.Calls.Select(call => call.Executable));
-            Assert.Contains("--atomic", calls.Calls[2].Arguments);
+            Assert.Equal(new[] { "helm", "kubectl", "kubectl", "kubectl" },
+                calls.Calls.Select(call => call.Executable));
+            Assert.Contains("template", calls.Calls[0].Arguments);
+            Assert.DoesNotContain(calls.Calls, call => call.Arguments.Contains("upgrade"));
+            Assert.Contains("--dry-run=client", calls.Calls[1].Arguments);
+            Assert.Equal(calls.Calls[1].Arguments.Last(), calls.Calls[2].Arguments.Last());
+            Assert.Contains("apply", calls.Calls[2].Arguments);
+            Assert.Contains("rollout", calls.Calls[3].Arguments);
+            Assert.Equal(rendered, calls.ManifestContents);
         }
         finally { File.Delete(path); }
     }

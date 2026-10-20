@@ -30,10 +30,9 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
                 throw new InvalidDataException("Helm chart left an image placeholder unresolved.");
             var renderedPath = Path.Combine(temp.Path, "rendered.yaml");
             await File.WriteAllTextAsync(renderedPath, rendered.Output, ct);
+            // Apply the verified rendering itself; a second Helm render could differ from what was checked.
             await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, renderedPath, resource, image, ct);
-            await commands.RunAsync("helm", ["--kubeconfig", kubeconfig, "--namespace", ns,
-                "upgrade", "--install", release, content, "--set-string", "image.ref=" + image,
-                "--atomic", "--wait"], null, ct);
+            await ApplyAndWaitAsync(kubeconfig, ns, renderedPath, resource, ct);
             return;
         }
 
@@ -55,8 +54,14 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
         }
         if (replaced == 0) throw new InvalidDataException("Manifest did not reference the release image.");
         await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, content, resource, image, ct);
+        await ApplyAndWaitAsync(kubeconfig, ns, content, resource, ct);
+    }
+
+    private async Task ApplyAndWaitAsync(string kubeconfig, string ns, string source, string resource,
+        CancellationToken ct)
+    {
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
-            "apply", "-f", content], null, ct);
+            "apply", "-f", source], null, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
             "rollout", "status", "deployment/" + resource, "--timeout=300s"], null, ct);
     }
