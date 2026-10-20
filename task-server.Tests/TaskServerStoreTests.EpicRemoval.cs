@@ -61,8 +61,10 @@ public sealed partial class TaskServerStoreTests
         Assert.Contains("newer than this service supports (36)", error.Message);
     }
 
-    [Fact]
-    public async Task InterruptedRetiredSchemaRemovalRejectsVersion36AndFinishesOnRestart()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InterruptedRetiredSchemaRemovalRejectsVersion36AndFinishesOnRestart(bool fieldRemoved)
     {
         const int previousBinarySchemaVersion = 36;
         using var temp = new TempDirectory();
@@ -84,8 +86,10 @@ public sealed partial class TaskServerStoreTests
 
             await TaskServerStore.GuardRetiredSchemaRemovalAsync(connection, default);
             await store.ApplyStudioProjectMetaMigrationAsync(connection, default);
-            // Simulate termination after the tables are dropped but before
-            // the task metadata field and final migration receipt are updated.
+            if (fieldRemoved)
+                await store.ApplyStudioTaskMetadataMigrationAsync(connection, default);
+            // Simulate termination after table removal or after all retired
+            // schema is removed, before the remaining startup work completes.
         }
 
         await using (var interrupted = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
@@ -98,7 +102,7 @@ public sealed partial class TaskServerStoreTests
                 TaskServerStore.RejectUnsupportedSchemaVersion(storedVersion, previousBinarySchemaVersion));
             Assert.Contains("newer than this service supports (36)", error.Message);
             check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name = 'epic_id';";
-            Assert.Equal(1L, (long)(await check.ExecuteScalarAsync())!);
+            Assert.Equal(fieldRemoved ? 0L : 1L, (long)(await check.ExecuteScalarAsync())!);
             check.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('epics', 'epic_tasks');";
             Assert.Equal(0L, (long)(await check.ExecuteScalarAsync())!);
         }
