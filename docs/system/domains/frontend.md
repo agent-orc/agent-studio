@@ -374,6 +374,8 @@ occur. It is not a claim about tunnel transfer time.
   Pipeline reuses the parsed diagram from `/pipeline-definition`, including
   validation issues when the file is invalid. Production approvals and running
   aborts require confirmation; the server remains the authority for refusals.
+  At phone widths the shell hides its Explorer sidebar so the Deploy cards use
+  the editor width while the activity bar stays available.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints
