@@ -569,7 +569,9 @@ public sealed class AccessSecurityMiddleware
     private PermissionTarget Target(HttpContext context, string path, RequiredPermissionMetadata required, bool safeMethod)
     {
         var endpoint = context.GetEndpoint();
-        var address = ResolveRouteAddress(context.Request, path, endpoint);
+        var address = path.StartsWith("/api/secrets/workspace", StringComparison.OrdinalIgnoreCase)
+            ? ProjectRouteAddress.WorkspaceWide
+            : ResolveRouteAddress(context.Request, path, endpoint);
         var scope = address.Scope == ProjectRouteScope.Unaddressed && !safeMethod && !required.ProjectBindingsSuffice
             ? ProjectRouteScope.WorkspaceWide
             : address.Scope;
@@ -1045,9 +1047,14 @@ public sealed class AccessSecurityMiddleware
         string message,
         string? loginUrl = null)
     {
-        // A refused write on a secret route never reaches the secret provider; audit it with the person behind it.
-        if (status == StatusCodes.Status403Forbidden && context.Items[HumanPrincipalItem] is HumanPrincipal human)
-            AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.Human(human.User.Username), code);
+        // A refused write never reaches the provider. Preserve the real actor in its audit.
+        if (status == StatusCodes.Status403Forbidden)
+        {
+            if (context.Items[ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+                AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.ServiceAccount(account.AccountId), code);
+            else if (context.Items[HumanPrincipalItem] is HumanPrincipal human)
+                AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.Human(human.User.Username), code);
+        }
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         context.Response.Headers.CacheControl = "no-store";

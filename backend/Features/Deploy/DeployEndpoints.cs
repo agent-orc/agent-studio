@@ -81,9 +81,18 @@ public static class DeployEndpoints
     }
 
     public static DeployActor Actor(HttpContext context, string project)
-        => DeployApprovalAuthority.Resolve(
-            DeployApprovalAuthority.SignedInUser(context, context.RequestServices.GetRequiredService<AccessSecurityStore>()),
-            project);
+    {
+        if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+            return new DeployActor(account.ActorId, false);
+        var user = DeployApprovalAuthority.SignedInUser(context,
+            context.RequestServices.GetRequiredService<AccessSecurityStore>());
+        if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
+            return new DeployActor(user?.Id ?? DeployApprovalAuthority.LocalOperator,
+                user is { Disabled: false, MustChangePassword: false }
+                && access.Allows(IamPermissions.EnvironmentProductionDeployApprove,
+                    PermissionTarget.ForProject(project, IamEnvironments.Production)));
+        return DeployApprovalAuthority.Resolve(user, project);
+    }
 
     private static IResult UnknownProject(string project)
         => Results.NotFound(new { error = $"Unknown project '{project}'" });

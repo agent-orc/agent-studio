@@ -211,6 +211,24 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/environments/{}/rollback", null, "environmentId");
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
+        Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix");
+        Add("R", IamPermissions.ProjectRead,
+            "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
+            "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/{}",
+            "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/{}",
+            "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit");
+        Environment("POST", IamPermissions.EnvironmentDeploy,
+            "/api/projects/{}/deploy/releases/{}/deployments", null);
+        Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
+            "/api/projects/{}/deploy/deployments/{}/approve", IamEnvironments.Production);
+        Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
+            "/api/projects/{}/deploy/deployments/{}/reject", IamEnvironments.Production);
+        Add("POST", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/deploy/deployments/{}/cancel");
+        Environment("POST", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/deploy/environments/{}/redeploy", null, "environmentId");
+        Environment("POST", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/deploy/environments/{}/rollback", null, "environmentId");
 
         // --- Secrets: write without read; no human route returns a value ----
         // Only a Runner credential bound to a live lease resolves a value.

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -274,6 +275,114 @@ public sealed class IamHandlerAccessTests : IDisposable
             Assert.DoesNotContain("permission-denied", await write.Content.ReadAsStringAsync(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Secret_lists_filter_each_scope_and_workspace_metadata_needs_a_workspace_binding()
+    {
+        using var factory = BuildFactory();
+        var provider = factory.Services.GetRequiredService<ISecretProvider>();
+        var actor = SecretActor.Human("first.owner");
+        await provider.PutAsync(SecretScope.Workspace, "WORKSPACE_KEY", "fixture-value", actor);
+        await provider.PutAsync(SecretScope.ForProject("alpha"), "ALPHA_KEY", "fixture-value", actor);
+        await provider.PutAsync(SecretScope.ForProject("beta"), "BETA_KEY", "fixture-value", actor);
+        using var client = Client(factory, Invite(factory, "alpha.reader",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        using var workspace = await client.GetAsync("/api/secrets/workspace");
+        Assert.Equal(HttpStatusCode.Forbidden, workspace.StatusCode);
+        using var all = await client.GetAsync("/api/secrets");
+        Assert.Equal(HttpStatusCode.OK, all.StatusCode);
+        var listing = await all.Content.ReadAsStringAsync();
+        Assert.Contains("ALPHA_KEY", listing, StringComparison.Ordinal);
+        Assert.DoesNotContain("WORKSPACE_KEY", listing, StringComparison.Ordinal);
+        Assert.DoesNotContain("BETA_KEY", listing, StringComparison.Ordinal);
+        using var audit = await client.GetAsync("/api/secrets/audit");
+        Assert.Equal(HttpStatusCode.OK, audit.StatusCode);
+        var entries = await audit.Content.ReadAsStringAsync();
+        Assert.Contains("ALPHA_KEY", entries, StringComparison.Ordinal);
+        Assert.DoesNotContain("WORKSPACE_KEY", entries, StringComparison.Ordinal);
+        Assert.DoesNotContain("BETA_KEY", entries, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Service_account_secret_write_keeps_a_non_human_actor_in_metadata_and_audit()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("secret-bot", null,
+            [new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))]), ownerId);
+        var token = store.CreateServiceAccountToken(account.Id, new CreateServiceAccountTokenRequest(null, null)).Secret;
+        using var client = BearerClient(factory, token);
+
+        using var response = await client.PostAsJsonAsync("/api/projects/alpha/secrets",
+            new { name = "SA_KEY", value = "fixture-value" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var actor = "service-account:" + account.Id;
+        var provider = factory.Services.GetRequiredService<ISecretProvider>();
+        var record = Assert.Single((await provider.ListAsync(SecretScope.ForProject("alpha"))).Records);
+        Assert.Equal(actor, record.CreatedBy);
+        Assert.Equal(actor, record.UpdatedBy);
+        Assert.Contains(await provider.ReadAuditAsync(SecretScope.ForProject("alpha"), 20),
+            entry => entry.Action == SecretAuditActions.Put && entry.Actor == actor && entry.Outcome == "ok");
+    }
+
+    [Fact]
+    public async Task Production_approval_routes_accept_scoped_human_approvers_and_deny_service_accounts()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
+        foreach (var (name, scope) in new[]
+                 {
+                     ("workspace.approver", IamScope.Workspace),
+                     ("project.approver", IamScope.ForProject("alpha")),
+                     ("environment.approver", IamScope.ForEnvironment("alpha", IamEnvironments.Production)),
+                 })
+        {
+            using var client = Client(factory, Invite(factory, name, new IamGrantRequest(IamRoles.Approver, scope)));
+            using var approved = await client.PostAsync("/api/projects/alpha/deploy/deployments/missing/approve", null);
+            Assert.NotEqual(HttpStatusCode.Forbidden, approved.StatusCode);
+            using var promotion = await client.PostAsJsonAsync("/api/projects/alpha/environments/promotions/approve",
+                new { artifact = "missing" });
+            Assert.NotEqual(HttpStatusCode.Forbidden, promotion.StatusCode);
+            using var foreign = await client.PostAsync("/api/projects/beta/deploy/deployments/missing/approve", null);
+            Assert.Equal(scope.Kind == IamScopeKind.Workspace ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden,
+                foreign.StatusCode);
+        }
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("approval-bot", null,
+            [new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))]), ownerId);
+        var token = store.CreateServiceAccountToken(account.Id, new CreateServiceAccountTokenRequest(null, null)).Secret;
+        using var service = BearerClient(factory, token);
+        using var refused = await service.PostAsync("/api/projects/alpha/deploy/deployments/missing/approve", null);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        using var refusedPromotion = await service.PostAsJsonAsync("/api/projects/alpha/environments/promotions/approve",
+            new { artifact = "missing" });
+        Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
+    }
+
+    [Fact]
+    public async Task Deployment_reads_and_operations_use_distinct_permissions()
+    {
+        using var factory = BuildFactory();
+        using var viewer = Client(factory, Invite(factory, "deploy.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+        using var developer = Client(factory, Invite(factory, "deploy.developer",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        using var alphaRead = await viewer.GetAsync("/api/projects/alpha/deploy/status");
+        Assert.NotEqual(HttpStatusCode.Forbidden, alphaRead.StatusCode);
+        using var betaRead = await viewer.GetAsync("/api/projects/beta/deploy/status");
+        Assert.Equal(HttpStatusCode.Forbidden, betaRead.StatusCode);
+        using var refused = await viewer.PostAsJsonAsync("/api/projects/alpha/deploy/releases/missing/deployments",
+            new { environmentId = "stage" });
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        using var admitted = await developer.PostAsJsonAsync("/api/projects/alpha/deploy/releases/missing/deployments",
+            new { environmentId = "stage" });
+        Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
+        using var deniedApproval = await developer.PostAsync("/api/projects/alpha/deploy/deployments/missing/approve", null);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedApproval.StatusCode);
+    }
+
     private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
     {
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),
@@ -303,6 +412,8 @@ public sealed class IamHandlerAccessTests : IDisposable
                 ["Security:Profile"] = "networked",
                 ["AllowedHosts"] = "studio.test",
                 ["DeliveryChain:Guarded"] = "false",
+                ["Secrets:KeyFile"] = Path.Combine(_workspace + "-keys", "secrets.kek"),
+                ["Secrets:KeyEnvironmentVariable"] = "AGENT_STUDIO_TEST_UNSET_KEK_" + Guid.NewGuid().ToString("N"),
                 ["WatchPaths:0:Name"] = "alpha",
                 ["WatchPaths:0:Path"] = ProjectPath("alpha"),
                 ["WatchPaths:0:RootPath"] = ProjectPath("alpha"),
@@ -357,5 +468,6 @@ public sealed class IamHandlerAccessTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, true);
+        if (Directory.Exists(_workspace + "-keys")) Directory.Delete(_workspace + "-keys", true);
     }
 }

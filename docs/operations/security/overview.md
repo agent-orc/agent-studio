@@ -178,6 +178,17 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   `environmentId` to the kind of that declaration (an undeclared id resolves
   to no environment, so only workspace and project bindings grant it). The
   store refuses any other environment key with `invalid-scope`.
+- Deployment status, release, deployment, log, and audit reads require
+  `project.read`. Deployment actions require a deploy permission. Production
+  approve and reject routes require `environment.production.deploy.approve`;
+  a human Approver bound at the workspace, project, or production environment
+  may decide in scope. Service accounts cannot approve. The deployment
+  lifecycle still checks the approval when it processes the decision.
+- Workspace secret metadata requires `secrets.read` on the workspace.
+  `/api/secrets` and `/api/secrets/audit` filter each entry by its actual
+  workspace, project, or declared environment scope. A service account with
+  `secrets.write` may manage secrets in scope; records and audit entries name
+  it as `service-account:<id>`.
 - Requests never authorize through the stored legacy fields. After the
   permission decision the middleware gives the handler a projected principal
   for this request: `role` is the strongest role among the workspace and
@@ -210,7 +221,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   workspace binding on unaddressed routes. They never call access
   administration or the versioned `/api/v1` plane. Handlers, audit records,
   and card timelines all see them as the one non-human actor
-  `service-account:<id>`, which is also the actor of approvals, rollbacks, and
+  `service-account:<id>`, which is also the actor of rollbacks and
   moves they trigger. Because that actor is not `human:`, a lane move by a
   service account or API token no longer counts as an operator requeue out of
   a decision lane or as an operator lane verdict, as a human operator's move
