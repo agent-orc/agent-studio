@@ -93,6 +93,9 @@ public sealed class DeployService
         if (staging is null || !environments.Any(StandardLifecyclePolicy.RequiresApproval))
             return DeployOutcome<Release>.Invalid(
                 $"Staging and production declarations are required at commit {ShortSha(commit)}.");
+        if (declarations.Any(item => (item.Kind is "stage" or "production")
+                && !_environments.HasVerifiedArtifact(project, artifact, commit, item.Template)))
+            return DeployOutcome<Release>.Invalid("Artifact provenance does not match the release template.");
         var id = ReleaseSnapshot.Id(project, commit, [artifact]);
         var repo = _git.ResolveRepoRootForProject(project);
         var existing = _store.ReadReleaseRecords(project);

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.Deploy;
 
 namespace AgentStudio.Projects;
 
@@ -57,6 +58,7 @@ public sealed class ProjectEnvironmentService
     private const string AbortedEvidence = "deploy-aborted";
     private readonly object _gate = new();
     private readonly IConfiguration _configuration;
+    private readonly ReleaseArtifactRegistry _registry;
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
@@ -64,9 +66,10 @@ public sealed class ProjectEnvironmentService
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ProjectEnvironmentService(IConfiguration configuration, TaskScannerService scanner,
-        GitService git, ProjectSettingsService settings, TimeProvider clock)
+        GitService git, ProjectSettingsService settings, TimeProvider clock, ReleaseArtifactRegistry? registry = null)
     {
         _configuration = configuration;
+        _registry = registry ?? new ReleaseArtifactRegistry(configuration);
         _scanner = scanner;
         _git = git;
         _settings = settings;
@@ -261,6 +264,9 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    public bool HasVerifiedArtifact(string project, string artifact, string commit, string template)
+        => _registry.Verified(project, commit, artifact, template) is not null;
+
     /// <summary>
     /// Queues stage for a gate-built artifact and returns the stage job. The
     /// caller has passed <see cref="CanQueueRelease"/> (its git checks stay
@@ -283,6 +289,8 @@ public sealed class ProjectEnvironmentService
             var production = declarations?.FirstOrDefault(item => item.Kind == "production");
             if (stage is null || production is null || !IsDeclared(current, stage.Id) || !IsDeclared(current, production.Id))
                 return null;
+            if (!HasVerifiedArtifact(project, artifact, commit, stage.Template)
+                || !HasVerifiedArtifact(project, artifact, commit, production.Template)) return null;
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
@@ -349,7 +357,8 @@ public sealed class ProjectEnvironmentService
 
     // The gate endpoint is service-credential only. It records the built
     // artifact's immutable digest against the exact released commit.
-    public bool RegisterGateArtifact(string project, string artifact, string commit)
+    public bool RegisterGateArtifact(string project, string artifact, string commit,
+        string builderIdentity = "release-gate")
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
         if (!HasIndependentReleaseEvidence(project, artifact, commit)) return false;
@@ -361,6 +370,7 @@ public sealed class ProjectEnvironmentService
             return false;
         lock (_gate)
         {
+            if (!_registry.PushVerified(project, commit, artifact, builderIdentity)) return false;
             var path = ArtifactPath(project, commit, artifact);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (File.Exists(path))
@@ -404,7 +414,8 @@ public sealed class ProjectEnvironmentService
                 && (artifact == "release-package@sha256:" + expected
                     || value.GetProperty("sourceSha256").GetString() == expected);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+            or KeyNotFoundException or InvalidOperationException)
         {
             return false;
         }
@@ -413,7 +424,8 @@ public sealed class ProjectEnvironmentService
     private bool HasBuiltArtifact(string project, string artifact, string commit)
     {
         var path = ArtifactPath(project, commit, artifact);
-        return File.Exists(path) && string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal);
+        return File.Exists(path) && string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal)
+            && _registry.VerifiedForArtifact(project, commit, artifact) is not null;
     }
 
     private string ArtifactPath(string project, string commit, string artifact)
