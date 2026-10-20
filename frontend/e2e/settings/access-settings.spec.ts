@@ -60,7 +60,7 @@ test('owner manages access from Settings and sees each created token once', asyn
     if (request.method() === 'DELETE') {
       const id = new URL(request.url()).pathname.split('/').at(-1);
       const index = tokens.findIndex(token => token.id === id);
-      if (index >= 0) tokens.splice(index, 1);
+      if (index >= 0) tokens[index] = { ...tokens[index], revokedAt: '2026-10-20T09:00:00Z' };
       return route.fulfill({ status: 204, body: '' });
     }
     return route.fulfill(json(tokens));
@@ -107,6 +107,9 @@ test('owner manages access from Settings and sees each created token once', asyn
   await expect(access).toContainText('build bot');
   await access.getByRole('button', { name: 'Revoke' }).click();
   await expect(access).not.toContainText('build bot');
+  expect(tokens).toHaveLength(1);
+  expect(tokens[0].revokedAt).toBe('2026-10-20T09:00:00Z');
+  await expect(access.getByText('No API tokens yet.')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -124,5 +127,5 @@ test('Access renders empty and unavailable token states', async ({ page }) => {
   await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('access-settings')).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('Token service unavailable');
-  await expect(page.getByTestId('access-settings').getByText('No API tokens yet.')).toBeVisible();
+  await expect(page.getByTestId('access-settings').getByText('No API tokens yet.')).toHaveCount(0);
 });

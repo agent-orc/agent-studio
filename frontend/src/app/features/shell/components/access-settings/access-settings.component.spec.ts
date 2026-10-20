@@ -72,4 +72,36 @@ describe('AccessSettingsComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Sign in as the installation owner');
     TestBed.inject(HttpTestingController).expectNone('/api/auth/users');
   });
+
+  it('shows an empty active list only after inventory loads and omits revoked tokens', async () => {
+    await TestBed.configureTestingModule({
+      imports: [AccessSettingsComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    TestBed.inject(AuthService).status.set(owner);
+    const http = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(AccessSettingsComponent);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain('No API tokens yet.');
+    http.expectOne('/api/auth/users').flush([]);
+    http.expectOne('/api/auth/api-tokens').flush([{ id: 'tok_1', name: 'retired bot', role: 'viewer',
+      projects: ['PROJ-002'], createdBy: 'owner', createdAt: '2026-10-19T09:00:00Z',
+      expiresAt: '2026-11-19T09:00:00Z', lastUsedAt: null, revokedAt: '2026-10-20T09:00:00Z' }]);
+    http.expectOne('/api/auth/runner-enrollments').flush([]);
+    http.expectOne('/api/auth/runners').flush([]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('No API tokens yet.');
+    expect(fixture.nativeElement.textContent).not.toContain('retired bot');
+
+    fixture.componentInstance.refresh();
+    http.expectOne('/api/auth/users').flush([]);
+    http.expectOne('/api/auth/api-tokens').flush({ message: 'Token service unavailable' },
+      { status: 503, statusText: 'Service Unavailable' });
+    http.expectOne('/api/auth/runner-enrollments');
+    http.expectOne('/api/auth/runners');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Token service unavailable');
+    expect(fixture.nativeElement.textContent).not.toContain('No API tokens yet.');
+    http.verify({ ignoreCancelled: true });
+  });
 });

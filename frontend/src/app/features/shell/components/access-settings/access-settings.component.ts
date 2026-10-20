@@ -17,6 +17,7 @@ export class AccessSettingsComponent implements OnInit {
   private readonly api = inject(AccessSettingsService);
   readonly users = signal<AccessUser[]>([]);
   readonly tokens = signal<AccessToken[]>([]);
+  readonly inventoryLoaded = signal(false);
   readonly enrollments = signal<AccessEnrollment[]>([]);
   readonly runners = signal<AccessRunner[]>([]);
   readonly busy = signal(false);
@@ -41,12 +42,13 @@ export class AccessSettingsComponent implements OnInit {
 
   refresh(): void {
     this.busy.set(true);
+    this.inventoryLoaded.set(false);
     forkJoin({ users: this.api.users(), tokens: this.api.tokens(), enrollments: this.api.enrollments(), runners: this.api.runners() })
       .subscribe({
         next: result => {
-          this.users.set(result.users); this.tokens.set(result.tokens);
+          this.users.set(result.users); this.tokens.set(result.tokens.filter(token => !token.revokedAt));
           this.enrollments.set(result.enrollments); this.runners.set(result.runners);
-          this.busy.set(false); this.error.set(null);
+          this.busy.set(false); this.error.set(null); this.inventoryLoaded.set(true);
         },
         error: err => this.failed(err),
       });

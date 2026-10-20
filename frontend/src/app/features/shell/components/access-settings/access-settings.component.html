@@ -54,7 +54,7 @@
         <label>Valid days <input name="tokenDays" type="number" min="1" max="365" [ngModel]="tokenDays()" (ngModelChange)="tokenDays.set($event)" /></label>
         <button type="submit" [disabled]="busy() || !tokenName().trim() || !tokenProjects().trim()">Create token</button>
       </form>
-      @if (!tokens().length) { <p class="access__empty" role="status">No API tokens yet.</p> }
+      @if (inventoryLoaded() && !tokens().length) { <p class="access__empty" role="status">No API tokens yet.</p> }
       <div class="access__list">
         @for (token of tokens(); track token.id) {
           <div class="access__row"><div><strong>{{ token.name }}</strong><small>{{ token.role }} · {{ token.projects.join(', ') }} · Expires {{ token.expiresAt }} · Last use {{ token.lastUsedAt || 'Never' }} · {{ token.revokedAt ? 'Revoked' : 'Active' }}</small></div>
