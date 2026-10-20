@@ -832,6 +832,22 @@ public sealed class DeployServiceTests : IDisposable
             Assert.Equal("release/test-gate", provenance.RootElement.GetProperty("gateRunId").GetString());
             Assert.Equal("container", provenance.RootElement.GetProperty("template").GetString());
         }
+        Assert.Equal(releaseId, stage.ReleaseId);
+        var otherCommit = Commit("reuse-digest");
+        WriteReleaseEvidence(Artifact('a'), otherCommit);
+        Assert.True(hosts.RegisterGateArtifact("demo", Artifact('a'), otherCommit));
+        var store = factory.Services.GetRequiredService<DeployStore>();
+        var original = Assert.Single(store.ReadReleaseRecords("demo"));
+        Assert.True(store.AppendRelease("demo", new ReleaseRecord(
+            original.Release with { Id = "ffffffffffff", CommitSha = otherCommit }, original.Environments)).Created);
+        using var reusedDigestRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
+        reusedDigestRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
+        using var reusedDigest = await host.SendAsync(reusedDigestRequest);
+        Assert.Equal(HttpStatusCode.OK, reusedDigest.StatusCode);
+        using (var provenance = JsonDocument.Parse(await reusedDigest.Content.ReadAsStringAsync()))
+            Assert.Equal(commit, provenance.RootElement.GetProperty("commit").GetString());
+        File.Delete(Path.Combine(_root, "workspace", "deployments", "projects", "demo", "releases",
+            "ffffffffffff.json"));
         var provenanceFile = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
             "*.json", SearchOption.AllDirectories).Single(file => file.Contains(commit, StringComparison.Ordinal));
         File.Delete(provenanceFile);

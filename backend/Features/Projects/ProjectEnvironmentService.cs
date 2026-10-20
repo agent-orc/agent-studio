@@ -24,7 +24,8 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
+    string? ReleaseId = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -277,7 +278,7 @@ public sealed class ProjectEnvironmentService
     /// the host the current declaration names (<see cref="RouteToCurrentHost"/>).
     /// </summary>
     public DeployJob? QueueReleaseJob(string project, string artifact, string commit,
-        IReadOnlyList<EnvironmentDeclaration>? snapshot = null)
+        IReadOnlyList<EnvironmentDeclaration>? snapshot = null, string? releaseId = null)
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit) || !HasBuiltArtifact(project, artifact, commit))
             return null;
@@ -294,7 +295,8 @@ public sealed class ProjectEnvironmentService
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
-            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state, actor: "release-gate");
+            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state,
+                actor: "release-gate", releaseId: releaseId);
             Save(project, state);
             return job;
         }
@@ -307,7 +309,7 @@ public sealed class ProjectEnvironmentService
     /// deployment may start.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
-        bool rollback)
+        bool rollback, string? releaseId = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -315,7 +317,7 @@ public sealed class ProjectEnvironmentService
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, releaseId);
             Save(project, state);
             return job;
         }
@@ -442,7 +444,7 @@ public sealed class ProjectEnvironmentService
     /// current declaration names.
     /// </summary>
     public (bool Decided, DeployJob? Job) DecidePromotion(string project, string artifact, bool approve, string actor,
-        EnvironmentDeclaration? target = null)
+        EnvironmentDeclaration? target = null, string? releaseId = null)
     {
         lock (_gate)
         {
@@ -458,7 +460,7 @@ public sealed class ProjectEnvironmentService
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
             var job = approve
                 ? Queue(project, target is null ? production : RouteToCurrentHost(target, declarations), artifact, state,
-                    actor: actor)
+                    actor: actor, releaseId: releaseId)
                 : null;
             Save(project, state);
             return (true, job);
@@ -580,8 +582,11 @@ public sealed class ProjectEnvironmentService
                 && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
             {
                 var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
+                var previous = state.Jobs.LastOrDefault(item => item.EnvironmentId == job.EnvironmentId
+                    && item.Artifact == job.PreviousArtifact && item.Status == "healthy");
                 if (declaration is not null) Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact),
-                    job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback");
+                    job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback",
+                    releaseId: previous?.ReleaseId);
             }
             Save(project, state);
             return true;
@@ -665,7 +670,7 @@ public sealed class ProjectEnvironmentService
         => declarations?.Any(item => item.Id == environmentId) == true;
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null)
+        bool rollback = false, string? actor = null, string? releaseId = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
@@ -674,7 +679,7 @@ public sealed class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId);
         state.Jobs.Add(job);
         return job;
     }

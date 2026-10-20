@@ -97,9 +97,9 @@ public static class ProjectOperatorDashboardEndpoints
                 && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                     || principal.RunnerId != job.HostId))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
-            var record = releases.ReadReleaseRecords(project).LastOrDefault(item =>
-                item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
-                && item.Release.CreatedAtUtc <= job.CreatedAt
+            var record = releases.ReadReleaseRecords(project).SingleOrDefault(item =>
+                item.Release.Id == job.ReleaseId
+                && item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
                 && item.Environments.Any(environment => environment.Id == job.EnvironmentId
                     && environment.Template == job.Template));
             if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });

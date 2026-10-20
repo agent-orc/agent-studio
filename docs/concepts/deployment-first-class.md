@@ -60,7 +60,8 @@ bytes into `blobs/sha256/<digest>` and verifies them on reads. A container image
 may use an external registry by digest; its signed provenance stays in the
 installation, and Docker verifies the digest when the host pulls it.
 
-The deploy host asks `/api/deploy/jobs/{project}/{jobId}/artifact` with its
+Each release deploy job stores the exact release ID when it is queued. The
+deploy host asks `/api/deploy/jobs/{project}/{jobId}/artifact` with its
 `runner.deploy` credential and current job lease before any transfer. The server
 checks the release, provenance signature, project, commit, digest and template;
 static bytes are then served from the built-in registry through the same leased
@@ -77,8 +78,9 @@ the credential's runner identity must equal the job's `hostId`. The lease must
 still be current and the job claimed. The response is a JSON provenance record
 with `project`, `commit`, `artifact`, `digest`, `gateRunId`, `template`,
 `builderIdentity`, `location`, `sourceDigest`, and its server signature. The
-server selects a release containing that artifact and matching the job's
-environment template, then verifies the record before replying. The host
+server selects the job's release ID, then checks its artifact and environment
+template and verifies the record before replying. A reused digest cannot make
+the job select a different release or commit. The host
 compares the record to the claimed job before it transfers or deploys anything.
 
 For `static`, the host repeats the same leased request with `?content=1` to
