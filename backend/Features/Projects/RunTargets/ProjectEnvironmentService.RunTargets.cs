@@ -40,7 +40,7 @@ public sealed partial class ProjectEnvironmentService
                     continue;
                 }
                 var before = JsonSerializer.Serialize(state, _json);
-                AdvanceTimedPromotions(project, declarations, state);
+                AdvanceQueue(state);
                 var hosted = declarations.Where(item => item.TargetHostId == hostId && item.Hosting is not null).ToArray();
                 var placement = RunTargetDesiredStatePolicy.Place(state.Placements, hostId,
                     hosted.Select(item => new RunTargetHostedEnvironment(item.Id, item.Kind)).ToArray(), tombstones, now);
