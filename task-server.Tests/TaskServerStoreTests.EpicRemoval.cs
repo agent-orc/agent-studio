@@ -21,6 +21,8 @@ public sealed partial class TaskServerStoreTests
                 CREATE TABLE epic_tasks(epic_id TEXT, task_id TEXT);
                 ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
                 INSERT INTO epics(id) VALUES ('old-parent');
+                UPDATE meta SET value = '36' WHERE key = 'schema_version';
+                DELETE FROM schema_migrations WHERE version = 37;
                 """;
             await legacy.ExecuteNonQueryAsync();
         }
@@ -35,5 +37,27 @@ public sealed partial class TaskServerStoreTests
                  + (SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name='epic_id');
             """;
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+        Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Version36BinaryRejectsStoreAfterRetiredFieldRemoval()
+    {
+        const int previousBinarySchemaVersion = 36;
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+
+        await using var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+        var storedVersion = int.Parse((string)(await command.ExecuteScalarAsync())!);
+
+        Assert.Equal(37, storedVersion);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            TaskServerStore.RejectUnsupportedSchemaVersion(storedVersion, previousBinarySchemaVersion));
+        Assert.Contains("newer than this service supports (36)", error.Message);
     }
 }

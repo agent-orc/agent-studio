@@ -54,7 +54,9 @@ public sealed partial class TaskServerStore
     // 35 adds project review plans, integration commands, publication leases
     // and the continuation base reason of the standalone review loop (I11).
     // 36 adds one-time Studio invitations and per-project production approval.
-    public const int CurrentSchemaVersion = 36;
+    // 37 removes retired epic tables and the task_studio_fields.epic_id column.
+    // Older binaries must reject this store before reading task metadata.
+    public const int CurrentSchemaVersion = 37;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3513,9 +3515,7 @@ public sealed partial class TaskServerStore
         var storedVersion = Convert.ToInt32(
             await ScalarAsync(connection, "SELECT value FROM meta WHERE key = 'schema_version';", ct) ?? 0,
             CultureInfo.InvariantCulture);
-        if (storedVersion > CurrentSchemaVersion)
-            throw new InvalidOperationException(
-                $"Task Server store schema {storedVersion} is newer than this service supports ({CurrentSchemaVersion}).");
+        RejectUnsupportedSchemaVersion(storedVersion, CurrentSchemaVersion);
 
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS schema_migrations(
@@ -4451,6 +4451,13 @@ public sealed partial class TaskServerStore
         await ApplyCredentialReminderMigrationAsync(connection, ct);
         await ApplyStandaloneReviewLoopMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
+    }
+
+    internal static void RejectUnsupportedSchemaVersion(int storedVersion, int supportedVersion)
+    {
+        if (storedVersion > supportedVersion)
+            throw new InvalidOperationException(
+                $"Task Server store schema {storedVersion} is newer than this service supports ({supportedVersion}).");
     }
 
     /// <summary>
