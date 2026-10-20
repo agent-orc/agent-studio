@@ -2623,7 +2623,10 @@ starting it. It resolves secret names under the claimed job lease, sends step
 log messages to the deployment log, and records each step
 result. A failed deployment queues the previous healthy artifact for rollback.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
-needs Python 3, and container targets also need Docker Compose.
+needs Python 3, and container targets also need Docker Compose. The
+[deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
+lease-bound step log and report payloads, failure responses, and secret
+resolution request.
 `POST .../migration` writes only through `ManagedRepositoryMutationService` as
 one path-scoped commit. The current file digest and the regenerated proposal
 digest must both still equal the dry run. That comparison is the mutation's
