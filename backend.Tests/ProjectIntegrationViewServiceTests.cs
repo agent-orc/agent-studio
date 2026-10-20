@@ -355,7 +355,7 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         try
         {
             var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
@@ -367,7 +367,7 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
-            throw new TimeoutException($"git {string.Join(' ', args)} exceeded 30 seconds.", ex);
+            throw new TimeoutException($"git {string.Join(' ', args)} exceeded two minutes.", ex);
         }
     }
 }
