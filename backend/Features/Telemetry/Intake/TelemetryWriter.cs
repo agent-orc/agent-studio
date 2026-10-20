@@ -7,8 +7,8 @@ namespace AgentStudio.Telemetry;
 /// batches of up to <see cref="MaxRecordsPerFlush"/> records,
 /// <see cref="MaxBytesPerFlush"/> estimated bytes, or
 /// <see cref="TelemetryOptions.MaxStoredBytesPerRequest"/> stored bytes, groups them per environment
-/// into one transaction each, masks log bodies and the attribute values of logs
-/// and metrics, calls the export hooks, and runs the retention sweep and the
+/// into one transaction each, masks log bodies, event names, severity text, and
+/// the attribute values of logs and metrics, calls the export hooks, and runs the retention sweep and the
 /// global minute- and hour-bucket caps every <see cref="TelemetryOptions.RetentionSweepMinutes"/>.
 /// Studio requests never wait for this loop.
 /// </summary>

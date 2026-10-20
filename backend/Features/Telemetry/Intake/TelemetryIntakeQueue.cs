@@ -19,7 +19,7 @@ public sealed class TelemetryIntakeQueue
     private readonly object _gate = new();
     private readonly TelemetryBatchJournal? _journal;
     private readonly TelemetryStore? _store;
-    private readonly ITelemetryValueMasker? _masker;
+    private readonly ITelemetryValueMasker _masker;
     private readonly List<TelemetryIngestBatch> _outstanding = [];
     private readonly Dictionary<TelemetryEnvironmentKey, (long Records, long Bytes)> _environments = [];
     private readonly long _maxRecords;
@@ -37,14 +37,14 @@ public sealed class TelemetryIntakeQueue
         ITelemetryDurability durability)
     {
         _store = store;
-        _masker = masker;
+        _masker = masker ?? new CredentialTelemetryValueMasker();
         _maxRecords = options.MaxQueuedRecords;
         _maxBytes = options.MaxQueuedBytes;
         _maxRecordsPerEnvironment = options.MaxQueuedRecordsPerEnvironment;
         _maxBytesPerEnvironment = options.MaxQueuedBytesPerEnvironment;
         if (options.StoreRoot is not null)
         {
-            _journal = new TelemetryBatchJournal(options.StoreRoot, masker, durability);
+            _journal = new TelemetryBatchJournal(options.StoreRoot, _masker, durability);
             foreach (var recovered in _journal.Recover())
             {
                 Add(recovered.Environment, recovered.RecordCount, recovered.EstimatedBytes);
@@ -93,8 +93,8 @@ public sealed class TelemetryIntakeQueue
             {
                 if (batch.Metrics.Count > 0 && _store?.WouldRejectSeries(batch.Environment,
                     _outstanding.Where(item => item.Environment == batch.Environment)
-                        .SelectMany(item => item.Metrics).Concat(batch.Metrics.Select(item => _masker is null
-                            ? item : item with { Attributes = item.Attributes.MapValues(_masker.Mask) }))) == true)
+                        .SelectMany(item => item.Metrics).Concat(batch.Metrics.Select(item => item with
+                            { Attributes = item.Attributes.MapValues(_masker.Mask) }))) == true)
                     return TelemetryEnqueueResult.TooManySeries;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)

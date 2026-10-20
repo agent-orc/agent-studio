@@ -6,11 +6,11 @@ namespace AgentStudio.Telemetry;
 internal sealed class TelemetryBatchJournal
 {
     private readonly string _root;
-    private readonly ITelemetryValueMasker? _masker;
+    private readonly ITelemetryValueMasker _masker;
     private readonly ITelemetryDurability _durability;
     private long _nextOrder;
 
-    public TelemetryBatchJournal(string root, ITelemetryValueMasker? masker, ITelemetryDurability durability)
+    public TelemetryBatchJournal(string root, ITelemetryValueMasker masker, ITelemetryDurability durability)
     {
         _root = Path.Combine(root, "pending");
         _masker = masker;
@@ -31,7 +31,7 @@ internal sealed class TelemetryBatchJournal
 
     public TelemetryIngestBatch Stage(TelemetryIngestBatch batch)
     {
-        var staged = _masker is null ? batch : batch with
+        var staged = batch with
         {
             Metrics = batch.Metrics.Select(item => item with
                 { Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray(),
