@@ -349,7 +349,7 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
-    public void Active_run_keeps_running_and_metering_when_the_quota_is_reached()
+    public async Task Active_run_keeps_running_and_metering_when_the_quota_is_reached()
     {
         Directory.CreateDirectory(_root);
         using var factory = Factory();
@@ -367,12 +367,116 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         Assert.False(quota.Admit(project.Id).Allowed);
         _clock.Advance(TimeSpan.FromHours(1));
 
+        // Stale-while-revalidate: the read after the TTL gets the previous value and starts one recompute.
+        Assert.Equal(4, quota.Snapshot(workspace.Id).Usage.ComputeCoreHours);
+        await quota.PendingUsageRefresh(workspace.Id);
         // Refusal is admission only: the open step is neither completed nor moved, and it keeps metering.
         Assert.Equal(6, quota.Snapshot(workspace.Id).Usage.ComputeCoreHours);
         Assert.True(Directory.Exists(job));
         var step = Assert.Single(services.GetRequiredService<PipelineExecutionLog>().Read(job)!.Steps,
             item => item.StartedAt is not null);
         Assert.Null(step.CompletedAt);
+    }
+
+    [Fact]
+    public async Task Orphaned_running_step_of_a_previous_attempt_stops_metering_when_the_next_attempt_starts()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "orphans"), "Orphans", workspace.Id, _clock);
+        var job = SeedTask(project.StorageLocation, "orphan-card", state: TaskStates.Progress);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        RecordStep(services, job, project.DisplayName, "orphan-card", now.AddHours(-3), completedAt: null, cores: 1);
+        // The next pickup archives the incomplete attempt together with its Running step.
+        var pipeline = services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.EnsureAgentRunStart(job, PipelineCatalogue.Standard, project.DisplayName, "orphan-card", now.AddHours(-2));
+        services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        Assert.Equal(PipelineStepStatus.Running, Assert.Single(pipeline.Read(job)!.PreviousAttempts).Steps
+            .Single(step => step.StartedAt is not null).Status);
+        Assert.Equal(1, quota.Snapshot(workspace.Id).Usage.ComputeCoreHours);
+        _clock.Advance(TimeSpan.FromHours(5));
+        quota.Snapshot(workspace.Id);
+        await quota.PendingUsageRefresh(workspace.Id);
+
+        Assert.Equal(1, quota.Snapshot(workspace.Id).Usage.ComputeCoreHours);
+    }
+
+    [Fact]
+    public async Task Open_step_on_a_human_review_card_ends_at_the_last_record_write()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "reviewed"), "Reviewed", workspace.Id, _clock);
+        var job = SeedTask(project.StorageLocation, "reviewed-card", state: TaskStates.HumanReview);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        RecordStep(services, job, project.DisplayName, "reviewed-card", now.AddHours(-2), completedAt: null, cores: 2);
+        File.SetLastWriteTimeUtc(Path.Combine(job, PipelineExecutionLog.FileName), now.AddHours(-1));
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        Assert.Equal(2, quota.Snapshot(workspace.Id).Usage.ComputeCoreHours);
+        _clock.Advance(TimeSpan.FromHours(3));
+        quota.Snapshot(workspace.Id);
+        await quota.PendingUsageRefresh(workspace.Id);
+
+        Assert.Equal(2, quota.Snapshot(workspace.Id).Usage.ComputeCoreHours);
+    }
+
+    [Fact]
+    public void Without_any_limit_admission_answers_without_message_or_meter_warning()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var quota = factory.Services.GetRequiredService<WorkspaceQuotaService>();
+
+        var admission = quota.Admit("task-server-only-name", hosting: true);
+
+        Assert.False(quota.HasLimits());
+        Assert.True(admission.Allowed);
+        Assert.Null(admission.Message);
+        Assert.False(admission.MeterUnavailable);
+    }
+
+    [Fact]
+    public void Override_audits_older_than_the_retention_are_trimmed()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+        quota.Override(workspace.Id, null, "owner-1", "First");
+        _clock.Advance(WorkspaceQuotaService.AuditRetention + TimeSpan.FromDays(1));
+
+        quota.Override(workspace.Id, null, "owner-2", "Second");
+
+        Assert.Equal("Second", Assert.Single(quota.Audit(workspace.Id, null)).Reason);
+    }
+
+    [Fact]
+    public void Monolith_gate_claim_admits_an_unresolved_subject_with_a_meter_warning()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(0, null, null));
+        var store = new MonolithGateStore((string?)null, _clock, new GateHosts(), quota,
+            services.GetRequiredService<TaskScannerService>());
+        store.Create(GateSubject("NOPE-1"));
+
+        var claimed = store.Claim(new GateClaimRequest("gate-a", "instance-a"));
+
+        Assert.Equal("claimed", claimed.Status);
+        Assert.Contains("could not be resolved", claimed.Message, StringComparison.Ordinal);
     }
 
     [Fact]

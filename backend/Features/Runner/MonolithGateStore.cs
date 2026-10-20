@@ -168,10 +168,11 @@ public sealed class MonolithGateStore
                          .Where(item => item.attempt.Attempt.State == GateStates.Queued)
                          .OrderBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
             {
+                AgentStudio.Quota.QuotaAdmission? admission = null;
                 if (verdicts is not null)
                 {
                     // A subject queued after the verdicts were read waits for the next poll.
-                    if (!verdicts.TryGetValue(record.Subject.TaskId, out var admission))
+                    if (!verdicts.TryGetValue(record.Subject.TaskId, out admission))
                     {
                         quotaReason = "Gate quota admission is pending for this subject.";
                         continue;
@@ -210,7 +211,8 @@ public sealed class MonolithGateStore
                 };
                 var updated = Replace(record, claimed) with { LastFence = fence };
                 Save(updated);
-                return new GateClaimResponse("claimed", updated.Subject, claimed.Attempt, Lease(claimed));
+                return new GateClaimResponse("claimed", updated.Subject, claimed.Attempt, Lease(claimed),
+                    admission is { MeterUnavailable: true } ? admission.Message : null);
             }
             return new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }
@@ -240,7 +242,9 @@ public sealed class MonolithGateStore
         {
             if (!projects.TryGetValue(taskId, out var project))
             {
-                verdicts[taskId] = new(false, "Gate project could not be resolved for quota admission.");
+                // Like an unregistered project: admitted, and the meter gap is named on the claim.
+                verdicts[taskId] = new(true,
+                    $"Gate card '{taskId}' could not be resolved to a project; quota admission is off for it.", true);
                 continue;
             }
             if (!byProject.TryGetValue(project, out var admission))

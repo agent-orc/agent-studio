@@ -33,8 +33,15 @@ public sealed record QuotaDeployExecution(string ProjectId, string JobId, string
 /// <summary>Workspace and project limits. Usage is projected from the same token and pipeline records as Studio.</summary>
 public sealed class WorkspaceQuotaService
 {
-    /// <summary>Usage lags token and pipeline writes by at most this long, or one task index generation.</summary>
+    /// <summary>
+    /// Usage is recomputed in the background at most this often; readers get the
+    /// previous value meanwhile, so usage lags token and pipeline writes by about this long.
+    /// </summary>
     public static readonly TimeSpan UsageTtl = TimeSpan.FromSeconds(30);
+
+    /// <summary>Override audits older than this are dropped when a new override is written.</summary>
+    public static readonly TimeSpan AuditRetention = TimeSpan.FromDays(90);
+    private const int MaxAudits = 200;
 
     private sealed record State(Dictionary<string, QuotaLimits> Workspaces,
         Dictionary<string, QuotaLimits> Projects, Dictionary<string, DateTime> Overrides,
@@ -49,7 +56,11 @@ public sealed class WorkspaceQuotaService
     private sealed record ProjectUsage(ProjectRecord Project, QuotaUsage[] Daily,
         IReadOnlyList<QuotaConsumer> Consumers, string? MeterWarning);
 
-    private sealed record WorkspaceUsage(DateTime WeekStart, IReadOnlyDictionary<string, ProjectUsage> Projects);
+    /// <summary>RefreshError is set when the latest background recompute failed and the value is older.</summary>
+    private sealed record WorkspaceUsage(DateTime WeekStart, IReadOnlyDictionary<string, ProjectUsage> Projects,
+        string? RefreshError = null);
+
+    private sealed record UsageSlot(WorkspaceUsage Value, DateTimeOffset ComputedAt);
 
     private readonly object _gate = new();
     private readonly string _path;
@@ -61,10 +72,13 @@ public sealed class WorkspaceQuotaService
     private readonly TaskScannerService _scanner;
     private readonly PipelineExecutionLog _pipeline;
     private readonly ILogger<WorkspaceQuotaService>? _logger;
-    private readonly GenerationSingleFlightCache<WorkspaceUsage> _usage;
+    private readonly ConcurrentDictionary<string, UsageSlot> _usage = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Task> _usageRefreshes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, object> _usageGates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _unpricedModels = new(StringComparer.OrdinalIgnoreCase);
     private State _state = Empty();
     private string? _stateReadError;
+    private (DateTime WrittenAt, long Length)? _loadedStamp;
 
     public WorkspaceQuotaService(IConfiguration config, TimeProvider clock, WorkspaceRegistry workspaces,
         ProjectRegistry projects, ProjectTokenLedger tokens, ITokenPricing pricing,
@@ -78,7 +92,6 @@ public sealed class WorkspaceQuotaService
         _scanner = scanner;
         _pipeline = pipeline;
         _logger = logger;
-        _usage = new GenerationSingleFlightCache<WorkspaceUsage>(clock);
         var root = config["TaskRepository"] ?? Path.Combine(Path.GetTempPath(), "agent-studio-quota");
         _path = Path.Combine(root, ".metadata", "workspace-quotas.json");
         lock (_gate) Reload();
@@ -88,12 +101,20 @@ public sealed class WorkspaceQuotaService
         new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase),
         new(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>An unreadable state file keeps the last good state and is reported as meter unavailable.</summary>
+    /// <summary>
+    /// The state lives in memory; the file is read again only when its write
+    /// time or length changed. An unreadable state file keeps the last good
+    /// state and is reported as meter unavailable.
+    /// </summary>
     private void Reload()
     {
         try
         {
-            if (!File.Exists(_path)) return;
+            var file = new FileInfo(_path);
+            if (!file.Exists) return;
+            var stamp = (file.LastWriteTimeUtc, file.Length);
+            if (_loadedStamp == stamp) return;
+            _loadedStamp = stamp;
             var read = JsonSerializer.Deserialize<State>(File.ReadAllText(_path));
             if (read is not null) _state = read;
             _stateReadError = null;
@@ -112,6 +133,8 @@ public sealed class WorkspaceQuotaService
         var temporary = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(_state));
         File.Move(temporary, _path, true);
+        var file = new FileInfo(_path);
+        _loadedStamp = (file.LastWriteTimeUtc, file.Length);
     }
 
     public void SetLimits(string workspaceId, string? projectId, QuotaLimits? limits)
@@ -140,12 +163,16 @@ public sealed class WorkspaceQuotaService
         if (projectId is not null && !_projects.List().Any(p => p.Id == projectId && p.WorkspaceId == workspaceId))
             throw new KeyNotFoundException("Project does not belong to workspace.");
         var expiry = WorkspaceQuotaPolicy.Week(_clock).End;
+        var now = _clock.GetUtcNow();
         lock (_gate)
         {
             Reload();
+            foreach (var expired in _state.Overrides.Where(item => item.Value <= now.UtcDateTime).Select(item => item.Key).ToList())
+                _state.Overrides.Remove(expired);
             _state.Overrides[projectId ?? workspaceId] = expiry;
-            _state = _state with { Audits = [.. (_state.Audits ?? []),
-                WorkspaceQuotaPolicy.OverrideEntry(_clock, workspaceId, projectId, actor, reason, expiry)] };
+            var audits = (_state.Audits ?? []).Where(entry => entry.At >= now - AuditRetention).ToList();
+            audits.Add(WorkspaceQuotaPolicy.OverrideEntry(_clock, workspaceId, projectId, actor, reason, expiry));
+            _state = _state with { Audits = audits.TakeLast(MaxAudits).ToList() };
             Save();
         }
     }
@@ -160,13 +187,17 @@ public sealed class WorkspaceQuotaService
         }
     }
 
-    /// <summary>True when any workspace or project limit exists; admission paths skip all work otherwise.</summary>
+    /// <summary>
+    /// True when any workspace or project limit exists, or when the settings
+    /// file cannot be read (limits are then unknown). Admission paths skip all
+    /// quota work otherwise.
+    /// </summary>
     public bool HasLimits()
     {
         lock (_gate)
         {
             Reload();
-            return _state.Workspaces.Count > 0 || _state.Projects.Count > 0;
+            return _state.Workspaces.Count > 0 || _state.Projects.Count > 0 || _stateReadError is not null;
         }
     }
 
@@ -182,23 +213,51 @@ public sealed class WorkspaceQuotaService
         }
     }
 
-    /// <summary>Reserve a hosting slot before dispatch. The read, admission and write share one lock.</summary>
+    /// <summary>
+    /// Reserve a hosting slot before dispatch. Tokens, core-hours and the meter
+    /// are checked before the lock; the slot count is checked again and the
+    /// slot written under it, so two deploys cannot take the last slot.
+    /// </summary>
     public bool ReserveProjectEnvironment(string projectName, string environmentId)
     {
         var project = _projects.FindByIdOrDisplayName(projectName);
         if (project is null) return false;
+        var admission = Admit(project, hosting: false);
+        if (!admission.Allowed) throw new InvalidOperationException(admission.Message);
+        var workspaceProjectIds = _projects.List().Where(p => p.WorkspaceId == project.WorkspaceId)
+            .Select(p => p.Id).ToList();
         lock (_gate)
         {
             Reload();
             var key = project.Id + "/" + environmentId;
-            var existed = _state.Environments.ContainsKey(key);
-            var admission = Admit(project, hosting: !existed);
-            if (!admission.Allowed) throw new InvalidOperationException(admission.Message);
-            if (existed) return false;
+            if (_state.Environments.ContainsKey(key)) return false;
+            if (HostingRefusalLocked(project, workspaceProjectIds) is { } refusal)
+                throw new InvalidOperationException(refusal);
             _state.Environments[key] = _clock.GetUtcNow().ToString("O");
             Save();
             return true;
         }
+    }
+
+    /// <summary>Refusal when the workspace or the project has no free hosting slot; caller holds the lock.</summary>
+    private string? HostingRefusalLocked(ProjectRecord project, IReadOnlyCollection<string> workspaceProjectIds)
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        _state.Workspaces.TryGetValue(project.WorkspaceId, out var workspaceLimits);
+        _state.Projects.TryGetValue(project.Id, out var projectLimits);
+        foreach (var (scope, limits, ids) in new[]
+                 {
+                     (project.WorkspaceId, workspaceLimits, workspaceProjectIds),
+                     (project.Id, projectLimits, (IReadOnlyCollection<string>)[project.Id]),
+                 })
+        {
+            if (limits?.HostingSlots is not { } slots
+                || _state.Overrides.TryGetValue(scope, out var expiry) && expiry > now) continue;
+            var used = _state.Environments.Keys.Count(key => ids.Any(id =>
+                key.StartsWith(id + "/", StringComparison.OrdinalIgnoreCase)));
+            if (used >= slots) return WorkspaceQuotaPolicy.Message(WorkspaceQuotaPolicy.HostingFull, limits);
+        }
+        return null;
     }
 
     public void SetProjectEnvironment(string projectName, string environmentId, bool running)
@@ -311,6 +370,7 @@ public sealed class WorkspaceQuotaService
 
     public QuotaAdmission Admit(string projectName, bool hosting = false)
     {
+        if (!HasLimits()) return new(true, null);
         var project = _projects.FindByIdOrDisplayName(projectName);
         if (project is null)
             return new(true, $"Project '{projectName}' is not registered in Studio; quota admission is off for it.", true);
@@ -422,13 +482,14 @@ public sealed class WorkspaceQuotaService
         var remaining = new QuotaUsage(Math.Max(0, (limits?.ModelTokensPerWeek ?? 0) - total.ModelTokens), 0,
             Math.Max(0, (limits?.ComputeCoreHoursPerWeek ?? 0) - total.ComputeCoreHours),
             Math.Max(0, (limits?.HostingSlots ?? 0) - total.HostingSlots));
-        var meterProblems = projects.Where(p => p.MeterWarning is not null).ToList();
+        var meterProblems = projects.Where(p => p.MeterWarning is not null)
+            .Select(p => $"Project {p.Project.DisplayName}: {p.MeterWarning}").ToList();
+        if (usage.RefreshError is not null) meterProblems.Add(usage.RefreshError);
         var meterComplete = meterProblems.Count == 0;
         var meterBlocks = !meterComplete && limits is not null;
         var status = meterBlocks ? WorkspaceQuotaPolicy.Blocked : WorkspaceQuotaPolicy.Status(limits, total);
         var message = meterBlocks
-            ? "Quota usage is temporarily unavailable. New work waits for the meter. "
-              + string.Join(" ", meterProblems.Select(p => $"Project {p.Project.DisplayName}: {p.MeterWarning}"))
+            ? "Quota usage is temporarily unavailable. New work waits for the meter. " + string.Join(" ", meterProblems)
             : WorkspaceQuotaPolicy.Message(status, limits) ?? (limits is null ? null : view.ReadError);
         return new(workspaceId, projectId, start, end, limits, total, remaining, status,
             consumers.GroupBy(c => (c.ProjectId, c.Project, c.CardId))
@@ -446,37 +507,76 @@ public sealed class WorkspaceQuotaService
     }
 
     /// <summary>
-    /// Current-week usage of every project in the workspace, computed once per
-    /// task index generation, week, and project set and kept for
-    /// <see cref="UsageTtl"/>. Concurrent readers share one computation.
+    /// Current-week usage of every project in the workspace. The first read of a
+    /// week computes it; later reads get the previous value while one
+    /// background recompute runs, at most once per <see cref="UsageTtl"/>.
     /// </summary>
     private WorkspaceUsage Usage(string workspaceId)
     {
         var (start, _) = WorkspaceQuotaPolicy.Week(_clock);
-        var projects = _projects.List().Where(p => p.WorkspaceId == workspaceId).ToList();
-        // Reading the index first publishes a pending refresh, so the generation
-        // below matches the task list the computation uses.
-        var tasks = _scanner.ScanAllJobsWithArchive();
-        var version = string.Join("|", new[]
+        if (_usage.TryGetValue(workspaceId, out var slot) && slot.Value.WeekStart == start)
         {
-            _scanner.SnapshotGeneration.ToString(CultureInfo.InvariantCulture),
-            start.ToString("O", CultureInfo.InvariantCulture),
-        }.Concat(projects.Select(p => $"{p.Id}:{p.DisplayName}:{p.Archived}:{p.StorageLocation}")));
-        return _usage.GetOrCreateVersioned(workspaceId, version, UsageTtl, () => ComputeUsage(projects, tasks));
+            if (_clock.GetUtcNow() - slot.ComputedAt >= UsageTtl) StartUsageRefresh(workspaceId);
+            return slot.Value;
+        }
+        // No value for this week yet: one reader computes, concurrent readers wait for it.
+        lock (_usageGates.GetOrAdd(workspaceId, _ => new object()))
+        {
+            if (_usage.TryGetValue(workspaceId, out slot) && slot.Value.WeekStart == start) return slot.Value;
+            var value = ComputeUsage(workspaceId);
+            _usage[workspaceId] = new(value, _clock.GetUtcNow());
+            return value;
+        }
     }
 
-    private WorkspaceUsage ComputeUsage(IReadOnlyList<ProjectRecord> projects, IReadOnlyList<TaskInfo> index)
+    private void StartUsageRefresh(string workspaceId)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_usageRefreshes.TryAdd(workspaceId, done.Task)) return;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                _usage[workspaceId] = new(ComputeUsage(workspaceId), _clock.GetUtcNow());
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "workspace-quota-usage-refresh-failed workspace={Workspace}", workspaceId);
+                // Keep the previous value, mark it as not refreshed, and retry after one TTL.
+                if (_usage.TryGetValue(workspaceId, out var previous))
+                    _usage[workspaceId] = new(previous.Value with
+                    {
+                        RefreshError = $"Usage could not be refreshed ({ex.GetType().Name}).",
+                    }, _clock.GetUtcNow());
+            }
+            finally
+            {
+                _usageRefreshes.TryRemove(workspaceId, out _);
+                done.SetResult();
+            }
+        });
+    }
+
+    /// <summary>The running background usage recompute of the workspace, or a completed task.</summary>
+    internal Task PendingUsageRefresh(string workspaceId)
+        => _usageRefreshes.TryGetValue(workspaceId, out var refresh) ? refresh : Task.CompletedTask;
+
+    private WorkspaceUsage ComputeUsage(string workspaceId)
     {
         var (start, end) = WorkspaceQuotaPolicy.Week(_clock);
+        var projects = _projects.List().Where(p => p.WorkspaceId == workspaceId).ToList();
         var names = projects.ToDictionary(p => p.DisplayName, StringComparer.OrdinalIgnoreCase);
         // The task index omits archived projects. Their current-week pipeline
         // executions still consume workspace quota, so read those folders directly.
-        var tasks = index
+        // Archived projects run nothing, so none of their cards is live.
+        var tasks = _scanner.ScanAllJobsWithArchive()
             .Where(t => names.ContainsKey(t.ProjectName))
-            .Select(t => (t.FolderPath, Project: names[t.ProjectName], Card: CardId(t), Aliases: new string?[] { t.Id, t.TaskKey, t.Key }))
+            .Select(t => (t.FolderPath, Project: names[t.ProjectName], Card: CardId(t),
+                Aliases: new string?[] { t.Id, t.TaskKey, t.Key },
+                Live: t.State is TaskStates.Progress or TaskStates.AutoReview))
             .Concat(projects.Where(p => p.Archived).SelectMany(p => ProjectTaskFolders(p.StorageLocation)
                 .Select(folder => (FolderPath: folder, Project: p, Card: Path.GetFileName(folder),
-                    Aliases: new string?[] { Path.GetFileName(folder) }))))
+                    Aliases: new string?[] { Path.GetFileName(folder) }, Live: false))))
             .DistinctBy(t => t.FolderPath, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var result = new Dictionary<string, ProjectUsage>(StringComparer.OrdinalIgnoreCase);
@@ -508,23 +608,53 @@ public sealed class WorkspaceQuotaService
             }
             foreach (var task in projectTasks)
             {
+                var file = new FileInfo(Path.Combine(task.FolderPath, PipelineExecutionLog.FileName));
+                if (!file.Exists) continue;
+                var lastWrite = file.LastWriteTimeUtc;
+                // A card that is not live and was not written this week has nothing open this week.
+                if (!task.Live && lastWrite < start) continue;
                 var record = _pipeline.Read(task.FolderPath);
                 if (record is null) continue;
-                foreach (var attempt in new[] { record }.Concat(record.PreviousAttempts))
-                foreach (var step in attempt.Steps)
-                foreach (var execution in new[] { (step.StartedAt, step.CompletedAt, step.GrantedCores) }
-                    .Concat(step.EarlierRuns?.Select(run => (run.StartedAt, run.CompletedAt, run.GrantedCores))
-                        ?? Enumerable.Empty<(DateTime?, DateTime?, int?)>()))
-                {
-                    if (execution.StartedAt is not { } startedAt) continue;
-                    var until = execution.CompletedAt ?? _clock.GetUtcNow().UtcDateTime;
-                    var hours = AddCoreHours(daily, start, end, startedAt, until, Math.Max(1, execution.GrantedCores ?? 1));
-                    if (hours > 0) consumers.Add(new(project.Id, project.DisplayName, task.Card, 0, hours));
-                }
+                foreach (var hours in StepCoreHours(record, task.Live, lastWrite, daily, start, end))
+                    consumers.Add(new(project.Id, project.DisplayName, task.Card, 0, hours));
             }
             result[project.Id] = new(project, daily, consumers, meterWarning);
         }
         return new(start, result);
+    }
+
+    /// <summary>
+    /// Core-hours of every step execution of the record and its previous
+    /// attempts. Only the current attempt of a live card meters an open step
+    /// until now; an archived attempt ends when it completed or when the next
+    /// attempt started (see <see cref="WorkspaceQuotaPolicy.StepEnd"/>).
+    /// </summary>
+    private IEnumerable<decimal> StepCoreHours(PipelineExecutionRecord record, bool liveCard, DateTime lastWrite,
+        QuotaUsage[] daily, DateTime start, DateTime end)
+    {
+        // Previous attempts are newest first, so each one was superseded by the attempt before it in the list.
+        var attempts = new[] { record }.Concat(record.PreviousAttempts).ToList();
+        for (var index = 0; index < attempts.Count; index++)
+        {
+            var attempt = attempts[index];
+            var current = index == 0;
+            var live = current && liveCard && !attempt.IsComplete;
+            var attemptEnd = attempt.CompletedAt is { } completed ? AsUtc(completed)
+                : current ? (DateTime?)null : AsUtc(attempts[index - 1].StartedAt);
+            foreach (var step in attempt.Steps)
+            foreach (var (startedAt, completedAt, cores, latest) in new[] { (step.StartedAt, step.CompletedAt, step.GrantedCores, true) }
+                         .Concat(step.EarlierRuns?.Select(run => (run.StartedAt, run.CompletedAt, run.GrantedCores, false))
+                             ?? Enumerable.Empty<(DateTime?, DateTime?, int?, bool)>()))
+            {
+                if (startedAt is not { } from) continue;
+                var stepStart = AsUtc(from);
+                // An earlier run of a step was replaced by a later run, so it is never live.
+                var until = WorkspaceQuotaPolicy.StepEnd(stepStart, completedAt is { } done ? AsUtc(done) : null,
+                    live && latest, attemptEnd, lastWrite, _clock);
+                var hours = AddCoreHours(daily, start, end, stepStart, until, Math.Max(1, cores ?? 1));
+                if (hours > 0) yield return hours;
+            }
+        }
     }
 
     /// <summary>Adds the week-clipped execution to the daily buckets and returns its core-hours.</summary>

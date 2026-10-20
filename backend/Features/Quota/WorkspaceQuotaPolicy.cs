@@ -74,5 +74,26 @@ public static class WorkspaceQuotaPolicy
         return now < leaseEnd ? now : leaseEnd;
     }
 
+    /// <summary>Longest an open step meters; bounds a step whose end was never written.</summary>
+    public static readonly TimeSpan OpenStepBudget = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// End of a pipeline step execution for metering. An open step counts until
+    /// now only while it belongs to a live attempt (the current, incomplete
+    /// attempt of a card in a working lane). Otherwise it ends when its attempt
+    /// ended, or at the last write of the record. No open step meters past
+    /// <see cref="OpenStepBudget"/> or past now.
+    /// </summary>
+    public static DateTime StepEnd(DateTime startedAt, DateTime? completedAt, bool live,
+        DateTime? attemptEnd, DateTime lastWrite, TimeProvider clock)
+    {
+        if (completedAt is { } done) return done;
+        var now = clock.GetUtcNow().UtcDateTime;
+        var end = live ? now : attemptEnd ?? lastWrite;
+        var budget = startedAt + OpenStepBudget;
+        if (end > budget) end = budget;
+        return end < now ? end : now;
+    }
+
     private static decimal Ratio(decimal used, decimal limit) => limit == 0 ? 1 : used / limit;
 }
