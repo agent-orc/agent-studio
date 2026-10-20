@@ -24,19 +24,22 @@
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
             (openRun)="openRun($event)" (openTools)="show('tools')" />
-          @defer { <app-project-deploy-history [panel]="deploymentPanel()" [runs]="runs()" [environments]="environmentOptions()"
-            [now]="now()" [selectedRunId]="selectedRunId()" (openRun)="openRun($event)" /> }
+          @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
+            [now]="now()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
+            (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
           @placeholder { <p>Loading deploy history…</p> }
           <p class="deploy-area__tools-link">Deploy commands and the AGT-3176 promotion and rollback controls live in the
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">existing deployment tools</button>.</p>
         }
-        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()" /> }
+        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()"
+          [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading pipeline…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
         @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
         @case ('history') {
-          @defer { <app-project-deploy-history [panel]="deploymentPanel()" [runs]="runs()" [environments]="environmentOptions()"
-            [now]="now()" [selectedRunId]="selectedRunId()" (openRun)="openRun($event)" /> }
+          @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
+            [now]="now()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
+            (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
           @placeholder { <p>Loading deploy history…</p> }
         }
         @case ('tools') {

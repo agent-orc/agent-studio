@@ -47,6 +47,12 @@
             </article>
           }
         </div>
+        @if (total() > 25) {
+          <nav class="releases__pages" aria-label="Release pages">
+            <button type="button" data-testid="deploy-releases-prev" [disabled]="offset() === 0" (click)="pageChange.emit(offset() >= 25 ? offset() - 25 : 0)">Previous</button>
+            <button type="button" data-testid="deploy-releases-next" [disabled]="offset() + 25 >= total()" (click)="pageChange.emit(offset() + 25)">Next</button>
+          </nav>
+        }
       }
     }
   }

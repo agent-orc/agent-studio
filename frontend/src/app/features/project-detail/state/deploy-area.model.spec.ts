@@ -166,6 +166,46 @@ describe('deploy area model', () => {
       expect(production.awaitingApproval).toEqual({ deploymentId: null, subject: 'website@sha256:cccccccccccc', requestedBy: null });
     });
 
+    it('uses the host artifact and report when the latest release run describes an older deployment', () => {
+      const sources = deploySourcesFixture();
+      const host = sources.environments!.environments[0];
+      host.deployedArtifact = ARTIFACT_B;
+      host.history.unshift({ at: '2026-10-19T11:57:00Z', status: 'healthy', artifact: ARTIFACT_B,
+        previousArtifact: ARTIFACT_C, evidence: 'host-migration' });
+      sources.statuses![0].currentRelease = RELEASE_3;
+      sources.statuses![0].currentDeployment = sources.deployments!.find(run => run.id === 'run-c-stage')!;
+      const card = buildEnvironmentCards(sources)[0];
+      expect(card).toMatchObject({ artifact: ARTIFACT_B, releaseVersion: '2026.10.19.1',
+        deployedAt: '2026-10-19T11:57:00Z', cards: { status: 'known', keys: ['WEB-33', 'WEB-34'] },
+        lastRun: { deploymentId: null, at: '2026-10-19T11:57:00Z' } });
+    });
+
+    it('shows an unmapped host artifact without assigning a stale release and uses the host time', () => {
+      const sources = deploySourcesFixture();
+      const host = sources.environments!.environments[0];
+      host.deployedArtifact = 'registry.example/website@sha256:legacy';
+      host.history.unshift({ at: '2026-10-19T11:58:00Z', status: 'healthy', artifact: host.deployedArtifact,
+        previousArtifact: ARTIFACT_C, evidence: 'legacy-host' });
+      const card = buildEnvironmentCards(sources)[0];
+      expect(card).toMatchObject({ artifact: host.deployedArtifact, releaseVersion: null,
+        deployedAt: '2026-10-19T11:58:00Z', cards: { status: 'unknown', reason: 'No release record for this artifact' } });
+    });
+
+    it('uses currentDeployment when host history is absent, and host history when release runs are empty', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].history = [];
+      sources.statuses![0].currentDeployment = sources.deployments!.find(run => run.id === 'run-c-stage')!;
+      sources.deployments = [];
+      expect(buildEnvironmentCards(sources)[0].deployedAt).toBe('2026-10-19T11:48:00Z');
+
+      sources.statuses![0].currentDeployment = null;
+      sources.environments!.environments[0].history = deployEnvironmentsFixture().environments[0].history;
+      expect(buildEnvironmentCards(sources)[0]).toMatchObject({
+        deployedAt: '2026-10-19T11:48:00Z',
+        lastRun: { deploymentId: null, state: 'succeeded' },
+      });
+    });
+
     it('prefers AGT-3201 health over the host report and maps the host "failed" to unhealthy', () => {
       const sources = deploySourcesFixture();
       sources.statuses![0].health = 'unhealthy';
@@ -203,8 +243,25 @@ describe('deploy area model', () => {
         currentIncident: null, lastIncident: null, error: null,
       }] };
       sources.deployments = sources.deployments!.filter(run => run.environmentId !== 'production');
+      sources.statuses![1].currentDeployment = null;
       expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'degraded' });
       expect(buildEnvironmentCards(sources)[1].awaitingApproval?.deploymentId).toBeNull();
+    });
+
+    it('uses the per-environment current deployment when that run is beyond the bounded history page', () => {
+      const sources = deploySourcesFixture();
+      sources.deployments = sources.deployments!.filter(run => run.environmentId === 'stage');
+      const production = buildEnvironmentCards(sources)[1];
+      expect(production.lastRun).toMatchObject({ deploymentId: 'run-c-production', state: 'awaiting-approval' });
+      expect(production.awaitingApproval?.deploymentId).toBe('run-c-production');
+    });
+
+    it('keeps the current release identity when it falls outside the bounded release page', () => {
+      const sources = deploySourcesFixture();
+      sources.releases = [];
+      const staging = buildEnvironmentCards(sources)[0];
+      expect(staging.releaseVersion).toBe(RELEASE_3.version);
+      expect(staging.cards).toEqual({ status: 'known', keys: ['WEB-35'] });
     });
 
     it('shows an approval requested through AGT-3201 even without a pending AGT-3176 promotion', () => {

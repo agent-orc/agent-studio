@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { formatAge, type DeployPanel, type EnvironmentCardView, type Release } from '../../state/deploy-area.model';
@@ -17,6 +17,9 @@ export class ProjectDeployReleasesComponent {
   readonly panel = input.required<DeployPanel<Release[]>>();
   readonly environments = input.required<readonly EnvironmentCardView[]>();
   readonly now = input.required<number>();
+  readonly total = input<number>(0);
+  readonly offset = input<number>(0);
+  readonly pageChange = output<number>();
   readonly selectedId = signal<string | null>(null);
 
   readonly releases = computed(() => {

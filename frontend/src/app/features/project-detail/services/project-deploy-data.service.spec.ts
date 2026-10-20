@@ -53,6 +53,24 @@ describe('ProjectDeployDataService', () => {
     expect(log.at(-1)).toEqual({ status: 'ready', value: deploymentLogFixture('run-b-stage') });
   });
 
+  it('requests bounded release and filtered deployment pages', () => {
+    const releases = collect(service.releasePage('Web Site', 25));
+    const runs = collect(service.deploymentPage('Web Site', 50,
+      { environmentId: 'production', state: 'failed', period: '7d' }, Date.parse('2026-10-19T12:00:00Z')));
+    http.expectOne(`${DEPLOY}/releases/page?offset=25&limit=25`).flush({
+      items: deployReleasesFixture().slice(1), offset: 25, limit: 25, total: 28,
+    });
+    const request = http.expectOne(req => req.url === `${DEPLOY}/deployments/page`);
+    expect(request.request.params.get('offset')).toBe('50');
+    expect(request.request.params.get('limit')).toBe('25');
+    expect(request.request.params.get('environmentId')).toBe('production');
+    expect(request.request.params.get('state')).toBe('failed');
+    expect(request.request.params.get('sinceUtc')).toBe('2026-10-12T12:00:00.000Z');
+    request.flush({ items: deployDeploymentsFixture().slice(0, 1), offset: 50, limit: 25, total: 51 });
+    expect(releases.at(-1)).toMatchObject({ status: 'ready', value: { total: 28 } });
+    expect(runs.at(-1)).toMatchObject({ status: 'ready', value: { total: 51 } });
+  });
+
   it('reads AGT-3223 environment health and distinguishes unavailable from server error', () => {
     const health = collect(service.health('Web Site'));
     const response = { capturedAt: '2026-10-19T12:00:00Z', probeOrigin: 'mock', environments: [] };

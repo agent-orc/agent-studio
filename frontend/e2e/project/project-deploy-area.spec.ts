@@ -86,8 +86,24 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
-  await page.route(`**${DEPLOY}/releases`, route => answer(route, deploy.releases));
-  await page.route(`**${DEPLOY}/deployments`, route => answer(route, deploy.deployments));
+  await page.route(`**${DEPLOY}/releases/page?*`, route => {
+    if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
+      return answer(route, deploy.releases);
+    const releases = deploy.releases as unknown[];
+    const offset = Number(new URL(route.request().url()).searchParams.get('offset') ?? 0);
+    return answer(route, { items: releases.slice(offset, offset + 25), offset, limit: 25, total: releases.length });
+  });
+  await page.route(`**${DEPLOY}/deployments/page?*`, route => {
+    if (deploy.deployments === MISSING || (deploy.deployments && typeof deploy.deployments === 'object' && 'status' in deploy.deployments))
+      return answer(route, deploy.deployments);
+    const params = new URL(route.request().url()).searchParams;
+    let runs = deploy.deployments as ReturnType<typeof deployDeploymentsFixture>;
+    if (params.has('environmentId')) runs = runs.filter(run => run.environmentId === params.get('environmentId'));
+    if (params.has('state')) runs = runs.filter(run => run.state === params.get('state'));
+    if (params.has('sinceUtc')) runs = runs.filter(run => Date.parse(run.createdAtUtc) >= Date.parse(params.get('sinceUtc')!));
+    const offset = Number(params.get('offset') ?? 0);
+    return answer(route, { items: runs.slice(offset, offset + 25), offset, limit: 25, total: runs.length });
+  });
   await page.route(`**${DEPLOY}/deployments/*/log`, route => {
     const id = route.request().url().split('/').at(-2)!;
     return deploy.deployments === MISSING ? answer(route, MISSING) : answer(route, { deploymentId: id, lines: deploymentLogFixture(id) });
@@ -192,7 +208,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(rows).toHaveCount(1);
     await page.getByTestId('deploy-history-filter-outcome').selectOption('all');
     await page.getByTestId('deploy-history-filter-period').selectOption('24h');
-    await expect(page.getByTestId('deploy-history-count')).toHaveText('6 of 7 runs');
+    await expect(page.getByTestId('deploy-history-count')).toHaveText('6 of 6 runs');
     await page.getByTestId('deploy-history-reset').click();
     await expect(rows).toHaveCount(7);
 
@@ -252,6 +268,34 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-source-notices')).toContainText('Deployment state is unreadable.');
     await expect(page.getByTestId('deploy-source-notices')).toContainText("Unknown project 'Website'");
     await expect(page.getByRole('article', { name: 'Staging' })).toBeVisible();
+  });
+
+  test('loads one bounded slice at a time for a project with a large history', async ({ page }) => {
+    const sample = deployDeploymentsFixture()[0];
+    const release = deployReleasesFixture()[0];
+    const runs = Array.from({ length: 80 }, (_, index) => ({
+      ...sample, id: `long-run-${index}`, createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    const releases = Array.from({ length: 40 }, (_, index) => ({
+      ...release, id: `long-release-${index}`, createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    const requestedOffsets: string[] = [];
+    await openDeploy(page, fullMocks({ deployments: runs, releases }));
+    await page.route(`**${DEPLOY}/deployments/page?*`, async route => {
+      const params = new URL(route.request().url()).searchParams;
+      requestedOffsets.push(params.get('offset') ?? '');
+      const offset = Number(params.get('offset') ?? 0);
+      await answer(route, { items: runs.slice(offset, offset + 25), offset, limit: 25, total: runs.length });
+    });
+    await page.getByTestId('deploy-tab-history').click();
+    await expect(page.locator('[data-testid^="deploy-run-row-"]')).toHaveCount(25);
+    await page.getByTestId('deploy-history-next').click();
+    await expect(page.getByTestId('deploy-history-count')).toHaveText('50 of 80 runs');
+    expect(requestedOffsets).toContain('25');
+    await page.getByTestId('deploy-tab-releases').click();
+    await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button')).toHaveCount(25);
+    await page.getByTestId('deploy-releases-next').click();
+    await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button')).toHaveCount(15);
   });
 
   test('captures every view in light and dark at 1280 and 1920 px', async ({ page }) => {

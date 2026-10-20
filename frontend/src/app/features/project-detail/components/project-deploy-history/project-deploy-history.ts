@@ -37,7 +37,11 @@ export class ProjectDeployHistoryComponent {
   readonly environments = input.required<readonly { id: string; name: string }[]>();
   readonly now = input.required<number>();
   readonly selectedRunId = input<string | null>(null);
+  readonly total = input<number>(0);
+  readonly offset = input<number>(0);
   readonly openRun = output<string>();
+  readonly filterChange = output<DeployRunFilter>();
+  readonly pageChange = output<number>();
 
   readonly filter = signal<DeployRunFilter>(ALL_DEPLOY_RUNS);
   readonly visible = computed(() => filterDeployRuns(this.runs(), this.filter(), this.now()));
@@ -57,10 +61,11 @@ export class ProjectDeployHistoryComponent {
   protected readonly triggerLabel = triggerLabel;
   protected readonly duration = formatDuration;
 
-  setEnvironment(environmentId: string): void { this.filter.update(filter => ({ ...filter, environmentId })); }
+  setEnvironment(environmentId: string): void { this.setFilter({ ...this.filter(), environmentId }); }
   setState(state: string): void {
-    this.filter.update(filter => ({ ...filter, state: state as DeployRunFilter['state'] }));
+    this.setFilter({ ...this.filter(), state: state as DeployRunFilter['state'] });
   }
-  setPeriod(period: string): void { this.filter.update(filter => ({ ...filter, period: period as DeployPeriod })); }
-  reset(): void { this.filter.set(ALL_DEPLOY_RUNS); }
+  setPeriod(period: string): void { this.setFilter({ ...this.filter(), period: period as DeployPeriod }); }
+  reset(): void { this.setFilter(ALL_DEPLOY_RUNS); }
+  private setFilter(filter: DeployRunFilter): void { this.filter.set(filter); this.filterChange.emit(filter); }
 }

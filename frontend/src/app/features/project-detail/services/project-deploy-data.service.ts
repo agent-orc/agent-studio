@@ -11,10 +11,13 @@ import type {
   DeploymentLogResponse,
   EnvironmentStatus,
   Release,
+  DeployRunFilter,
 } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
+
+export interface DeployPage<T> { items: T[]; offset: number; limit: number; total: number }
 
 /**
  * A 404 without an `error` body: the route is not on this server. AGT-3201 and
@@ -62,9 +65,26 @@ export class ProjectDeployDataService {
     return panel(this.http.get<Release[]>(`${deployRoot(projectName)}/releases`), 'Releases could not be loaded.', true);
   }
 
+  releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {
+    return panel(this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`,
+      { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
+  }
+
   /** AGT-3201 deploy runs, newest first. */
   deployments(projectName: string): Observable<DeployPanel<Deployment[]>> {
     return panel(this.http.get<Deployment[]>(`${deployRoot(projectName)}/deployments`),
+      'Deploy runs could not be loaded.', true);
+  }
+
+  deploymentPage(projectName: string, offset: number, filter?: DeployRunFilter, now?: number): Observable<DeployPanel<DeployPage<Deployment>>> {
+    const params: Record<string, string | number> = { offset, limit: 25 };
+    if (filter?.environmentId && filter.environmentId !== 'all') params['environmentId'] = filter.environmentId;
+    if (filter?.state && filter.state !== 'all') params['state'] = filter.state;
+    if (filter?.period && filter.period !== 'all' && now !== undefined) {
+      const days = filter.period === '24h' ? 1 : filter.period === '7d' ? 7 : 30;
+      params['sinceUtc'] = new Date(now - days * 86_400_000).toISOString();
+    }
+    return panel(this.http.get<DeployPage<Deployment>>(`${deployRoot(projectName)}/deployments/page`, { params }),
       'Deploy runs could not be loaded.', true);
   }
 

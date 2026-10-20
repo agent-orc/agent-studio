@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
@@ -10,7 +10,7 @@ import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
+import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import {
   DEPLOY_CLOCK,
@@ -18,12 +18,14 @@ import {
   buildEnvironmentCards,
   environmentNames,
   ready,
+  ALL_DEPLOY_RUNS,
   type DeployPanel,
   type DeployRunAction,
   type Deployment,
   type DeploymentLogLine,
   type EnvironmentStatus,
   type Release,
+  type DeployRunFilter,
 } from '../../state/deploy-area.model';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'history' | 'steps' | 'operations' | 'tools';
@@ -46,7 +48,14 @@ export class ProjectDeployAreaComponent {
   private readonly data = inject(ProjectDeployDataService);
   private readonly clock = inject(DEPLOY_CLOCK);
   private subscriptions = new Subscription();
-  private runSubscriptions = new Subscription();
+  private runReads = new Subscription();
+  private releaseReads = new Subscription();
+  private logReads = new Subscription();
+  private mutations = new Subscription();
+  private readGeneration = 0;
+  private releaseGeneration = 0;
+  private logGeneration = 0;
+  private mutationAction: DeployRunAction | null = null;
   private runOpener: HTMLElement | null = null;
 
   readonly projectName = input.required<string>();
@@ -60,6 +69,13 @@ export class ProjectDeployAreaComponent {
   readonly statusPanel = signal<DeployPanel<EnvironmentStatus[]>>({ status: 'loading' });
   readonly releasePanel = signal<DeployPanel<Release[]>>({ status: 'loading' });
   readonly deploymentPanel = signal<DeployPanel<Deployment[]>>({ status: 'loading' });
+  readonly historyPanel = signal<DeployPanel<Deployment[]>>({ status: 'loading' });
+  readonly historyDeployments = signal<Deployment[]>([]);
+  readonly historyTotal = signal(0);
+  readonly historyOffset = signal(0);
+  readonly historyFilter = signal<DeployRunFilter>(ALL_DEPLOY_RUNS);
+  readonly releaseTotal = signal(0);
+  readonly releaseOffset = signal(0);
   readonly pipelinePanel = signal<DeployPanel<PipelineDefinitionResponse>>({ status: 'loading' });
   readonly healthPanel = signal<DeployPanel<EnvironmentHealthResponse>>({ status: 'loading' });
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
@@ -77,6 +93,7 @@ export class ProjectDeployAreaComponent {
     const sources = this.sources();
     return sources.deployments ? buildDeployRuns(sources.deployments, environmentNames(sources), sources.releases) : [];
   });
+  readonly historyRuns = computed(() => buildDeployRuns(this.historyDeployments(), environmentNames(this.sources()), ready(this.releasePanel())));
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
@@ -84,7 +101,7 @@ export class ProjectDeployAreaComponent {
     return environments.status === 'error' && this.statusPanel().status === 'ready' ? this.statusPanel() : environments;
   });
   readonly environmentOptions = computed(() => this.cards().map(card => ({ id: card.id, name: card.name })));
-  readonly selectedRun = computed(() => this.runs().find(run => run.id === this.selectedRunId()) ?? null);
+  readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns()].find(run => run.id === this.selectedRunId()) ?? null);
   readonly notices = computed(() => {
     const notice = (name: string, panel: DeployPanel<unknown>) => panel.status === 'error' ? [`${name}: ${panel.message}`] : [];
     return [
@@ -97,27 +114,34 @@ export class ProjectDeployAreaComponent {
   constructor() {
     effect(() => this.view.set(this.initialView()));
     effect(onCleanup => {
-      this.load(this.projectName());
+      const project = this.projectName();
+      untracked(() => this.load(project, true));
       onCleanup(() => {
         this.subscriptions.unsubscribe();
-        this.runSubscriptions.unsubscribe();
+        this.runReads.unsubscribe();
+        this.releaseReads.unsubscribe();
+        this.logReads.unsubscribe();
+        this.mutations.unsubscribe();
+        this.mutations = new Subscription();
+        this.mutationAction = null;
       });
     });
   }
 
   show(view: DeployView): void { this.view.set(view); this.viewChange.emit(view); }
 
-  refresh(): void { this.load(this.projectName()); }
+  refresh(): void { this.load(this.projectName(), false); }
 
   openRun(runId: string): void {
     this.runOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.selectedRunId.set(runId);
-    this.actionState.set(IDLE);
+    this.actionState.set({ busy: this.mutationAction, error: null });
     this.loadLog(runId);
   }
 
   closeRun(): void {
-    this.runSubscriptions.unsubscribe();
+    this.logReads.unsubscribe();
+    this.logGeneration++;
     this.selectedRunId.set(null);
     const opener = this.runOpener;
     this.runOpener = null;
@@ -126,7 +150,7 @@ export class ProjectDeployAreaComponent {
 
   act(action: DeployRunAction): void {
     const runId = this.selectedRunId();
-    if (!runId || this.actionState().busy) return;
+    if (!runId || this.mutationAction) return;
     const run = this.selectedRun();
     if (!run) return;
     const production = ready(this.statusPanel())?.some(item => item.environment.id === run.environmentId && item.environment.kind === 'production')
@@ -138,28 +162,38 @@ export class ProjectDeployAreaComponent {
       if (!window.confirm(`${verb} ${run.environmentName} run ${run.id}?`)) return;
     }
     const project = this.projectName();
+    this.mutationAction = action;
+    this.runReads.unsubscribe();
+    this.readGeneration++;
     this.actionState.set({ busy: action, error: null });
-    this.runSubscriptions.add(this.data.act(project, runId, action).subscribe({
+    this.mutations.add(this.data.act(project, runId, action).subscribe({
       next: () => {
+        this.mutationAction = null;
         this.actionState.set(IDLE);
         this.reloadRuns(project, true);
-        this.loadLog(runId);
+        if (this.selectedRunId() === runId) this.loadLog(runId);
       },
       error: (error: unknown) => {
-        this.actionState.set({ busy: null, error: serverMessage(error) ?? 'The deploy service did not accept the request.' });
+        this.mutationAction = null;
+        this.actionState.set(this.selectedRunId() === runId
+          ? { busy: null, error: serverMessage(error) ?? 'The deploy service did not accept the request.' } : IDLE);
         this.reloadRuns(project, true);
       },
     }));
   }
 
-  private load(projectName: string): void {
+  private load(projectName: string, resetSelection: boolean): void {
     this.subscriptions.unsubscribe();
     this.subscriptions = new Subscription();
-    this.runSubscriptions.unsubscribe();
     this.now.set(this.clock());
-    this.selectedRunId.set(null);
+    if (resetSelection) {
+      this.selectedRunId.set(null);
+      this.actionState.set(IDLE);
+      this.historyOffset.set(0);
+      this.releaseOffset.set(0);
+    }
     this.subscriptions.add(this.data.environments(projectName).subscribe(panel => this.environmentPanel.set(panel)));
-    this.subscriptions.add(this.data.releases(projectName).subscribe(panel => this.releasePanel.set(panel)));
+    this.loadReleases(projectName, true);
     this.subscriptions.add(this.data.pipeline(projectName).subscribe(panel => this.pipelinePanel.set(panel)));
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
     this.reloadRuns(projectName, false);
@@ -168,8 +202,55 @@ export class ProjectDeployAreaComponent {
   /** Status and runs change together after an approval, rejection, or cancellation. */
   private reloadRuns(projectName: string, keepShown: boolean): void {
     this.now.set(this.clock());
-    this.subscriptions.add(this.data.statuses(projectName).subscribe(this.into(this.statusPanel, keepShown)));
-    this.subscriptions.add(this.data.deployments(projectName).subscribe(this.into(this.deploymentPanel, keepShown)));
+    this.runReads.unsubscribe();
+    this.runReads = new Subscription();
+    const generation = ++this.readGeneration;
+    this.runReads.add(this.data.statuses(projectName).subscribe(panel => {
+      if (generation === this.readGeneration) this.into(this.statusPanel, keepShown)(panel);
+    }));
+    this.runReads.add(this.data.deploymentPage(projectName, 0).subscribe(panel => {
+      if (generation !== this.readGeneration) return;
+      this.into(this.deploymentPanel, keepShown)(this.items(panel));
+    }));
+    this.runReads.add(this.data.deploymentPage(projectName, this.historyOffset(), this.historyFilter(), this.now()).subscribe(panel => {
+      if (generation !== this.readGeneration) return;
+      if (panel.status === 'ready') {
+        this.historyDeployments.set(panel.value.items);
+        this.historyTotal.set(panel.value.total);
+      }
+      this.into(this.historyPanel, keepShown)(this.items(panel));
+    }));
+  }
+
+  changeHistoryFilter(filter: DeployRunFilter): void {
+    this.historyFilter.set(filter);
+    this.historyOffset.set(0);
+    this.reloadRuns(this.projectName(), false);
+  }
+
+  changeHistoryPage(offset: number): void {
+    this.historyOffset.set(offset);
+    this.reloadRuns(this.projectName(), false);
+  }
+
+  changeReleasePage(offset: number): void {
+    this.releaseOffset.set(offset);
+    this.loadReleases(this.projectName(), false);
+  }
+
+  private loadReleases(projectName: string, keepShown: boolean): void {
+    this.releaseReads.unsubscribe();
+    this.releaseReads = new Subscription();
+    const generation = ++this.releaseGeneration;
+    this.releaseReads.add(this.data.releasePage(projectName, this.releaseOffset()).subscribe(panel => {
+      if (generation !== this.releaseGeneration) return;
+      if (panel.status === 'ready') this.releaseTotal.set(panel.value.total);
+      this.into(this.releasePanel, keepShown)(this.items(panel));
+    }));
+  }
+
+  private items<T>(panel: DeployPanel<DeployPage<T>>): DeployPanel<T[]> {
+    return panel.status === 'ready' ? { status: 'ready', value: panel.value.items } : panel;
   }
 
   /** With `keepShown`, ready data stays on screen until the reload answers. */
@@ -180,8 +261,11 @@ export class ProjectDeployAreaComponent {
   }
 
   private loadLog(runId: string): void {
-    this.runSubscriptions.unsubscribe();
-    this.runSubscriptions = new Subscription();
-    this.runSubscriptions.add(this.data.deploymentLog(this.projectName(), runId).subscribe(panel => this.logPanel.set(panel)));
+    this.logReads.unsubscribe();
+    this.logReads = new Subscription();
+    const generation = ++this.logGeneration;
+    this.logReads.add(this.data.deploymentLog(this.projectName(), runId).subscribe(panel => {
+      if (generation === this.logGeneration && this.selectedRunId() === runId) this.logPanel.set(panel);
+    }));
   }
 }

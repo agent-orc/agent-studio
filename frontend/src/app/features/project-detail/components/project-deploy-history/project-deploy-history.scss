@@ -48,3 +48,5 @@
 .history__open { @include deploy.button; }
 .history__badge { @include deploy.tone-badge; }
 .history__numeric { @include deploy.numeric; white-space: nowrap; }
+.history__pages { display: flex; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
+.history__pages button { @include deploy.button; }

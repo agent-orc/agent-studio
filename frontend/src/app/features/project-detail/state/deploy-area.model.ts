@@ -335,23 +335,36 @@ function cardBases(sources: DeploySources): CardBase[] {
 export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardView[] {
   return cardBases(sources).map(base => {
     const status = sources.statuses?.find(item => item.environment.id === base.id) ?? null;
-    const runs = sources.deployments?.filter(item => item.environmentId === base.id).sort(newestFirst) ?? null;
-    const lastSucceeded = runs?.filter(item => item.state === 'succeeded')
-      .sort((a, b) => Date.parse(b.finishedAtUtc ?? '') - Date.parse(a.finishedAtUtc ?? ''))[0] ?? null;
-    const report = base.view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded') ?? null;
+    const pageRuns = sources.deployments?.filter(item => item.environmentId === base.id) ?? [];
+    const statusRun = status?.currentDeployment ?? null;
+    const runs = sources.deployments || statusRun
+      ? [...pageRuns, ...(statusRun && !pageRuns.some(item => item.id === statusRun.id) ? [statusRun] : [])].sort(newestFirst)
+      : null;
+    const report = base.view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded'
+      && (!base.view?.deployedArtifact || row.artifact === base.view.deployedArtifact)) ?? null;
     const artifact = base.view?.deployedArtifact ?? status?.currentRelease?.artifactDigests[0] ?? null;
-    const release = status?.currentRelease ?? releaseForArtifact(artifact, sources.releases);
+    const statusRelease = status?.currentRelease ?? null;
+    const release = releaseForArtifact(artifact, sources.releases)
+      ?? (statusRelease?.artifactDigests.some(item => digestOf(item) === digestOf(artifact ?? '')) ? statusRelease : null);
+    const current = status?.currentDeployment?.state === 'succeeded' && status.currentDeployment.releaseId === release?.id
+      ? status.currentDeployment : null;
+    const matchingRun = runs?.filter(item => item.state === 'succeeded' && item.releaseId === release?.id)
+      .sort((a, b) => Date.parse(b.finishedAtUtc ?? '') - Date.parse(a.finishedAtUtc ?? ''))[0] ?? null;
+    const deployedAt = current?.finishedAtUtc ?? matchingRun?.finishedAtUtc ?? report?.at ?? null;
+    const releaseRun = runs?.length ? lastRunOf(runs) : null;
+    const hostRun = lastReportOf(base.view);
+    const lastRun = hostRun && (!releaseRun || Date.parse(hostRun.at) > Date.parse(releaseRun.at)) ? hostRun : releaseRun;
     return {
       id: base.id,
       name: base.name,
       address: base.address,
       artifact,
       releaseVersion: release?.version ?? null,
-      deployedAt: lastSucceeded?.finishedAtUtc ?? report?.at ?? null,
+      deployedAt,
       cards: cardsFor(artifact !== null || release !== null, release, sources.releases !== null || status !== null),
       newer: status?.newerRelease ? { version: status.newerRelease.version, cardKeys: status.cardsSinceLastDeploy } : null,
       health: healthFor(status, base, sources.health),
-      lastRun: runs ? lastRunOf(runs) : lastReportOf(base.view),
+      lastRun,
       awaitingApproval: approvalFor(base, runs, sources),
     };
   });

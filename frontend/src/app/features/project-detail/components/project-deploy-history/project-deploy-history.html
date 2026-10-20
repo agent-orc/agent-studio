@@ -2,7 +2,7 @@
   <header class="history__head">
     <div>
       <h2 id="deploy-history-title">Deploy history</h2>
-      <p>Every deploy, redeploy, and rollback run, newest first. Open a run for its step log, approval, or cancellation.</p>
+      <p>Deploy, redeploy, and rollback runs, newest first. Open a run for its step log, approval, or cancellation.</p>
     </div>
   </header>
   @switch (panel().status) {
@@ -15,7 +15,7 @@
         body="Deploy runs appear here once the deploy service records them. Each run of a release in Staging or Production then lists its steps, approval, and outcome. The environment cards meanwhile show the last host report." />
     }
     @default {
-      @if (runs().length === 0) {
+      @if (runs().length === 0 && total() === 0 && !filtered()) {
         <app-empty-state icon="clock" title="No deploy runs yet" testid="deploy-history-empty"
           body="A run is recorded when a release is queued for an environment, waits for Production approval, or is rolled back." />
       } @else {
@@ -37,7 +37,7 @@
               @for (period of periods; track period.value) { <option [value]="period.value">{{ period.label }}</option> }
             </select>
           </label>
-          <span class="history__count" data-testid="deploy-history-count" aria-live="polite">{{ visible().length }} of {{ runs().length }} runs</span>
+          <span class="history__count" data-testid="deploy-history-count" aria-live="polite">{{ offset() + visible().length }} of {{ total() || runs().length }} runs</span>
           @if (filtered()) { <button type="button" data-testid="deploy-history-reset" (click)="reset()">Clear filters</button> }
         </div>
         @if (visible().length === 0) {
@@ -67,6 +67,12 @@
             </tbody>
           </table>
           </div>
+        }
+        @if (total() > 25) {
+          <nav class="history__pages" aria-label="Deploy history pages">
+            <button type="button" data-testid="deploy-history-prev" [disabled]="offset() === 0" (click)="pageChange.emit(offset() >= 25 ? offset() - 25 : 0)">Previous</button>
+            <button type="button" data-testid="deploy-history-next" [disabled]="offset() + 25 >= total()" (click)="pageChange.emit(offset() + 25)">Next</button>
+          </nav>
         }
       }
     }

@@ -367,6 +367,11 @@ occur. It is not a claim about tunnel transfer time.
   card.
 - The Deploy overview reads declared environments from AGT-3176 and status,
   releases, deploy runs, and step logs from `/api/projects/<project>/deploy`.
+  Release and run lists request `/releases/page` and `/deployments/page` with
+  `offset` and `limit`; responses contain `items`, `offset`, `limit`, and the
+  filtered `total`. The server caps each page at 50 items, and the UI requests
+  25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
+  filters apply before paging. The unpaged routes remain for existing clients.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server
