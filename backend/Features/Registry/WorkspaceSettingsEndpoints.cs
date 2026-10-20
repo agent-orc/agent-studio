@@ -1,5 +1,7 @@
 namespace AgentStudio.Registry;
 
+public sealed record SetCodingEmergencyLimitRequest(int? Seconds);
+
 public sealed record SetWorkspaceUsageCalendarRequest(string TimeZone, string WeekStart);
 public sealed record SetChatMetadataEnabledRequest(bool? Enabled);
 
@@ -31,11 +33,14 @@ public static class WorkspaceSettingsEndpoints
                 chatMetadataEnabled = s.ChatMetadataEnabled ?? true,
                 orchestratorThinkingLevel = s.OrchestratorThinkingLevel,
                 autonomyLevel = s.AutonomyLevel,
+                codingEmergencyLimitSeconds = s.CodingEmergencyLimitSeconds,
+                effectiveCodingEmergencyLimitSeconds = AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.Resolve(null, s.CodingEmergencyLimitSeconds).Seconds,
                 autoApplyModelMigrations = s.AutoApplyModelMigrations ?? true,
                 // Platform fallbacks so the UI can render the effective "inherited"
                 // value without hardcoding it or a second round-trip.
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,
                 defaultAutonomyLevel = 2,
+                defaultCodingEmergencyLimitSeconds = AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.DefaultSeconds,
                 usageTimeZone = s.UsageTimeZone ?? "Etc/UTC",
                 usageWeekStart = (s.UsageWeekStart ?? DayOfWeek.Monday).ToString(),
             });
@@ -49,6 +54,19 @@ public static class WorkspaceSettingsEndpoints
                 return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
             settings.SetChatMetadataEnabled(id, request.Enabled);
             return Results.Ok(new { chatMetadataEnabled = settings.Get(id).ChatMetadataEnabled ?? true });
+        });
+
+        app.MapPut("/api/workspaces/{id}/coding-emergency-limit", (
+            string id, SetCodingEmergencyLimitRequest request,
+            WorkspaceRegistry workspaces, WorkspaceSettingsService settings) =>
+        {
+            if (workspaces.Find(id) is null) return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
+            if (request.Seconds is not null && request.Seconds is < 1 or > AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.MaximumSeconds)
+                return Results.BadRequest(new { error = "seconds must be between 1 and 604800, or null to inherit." });
+            settings.SetCodingEmergencyLimit(id, request.Seconds);
+            var resolved = AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.Resolve(null, settings.Get(id).CodingEmergencyLimitSeconds);
+            return Results.Ok(new { codingEmergencyLimitSeconds = settings.Get(id).CodingEmergencyLimitSeconds,
+                effectiveSeconds = resolved.Seconds, source = resolved.Source });
         });
 
         app.MapPut("/api/workspaces/{id}/usage-calendar", (

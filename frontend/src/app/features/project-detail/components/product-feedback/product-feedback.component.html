@@ -1,0 +1,117 @@
+<section class="product" data-testid="product-feedback" aria-label="Change this product">
+  <div class="product__intro">
+    <div>
+      <h2>Shape this product</h2>
+      <p>Describe a change in chat while you look at the live preview.</p>
+    </div>
+    <div class="product__actions">
+      <button type="button" data-testid="product-start-change" (click)="startChange()">Start a change</button>
+      <button type="button" data-testid="product-open-chat" (click)="openChat()">Open project chat</button>
+    </div>
+  </div>
+
+  @switch (draftStep()) {
+    @case ('wish') {
+      <div class="product__draft" data-testid="product-draft">
+        <p class="product__question">What would you like to change?</p>
+        <textarea data-testid="product-wish" rows="2" [value]="wish()" (input)="wish.set($any($event.target).value)"></textarea>
+        <button type="button" [disabled]="!wish().trim()" (click)="nextDraft()">Continue</button>
+      </div>
+    }
+    @case ('location') {
+      <div class="product__draft" data-testid="product-draft">
+        <p class="product__question">Where on the page should it change?</p>
+        <textarea data-testid="product-location" rows="2" [value]="location()" (input)="location.set($any($event.target).value)"></textarea>
+        <button type="button" [disabled]="!location().trim()" (click)="nextDraft()">Continue</button>
+      </div>
+    }
+    @case ('example') {
+      <div class="product__draft" data-testid="product-draft">
+        <p class="product__question">Is there an example or detail we should match?</p>
+        <textarea data-testid="product-example" rows="2" [value]="example()" (input)="example.set($any($event.target).value)"></textarea>
+        <button type="button" (click)="nextDraft()">Review change</button>
+      </div>
+    }
+    @case ('confirm') {
+      <div class="product__draft" data-testid="product-proposal">
+        <p class="product__question">Proposed change</p>
+        <p>{{ wish() }} on {{ location() }}.</p>
+        @if (example().trim()) { <p>Use this example: {{ example() }}</p> }
+        <p>Estimated quota: one coding run and one review run, roughly 20,000 to 60,000 tokens. Actual use depends on the project.</p>
+        <button type="button" data-testid="product-confirm-change" [disabled]="busy() || !watchPath()"
+                (click)="confirmChange()">Create this change</button>
+      </div>
+    }
+  }
+
+  <label class="product__field">
+    <span>Change to review</span>
+    <select data-testid="product-card-select" [value]="selectedId() ?? ''" (change)="selectCard($any($event.target).value)">
+      <option value="">Choose a change</option>
+      @for (card of cards(); track card.id) {
+        <option [value]="card.id">{{ card.title }}</option>
+      }
+    </select>
+  </label>
+
+  @if (selected(); as card) {
+    <div class="product__status" data-testid="product-status">
+      <strong>{{ status()?.label }}</strong>
+      <span>{{ status()?.next }}</span>
+    </div>
+    @if (screenshots().length > 0) {
+      @if (beforeShot(); as before) {
+        @if (afterShot(); as after) {
+          <div class="product__comparison" data-testid="product-before-after">
+            <figure><img [src]="before.url" [alt]="'Before: ' + before.caption" /><figcaption>Before</figcaption></figure>
+            <figure><img [src]="after.url" [alt]="'After: ' + after.caption" /><figcaption>After</figcaption></figure>
+          </div>
+        }
+      }
+      <div class="product__shots" aria-label="Delivery screenshots">
+        @for (shot of screenshots(); track shot.url) {
+          <button type="button" [attr.aria-pressed]="currentShot()?.url === shot.url"
+                  (click)="selectShot(shot.url)">{{ shot.caption }}</button>
+        }
+      </div>
+      @if (feedbackShotUrls()) {
+        <button type="button" data-testid="product-check-update" (click)="refreshScreenshots()">Check for updated preview</button>
+      }
+      @if (currentShot(); as shot) {
+        <p class="product__hint">Drag across the screenshot to mark the area you mean. A tap marks a point.</p>
+        <div class="product__image-wrap">
+          <img #shotImage [src]="shot.url" [alt]="shot.caption"
+               data-testid="product-markup-image" draggable="false"
+               (pointerdown)="startBox($event)" (pointermove)="moveBox($event)"
+               (pointerup)="endBox($event)" (pointercancel)="endBox($event)" />
+          @if (box(); as selection) {
+            <span class="product__selection" data-testid="product-selection"
+                  [style.left.%]="selection.x * 100" [style.top.%]="selection.y * 100"
+                  [style.width.%]="selection.width * 100" [style.height.%]="selection.height * 100"></span>
+          }
+        </div>
+        <label class="product__field">
+          <span>What should change here?</span>
+          <textarea data-testid="product-comment" rows="3" [value]="comment()"
+                    (input)="comment.set($any($event.target).value)"></textarea>
+        </label>
+        <details class="product__optional">
+          <summary>Element details, if known</summary>
+          <label class="product__field"><span>Element selector</span>
+            <input data-testid="product-selector" [value]="selector()"
+                   (input)="selector.set($any($event.target).value)" placeholder="For example, main h1" />
+          </label>
+        </details>
+        <button type="button" data-testid="product-send-feedback" [disabled]="busy() || !previewAddress()"
+                (click)="send(shotImage)">Send feedback</button>
+      }
+    } @else {
+      <p class="product__hint" data-testid="product-no-screenshot">A delivery screenshot will appear here when the change is ready to review.</p>
+    }
+    @if (card.state === '5-human-review' && !feedbackShotUrls()) {
+      <button type="button" data-testid="product-accept" [disabled]="busy()"
+              (click)="accept()">Accept this preview</button>
+    }
+  }
+  @if (message(); as notice) { <p class="product__message" role="status">{{ notice }}</p> }
+</section>

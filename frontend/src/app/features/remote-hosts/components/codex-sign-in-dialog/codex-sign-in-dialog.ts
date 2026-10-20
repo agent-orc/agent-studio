@@ -33,6 +33,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
   readonly session = signal<CodexSignInStartResponse | null>(null);
   readonly detail = signal('Starting Codex on the execution host…');
   readonly copyLabel = signal('Copy code');
+  readonly secondsRemaining = signal(0);
 
   private readonly requestEffect = effect(() => {
     const request = this.request();
@@ -53,8 +54,8 @@ export class CodexSignInDialogComponent implements OnDestroy {
   close(): void {
     const session = this.session();
     const target = this.request();
-    if (session && target && this.phase() === 'pending')
-      this.providerAuth.cancelCodexSignIn(target.hostId, session.handle).subscribe();
+    if (session && target && this.phase() !== 'verifying')
+      this.providerAuth.cancelCodexSignIn(session.handle, session.sessionKey).subscribe();
     this.polling?.unsubscribe();
     this.polling = null;
     this.dialog.close();
@@ -74,33 +75,26 @@ export class CodexSignInDialogComponent implements OnDestroy {
   }
 
   private launch(request: CodexSignInTarget): void {
-    const sshTarget = request.sshTarget?.trim();
     this.polling?.unsubscribe();
     this.polling = null;
     this.session.set(null);
     this.copyLabel.set('Copy code');
     this.phase.set('starting');
     this.detail.set(`Starting a host-owned Codex device sign-in on ${request.hostName}…`);
-    if (!sshTarget) {
-      this.fail('This execution host has no SSH target. Open its setup dialog and configure the host address first.');
-      return;
-    }
-
-    this.providerAuth.startCodexSignIn(request.hostId, sshTarget).subscribe({
+    this.providerAuth.startCodexSignIn(request.hostId).subscribe({
       next: session => {
         this.session.set(session);
-        this.phase.set('pending');
-        this.detail.set('Complete the browser flow. This window will detect completion automatically.');
-        this.poll(request, session, sshTarget);
+        this.detail.set('Waiting for the execution host to start Codex…');
+        this.poll(request, session);
       },
       error: error => this.fail(errorDetail(error, 'Codex device sign-in could not be started.')),
     });
   }
 
-  private poll(request: CodexSignInTarget, session: CodexSignInStartResponse, sshTarget: string): void {
+  private poll(request: CodexSignInTarget, session: CodexSignInStartResponse): void {
     this.polling = timer(500, 1_000).pipe(
-      switchMap(() => this.providerAuth.codexSignInStatus(request.hostId, session.handle, sshTarget)),
-      takeWhile(status => status.state === 'pending', true),
+      switchMap(() => this.providerAuth.codexSignInStatus(session.handle, session.sessionKey)),
+      takeWhile(status => status.state === 'queued' || status.state === 'running', true),
     ).subscribe({
       next: status => this.acceptStatus(request, status),
       error: error => this.fail(errorDetail(error, 'Codex sign-in status could not be read.')),
@@ -108,8 +102,18 @@ export class CodexSignInDialogComponent implements OnDestroy {
   }
 
   private acceptStatus(request: CodexSignInTarget, status: CodexSignInStatusResponse): void {
-    this.detail.set(status.detail);
-    if (status.state === 'pending') return;
+    this.detail.set(status.detail ?? 'Waiting for the execution host…');
+    this.secondsRemaining.set(Math.max(0, Math.ceil(
+      (new Date(status.expiresAt).getTime() - Date.now()) / 1_000)));
+    if (status.state === 'queued' || status.state === 'running') {
+      if (status.userCode && status.verificationUrl) {
+        this.session.update(session => session ? { ...session,
+          userCode: status.userCode, verificationUrl: status.verificationUrl } : session);
+        this.phase.set('pending');
+        this.detail.set('Complete the browser flow. This window will detect completion automatically.');
+      }
+      return;
+    }
     this.polling?.unsubscribe();
     this.polling = null;
     this.session.set(null);
@@ -144,6 +148,10 @@ export class CodexSignInDialogComponent implements OnDestroy {
   private fail(detail: string): void {
     this.polling?.unsubscribe();
     this.polling = null;
+    const session = this.session();
+    const target = this.request();
+    if (session && target)
+      this.providerAuth.cancelCodexSignIn(session.handle, session.sessionKey).subscribe();
     this.session.set(null);
     this.phase.set('failed');
     this.detail.set(detail);

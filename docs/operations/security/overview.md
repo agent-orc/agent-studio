@@ -67,8 +67,13 @@ that is already allowed to edit that project's checkout.
   header. Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
 - Roles are intentionally small: owner manages identities and all projects,
-  operator reads and mutates allowed projects, and viewer is read-only.
-  Operator and viewer are scoped roles. Their project membership list
+  operator reads and mutates allowed projects, contributor (shown as Product)
+  reads assigned projects, creates wishes and cards, edits Backlog and Ready
+  cards, uses project and card chat, comments on previews, and accepts a
+  Human Review delivery; viewer is read-only. A contributor cannot access
+  credentials, hosts, settings, quotas, merges, promotions, or raw logs.
+  Production approval is a separate grant that an owner gives for one assigned
+  project. Operator, contributor, and viewer are scoped roles. Their project membership list
   restricts project routes; an empty list grants no project, and only the
   explicit `*` entry grants every project in this single organization. The
   route or addressed task decides the project; a `?project=` query value may
@@ -81,6 +86,9 @@ that is already allowed to edit that project's checkout.
   project never becomes an authorization bypass. SignalR connections and
   subscriptions honour the forced password change and join only the groups
   of allowed projects.
+  Preview comments are appended to the card timeline through
+  `POST /api/tasks/{jobId}/preview-comments`, with the authenticated user as
+  actor and the preview ID as the reference.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and
@@ -102,9 +110,10 @@ that is already allowed to edit that project's checkout.
   origin and `AGENT_STUDIO_API_TOKEN` for the secret. `X-Client-Id` remains
   attribution only. API tokens cannot call access administration, versioned
   Task Server, Runner service, or SignalR routes. A viewer token cannot mutate.
-  Workspace token timelines and expensive-jobs lists can span all watched
-  projects, including cached responses, so those routes require the `*`
-  project grant. A `?project=` query alone does not narrow their payloads.
+  Each mapped API route declares its token project scope. Routes without a
+  project address, including workspace timelines, expensive-jobs lists, and
+  screenshots, require the `*` project grant. A `?project=` query cannot turn
+  a workspace route into a project route.
 - A Runner never receives a human password or session cookie.
 
 The minimum Runner scopes are `runner.claim`, `runner.lease`, `runner.logs`,

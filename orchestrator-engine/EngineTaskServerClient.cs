@@ -5,7 +5,7 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestratorEngine;
 
-public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IDisposable
+public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IEngineArtifactSource, IDisposable
 {
     // Match the Task Server HTTP JSON contract: orchestration enums are numbers.
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -131,6 +131,11 @@ public sealed class EngineTaskServerClient : IDecisionReceiptPlane, IDisposable
     public Task<OrchestratorDecisionJobDto> GetDecisionJobAsync(string jobId, CancellationToken ct)
         => GetAsync<OrchestratorDecisionJobDto>(
             $"/api/v1/orchestration/decision-jobs/{Uri.EscapeDataString(jobId)}", ct);
+
+    /// <summary>Read an immutable run artefact by IDs through the authorized Task Server route.</summary>
+    public Task<ArtifactContentDto> GetArtifactContentAsync(string runId, string artifactId, CancellationToken ct)
+        => GetAsync<ArtifactContentDto>(
+            $"/api/v1/runs/{Uri.EscapeDataString(runId)}/artifacts/{Uri.EscapeDataString(artifactId)}/content", ct);
 
     public async Task<OrchestratorDecisionReceiptV1> PutDecisionReceiptAsync(
         OrchestratorDecisionReceiptV1 receipt, CancellationToken ct)

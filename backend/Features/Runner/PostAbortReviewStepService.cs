@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using System.Text;
 
 namespace AgentStudio.Runner;
 
@@ -69,6 +71,9 @@ public sealed class PostAbortReviewStepService
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
+    private static readonly Regex Credential = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Run one abort-review pass and persist its evidence. Never throws on a
@@ -81,6 +86,8 @@ public sealed class PostAbortReviewStepService
         if (request is null) throw new ArgumentNullException(nameof(request));
         if (string.IsNullOrWhiteSpace(request.JobFolderPath))
             throw new ArgumentException("JobFolderPath is required", nameof(request));
+
+        request = BoundEvidence(request);
 
         var startedAt = DateTime.UtcNow;
         _logger.LogInformation(
@@ -206,6 +213,7 @@ public sealed class PostAbortReviewStepService
             RerunBudgetRemaining = request.RerunBudgetRemaining,
             Model = request.Model,
             CliType = request.CliType,
+            Omissions = request.Omissions,
         };
         WriteContract(request.JobFolderPath, InputContractName, dto);
     }
@@ -274,7 +282,8 @@ public sealed class PostAbortReviewStepService
                 new PromptCallContext(
                     request.Project,
                     PipelineCatalogue.PostAbortReviewStepId,
-                    request.Model));
+                    request.Model)) + "\nEvidence omissions: " +
+                (request.Omissions.Count == 0 ? "none" : string.Join(", ", request.Omissions));
         }
         catch (Exception ex)
         {
@@ -283,6 +292,46 @@ public sealed class PostAbortReviewStepService
                 PromptTemplate);
             return BuildInlineFallbackPrompt(request);
         }
+    }
+
+    internal static PostAbortReviewRequest BoundEvidence(PostAbortReviewRequest request)
+    {
+        var omitted = new List<string>(request.Omissions);
+        if (request.CliOutputTail.Contains("[omitted: oversize]", StringComparison.Ordinal))
+            omitted.Add("cliOutputTail:oversize");
+        if (request.CliOutputTail.Contains("[omitted: secret]", StringComparison.Ordinal))
+            omitted.Add("cliOutputTail:secret");
+        string Bound(string field, string value, int maxBytes)
+        {
+            if (Path.IsPathRooted(value.Trim()) && !value.Contains('\n'))
+            {
+                omitted.Add(field + ":raw-path");
+                return "[omitted: raw path]";
+            }
+            var clean = Credential.Replace(value, _ =>
+            {
+                if (!omitted.Contains(field + ":secret", StringComparer.Ordinal)) omitted.Add(field + ":secret");
+                return "[omitted: secret]";
+            });
+            if (Encoding.UTF8.GetByteCount(clean) <= maxBytes) return clean;
+            omitted.Add(field + ":oversize");
+            clean = clean[..Math.Min(clean.Length, maxBytes)];
+            while (Encoding.UTF8.GetByteCount(clean) > maxBytes) clean = clean[..^1];
+            return clean + " [omitted: oversize]";
+        }
+        var bounded = request with
+        {
+            TaskTitle = Bound("taskTitle", request.TaskTitle, 512),
+            TaskBody = Bound("taskBody", request.TaskBody, 8 * 1024),
+            AbortReason = Bound("abortReason", request.AbortReason, 512),
+            AbortPhase = Bound("abortPhase", request.AbortPhase, 128),
+            CliOutputTail = Bound("cliOutputTail", request.CliOutputTail, 8 * 1024),
+            ToolCallsLiveness = Bound("toolCallsLiveness", request.ToolCallsLiveness, 1024),
+            GitState = Bound("gitState", request.GitState, 2 * 1024),
+            TranscriptUsage = Bound("transcriptUsage", request.TranscriptUsage, 1024),
+            Omissions = omitted,
+        };
+        return bounded;
     }
 
     private static string BuildInlineFallbackPrompt(PostAbortReviewRequest request)
@@ -418,6 +467,7 @@ public sealed record PostAbortReviewRequest(
     string CliType,
     string Model)
 {
+    public IReadOnlyList<string> Omissions { get; init; } = [];
     public string? ThinkingLevel { get; init; }
 
     /// <summary>Automatic reruns this job has left. Drives the decider.</summary>
@@ -462,6 +512,7 @@ public sealed record PostAbortReviewInputContract
     public int RerunBudgetRemaining { get; init; }
     public string Model { get; init; } = string.Empty;
     public string CliType { get; init; } = string.Empty;
+    public IReadOnlyList<string> Omissions { get; init; } = [];
 }
 
 /// <summary>

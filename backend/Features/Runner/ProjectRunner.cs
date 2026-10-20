@@ -71,6 +71,9 @@ public class ProjectRunner
     private static readonly Regex CompactTokenValueRegex = new(
         @"(?<value>\d+(?:[.,]\d+)?)\s*(?<suffix>[kKmM])?",
         RegexOptions.Compiled);
+    private static readonly Regex AbortEvidenceCredentialRegex = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex GitMutationCommandRegex = new(
         @"(?:^|[`""'\s>$:])git\s+(?:-C\s+\S+\s+)?(?:commit|push)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -115,7 +118,7 @@ public class ProjectRunner
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
-    private readonly VisualQaService? _visualQa;
+    private readonly IVisualQaService? _visualQa;
     private readonly FailureInterventionService? _failureInterventions;
     private readonly IReadOnlyList<ProjectUrlRecord> _projectUrls;
     private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
@@ -175,6 +178,7 @@ public class ProjectRunner
     // its byte-identical fixed terminal route to typed escalation. When wired AND
     // enabled, a non-clean run end consults the step before escalating.
     private readonly PostAbortReviewStepService? _postAbortReview;
+    private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
     // Reads Claude session transcripts (~/.claude/projects) to reconstruct
     // token usage post-hoc when the CLI never reported a footer (always, for
     // Claude) or the run was killed before emitting one. Null in tests that
@@ -466,7 +470,7 @@ public class ProjectRunner
         AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
-        VisualQaService? visualQa = null,
+        IVisualQaService? visualQa = null,
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,
         AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null,
@@ -475,7 +479,8 @@ public class ProjectRunner
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
         RemoteDispatchRejectionStore? dispatchRejections = null,
         LocalRunClaimAdapter? localRunClaims = null,
-        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null,
+        ReviewInputDecisionGateway? reviewInputDecisions = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -532,6 +537,7 @@ public class ProjectRunner
         _projectUrlPortInspector = projectUrlPortInspector;
         _dispatchRejections = dispatchRejections;
         _postAbortReview = postAbortReview;
+        _reviewInputDecisions = reviewInputDecisions;
         _sessionInspector = sessionInspector;
 
         // Listen across all CLI backends for completion of the active job.
@@ -2527,6 +2533,28 @@ public class ProjectRunner
             {
                 var ui = pendingUiReview!.UiIterationReview!;
                 var reason = $"UI iteration cap {ui.MaxIterations} was reached without a finish decision; additional feedback iterations are not allowed.";
+                if (_reviewInputDecisions?.EngineDecides == true
+                    && MonolithTransitionAdapter.LoopSignal(
+                        "ui-task.human-feedback-iterations", ui.Iteration, ui.MaxIterations,
+                        "per-card", jobId, ["prepare feedback", "defer", "ask"]) is { } signal)
+                {
+                    var summary = JsonSerializer.Serialize(new
+                    {
+                        ui.Iteration,
+                        ui.MaxIterations,
+                        ui.ChangeDescriptionPath,
+                        ui.VisualQaStatus,
+                    });
+                    var digest = "sha256:" + Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                    var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                        "loop-exhaustion", ProjectName, jobId, info.State,
+                        $"ui-feedback:{jobId}:{ui.Iteration}", summary, digest, [], jobId,
+                        LoopSignal: signal));
+                    EngineDecisionWaitMarker.Write(info.FolderPath, occurrence.RunId);
+                    return RunOutcome.Reject(new RunRejection(RunRejectReason.UiIterationCapReached,
+                        $"UI feedback waits for engine decision {occurrence.RunId}."));
+                }
                 var escalation = await _humanReviewEscalation.EscalateAsync(
                     jobId, info.WatchPath, ProjectName,
                     HumanReviewEscalationCategories.UiIterationCap, reason, ct);
@@ -3312,14 +3340,38 @@ public class ProjectRunner
                 // Keep the admitted session event truthful about the fallback.
                 admittedSessionReason = why;
             }
-            var (execution, cliError) = await cli.StartAsync(
-                jobId, GetJobKey(jobId), prompt, runWorkingDir,
-                effSessionToResume, effResumeFlag, runModel, runThinkingLevel,
-                jobFolderPath: info.FolderPath,
-                permissionMode: permissionMode,
-                contextMode: contextMode,
-                environment: activeRunForSpawn?.Preparation?.Environment,
-                ct: ct);
+            // Preparation can take minutes while this run still owns its lease.
+            // A stop acknowledged during that gap must win before the CLI starts.
+            var startStopGate = localAuthorityTaskKey is null
+                ? null : _localRunClaims?.StopGate(localAuthorityTaskKey);
+            if (startStopGate is not null) await startStopGate.WaitAsync(ct);
+            var stoppedBeforeStart = false;
+            (CliExecution? execution, string? cliError) startResult = default;
+            try
+            {
+                stoppedBeforeStart = localAuthorityTaskKey is not null
+                    && _localRunClaims?.StopRequested(localAuthorityTaskKey) == true;
+                if (!stoppedBeforeStart)
+                    startResult = await cli.StartAsync(
+                        jobId, GetJobKey(jobId), prompt, runWorkingDir,
+                        effSessionToResume, effResumeFlag, runModel, runThinkingLevel,
+                        jobFolderPath: info.FolderPath,
+                        permissionMode: permissionMode,
+                        contextMode: contextMode,
+                        environment: activeRunForSpawn?.Preparation?.Environment,
+                        ct: ct);
+            }
+            finally { startStopGate?.Release(); }
+            if (stoppedBeforeStart)
+            {
+                ReleaseRun(jobId);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                NotifyStatus();
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.CliUnavailable, "Run stopped before agent execution started."));
+            }
+
+            var (execution, cliError) = startResult;
 
             if (execution == null)
             {
@@ -5883,6 +5935,12 @@ public class ProjectRunner
             if (_activeRuns.Get(jobId) is not { } run) return;
             if (run.CliType != null && !string.Equals(cliType, run.CliType, StringComparison.OrdinalIgnoreCase)) return;
 
+            // The process may have completed just before a stop arrived between
+            // local pipeline steps. Carry that stop through the normal stopped
+            // closeout so the card does not proceed to review as a success.
+            if (LocalStopRequested(jobId))
+                execution = execution with { Status = RunStatuses.Stopped, RunOutcome = "interrupted" };
+
             // Slot ownership follows process life, not lane membership. Keep the
             // ActiveRun record for finalisation, but free its execution seat as
             // soon as the CLI process exits. Integration, outcome analysis and
@@ -5988,6 +6046,7 @@ public class ProjectRunner
 
             WorktreeCommitRange? worktreeCommitRange = null;
             var worktreeTask = runInfo ?? _scanner.FindJob(jobId, Entry.Path);
+            if (LocalStopRequested(jobId)) return;
             // ADR-0052/0057: every coding worktree run commits its edits on the
             // task branch and integrates them into the work branch BEFORE the
             // post-run review reads the result; a merge conflict is left for the
@@ -5995,10 +6054,13 @@ public class ProjectRunner
             if (run.IsWorktreeRun
                 && worktreeTask != null
                 && !TaskModes.IsConcept(worktreeTask.Mode)
+                && !LocalStopRequested(jobId)
                 && agentGitDecision.Disposition != AgentGitMutationDisposition.Escalate)
             {
                 worktreeCommitRange = await IntegrateWorktreeRunAsync(run, worktreeTask);
             }
+
+            if (LocalStopRequested(jobId)) return;
 
             // Persist last token/usage summary (best-effort)
             var usage = cli.GetLastUsage(jobKey);
@@ -6104,6 +6166,7 @@ public class ProjectRunner
             // Best-effort; the record is observability, never a state-machine
             // input.
             await RecordCoreRunFinish(jobId, execution, coreUsage);
+            if (LocalStopRequested(jobId)) return;
 
             // Capture the post-run HEAD SHA so the run's commit set can be
             // derived deterministically via git rev-list HeadShaBefore..After.
@@ -6212,6 +6275,7 @@ public class ProjectRunner
             // post-run policy may re-issue another run on top before we let
             // the regular review/summary pipeline proceed.
             var liveOutputSnapshot = earlyOutputSnapshot;
+            if (LocalStopRequested(jobId)) return;
 
             // Strict-iteration progress-first pickup bookkeeping: only
             // autopickup runs feed the per-slug silent-attempt counter.
@@ -6475,6 +6539,7 @@ public class ProjectRunner
             }
 
             FailureInterventionResult? runIntervention = null;
+            if (LocalStopRequested(jobId)) return;
             if (action is { Kind: not OutcomeActionKind.NotifyUserAndAccept }
                 && activeInfo is not null
                 && !WasDeliberatelyStopped(execution.Status)
@@ -6631,6 +6696,7 @@ public class ProjectRunner
                 }
                 _lastMetaSignature = signature;
 
+                if (LocalStopRequested(jobId)) return;
                 if (action.Kind == OutcomeActionKind.ReissueWithStrongerFraming
                     && !string.IsNullOrWhiteSpace(action.FollowupRetryPrompt))
                 {
@@ -6711,6 +6777,7 @@ public class ProjectRunner
                         AgentStudio.Pipeline.PipelineCatalogue.AbortReviewStep,
                         abortConditionContext))
                 {
+                    if (LocalStopRequested(jobId)) return;
                     var handled = await TryRunAbortReviewAsync(
                         activeInfo, jobId, jobKey, cliType, execution, action,
                         liveOutputSnapshot, commitsDuringRun, headShaAfter, usage,
@@ -6761,6 +6828,7 @@ public class ProjectRunner
                     // Release the active-job latch so the re-issue can claim
                     // it, then schedule on the thread pool so OnCliFinished
                     // returns promptly (mirrors the abort-review rerun path).
+                    if (LocalStopRequested(jobId)) return;
                     ReleaseRun(jobId);
                     NotifyStatus();
                     var retryPrompt = BuildCompletionRetriggerPrompt(activeInfo);
@@ -6785,6 +6853,38 @@ public class ProjectRunner
                     return;
                 }
 
+                if (_reviewInputDecisions?.EngineDecides == true
+                    && action.Kind == OutcomeActionKind.NotifyUserAndStop
+                    && activeInfo != null && restartTerminal.AllowAutomaticRetry
+                    && runIntervention is null
+                    && CompletionRetriggerDecider.IsTransientAbort(action.IssueKind))
+                {
+                    var used = _completionRetriggerUsed.TryGetValue(jobId, out var spent) ? spent : 0;
+                    var signal = MonolithTransitionAdapter.LoopSignal(
+                        "completion.retrigger-transient-abort-per-job", used,
+                        CompletionRetriggerDecider.BudgetFor(action.IssueKind), "per-card", jobId,
+                        ["retry", "adapt route", "ask"]);
+                    if (signal is not null)
+                    {
+                        var summary = JsonSerializer.Serialize(new
+                        {
+                            issue = action.IssueKind.ToString(),
+                            action.MetaMessage,
+                            execution.Status,
+                            execution.ExitCode,
+                            attemptsUsed = used,
+                        });
+                        var digest = "sha256:" + Convert.ToHexStringLower(
+                            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                        var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                            "abort-review", ProjectName, jobId, activeInfo.State,
+                            $"completion-exhausted:{jobId}:{used}", summary, digest, [], jobId,
+                            LoopSignal: signal));
+                        EngineDecisionWaitMarker.Write(activeInfo.FolderPath, occurrence.RunId);
+                        return;
+                    }
+                }
+
                 if (action.Kind == OutcomeActionKind.NotifyUserAndStop
                     && activeInfo != null
                     && (runIntervention is not null || ShouldRouteIssueToEscalated(action.IssueKind)))
@@ -6807,6 +6907,7 @@ public class ProjectRunner
                     _consecutiveFailNoProgress.TryRemove(jobId, out _);
                     // Terminal: tear down the coding worktree+branch (kept only
                     // if its work is unmerged, so a human can still resolve it).
+                    if (LocalStopRequested(jobId)) return;
                     TeardownWorktreeForJob(jobId);
                     var move = await _humanReviewEscalation.EscalateAsync(
                         jobId, activeInfo.WatchPath, ProjectName,
@@ -6831,6 +6932,7 @@ public class ProjectRunner
             // the orchestrator to decide on the user's behalf and feed the
             // decision back as a Continue follow-up. Manual mode keeps
             // today's path: the question stays in the chat for the user.
+            if (LocalStopRequested(jobId)) return;
             if (ShouldHandleNeedsInputUnattended(outcome.Kind, capturedIntent, _mode, activeInfo))
             {
                 _ = Task.Run(() => RunOrchestratorDecisionAsync(activeInfo!, jobId, outcome));
@@ -6856,6 +6958,7 @@ public class ProjectRunner
                 && TaskModes.IsConcept(activeInfo.Mode))
             {
                 var movedConcept = _scanner.FindJob(jobId, Entry.Path) ?? activeInfo;
+                if (LocalStopRequested(jobId)) return;
                 await PublishConceptWorkbenchAsync(movedConcept, run);
             }
 
@@ -6867,6 +6970,7 @@ public class ProjectRunner
                 && activeInfo != null
                 && snapRun is { IsUiIterationPipeline: true })
             {
+                if (LocalStopRequested(jobId)) return;
                 await HandleUiIterationCompletionAsync(
                     activeInfo, snapRun, jobId, execution,
                     snapRun.UiIteration, snapRun.UiMaxIterations,
@@ -6887,6 +6991,7 @@ public class ProjectRunner
                 && activeInfo != null
                 && EpicRunPolicy.IsPlanningRun(activeInfo.Kind, intentSnapshot))
             {
+                if (LocalStopRequested(jobId)) return;
                 var finalized = DecomposeEpicAndCreateSubTasks(
                     activeInfo,
                     liveOutputSnapshot.Select(l => l.Text).ToList(),
@@ -6896,6 +7001,7 @@ public class ProjectRunner
 
             if (movedToReview)
             {
+                if (LocalStopRequested(jobId)) return;
                 var completionLane = epicPlanningLane ?? TaskStates.AutoReview;
                 if (activeInfo != null)
                 {
@@ -6908,6 +7014,7 @@ public class ProjectRunner
                         terminalOutcome,
                         CancellationToken.None);
                 }
+                if (LocalStopRequested(jobId)) return;
                 // Drop a completion marker BEFORE the move so a crash between
                 // here and the folder-rename leaves enough state on disk for
                 // CrashRecoveryService to finish the transition on next boot.
@@ -6926,10 +7033,37 @@ public class ProjectRunner
                     }, _logger);
                 }
 
-                var moveOutcome = await _transitions.MoveAsync(
-                    jobId, completionLane, Entry.Path, CancellationToken.None,
-                    transitionCause: CompletionLaneChangeCause(completionLane),
-                    transitionDetail: epicPlanningLane is null ? outcome.Kind.ToString() : "epic-planning");
+                // Hold the stop gate through the review move and lease release.
+                // A stop accepted before this boundary prevents the move; once
+                // the move begins, a new request sees the released lease.
+                var localStopGate = _localAuthorityTaskKeys.TryGetValue(jobId, out var finalizationKey)
+                    ? _localRunClaims?.StopGate(finalizationKey) : null;
+                if (localStopGate is not null) await localStopGate.WaitAsync();
+                MoveJobOutcome moveOutcome;
+                try
+                {
+                    if (LocalStopRequested(jobId))
+                    {
+                        if (activeInfo != null) CompletionMarker.Clear(activeInfo.FolderPath, _logger);
+                        return;
+                    }
+                    moveOutcome = await _transitions.MoveAsync(
+                        jobId, completionLane, Entry.Path, CancellationToken.None,
+                        transitionCause: CompletionLaneChangeCause(completionLane),
+                        transitionDetail: epicPlanningLane is null ? outcome.Kind.ToString() : "epic-planning");
+                }
+                finally
+                {
+                    if (localStopGate is not null)
+                    {
+                        try
+                        {
+                            if (_localAuthorityTaskKeys.TryRemove(jobId, out var authorityTaskKey))
+                                _localRunClaims?.ReleaseWhileStopGateHeld(authorityTaskKey);
+                        }
+                        finally { localStopGate.Release(); }
+                    }
+                }
                 if (moveOutcome.Status == MoveJobStatus.Success)
                 {
                     // The job made it out of the run loop; forget any spent
@@ -7325,6 +7459,8 @@ public class ProjectRunner
                 .ApplyTo(visualVerdictRow)
             : visualVerdictRow with { Model = null, ThinkingLevel = null });
 
+        if (LocalStopRequested(jobId)) return;
+
         if (visualQa.Decision.Action == VisualQaAction.RetryWithSteer)
         {
             var steer = visualQa.Decision.SteerPrompt!;
@@ -7353,73 +7489,119 @@ public class ProjectRunner
             return;
         }
 
-        var contract = new UiIterationReviewContract
+        if (_reviewInputDecisions?.EngineDecides == true
+            && visualQa.Verdict.Status == VisualQaVerdictStatus.ClearDefect
+            && MonolithTransitionAdapter.LoopSignal(
+                "ui-task.visual-defect-auto-retry", visualQa.PriorAutomaticRetries,
+                VisualQaPolicy.MaxAutomaticDefectRetries, "per-ui-iteration", jobId,
+                ["retry", "prepare defect follow-up", "ask"]) is { } visualSignal)
         {
-            Iteration = iteration,
-            MaxIterations = maxIterations,
-            CapReached = decision.CapReached,
-            ArtifactPaths = decision.ArtifactPaths.Concat(visualQa.EvidenceScreenshotPaths).Distinct().ToArray(),
-            ChangeDescriptionPath = decision.ChangeDescriptionPath!,
-            VisualQaStatus = visualQa.Applicable ? visualQa.Verdict.Status switch
+            var summary = JsonSerializer.Serialize(new
             {
-                VisualQaVerdictStatus.Acceptable => "acceptable",
-                VisualQaVerdictStatus.ClearDefect => "clear-defect",
-                _ => "unavailable",
-            } : "not-applicable",
-            VisualQaVerdictPath = visualQa.VerdictPath,
-            VisualQaDefects = visualQa.Verdict.Defects,
-            VisualQaAutoRetryUsed = visualQa.PriorAutomaticRetries > 0,
-        };
-        SteerPendingMarker.Write(info.FolderPath, new SteerPendingRecord
-        {
-            WaitStartedAt = DateTime.UtcNow,
-            Kind = SteerPendingKinds.UiIterationReview,
-            Question = visualQa.Decision.Action == VisualQaAction.EscalateToHumanReview
-                ? $"Visual QA requires human review: {visualQa.Decision.Reason} Inspect the attached screenshots before deciding."
-                : decision.CapReached
-                ? "Final configured UI iteration. Finish this task or escalate; another feedback iteration is not allowed."
-                : "Review the visual result and choose finish or provide feedback for the next iteration.",
-            CliType = info.CliType,
-            UiIterationReview = contract,
-        }, _logger);
-        _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
-        _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
-        {
-            StepId = AgentStudio.Pipeline.PipelineCatalogue.UiHumanReviewGateStepId,
-            Kind = StepKind.Orchestrator,
-            Status = PipelineStepStatus.Running,
-            StartedAt = DateTime.UtcNow,
-            Verdict = "awaiting-human-review",
-            VerdictSummary = $"Iteration {iteration}/{maxIterations} is ready for visual review.",
-        });
-        CompletionMarker.Write(info.FolderPath, new CompletionMarker
-        {
-            TargetState = TaskStates.HumanReview,
-            ExecutionStatus = execution.Status,
-            AgentOutcome = $"ui-iteration-{iteration:D3}-awaiting-review",
-        }, _logger);
-
-        var move = await _transitions.MoveAsync(
-            jobId, TaskStates.HumanReview, Entry.Path, CancellationToken.None,
-            transitionCause: LaneChangeCauses.Delivered,
-            transitionDetail: $"ui-iteration-{iteration}/{maxIterations}");
-        if (move.Status == MoveJobStatus.Success)
-        {
-            TeardownWorktreeForJob(jobId);
-            var movedFolder = move.NewFolderPath ?? info.FolderPath;
-            CompletionMarker.Clear(movedFolder, _logger);
-            _mutations.SetJobPhase(movedFolder, null);
-            _logger.LogInformation(
-                "ui_pipeline_review_pending project={Project} job={JobId} pipeline={PipelineId} iteration={Iteration}/{MaxIterations} artifacts={ArtifactCount} marker={Marker}",
-                ProjectName, jobId, AgentStudio.Pipeline.PipelineCatalogue.UiPipelineId,
-                iteration, maxIterations, decision.ArtifactPaths.Count,
-                SteerPendingMarker.PathFor(movedFolder));
+                visualQa.Verdict.Summary,
+                visualQa.Verdict.Defects,
+                visualQa.PriorAutomaticRetries,
+                visualQa.VerdictPath,
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "loop-exhaustion", ProjectName, jobId, info.State,
+                $"visual-qa:{jobId}:{iteration}:{visualQa.PriorAutomaticRetries}",
+                summary, digest, [], jobId, LoopSignal: visualSignal));
+            EngineDecisionWaitMarker.Write(info.FolderPath, occurrence.RunId);
+            return;
         }
-        else
+
+        // Visual QA can outlive a stop request. Keep the accepted-stop check,
+        // review markers, move, and lease release under the same gate as the
+        // endpoint, so the card cannot enter Human Review after a 202.
+        var uiStopGate = _localAuthorityTaskKeys.TryGetValue(jobId, out var uiAuthorityKey)
+            ? _localRunClaims?.StopGate(uiAuthorityKey) : null;
+        if (uiStopGate is not null) await uiStopGate.WaitAsync();
+        try
         {
-            _logger.LogWarning(
-                "UI iteration {Iteration}/{MaxIterations} for {JobId} is evidenced but could not move to human review: {Status} {Message}",
-                iteration, maxIterations, jobId, move.Status, move.Message);
+            if (LocalStopRequested(jobId)) return;
+            var contract = new UiIterationReviewContract
+            {
+                Iteration = iteration,
+                MaxIterations = maxIterations,
+                CapReached = decision.CapReached,
+                ArtifactPaths = decision.ArtifactPaths.Concat(visualQa.EvidenceScreenshotPaths).Distinct().ToArray(),
+                ChangeDescriptionPath = decision.ChangeDescriptionPath!,
+                VisualQaStatus = visualQa.Applicable ? visualQa.Verdict.Status switch
+                {
+                    VisualQaVerdictStatus.Acceptable => "acceptable",
+                    VisualQaVerdictStatus.ClearDefect => "clear-defect",
+                    _ => "unavailable",
+                } : "not-applicable",
+                VisualQaVerdictPath = visualQa.VerdictPath,
+                VisualQaDefects = visualQa.Verdict.Defects,
+                VisualQaAutoRetryUsed = visualQa.PriorAutomaticRetries > 0,
+            };
+            SteerPendingMarker.Write(info.FolderPath, new SteerPendingRecord
+            {
+                WaitStartedAt = DateTime.UtcNow,
+                Kind = SteerPendingKinds.UiIterationReview,
+                Question = visualQa.Decision.Action == VisualQaAction.EscalateToHumanReview
+                    ? $"Visual QA requires human review: {visualQa.Decision.Reason} Inspect the attached screenshots before deciding."
+                    : decision.CapReached
+                    ? "Final configured UI iteration. Finish this task or escalate; another feedback iteration is not allowed."
+                    : "Review the visual result and choose finish or provide feedback for the next iteration.",
+                CliType = info.CliType,
+                UiIterationReview = contract,
+            }, _logger);
+            _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
+            _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
+            {
+                StepId = AgentStudio.Pipeline.PipelineCatalogue.UiHumanReviewGateStepId,
+                Kind = StepKind.Orchestrator,
+                Status = PipelineStepStatus.Running,
+                StartedAt = DateTime.UtcNow,
+                Verdict = "awaiting-human-review",
+                VerdictSummary = $"Iteration {iteration}/{maxIterations} is ready for visual review.",
+            });
+            CompletionMarker.Write(info.FolderPath, new CompletionMarker
+            {
+                TargetState = TaskStates.HumanReview,
+                ExecutionStatus = execution.Status,
+                AgentOutcome = $"ui-iteration-{iteration:D3}-awaiting-review",
+            }, _logger);
+
+            var move = await _transitions.MoveAsync(
+                jobId, TaskStates.HumanReview, Entry.Path, CancellationToken.None,
+                transitionCause: LaneChangeCauses.Delivered,
+                transitionDetail: $"ui-iteration-{iteration}/{maxIterations}");
+            if (move.Status == MoveJobStatus.Success)
+            {
+                TeardownWorktreeForJob(jobId);
+                var movedFolder = move.NewFolderPath ?? info.FolderPath;
+                CompletionMarker.Clear(movedFolder, _logger);
+                _mutations.SetJobPhase(movedFolder, null);
+                _logger.LogInformation(
+                    "ui_pipeline_review_pending project={Project} job={JobId} pipeline={PipelineId} iteration={Iteration}/{MaxIterations} artifacts={ArtifactCount} marker={Marker}",
+                    ProjectName, jobId, AgentStudio.Pipeline.PipelineCatalogue.UiPipelineId,
+                    iteration, maxIterations, decision.ArtifactPaths.Count,
+                    SteerPendingMarker.PathFor(movedFolder));
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "UI iteration {Iteration}/{MaxIterations} for {JobId} is evidenced but could not move to human review: {Status} {Message}",
+                    iteration, maxIterations, jobId, move.Status, move.Message);
+            }
+        }
+        finally
+        {
+            if (uiStopGate is not null)
+            {
+                try
+                {
+                    if (_localAuthorityTaskKeys.TryRemove(jobId, out var authorityTaskKey))
+                        _localRunClaims?.ReleaseWhileStopGateHeld(authorityTaskKey);
+                }
+                finally { uiStopGate.Release(); }
+            }
         }
     }
 
@@ -7472,6 +7654,10 @@ public class ProjectRunner
         ProjectPreparationExecutor.ReleaseRunRoot(released?.Preparation);
         return released;
     }
+
+    private bool LocalStopRequested(string jobId)
+        => _localAuthorityTaskKeys.TryGetValue(jobId, out var authorityTaskKey)
+           && _localRunClaims?.StopRequested(authorityTaskKey) == true;
 
     /// <summary>
     /// Way 3 (non-deterministic half): turn the output of an epic's planning /
@@ -7830,6 +8016,35 @@ public class ProjectRunner
             RerunBudgetRemaining = budgetRemaining,
         };
 
+        if (_reviewInputDecisions?.EngineDecides == true)
+        {
+            var bounded = PostAbortReviewStepService.BoundEvidence(request);
+            var summary = JsonSerializer.Serialize(new
+            {
+                bounded.TaskTitle,
+                bounded.TaskBody,
+                bounded.AbortReason,
+                bounded.AbortPhase,
+                bounded.CliOutputTail,
+                bounded.ToolCallsLiveness,
+                bounded.GitState,
+                bounded.TranscriptUsage,
+                bounded.RerunBudgetRemaining,
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var run = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "abort-review", ProjectName, jobId, activeInfo.State,
+                $"{jobId}:{execution.StartedAt:O}", summary, digest,
+                bounded.Omissions.Select(value => new GroundsOmissionV1("abort-review", value)).ToArray(),
+                jobId,
+                LoopSignal: MonolithTransitionAdapter.LoopSignal(
+                    "abort-review.rerun-per-job", used, PostAbortReviewDecider.DefaultRerunBudget,
+                    "per-card", jobId, ["retry", "checkpoint", "ask"])));
+            EngineDecisionWaitMarker.Write(activeInfo.FolderPath, run.RunId);
+            return true;
+        }
+
         PostAbortReviewStepReport report;
         try
         {
@@ -8002,31 +8217,31 @@ public class ProjectRunner
     {
         if (lines == null || lines.Count == 0) return "(no CLI output captured)";
         var start = Math.Max(0, lines.Count - maxLines);
-        return string.Join("\n", lines.Skip(start).Select(l => l.Text));
+        var window = string.Join("\n", lines.Skip(start).Select(l =>
+            AbortEvidenceCredentialRegex.Replace(l.Text ?? string.Empty, "[omitted: secret]")));
+        const int maxBytes = 8 * 1024;
+        if (Encoding.UTF8.GetByteCount(window) <= maxBytes) return window;
+        window = window[^Math.Min(window.Length, maxBytes)..];
+        while (Encoding.UTF8.GetByteCount(window) > maxBytes) window = window[1..];
+        return "[omitted: oversize]\n" + window;
     }
 
-    private const int ToolCallsLivenessTailBytes = 64 * 1024;
-
-    /// <summary>Tails <c>logs/tool-calls.jsonl</c> so the model can judge
-    /// whether a tool call started shortly before the abort and never
-    /// returned (a live long-op) vs. a genuine stall. Best-effort.</summary>
-    private string BuildToolCallsLiveness(string jobFolderPath, int maxLines = 12)
+    /// <summary>Captures typed file metadata for abort review without reading
+    /// raw tool-call rows into a decision prompt.</summary>
+    private string BuildToolCallsLiveness(string jobFolderPath)
     {
         try
         {
             var path = Path.Combine(TaskPaths.LogsDir(jobFolderPath), "tool-calls.jsonl");
             if (!File.Exists(path)) return "(no tool-calls.jsonl on disk)";
-            // tool-calls.jsonl grows by one row per tool call for the whole
-            // task; read only the newest window (AGT-2991).
-            var all = BoundedFileRead.ReadTailLines(path, ToolCallsLivenessTailBytes);
-            if (all.Count == 0) return "(tool-calls.jsonl is empty)";
-            var start = Math.Max(0, all.Count - maxLines);
-            return string.Join("\n", all.Skip(start));
+            var file = new FileInfo(path);
+            return $"tool-call evidence present; bytes={file.Length}; lastWriteUtc={file.LastWriteTimeUtc:O}; " +
+                "content omitted pending authorized artefact drill-down";
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "abort-review tool-calls.jsonl read failed for {Folder}", jobFolderPath);
-            return "(tool-calls.jsonl unreadable)";
+            _logger.LogDebug(ex, "abort-review tool-call metadata read failed for {Folder}", jobFolderPath);
+            return "(tool-call evidence metadata unavailable)";
         }
     }
 
@@ -9992,6 +10207,28 @@ public class ProjectRunner
         var historySnapshot = _pickupAttempts.TryGetValue(slug, out var state)
             ? state.History.ToList()
             : new List<PickupAttemptDiagnostic>();
+        if (reasonOverride is null && candidate.Info is { } waitingTask
+            && _reviewInputDecisions?.EngineDecides == true
+            && MonolithTransitionAdapter.LoopSignal(
+                "pickup.silent-runs-per-job", attempts, threshold, "per-card", slug,
+                ["retry", "defer", "ask"]) is { } signal)
+        {
+            var summary = JsonSerializer.Serialize(new
+            {
+                attempts,
+                threshold,
+                cliTypeBeforeMove,
+                history = historySnapshot.TakeLast(threshold),
+            });
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+            var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                "loop-exhaustion", ProjectName, waitingTask.Id, waitingTask.State,
+                $"pickup:{slug}:{attempts}", summary, digest, [], waitingTask.Id,
+                LoopSignal: signal));
+            EngineDecisionWaitMarker.Write(waitingTask.FolderPath, occurrence.RunId);
+            return true;
+        }
 
         // Classify the budget-exhaustion cause. A zombie escalation (passed an
         // explicit reasonOverride) is always task-shaped: a session-less folder
@@ -10191,6 +10428,32 @@ public class ProjectRunner
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "CrossSlugInfraCircuitBreaker: chat-log append failed for {Slug}", slug);
+        }
+
+        if (_reviewInputDecisions?.EngineDecides == true
+            && MonolithTransitionAdapter.LoopSignal(
+                "pickup.cross-slug-infra-circuit-breaker", trip.Slugs.Count, trip.Limit,
+                $"{trip.WindowMinutes}-minute-project-cli-window", jobIdBeforeMove,
+                ["defer project pickup", "prepare diagnosis", "ask"]) is { } infraSignal)
+        {
+            var moved = _scanner.FindJob(jobIdBeforeMove, Entry.Path);
+            if (moved is not null)
+            {
+                var summary = JsonSerializer.Serialize(new
+                {
+                    cliType,
+                    trip.Slugs,
+                    trip.WindowMinutes,
+                    trip.Limit,
+                });
+                var digest = "sha256:" + Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(summary)));
+                var occurrence = _reviewInputDecisions.Submit(new ReviewInputDecisionRequest(
+                    "loop-exhaustion", ProjectName, moved.Id, moved.State,
+                    $"cross-slug:{cliType}:{trip.TrippedAt:O}", summary, digest, [], moved.Id,
+                    LoopSignal: infraSignal));
+                EngineDecisionWaitMarker.Write(moved.FolderPath, occurrence.RunId);
+            }
         }
 
         // Mode flip last so any throw above does not leave us paused

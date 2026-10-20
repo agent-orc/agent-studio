@@ -1,0 +1,9 @@
+{$STUDIO_DOMAIN} {
+    tls internal
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+    }
+    reverse_proxy frontend:8080
+}

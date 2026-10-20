@@ -66,6 +66,41 @@ internal static class IdentityBootstrapEndpoints
                 return await store.CreateStudioUserAsync(request, ActorOf(context, owner), ct);
             }, StatusCodes.Status201Created))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
+        auth.MapPost("/invitations", async (
+            HttpContext context, StudioInviteUserRequest request, TaskServerStore store,
+            TaskServerBootstrapOptions bootstrap, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                var owner = await RequireOwnerAsync(context, store, bootstrap, ct);
+                return await store.InviteStudioUserAsync(request, ActorOf(context, owner), ct);
+            }, StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
+        auth.MapPost("/invite/accept", async (
+            HttpContext context, StudioAcceptInvitationRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            try
+            {
+                var session = await store.AcceptStudioInvitationAsync(request, ct);
+                StudioEndpoints.SetStudioSessionCookies(context, session.SessionToken, session.CsrfToken);
+                return Results.Ok(session);
+            }
+            catch (Exception exception)
+            {
+                return TaskServerEndpoints.MapError(exception);
+            }
+        }).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
+        auth.MapPut("/users/{userId}/projects/{projectId}/production-approval", async (
+            HttpContext context, string userId, string projectId, StudioProductionApprovalRequest request,
+            TaskServerStore store, TaskServerBootstrapOptions bootstrap, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                var owner = await RequireOwnerAsync(context, store, bootstrap, ct);
+                await store.SetStudioProductionApprovalAsync(userId, projectId, request.Approved, ActorOf(context, owner), ct);
+                return new { userId, projectId, request.Approved };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
 
     private static void MapEnrolmentEndpoints(RouteGroupBuilder api)
@@ -121,6 +156,15 @@ internal static class IdentityBootstrapEndpoints
                 return TaskServerEndpoints.MapError(exception);
             }
         }).RequireTaskServerScope(TaskServerScopes.Management);
+
+        api.MapPut("/projects/repository-visibility", async (
+            HttpContext context, SetProjectRepositoryVisibilityRequest request, TaskServerStore store,
+            CancellationToken ct) => await TaskServerEndpoints.InvokeAsync(async () => new
+            {
+                found = await store.SetProjectRepositoryVisibilityAsync(request,
+                    context.TaskServerPrincipal()?.PrincipalId ?? "local-loopback", ct),
+            }))
+            .RequireTaskServerScope(TaskServerScopes.Management);
 
         api.MapGet("/projects/{projectId}/repository", async (
             string projectId, TaskServerStore store, CancellationToken ct)

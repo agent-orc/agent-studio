@@ -18,13 +18,17 @@ public sealed class OrchestratorWorkbenchPromptContextComposer
 {
     internal const int MetadataTokenLimit = 256;
     internal const int EntryHtmlTokenLimit = 1_800;
+    internal const int CardTokenLimit = 700;
     private const int EstimatedCharactersPerToken = 4;
 
     private readonly WorkbenchCatalogueService _workbenches;
+    private readonly DossierCardsService? _cards;
 
-    public OrchestratorWorkbenchPromptContextComposer(WorkbenchCatalogueService workbenches)
+    public OrchestratorWorkbenchPromptContextComposer(
+        WorkbenchCatalogueService workbenches, DossierCardsService? cards = null)
     {
         _workbenches = workbenches;
+        _cards = cards;
     }
 
     /// <summary>
@@ -54,9 +58,16 @@ public sealed class OrchestratorWorkbenchPromptContextComposer
             blocks.Add(RenderBoundedBlock("index.html EXCERPT", document.Html, EntryHtmlTokenLimit));
         }
 
+        if (_cards != null)
+        {
+            var cardList = _cards.List(projectName, item);
+            included.Add("Dossier cards");
+            blocks.Add(RenderCardBlock(cardList));
+        }
+
         var sb = new StringBuilder();
         sb.AppendLf("=== ACTIVE DOSSIER CONTEXT ===");
-        sb.AppendLf("The operator is chatting from this Dossier. Treat this block as the authoritative scope for the current message. Do not assume board or task state that was not explicitly requested.");
+        sb.AppendLf("The operator is chatting from this Dossier. Treat this block as the authoritative scope for the current message. Use the included card states and open decisions to answer what remains.");
         sb.AppendLf($"Included context blocks: {string.Join(", ", included)}.");
         sb.AppendLf();
         foreach (var block in blocks)
@@ -89,6 +100,20 @@ public sealed class OrchestratorWorkbenchPromptContextComposer
         if (item.Decision is { } decision)
             lines.Add($"Last decision: {decision.Outcome} ({decision.State}) at {decision.DecidedAt ?? decision.PreparedAt}");
         return string.Join("\n", lines);
+    }
+
+    internal static string RenderCardBlock(DossierCardList cardList)
+    {
+        var lines = new List<string>
+        {
+            $"Implementation slices: {cardList.CompletedSlices}/{cardList.ImplementationSlices} complete.",
+        };
+        lines.AddRange(cardList.Cards.Select(card =>
+            $"- {card.Key}: {card.Title} | lane {card.Lane} | state {card.State}"
+            + (card.Environments.Length == 0 ? "" : $" | environments {string.Join(", ", card.Environments)}")
+            + (card.Section is null ? "" : $" | section {card.Section}")
+            + (card.Decision is null ? "" : $" | decision {card.Decision}")));
+        return RenderBoundedBlock("DOSSIER CARDS", string.Join("\n", lines), CardTokenLimit);
     }
 
     internal static string RenderBoundedBlock(string label, string content, int tokenLimit)

@@ -6,7 +6,7 @@ export interface AuthUser {
   id: string;
   username: string;
   displayName: string;
-  role: 'owner' | 'operator' | 'viewer';
+  role: 'owner' | 'operator' | 'contributor' | 'viewer';
   projects: string[];
   disabled: boolean;
   mustChangePassword: boolean;
@@ -133,6 +133,11 @@ export class AuthService {
 
   login(username: string, password: string): Observable<AuthStatus> {
     return this.http.post<AuthStatus | StandaloneAuthSession>(`${this.authRoot}/login`, { username, password })
+      .pipe(map(normalizeSession), tap((status) => this.status.set(status)));
+  }
+
+  acceptInvitation(token: string, newPassword: string): Observable<AuthStatus> {
+    return this.http.post<AuthStatus | StandaloneAuthSession>('/api/v1/studio/auth/invite/accept', { token, newPassword })
       .pipe(map(normalizeSession), tap((status) => this.status.set(status)));
   }
 

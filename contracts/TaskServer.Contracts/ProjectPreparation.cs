@@ -270,7 +270,10 @@ public sealed record ProjectExecutionDefinition(
     string? Image,
     ProjectReleaseDefinition? Release,
     ProjectDefinition? Project,
-    QualityDefinition? Quality);
+    QualityDefinition? Quality)
+{
+    public ProjectDeploymentDefinition? Deployment { get; init; }
+}
 
 public sealed record ProjectDefinitionIssue(string Path, string Code, string Message);
 
@@ -323,7 +326,7 @@ public static partial class ProjectDefinitionReader
         {
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
-            "project", "quality",
+            "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -358,7 +361,10 @@ public static partial class ProjectDefinitionReader
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
-            environment, devServer, NullIfBlank(image), release, project, quality);
+            environment, devServer, NullIfBlank(image), release, project, quality)
+        {
+            Deployment = ParseDeployment(lines, issues),
+        };
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace));
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
@@ -815,6 +821,9 @@ public static partial class ProjectDefinitionValidator
         if (definition.SchemaVersion == 1 && definition.Quality is not null)
             issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
 
+        if (definition.SchemaVersion == 1 && definition.Deployment is not null)
+            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, or deploy. Use schemaVersion 2."));
+
         if (definition.SchemaVersion == 2 && definition.Project is null)
             issues.Add(new("project", "v2-project-required", "schemaVersion 2 requires a project section."));
         if (definition.Stack.Count == 0 || definition.Stack.Any(string.IsNullOrWhiteSpace))
@@ -909,6 +918,8 @@ public static partial class ProjectDefinitionValidator
                 }
             }
         }
+        if (definition.Deployment is { } deployment)
+            issues.AddRange(ValidateDeployment(deployment));
         return issues;
     }
 

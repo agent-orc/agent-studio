@@ -6,6 +6,9 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { HeaderQuotaComponent } from './header-quota';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
+import { AuthSessionState } from '../../../../services/auth.service';
+import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
+import type { ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 
 interface WindowDisplay { value: string; barPct: number; tone: string; windowKind: string }
 interface PrimaryDisplay { value: string; tag: string; barPct: number; hasValue: boolean; tone: string }
@@ -53,6 +56,27 @@ describe('HeaderQuotaComponent (smoke)', () => {
       .expectOne('/api/cli/quota')
       .flush({ ttlSeconds: 600, snapshots: [] });
     expect(fixture.componentInstance).toBeTruthy();
+  });
+});
+
+describe('HeaderQuotaComponent (networked)', () => {
+  it('renders runner provider state without probing the web server CLI', async () => {
+    const statuses = signal([{ id: 'runner-1:claude', provider: 'claude', providerLabel: 'Claude',
+      runnerId: 'runner-1', hostName: 'agent-host-1', state: 'ok' }] as ProviderAuthBadge[]);
+    await TestBed.configureTestingModule({
+      imports: [HeaderQuotaComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        provideRouter([]), { provide: JobsHubClient, useClass: JobsHubClientStub },
+        { provide: ProviderAuthStatusService, useValue: { statuses } }],
+    }).compileComponents();
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+    });
+    const fixture = TestBed.createComponent(HeaderQuotaComponent);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="hquota-card-claude"]')
+      .getAttribute('aria-label')).toContain('agent-host-1 ok');
+    TestBed.inject(HttpTestingController).expectNone('/api/cli/quota');
   });
 });
 

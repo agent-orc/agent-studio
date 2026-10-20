@@ -753,6 +753,10 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
+            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+                && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
+                    req.TargetState, req.OperatorOverride, req.ArchiveOverride))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var validation = ValidateTargetState(req.TargetState);
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
@@ -788,6 +792,10 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
+            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+                && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
+                    req.TargetState, req.OperatorOverride, req.ArchiveOverride))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var validation = ValidateTargetState(req.TargetState);
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
@@ -973,6 +981,9 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
+            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+                && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
@@ -1226,6 +1237,20 @@ public static class TaskCrudEndpoints
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var ok = mutations.SetJobEpic(jobId, req?.EpicId, watchPath);
             return ok ? Results.Ok() : Results.NotFound();
+        });
+
+        group.MapPut("/{jobId}/dossier", (string jobId, string? project, string? watchPath,
+            TaskDossier? req, TaskScannerService scanner, TaskMutationService mutations,
+            AgentStudio.Registry.ProjectRegistry projects, AgentStudio.Docs.WorkbenchCatalogueService workbenches) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound();
+            if (req != null && (!ConceptDossierContract.IsDossierPath(req.Path)
+                || workbenches.List(info.ProjectName, includeHistory: true)?.Items.Any(item =>
+                    item.Valid && string.Equals(item.EntryPath, req.Path, StringComparison.OrdinalIgnoreCase)) != true))
+                return Results.BadRequest(new { error = "Choose a Dossier in this project." });
+            return mutations.SetJobDossier(jobId, req, watchPath) ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/title", (string jobId, string? project, string? watchPath, SetJobTitleRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
@@ -1560,8 +1585,10 @@ public static class TaskCrudEndpoints
         }
     }
 
-    private static string OperatorActor(HttpContext context)
+    internal static string OperatorActor(HttpContext context)
     {
+        if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
+            return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string
             ?? context.Request.Headers["X-Client-Id"].FirstOrDefault();
         return TimelineActors.Human(clientId ?? string.Empty);

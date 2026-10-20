@@ -1,11 +1,40 @@
 # Frontend Domain Map
 
-Version: 2026-10-10
+Version: 2026-10-16
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Environment flow
+
+The Studio header opens a full-width Environment view. It refreshes every 15
+seconds while visible. The view joins the archive-inclusive
+`GET /api/environment/flow` projection with execution-host heartbeat telemetry,
+open Watcher cases, and AI Operator decision receipts. Host, queue, and lane
+markers resolve a case's affected card IDs against the current board. A missing
+host metric or unlinked receipt reads as unavailable, never as a healthy zero.
+
+The flow endpoint counts distinct cards entering delivery, human review, and
+completion during the current UTC day; integration uses `integration_succeeded`
+ledger events. Lane flow uses the rolling last 24 hours and median completed
+stays. Queue throughput divides rolling lane exits by 24 hours; the gate uses
+distinct cards with a completed build/test step and the batch gate uses members
+in verified publications. Gate waiting comes from the active auto-review gate
+queue, and batch gate waiting from its pending store. Deployment card counts
+have no global attribution source yet, so that value remains unavailable.
+
+## Workspace deployment dashboard
+
+The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
+It lists projects against Staging and Production, with release version, deploy
+age and state, health, pending approval, and newer release. Project group and
+environment filters apply to the matrix; selecting a cell opens that project's
+Deployment rail. The dashboard currently reads a typed fixture service and
+labels its values as sample data. BD-1 will replace the fixture producer with
+the deployment API; the `Environment`, `Release`, `Deployment`, and
+`EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
 
 The project execution assignment card warns when automatic pickup is placed
 at `local` and the settings projection reports `localCodingAdmitted: false`.
@@ -59,6 +88,12 @@ characters return empty result groups, and a failed repository reports against
 the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
+
+### Product preview and feedback
+
+The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
+
+Cross-origin iframes do not expose their pixels or DOM to Studio. Screenshot markup therefore uses the task's captured image, and a selector is optional unless the person knows it. The Project URL registry currently supplies the preview address. A task-specific preview address requires the companion card-preview contract when it becomes available.
 
 Product calls to `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`,
 and `Intl` formatters pass an explicit locale. The current product formatting
@@ -448,6 +483,13 @@ occur. It is not a claim about tunnel transfer time.
   the existing Task Server-backed grouped task snapshot, excluding completed
   and archived cards. Readiness and last-start diagnosis remain independent, so
   a failed preview keeps both the source context and its compact failure detail.
+  In the networked profile, the registered URL is fetched through Studio's
+  preview proxy. Documents receive a CSP sandbox with an opaque origin. The
+  rewritten asset paths contain a short lived capability scoped to the project
+  URL, so module scripts, root imports, and relative dynamic imports can load
+  without a Studio session cookie. Only those capability-bearing asset
+  responses allow CORS for `Origin: null`; they never allow credentials. Other
+  opaque-origin requests to Studio APIs are rejected before session authentication.
 - `frontend/src/app/features/project-detail/components/workbench-viewer/` is the
   isolated Dossier host. The workspace-wide `#/workbenches` overview and
   project-scoped `#/projects/<project>/workbenches` overview share one ordered
@@ -464,8 +506,9 @@ occur. It is not a claim about tunnel transfer time.
   selects never-reviewed items, reviews older than 30 days, or any verdict.
   Sort orders each lifecycle group by Created, status, last movement, review
   age, project, key, or open decision count. Created defaults to newest first;
-  the direction button reverses the selected sort. The decision-first
-  projection remains the reset default.
+  the direction button reverses the selected sort. Duplicate Tag labels show
+  a numbered count and id so the compact control selects the intended tag.
+  The decision-first projection remains the reset default.
   Filter and sort state use one encoded route-local `dossier` query value and
   separate session entries for the global and each project scope; explicit URL
   state wins when a link is opened.
@@ -678,7 +721,14 @@ occur. It is not a claim about tunnel transfer time.
   hot Markdown excerpts in Docs with one restore action. All retention traffic
   uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
   the Orchestrator proxy and direct Task Server deployment share one frontend.
-- The Execution Hosts destination at `#/workspace/settings/execution-hosts`
+- The Environment destination at `#/workspace/settings/environment` (old
+  `execution-hosts` and `remote-hosts` routes redirect here) offers a per-user
+  List/Map preference. The map combines runner roles with the read-only
+  management environment snapshot: control machine, configured gate host,
+  engine readiness, manifest routes, and gate slot usage. Unreported service
+  health, repository permission, and installation machines stay unknown.
+  Selecting a runner role opens its existing list detail and actions. Narrow
+  widths show the list. The list
   uses one sortable machine row for status, host CPU load, activity, and release
   identity. Its occupied/total slots sum the visible role rows. Matching role releases appear once on the machine row; differing
   releases appear on their role rows. Coding and Review runner processes
@@ -699,6 +749,9 @@ occur. It is not a claim about tunnel transfer time.
   connection, capabilities, capacity, project access, host work, and system
   load; each section discloses its internals independently. Crash recovery
   pending count occupies a status-bar slot so it cannot cover host actions.
+  Release drift stays paired with the release reported for the same runner
+  generation. An older drift response cannot mark a newer capability release
+  behind Stable.
 - The System prompts destination is the prompt registry and observability
   surface. Its overview groups runtime-step, orchestrator, drift, and framing
   templates, explains application and project pipeline override precedence, and

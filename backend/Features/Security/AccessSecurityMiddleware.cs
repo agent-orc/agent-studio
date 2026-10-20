@@ -2,7 +2,7 @@ using Microsoft.Extensions.Primitives;
 
 namespace AgentStudio.Security;
 
-/// <summary>Fail-closed authentication and the intentionally small owner/operator/viewer authorization model.</summary>
+/// <summary>Fail-closed authentication and project-scoped human authorization.</summary>
 public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
@@ -16,6 +16,9 @@ public sealed class AccessSecurityMiddleware
     private readonly TaskScannerService? _scanner;
     private readonly RunLeaseService? _leases;
     private readonly AgentStudio.Registry.ProjectRegistry? _projects;
+    private readonly TimelineLog? _timeline;
+    private readonly TimeProvider _clock;
+    private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -23,7 +26,10 @@ public sealed class AccessSecurityMiddleware
         AccessSecurityStore store,
         TaskScannerService? scanner = null,
         RunLeaseService? leases = null,
-        AgentStudio.Registry.ProjectRegistry? projects = null)
+        AgentStudio.Registry.ProjectRegistry? projects = null,
+        TimelineLog? timeline = null,
+        TimeProvider? clock = null,
+        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null)
     {
         _next = next;
         _configuration = configuration;
@@ -31,6 +37,9 @@ public sealed class AccessSecurityMiddleware
         _scanner = scanner;
         _leases = leases;
         _projects = projects;
+        _timeline = timeline;
+        _clock = clock ?? TimeProvider.System;
+        _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -76,6 +85,21 @@ public sealed class AccessSecurityMiddleware
         if (!context.Request.IsHttps)
         {
             await Reject(context, 426, "https-required", "HTTPS is required for the networked profile.");
+            return;
+        }
+
+        // Module fetches from a CSP-sandboxed document have an opaque origin
+        // and omit Studio's SameSite session cookie. The URL capability grants
+        // only a GET under the registered preview asset route.
+        if (_previewAccess.AllowsAssetRequest(context.Request))
+        {
+            await _next(context);
+            return;
+        }
+        if (context.Request.Headers.Origin == "null"
+            && path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            await Reject(context, 403, "opaque-origin-denied", "An opaque origin cannot access Studio APIs.");
             return;
         }
 
@@ -150,8 +174,32 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path);
-        if (requiredRunnerScope is not null)
+        if (path is "/api/v1/protocol" or "/api/v1/protocol/compatibility")
+        {
+            if (human is not null && !human.User.MustChangePassword)
+            {
+                await _next(context);
+                return;
+            }
+            if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
+            if (!runner.Scopes.Contains(RunnerScopes.Claim) && !runner.Scopes.Contains(RunnerScopes.Orchestration))
+            {
+                await Reject(context, 403, "runner-scope-denied", "A Runner execution or engine scope is required.");
+                return;
+            }
+            await _next(context);
+            return;
+        }
+
+        // Core-attach aliases are applied before this middleware. Check the
+        // original versioned route as a fallback so only those client reads
+        // gain a Runner scope, not other legacy /api/tasks/{id} reads.
+        var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
+        var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
+            ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
+        if (requiredRunnerScope is not null
+            && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+                || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null)
             {
@@ -161,6 +209,12 @@ public sealed class AccessSecurityMiddleware
                 return;
             }
             if (!runner.Scopes.Contains(requiredRunnerScope)) { await Reject(context, 403, "runner-scope-denied", $"Runner credential lacks '{requiredRunnerScope}'."); return; }
+            if (path.StartsWith("/api/v1/runners/", StringComparison.OrdinalIgnoreCase)
+                && !path["/api/v1/runners/".Length..].Split('/')[0].Equals(runner.RunnerId, StringComparison.Ordinal))
+            {
+                await Reject(context, 403, "runner-identity-denied", "A Runner may access only its enrolled identity.");
+                return;
+            }
             if (IsRunnerTaskFileRead(context.Request.Method, path)
                 && !RunnerOwnsTaskInput(path, runner.RunnerId))
             {
@@ -172,11 +226,6 @@ public sealed class AccessSecurityMiddleware
         }
 
         if (runner is not null && IsRunnerSelfRead(context.Request.Method, path, runner.RunnerId))
-        {
-            await _next(context);
-            return;
-        }
-        if (runner is not null && path is "/api/v1/protocol" or "/api/v1/protocol/compatibility")
         {
             await _next(context);
             return;
@@ -207,6 +256,14 @@ public sealed class AccessSecurityMiddleware
                 if (!TokenWriteRouteAllowed(context.Request, path))
                 {
                     await Reject(context, 403, "project-scope-denied", "A project-scoped token cannot mutate installation-wide settings.");
+                    return;
+                }
+                var declaredScope = context.GetEndpoint()?.Metadata.GetMetadata<ApiTokenRouteScope>()?.Scope
+                    ?? ProjectRouteScope.WorkspaceWide;
+                if (declaredScope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler)
+                    && !apiToken.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal))
+                {
+                    await Reject(context, 403, "project-scope-denied", "This token requires a workspace scope for this route.");
                     return;
                 }
                 if (!ProjectAllowed(apiToken.User, context.Request, path))
@@ -260,6 +317,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         if (path.StartsWith("/api/auth/users", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/invitations", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/runners", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/runner-enrollments", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/api-tokens", StringComparison.OrdinalIgnoreCase))
@@ -282,6 +340,23 @@ public sealed class AccessSecurityMiddleware
             }
         }
 
+        if (human.User.Role == StudioRoles.Contributor)
+        {
+            var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+                ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
+                : null;
+            var productionApproval = card is not null
+                && human.User.ProductionApprovalProjects.Any(project =>
+                    string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
+                    || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
+                        && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)));
+            if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval))
+            {
+                await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
+                return;
+            }
+        }
+
         if (!ProjectAllowed(human.User, context.Request, path))
         {
             await Reject(context, 403, "project-scope-denied", "This account is not a member of the requested project.");
@@ -289,25 +364,125 @@ public sealed class AccessSecurityMiddleware
         }
 
         await _next(context);
+        if (human.User.Role == StudioRoles.Contributor
+            && !safeMethod && context.Response.StatusCode is >= 200 and < 400
+            && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+            && _timeline is not null)
+        {
+            var taskId = Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]);
+            var updated = _scanner?.FindJob(taskId);
+            if (updated is not null)
+                _timeline.Append(updated.FolderPath, new TimelineEvent
+                {
+                    Ts = _clock.GetUtcNow().UtcDateTime,
+                    Kind = "contributor-action",
+                    Actor = TimelineActors.Human(human.User.Id),
+                    Summary = $"{context.Request.Method} {path}"
+                });
+        }
     }
 
     private static string? RequiredRunnerScope(string method, string path)
     {
+        if (HttpMethods.IsPost(method) && path.Equals("/api/deploy/gate-releases", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Release;
+        if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
+        if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Gate;
+        if (HttpMethods.IsGet(method)
+            && path.StartsWith("/api/gate-artifacts/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Artifacts;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
+        // Keep the versioned client surface explicit. A service credential must
+        // never fall through to browser-session authorization on a new route.
+        if (path.StartsWith("/api/v1/runners/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (HttpMethods.IsPut(method) && path.EndsWith("/outbox-status", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+            if (HttpMethods.IsPut(method) && path.EndsWith("/capabilities", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+            if (HttpMethods.IsPut(method) && path.Split('/').Length == 5) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && (path.EndsWith("/claims", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/reports", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/cli-update/result", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+            if (HttpMethods.IsPost(method) && path.Contains("/provider-canary/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+        }
+        if (HttpMethods.IsGet(method) && (path is "/api/v1/projects" or "/api/v1/artifact-limits"
+            || path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+        if (HttpMethods.IsGet(method) && path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = path.Split('/');
+            if (parts.Length == 7 && parts[5].Equals("tasks", StringComparison.OrdinalIgnoreCase))
+                return RunnerScopes.Claim;
+        }
+        if (HttpMethods.IsPost(method) && path.Equals("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (path.StartsWith("/api/v1/reviews/attempts/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (HttpMethods.IsGet(method)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/lease/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/reclaim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/cleanup", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        }
+        if (path.StartsWith("/api/v1/integrations/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (HttpMethods.IsPost(method) && path.EndsWith("/claims", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/lease/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        }
+        if (path.StartsWith("/api/v1/work-permits/", StringComparison.OrdinalIgnoreCase)
+            && HttpMethods.IsPost(method) && path.EndsWith("/accept", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (path.StartsWith("/api/v1/runs/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (path.Contains("/lease/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+            if (path.EndsWith("/artifacts", StringComparison.OrdinalIgnoreCase)
+                || path.Contains("/artifacts/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Artifacts;
+            if (path.EndsWith("/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+            if (path.EndsWith("/completion", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/result-handoff", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/result-finalization", StringComparison.OrdinalIgnoreCase)
+                || (path.Contains("/post-steps/", StringComparison.OrdinalIgnoreCase)
+                    && path.EndsWith("/complete", StringComparison.OrdinalIgnoreCase))
+                || path.EndsWith("/revoked-reference", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+            if (path.EndsWith("/reconcile", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        }
         // The replay ingest sits above the general runner routes because its
         // credential must never satisfy any of them.
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/replay/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.DemoReplay;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (path.StartsWith("/api/runner/lease", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
-        if (HttpMethods.IsPost(method) && path.StartsWith("/api/runner/orchestrator-decisions/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/logs", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Logs;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         if ((HttpMethods.IsPost(method) || HttpMethods.IsGet(method))
             && path.StartsWith("/api/runner/artifacts", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Artifacts;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/completion", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsGet(method) && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase) && path.Contains("/files/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsGet(method) && path.Equals("/api/system/about", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/epic-planning-prompt", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         return GateRunnerScope(method, path);
+    }
+
+    private static bool IsHumanSessionRead(string method, string path)
+    {
+        if (!HttpMethods.IsGet(method)) return false;
+        if (path is "/api/system/about" or "/api/v1/projects") return true;
+        if (path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/v1/reviews/attempts/", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase)) return false;
+        var parts = path.Split('/');
+        return parts.Length == 7 && parts[5].Equals("tasks", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -343,6 +518,7 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRunnerTaskFileRead(string method, string path)

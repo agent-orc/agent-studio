@@ -95,6 +95,7 @@ import { ErrorDialogService } from './error-dialog.service';
 import { JobsHubClient } from './jobs-hub-client.service';
 import type {
   ProjectDeploymentSummary,
+  ProjectEnvironments,
   ProjectTestRunsResponse,
   CompiledDeploymentPrompt,
   ProjectThroughputSummary,
@@ -2050,6 +2051,14 @@ export class TaskService {
     );
   }
 
+  sendPreviewFeedback(jobId: string, watchPath: string, data: FormData) {
+    return this.http.post<ContinueTaskResponse>(
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/preview-feedback`,
+      data,
+      this.withWatchPath(watchPath),
+    );
+  }
+
   setJobModel(jobId: string, model: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
@@ -2269,6 +2278,12 @@ export class TaskService {
   getGlobalOrchestratorFeed() {
     return this.http.get<import('../features/orchestrator').GlobalOrchestratorFeedResponse>(
       `${this.baseUrl}/runner/orchestrator-feed`,
+    );
+  }
+
+  getOperationalStalls() {
+    return this.http.get<{ count: number; cases: import('../features/orchestrator').OperationalStallCase[] }>(
+      `${this.baseUrl}/watcher/stalls`,
     );
   }
 
@@ -2807,6 +2822,19 @@ export class TaskService {
     return this.http.get<ProjectDeploymentSummary>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/deployment/summary`,
     );
+  }
+
+  getProjectEnvironments(projectName: string) {
+    return this.http.get<ProjectEnvironments>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments`);
+  }
+
+  decideProjectPromotion(projectName: string, artifact: string, approve: boolean) {
+    const action = approve ? 'approve' : 'reject';
+    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
+  }
+
+  rollbackProjectEnvironment(projectName: string, environmentId: string) {
+    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, {});
   }
 
   /** Project-wide planned/running/completed test-run pipeline with derived card attachments. */

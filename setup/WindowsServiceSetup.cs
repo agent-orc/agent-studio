@@ -164,6 +164,8 @@ internal sealed class WindowsServiceSetup(ProcessRunner process, WindowsServiceL
             Console.WriteLine($"Upstream Task Server: {upstreamUrl ?? "unchanged"}");
         }
         Console.WriteLine($"Studio connector: {WindowsServiceLayout.ConnectorUrl}");
+        if (profile == ProductProfile.StudioWindowsServices)
+            Console.WriteLine($"Studio browser: {WindowsServiceLayout.ConnectorUrl}/");
         Console.WriteLine($"Configuration and credentials: {layout.ConfigRoot}");
         if (profile == ProductProfile.StudioWindowsServices)
             Console.WriteLine($"Task data: {layout.DataDirectory}");

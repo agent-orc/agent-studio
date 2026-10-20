@@ -6,19 +6,17 @@
             (click)="reload()">
       <app-studio-icon name="refresh" [size]="14" />
     </button>
-
     <div class="url-preview__addr" data-testid="url-preview-addr">
       <app-studio-icon class="url-preview__addr-icon" name="link" [size]="12" />
       <app-project-url-address
         [identity]="projectName() + ' / ' + (urlRecord()?.label ?? urlId())"
         [url]="displayUrl()"
-        [editable]="!!urlRecord()"
+        [editable]="!!urlRecord() && !networked()"
         (navigate)="onNavigate($event)" />
       <span class="url-preview__pill"
             [attr.data-status]="statusPill()"
             data-testid="url-preview-status">{{ statusPill() }}</span>
     </div>
-
     <button type="button" class="url-preview__nav"
             data-testid="url-preview-open-external"
             cacTooltip="Open in external browser"
@@ -37,13 +35,16 @@
             (click)="showMenu()">
       <app-studio-icon name="more" [size]="14" />
     </button>
-
     <app-menu [items]="menuItems()" [open]="menuOpen()" [anchorEl]="menuTrigger"
               [position]="menuPosition()" ariaLabel="Embed actions" testIdPrefix="url-preview-menu"
               (itemClick)="onMenuItem($event)" (closeRequest)="menuOpen.set(false)" />
   </div>
+  <app-product-feedback [projectName]="projectName()" [watchPath]="projectWatchPath()" [previewAddress]="displayUrl()" />
   @if (resolveState() === 'resolved') {
-    <app-project-url-context-header [projectId]="projectId()" [projectName]="projectName()" [urlId]="urlId()" [workingDirectoryKey]="urlRecord()?.startRule?.cwd || repositoryPath() || rootPath()" />
+    <details class="url-preview__technical" data-testid="url-preview-technical">
+      <summary>Technical details</summary>
+      <app-project-url-context-header [projectId]="projectId()" [projectName]="projectName()" [urlId]="urlId()" [workingDirectoryKey]="urlRecord()?.startRule?.cwd || repositoryPath() || rootPath()" />
+    </details>
   }
   <div class="url-preview__body">
     @switch (resolveState()) {
@@ -76,14 +77,13 @@
       }
       @default {
         @if (shouldEmbed()) {
-          <iframe #frame class="url-preview__frame"
-                  data-testid="url-preview-frame"
-                  [src]="iframeSrc()"
-                  aria-label="Embedded preview of {{ urlRecord()?.url }}"
-                  [appTooltip]="'Embedded preview of ' + urlRecord()?.url"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                  referrerpolicy="no-referrer"
-                  (load)="onFrameLoad($event)"></iframe>
+          @if (networked()) {
+          <iframe #frame class="url-preview__frame" data-testid="url-preview-frame" [src]="iframeSrc()" aria-label="Embedded preview of {{ urlRecord()?.url }}"
+                  [appTooltip]="'Embedded preview of ' + urlRecord()?.url" sandbox="allow-scripts allow-forms allow-popups allow-modals" referrerpolicy="no-referrer" (load)="onFrameLoad($event)"></iframe>
+          } @else {
+          <iframe #frame class="url-preview__frame" data-testid="url-preview-frame" [src]="iframeSrc()" aria-label="Embedded preview of {{ urlRecord()?.url }}"
+                  [appTooltip]="'Embedded preview of ' + urlRecord()?.url" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" referrerpolicy="no-referrer" (load)="onFrameLoad($event)"></iframe>
+          }
           @if (frameState() === 'loading') {
             <div class="url-preview__overlay" data-testid="url-preview-loading">
               <span class="url-preview__spinner" aria-hidden="true"></span>
@@ -283,7 +283,6 @@
       }
     }
   </div>
-
   <app-project-url-process-console [label]="projectName() + ' / ' + (urlRecord()?.label ?? urlId())"
     [session]="process.session()" [open]="process.consoleOpen()" [stopping]="process.stopping()"
     (stopRequest)="stop()" (closeRequest)="process.consoleOpen.set(false)" />

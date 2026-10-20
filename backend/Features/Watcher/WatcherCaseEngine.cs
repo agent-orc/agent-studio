@@ -43,11 +43,15 @@ public sealed class WatcherCaseEngine
             var suppressed = _suppressions.IsSuppressed(workspaceRoot, fingerprint, nowUtc);
             var state = existing?.State ?? WatcherCaseStates.Open;
             if (suppressed) state = WatcherCaseStates.Suppressed;
-            else if (state == WatcherCaseStates.Suppressed) state = WatcherCaseStates.Open;
+            else if (state == WatcherCaseStates.Suppressed
+                || state == WatcherCaseStates.Resolved && obs.Subject is not null)
+                state = WatcherCaseStates.Open;
 
-            var mergedCards = (existing?.AffectedCards ?? [])
-                .Union(obs.AffectedCards, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var mergedCards = obs.Subject is not null
+                ? obs.AffectedCards.Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : (existing?.AffectedCards ?? [])
+                    .Union(obs.AffectedCards, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
             var updatedCase = new WatcherCase
             {
@@ -70,6 +74,11 @@ public sealed class WatcherCaseEngine
                 ProposalJobId = existing?.ProposalJobId,
                 IsCommentOnly = existing?.IsCommentOnly ?? false,
                 GaveUpReason = existing?.GaveUpReason,
+                Subject = obs.Subject,
+                Severity = obs.Severity,
+                SinceUtc = obs.SinceUtc,
+                BlockedCount = obs.BlockedCount,
+                SuggestedAction = obs.SuggestedAction,
             };
             _store.Save(workspaceRoot, updatedCase);
             updated.Add(updatedCase);
@@ -80,5 +89,20 @@ public sealed class WatcherCaseEngine
         }
 
         return new WatcherIngestResult(updated, readyForProposal);
+    }
+
+    public IReadOnlyList<WatcherCase> ResolveClearedOperationalCases(
+        string workspaceRoot, IReadOnlyList<WatcherSignalObservation> current, DateTime nowUtc)
+    {
+        var active = current.Where(x => x.FingerprintKey.StartsWith("operational:", StringComparison.Ordinal))
+            .Select(WatcherFingerprint.Compute).ToHashSet(StringComparer.Ordinal);
+        var cleared = _store.All(workspaceRoot)
+            .Where(x => x.Subject is not null
+                && x.State is WatcherCaseStates.Open or WatcherCaseStates.DecisionRequired
+                && !active.Contains(x.Fingerprint))
+            .Select(x => x with { State = WatcherCaseStates.Resolved, LastSeenUtc = nowUtc })
+            .ToList();
+        foreach (var item in cleared) _store.Save(workspaceRoot, item);
+        return cleared;
     }
 }

@@ -65,7 +65,8 @@ export function parseProjectHubRoute(
   if (parts.length === 3 && (parts[1] !== 'workbenches' || !parts[2])) return null;
   const workbenchId = parts.length === 3 ? safeDecode(parts[2]) : null;
   if (parts.length === 3 && !workbenchId) return null;
-  const rawSection = parts[1] || DEFAULT_PROJECT_RAIL_KEY;
+  // Old Deployment bookmarks now land on the Deploy area.
+  const rawSection = parts[1] === 'deployment' ? 'deploy' : (parts[1] || DEFAULT_PROJECT_RAIL_KEY);
   if (rawSection !== 'workbenches' && !isProjectRailKey(rawSection)) return null;
   return {
     project,

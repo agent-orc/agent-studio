@@ -36,6 +36,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly string _localRoot;
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
+    private readonly Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> _runProcess;
     private long _lastSweepTicks = NeverSwept;
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
@@ -48,14 +49,16 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory,
-        GateSlotUsageTracker? slotUsage = null)
+        GateSlotUsageTracker? slotUsage = null,
+        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null)
     {
         _configuration = configuration;
         _logger = logger;
         _time = timeProvider;
         _localRoot = localRoot;
         _deleteDirectory = deleteDirectory;
-        _slotUsage = slotUsage ?? new GateSlotUsageTracker();
+        _slotUsage = slotUsage ?? new GateSlotUsageTracker(clock: timeProvider);
+        _runProcess = runProcess ?? RemoteGateProcess.RunAsync;
     }
 
     public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
@@ -98,19 +101,10 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 sourcePackKiB * 1024, "fetch", ct);
             await Git(local, ["-C", repository, "update-ref", "refs/heads/gate-subject", request.ExpectedSha!], infra, ct);
             var knownTips = new List<string>();
-            try
-            {
-                await Ssh(options, local, "umask 077; mkdir -p -- " + Quote(options.Root + "/cache")
-                    + "; git init --bare --quiet -- " + Quote(cache)
-                    + "; git -C " + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
-                    infra, ct, line => { if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line); });
-                _slotUsage.Reached();
-            }
-            catch (Exception exception) when (exception is IOException or TimeoutException)
-            {
-                _slotUsage.Failed();
-                throw;
-            }
+            await Ssh(options, local, "umask 077; mkdir -p -- " + Quote(options.Root + "/cache")
+                + "; git init --bare --quiet -- " + Quote(cache)
+                + "; git -C " + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
+                infra, ct, line => { if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line); });
             var includedTips = new List<string>();
             // Only exclude cache tips that are ancestors of this exact subject.
             foreach (var tip in knownTips)
@@ -185,13 +179,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             var response = JsonSerializer.Deserialize<RemoteGateResponse>(
                 await File.ReadAllTextAsync(responsePath, ct), RemoteBuildTestGateRunner.Json)
                 ?? throw new InvalidDataException("Remote gate response is empty.");
-            if (response.Version != 1 || response.RunId != runId || response.BundleSha256 != digest)
-                throw new InvalidDataException("Remote gate response does not match this invocation and source bundle.");
-            return response.Result with
-            {
-                Executor = "ssh:" + options.Host + "/" + request.Executor,
-                Reason = response.Result.Reason + $" Source bundle {bundleBytes} bytes transferred in {transfer.Elapsed.TotalSeconds:F1}s."
-            };
+            return AcceptResponse(response, runId, digest, options.Host, request.Executor,
+                bundleBytes, transfer.Elapsed);
         }
         finally
         {
@@ -211,6 +200,20 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             }
             DeleteLocalRunFolder(local, runId);
         }
+    }
+
+    internal static BuildTestGateResult AcceptResponse(RemoteGateResponse response,
+        string runId, string digest, string host, string executor, long bundleBytes,
+        TimeSpan transfer)
+    {
+        if (response.Version != 1 || response.RunId != runId || response.BundleSha256 != digest)
+            throw new InvalidDataException("Remote gate response does not match this invocation and source bundle.");
+        return response.Result with
+        {
+            Executor = "ssh:" + host + "/" + executor,
+            Reason = response.Result.Reason
+                + $" Source bundle {bundleBytes} bytes transferred in {transfer.TotalSeconds:F1}s."
+        };
     }
 
     internal void ReportWorkerLine(string line, string runId, string host, BuildTestGateRequest request)
@@ -380,16 +383,31 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         catch (IOException) { return false; }
     }
 
-    private static Task Ssh(RemoteGateOptions options, string cwd, string command,
+    internal Task Ssh(RemoteGateOptions options, string cwd, string command,
         TimeSpan timeout, CancellationToken ct, Action<string>? output = null)
-        => RemoteGateProcess.RunAsync("ssh", ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        => RunTransportProcess("ssh", ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             options.Host, command], cwd, timeout, ct, output);
 
-    private static Task Scp(RemoteGateOptions options, string cwd, string source, string target,
+    internal Task Scp(RemoteGateOptions options, string cwd, string source, string target,
         TimeSpan timeout, CancellationToken ct)
-        => RemoteGateProcess.RunAsync("scp", ["-B", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        => RunTransportProcess("scp", ["-B", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=15", source, target], cwd, timeout, ct);
+
+    private async Task RunTransportProcess(string fileName, IReadOnlyList<string> args, string cwd,
+        TimeSpan timeout, CancellationToken ct, Action<string>? output = null)
+    {
+        try
+        {
+            await _runProcess(fileName, args, cwd, timeout, ct, output);
+            _slotUsage.Reached();
+        }
+        catch
+        {
+            _slotUsage.Failed();
+            throw;
+        }
+    }
 
     internal static string Quote(string text) => "'" + text.Replace("'", "'\"'\"'") + "'";
 }

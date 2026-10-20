@@ -1352,6 +1352,11 @@ public sealed class RemoteTaskRunner
                 runSpec?.ModeFraming,
                 ResultsDir(taskKey),
                 artifactLimits);
+            var attachments = await TaskAttachmentMaterializer.MaterializeAsync(
+                _client, taskKey, runSpec?.FollowUp?.Prompt,
+                workspace.RepoPath, artifactLimits.MaxRequestBodyBytes, shutdown);
+            if (attachments.Count > 0)
+                shipper.Add("system", $"[runner] materialized {attachments.Count} continuation attachment(s) in the workspace");
             shipper.Add("system", acknowledgedFollowUp is null
                 ? string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
                     ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
@@ -1443,6 +1448,9 @@ public sealed class RemoteTaskRunner
         DurableAgentProcess process;
         try
         {
+            _log($"coding-emergency-limit task={taskKey} attempt={slot.AttemptId} "
+                + $"seconds={EffectiveRunTimeoutSeconds(runSpec, slot.InputSessionId is not null) ?? _options.RunTimeoutSeconds} "
+                + $"source={(slot.InputSessionId is null ? runSpec?.RunTimeoutSource : "mechanical-resume") ?? "runner-default"}");
             process = DurableAgentProcess.Start(
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
                 runSpec: runSpec,

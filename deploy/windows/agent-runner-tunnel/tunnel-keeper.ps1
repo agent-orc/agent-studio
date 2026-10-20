@@ -3,6 +3,9 @@ param(
     [ValidatePattern('^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$')]
     [string] $SshTarget = 'agent-runner',
 
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
+    [string] $HostIdentity = 'AgentRunner-TunnelKeeper',
+
     [ValidateRange(1, 65535)]
     [int] $RemotePort = 15031,
 
@@ -24,7 +27,7 @@ $forward = "${RemotePort}:127.0.0.1:${OrchestratorPort}"
 $statePath = Join-Path $StateDirectory 'state.json'
 $logPath = Join-Path $StateDirectory 'events.log'
 $sshAttemptLogPath = Join-Path $StateDirectory 'ssh-attempts.log'
-$mutexName = "Local\AgentTaskboardTunnelKeeper-$RemotePort"
+$mutexName = "Local\AgentTaskboardTunnelKeeper-$HostIdentity-$RemotePort-$SshTarget"
 $mutex = [Threading.Mutex]::new($false, $mutexName)
 $ownsMutex = $false
 

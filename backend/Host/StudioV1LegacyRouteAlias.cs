@@ -19,6 +19,7 @@ namespace AgentStudio.Host;
 /// </summary>
 public static class StudioV1LegacyRouteAlias
 {
+    public const string OriginalPathItem = "StudioV1LegacyRouteAlias.OriginalPath";
     /// <summary>
     /// The Task Server's "resolve this task by id alone" project segment
     /// (<c>TaskServerStore.UnscopedProjectToken</c>). The Studio sends it when
@@ -28,7 +29,7 @@ public static class StudioV1LegacyRouteAlias
     public const string UnscopedProjectToken = "-";
 
     private static readonly string[] AuthPostVerbs = ["bootstrap", "login", "logout", "change-password"];
-    private static readonly string[] TaskPostVerbs = ["continue", "move", "move-to-top", "start", "stop"];
+    private static readonly string[] TaskPostVerbs = ["continue", "move", "move-to-top", "preview-feedback", "start", "stop"];
 
     public readonly record struct LegacyTarget(string Path, string? Project);
 
@@ -64,6 +65,7 @@ public static class StudioV1LegacyRouteAlias
         {
             if (Resolve(context.Request.Method, context.Request.Path.Value ?? string.Empty, standaloneTaskServer) is { } target)
             {
+                context.Items[OriginalPathItem] = context.Request.Path.Value;
                 context.Request.Path = new PathString(target.Path);
                 if (target.Project is not null && !context.Request.Query.ContainsKey("project"))
                     context.Request.QueryString = context.Request.QueryString.Add("project", target.Project);

@@ -17,7 +17,7 @@ import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
   CreateTaskDialogComponent,
-  EpicGroupBoardComponent,
+  DossierGroupBoardComponent,
   EpicOverviewScreenComponent,
   type EpicOverviewScope,
   FiltersDropdownComponent,
@@ -80,6 +80,7 @@ import {
   WorkspaceManagerService,
   WorkspaceOverlaysComponent,
   WorkspaceOverlaysService,
+  FirstRunLaunchService,
   type WorkspaceSettingsSection,
 } from './features/shell';
 import {
@@ -184,7 +185,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     StatusBarComponent,
     FormsModule,
     CreateTaskDialogComponent,
-    EpicGroupBoardComponent,
+    DossierGroupBoardComponent,
     ErrorDialogComponent,
     ConfirmDialogComponent,
     NotificationStackComponent,
@@ -236,6 +237,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   styleUrl: './app.scss',
 })
 export class App implements OnInit, OnDestroy {
+  private readonly firstRunLaunch = inject(FirstRunLaunchService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
   readonly errorDialog = inject(ErrorDialogService);
@@ -452,9 +454,9 @@ export class App implements OnInit, OnDestroy {
   readonly taskNavCollapsed = this.uiPrefs.taskNavCollapsed;
 
   /**
-   * Board "Gruppieren nach Epic" toggle. When on, the board case renders the
-   * epic tree instead of the lane columns. The tree is built from the same
-   * `filteredGrouped` feed (via `epicBoardTasks`) so search + filters apply to
+   * Board "Group by Dossier" toggle. When on, the board case renders the
+   * Dossier groups instead of the lane columns. The groups use the same
+   * `displayGrouped` feed (via `dossierBoardTasks`) so search + filters apply to
    * both shapes identically. Persisted in UiPreferencesService.
    */
   readonly groupByEpic = this.uiPrefs.groupByEpic;
@@ -462,11 +464,13 @@ export class App implements OnInit, OnDestroy {
     this.uiPrefs.toggleGroupByEpic();
   }
   /**
-   * Flat, de-duplicated task list for the epic tree. Sourced from the filtered
-   * lane feed so the "Group by epic" view honours the active search + filters;
+   * Flat, de-duplicated task list for the Dossier groups. Sourced from the visible
+   * lane feed so the Dossier view honours the active search + filters;
    * `flattenGrouped` collapses the `review`/`autoReview` legacy alias so no card
    * is counted twice.
    */
+  readonly dossierBoardTasks = computed(() => flattenGrouped(this.displayGrouped()));
+  /** Existing lane cards still use the full filtered feed for their Epic subtask details. */
   readonly epicBoardTasks = computed(() => flattenGrouped(this.filteredGrouped()));
 
   /**
@@ -575,8 +579,8 @@ export class App implements OnInit, OnDestroy {
   // not just usually true.
   // Board display contract: epics are containers, not board work-items, so the
   // flat lane board (focusGroups / laneGroups) renders tasks only. The
-  // "Group by epic" view binds the unfiltered `epicBoardTasks` feed instead, so
-  // epics still surface there and via the Epic navigation. See `excludeEpics`.
+  // Dossier grouping uses the same tasks-only feed, so Epic containers stay out
+  // of the board. See `excludeEpics`.
   readonly displayGrouped = computed(() => excludeEpics(this.filteredGrouped()));
 
   /**
@@ -1083,10 +1087,7 @@ export class App implements OnInit, OnDestroy {
     this.clientService.refresh();
     this.jobSelection.restoreFromUrl();
 
-    // Deep-link: open the workspace token timeline when the URL already
-    // points at it, and keep the overlay in sync as the hash changes.
-    // Also reconciles legacy top-level hash routes into their current
-    // editor-tab destinations.
+    // Reconcile settings deep links with editor tabs.
     const applyHash = (event?: Event) => {
       const fromHistory = event?.type === 'popstate' || event?.type === 'hashchange';
       this.workspaceOverlays.syncFromHash();
@@ -1098,6 +1099,7 @@ export class App implements OnInit, OnDestroy {
       this.syncEpicsTabFromHash();
     };
     applyHash();
+    this.firstRunLaunch.maybeOpen(() => this.openWorkspaceSettingsInStudio('first-run'));
     this.hashListener = applyHash;
     window.addEventListener('hashchange', this.hashListener);
     window.addEventListener('popstate', this.hashListener);
@@ -2114,6 +2116,9 @@ export class App implements OnInit, OnDestroy {
       case 'workbenches':
         this.studioTabState.open({ kind: 'workbenches', projectName });
         break;
+      case 'deployment-dashboard':
+        this.studioTabState.open({ kind: 'deployment-dashboard' });
+        break;
       case 'task':
         this.routeDetailTab.set(route.tab);
         this.routeInspectorTab.set(route.inspector);
@@ -2167,10 +2172,9 @@ export class App implements OnInit, OnDestroy {
   }
 
   private openWorkspaceSettingsInStudio(section: WorkspaceSettingsSection): void {
-    // AGT-2035: settings is now purely an editor tab; it no longer also opens a
-    // sidebar "Settings" panel (that panel was removed and folded into here).
+    // The editor tab is mounted only in Studio layout.
     this.workspaceOverlays.open(section);
-    this.studioTabState.open({ kind: 'workspace-settings' });
+    if (this.featureFlags.vsCodeLayout()) this.studioTabState.open({ kind: 'workspace-settings' });
   }
 
   private toggleWorkspaceSettingsInStudio(section: WorkspaceSettingsSection): void {

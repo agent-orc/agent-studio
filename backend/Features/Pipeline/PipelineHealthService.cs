@@ -22,6 +22,7 @@ public static class PipelineHealthConventions
     public const string ArtifactUploadAfterSettlementKind = "artifact-upload-after-settlement";
     public const int ArtifactUploadAfterSettlementAttempts = 3;
     public static readonly TimeSpan ArtifactUploadAfterSettlementWindow = TimeSpan.FromHours(1);
+    public const string IntegrationLaneDivergedKind = "integration-lane-diverged";
 }
 
 public sealed record PipelineGateContext(
@@ -251,11 +252,13 @@ public interface IPipelineHealthSensor
 /// <summary>
 /// Visibility-only pipeline sensor. It observes gate lifecycle, the
 /// append-only lane ledger, stalled workspace evidence flushes and artifact
-/// uploads refused after settlement, emits deduplicated feed alarms, and
-/// exposes a compact read model. It never cancels gates or moves tasks.
+/// uploads refused after settlement, integration lanes stalled by unpublished
+/// work, emits deduplicated feed alarms, and exposes a compact read model. It
+/// never cancels gates or moves tasks.
 /// </summary>
 public sealed class PipelineHealthService
-    : BackgroundService, IPipelineHealthSensor, IEvidenceFlushAlarm, IArtifactUploadAfterSettlementAlarm
+    : BackgroundService, IPipelineHealthSensor, IEvidenceFlushAlarm, IArtifactUploadAfterSettlementAlarm,
+        IIntegrationLaneStallAlarm
 {
     private static readonly string[] ObservedLanes =
     [
@@ -276,6 +279,8 @@ public sealed class PipelineHealthService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
     private readonly RemoteQueueStarvationWatchdog? _queueStarvation;
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _laneBlockedCards =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
     internal const string ReviewClaimStallIdentity = "review-claims:" + TaskStates.AutoReview;
@@ -334,7 +339,8 @@ public sealed class PipelineHealthService
             || fingerprint?.IsSystemic == true
             || lanes.Any(lane => lane.IsStalled)
             || alerts.Any(alert => alert.Kind is PipelineHealthConventions.EvidenceFlushStalledKind
-                or PipelineHealthConventions.ArtifactUploadAfterSettlementKind)
+                or PipelineHealthConventions.ArtifactUploadAfterSettlementKind
+                or PipelineHealthConventions.IntegrationLaneDivergedKind)
             || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,
@@ -433,6 +439,51 @@ public sealed class PipelineHealthService
 
     private static string ArtifactUploadAfterSettlementIdentity(string runnerId)
         => "artifact-after-settlement:" + runnerId;
+
+    /// <summary>
+    /// Raises <c>integration-lane-diverged</c> (AGT-3215): the lane carries
+    /// genuinely unpublished work while origin moved on, so no delivery
+    /// integrates. Each refused card joins the blocked set; the feed gets one
+    /// entry per cooldown while the snapshot keeps the current count and stays
+    /// at <c>alarm</c> until a lane sync succeeds again.
+    /// </summary>
+    public void IntegrationLaneStalled(IntegrationLaneStall stall)
+    {
+        var identity = IntegrationLaneIdentity(stall.Branch);
+        var blocked = _laneBlockedCards.GetOrAdd(
+            stall.Project + "\0" + identity,
+            _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+        blocked[stall.JobId] = 0;
+        var cards = blocked.Keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToArray();
+        var commits = stall.Commits
+            .Where(commit => commit.Status == AgentStudio.Git.LaneCommitStatus.Unpublished)
+            .Select(commit => commit.Describe())
+            .ToArray();
+        var alert = new PipelineHealthAlert(
+            PipelineHealthConventions.IntegrationLaneDivergedKind,
+            "high",
+            $"Integration lane {stall.Branch} diverged from origin; {cards.Length} card(s) blocked",
+            $"The integration lane of {stall.Branch} carries unpublished work origin does not contain: "
+            + $"{string.Join("; ", commits)}. No delivery integrates until it is published or removed. "
+            + $"Blocked cards ({cards.Length}): {string.Join(", ", cards)}.",
+            stall.DetectedAtUtc,
+            stall.JobId);
+        EmitAlert(stall.Project, stall.WatchPath, alert, identity);
+    }
+
+    public void IntegrationLaneRecovered(string project, string branch, DateTime recoveredAtUtc)
+    {
+        var key = project + "\0" + IntegrationLaneIdentity(branch);
+        _laneBlockedCards.TryRemove(key, out _);
+        if (!_currentAlerts.TryRemove(key, out _)) return;
+        // Re-arm: a later divergence of the same lane alarms immediately.
+        _lastAlertAt.TryRemove(key, out _);
+        _logger.LogInformation(
+            "pipeline_health_alarm_cleared kind={Kind} project={Project} branch={Branch} at={At:O}",
+            PipelineHealthConventions.IntegrationLaneDivergedKind, project, branch, recoveredAtUtc);
+    }
+
+    private static string IntegrationLaneIdentity(string branch) => "integration-lane:" + branch;
 
     private IReadOnlyList<(string Project, string WatchPath)> ProjectsIn(string gitRoot)
     {

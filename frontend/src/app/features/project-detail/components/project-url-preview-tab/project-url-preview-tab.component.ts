@@ -19,6 +19,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 import { TaskService } from '../../../../services/task.service';
+import { AuthService } from '../../../../services/auth.service';
 import {
   ProjectUrlProbeService,
   type ProjectUrlReadiness,
@@ -31,11 +32,12 @@ import { ProjectUrlAddressComponent } from '../project-url-address/project-url-a
 import { ProjectUrlRecoveryService } from '../../services/project-url-recovery.service';
 import { ProjectUrlProcessConsoleComponent } from '../project-url-process-console/project-url-process-console';
 import { ProjectUrlContextHeaderComponent } from '../project-url-context-header/project-url-context-header';
+import { ProductFeedbackComponent } from '../product-feedback/product-feedback.component';
 import {
   ProjectUrlSettingsDialogComponent,
   type ProjectUrlSettingsValue,
 } from '../project-url-settings-dialog/project-url-settings-dialog';
-import { buildEmbedMenuItems, httpErrorMessage, type StartFailure } from './project-url-preview-tab.helpers';
+import { buildEmbedMenuItems, httpErrorMessage, projectPreviewProxyUrl, type StartFailure } from './project-url-preview-tab.helpers';
 import { diagnosticText, presentProjectUrlDiagnosis } from './project-url-diagnostic.model';
 
 type PreviewPill = 'running' | 'offline' | 'checking' | 'building' | 'blocked' | 'failed' | 'custom';
@@ -77,6 +79,7 @@ const DIAGNOSABLE_KINDS: ReadonlySet<ProjectUrlReadiness['kind']> =
     MenuComponent,
     ProjectUrlAddressComponent,
     ProjectUrlContextHeaderComponent,
+    ProductFeedbackComponent,
     ProjectUrlProcessConsoleComponent,
     ProjectUrlSettingsDialogComponent,
   ],
@@ -99,6 +102,8 @@ export class ProjectUrlPreviewTabComponent {
   private readonly recovery = inject(ProjectUrlRecoveryService);
   private readonly taskService = inject(TaskService);
   private readonly sanitizer = inject(DomSanitizer);
+  private readonly auth = inject(AuthService);
+  readonly networked = computed(() => this.auth.status()?.profile === 'networked');
   readonly process = inject(ProjectUrlProcessController);
   readonly nav = inject(ProjectUrlEmbedNavigationController);
   /** ~6s without `load` while reachable reads as "probably refuses embedding". */
@@ -106,6 +111,7 @@ export class ProjectUrlPreviewTabComponent {
 
   readonly resolveState = signal<'resolving' | 'resolved' | 'not-found' | 'error'>('resolving');
   readonly projectId = signal<string | null>(null);
+  readonly projectWatchPath = signal<string | null>(null);
   readonly urlRecord = signal<RegistryProjectUrl | null>(null);
   readonly frameState = signal<'loading' | 'loaded' | 'blocked'>('loading');
   readonly building = signal(false);
@@ -153,6 +159,7 @@ export class ProjectUrlPreviewTabComponent {
 
   /** Address-bar text: the embed-reported live URL wins over the mounted one. */
   readonly displayUrl = computed(() => this.nav.reportedUrl() ?? this.effectiveUrl());
+  readonly proxyUrl = computed(() => projectPreviewProxyUrl(this.projectId(), this.urlId()));
 
   /** Embed once resolved and healthy; offline shows the card. A typed
    *  override embeds unconditionally (readiness probes only the record URL). */
@@ -160,7 +167,9 @@ export class ProjectUrlPreviewTabComponent {
     this.resolveState() === 'resolved'
       && !this.building()
       && !this.startFailure()
-      && (this.readiness().kind === 'healthy' || this.nav.overrideUrl() !== null),
+      && (this.readiness().kind === 'healthy'
+        || (this.networked() && this.readiness().kind === 'frame-blocked')
+        || this.nav.overrideUrl() !== null),
   );
 
   readonly readinessPending = computed(() =>
@@ -172,7 +181,7 @@ export class ProjectUrlPreviewTabComponent {
 
   /** Sandboxed iframe source; recomputes on reload, never on probe re-ticks. */
   readonly iframeSrc = computed<SafeResourceUrl | null>(() => {
-    const target = this.effectiveUrl();
+    const target = this.networked() ? this.proxyUrl() : this.effectiveUrl();
     if (!target) return null;
     void this.reloadNonce();
     return this.sanitizer.bypassSecurityTrustResourceUrl(target);
@@ -292,6 +301,7 @@ export class ProjectUrlPreviewTabComponent {
         if (name !== this.projectName() || id !== this.urlId()) return;
         if (!res) {
           this.projectId.set(null);
+          this.projectWatchPath.set(null);
           this.urlRecord.set(null);
           this.repositoryPath.set(null);
           this.rootPath.set(null);
@@ -299,6 +309,7 @@ export class ProjectUrlPreviewTabComponent {
           return;
         }
         this.projectId.set(res.projectId);
+        this.projectWatchPath.set(res.watchPath);
         this.urlRecord.set(res.url);
         this.repositoryPath.set(res.repositoryPath);
         this.rootPath.set(res.rootPath);
@@ -347,6 +358,7 @@ export class ProjectUrlPreviewTabComponent {
   onNavigate(target: string): void {
     const u = this.urlRecord();
     if (!u) return;
+    if (this.networked()) return;
     this.nav.navigate(target, u.url);
     this.frameState.set('loading');
     this.reloadNonce.update(n => n + 1);
@@ -546,7 +558,7 @@ export class ProjectUrlPreviewTabComponent {
   }
 
   openExternal(): void {
-    const target = this.displayUrl();
+    const target = this.networked() ? this.proxyUrl() : this.displayUrl();
     if (target) window.open(target, '_blank', 'noopener');
   }
 

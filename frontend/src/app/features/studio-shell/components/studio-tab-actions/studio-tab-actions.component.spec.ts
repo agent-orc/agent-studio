@@ -157,10 +157,10 @@ describe('StudioTabActionsComponent - document history', () => {
 describe('StudioTabActionsComponent - board actions', () => {
   it('labels the grouping toggle by the view it switches to', async () => {
     const lanes = await build({ boardActionsVisible: true, groupByEpic: false });
-    expect(query(lanes, 'studio-board-epic-toggle')?.textContent).toContain('Lanes');
+    expect(query(lanes, 'studio-board-dossier-toggle')?.textContent).toContain('Lanes');
     const epics = await build({ boardActionsVisible: true, groupByEpic: true });
-    expect(query(epics, 'studio-board-epic-toggle')?.textContent).toContain('Epics');
-    expect(query(epics, 'studio-board-epic-toggle')?.getAttribute('aria-pressed')).toBe('true');
+    expect(query(epics, 'studio-board-dossier-toggle')?.textContent).toContain('Dossiers');
+    expect(query(epics, 'studio-board-dossier-toggle')?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('blocks Add task while mutations are blocked', async () => {

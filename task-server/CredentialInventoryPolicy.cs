@@ -8,20 +8,25 @@ public static class CredentialInventoryPolicy
     public sealed record Host(string Id, IReadOnlySet<string> Roles,
         IReadOnlySet<string> ReadyCapabilities);
     public sealed record PrivateReview(string Repository, string TaskKey);
-    public sealed record Repository(string Canonical, string IntegrationRef, string? ReleaseRef);
+    public sealed record Repository(string Canonical, string IntegrationRef, string? ReleaseRef,
+        bool Private = false);
 
     public static IReadOnlyList<CredentialInventoryItemDto> Derive(
         IReadOnlyList<CredentialInventoryItemDto> present,
         IReadOnlyList<Host> hosts,
         IReadOnlyList<PrivateReview> privateReviews,
-        IReadOnlyList<Repository> repositories)
+        IReadOnlyList<Repository> repositories,
+        DateTime now)
     {
         var result = new List<CredentialInventoryItemDto>(present);
+        var requiredReviews = privateReviews.Concat(repositories.Where(repository => repository.Private)
+            .Select(repository => new PrivateReview(repository.Canonical, string.Empty))).ToArray();
         foreach (var repository in repositories)
         {
             if (present.Any(item => item.Category == "repository" && item.HostId == "control" &&
                 item.Repository == repository.Canonical && item.Permission == "write" &&
-                item.State is not "missing")) continue;
+                item.State is not ("missing" or "unexpected") &&
+                (item.ExpiresAt is null || item.ExpiresAt > now))) continue;
             var branches = new[] { repository.IntegrationRef, repository.ReleaseRef }
                 .Where(branch => branch is not null).Distinct(StringComparer.Ordinal).Cast<string>().ToArray();
             result.Add(new($"required:integrator:{repository.Canonical}", "repository", "control",
@@ -36,11 +41,12 @@ public static class CredentialInventoryPolicy
                 result.Add(new($"observed:review:{host.Id}:{capability}", "repository", host.Id,
                     "review_read_file", "Verified review read credential", [capability],
                     capability[ReviewRepositoryAccessPolicy.ReadCapabilityPrefix.Length..], "read",
-                    null, null, "ok", privateReviews.Any(review => capability.EndsWith(review.Repository,
-                        StringComparison.Ordinal)), "Read probe passed on this review host.", []));
+                    null, null, "ok", requiredReviews.Any(review => capability ==
+                        ReviewRepositoryAccessPolicy.ReadCapabilityPrefix + review.Repository),
+                    "Read probe passed on this review host.", []));
             if (host.Roles.Contains(ReviewCapabilities.ReviewExecutor))
             {
-                foreach (var group in privateReviews.GroupBy(review => review.Repository, StringComparer.Ordinal))
+                foreach (var group in requiredReviews.GroupBy(review => review.Repository, StringComparer.Ordinal))
                 {
                     var key = ReviewRepositoryAccessPolicy.ReadCapabilityPrefix + group.Key;
                     if (host.ReadyCapabilities.Contains(key)) continue;
@@ -48,7 +54,8 @@ public static class CredentialInventoryPolicy
                         "review_read_file", "Private repository read access", [key], group.Key, "read", null,
                         null, "missing", true,
                         "Add a repository-scoped read credential to RUNNER_REVIEW_GIT_CREDENTIALS_FILE and verify the read probe.",
-                        group.Select(review => review.TaskKey).Distinct(StringComparer.Ordinal).ToArray()));
+                        group.Select(review => review.TaskKey).Where(key => key.Length > 0)
+                            .Distinct(StringComparer.Ordinal).ToArray()));
                 }
             }
             if (host.Roles.Contains(GateCapabilities.Executor))

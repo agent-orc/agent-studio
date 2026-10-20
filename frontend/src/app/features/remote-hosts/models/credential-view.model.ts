@@ -77,7 +77,7 @@ export interface CredentialViewRow {
 }
 
 export interface CredentialView {
-  role: 'owner' | 'operator' | 'viewer';
+  role: 'owner' | 'operator' | 'contributor' | 'viewer';
   generatedAt: string;
   rows: readonly CredentialViewRow[];
 }

@@ -21,9 +21,9 @@
         (openEmbeddedPreview)="openUrlPreview($event)" />
     }
   }
-  @defer (when activeRail() === 'deployment') {
-    @if (activeRail() === 'deployment') {
-      <app-project-deployment-panel [projectName]="projectName()" />
+  @defer (when activeRail() === 'deploy') {
+    @if (activeRail() === 'deploy') {
+      <app-project-deploy-area [projectName]="projectName()" />
     }
   }
   @defer (when activeRail() === 'git') {

@@ -566,7 +566,17 @@ internal sealed class NativeInstaller(
                         ?? throw new InvalidOperationException($"Path has no parent: {path}");
         Directory.CreateDirectory(directory);
         var temporary = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}");
-        File.WriteAllText(temporary, content);
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+        };
+        if (!OperatingSystem.IsWindows())
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        using (var file = new FileStream(temporary, options))
+        using (var writer = new StreamWriter(file))
+            writer.Write(content);
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(temporary, mode);
         File.Move(temporary, path, overwrite: true);

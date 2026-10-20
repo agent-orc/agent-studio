@@ -41,6 +41,7 @@ public sealed class WatcherHostedService : BackgroundService
     private readonly WatcherContingentService _contingent;
     private readonly IConfiguration _configuration;
     private readonly ILogger<WatcherHostedService> _logger;
+    private readonly TimeProvider _time;
 
     public WatcherRunSnapshot Current { get; private set; } = WatcherRunSnapshot.Idle("Not run yet.");
 
@@ -54,7 +55,8 @@ public sealed class WatcherHostedService : BackgroundService
         WatcherActivityProjector activity,
         WatcherContingentService contingent,
         IConfiguration configuration,
-        ILogger<WatcherHostedService> logger)
+        ILogger<WatcherHostedService> logger,
+        TimeProvider? time = null)
     {
         _probes = probes;
         _engine = engine;
@@ -66,6 +68,7 @@ public sealed class WatcherHostedService : BackgroundService
         _contingent = contingent;
         _configuration = configuration;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -78,7 +81,8 @@ public sealed class WatcherHostedService : BackgroundService
             var options = WatcherOptions.FromConfiguration(_configuration);
             try
             {
-                if (options.Enabled) await RunOnceAsync(options, stoppingToken);
+                if (options.Enabled || options.OperationalMonitoringEnabled)
+                    await RunOnceAsync(options, stoppingToken);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { _logger.LogWarning(ex, "Watcher sweep failed"); }
@@ -101,7 +105,7 @@ public sealed class WatcherHostedService : BackgroundService
 
         var options = optionsOverride ?? WatcherOptions.FromConfiguration(_configuration);
         var budgets = WatcherContingentBudgets.FromConfiguration(_configuration);
-        var nowUtc = DateTime.UtcNow;
+        var nowUtc = _time.GetUtcNow().UtcDateTime;
         // Wall-clock plus a random suffix, not an in-memory counter: a
         // counter resets to zero on every process restart and would collide
         // with the prior process's last sweep id, silently losing the "two
@@ -110,11 +114,14 @@ public sealed class WatcherHostedService : BackgroundService
         var sweepId = $"{nowUtc:O}-{Guid.NewGuid():N}";
 
         var observations = new List<WatcherSignalObservation>();
-        foreach (var probe in _probes)
+        var operationalProbeSucceeded = false;
+        foreach (var probe in _probes.Where(p => options.Enabled
+            || options.OperationalMonitoringEnabled && p is OperationalStallProbe))
         {
             try
             {
                 observations.AddRange(probe.Collect(workspaceRoot, nowUtc));
+                if (probe is OperationalStallProbe) operationalProbeSucceeded = true;
             }
             catch (Exception ex)
             {
@@ -122,19 +129,27 @@ public sealed class WatcherHostedService : BackgroundService
             }
         }
 
+        var previouslyResolved = observations.Where(x => x.Subject is not null)
+            .Where(x => _caseStore.Find(workspaceRoot, WatcherFingerprint.Compute(x))?.State == WatcherCaseStates.Resolved)
+            .Select(WatcherFingerprint.Compute).ToHashSet(StringComparer.Ordinal);
         var ingest = _engine.Ingest(workspaceRoot, observations, sweepId, options, nowUtc);
 
         // Noise rule (§4): a brand-new fingerprint raises one Problem entry.
         // A recurring one only updates the durable case counters.
-        foreach (var freshCase in ingest.UpdatedCases.Where(c => c.OccurrenceCount == 1))
+        foreach (var freshCase in ingest.UpdatedCases.Where(c => c.OccurrenceCount == 1
+            || previouslyResolved.Contains(c.Fingerprint)))
             _activity.ProjectFindingRaised(freshCase, _packs.Build(freshCase));
+
+        if (operationalProbeSucceeded)
+            foreach (var cleared in _engine.ResolveClearedOperationalCases(workspaceRoot, observations, nowUtc))
+                _activity.ProjectResolved(cleared);
 
         var proposalsCreated = 0;
         var commentsAppended = 0;
         var contingentBlocked = 0;
         var analysisCalls = 0;
 
-        foreach (var readyCase in ingest.ReadyForProposal)
+        foreach (var readyCase in ingest.ReadyForProposal.Where(_ => options.Enabled))
         {
             var pack = _packs.Build(readyCase);
             WatcherAnalysisReceipt? analysis = null;

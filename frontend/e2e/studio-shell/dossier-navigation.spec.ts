@@ -50,7 +50,6 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     }
   }
   expect(catalogue, 'expected the Workbench catalogue to own the living Style Guide').not.toBeNull();
-  const projectName = catalogue!.projectName;
   const styleGuide = catalogue!.items.find(item => item.entryPath.replace(/\\/g, '/') ===
     'docs/operations/admin-design-guideline/index.html')!;
   const pending = catalogue!.items.find(item => item.status === 'decision-pending' && item.id !== styleGuide.id);
@@ -70,6 +69,35 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
       profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
     }),
   }));
+  await page.route('**/api/projects/**/workbenches/*', async route => {
+    if (!route.request().url().split('?')[0].endsWith(`/${encodeURIComponent(implementation!.id)}`)) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', json: {
+      workbench: implementation,
+      html: '<main><h1>Dossier fixture</h1></main>',
+      branch: null,
+      revision: null,
+      workingTreeModified: false,
+      fingerprint: null,
+      cards: {
+        projectName: catalogue!.projectName,
+        dossierKey: implementation!.key ?? null,
+        dossierPath: implementation!.entryPath,
+        implementationSlices: 3,
+        completedSlices: 1,
+        cards: [
+          { key: 'AGT-3203', id: 'done', title: 'Completed delivery slice',
+            lane: '6-completed', state: 'completed', environments: ['production'],
+            section: '§3', decision: null, implementationIndex: 0 },
+          { key: 'AGT-3204', id: 'doing', title: 'Dossier cards and grouping',
+            lane: '3-progress', state: 'running', environments: ['staging'],
+            section: '§4', decision: 'NV-D2', implementationIndex: 1 },
+        ],
+      },
+    } });
+  });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => {
     localStorage.removeItem('atp.studio.explorerSections');
@@ -81,6 +109,11 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await closeOrchestratorIfOpen(page);
+
+  const projectRow = page.locator('[data-testid^="studio-explorer-project-row-"]').first();
+  await expect(projectRow).toBeVisible({ timeout: 20_000 });
+  const projectName = (await projectRow.getAttribute('data-testid'))!
+    .replace('studio-explorer-project-row-', '');
 
   const project = page.getByTestId(`studio-explorer-project-${projectName}`);
   await expect(project).toBeVisible({ timeout: 20_000 });
@@ -108,6 +141,7 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   const history = page.getByTestId(`studio-explorer-workbench-history-${projectName}`);
   await expect(needsDecision).toHaveAttribute('aria-expanded', 'true');
   await expect(inImplementation).toHaveAttribute('aria-expanded', 'true');
+  if (await history.getAttribute('aria-expanded') === 'true') await history.click();
   await expect(history).toHaveAttribute('aria-expanded', 'false');
   await expect(page.getByTestId(`studio-explorer-workbench-status-${projectName}-${pending!.id}`))
     .toHaveAttribute('data-status', 'decision-pending');
@@ -139,6 +173,13 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     `studio-explorer-workbench-${projectName}-${implementation!.id}`);
   await implementationRow.click();
   await expect(implementationRow).toHaveAttribute('aria-current', 'page');
+  const cardList = page.getByTestId('dossier-card-list');
+  await expect(cardList).toBeVisible();
+  await expect(cardList.getByTestId('dossier-slice-progress')).toContainText('1 / 3 implementation slices complete');
+  await expect(cardList.getByTestId('dossier-card-AGT-3204')).toContainText('Dossier cards and grouping');
+  await expect(cardList).toContainText('staging');
+  await expect(cardList).toContainText('§4');
+  await expect(cardList).toContainText('NV-D2');
   await expect(needsDecision).toHaveAttribute('aria-expanded', 'false');
   const rowBox = await implementationRow.boundingBox();
   const sidebarBox = await page.getByTestId('studio-sidebar').boundingBox();
@@ -174,6 +215,7 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
+    await cardList.screenshot({ path: evidencePath(testInfo, `dossier-cards-${theme}.png`) });
     await page.getByTestId('studio-sidebar').screenshot({
       path: evidencePath(testInfo, `workspace-tree-after-narrow-${theme}--real.png`),
     });

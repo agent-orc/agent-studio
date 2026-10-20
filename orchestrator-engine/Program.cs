@@ -68,6 +68,7 @@ try
     builder.Services.AddSingleton<IBatchAdvisorModel, OpenAiBatchAdvisorModel>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, BatchPlanLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, AiOperatorDecisionLoop>();
+    builder.Services.AddSingleton<IOrchestrationStageHandler, ReviewInputDecisionLoop>();
     builder.Services.AddHostedService<OrchestratorEngineService>();
     builder.Services.AddHostedService<EngineHealthServer>();
     builder.Services.AddHostedService<ShadowDecisionService>();

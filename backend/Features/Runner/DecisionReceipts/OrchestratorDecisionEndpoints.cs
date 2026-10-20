@@ -89,6 +89,14 @@ public static class OrchestratorDecisionEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         var studio = app.MapGroup("/api/orchestration/decision-receipts");
+        app.MapGet("/api/orchestration/review-inputs/{runId}", (HttpContext context,
+            string runId, MonolithOrchestrationStore orchestration, ProjectRegistry projects) =>
+        {
+            var occurrence = orchestration.GetOccurrence(runId);
+            return occurrence is { Run.CurrentStage: OrchestrationStage.ReviewInputDecision }
+                && AllowsProject(context, occurrence.Run.ProjectId, projects)
+                ? Wire(occurrence.Run) : Results.NotFound();
+        });
         studio.MapGet("", (HttpContext context, string? taskId, string? projectId, int? limit,
             OrchestratorDecisionStore store, ProjectRegistry projects) =>
             Wire(store.ListReceipts(string.IsNullOrWhiteSpace(taskId) ? null : taskId, limit ?? 20,
@@ -112,9 +120,10 @@ public static class OrchestratorDecisionEndpoints
             ProjectRegistry projects, TaskScannerService scanner, TaskRunnerService runner,
             RunLeaseService leases, RemoteRunStopRequestStore stops,
             TaskTransitionService transitions, ProjectSettingsService settings,
-            V1ReviewExecutorRegistry runners, IConfiguration configuration, CancellationToken ct) =>
+            V1ReviewExecutorRegistry runners, OrchestratorDefaultsProvider defaults,
+            CancellationToken ct) =>
             await ApplyOperatorIntentAsync(context, receiptId, request, store, projects, scanner,
-                runner, leases, stops, transitions, settings, runners, configuration, ct))
+                runner, leases, stops, transitions, settings, runners, defaults, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         studio.MapGet("/{receiptId}/outcome", (HttpContext context, string receiptId,
             OrchestratorDecisionStore store, MonolithOrchestrationStore orchestration,
@@ -151,7 +160,7 @@ public static class OrchestratorDecisionEndpoints
         TaskScannerService scanner, TaskRunnerService runner, RunLeaseService leases,
         RemoteRunStopRequestStore stops, TaskTransitionService transitions,
         ProjectSettingsService settings, V1ReviewExecutorRegistry runners,
-        IConfiguration configuration, CancellationToken ct)
+        OrchestratorDefaultsProvider defaults, CancellationToken ct)
     {
         var receipt = AuthorizedReceipt(context, receiptId, store, projects);
         if (receipt is null) return Results.NotFound();
@@ -181,8 +190,10 @@ public static class OrchestratorDecisionEndpoints
                 || store.AppliedRunLimitSeconds(cardId, receipt.Scope.ProjectId) is null))
             return Results.Conflict(new ApiError("runner-timeout-unavailable",
                 "The coding runner must report its run timeout before this limit can be applied."));
-        var defaultRunLimitSeconds = runnerTimeoutSeconds
-            ?? configuration.GetValue("Runner:RunTimeoutSeconds", 3600);
+        var configuredEmergency = receipt.Scope.ProjectId is { } project
+            ? defaults.ResolveCodingEmergencyLimit(project)
+            : (CodingEmergencyLimit.DefaultSeconds, "platform");
+        var defaultRunLimitSeconds = configuredEmergency.Item1;
         DecisionOperatorIntentV1 intent;
         try
         {

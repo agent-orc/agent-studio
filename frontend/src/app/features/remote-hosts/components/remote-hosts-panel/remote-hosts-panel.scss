@@ -1,36 +1,16 @@
-// Execution Hosts settings page (AGT-1921). Full-bleed content, no max-width cap
+// Environment settings page. Full-bleed content, no max-width cap
 // on the top-level view (R2); colours read --studio-* tokens for both themes.
 :host { display: block; min-width: 0; }
 .rh {
   padding: var(--studio-spacing-4) var(--studio-spacing-5) var(--studio-spacing-6);
   color: var(--studio-fg);
 }
-.rh__head {
-  display: flex;
-  align-items: center;
-  gap: var(--studio-spacing-4);
-  margin-bottom: var(--studio-spacing-3);
+.rh__table-wrap--map { display: none; }
+@media (max-width: 1100px) {
+  .rh__table-wrap--map { display: block; }
+  app-environment-map { display: none; }
 }
-.rh__title {
-  margin: 0 0 var(--studio-spacing-1);
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--studio-fg-strong);
-}
-.rh__subtitle {
-  margin: 0;
-  font-size: 12px;
-  color: var(--studio-fg-dim);
-  max-width: 64ch;
-  line-height: 1.45;
-}
-.rh__actions {
-  margin-left: auto;
-  display: flex;
-  gap: var(--studio-spacing-2);
-}
-.rh__refresh,
-.rh__add {
+.rh__refresh {
   flex: 0 0 auto;
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
@@ -43,17 +23,9 @@
   align-items: center;
   gap: var(--studio-spacing-2);
 }
-.rh__add {
-  background: var(--studio-accent);
-  border-color: var(--studio-accent);
-  color: var(--studio-on-accent);
-  font-weight: 700;
-}
-.rh__add:hover { filter: brightness(1.08); }
 .rh__refresh:hover:not(:disabled) { background: var(--studio-bg-selected); }
 .rh__refresh:disabled { opacity: 0.6; cursor: not-allowed; }
-.rh__refresh:focus-visible,
-.rh__add:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+.rh__refresh:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 .rh__summary {
   display: flex;
   align-items: center;
@@ -368,8 +340,6 @@
 
 @media (max-width: 760px) {
   .rh { padding-inline: var(--studio-spacing-3); }
-  .rh__head { align-items: flex-start; flex-wrap: wrap; }
-  .rh__actions { margin-left: 0; }
   .rh__summary { flex-wrap: wrap; }
 }
 

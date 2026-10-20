@@ -131,6 +131,28 @@ public sealed class ProjectRegistry
         }
     }
 
+    /// <summary>Apply a reviewed path import in one registry write.</summary>
+    public void ApplyPathImport(IReadOnlyList<ProjectPathImportRow> rows)
+    {
+        EnsureLoaded();
+        lock (_gate)
+        {
+            var byId = rows.Where(row => row.Status == "ready")
+                .ToDictionary(row => row.ProjectId, StringComparer.OrdinalIgnoreCase);
+            var next = _state.Projects.Select(project =>
+            {
+                if (!byId.TryGetValue(project.Id, out var row)) return project;
+                return project with
+                {
+                    RepositoryPath = row.RepositoryPath is null ? project.RepositoryPath : ValidateRepositoryPath(row.RepositoryPath),
+                    RootPath = row.RootPath is null ? project.RootPath : ValidateRootPath(row.RootPath),
+                    StorageLocation = row.StorageLocation ?? project.StorageLocation,
+                };
+            }).ToList();
+            ReplaceStateAndPersistLocked(_state with { Projects = next });
+        }
+    }
+
     public ProjectRecord? FindById(string id)
     {
         if (string.IsNullOrWhiteSpace(id)) return null;
@@ -746,9 +768,12 @@ public sealed class ProjectRegistry
         var trimmed = string.IsNullOrWhiteSpace(repositoryUrl) ? null : repositoryUrl.Trim();
         if (trimmed == null) return null;
         if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var parsed)
-            || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp))
+            || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp)
+            || !string.IsNullOrEmpty(parsed.UserInfo)
+            || !string.IsNullOrEmpty(parsed.Query)
+            || !string.IsNullOrEmpty(parsed.Fragment))
             throw new ArgumentException(
-                "repositoryUrl must be an absolute http or https URL", nameof(repositoryUrl));
+                "repositoryUrl must be an absolute http or https URL without credentials, query, or fragment", nameof(repositoryUrl));
         return trimmed;
     }
 

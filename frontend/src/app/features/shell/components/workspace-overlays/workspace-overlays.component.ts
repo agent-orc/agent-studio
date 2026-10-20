@@ -21,6 +21,7 @@ import { UpdatesSettingsComponent } from '../../../update';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
 import { AccessSettingsComponent } from '../access-settings/access-settings.component';
+import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
@@ -54,7 +55,7 @@ interface SettingsRailItem {
  * Global group (per-user / app-wide): Appearance (Theme + Activity bar),
  * Updates, Workspaces (registry management), Task Server (the durable task
  * server's URL, store, evidence git, client registry and management sweeps -
- * AGT-1924), Execution Hosts, Orchestrator (the platform-global lifecycle flags
+ * AGT-1924), Environment, Orchestrator (the platform-global lifecycle flags
  * AGT-1812 moved out of their standalone modal). Workspace group
  * (defaults applied across the workspace's projects): CLI Management (the CLI
  * catalog / models / routes / usage caps / completion-contracts hub), CLI
@@ -89,6 +90,7 @@ interface SettingsRailItem {
     WorkspaceManagementComponent,
     RetentionAdminComponent,
     AccessSettingsComponent,
+    FirstRunChecklistComponent,
     SectionHeaderComponent,
     TreeRowComponent,
     StudioIconComponent,
@@ -120,13 +122,14 @@ export class WorkspaceOverlaysComponent {
   /** Rail order: overview first, then the Global group, then the Workspace group. */
   readonly railItems: readonly SettingsRailItem[] = [
     { key: 'overview', label: 'Overview', description: 'Everything in one place, split into Global and Workspace.', icon: 'grid', group: 'general' },
+    { key: 'first-run', label: 'First-run checklist', description: 'Set up access, a project, an execution host, and a proof card.', icon: 'list', group: 'general' },
     { key: 'appearance', label: 'Appearance', description: 'Theme and activity-bar side. Applies to you everywhere.', icon: 'sun', group: 'global' },
     { key: 'access', label: 'Access', description: 'Users, API tokens, and runner enrollments.', icon: 'settings', group: 'global' },
     { key: 'updates', label: 'Updates', description: 'Keep this instance in sync with stable.', icon: 'refresh', group: 'global' },
     { key: 'workspaces', label: 'Workspaces', description: 'Manage every workspace and its projects.', icon: 'folder', group: 'global' },
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },
     { key: 'credentials', label: 'Credentials', description: 'Required access, observed custody, expiry and gaps across the installation.', icon: 'check', group: 'global' },
-    { key: 'remote-hosts', label: 'Execution Hosts', description: 'Local and remote CLI execution: heartbeat, vitals, quota, and lifecycle.', icon: 'activity', group: 'global' },
+    { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
     { key: 'cli-sessions', label: 'CLI sessions', description: 'Per-CLI per-project native session inventory.', icon: 'list', group: 'workspace' },
@@ -208,6 +211,7 @@ export class WorkspaceOverlaysComponent {
       case 'task-server': return 'workspace-task-server-overlay';
       case 'credentials': return 'workspace-credentials-overlay';
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
+      case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
       case 'working-memory': return 'workspace-working-memory-overlay';
       case 'overview': return 'workspace-settings-overview-panel';

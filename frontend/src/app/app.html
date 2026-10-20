@@ -137,10 +137,8 @@
               @if (groupByEpic()) {
                 <main class="dashboard dashboard--studio dashboard--epic-board"
                       data-testid="studio-board">
-                  <app-epic-group-board
-                    [tasks]="epicBoardTasks()"
-                    [compact]="effectiveCompactCards()"
-                    [highlightJobId]="justCreatedJobId()"
+                  <app-dossier-group-board
+                    [tasks]="dossierBoardTasks()"
                     (jobClick)="openDetail($event)" />
                 </main>
               } @else {
@@ -481,7 +479,7 @@
             </span>
           }
           <app-auto-review-indicator />
-          <app-update-version-badge />
+          @if (updateClient.enabled) { <app-update-version-badge /> }
           <label class="client-filter" data-testid="client-filter">
             <span class="client-filter__label">Owner:</span>
             <select class="client-filter__select"

@@ -70,6 +70,38 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task Pull_gate_credential_is_exclusive_and_fences_its_routes()
+    {
+        var (store, config, _) = NewStore();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var gate = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("gate-host", [RunnerScopes.Gate], null, null)).Code);
+        var ordinary = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("ordinary-runner", [RunnerScopes.Claim], null, null)).Code);
+        Assert.Throws<SecurityOperationException>(() => store.CreateEnrollment(
+            new RunnerEnrollmentRequest("mixed", [RunnerScopes.Gate, RunnerScopes.Claim], null, null)));
+        foreach (var (method, path) in new[]
+        {
+            ("POST", "/api/pull-gates/register"),
+            ("POST", "/api/pull-gates/claim"),
+            ("GET", "/api/pull-gates/runs/run/request.json"),
+            ("POST", "/api/pull-gates/runs/run/heartbeat"),
+            ("POST", "/api/pull-gates/runs/run/progress"),
+            ("PUT", "/api/pull-gates/runs/run/artifacts/release.zip"),
+            ("POST", "/api/pull-gates/runs/run/result"),
+        })
+        {
+            Assert.True((await Invoke(config, store, method, path, bearer: gate.Secret)).Called.Value, path);
+            Assert.Equal(403, (await Invoke(config, store, method, path, bearer: ordinary.Secret)).Context.Response.StatusCode);
+        }
+        Assert.True((await Invoke(config, store, "GET", "/api/gate-artifacts/run",
+            bearer: store.EnrollRunner(store.CreateEnrollment(
+                new RunnerEnrollmentRequest("artifact-reader", [RunnerScopes.Artifacts], null, null)).Code).Secret)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "GET", "/api/gate-artifacts/run",
+            bearer: gate.Secret)).Context.Response.StatusCode);
+    }
+
+    [Fact]
     public void Runner_lifecycle_and_activity_share_the_credential_registry()
     {
         var (store, _, _) = NewStore();
@@ -221,6 +253,127 @@ public sealed class AccessSecurityTests : IDisposable
             Assert.Equal(StatusCodes.Status401Unauthorized,
                 (await Invoke(config, store, method, path, owner.SessionToken, owner.CsrfToken)).Context.Response.StatusCode);
         }
+    }
+
+    [Fact]
+    public async Task TaskServerClient_routes_require_the_matching_runner_scope()
+    {
+        var (store, config, _) = NewStore();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var scoped = new Dictionary<string, string>();
+        foreach (var scope in RunnerScopes.Minimum)
+            scoped[scope] = store.EnrollRunner(store.CreateEnrollment(
+                new RunnerEnrollmentRequest(scope, [scope], null, null)).Code).Secret;
+        var runner = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("full runner", null, null, null)).Code);
+        var id = runner.Runner.Id;
+        var routes = new (string Method, string Path, string Scope)[]
+        {
+            ("PUT", $"/api/v1/runners/{id}", RunnerScopes.Claim),
+            ("POST", $"/api/v1/runners/{id}/claims", RunnerScopes.Claim),
+            ("POST", $"/api/v1/runners/{id}/review-claims", RunnerScopes.Claim),
+            ("PUT", $"/api/v1/runners/{id}/capabilities", RunnerScopes.Events),
+            ("POST", $"/api/v1/runners/{id}/capability-failures", RunnerScopes.Events),
+            ("PUT", $"/api/v1/runners/{id}/outbox-status", RunnerScopes.Events),
+            ("POST", $"/api/v1/runners/{id}/reports", RunnerScopes.Events),
+            ("GET", $"/api/v1/runners/{id}/cli-update", RunnerScopes.Claim),
+            ("POST", $"/api/v1/runners/{id}/cli-update/result", RunnerScopes.Events),
+            ("POST", $"/api/v1/runners/{id}/provider-canary/codex", RunnerScopes.Claim),
+            ("GET", $"/api/v1/runners/{id}/provider-comparison", RunnerScopes.Claim),
+            ("POST", "/api/v1/work-permits/permit/accept", RunnerScopes.Claim),
+            ("POST", "/api/v1/runs/run/reconcile", RunnerScopes.Claim),
+            ("POST", "/api/v1/runs/run/post-steps/step/claim", RunnerScopes.Claim),
+            ("POST", "/api/v1/runs/run/post-steps/step/complete", RunnerScopes.Completion),
+            ("POST", "/api/v1/runs/run/lease/renew", RunnerScopes.Lease),
+            ("POST", "/api/v1/runs/run/lease/release", RunnerScopes.Lease),
+            ("POST", "/api/v1/runs/run/events", RunnerScopes.Events),
+            ("POST", "/api/v1/runs/run/artifacts", RunnerScopes.Artifacts),
+            ("GET", "/api/v1/runs/run/artifacts/artifact/content", RunnerScopes.Artifacts),
+            ("GET", "/api/v1/artifact-limits", RunnerScopes.Claim),
+            ("POST", "/api/v1/runs/run/completion", RunnerScopes.Completion),
+            ("POST", "/api/v1/runs/run/result-finalization", RunnerScopes.Completion),
+            ("PUT", "/api/v1/runs/run/result-handoff", RunnerScopes.Completion),
+            ("POST", "/api/v1/runs/run/revoked-reference", RunnerScopes.Completion),
+            ("GET", "/api/v1/projects", RunnerScopes.Claim),
+            ("GET", "/api/v1/projects/project/tasks/task", RunnerScopes.Claim),
+            ("GET", "/api/v1/reviews/attempts/attempt", RunnerScopes.Claim),
+            ("POST", "/api/v1/reviews/attempts/attempt/lease/renew", RunnerScopes.Lease),
+            ("POST", "/api/v1/reviews/attempts/attempt/reclaim", RunnerScopes.Claim),
+            ("POST", "/api/v1/reviews/attempts/attempt/report", RunnerScopes.Completion),
+            ("POST", "/api/v1/reviews/attempts/attempt/cleanup", RunnerScopes.Completion),
+            ("POST", "/api/v1/integrations/claims", RunnerScopes.Claim),
+            ("POST", "/api/v1/integrations/integration/lease/renew", RunnerScopes.Lease),
+            ("POST", "/api/v1/integrations/integration/report", RunnerScopes.Completion),
+            ("GET", "/api/v1/failure-fingerprints", RunnerScopes.Claim),
+            ("POST", "/api/v1/failure-fingerprints", RunnerScopes.Events),
+            ("POST", "/api/v1/gates/claims", RunnerScopes.Claim),
+            ("GET", "/api/v1/gates/subjects/subject", RunnerScopes.Claim),
+            ("POST", "/api/v1/gates/attempts/attempt/renew", RunnerScopes.Lease),
+            ("POST", "/api/v1/gates/attempts/attempt/phase", RunnerScopes.Events),
+            ("POST", "/api/v1/gates/attempts/attempt/report", RunnerScopes.Completion),
+            ("POST", "/api/v1/gates/attempts/attempt/containment", RunnerScopes.Completion),
+            ("POST", "/api/runner/claim", RunnerScopes.Claim),
+            ("POST", "/api/runner/lease/acquire", RunnerScopes.Lease),
+            ("POST", "/api/runner/lease/renew", RunnerScopes.Lease),
+            ("POST", "/api/runner/lease/release", RunnerScopes.Lease),
+            ("POST", "/api/runner/lease/attempt/revoked-reference", RunnerScopes.Lease),
+            ("POST", "/api/runner/logs", RunnerScopes.Logs),
+            ("POST", "/api/runner/events", RunnerScopes.Events),
+            ("POST", "/api/runner/artifacts", RunnerScopes.Artifacts),
+            ("GET", "/api/runner/artifacts/limits", RunnerScopes.Artifacts),
+            ("POST", "/api/runner/artifacts/outcome", RunnerScopes.Artifacts),
+            ("POST", "/api/runner/completion", RunnerScopes.Completion),
+            ("POST", "/api/runner/project-chat/claim", RunnerScopes.Claim),
+            ("POST", "/api/runner/project-chat/renew", RunnerScopes.Lease),
+            ("POST", "/api/runner/project-chat/complete", RunnerScopes.Completion),
+            ("POST", "/api/runner/orchestrator-decisions/claim", RunnerScopes.Claim),
+            ("POST", "/api/runner/orchestrator-decisions/complete", RunnerScopes.Completion),
+            ("POST", "/api/runner/epic-planning-prompt", RunnerScopes.Claim),
+            ("GET", "/api/system/about", RunnerScopes.Claim),
+            ("POST", $"/api/clients/{id}/runner-git-capability", RunnerScopes.Events),
+        };
+
+        foreach (var (method, path, scope) in routes)
+        {
+            Assert.True((await Invoke(config, store, method, path, bearer: runner.Secret)).Called.Value, path);
+            Assert.Equal(401, (await Invoke(config, store, method, path)).Context.Response.StatusCode);
+            var wrongScope = scope == RunnerScopes.Claim ? RunnerScopes.Logs : RunnerScopes.Claim;
+            Assert.Equal(403, (await Invoke(config, store, method, path, bearer: scoped[wrongScope])).Context.Response.StatusCode);
+        }
+        Assert.Equal(403, (await Invoke(config, store, "PUT", "/api/v1/runners/runner_other", bearer: runner.Secret)).Context.Response.StatusCode);
+        Assert.True((await Invoke(config, store, "POST", "/api/v1/protocol/compatibility", bearer: runner.Secret)).Called.Value);
+        Assert.Equal(401, (await Invoke(config, store, "POST", "/api/v1/protocol/compatibility")).Context.Response.StatusCode);
+        Assert.Equal(403, (await Invoke(config, store, "POST", "/api/v1/protocol/compatibility", bearer: scoped[RunnerScopes.Logs])).Context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Shared_runner_reads_accept_human_sessions_without_weakening_runner_scopes()
+    {
+        var (store, config, _) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var logsOnly = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("logs-only", [RunnerScopes.Logs], null, null)).Code);
+        var paths = new[]
+        {
+            "/api/system/about",
+            "/api/v1/projects",
+            "/api/v1/projects/project/tasks/task",
+            "/api/v1/reviews/attempts/attempt",
+            "/api/v1/failure-fingerprints"
+        };
+
+        foreach (var path in paths)
+        {
+            Assert.True((await Invoke(config, store, "GET", path, owner.SessionToken)).Called.Value, path);
+            Assert.Equal(StatusCodes.Status401Unauthorized,
+                (await Invoke(config, store, "GET", path)).Context.Response.StatusCode);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                (await Invoke(config, store, "GET", path, bearer: logsOnly.Secret)).Context.Response.StatusCode);
+        }
+
+        Assert.Equal(StatusCodes.Status401Unauthorized,
+            (await Invoke(config, store, "POST", "/api/v1/reviews/attempts/attempt/report", owner.SessionToken, owner.CsrfToken))
+                .Context.Response.StatusCode);
     }
 
     [Fact]

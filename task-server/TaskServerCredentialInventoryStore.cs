@@ -33,7 +33,7 @@ public sealed partial class TaskServerStore
                     $"{binding.ServiceId}:{binding.Purpose}")).Distinct(StringComparer.Ordinal).ToArray(), repository,
                 category == "repository" ? record.RepositoryWriteGrant switch
                 { true => "write", false => "read", null => "unknown" } : null,
-                row.Due.Subject == "expiry" ? row.Due.DueAt : null, record.LastRealSuccessAt,
+                record.ExpiresAt, record.LastRealSuccessAt,
                 state, false, row.Due.ThresholdDays is { } threshold
                     ? $"{threshold}-day {row.Due.Subject} warning" : row.StatusDetail ?? row.Status, []));
         }
@@ -109,10 +109,13 @@ public sealed partial class TaskServerStore
         }
         var privateReviews = new List<CredentialInventoryPolicy.PrivateReview>();
         await using (var command = Command(connection, """
-            SELECT s.repository_url, s.plan_json, t.task_key
+            SELECT s.repository_url, s.plan_json,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM review_attempts a
+                        WHERE a.subject_id = s.id AND a.cleaned_at IS NULL)
+                       THEN t.task_key ELSE '' END
               FROM review_subjects s JOIN tasks t ON t.id = s.task_id
-             WHERE s.repository_url IS NOT NULL AND EXISTS (
-                 SELECT 1 FROM review_attempts a WHERE a.subject_id = s.id AND a.cleaned_at IS NULL);
+             WHERE s.repository_url IS NOT NULL;
             """))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         while (await reader.ReadAsync(ct))
@@ -125,16 +128,18 @@ public sealed partial class TaskServerStore
         }
         var repositories = new List<CredentialInventoryPolicy.Repository>();
         await using (var command = Command(connection, """
-            SELECT repository_url, integration_ref, release_ref FROM project_repositories;
+            SELECT repository_url, integration_ref, release_ref, repository_visibility
+              FROM project_repositories;
             """))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         while (await reader.ReadAsync(ct))
             if (ReviewRepositoryAccessPolicy.CanonicalRepository(reader.GetString(0)) is { } repository)
                 repositories.Add(new(repository, reader.GetString(1),
-                    reader.IsDBNull(2) ? null : reader.GetString(2)));
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    !reader.IsDBNull(3) && ReviewRepositoryAccessPolicy.IsPrivate(reader.GetString(3))));
         return new(now, CredentialInventoryPolicy.Derive(items,
             hosts.Select(pair => new CredentialInventoryPolicy.Host(pair.Key, pair.Value.Roles,
-                pair.Value.Ready)).ToArray(), privateReviews, repositories));
+                pair.Value.Ready)).ToArray(), privateReviews, repositories, now));
     }
 
     private static string ExpiryDetail(DateTime? expires, DateTime now, string otherwise)

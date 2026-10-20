@@ -1,3 +1,7 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+
 namespace AgentStudio.Security;
 
 public static class AccessSecurityEndpoints
@@ -13,12 +17,15 @@ public static class AccessSecurityEndpoints
                 SecurityProfiles.ActiveProfile(configuration),
                 store.BootstrapRequired,
                 principal is not null,
-                principal is null ? null : ToResponse(principal.User)));
+                principal is null ? null : ToResponse(principal.User),
+                BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration)));
         });
 
         auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
+                if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
+                    throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
                 var created = store.Bootstrap(request);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
@@ -31,6 +38,15 @@ public static class AccessSecurityEndpoints
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
+            }));
+
+        auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+            Execute(() =>
+            {
+                var accepted = store.AcceptInvitation(request);
+                SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
+                    ToResponse(accepted.User), accepted.CsrfToken));
             }));
 
         // The local profile treats X-Client-Id as attribution only, so it must not
@@ -80,6 +96,19 @@ public static class AccessSecurityEndpoints
                 RequireOwner(context, store);
                 var result = store.CreateUser(request);
                 return Results.Ok(new { user = ToResponse(result.User), temporaryPassword = result.TemporaryPassword, mustChangePassword = true });
+            }));
+
+        auth.MapPost("/invitations", (InviteUserRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                var invitation = store.InviteUser(request);
+                return Results.Ok(new
+                {
+                    user = ToResponse(invitation.User),
+                    signInLink = "/?invite=" + Uri.EscapeDataString(invitation.Token),
+                    expiresAt = invitation.ExpiresAt
+                });
             }));
 
         auth.MapPut("/users/{id}", (string id, UpdateUserRequest request, HttpContext context, AccessSecurityStore store) =>
@@ -144,10 +173,12 @@ public static class AccessSecurityEndpoints
                 return Results.NoContent();
             }));
 
-        auth.MapPost("/runner-enroll", (RunnerEnrollRequest request, AccessSecurityStore store) =>
+        auth.MapPost("/runner-enroll", (RunnerEnrollRequest request, AccessSecurityStore store,
+            AgentStudio.Clients.ClientIdentityStore clients) =>
             Execute(() =>
             {
                 var enrolled = store.EnrollRunner(request.Code);
+                clients.EnsureEnrolledRunner(enrolled.Runner.Id, enrolled.Runner.Name);
                 return Results.Ok(new OneTimeSecretResponse(enrolled.Runner.Id, enrolled.Runner.Name, enrolled.Credential.Id,
                     enrolled.Secret, enrolled.Credential.Scopes, enrolled.Credential.ExpiresAt));
             }));
@@ -234,8 +265,22 @@ public static class AccessSecurityEndpoints
         return store.AuthenticateSession(token, touch);
     }
 
+    private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
+        => SecurityProfiles.IsNetworked(configuration)
+           && (context.Connection.RemoteIpAddress is not { } address || !IPAddress.IsLoopback(address));
+
+    private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
+    {
+        var expected = configuration["Security:BootstrapCode"];
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(candidate)) return false;
+        return CryptographicOperations.FixedTimeEquals(
+            SHA256.HashData(Encoding.UTF8.GetBytes(candidate)),
+            SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
+    }
+
     private static AuthUserResponse ToResponse(StudioUser user)
-        => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword);
+        => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
+            user.ProductionApprovalProjects);
 
     private static object ToRunnerResponse(RunnerServiceIdentity runner) => new
     {

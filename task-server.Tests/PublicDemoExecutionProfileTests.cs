@@ -82,12 +82,19 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Empty((await resultRefGc.RunOnceAsync()).Decisions);
 
         var routes = ExecutionRoutes(factory.Services);
+        var allRoutes = factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/studio/auth/invitations");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/studio/auth/invite/accept");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/studio/auth/users/{userId}/projects/{projectId}/production-approval");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/v1/projects/{projectId}/tasks/{taskIdentity}/preview-comments");
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
         // AGT-3061 added the integration command plane: claims (Claim),
         // {integrationId}/lease/renew and {integrationId}/report (PostStep).
         // Integration executors publish through them, so all three are denied.
-        Assert.Equal(46, routes.Count);
+        // AGT-3181 preview feedback queues a same-card continuation (Continue).
+        Assert.Equal(47, routes.Count);
         var revokedReference = Assert.Single(routes, route => route.RoutePattern.RawText ==
             "/api/v1/runs/{runId}/revoked-reference");
         Assert.Equal(ExecutionAdmissionPath.PostStep,
@@ -119,7 +126,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 6,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 12,
+                [ExecutionAdmissionPath.Continue] = 13,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,

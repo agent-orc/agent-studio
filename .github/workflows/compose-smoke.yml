@@ -30,6 +30,17 @@ jobs:
           docker version
           docker compose version
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Verify deploy host against Studio and a local container
+        run: |
+          dotnet restore runner.Tests/AgentRunner.Tests.csproj --locked-mode
+          dotnet test runner.Tests/AgentRunner.Tests.csproj --no-restore \
+            --filter FullyQualifiedName~DeployHostCommandTests
+
       - name: Validate container image contracts
         run: |
           bash scripts/compose-bootstrap.test.sh
@@ -44,3 +55,15 @@ jobs:
         run: |
           bash scripts/monolith-seed-cli-auth.test.sh
           bash scripts/monolith-compose-smoke.sh
+
+      - name: Prepare Node for website browser smoke
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Open the website board in Chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend exec -- playwright install --with-deps chromium
+          WEBSITE_REUSE_MONOLITH_IMAGE=1 bash scripts/monolith-networked-compose-smoke.sh

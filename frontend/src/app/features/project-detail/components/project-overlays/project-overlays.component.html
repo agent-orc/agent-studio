@@ -31,9 +31,9 @@
             <app-project-urls-panel [projectName]="projShell" />
           }
         }
-        @defer (when overlays.projectShellRail() === 'deployment') {
-          @if (overlays.projectShellRail() === 'deployment') {
-            <app-project-deployment-panel [projectName]="projShell" />
+        @defer (when overlays.projectShellRail() === 'deploy') {
+          @if (overlays.projectShellRail() === 'deploy') {
+            <app-project-deploy-area [projectName]="projShell" />
           }
         }
         @defer (when overlays.projectShellRail() === 'security') {

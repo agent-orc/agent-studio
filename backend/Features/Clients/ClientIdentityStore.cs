@@ -33,6 +33,12 @@ public class ClientIdentityStore
     private static readonly Regex SlugAllowed = new("^[a-z0-9]+(-[a-z0-9]+)*$", RegexOptions.Compiled);
     private static readonly Regex SlugSanitiser = new("[^a-z0-9]+", RegexOptions.Compiled);
 
+    private static bool IsEnrolledServiceId(string id)
+        => id.Length == 39
+           && (id.StartsWith("runner_", StringComparison.Ordinal)
+               || id.StartsWith("engine_", StringComparison.Ordinal))
+           && Guid.TryParseExact(id[7..], "N", out _);
+
     private readonly IConfiguration _config;
     private readonly ILogger<ClientIdentityStore> _logger;
     private readonly IAtomicJsonFileWriter _fileWriter;
@@ -162,6 +168,13 @@ public class ClientIdentityStore
         return Volatile.Read(ref _published).GetValueOrDefault(id);
     }
 
+    /// <summary>Read the last committed identities without waiting for persistence.</summary>
+    public IEnumerable<ClientIdentity> ListPublished()
+    {
+        if (!Volatile.Read(ref _loaded)) EnsureLoaded();
+        return Volatile.Read(ref _published).Values;
+    }
+
     /// <summary>Coalesce board last-seen stamps so a read never waits for identity persistence.</summary>
     public void RecordSeenDeferred(string id)
     {
@@ -261,6 +274,36 @@ public class ClientIdentityStore
             WriteLocked(record);
             SetRecordLocked(record);
             _logger.LogInformation("Registered client identity '{Id}' ({Name}, kind={Kind})", id, record.DisplayName, record.Kind);
+            return record;
+        }
+    }
+
+    /// <summary>Bind a networked service principal to the same id used for claims and project assignment.</summary>
+    public ClientIdentity EnsureEnrolledRunner(string id, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName) || !IsEnrolledServiceId(id))
+            throw new ArgumentException("An enrolled service id and display name are required.");
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (_byId.TryGetValue(id, out var existing))
+            {
+                if (existing.Kind != ClientIdentityKind.Service)
+                    throw new InvalidOperationException("The enrolled service id conflicts with another client identity.");
+                return existing;
+            }
+            var now = DateTime.UtcNow;
+            var record = new ClientIdentity
+            {
+                Id = id,
+                DisplayName = displayName.Trim(),
+                Kind = ClientIdentityKind.Service,
+                RegisteredAt = now,
+                LastSeenAt = now,
+                Notes = "Owner-enrolled networked service identity."
+            };
+            WriteLocked(record);
+            SetRecordLocked(record);
             return record;
         }
     }
@@ -641,7 +684,8 @@ public class ClientIdentityStore
             var record = JsonSerializer.Deserialize<ClientIdentity>(json, ReadOpts);
             if (record is null || string.IsNullOrWhiteSpace(record.Id))
                 throw new InvalidDataException("The identity document has no id.");
-            if (!SlugAllowed.IsMatch(record.Id)
+            if ((!SlugAllowed.IsMatch(record.Id)
+                 && !(IsEnrolledServiceId(record.Id) && record.Kind == ClientIdentityKind.Service))
                 || !string.Equals(record.Id, identityId, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException(
@@ -668,7 +712,7 @@ public class ClientIdentityStore
 
     private void TryReloadIdentityLocked(string id)
     {
-        if (!SlugAllowed.IsMatch(id)) return;
+        if (!SlugAllowed.IsMatch(id) && !IsEnrolledServiceId(id)) return;
         var path = Path.Combine(IdentitiesFolder, id + ".json");
         if (File.Exists(path)) TryLoadFileLocked(path);
     }

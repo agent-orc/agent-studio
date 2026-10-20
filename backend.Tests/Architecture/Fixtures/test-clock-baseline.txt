@@ -427,7 +427,6 @@ fixed-date backend.Tests/SupervisorInterventionTests.cs
 fixed-date backend.Tests/TaskAccessServiceTests.cs
 fixed-date backend.Tests/TaskAccessSkeletonTests.cs
 fixed-date backend.Tests/TaskArchiveEndpointTests.cs
-fixed-date backend.Tests/TaskCleanContextStoreTests.cs
 fixed-date backend.Tests/TaskCommitBindingTests.cs
 fixed-date backend.Tests/TaskCommitsEndpointIntegrationTests.cs
 fixed-date backend.Tests/TaskDetailHygieneScopeTests.cs

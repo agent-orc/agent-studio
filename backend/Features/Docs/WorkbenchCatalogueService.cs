@@ -27,6 +27,7 @@ public sealed class WorkbenchCatalogueService
     private readonly WikiPublicationService? _publication;
     private readonly ManagedRepositoryMutationService _repositoryMutations;
     private readonly IAtomicJsonFileWriter _fileWriter;
+    private readonly TaskMutationService? _taskMutations;
     private readonly ConcurrentDictionary<string, DecisionCountSnapshot> _decisionCounts =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CreatedDateSnapshot> _createdDates =
@@ -71,7 +72,8 @@ public sealed class WorkbenchCatalogueService
         IAtomicJsonFileWriter? fileWriter = null,
         ManagedRepositoryMutationService? repositoryMutations = null,
         IConfiguration? configuration = null,
-        WikiPublicationService? publication = null)
+        WikiPublicationService? publication = null,
+        TaskMutationService? taskMutations = null)
     {
         _scanner = scanner;
         _registry = registry;
@@ -81,6 +83,7 @@ public sealed class WorkbenchCatalogueService
             ?? new ManagedRepositoryMutationService(git);
         _reviewDueDays = Math.Clamp(configuration?.GetValue<int?>("Workbenches:ReviewDueDays") ?? 90, 1, 3650);
         _publication = publication;
+        _taskMutations = taskMutations;
     }
 
     public WorkbenchCatalogue? List(string projectName, bool includeHistory = false)
@@ -158,6 +161,9 @@ public sealed class WorkbenchCatalogueService
         }
 
         ApplyDocumentationProjection(items);
+
+        if (source.Info.Writable && _taskMutations != null)
+            DossierCardsService.Backfill(projectName, items, _scanner, _taskMutations);
 
         return FilterCatalogue(
             new WorkbenchCatalogue(projectName, true, items.Count, items),
@@ -565,6 +571,21 @@ public sealed class WorkbenchCatalogueService
                     },
                     DescriptorSourceTaskKeys = StringArray(obj, "sourceTaskKeys"),
                     RelatedTaskKeys = StringArray(obj, "relatedTaskKeys"),
+                    ImplementationTasks = obj.TryGetProperty("implementationTasks", out var implementations)
+                        && implementations.ValueKind == JsonValueKind.Array
+                        ? implementations.EnumerateArray()
+                            .Where(entry => entry.ValueKind == JsonValueKind.Object)
+                            .Select(entry => JsonSerializer.Deserialize<ConceptImplementationTask>(
+                                entry.GetRawText(), new JsonSerializerOptions(JsonSerializerDefaults.Web))!)
+                            .ToList()
+                        : [],
+                    ImplementationTaskKeys = obj.TryGetProperty("implementationTasks", out var keyEntries)
+                        && keyEntries.ValueKind == JsonValueKind.Array
+                        ? keyEntries.EnumerateArray()
+                            .Where(entry => entry.ValueKind == JsonValueKind.String)
+                            .Select(entry => entry.GetString()!)
+                            .ToArray()
+                        : [],
                     LifecycleState = lifecycleState ?? LifecycleFromStatus(status, phase),
                     EditedBy = editedBy,
                     LifecycleHistory = lifecycleHistory,
@@ -714,8 +735,8 @@ public sealed class WorkbenchCatalogueService
                 {
                     foreach (var assignment in assignments)
                     {
-                        _fileWriter.Write(assignment.Path, assignment.Descriptor.ToJsonString(
-                            new JsonSerializerOptions { WriteIndented = true }));
+                        _fileWriter.Write(assignment.Path, RepositoryTextLayout.IndentedJsonFor(
+                            assignment.Path, assignment.Descriptor));
                     }
                 });
             if (!persisted.Success)
@@ -1361,6 +1382,10 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     [System.Text.Json.Serialization.JsonIgnore]
     public string[] DescriptorSourceTaskKeys { get; init; } = [];
     public string[] RelatedTaskKeys { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<ConceptImplementationTask> ImplementationTasks { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string[] ImplementationTaskKeys { get; init; } = [];
     public string? LifecycleState { get; init; }
     public string? EditedBy { get; init; }
     public List<WikiLifecycleHistoryEntry>? LifecycleHistory { get; init; }
@@ -1396,7 +1421,10 @@ public sealed record WorkbenchOverview(
     int HistoryCount,
     List<WorkbenchOverviewItem> Items);
 public record WorkbenchDocument(WorkbenchListItem Workbench, string Html, string? Branch, string? Revision,
-    bool WorkingTreeModified, string? Fingerprint, string? EntryFingerprint);
+    bool WorkingTreeModified, string? Fingerprint, string? EntryFingerprint)
+{
+    public DossierCardList? Cards { get; init; }
+}
 
 public sealed record WorkbenchDecisionProjection(
     string Outcome,

@@ -387,8 +387,10 @@ public static class TaskGitEndpoints
             return Results.Ok(new { commit = commitInfo });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
-        group.MapPost("/{jobId}/open-in-vscode", (string jobId, string? project, string? watchPath, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapPost("/{jobId}/open-in-vscode", (string jobId, string? project, string? watchPath, GitService git, AgentStudio.Registry.ProjectRegistry projects, IConfiguration configuration) =>
         {
+            if (!SecurityProfiles.IsLocal(configuration))
+                return Results.StatusCode(StatusCodes.Status404NotFound);
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return git.OpenInVsCode(jobId, watchPath, out var error)
                 ? Results.Ok()

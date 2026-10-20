@@ -186,6 +186,8 @@ export function buildComposerLocationContext(
       return { project: null, surface: 'Diff', detail: tab.commitSha.slice(0, 8) };
     case 'workspace-settings':
       return { project: null, surface: 'Workspace Settings' };
+    case 'deployment-dashboard':
+      return { project: null, surface: 'Deployment dashboard' };
     case 'welcome':
       return { project: null, surface: 'Welcome' };
   }

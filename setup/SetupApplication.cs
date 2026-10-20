@@ -91,7 +91,10 @@ internal static class SetupApplication
 
         if (mode == SetupMode.AgentHost)
         {
-            var payload = ReadJoinPayload(options, prompter);
+            var payload = ReadJoinPayload(options);
+            var route = await PreflightProbe.AuthorityAsync(new Uri(payload.ServerUrl), cancellationToken);
+            if (route.Reachable != true || route.Trusted == false)
+                throw new InvalidOperationException("The selected Task Server route did not pass the reachability and TLS probe; no package was installed.");
             if (options.ReleaseVersion is not null
                 && !string.Equals(
                     options.ReleaseVersion,
@@ -215,12 +218,11 @@ internal static class SetupApplication
             Console.WriteLine("Single-machine setup is complete.");
             Console.WriteLine($"Task Server: {control.ServerUrl}");
             Console.WriteLine("Open Agent Studio at http://127.0.0.1:4011/.");
-            PrintJoinInstructions(joinPayload, paths.OrchestratorConfig, options.DryRun,
-                "Single-machine Studio");
+            PrintJoinInstructions(joinPayload, "Single-machine Studio");
         }
         else
         {
-            PrintJoinInstructions(joinPayload, paths.OrchestratorConfig, options.DryRun);
+            PrintJoinInstructions(joinPayload);
         }
     }
 
@@ -287,9 +289,10 @@ internal static class SetupApplication
         var runnerId = SetupValidation.RequireSimpleName(
             options.Role == "coding" ? runnerName : $"{runnerName}-review",
             "Runner id");
-        var runnerCredential = options.DryRun
-            ? new string('0', 64)
-            : await MintRunnerCredentialAsync(payload, runnerId, cancellationToken);
+        if (payload.SchemaVersion == 2 && !string.Equals(payload.RunnerId, runnerId, StringComparison.Ordinal))
+            throw new InvalidOperationException($"This join token is bound to Runner '{payload.RunnerId}'. Select the matching host name and role.");
+        // Keep the one-time enrolment code unused until local CLI and Git checks pass.
+        var runnerCredential = new string('0', 64);
         var gitRemote = string.IsNullOrWhiteSpace(options.GitRemote)
             ? prompter.Ask(
                 "Git repository used for the host read/write probe (leave empty to register read-only)",
@@ -390,6 +393,14 @@ internal static class SetupApplication
                 "  No Git probe repository was selected. The host will register, but coding claims remain disabled until Git write access is configured.");
         }
 
+        if (!options.DryRun)
+            configuration = configuration with
+            {
+                Credential = payload.SchemaVersion == 2
+                    ? await GetOrMintJoinCredentialAsync(payload, runnerId, options.Role,
+                        paths.HostConfig, cancellationToken)
+                    : await MintRunnerCredentialAsync(payload, runnerId, cancellationToken),
+            };
         await native.InstallAgentHostAsync(
             hostRelease,
             configuration,
@@ -398,11 +409,71 @@ internal static class SetupApplication
             await native.LinkHostSetupCommandAsync(cancellationToken);
     }
 
+    internal static async Task<string> GetOrMintJoinCredentialAsync(
+        JoinPayload payload, string runnerId, string role, string configRoot,
+        CancellationToken cancellationToken, HttpClient? client = null, TimeProvider? clock = null)
+    {
+        var name = role == "coding" ? "runner" : "review";
+        var credentialPath = Path.Combine(configRoot, $"{name}.token");
+        var receiptPath = Path.Combine(configRoot, $"{name}.join");
+        var receipt = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            $"{payload.Credential}\n{payload.InstallationId}\n{payload.ServerUrl}\n{runnerId}")));
+        if (File.Exists(receiptPath) && File.Exists(credentialPath)
+            && SetupSecrets.IsProtected(receiptPath)
+            && ProtectedHostCredential(credentialPath)
+            && string.Equals(File.ReadAllText(receiptPath).Trim(), receipt, StringComparison.Ordinal))
+        {
+            var saved = File.ReadAllText(credentialPath).Trim();
+            if (saved.Length >= 32)
+                return saved;
+        }
+
+        var credential = await MintRunnerCredentialAsync(payload, runnerId, cancellationToken, client, clock);
+        Directory.CreateDirectory(configRoot);
+        WriteJoinSecret(credentialPath, credential);
+        WriteJoinSecret(receiptPath, receipt);
+        return credential;
+    }
+
+    private static bool ProtectedHostCredential(string path)
+    {
+        if (!OperatingSystem.IsLinux()) return false;
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false;
+        var mode = File.GetUnixFileMode(path);
+        return (mode & (UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                        | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) == 0;
+    }
+
+    private static void WriteJoinSecret(string path, string content)
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Agent Host join credentials require Linux.");
+        var temporary = $"{path}.{Guid.NewGuid():N}";
+        try
+        {
+            using (var file = new FileStream(temporary, new FileStreamOptions
+                   {
+                       Mode = FileMode.CreateNew,
+                       Access = FileAccess.Write,
+                       Share = FileShare.None,
+                       UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                   }))
+            using (var writer = new StreamWriter(file))
+                writer.WriteLine(content);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
     internal static async Task<string> MintRunnerCredentialAsync(
         JoinPayload payload,
         string runnerId,
         CancellationToken cancellationToken,
-        HttpClient? client = null)
+        HttpClient? client = null,
+        TimeProvider? clock = null)
     {
         var ownsClient = client is null;
         client ??= new HttpClient
@@ -412,14 +483,32 @@ internal static class SetupApplication
         };
         try
         {
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", payload.Credential);
             if (!client.DefaultRequestHeaders.Contains(TaskServerProtocol.HeaderName))
-                client.DefaultRequestHeaders.Add(
-                    TaskServerProtocol.HeaderName,
-                    TaskServerProtocol.Current.ToString());
+                client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
+            if (!client.DefaultRequestHeaders.Contains(TaskServerProtocol.ClientVersionHeaderName))
+                client.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, ReleaseArtifacts.CurrentVersion());
             if (!client.DefaultRequestHeaders.Contains("X-Client-Id"))
                 client.DefaultRequestHeaders.Add("X-Client-Id", "agent-orchestrator-setup");
+            if (payload.SchemaVersion == 2)
+            {
+                if (payload.ExpiresAtUtc is { } expiresAt && expiresAt <= (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime)
+                    throw new InvalidOperationException("Join token expired. Issue a new token on the Task Server.");
+                using var exchange = await client.PostAsJsonAsync("/api/v1/enrolments/exchange",
+                    new ExchangeEnrolmentRequest(payload.EnrolmentCode ?? payload.Credential, payload.InstallationId!), cancellationToken);
+                if (!exchange.IsSuccessStatusCode)
+                    throw new InvalidOperationException($"Task Server denied the single-use join token ({(int)exchange.StatusCode}). Issue a new token and retry.");
+                var enrolled = await exchange.Content.ReadFromJsonAsync<ExchangedEnrolment>(cancellationToken: cancellationToken)
+                    ?? throw new InvalidOperationException("Task Server returned an empty enrolment response.");
+                if (enrolled.InstallationId != payload.InstallationId
+                    || enrolled.Issued.Principal.RunnerId != runnerId
+                    || payload.RunnerId != runnerId
+                    || enrolled.Issued.Principal.Kind != TaskServerPrincipalKinds.Runner)
+                    throw new InvalidOperationException("Task Server returned an unexpected installation or Runner identity.");
+                return enrolled.Issued.Credential
+                    ?? throw new InvalidOperationException("Task Server returned no Runner credential.");
+            }
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", payload.Credential);
             var response = await client.PostAsJsonAsync(
                 "/api/v1/management/principals",
                 new CreatePrincipalRequest(
@@ -494,36 +583,16 @@ internal static class SetupApplication
         }
     }
 
-    private static JoinPayload ReadJoinPayload(
-        SetupOptions options,
-        ConsolePrompter prompter)
+    private static JoinPayload ReadJoinPayload(SetupOptions options)
     {
-        string token;
-        if (options.JoinTokenFile is not null)
-        {
-            if (!File.Exists(options.JoinTokenFile))
-                throw new FileNotFoundException(
-                    "Join token file does not exist.",
-                    options.JoinTokenFile);
-            if (!OperatingSystem.IsWindows())
-            {
-                var mode = File.GetUnixFileMode(options.JoinTokenFile);
-                if ((mode & (UnixFileMode.GroupRead
-                             | UnixFileMode.GroupWrite
-                             | UnixFileMode.GroupExecute
-                             | UnixFileMode.OtherRead
-                             | UnixFileMode.OtherWrite
-                             | UnixFileMode.OtherExecute)) != 0)
-                    throw new InvalidOperationException(
-                        "Join token file must be readable only by its owner.");
-            }
-            token = File.ReadAllText(options.JoinTokenFile).Trim();
-        }
-        else
-        {
-            token = prompter.Secret("Paste the join token");
-        }
-        return JoinTokenCodec.Decode(token);
+        if (options.JoinTokenFile is null)
+            throw new ArgumentException("Joining a host requires --join-token-file with an owner-only token file.");
+        SetupSecrets.RequireProtected(options.JoinTokenFile, "Join token file");
+        var token = File.ReadAllText(options.JoinTokenFile).Trim();
+        var payload = JoinTokenCodec.Decode(token);
+        if (payload.SchemaVersion != 2)
+            throw new InvalidOperationException("Legacy join tokens carry reusable management credentials. Issue a single-use token with the join-token command.");
+        return payload;
     }
 
     private static async Task CheckRootAsync(ProcessRunner processes)
@@ -719,29 +788,12 @@ internal static class SetupApplication
         };
     }
 
-    private static void PrintJoinInstructions(JoinPayload payload, string configRoot, bool dryRun,
-        string label = "Control Plane")
+    private static void PrintJoinInstructions(JoinPayload payload, string label = "Control Plane")
     {
-        var token = JoinTokenCodec.Encode(payload);
-        var tokenPath = Path.Combine(configRoot, "join.token");
-        if (!dryRun)
-        {
-            Directory.CreateDirectory(configRoot);
-            var temporary = tokenPath + $".{Guid.NewGuid():N}";
-            SetupSecrets.WriteOwnerOnly(temporary, token + Environment.NewLine);
-            File.Move(temporary, tokenPath, overwrite: true);
-        }
         Console.WriteLine();
         Console.WriteLine($"{label} setup is complete.");
-        Console.WriteLine($"Join token file (owner-only): {tokenPath}");
-        Console.WriteLine("Transfer it over a protected channel, then run on each Agent Host:");
-        Console.WriteLine();
-        Console.WriteLine("  curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sudo sh -s -- --join --join-token-file /secure/path/join.token");
-        Console.WriteLine();
-        Console.WriteLine(
-            "Treat the join token as a secret. It contains a credential that setup uses to mint one bound Runner principal; it is encoded, not encrypted.");
-        Console.WriteLine(
-            "The join token never becomes the Runner service credential. Revoke or rotate its Studio principal after enrollment, and do not place it in shell history, chat, task text or source control.");
+        Console.WriteLine("After bootstrapping an owner, issue a single-use join token with 'agent-studio-setup join-token --help'.");
+        Console.WriteLine($"Task Server URL for Agent Hosts: {payload.ServerUrl}");
     }
 
     private static void PrintGitHubTokenGuide(string remote)
@@ -796,7 +848,6 @@ internal static class SetupApplication
               sudo ./agent-studio-setup --mode single
               sudo ./agent-studio-setup --mode control-plane --server-url https://tasks.example.com
               sudo ./agent-studio-setup --mode control-plane --target docker --server-url task-server-01.wg.internal
-              sudo ./agent-studio-setup --join
               sudo ./agent-studio-setup --join --join-token-file /secure/path/join.token
 
             Options:
@@ -808,7 +859,7 @@ internal static class SetupApplication
               --server-url <url>          URL visible from Agent Host machines (systemd); private WireGuard-only DNS name (docker)
               --wg-address <ip>           task-server-01 WireGuard interface address (docker target only)
               --offhost-backup-path <path> Already-mounted off-host backup destination (docker target only)
-              --join                      Join this machine as an Agent Host; token is prompted securely
+              --join                      Join this machine as an Agent Host; requires --join-token-file
               --join-token-file <path>    Read the join token from a protected file
               --runner-name <name>        Host identity shown in the Control Plane; bootstrap Runner id for the docker target
               --execution-user <user>     Linux user that owns Agent CLI and Git credentials

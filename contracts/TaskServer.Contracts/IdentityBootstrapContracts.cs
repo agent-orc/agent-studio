@@ -35,6 +35,11 @@ public sealed record StudioCreateUserRequest(
     string Role,
     string? DisplayName = null);
 
+public sealed record StudioInviteUserRequest(string Username, string Role, IReadOnlyList<string> ProjectIds, string? DisplayName = null);
+public sealed record StudioAcceptInvitationRequest(string Token, string NewPassword);
+public sealed record StudioInviteResult(StudioAuthUserDto User, string SignInLink, DateTime ExpiresAt);
+public sealed record StudioProductionApprovalRequest(bool Approved);
+
 /// <summary>
 /// Owner request for a one-time enrolment code for a distinct service
 /// principal: one Studio edge, one engine, or one runner per host.
@@ -102,7 +107,11 @@ public sealed record RegisterProjectRepositoryRequest(
     string RepositoryUrl,
     string IntegrationRef,
     string? ReleaseRef = null,
-    string DeliveryPolicy = ProjectDeliveryPolicies.ReviewedPublication);
+    string DeliveryPolicy = ProjectDeliveryPolicies.ReviewedPublication,
+    string? RepositoryVisibility = null);
+
+/// <summary>Updates visibility for an already registered repository from the project setting.</summary>
+public sealed record SetProjectRepositoryVisibilityRequest(string RepositoryUrl, string? Visibility);
 
 public sealed record ProjectRepositoryDto(
     string ProjectId,
@@ -112,7 +121,8 @@ public sealed record ProjectRepositoryDto(
     string? ReleaseRef,
     string DeliveryPolicy,
     DateTime RegisteredAt,
-    string RegisteredBy);
+    string RegisteredBy,
+    string? RepositoryVisibility = null);
 
 /// <summary>
 /// What a runner host observed when it probed the registered project from

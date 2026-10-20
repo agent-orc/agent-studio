@@ -9,6 +9,15 @@ const oneTimeSecret = ['api', 'one', 'time-value'].join('.');
 
 test('owner manages access from Settings and sees each created token once', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.route('**/hubs/v1/studio/negotiate?*', route => route.fulfill(json({
+    negotiateVersion: 1, connectionId: 'access-e2e', connectionToken: 'access-e2e',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  })));
+  await page.routeWebSocket('**/hubs/v1/studio*', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send(`{}\u001e`);
+    });
+  });
   await page.route('**/api/auth/status', route => route.fulfill(json({
     profile: 'networked', bootstrapRequired: false, authenticated: true,
     user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },

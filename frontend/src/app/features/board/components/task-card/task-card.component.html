@@ -79,6 +79,9 @@
       <span class="task-card__decision-badge" data-testid="task-card-decision-badge"
             [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.label }}</span>
     }
+    @if (job().dossier; as dossier) {
+      <span class="task-card__subtask-chip" data-testid="task-card-dossier" [cacTooltip]="dossier.path">Dossier · {{ dossier.path.split('/').slice(-2, -1)[0] }} @if (dossier.section) { · {{ dossier.section }} } @if (dossier.decision) { · {{ dossier.decision }} }</span>
+    }
     <span class="task-card__title-text" data-truncatable>{{ job().title || job().id }}</span>
     @if (compact()) {
       <span class="task-card__compact-time" [cacTooltip]="'Last activity: ' + relativeActivity()">{{ relativeActivity() }}</span>

@@ -688,6 +688,8 @@ export interface TaskInfo {
    * or by an epic's decomposition run (way 3).
    */
   epicId?: string | null;
+  /** One primary Dossier; other Dossiers remain ordinary reference links. */
+  dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null } | null;
   /**
    * Execution mode. Mirrors backend `TaskInfo.Mode` (default `coding`).
    * Older payloads may omit it, so callers treat absent as `coding`.
@@ -2015,6 +2017,12 @@ export interface RegistryProjectSummary {
 }
 
 export interface CreateRegistryProjectRequest {
+  createRepository?: {
+    owner: string;
+    name: string;
+    visibility: 'public' | 'private';
+    template: 'static-web' | 'container-service';
+  };
   workspaceId: string;
   displayName: string;
   shortCode?: string;

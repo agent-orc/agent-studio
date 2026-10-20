@@ -2,11 +2,17 @@ import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
-const screenshotDir = path.resolve(__dirname, '..', '..', '..', 'results', 'security');
+const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
 
 test('networked Studio gates the workspace behind same-origin login', async ({ page }) => {
   mkdirSync(screenshotDir, { recursive: true });
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: '[]',
+  }));
+  await page.route('**/api/v1/management/links', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: '[]',
+  }));
   await page.route('**/api/v1/studio/auth/login', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -26,6 +32,11 @@ test('networked Studio gates the workspace behind same-origin login', async ({ p
   await expect(page.getByTestId('auth-gate')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await page.screenshot({ path: path.join(screenshotDir, 'networked-login.png'), fullPage: true });
+
+  // The unauthenticated live-update socket remains disconnected. Its offline
+  // grace period must never disable sign-in after the page has been open.
+  await page.waitForTimeout(4_600);
+  await page.screenshot({ path: path.join(screenshotDir, 'networked-login-after-offline.png'), fullPage: true });
 
   await page.getByLabel('Username').fill('owner');
   await page.getByLabel('Password').fill('not-stored-password');
@@ -102,4 +113,31 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
   await page.reload({ waitUntil: 'commit', timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByLabel('Installer owner code')).toHaveCount(0);
+});
+
+test('one-time Product invitation lets the recipient choose a password', async ({ page }) => {
+  const resultDir = process.env['JOB_RESULTS_DIR'] || path.resolve(__dirname, '..', '..', '..', 'results');
+  mkdirSync(resultDir, { recursive: true });
+  await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ bootstrapRequired: false, authenticated: false, user: null }),
+  }));
+  await page.route('**/api/v1/studio/auth/invite/accept', route => {
+    expect(route.request().postDataJSON()).toEqual({ token: 'sti_inv_example', newPassword: 'product password long enough' });
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ status: { bootstrapRequired: false, authenticated: true,
+        user: { userId: 'usr_product', username: 'product', displayName: 'Product User', role: 'contributor',
+          projectIds: ['prj-assigned'], disabled: false, mustChangePassword: false } } }),
+    });
+  });
+  await page.goto('/?invite=sti_inv_example');
+  await expect(page.getByRole('heading', { name: 'Accept invitation' })).toBeVisible();
+  await page.screenshot({ path: path.join(resultDir, 'product-invitation.png'), fullPage: true });
+  await page.getByLabel('New password').fill('product password long enough');
+  await page.getByRole('button', { name: 'Join project' }).click();
+  await expect(page.getByTestId('auth-gate')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/#\/board$/);
+  expect(new URL(page.url()).search).toBe('');
 });

@@ -13,7 +13,7 @@
        tabindex="0"
        (keydown.enter)="onBackdrop($event)"
        (keydown.space)="onBackdrop($event); $event.preventDefault()">
-    <section class="ws-settings"
+    <section class="ws-settings" [class.ws-settings--environment]="overlays.section() === 'remote-hosts'"
              role="dialog"
              aria-modal="true"
              aria-labelledby="ws-settings-title"
@@ -108,6 +108,9 @@
         }
         @case ('access') {
           <app-access-settings />
+        }
+        @case ('first-run') {
+          <app-first-run-checklist (openProjectSettings)="openProjectSettings.emit($event)" />
         }
         @case ('updates') {
           <app-updates-settings />

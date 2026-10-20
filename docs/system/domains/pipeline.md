@@ -464,7 +464,28 @@ fences, or publish a new source ref. The existing backend merge, rollback and
 publication owner remains in place; only verification executes remotely. The
 Task Server gate protocol remains the target for admission of these subjects.
 
-Operator configuration uses `RemoteGate:SshHost` and an absolute
+The outbound pull worker uses an exclusively scoped `gate.execute` Runner
+credential and starts the release-pinned backend binary with
+`--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
+on that host. The worker registers, claims from `/api/pull-gates`, downloads
+the exact source bundle, heartbeats its lease, streams progress through those
+heartbeats, and uploads the result and files from its `artifacts/` run folder.
+The server refuses uploads after lease expiry or replacement. Completed
+artifacts are listed at `/api/gate-artifacts/{runId}` and fetched from
+`/api/gate-artifacts/{runId}/{name}` on Studio; the gate result carries
+`serverArtifactRunId`. Verify commands can write files to the
+`AGENTSTUDIO_GATE_ARTIFACT_DIR` environment variable.
+Deploy and launcher automation can use `scripts/fetch-gate-artifact.sh`
+with a `runner.artifacts` credential to download a named artifact through
+Studio; it never addresses the gate host.
+The server's `RemoteGate:HostCapacity:{runnerId}:Slots` and
+`ProcessorCount` values control each host, falling back to
+`RemoteGate:GateSlots` and `RemoteGate:ProcessorCount`. A healthy registered
+worker is selected by convention; SSH remains as the transition fallback
+until the pull path passes a soak, then a follow-up removes SSH.
+No transport-selection setting is required.
+
+The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
 the remote host. Environment variables use double underscores, for example
 `RemoteGate__SshHost` and `RemoteGate__WorkerPath`. Optional
@@ -482,6 +503,10 @@ key and noninteractive credentials. Host-key checking and batch mode are
 mandatory. The worker is invoked explicitly with
 `--remote-build-test-gate-worker <request.json>` before the API host is created;
 it starts no listener or backend background loops and refuses Windows.
+The Execution Hosts infrastructure snapshot reports gate reachability from the
+latest SSH or SCP call, including cleanup calls. Each successful call marks the
+host reachable for five minutes; each failed call marks it unreachable at once.
+Without a recent successful call, reachability is unverified.
 
 Transport creates a private bare repository and bundle from the requested
 commit, computes SHA-256, and transfers that bundle and immutable request into
@@ -910,9 +935,12 @@ comparison before Quality Studio's verdict contract can decide a review.
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
   synchronization drops only lane merges whose delivery is already on origin
-  by ancestry or patch equality.
-  It restarts the lane at origin when every lane merge is published; otherwise
-  it refuses and names the unpublished merges. Before a legacy acceptance
+  by ancestry, tree, or patch equality, or that a newer published delivery of
+  the same card superseded (AGT-3215, `IntegrationLaneDivergencePolicy`).
+  It backs the old tip up under `refs/agent-studio/integration-backup/` and
+  restarts the lane at origin when nothing unpublished remains; otherwise it
+  refuses, names the unpublished merges, and raises the
+  `integration-lane-diverged` pipeline health alarm with the blocked cards. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
   checks the card's delivery there. It resolves that delivery from the review
   subject, card attribution, or local task branch, including local deliveries
@@ -2403,3 +2431,48 @@ new fact even when its operator-facing summary is unchanged.
   its intent / prompt note / timeline receipt, and the fresh budget after an
   operator requeue) plus the loop breaker
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
+
+## Project deployment definition (P1)
+
+`.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
+Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
+`environments`, `lifecycles.standard`, and `deploy`. Existing `commands` and
+`testSuites` remain the execution source until the pipeline engine is extended.
+The P1 deployment definition uses exactly `[staging, production]`. Staging is
+automatic after integration; Production requires successful Staging and approval
+by Owner or Maintainer. The accepted steps are `publish-static`,
+`start-container`, `run`, `health`, and `approval`. `start-container` is a
+configuration placeholder until the run-host adapter is available. The editor
+contract is [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json).
+
+A static deploy example uses a branch pulled by the web target:
+
+```yaml
+artifacts:
+  - name: web
+    type: static
+    path: dist
+environments: [staging, production]
+lifecycles:
+  standard:
+    - phase: staging
+      automatic: true
+    - phase: production
+      approval: [Owner, Maintainer]
+      requires: staging
+deploy:
+  - step: publish-static
+    artifact: web
+    target: web-vm
+    branch: deploy/website
+```
+
+To import legacy `docs/deployments/**/deployment.json` descriptors once, run
+`dotnet run --project tools/project-deployment-import -- <repository-path>`
+from the Studio checkout. The command converts executable legacy commands to
+Production `run` steps and Caddy site templates to `publish-static` steps, validates the result, and writes `project.yml` while
+preserving its line endings. Legacy descriptors remain in place for review.
+When a deployment section already exists, the import is a no-op. Unsupported descriptors
+yield a clear error and leave the repository unchanged.
+Review the generated process before committing it; imported commands retain
+the legacy behavior and do not acquire a web-branch publish step automatically.

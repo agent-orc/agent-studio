@@ -82,7 +82,7 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
     expect(window.location.hash).toBe('#/workspace/settings/screenshots');
 
     service.select('remote-hosts');
-    expect(window.location.hash).toBe('#/workspace/settings/execution-hosts');
+    expect(window.location.hash).toBe('#/workspace/settings/environment');
   });
 
   it('reads legacy loose routes and republishes the canonical path', () => {
@@ -97,7 +97,7 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
     expect(window.location.hash).toBe('#/workspace/settings/tokens/claude');
   });
 
-  it('migrates the former remote-hosts route to Execution Hosts', () => {
+  it('migrates the former remote-hosts route to Environment', () => {
     history.replaceState(null, '', '/#/workspace/settings/remote-hosts');
     const service = new WorkspaceOverlaysService();
 
@@ -105,6 +105,16 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
 
     expect(service.settingsOpen()).toBe(true);
     expect(service.section()).toBe('remote-hosts');
-    expect(window.location.hash).toBe('#/workspace/settings/execution-hosts');
+    expect(window.location.hash).toBe('#/workspace/settings/environment');
+  });
+
+  it('redirects the former execution-hosts route to Environment', () => {
+    history.replaceState(null, '', '/#/workspace/settings/execution-hosts');
+    const service = new WorkspaceOverlaysService();
+
+    service.syncFromHash();
+
+    expect(service.section()).toBe('remote-hosts');
+    expect(window.location.hash).toBe('#/workspace/settings/environment');
   });
 });

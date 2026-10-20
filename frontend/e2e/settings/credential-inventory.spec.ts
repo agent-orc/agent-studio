@@ -29,19 +29,33 @@ async function stub(page: Page) {
         label: 'Runner PAT', scopes: ['main'], repository: 'github.com/team/product',
         permission: 'write', expiresAt: '2026-10-24T09:00:00Z', lastUseAt: '2026-10-15T09:00:00Z',
         state: 'expiring', required: false, detail: '14-day expiry warning', affectedCards: [] },
+      { id: 'codex-login', category: 'provider', hostId: 'runner-a', kind: 'codex_chatgpt_login',
+        label: 'Codex account', scopes: [], repository: null, permission: null,
+        expiresAt: null, lastUseAt: null, state: 'ok', required: true,
+        detail: 'Host-owned login', affectedCards: [] },
     ],
   }));
 }
 
 test('Credentials page shows gaps, filters and both theme screenshots', async ({ page }) => {
+  const code = `${'A'.repeat(4)}-${'B'.repeat(4)}`;
   mkdirSync(shots, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await stub(page);
+  await page.route('**/api/v1/management/device-logins', json({
+    handle: 'access-session', state: 'queued', sessionKey: 'browser-session',
+    verificationUrl: null, userCode: null, expiresAt: new Date(Date.now() + 900_000).toISOString(),
+  }));
+  await page.route('**/api/v1/management/device-logins/*', json({
+    handle: 'access-session', state: 'running', detail: null,
+    verificationUrl: 'https://auth.openai.com/codex/device', userCode: code,
+    expiresAt: new Date(Date.now() + 900_000).toISOString(),
+  }));
   await page.goto('/#/workspace/settings/credentials', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('credential-inventory')).toBeVisible();
   await expect(page.getByTestId('workspace-settings-rail-credentials')).toBeVisible();
   await expect(page.getByTestId('credential-inventory')).toContainText('Affected cards: AGT-1');
-  await expect(page.locator('.credentials__row')).toHaveCount(2);
+  await expect(page.locator('.credentials__row')).toHaveCount(3);
   await page.getByLabel('State').selectOption('missing');
   await expect(page.locator('.credentials__row')).toHaveCount(1);
   await page.getByLabel('State').selectOption('all');
@@ -49,4 +63,30 @@ test('Credentials page shows gaps, filters and both theme screenshots', async ({
     await setTheme(page, theme);
     await page.screenshot({ path: join(shots, `inventory-${theme}--mocked.png`) });
   }
+  await page.getByTestId('access-codex-sign-in').click();
+  await expect(page.getByTestId('codex-sign-in-code')).toContainText(code);
+  await expect(page.getByTestId('codex-sign-in-countdown')).toBeVisible();
+});
+
+test('an open Credentials page shows a new gap after the inventory refreshes', async ({ page }) => {
+  await page.clock.install();
+  await stub(page);
+  let missing = false;
+  await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ generatedAt: '', items: missing ? [{
+      id: 'new-gap', category: 'repository', hostId: 'review-a', kind: 'review_read_file',
+      label: 'Private repository read access', scopes: [], repository: 'github.com/team/private',
+      permission: 'read', expiresAt: null, lastUseAt: null, state: 'missing', required: true,
+      detail: 'Add a repository-scoped read credential', affectedCards: [],
+    }] : [] }),
+  }));
+  await page.goto('/#/workspace/settings/credentials', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('credential-inventory')).toBeVisible();
+  await expect(page.locator('.credentials__row')).toHaveCount(0);
+  missing = true;
+  await page.clock.fastForward(60_000);
+  await expect(page.locator('.credentials__row')).toHaveCount(1);
+  await expect(page.locator('.credentials__row')).toContainText('Private repository read access');
 });

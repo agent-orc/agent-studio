@@ -1,0 +1,20 @@
+<div class="dossier-board" data-testid="dossier-group-board">
+  @for (group of groups(); track group.id) {
+    <section class="dossier-board__group" [attr.data-dossier-path]="group.path">
+      <header>
+        <h2>{{ label(group.path, group.cards[0].projectName) }}</h2>
+        <span>{{ group.completed }} / {{ group.cards.length }} complete</span>
+      </header>
+      <ul>
+        @for (card of group.cards; track card.taskKey) {
+          <li>
+            <button type="button" (click)="jobClick.emit(card)" [attr.data-testid]="'dossier-board-card-' + card.id">
+              <strong>{{ card.key ?? card.id }}</strong> {{ card.title }}
+            </button>
+            <span>{{ laneName(card.state) }}</span>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+</div>

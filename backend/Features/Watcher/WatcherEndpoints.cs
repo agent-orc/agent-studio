@@ -1,5 +1,7 @@
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Security;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Watcher;
 
@@ -41,6 +43,22 @@ public static class WatcherEndpoints
                 .OrderByDescending(c => c.LastSeenUtc)
                 .ToList();
             return Results.Ok(new { cases = all });
+        });
+
+        group.MapGet("/stalls", (HttpContext context, IConfiguration configuration,
+            WatcherCaseStore cases, ProjectRegistry projects) =>
+        {
+            var workspaceRoot = configuration["TaskRepository"] ?? "";
+            var open = string.IsNullOrWhiteSpace(workspaceRoot)
+                ? Array.Empty<WatcherCase>()
+                : cases.All(workspaceRoot)
+                    .Where(c => c.Subject is not null
+                        && c.State is WatcherCaseStates.Open or WatcherCaseStates.DecisionRequired)
+                    .Where(c => c.Project == QuotaProbeSignalProbe.WorkspaceProject
+                        || context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+                        || ProjectAccessAuthorization.Allows(human.User, c.Project, projects))
+                    .OrderByDescending(c => c.SinceUtc).ToArray();
+            return Results.Ok(new { count = open.Length, cases = open });
         });
 
         group.MapGet("/proposals", (IConfiguration configuration, WatcherProposalStore proposals, bool? pending) =>
