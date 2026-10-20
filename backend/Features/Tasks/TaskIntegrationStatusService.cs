@@ -771,7 +771,9 @@ public sealed class TaskIntegrationStatusService
         => publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)
             ? []
             : job.IntegrationRecords.Where(record =>
-                    record.Classification == IntegrationRecordClasses.CuratedMapping
+                    (record.Classification == IntegrationRecordClasses.CuratedMapping
+                        || record.Classification == IntegrationRecordClasses.IntegratedVerified
+                        && record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal))
                     && string.Equals(record.SourceSha, sourceSha, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
                     && string.Equals(record.IntegrationBranch, branch, StringComparison.OrdinalIgnoreCase)

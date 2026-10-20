@@ -144,12 +144,15 @@ STUDIO_OPERATOR_TOKEN=<operator-token> python3 scripts/record-operator-candidate
   verification-summary.json --url https://studio.example --project AGT
 ```
 
-The script computes the log SHA-256 and posts the summary. The route checks
-that the candidate is on the published integration branch and that each
-card's reviewed delivery is an ancestor or patch-equivalent. It returns a
-reason for each refused card. Successful card records and their timeline
-audit events are append-only; reposting identical evidence is a no-op. A
-changed summary for the same candidate and delivery is refused.
+The script computes the log SHA-256 and posts the summary. The route fetches
+the published integration branch on each post and fails closed if that fetch
+fails or the candidate is absent. It checks that each card's current reviewed
+delivery is an ancestor or patch-equivalent, and returns a reason for each
+refused card. A patch-equivalent delivery is recorded against its current
+review attempt, so the board shows it as integrated and verified; a later
+delivery attempt cannot reuse that proof. Successful card records and their
+timeline audit events are append-only; reposting identical evidence is a
+no-op. A changed summary for the same candidate and delivery is refused.
 
 ### Detached launch
 

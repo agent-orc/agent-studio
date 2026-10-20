@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.Persistence;
 
@@ -19,6 +20,10 @@ internal static class TaskJsonFile
     internal static readonly JsonSerializerOptions ReadOpts = new() { PropertyNameCaseInsensitive = true };
     private static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true };
     private static readonly IAtomicJsonFileWriter FileWriter = new AtomicJsonFileWriter();
+    private static readonly ConcurrentDictionary<string, object> FolderLocks = new(FileSystemPathComparer.Instance);
+
+    internal static object FolderLock(string folder)
+        => FolderLocks.GetOrAdd(Path.GetFullPath(folder), static _ => new object());
 
     /// <summary>
     /// Reads <c>task.json</c>, replaces or adds a single top-level field, writes
@@ -82,6 +87,13 @@ internal static class TaskJsonFile
         string fieldName,
         object value,
         IAtomicJsonFileWriter? fileWriter = null)
+    {
+        lock (FolderLock(jobDir))
+            UpdateFieldOrThrowCore(jobDir, fieldName, value, fileWriter);
+    }
+
+    private static void UpdateFieldOrThrowCore(
+        string jobDir, string fieldName, object value, IAtomicJsonFileWriter? fileWriter)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath))
@@ -151,6 +163,14 @@ internal static class TaskJsonFile
         IReadOnlyDictionary<string, object> values,
         ILogger logger,
         IAtomicJsonFileWriter? fileWriter = null)
+    {
+        lock (FolderLock(jobDir))
+            return UpdateFieldsCore(jobDir, values, logger, fileWriter);
+    }
+
+    private static bool UpdateFieldsCore(
+        string jobDir, IReadOnlyDictionary<string, object> values, ILogger logger,
+        IAtomicJsonFileWriter? fileWriter)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return false;

@@ -26,7 +26,7 @@ public static class OperatorCandidateVerificationEndpoints
         app.MapPost("/api/projects/{project}/operator-candidate-verifications", (
             HttpContext context, string project, RecordOperatorCandidateRequest request,
             ProjectRegistry projects, ProjectSettingsService settings, TaskScannerService scanner,
-            TaskMutationService mutations, GitService git, TimelineLog timeline, TimeProvider clock) =>
+            TaskMutationService mutations, GitService git, TimeProvider clock) =>
         {
             // The local profile has no human identity. A run or coding-agent token
             // cannot create verification evidence, even if it can call other APIs.
@@ -52,10 +52,9 @@ public static class OperatorCandidateVerificationEndpoints
             var branch = TaskIntegrationBranch.Name(settings.Get(registered.DisplayName).IntegrationBranch);
             var root = git.ResolveRepoRootForWatchPath(registered.StorageLocation);
             if (root is null) return Results.Conflict(new { error = "Project repository is unavailable." });
-            var published = git.GetBranchTip(root, git.HasOriginRemote(root)
-                ? $"refs/remotes/origin/{branch}" : $"refs/heads/{branch}");
+            var published = git.FetchBatchIntegrationTip(root, branch, context.RequestAborted);
             if (!ReviewSubjectStore.IsValidResultSha(published) || !git.IsAncestor(root, sha, published!))
-                return Results.Conflict(new { error = $"Candidate {sha} is not on published {branch}." });
+                return Results.Conflict(new { error = $"Published {branch} could not be refreshed or candidate {sha} is absent from it." });
 
             var summary = string.Join("; ", request.Suites.Select(suite =>
                 $"{suite.Command}: {suite.Passed} passed, {suite.Failed} failed, {suite.Skipped} skipped"));
@@ -75,7 +74,8 @@ public static class OperatorCandidateVerificationEndpoints
                     results.Add(new(address, false, "Card was not found in the project."));
                     continue;
                 }
-                var delivery = ReviewSubjectStore.Read(card.FolderPath)?.ResultSha;
+                var subject = ReviewSubjectStore.Read(card.FolderPath);
+                var delivery = subject?.ResultSha;
                 if (!ReviewSubjectStore.IsValidResultSha(delivery))
                 {
                     results.Add(new(address, false, "Card has no full reviewed delivery SHA."));
@@ -95,6 +95,7 @@ public static class OperatorCandidateVerificationEndpoints
                     IntegrationBranch = branch,
                     IntegrationSha = sha,
                     SourceSha = delivery,
+                    DeliveryEpoch = subject!.RunAttemptId,
                     Actor = TimelineActors.Human(principal.User.Id),
                     VerificationHost = request.VerificationHost.Trim(),
                     SuiteSummary = summary,
@@ -105,42 +106,15 @@ public static class OperatorCandidateVerificationEndpoints
                     VerificationEndedAtUtc = request.EndedAtUtc.UtcDateTime,
                     Evidence = $"Verified by operator candidate {sha}: {summary}. Log SHA-256 {request.LogHash.Trim().ToLowerInvariant()}.",
                 };
-                var previous = card.IntegrationRecords.FirstOrDefault(item => item.Id == record.Id);
-                if (previous is not null && (previous.IntegrationSha != record.IntegrationSha
-                    || previous.SourceSha != record.SourceSha || previous.VerificationHost != record.VerificationHost
-                    || previous.SuiteSummary != record.SuiteSummary || previous.LogHash != record.LogHash
-                    || !previous.VerificationSuites.SequenceEqual(record.VerificationSuites)
-                    || previous.VerificationStartedAtUtc != record.VerificationStartedAtUtc
-                    || previous.VerificationEndedAtUtc != record.VerificationEndedAtUtc))
+                var write = mutations.AppendOperatorCandidateRecordOnFolder(card.FolderPath, record);
+                if (write.Conflict)
                 {
                     results.Add(new(address, false, "An immutable record with this candidate and delivery already has different evidence."));
                     continue;
                 }
-                var write = mutations.AppendIntegrationRecordOnFolder(card.FolderPath, record);
                 if (!write.Succeeded)
                 {
-                    results.Add(new(address, false, "The integration record could not be persisted."));
-                    continue;
-                }
-                var hasAudit = timeline.ReadAll(card.FolderPath).Any(item =>
-                    item.Kind == TimelineEventKinds.IntegrationVerificationRecorded
-                    && item.Details?.GetValueOrDefault("recordId") == record.Id);
-                if (!hasAudit && !timeline.Append(card.FolderPath, new TimelineEvent
-                    {
-                        Ts = now,
-                        Kind = TimelineEventKinds.IntegrationVerificationRecorded,
-                        Actor = record.Actor!,
-                        Summary = record.Evidence,
-                        Details = new Dictionary<string, string>
-                        {
-                            ["state"] = IntegrationVerificationStates.Verified,
-                            ["sha"] = sha,
-                            ["evidence"] = "operator-candidate",
-                            ["recordId"] = record.Id,
-                        },
-                    }))
-                {
-                    results.Add(new(address, false, "The record was persisted but its audit event failed; retry this post."));
+                    results.Add(new(address, false, write.Reason ?? "The integration record could not be persisted."));
                     continue;
                 }
                 results.Add(new(address, true, write.Appended ? "Recorded." : "Already recorded."));
@@ -186,4 +160,17 @@ public static class OperatorCandidateVerificationPolicy
     public static bool HasWorkspaceScope(HttpContext context)
         => context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] is not ApiTokenPrincipal token
            || token.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal);
+
+    public static bool SameEvidence(TaskIntegrationRecord existing, TaskIntegrationRecord proposed)
+        => existing.Classification == proposed.Classification
+           && existing.IntegrationBranch == proposed.IntegrationBranch
+           && existing.IntegrationSha == proposed.IntegrationSha
+           && existing.SourceSha == proposed.SourceSha
+           && existing.DeliveryEpoch == proposed.DeliveryEpoch
+           && existing.VerificationHost == proposed.VerificationHost
+           && existing.SuiteSummary == proposed.SuiteSummary
+           && existing.LogHash == proposed.LogHash
+           && existing.VerificationSuites.SequenceEqual(proposed.VerificationSuites)
+           && existing.VerificationStartedAtUtc == proposed.VerificationStartedAtUtc
+           && existing.VerificationEndedAtUtc == proposed.VerificationEndedAtUtc;
 }

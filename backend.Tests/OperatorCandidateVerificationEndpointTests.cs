@@ -136,11 +136,78 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder);
         Assert.Single(timeline, item => item.Details?.GetValueOrDefault("recordId") == record.GetProperty("id").GetString());
 
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var patchCard = Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166");
+        var statuses = factory.Services.GetRequiredService<TaskIntegrationStatusService>();
+        var status = statuses.BuildLookup([patchCard])[patchCard.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+        Assert.Contains("operator candidate", status.Verification?.Reason, StringComparison.OrdinalIgnoreCase);
+        await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
+        Assert.Equal(TaskStates.HumanReview,
+            Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166").State);
+
+        WriteCard(watchPath, "AGT-3190", delivery);
+        scanner.InvalidateCache();
+
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        var parallelRequest = summary with { Cards = ["AGT-3190"] };
+        var posts = Enumerable.Range(0, 16).Select(async index =>
+        {
+            var host = index % 2 == 0 ? "gate-host" : "different-host";
+            using var response = await client.PostAsJsonAsync(path, parallelRequest with { VerificationHost = host });
+            response.EnsureSuccessStatusCode();
+            using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var item = payload.RootElement.GetProperty("results")[0];
+            return (Host: host, Recorded: item.GetProperty("recorded").GetBoolean(),
+                Reason: item.GetProperty("reason").GetString());
+        }).ToArray();
+        var titleMutation = Task.Run(() =>
+        {
+            for (var index = 0; index < 16; index++)
+                Assert.True(mutations.SetJobTitle("AGT-3190", $"Title {index}", watchPath));
+        });
+        var posted = await Task.WhenAll(posts);
+        await titleMutation;
+        var concurrentFolder = Path.Combine(watchPath, "5-human-review", "AGT-3190");
+        using var concurrentTask = JsonDocument.Parse(File.ReadAllText(Path.Combine(concurrentFolder, "task.json")));
+        var concurrentRecord = Assert.Single(concurrentTask.RootElement.GetProperty("integrationRecords").EnumerateArray());
+        var winningHost = concurrentRecord.GetProperty("verificationHost").GetString();
+        Assert.Single(posted, item => item.Reason == "Recorded.");
+        Assert.All(posted.Where(item => item.Recorded), item => Assert.Equal(winningHost, item.Host));
+        Assert.All(posted.Where(item => !item.Recorded), item =>
+            Assert.Contains("different evidence", item.Reason));
+        Assert.Equal("Title 15", concurrentTask.RootElement.GetProperty("title").GetString());
+        Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(concurrentFolder), item =>
+            item.Details?.GetValueOrDefault("recordId") == concurrentRecord.GetProperty("id").GetString());
+
+        ReviewSubjectStore.Write(cardFolder, ReviewSubjectStore.Read(cardFolder)! with
+        {
+            RunAttemptId = "attempt-2",
+        });
+        scanner.InvalidateCache();
+        var newerCard = Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166");
+        Assert.NotEqual(IntegrationStatuses.Integrated,
+            statuses.BuildLookup([newerCard])[newerCard.TaskKey].Status);
+        await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
+        Assert.Equal(TaskStates.AutoReview,
+            Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166").State);
+
         using var unpublished = await client.PostAsJsonAsync(path, summary with
         {
             CandidateSha = missing, Cards = ["AGT-3185"],
         });
         Assert.Equal(HttpStatusCode.Conflict, unpublished.StatusCode);
+
+        // The local origin/develop tracking ref still names candidate, while
+        // the published branch has moved away from it.
+        Git(remote, "update-ref", "refs/heads/develop", ancestor);
+        Assert.Equal(candidate, Git(repository, "rev-parse", "refs/remotes/origin/develop"));
+        using var stale = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3171"] });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Git(repository, "remote", "remove", "origin");
+        using var fetchFailed = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3171"] });
+        Assert.Equal(HttpStatusCode.Conflict, fetchFailed.StatusCode);
     }
 
     private static void WriteCard(string watchPath, string key, string sha)

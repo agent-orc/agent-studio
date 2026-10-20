@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 
 namespace AgentStudio.Tasks;
@@ -883,6 +884,14 @@ public class TaskMutationService
         string folderPath,
         TaskIntegrationRecord record)
     {
+        lock (TaskJsonFile.FolderLock(folderPath))
+            return AppendIntegrationRecordCore(folderPath, record);
+    }
+
+    private IntegrationRecordWriteResult AppendIntegrationRecordCore(
+        string folderPath,
+        TaskIntegrationRecord record)
+    {
         if (!Directory.Exists(folderPath)
             || string.IsNullOrWhiteSpace(record.Id)
             || !IntegrationRecordClasses.All.Contains(record.Classification, StringComparer.Ordinal))
@@ -930,8 +939,75 @@ public class TaskMutationService
         }
     }
 
+    /// <summary>Compare, append, and audit operator proof under the task file mutation lock.</summary>
+    public OperatorCandidateRecordWriteResult AppendOperatorCandidateRecordOnFolder(
+        string folderPath, TaskIntegrationRecord record)
+    {
+        lock (TaskJsonFile.FolderLock(folderPath))
+        {
+            try
+            {
+                var subject = ReviewSubjectStore.Read(folderPath);
+                if (!string.Equals(subject?.ResultSha, record.SourceSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(subject?.RunAttemptId, record.DeliveryEpoch, StringComparison.Ordinal))
+                    return new(false, false, false, "The card's current reviewed delivery changed; retry with fresh evidence.");
+
+                var path = Path.Combine(folderPath, "task.json");
+                var document = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                    File.ReadAllText(path), TaskJsonFile.ReadOpts);
+                if (document?.TryGetValue("integrationRecords", out var persisted) == true
+                    && persisted.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in persisted.EnumerateArray())
+                    {
+                        var existing = item.Deserialize<TaskIntegrationRecord>(TaskJsonFile.ReadOpts);
+                        if (existing is null || !string.Equals(existing.Id, record.Id, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!OperatorCandidateVerificationPolicy.SameEvidence(existing, record))
+                            return new(false, false, true, null);
+                        break;
+                    }
+                }
+
+                var write = AppendIntegrationRecordCore(folderPath, record);
+                if (!write.Succeeded) return new(false, false, false, null);
+                if (_timeline is null) return new(false, write.Appended, false, "The audit writer is unavailable.");
+                var audited = _timeline.ReadAll(folderPath).Any(item =>
+                    item.Kind == TimelineEventKinds.IntegrationVerificationRecorded
+                    && item.Details?.GetValueOrDefault("recordId") == record.Id);
+                if (!audited && !_timeline.Append(folderPath, new TimelineEvent
+                    {
+                        Ts = record.RecordedAtUtc,
+                        Kind = TimelineEventKinds.IntegrationVerificationRecorded,
+                        Actor = record.Actor!,
+                        Summary = record.Evidence,
+                        Details = new Dictionary<string, string>
+                        {
+                            ["state"] = IntegrationVerificationStates.Verified,
+                            ["sha"] = record.IntegrationSha!,
+                            ["evidence"] = "operator-candidate",
+                            ["recordId"] = record.Id,
+                        },
+                    }))
+                    return new(false, write.Appended, false, "The record was persisted but its audit event failed; retry this post.");
+                return new(true, write.Appended, false, null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to append operator candidate record in {Folder}", folderPath);
+                return new(false, false, false, null);
+            }
+        }
+    }
+
     /// <summary>Removes evidence staged for an operator move that was refused.</summary>
     public bool RemoveIntegrationRecordOnFolder(string folderPath, string recordId)
+    {
+        lock (TaskJsonFile.FolderLock(folderPath))
+            return RemoveIntegrationRecordCore(folderPath, recordId);
+    }
+
+    private bool RemoveIntegrationRecordCore(string folderPath, string recordId)
     {
         // Operator candidate receipts are final evidence, never staged move
         // evidence. The rollback path must not erase them.
@@ -2941,6 +3017,8 @@ public enum PendingIntentAcknowledgeResult
 }
 
 public sealed record IntegrationRecordWriteResult(bool Succeeded, bool Appended);
+
+public sealed record OperatorCandidateRecordWriteResult(bool Succeeded, bool Appended, bool Conflict, string? Reason);
 
 public sealed record CommitSupersessionWriteResult(bool Succeeded, int MarkedCommits);
 
