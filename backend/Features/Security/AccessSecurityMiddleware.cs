@@ -262,6 +262,7 @@ public sealed class AccessSecurityMiddleware
                     await Reject(context, 403, "role-denied", "Viewer role is read-only.");
                     return;
                 }
+                if (await RejectedByRoleRequirement(context, apiToken.User.Role)) return;
                 if (!TokenWriteRouteAllowed(context.Request, path))
                 {
                     await Reject(context, 403, "project-scope-denied", "A project-scoped token cannot mutate installation-wide settings.");
@@ -333,6 +334,7 @@ public sealed class AccessSecurityMiddleware
         {
             if (human.User.Role != StudioRoles.Owner) { await Reject(context, 403, "owner-required", "Owner role is required."); return; }
         }
+        if (await RejectedByRoleRequirement(context, human.User.Role)) return;
 
         var safeMethod = HttpMethods.IsGet(context.Request.Method)
                          || HttpMethods.IsHead(context.Request.Method)
@@ -732,6 +734,18 @@ public sealed class AccessSecurityMiddleware
             if (scoped is not null) projects.Add(scoped.ProjectName);
         }
         return [.. projects];
+    }
+
+    /// <summary>Applies the route's declared <see cref="StudioRoleRequirement"/>, if any.</summary>
+    private static async Task<bool> RejectedByRoleRequirement(HttpContext context, string role)
+    {
+        var requirement = context.GetEndpoint()?.Metadata.GetMetadata<StudioRoleRequirement>();
+        if (requirement is null || requirement.IsSatisfiedBy(role)) return false;
+        if (requirement.MinimumRole == StudioRoles.Owner)
+            await Reject(context, 403, "owner-required", "Owner role is required.");
+        else
+            await Reject(context, 403, "role-denied", $"The {requirement.MinimumRole} role or higher is required.");
+        return true;
     }
 
     private static async Task Reject(
