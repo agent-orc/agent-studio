@@ -41,7 +41,11 @@ internal sealed class TelemetryDurability : ITelemetryDurability
             try
             {
                 using (var stream = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                    1, FileOptions.WriteThrough)) stream.Flush(flushToDisk: true);
+                    1, FileOptions.WriteThrough))
+                {
+                    stream.WriteByte(0);
+                    stream.Flush(flushToDisk: true);
+                }
                 if (!MoveFileEx(marker, renamed, MoveFileWriteThrough))
                     throw new IOException($"Cannot sync telemetry directory {directory}.",
                         new Win32Exception(Marshal.GetLastPInvokeError()));
