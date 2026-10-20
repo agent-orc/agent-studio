@@ -3,6 +3,7 @@ using System.Text.Json;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tokens;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Runner;
 
@@ -37,9 +38,11 @@ public sealed class DecisionGroundsCollector(
     RunTimeoutContinuationService timeoutContinuations,
     AttemptAuthorityService authority,
     MonolithOrchestrationStore orchestration,
-    OrchestratorDecisionStore decisions)
+    OrchestratorDecisionStore decisions,
+    ProjectRegistry projects,
+    DecisionRuleVersionStore rules)
 {
-    public const string Profile = "CodingCompletion";
+    public const string Profile = DecisionRuleTriggers.CodingCompletion;
 
     public DecisionShadowInputV1 FreezeCodingCompletion(CodingCompletionObservation observed,
         string mode = DecisionReceiptPolicy.ShadowMode)
@@ -182,18 +185,36 @@ public sealed class DecisionGroundsCollector(
                     ? "applied:" + applied : null,
                 receipt.EndedAt)).ToArray();
 
+        var project = projects.FindByIdOrDisplayName(task.ProjectName);
+        var workspaceId = project?.WorkspaceId;
+        var workspaceRuleVersion = workspaceId is null ? null : rules.ActiveVersionId(workspaceId);
+        var projectRuleVersion = workspaceId is null || project is null ? null
+            : rules.ActiveVersionId(workspaceId, project.Id);
+        IReadOnlyList<DecisionRuleV1> activeRules = workspaceId is null ? []
+            : rules.EffectiveRules(workspaceId, project?.Id);
+        var route = RuleRoute(Route(configuration), activeRules, rules.Models, Profile,
+            DecisionRuleTriggers.StepTransition);
+        var policyVersion = (workspaceRuleVersion ?? "platform.v1")
+            + (projectRuleVersion is null ? string.Empty : "+" + projectRuleVersion);
+        facts.AddRange(MonolithTransitionAdapter.DecisionRulePolicySignals(activeRules, Profile, facts, policyVersion, at));
+        facts.AddRange(MonolithTransitionAdapter.DecisionRulePolicySignals(activeRules, DecisionRuleTriggers.StepTransition,
+            facts, policyVersion, at));
+        var rulePin = workspaceRuleVersion is null && projectRuleVersion is null ? string.Empty
+            : "/rules:" + policyVersion;
         return new DecisionGroundsInputV1(
             observed.OccurrenceId,
-            new GroundsTriggerV1("step-transition", Profile, at),
+            new GroundsTriggerV1(DecisionRuleTriggers.StepTransition, Profile, at),
             new GroundsScopeV1("card", task.ProjectName, task.Id, observed.AttemptId, observed.Fence,
-                observed.Epoch, null),
+                observed.Epoch, null, workspaceId),
             "core",
             observed.TargetState,
-            $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}/{DecisionReceiptPolicy.PromptVersion}",
-            Route(configuration),
+            $"orchestration-decisions:{OrchestrationRolloutStore.LibraryVersion}/{DecisionReceiptPolicy.PromptVersion}{rulePin}",
+            route,
             facts,
-            MonolithTransitionAdapter.DecisionGroundsPolicyCodingCompletionAlternatives(observed.Deterministic, observed.HasSettledEnvelope,
-                ledger.Progress.LastVerifiedTreeSha, observed.ResultSha, observed.ResultRef),
+            MonolithTransitionAdapter.DecisionRulePolicyApply(activeRules, DecisionRuleTriggers.StepTransition, Profile, facts,
+                MonolithTransitionAdapter.DecisionGroundsPolicyCodingCompletionAlternatives(observed.Deterministic,
+                    observed.HasSettledEnvelope, ledger.Progress.LastVerifiedTreeSha,
+                    observed.ResultSha, observed.ResultRef), at),
             prior,
             ledger.Ledger,
             ledger.Progress,
@@ -213,6 +234,21 @@ public sealed class DecisionGroundsCollector(
     internal static bool IsCurrentOperatorIntent(DecisionOperatorIntentV1 intent, DateTime at,
         IReadOnlyList<OrchestratorDecisionReceiptV1> receipts)
         => intent.RecordedAt <= at && receipts.LastOrDefault()?.ReceiptId == intent.ReceiptId;
+
+    /// <summary>
+    /// The configured route with only its model replaced by the first active
+    /// rule model the configured CLI serves at the trusted floor, so the
+    /// thinking level and alternate transport retry stay configured.
+    /// </summary>
+    public static DecisionModelRouteV1 RuleRoute(DecisionModelRouteV1 route, IReadOnlyList<DecisionRuleV1> activeRules,
+        DecisionRuleModelCatalogue models, params string[] triggers)
+    {
+        var model = activeRules.Where(rule => triggers.Contains(rule.Trigger, StringComparer.Ordinal))
+            .Select(rule => rule.Model)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)
+                && MonolithTransitionAdapter.DecisionRulePolicyModelRefusal(value, models) is null);
+        return model is null ? route : route with { Model = model.Trim() };
+    }
 
     /// <summary>
     /// Configured deciding route. Runner-host custody is the default (AGT-W63);

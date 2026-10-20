@@ -205,4 +205,10 @@ public static class OrchestratorLogTopics
     /// for the separate load-distribution view.
     /// </summary>
     public const string LoadDistribution = "load-distribution";
+    /// <summary>IP-14: an environment health check crossed its failure threshold.</summary>
+    public const string EnvironmentIncidentOpened = "environment-incident-opened";
+    /// <summary>IP-14: an open environment incident recovered.</summary>
+    public const string EnvironmentIncidentRecovered = "environment-incident-recovered";
+    /// <summary>IP-14: an environment TLS certificate is within 14 or 3 days of expiry.</summary>
+    public const string EnvironmentCertificateExpiring = "environment-certificate-expiring";
 }

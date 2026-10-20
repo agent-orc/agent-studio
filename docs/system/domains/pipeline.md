@@ -243,6 +243,35 @@ fields remain accepted on input. The default scope is `documentation`.
 the latest plan decision, pending members, recent batches and member status.
 `POST .../close-now` and `POST .../members/{taskKey}/eject` request operator
 intervention. Mutations require `X-Client-Id`.
+
+### Batch gate queue stall API (AGT-3219)
+
+AGT-3219 adds two project-scoped routes for machine gate queue overruns. A
+queue overrun means the gate did not acquire a slot and did not test the card.
+The routes use the project's configured name in place of `{projectName}`.
+
+| Route | Result | Errors |
+|---|---|---|
+| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. | HTTP 404 for an unknown project. |
+| `POST /api/projects/{projectName}/batch-gate/queue-stalls/release` | HTTP 200 with `released` (task keys) and `refused` (objects with `taskKey` and `reason`). The request has no body. A partial release is still HTTP 200; inspect both arrays. | HTTP 400 when `X-Client-Id` is missing or blank; HTTP 404 for an unknown project. |
+
+The POST requires `X-Client-Id`, as do the other batch gate mutations. Each
+stall event has `episodeId`, `project`, `raisedAtUtc`, `queueDepth`,
+`oldestWaitMs`, `slotsBusy`, `slotsTotal`, `estimatedDrainMs`, `queueBudgetMs`,
+`idleConfiguredSlots`, `advisory`, `triggerTaskKey`, `raise`, and
+`episodeOpenedAtUtc`. Times are UTC; durations are milliseconds. An open
+episode survives a restart and a reminder increments `raise` without creating
+a new episode. `advisory` and `episodeOpenedAtUtc` can be null.
+
+Release considers cards escalated for a machine gate queue overrun of their
+current passed review. It moves each eligible card to Auto Review and admits
+that review to the durable batch queue, preserving its pending sequence and
+resetting its cumulative queue wait cap. A card with a pending follow-up, an
+ineligible batch subject, or an escalation that did not come from the per-card
+fallback is refused with a reason. If admission fails after the lane move, the
+card returns to Escalated and appears in `refused`. The route does not change
+gate host capacity or claim that an unrun gate passed.
+
 The hosted worker closes manifests at the configured size, age, pressure, or
 look-ahead decision, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
@@ -538,6 +567,104 @@ transport directory is eligible for cleanup. A completed response is written
 after gate and source-repository cleanup; otherwise the directory is retained
 with a cancellation marker for diagnosis. The remote machine lock continues
 to serialize gates, including a worker still completing bounded cleanup.
+
+## Sharded test suites in the gate (AGT-3232)
+
+The gate splits a declared `.NET` suite into class partitions and runs them in
+parallel. A `commands.test` step is sharded when its command equals the
+`command` of a `testSuites` entry in `.agent-studio/project.yml` and that entry
+opts in with a `shards` field. It must be a single `dotnet test <project>.csproj`
+with `--no-build` and without its own run settings, and must plan to two or
+more shards. Without `--no-build` every parallel shard would build the same
+output directory, so such a suite runs whole. Guard-first
+steps, work-package selections, suites without `shards` and other commands run
+as before.
+
+- **Opt-in.** Sharding is off unless the suite declares `shards`. On
+  agent-runner-01 a class-sharded slice of the backend suite (1,955 tests) ran
+  in 469 seconds in two or four parallel processes, against 236 seconds in one
+  process. xUnit already runs test classes in parallel inside one process, and
+  a class partition ends with its slowest class. Declare `shards` only after a
+  gate measurement on the gate hosts shows a gain. A gate worker older than
+  AGT-3232 rejects the field as `unknown-field`, so add it only after every
+  gate host runs the new worker.
+- **Count.** `shards: N` (1 to 16; 1 keeps the suite in one process) sets the
+  count. `shards: auto` derives it from the measured serial duration of the
+  last complete sharded run, or else `expectedDurationSeconds`, at 360 seconds
+  per shard. A derived count is at most 8 and never more than the number of
+  test classes.
+- **Assignment.** `GateShardPlanner` sorts classes by recorded duration, longest
+  first, and assigns each to the least loaded shard. A class without a timing
+  is estimated at the median. A suite without any recorded timing uses a
+  stable SHA-256 hash of the class name. Classes come from a source scan of the
+  test project and are namespace-qualified (`Ns.StoreTests`), as are the
+  recorded timings. The last shard runs the complement of all other shards, so a
+  class the scan misses still runs exactly once. A class whose filter term
+  (`Ns.Name.`, a substring match) also occurs in another class's name, such as
+  `Ns.Pipeline` next to `Ns.Pipeline.Gates.GateTests`, stays in the complement
+  shard so that no term names it. The plan digest is the same on
+  every host for the same subject and timing snapshot.
+- **Filters.** Each shard runs the suite command without its `--filter` and
+  with `--settings` pointing to a run-settings file. Its
+  `RunConfiguration/TestCaseFilter` is `(<suite filter>)&(<class partition>)`.
+  `Category!=MachineBound` and every other category filter therefore apply
+  exactly as in the unsharded run. The complement filter names hundreds of
+  classes, which is why it is not passed on the command line.
+- **Parallel lanes on one host.** The gate's own machine slot is one lane. It
+  takes additional slots that are free at that moment for more lanes, so
+  `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the
+  cores in use. Lanes are also capped at online cores divided by
+  `DOTNET_PROCESSOR_COUNT`. With one lane the shards run in sequence.
+- **Across hosts.** `ShardedRemoteGateTransport` wraps the conventional
+  transport (`ConventionalGateTransport`: the pull worker when one is healthy,
+  SSH otherwise) as the primary host and adds the hosts configured under
+  `RemoteGate:ShardHosts`, which are always reached over SSH. A run spans hosts
+  only when the subject's `.agent-studio/project.yml` at `ExpectedSha` declares
+  a shardable suite with `shards` other than 1 that plans to two or more
+  shards, and the primary host and an additional host each have a free slot.
+  A run uses at most as many hosts as that shard count. Otherwise the run goes
+  to the primary whole. A shard host whose last SSH call failed is skipped for
+  a 10-minute cooldown and then tried again. Host part *h* of *H* runs the
+  shards whose index modulo *H* is *h*. Part 0 also runs every unsharded
+  command; other parts run only builds and their own shards. Every host
+  receives the same timing snapshot (at most 1 MiB serialized, below the
+  worker's 2 MiB request limit; a larger snapshot is neither stored nor sent).
+  A part's verdict cache key includes its host part and the snapshot digest,
+  so a part cached under another plan is never merged with fresh siblings.
+  When one share fails, the dispatcher stops the other shares.
+- **One verdict.** `GateShardVerdictPolicy` merges shards and host shares. Every
+  shard must pass. A red test anywhere is a code failure. Without a red test,
+  any infrastructure failure, a host share whose verdict is not Ok, Warn,
+  NotApplicable or Skipped, or a shard that no host reports, gives an
+  infrastructure verdict. This holds even when every other shard passed.
+  A sharded step is red or green by its merged shard outcome, never by the
+  exit code of its aggregate record.
+- **No green without proof.** A shard whose test run aborted or whose test
+  host crashed (TRX `ResultSummary` outcome `Aborted`, `Error` or `Timeout`,
+  or the VSTest console abort lines) is an infrastructure failure, whatever
+  its exit code, with no quarantine and no re-run. So is a green shard without
+  a TRX report, and a shard whose TRX report holds a class outside its
+  partition (for the complement shard: a class another shard owns), reported
+  as `shard filter not applied`. After a
+  definitive red, shards that have not started are recorded as `not-run`.
+- **Flaky re-run per shard.** A red shard first applies the quarantine list. It
+  then spends the AGT-2853 targeted re-run of exactly its own failed tests on
+  the suite command. Both act only when the failures printed on the console
+  equal the TRX report's failed tests (`failures-unconfirmed` otherwise). The
+  shard evidence keeps both outcomes. A re-run is green only when it exits 0
+  and its TRX report shows exactly the targeted number of tests, all passed:
+  VSTest exits 0 when the `FullyQualifiedName` filter matches nothing
+  (`rerun-unconfirmed` otherwise). A green re-run marks the shard
+  `flaky-passed` and records the names as flaky.
+- **Evidence.** `BuildTestGateResult.TestShards` lists each sharded suite: plan
+  digest, count source, strategy, lanes, hosts, wall and serial time, test
+  counts, and per shard the host, lane, classes, duration, exit code, outcome,
+  failed tests and re-run. Integration gate logs carry it as
+  `--- test-shards.json ---`. Each shard process has phase `test-shard`. One
+  aggregate `verification` record per planned command keeps positional readers
+  unchanged. Per-class timings return to the dispatcher, which stores complete
+  runs in `agentstudio-gate-shard-timings` under its temp directory for the next
+  plan.
 
 ## Key Code
 
@@ -2436,14 +2563,128 @@ new fact even when its operator-facing summary is unchanged.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, and `deploy`. Existing `commands` and
-`testSuites` remain the execution source until the pipeline engine is extended.
-The P1 deployment definition uses exactly `[staging, production]`. Staging is
-automatic after integration; Production requires successful Staging and approval
-by Owner or Maintainer. The accepted steps are `publish-static`,
-`start-container`, `run`, `health`, and `approval`. `start-container` is a
-configuration placeholder until the run-host adapter is available. The editor
-contract is [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json).
+`environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
+`commands` and `testSuites` remain the execution source until the pipeline
+engine is extended.
+Each release hashes these sections at its commit into its process and
+variables versions; the release, lifecycle and deploy-run contract is described
+in
+[Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1).
+
+- `artifacts` name what the gate keeps: `static` (a site bundle `path`) or
+  `container` (a `dockerfile`, an optional build-context `path`, and an optional
+  registry `image` without tag or digest). Artifact paths are
+  repository-relative. Their segments contain only letters, digits, `.`, `_`, and
+  `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
+  the repository root as a build context.
+- `environments` are ordered and exactly Staging, then Production. Production
+  must be `protected`: every deploy, redeploy, or rollback into it needs an
+  Owner or Maintainer approval. Staging deploys automatically after
+  integration, so `protected: true` on Staging is refused as
+  `staging-protection-unsupported`. The shorthand `[staging, production]`
+  protects Production. When the file describes a deployment but omits
+  `environments` or `lifecycles`, the default is Staging, protected Production,
+  and the standard lifecycle.
+- `lifecycles.standard`: Staging is automatic after integration; Production
+  requires successful Staging and approval by Owner or Maintainer.
+- `deploy` steps in P1 (AGT-3221) are configuration only. Nothing executes
+  them yet; the SSH executor follows in a later card. `static-site` describes
+  copying a static artifact to a `directory` on an SSH `target`. `container`
+  describes pulling and restarting the compose `service` of a `composeFile` on
+  an SSH `target`. Both need `healthUrl` (http or https, no credentials) and
+  `healthTimeoutSeconds` (1 to 900), and may narrow `environments`. Because
+  the executor will pass `directory` and `composeFile` through the remote shell
+  and use the directory as an `rsync --delete` target, both must lie strictly
+  below `/srv/`. They follow the artifact path segment rule: only letters,
+  digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
+  starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
+  `service` are lower-case identifiers; credentials never appear in the file.
+  When the pipeline-definition API reads, validates, or migrates a file, it
+  checks each `target` against the hosts that the project's AGT-3176
+  declarations under `docs/deployments/environments/` register for every
+  environment the step deploys to. The deploy queue addresses jobs to those
+  hosts. A target missing from them is reported as
+  `deploy-target-unregistered`. Preparation reads only the checkout and checks
+  just the target's shape. The AGT-3198 steps `publish-static`,
+  `start-container` (configuration placeholder), `run`, `health`, and
+  `approval` stay valid.
+- `variables` hold either a plain `value` or a `secret` name for the secret
+  provider, optionally scoped to `environments`. A plain value is refused as
+  `secret-value-inline` in two cases. The first is a sensitive name: its last
+  segment (split at `_` and camelCase) is in a curated list (`PASSWORD`,
+  `PASSWD`, `PASS`, `PWD`, `PASSPHRASE`, `SECRET`, `TOKEN`, `KEY`, `APIKEY`,
+  `CREDENTIAL(S)`), it ends in a long secret word (`DBPASSWORD`, `AUTHTOKEN`),
+  or it ends in `CONNECTION_STRING` or `KEY_BASE`. `PUBLIC_KEY`,
+  `PUBLISHABLE_KEY`, `CACHE_KEY`, `SORT_KEY`, and `PARTITION_KEY` are plain, and
+  so is a name like `TOKEN_TTL` whose last segment is harmless. The second is a
+  value shaped like a credential: a URL with a password or a credential query
+  parameter (`?token=`, `api_key=`, `password=`), a connection-string
+  `Password=`, a PEM private key, a `Bearer` or `Basic` authorization value, a
+  JWT, or a common provider key prefix.
+
+Unknown keys are refused per section and per step kind. Every issue carries its
+definition path and, when the path resolves, the 1-based `line` in project.yml.
+The editor contract is
+[`project-execution.schema.json`](../../app/schemas/project-execution.schema.json);
+`ProjectDefinitionSchemaTwoTests` keeps its step kinds, step keys, artifact types,
+variable keys, and its remote path, compose suffix, artifact path, identifier,
+and secret name patterns equal to `ProjectDeploymentVocabulary`.
+
+`/api/projects/{projectName}/pipeline-definition` serves the parsed diagram
+(gate, artifacts, environments with their steps and variables) with the issues.
+`POST .../validate` validates edited text without writing. For a valid schema 1
+file, `GET .../migration` returns a schema 2 proposal as a dry run: the schema 1
+text stays as it is apart from the `schemaVersion` line, the new sections are
+appended with the file's own line ending, Staging and Production deploy steps
+come from the AGT-3176 declarations under `docs/deployments/environments/`, and
+every default the proposal had to choose is listed as a note.
+`POST .../migration` writes only through `ManagedRepositoryMutationService` as
+one path-scoped commit. The current file digest and the regenerated proposal
+digest must both still equal the dry run. That comparison is the mutation's
+precondition and runs inside the same repository gate as the write. The route
+is classified as the `PostStep` execution path, so the public-demo profile
+refuses it by route identity. The project
+Settings page shows the diagram, the validation result with line and path, and
+the migration preview with its confirm button in the Pipeline section below
+Execution.
+
+A static site over SSH and a compose service, each with a health check:
+
+```yaml
+artifacts:
+  - name: site
+    type: static
+    path: dist
+  - name: api
+    type: container
+    dockerfile: Dockerfile
+environments:
+  - name: staging
+  - name: production
+    protected: true
+deploy:
+  - step: static-site
+    artifact: site
+    target: web-vm
+    directory: /srv/www/_staging/studio
+    healthUrl: https://agent-orchestrator.dev/_staging/studio/
+    healthTimeoutSeconds: 60
+    environments: [staging]
+  - step: container
+    artifact: api
+    target: run-host
+    composeFile: /srv/apps/api/compose.yml
+    service: api
+    healthUrl: https://api.agent-orchestrator.dev/healthz
+    healthTimeoutSeconds: 120
+    environments: [production]
+variables:
+  - name: LOG_LEVEL
+    value: info
+  - name: DATABASE_URL
+    secret: DATABASE_URL
+    environments: [production]
+```
 
 A static deploy example uses a branch pulled by the web target:
 

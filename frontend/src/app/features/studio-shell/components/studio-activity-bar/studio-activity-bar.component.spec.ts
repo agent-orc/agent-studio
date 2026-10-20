@@ -102,10 +102,8 @@ describe('StudioActivityBarComponent settings destination', () => {
    * that two items can never light up together — assert it on the DOM.
    */
   it('marks at most one button active for any active key', () => {
-    for (const key of ['explorer', 'filters', 'chats', 'epics', 'settings', null]) {
+    for (const key of ['explorer', 'filters', 'chats', 'workbenches', 'settings', null]) {
       const fixture = mount(key);
-      fixture.componentRef.setInput('hasEpics', true);
-      fixture.detectChanges();
       const host = fixture.nativeElement as HTMLElement;
       const active = host.querySelectorAll('.studio-ab__btn--active');
       expect(active.length, `activeKey=${key}`).toBeLessThanOrEqual(1);
@@ -122,12 +120,12 @@ describe('StudioActivityBarComponent settings destination', () => {
  */
 describe('resolveActiveActivityKey', () => {
   it('lets the editor destination win over an open sidebar panel', () => {
-    // Explorer sidebar open and an Epics tab active. Only Epics wins.
+    // Explorer sidebar open and a Dossiers tab active. Only Dossiers wins.
     expect(resolveActiveActivityKey({
-      activeTabKind: 'epics',
+      activeTabKind: 'workbenches',
       activePanel: 'explorer',
       sidebarVisible: true,
-    })).toBe('epics');
+    })).toBe('workbenches');
   });
 
   it('maps the workspace-settings tab to the settings item', () => {
@@ -144,14 +142,6 @@ describe('resolveActiveActivityKey', () => {
       activePanel: 'explorer',
       sidebarVisible: true,
     })).toBe('activity');
-  });
-
-  it('maps the epics tab to the epics item', () => {
-    expect(resolveActiveActivityKey({
-      activeTabKind: 'epics',
-      activePanel: 'explorer',
-      sidebarVisible: true,
-    })).toBe('epics');
   });
 
   it('marks the Chats rail button while the sidebar Chats panel is open', () => {
@@ -180,9 +170,9 @@ describe('resolveActiveActivityKey', () => {
 
   it('keeps the destination marker even when the sidebar is hidden', () => {
     expect(resolveActiveActivityKey({
-      activeTabKind: 'epics',
+      activeTabKind: 'workbenches',
       activePanel: 'explorer',
       sidebarVisible: false,
-    })).toBe('epics');
+    })).toBe('workbenches');
   });
 });
