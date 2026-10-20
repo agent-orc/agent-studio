@@ -349,21 +349,108 @@ public sealed class TelemetryOtlpDecodingTests
         Assert.True(factory.Work < 10_000, $"decoding took {factory.Work} work units before it stopped");
     }
 
+    [Fact]
+    public void A_shared_resource_set_counts_for_every_log_record_toward_the_stored_byte_budget()
+    {
+        // One resource with 15 attributes of 1,024 '<', one scope, 20,000 empty log records: about 57 KB of body.
+        // Every record shares the resource set, but the writer stores its JSON in every row.
+        var body = SharedSetLogFlood(records: 20_000);
+        Assert.True(body.Length < 64 * 1024, $"the flood is {body.Length} bytes");
+        var factory = Factory();
+
+        var error = Assert.Throws<OtlpLimitException>(() => OtlpProtobufDecoder.DecodeLogs(body, factory));
+
+        Assert.Contains($"would store more than {Limits.MaxStoredBytes} bytes", error.Message);
+        // '<' is stored as itself, not as a six-byte \u003C escape, so a record stores about 15 KiB of attributes.
+        var accepted = OtlpProtobufDecoder.DecodeLogs(SharedSetLogFlood(records: 100), Factory());
+        var json = accepted.Items[0].Attributes.Json;
+        Assert.Contains(new string('<', 1024), json);
+        Assert.InRange(json.Length, 15 * 1024, 16 * 1024);
+        Assert.Equal(accepted.Items.Sum(log => log.StoredBytes(log.Attributes.JsonBytes)), accepted.StoredBytes);
+        Assert.True(accepted.StoredBytes > 100L * 15 * 1024);
+    }
+
+    [Fact]
+    public void Points_with_one_own_attribute_each_count_their_merged_set_toward_the_stored_byte_budget()
+    {
+        // 15 resource attributes of 1,000 '<' plus k=v on every point: each point renders its own 15 KB set.
+        var body = PointFlood(points: 20_000, resourceAttributes: 15, fill: '<');
+        var factory = Factory();
+
+        var error = Assert.Throws<OtlpLimitException>(() => OtlpProtobufDecoder.DecodeMetrics(body, factory));
+
+        Assert.Contains("would store more than", error.Message);
+        var accepted = OtlpProtobufDecoder.DecodeMetrics(PointFlood(points: 1_000, resourceAttributes: 15, fill: '<'), Factory());
+        Assert.Equal(1_000, accepted.Items.Count);
+        Assert.InRange(accepted.StoredBytes, 1_000L * 15 * 1000, Limits.MaxStoredBytes);
+    }
+
+    [Theory]
+    [InlineData("{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"body\":{\"stringValue\":\"\\uD800\"}}]}]}]}")]
+    [InlineData("{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"severityText\":\"\\uDC00x\"}]}]}]}")]
+    [InlineData("{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"\\uD800\"}]}}]}")]
+    [InlineData("{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"body\":{\"doubleValue\":1e400}}]}]}]}")]
+    public void Json_lone_surrogates_and_out_of_range_numbers_are_format_errors(string body)
+        => Assert.Throws<OtlpFormatException>(() => OtlpJsonDecoder.DecodeLogs(Encoding.UTF8.GetBytes(body), Factory()));
+
+    [Fact]
+    public void Json_metric_value_out_of_the_double_range_is_a_format_error()
+    {
+        const string body = "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{\"name\":\"m\",\"gauge\":{\"dataPoints\":[{\"asDouble\":1e400}]}}]}]}]}";
+
+        var error = Assert.Throws<OtlpFormatException>(() => OtlpJsonDecoder.DecodeMetrics(Encoding.UTF8.GetBytes(body), Factory()));
+
+        Assert.Contains("asDouble", error.Message);
+    }
+
+    [Fact]
+    public void A_repeated_protobuf_value_field_is_decoded_once_and_the_last_one_wins()
+    {
+        // An AnyValue with 10,000 array values (field 5) and then one string: only the string is decoded.
+        var array = Field(5, Field(1, Text(1, new string('a', 100))));
+        var value = new MemoryStream();
+        for (var index = 0; index < 10_000; index++) value.Write(array);
+        value.Write(Text(1, "last"));
+        var record = Field(2, [.. Field(6, [.. Text(1, "k"), .. Field(2, value.ToArray())])]);
+        var body = Field(1, Field(2, record));
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var log = Assert.Single(OtlpProtobufDecoder.DecodeLogs(body, Factory()).Items);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal("last", log.Attributes.Values["k"]);
+        Assert.True(allocated < 1024 * 1024, $"decoding allocated {allocated} bytes");
+    }
+
     /// <summary>
     /// ExportMetricsServiceRequest with one resource of <paramref name="resourceAttributes"/> wide
     /// attributes and one gauge of <paramref name="points"/> points, each with the attribute k=v.
     /// </summary>
-    internal static byte[] PointFlood(int points, int resourceAttributes)
+    internal static byte[] PointFlood(int points, int resourceAttributes, char fill = 'x')
     {
         var resource = new MemoryStream();
         for (var index = 0; index < resourceAttributes; index++)
-            resource.Write(Field(1, KeyValue("resource." + index, new string('x', 1000))));
+            resource.Write(Field(1, KeyValue("resource." + index, new string(fill, 1000))));
         byte[] point = Field(1, [.. Field(7, KeyValue("k", "v")), 0x21, .. BitConverter.GetBytes(1.5d)]);
         var gauge = new MemoryStream();
         for (var index = 0; index < points; index++) gauge.Write(point);
         byte[] metric = [.. Text(1, "flood"), .. Field(5, gauge.ToArray())];
         byte[] resourceMetrics = [.. Field(1, resource.ToArray()), .. Field(2, Field(2, metric))];
         return Field(1, resourceMetrics);
+    }
+
+    /// <summary>
+    /// ExportLogsServiceRequest with one resource of 15 attributes of 1,024 '<', one scope, and
+    /// <paramref name="records"/> empty log records that all share the resource set.
+    /// </summary>
+    internal static byte[] SharedSetLogFlood(int records)
+    {
+        var resource = new MemoryStream();
+        for (var index = 0; index < 15; index++) resource.Write(Field(1, KeyValue("r" + index, new string('<', 1024))));
+        var scope = new MemoryStream();
+        byte[] record = Field(2, []);
+        for (var index = 0; index < records; index++) scope.Write(record);
+        return Field(1, [.. Field(1, resource.ToArray()), .. Field(2, scope.ToArray())]);
     }
 
     /// <summary>One gauge whose points each carry a 1000-character attribute of their own.</summary>

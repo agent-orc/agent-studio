@@ -4,11 +4,12 @@ namespace AgentStudio.Telemetry;
 
 /// <summary>
 /// The only writer of the telemetry store. It drains the intake queue in
-/// batches of up to <see cref="MaxRecordsPerFlush"/> records or
-/// <see cref="MaxBytesPerFlush"/> estimated bytes, groups them per environment
+/// batches of up to <see cref="MaxRecordsPerFlush"/> records,
+/// <see cref="MaxBytesPerFlush"/> estimated bytes, or
+/// <see cref="TelemetryOptions.MaxStoredBytesPerRequest"/> stored bytes, groups them per environment
 /// into one transaction each, masks log bodies and the attribute values of logs
 /// and metrics, calls the export hooks, and runs the retention sweep and the
-/// global minute-bucket cap every <see cref="TelemetryOptions.RetentionSweepMinutes"/>.
+/// global minute- and hour-bucket caps every <see cref="TelemetryOptions.RetentionSweepMinutes"/>.
 /// Studio requests never wait for this loop.
 /// </summary>
 public sealed class TelemetryWriter : BackgroundService
@@ -69,12 +70,14 @@ public sealed class TelemetryWriter : BackgroundService
     {
         var batches = new List<TelemetryIngestBatch>();
         var records = 0;
-        long bytes = 0;
-        while (records < MaxRecordsPerFlush && bytes < MaxBytesPerFlush && _queue.TryDequeue(out var batch))
+        long bytes = 0, stored = 0;
+        while (records < MaxRecordsPerFlush && bytes < MaxBytesPerFlush && stored < _options.MaxStoredBytesPerRequest
+               && _queue.TryDequeue(out var batch))
         {
             batches.Add(batch);
             records += batch.RecordCount;
             bytes += batch.EstimatedBytes;
+            stored += batch.StoredBytes;
         }
         if (batches.Count == 0) return 0;
         try
@@ -104,12 +107,12 @@ public sealed class TelemetryWriter : BackgroundService
         }
         finally
         {
-            _queue.Release(records, bytes);
+            foreach (var batch in batches) _queue.Release(batch);
         }
         return records;
     }
 
-    /// <summary>Applies retention to every environment database, then the global minute-bucket cap.</summary>
+    /// <summary>Applies retention to every environment database, then the global minute- and hour-bucket caps.</summary>
     public void SweepRetention()
     {
         var now = _clock.GetUtcNow();
@@ -137,10 +140,14 @@ public sealed class TelemetryWriter : BackgroundService
                 _logger.LogWarning(
                     "Telemetry minute buckets exceeded {Limit} bytes; removed {Buckets} buckets older than {Cutoff:o} (hour buckets kept)",
                     _options.MaxMinuteBucketBytes, trimmed.Buckets, trimmed.Cutoff);
+            trimmed = _store.EnforceHourBucketCap(environments);
+            if (trimmed.Buckets > 0)
+                _logger.LogWarning("Telemetry hour buckets exceeded {Limit} bytes; removed {Buckets} buckets older than {Cutoff:o}",
+                    _options.MaxHourBucketBytes, trimmed.Buckets, trimmed.Cutoff);
         }
         catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
         {
-            _logger.LogError(ex, "Telemetry minute-bucket cap failed");
+            _logger.LogError(ex, "Telemetry bucket cap failed");
         }
     }
 

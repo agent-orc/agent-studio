@@ -8,8 +8,8 @@ public sealed record TelemetryWriteResult(int StoredPoints, int RejectedSeriesPo
 
 public sealed record TelemetryRetentionResult(int MinuteBuckets, int HourBuckets, int Series, int Logs);
 
-/// <summary>Minute buckets removed by the global cap, all older than <paramref name="Cutoff"/>.</summary>
-public sealed record TelemetryMinuteCapResult(long Buckets, DateTimeOffset? Cutoff);
+/// <summary>Minute or hour buckets removed by a global cap, all older than <paramref name="Cutoff"/>.</summary>
+public sealed record TelemetryBucketCapResult(long Buckets, DateTimeOffset? Cutoff);
 
 /// <summary>
 /// Built-in single-host store: one SQLite database (WAL) per project
@@ -22,7 +22,9 @@ public sealed record TelemetryMinuteCapResult(long Buckets, DateTimeOffset? Cuto
 /// or <see cref="TelemetryOptions.MaxSeriesBytesPerEnvironment"/> estimated bytes
 /// of the series cache (<see cref="SeriesBytes"/>). Minute buckets of all environments together are capped at
 /// <see cref="TelemetryOptions.MaxMinuteBucketBytes"/> by
-/// <see cref="EnforceMinuteBucketCap"/>, which removes the oldest hours first.
+/// <see cref="EnforceMinuteBucketCap"/>, which removes the oldest hours first, and hour buckets at
+/// <see cref="TelemetryOptions.MaxHourBucketBytes"/> by <see cref="EnforceHourBucketCap"/>, which
+/// removes the oldest days first.
 /// <para>Writes and retention run on the single <see cref="TelemetryWriter"/>
 /// loop and are serialized by a lock; queries open their own read connection.</para>
 /// </summary>
@@ -30,8 +32,8 @@ public sealed partial class TelemetryStore
 {
     private static readonly Regex EnvironmentId = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private const string LogBytesKey = "log_bytes";
-    /// <summary>Estimated disk bytes of one minute bucket: the row plus its entry in the bucket index.</summary>
-    internal const long MinuteBucketRowBytes = 96;
+    /// <summary>Estimated disk bytes of one minute or hour bucket: the row plus its entry in the bucket index.</summary>
+    internal const long BucketRowBytes = 96;
     /// <summary>One series cache entry without its strings: dictionary slot, key tuple, entry object, cumulative state, and two string headers.</summary>
     private const long SeriesEntryBytes = 192;
     private readonly TelemetryOptions _options;
@@ -124,48 +126,62 @@ public sealed partial class TelemetryStore
     /// <summary>
     /// Keeps the minute buckets of all environments together under
     /// <see cref="TelemetryOptions.MaxMinuteBucketBytes"/> (estimated at
-    /// <see cref="MinuteBucketRowBytes"/> per bucket). When the total is above
+    /// <see cref="BucketRowBytes"/> per bucket). When the total is above
     /// the cap, whole hours are removed oldest first, across every environment,
     /// until the total is at 90 percent of the cap. Hour buckets stay, so older
     /// ranges keep their hourly resolution.
     /// </summary>
-    public TelemetryMinuteCapResult EnforceMinuteBucketCap(IReadOnlyList<TelemetryEnvironmentKey> environments)
+    public TelemetryBucketCapResult EnforceMinuteBucketCap(IReadOnlyList<TelemetryEnvironmentKey> environments)
+        => TrimOldestBuckets(environments, "metric_minute", _options.MaxMinuteBucketBytes, 3600);
+
+    /// <summary>
+    /// Keeps the hour buckets of all environments together under
+    /// <see cref="TelemetryOptions.MaxHourBucketBytes"/>. Points 15 to 90 days
+    /// old write only hour buckets, which the minute cap does not see. Above the
+    /// cap, whole days are removed oldest first, across every environment, until
+    /// the total is at 90 percent of the cap.
+    /// </summary>
+    public TelemetryBucketCapResult EnforceHourBucketCap(IReadOnlyList<TelemetryEnvironmentKey> environments)
+        => TrimOldestBuckets(environments, "metric_hour", _options.MaxHourBucketBytes, 86400);
+
+    private TelemetryBucketCapResult TrimOldestBuckets(IReadOnlyList<TelemetryEnvironmentKey> environments, string table,
+        long maxBytes, long periodSeconds)
     {
-        var maxRows = _options.MaxMinuteBucketBytes / MinuteBucketRowBytes;
+        var maxRows = maxBytes / BucketRowBytes;
         lock (_writeGate)
         {
-            var perHour = new SortedDictionary<long, long>();
+            var perPeriod = new SortedDictionary<long, long>();
             long total = 0;
             foreach (var environment in environments)
             {
                 using var connection = Open(DatabasePath(environment), create: false);
                 if (connection is null) continue;
-                using var command = Command(connection, null, "SELECT bucket / 3600 * 3600, COUNT(*) FROM metric_minute GROUP BY 1");
+                using var command = Command(connection, null, $"SELECT bucket / {periodSeconds} * {periodSeconds}, COUNT(*) FROM {table} GROUP BY 1");
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
-                    var (hour, count) = (reader.GetInt64(0), reader.GetInt64(1));
-                    perHour[hour] = perHour.GetValueOrDefault(hour) + count;
+                    var (period, count) = (reader.GetInt64(0), reader.GetInt64(1));
+                    perPeriod[period] = perPeriod.GetValueOrDefault(period) + count;
                     total += count;
                 }
             }
-            if (total <= maxRows) return new TelemetryMinuteCapResult(0, null);
+            if (total <= maxRows) return new TelemetryBucketCapResult(0, null);
             var target = maxRows / 10 * 9;
             long cutoff = 0, removed = 0;
-            foreach (var (hour, count) in perHour)
+            foreach (var (period, count) in perPeriod)
             {
                 if (total - removed <= target) break;
                 removed += count;
-                cutoff = hour + 3600;
+                cutoff = period + periodSeconds;
             }
             foreach (var environment in environments)
             {
                 using var connection = Open(DatabasePath(environment), create: false);
                 if (connection is null) continue;
-                Execute(connection, null, "DELETE FROM metric_minute WHERE bucket < $cutoff", ("$cutoff", cutoff));
+                Execute(connection, null, $"DELETE FROM {table} WHERE bucket < $cutoff", ("$cutoff", cutoff));
                 Execute(connection, null, "PRAGMA incremental_vacuum");
             }
-            return new TelemetryMinuteCapResult(removed, DateTimeOffset.FromUnixTimeSeconds(cutoff));
+            return new TelemetryBucketCapResult(removed, DateTimeOffset.FromUnixTimeSeconds(cutoff));
         }
     }
 
@@ -279,11 +295,9 @@ public sealed partial class TelemetryStore
         return count;
     }
 
-    /// <summary>Stored payload size of one record: text columns in UTF-8 plus a fixed row overhead.</summary>
+    /// <summary>Stored payload size of one record, the size the intake charged (<see cref="TelemetryLogRecord.StoredBytes"/>).</summary>
     internal static long LogBytes(TelemetryLogRecord log, string attributesJson)
-        => 48 + Encoding.UTF8.GetByteCount(log.Body) + Encoding.UTF8.GetByteCount(attributesJson)
-           + log.SeverityText.Length + (log.TraceId?.Length ?? 0) + (log.SpanId?.Length ?? 0)
-           + Encoding.UTF8.GetByteCount(log.EventName ?? "");
+        => log.StoredBytes(Encoding.UTF8.GetByteCount(attributesJson));
 
     private SeriesCache SeriesFor(string path, SqliteConnection connection, SqliteTransaction transaction)
     {
@@ -426,8 +440,8 @@ public sealed partial class TelemetryStore
     /// <summary>
     /// Budget cost of one series as the writer's cache holds it: name and
     /// attribute JSON as UTF-16 strings plus the entry overhead. The series
-    /// table stores the same text in UTF-8, which is never larger for the
-    /// ASCII-escaped JSON and at most 1.5 times larger for other names.
+    /// table stores the same text in UTF-8, which is never larger for ASCII
+    /// and at most 1.5 times larger for other text.
     /// </summary>
     internal static long SeriesBytes(string name, string attributesJson)
         => SeriesEntryBytes + 2L * (name.Length + attributesJson.Length);

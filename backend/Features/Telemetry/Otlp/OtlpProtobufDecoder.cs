@@ -176,7 +176,7 @@ internal static class OtlpProtobufDecoder
                 case 11 when type == ProtoWireType.Fixed64: log.ObservedTimeUnixNano = Nanos(reader.ReadFixed64()); break;
                 case 2 when type == ProtoWireType.Varint: log.SeverityNumber = (int)Math.Min(reader.ReadVarint(), 1000); break;
                 case 3 when type == ProtoWireType.LengthDelimited: log.SeverityText = reader.ReadString(); break;
-                case 5 when type == ProtoWireType.LengthDelimited: log.Body = AnyValueText(reader.ReadBytes(), factory.Limits.MaxBodyChars); break;
+                case 5 when type == ProtoWireType.LengthDelimited: log.Body = AnyValueText(reader.ReadBytes(), factory.Limits.MaxBodyChars, factory); break;
                 case 6 when type == ProtoWireType.LengthDelimited: AddAttribute(log.Attributes, reader.ReadBytes(), factory); break;
                 case 9 when type == ProtoWireType.LengthDelimited: log.TraceId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 16); break;
                 case 10 when type == ProtoWireType.LengthDelimited: log.SpanId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 8); break;
@@ -241,32 +241,57 @@ internal static class OtlpProtobufDecoder
         while (reader.TryReadTag(out var field, out var type))
         {
             if (field == 1 && type == ProtoWireType.LengthDelimited) key = reader.ReadString();
-            else if (field == 2 && type == ProtoWireType.LengthDelimited) value = AnyValueText(reader.ReadBytes(), limits.MaxAttributeValueChars);
+            else if (field == 2 && type == ProtoWireType.LengthDelimited) value = AnyValueText(reader.ReadBytes(), limits.MaxAttributeValueChars, factory);
             else reader.Skip(type);
         }
         attributes.Add(KeyValuePair.Create(key, OtlpAttributeBuilder.Truncate(value, limits.MaxAttributeValueChars)));
     }
 
-    /// <summary>Scalar AnyValue as text; arrays and key-value lists as compact JSON, cut once longer than <paramref name="maxChars"/>.</summary>
-    private static string AnyValueText(ReadOnlySpan<byte> data, int maxChars)
+    /// <summary>
+    /// Scalar AnyValue as text; arrays and key-value lists as compact JSON, cut once longer than <paramref name="maxChars"/>.
+    /// The value is a oneof, so the last value field wins; earlier ones are skipped without being decoded.
+    /// </summary>
+    private static string AnyValueText(ReadOnlySpan<byte> data, int maxChars, OtlpRecordFactory factory)
     {
-        var text = "";
+        factory.Charge();
+        var last = 0;
+        ulong scalar = 0;
+        ReadOnlySpan<byte> bytes = default;
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
             switch (field)
             {
-                case 1 when type == ProtoWireType.LengthDelimited: text = reader.ReadString(); break;
-                case 2 when type == ProtoWireType.Varint: text = reader.ReadVarint() != 0 ? "true" : "false"; break;
-                case 3 when type == ProtoWireType.Varint: text = OtlpAttributeBuilder.Number(unchecked((long)reader.ReadVarint())); break;
-                case 4 when type == ProtoWireType.Fixed64: text = OtlpAttributeBuilder.Number(reader.ReadDouble()); break;
-                case 5 or 6 when type == ProtoWireType.LengthDelimited: text = ComplexJson(reader.ReadBytes(), field == 6, maxChars); break;
-                case 7 when type == ProtoWireType.LengthDelimited: text = Convert.ToBase64String(reader.ReadBytes()); break;
+                case 1 or 5 or 6 or 7 when type == ProtoWireType.LengthDelimited:
+                    last = field;
+                    bytes = reader.ReadBytes();
+                    break;
+                case 2 or 3 when type == ProtoWireType.Varint: (last, scalar) = (field, reader.ReadVarint()); break;
+                case 4 when type == ProtoWireType.Fixed64: (last, scalar) = (field, reader.ReadFixed64()); break;
                 default: reader.Skip(type); break;
             }
         }
-        return text;
+        return last switch
+        {
+            1 => Utf8Prefix(bytes, maxChars),
+            2 => scalar != 0 ? "true" : "false",
+            3 => OtlpAttributeBuilder.Number(unchecked((long)scalar)),
+            4 => OtlpAttributeBuilder.Number(BitConverter.UInt64BitsToDouble(scalar)),
+            5 or 6 => ComplexJson(bytes, last == 6, maxChars),
+            // Whole three-byte groups that still encode to more than maxChars characters, so truncation gives the same text.
+            7 => Convert.ToBase64String(bytes[..(int)Math.Min(bytes.Length, (maxChars + 1L) / 4 * 3 + 3)]),
+            _ => ""
+        };
     }
+
+    /// <summary>
+    /// The string, decoded only as far as the value limit can keep: past
+    /// <see cref="OtlpAttributeBuilder.JsonByteBudget"/> UTF-8 bytes the text
+    /// certainly has more than <paramref name="maxChars"/> characters, so the
+    /// later truncation gives the same result.
+    /// </summary>
+    private static string Utf8Prefix(ReadOnlySpan<byte> bytes, int maxChars)
+        => System.Text.Encoding.UTF8.GetString(bytes[..(int)Math.Min(bytes.Length, OtlpAttributeBuilder.JsonByteBudget(maxChars))]);
 
     private static string ComplexJson(ReadOnlySpan<byte> data, bool keyValueList, int maxChars)
     {

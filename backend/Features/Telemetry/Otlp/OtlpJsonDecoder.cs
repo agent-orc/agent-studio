@@ -12,7 +12,8 @@ namespace AgentStudio.Telemetry;
 /// are accepted too. 64-bit integers may be strings or numbers, enums may be
 /// integers or names, and trace and span ids are hex strings. Attribute lists
 /// stop at <see cref="OtlpLimits.MaxAttributes"/> entries; later entries are
-/// skipped without reading them.
+/// skipped without reading them. A string with an escaped lone surrogate or a
+/// number outside the double range is a format error (400), not a server error.
 /// </summary>
 internal static class OtlpJsonDecoder
 {
@@ -21,6 +22,29 @@ internal static class OtlpJsonDecoder
     private static readonly ConcurrentDictionary<string, string> SnakeNames = new(StringComparer.Ordinal);
 
     public static OtlpDecodeResult<MetricSample> DecodeMetrics(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
+        => Guarded(() => DecodeMetricsDocument(body, factory));
+
+    public static OtlpDecodeResult<TelemetryLogRecord> DecodeLogs(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
+        => Guarded(() => DecodeLogsDocument(body, factory));
+
+    /// <summary>
+    /// <see cref="JsonElement.GetString"/> throws <see cref="InvalidOperationException"/> on an
+    /// escaped lone surrogate such as <c>"\uD800"</c>; both it and a number that does not fit
+    /// are faults of the request body.
+    /// </summary>
+    private static T Guarded<T>(Func<T> decode)
+    {
+        try
+        {
+            return decode();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            throw new OtlpFormatException("OTLP JSON body has an invalid string or number: " + ex.Message);
+        }
+    }
+
+    private static OtlpDecodeResult<MetricSample> DecodeMetricsDocument(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
     {
         using var document = Parse(body);
         foreach (var resourceMetrics in Array(document.RootElement, "resourceMetrics"))
@@ -35,7 +59,7 @@ internal static class OtlpJsonDecoder
         return factory.Metrics();
     }
 
-    public static OtlpDecodeResult<TelemetryLogRecord> DecodeLogs(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
+    private static OtlpDecodeResult<TelemetryLogRecord> DecodeLogsDocument(ReadOnlyMemory<byte> body, OtlpRecordFactory factory)
     {
         using var document = Parse(body);
         foreach (var resourceLogs in Array(document.RootElement, "resourceLogs"))
@@ -274,7 +298,9 @@ internal static class OtlpJsonDecoder
     private static double? Double(JsonElement element, string name)
     {
         if (!TryProperty(element, name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
-        if (value.ValueKind == JsonValueKind.Number) return value.GetDouble();
+        // A JSON number literal is never NaN or infinite; one that does not fit a double is malformed.
+        if (value.ValueKind == JsonValueKind.Number)
+            return value.TryGetDouble(out var number) && double.IsFinite(number) ? number : throw Malformed(name);
         if (value.ValueKind == JsonValueKind.String)
         {
             var text = value.GetString();

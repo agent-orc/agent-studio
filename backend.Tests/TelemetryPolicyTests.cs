@@ -1,4 +1,5 @@
 using AgentStudio.Telemetry;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -159,7 +160,7 @@ public sealed class TelemetryPolicyTests
     [Fact]
     public void Intake_queue_bounds_estimated_bytes_as_well_as_records()
     {
-        var queue = new TelemetryIntakeQueue(new TelemetryOptions { MaxQueuedRecords = 100, MaxQueuedBytes = 1000 });
+        var queue = new TelemetryIntakeQueue(new TelemetryOptions { MaxQueuedRecords = 100, MaxQueuedBytes = 1000, MaxQueueSharePercentPerEnvironment = 100 });
         TelemetryIngestBatch Batch(long bytes)
             => new(new TelemetryEnvironmentKey("shop", "stage"), [], [new(0, 9, "INFO", "x", TelemetryAttributes.Empty, null, null, null)], bytes);
 
@@ -169,8 +170,65 @@ public sealed class TelemetryPolicyTests
         Assert.Equal((1L, 600L, 1L), (queue.PendingRecords, queue.PendingBytes, queue.RefusedBatches));
 
         Assert.True(queue.TryDequeue(out var handled));
-        queue.Release(handled.RecordCount, handled.EstimatedBytes);
+        queue.Release(handled);
         Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(600)));
+    }
+
+    [Fact]
+    public void One_environment_fills_at_most_its_share_of_the_queue()
+    {
+        // Half of 10 records and 1,000 bytes per environment.
+        var queue = new TelemetryIntakeQueue(new TelemetryOptions { MaxQueuedRecords = 10, MaxQueuedBytes = 1000 });
+        var stage = new TelemetryEnvironmentKey("shop", "stage");
+        var qa = new TelemetryEnvironmentKey("shop", "qa");
+        var production = new TelemetryEnvironmentKey("shop", "production");
+        TelemetryIngestBatch Batch(TelemetryEnvironmentKey environment, int records, long bytes)
+            => new(environment, [], Enumerable.Repeat(new TelemetryLogRecord(0, 9, "INFO", "x", TelemetryAttributes.Empty, null, null, null), records).ToList(), bytes);
+
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(stage, 4, 100)));
+        Assert.Equal(TelemetryEnqueueResult.Busy, queue.TryEnqueue(Batch(stage, 2, 100)));
+        Assert.Equal(TelemetryEnqueueResult.Busy, queue.TryEnqueue(Batch(stage, 1, 401)));
+        Assert.True(queue.HasRoom(stage));
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(stage, 1, 100)));
+        Assert.False(queue.HasRoom(stage));
+        // A batch larger than one environment's share can never be queued.
+        Assert.Equal(TelemetryEnqueueResult.TooLarge, queue.TryEnqueue(Batch(qa, 6, 10)));
+
+        // The other environment still has its own share, and the total is still bounded.
+        Assert.True(queue.HasRoom(qa));
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(qa, 5, 100)));
+        Assert.False(queue.HasRoom(production));
+        Assert.Equal(TelemetryEnqueueResult.Busy, queue.TryEnqueue(Batch(production, 1, 1)));
+        Assert.Equal(((5L, 200L), (5L, 100L), 10L, 3L), (queue.Pending(stage), queue.Pending(qa), queue.PendingRecords, queue.RefusedBatches));
+
+        while (queue.TryDequeue(out var handled)) queue.Release(handled);
+        Assert.Equal(((0L, 0L), 0L, 0L), (queue.Pending(stage), queue.PendingRecords, queue.PendingBytes));
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(Batch(production, 5, 500)));
+    }
+
+    [Theory]
+    [InlineData("MaxStoredBytesPerRequest", "67108865")] // more than a quarter of the 256 MiB log cap
+    [InlineData("MaxQueueSharePercentPerEnvironment", "0")]
+    [InlineData("MaxRecordsPerRequest", "100001")] // more than half of the 200,000 queued records
+    [InlineData("MaxHourBucketBytes", "1024")]
+    public void Configuration_rejects_out_of_range_request_and_storage_budgets(string key, string value)
+    {
+        var valid = new ConfigurationBuilder().Build();
+        var invalid = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Telemetry:" + key] = value }).Build();
+
+        Assert.Equal(64L * 1024 * 1024, TelemetryOptions.From(valid).MaxStoredBytesPerRequest);
+        Assert.Throws<InvalidOperationException>(() => TelemetryOptions.From(invalid));
+    }
+
+    [Fact]
+    public void Attribute_json_escapes_only_what_json_requires()
+    {
+        var attributes = TelemetryAttributes.From([KeyValuePair.Create("k", "<a href=\"x\">&+ é\u0001</a>")]);
+
+        Assert.Equal("{\"k\":\"<a href=\\\"x\\\">&+ é\\u0001</a>\"}", attributes.Json);
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(attributes.Json), attributes.JsonBytes);
+        Assert.Equal("<a href=\"x\">&+ é\u0001</a>", TelemetryAttributes.ParseJson(attributes.Json).Values["k"]);
     }
 
     [Fact]

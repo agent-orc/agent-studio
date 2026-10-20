@@ -135,7 +135,8 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     [Fact]
     public async Task Burst_beyond_the_queue_budget_is_refused_with_retry_after_and_never_waits()
     {
-        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 10, MaxConcurrentRequests = 64, MaxConcurrentRequestsPerEnvironment = 64 });
+        // One environment may fill half of the 20 queued records.
+        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 20, MaxConcurrentRequests = 64, MaxConcurrentRequestsPerEnvironment = 64 });
         var token = (await CreateToken(harness)).Secret;
         var body = Fixture("logs.pb"); // three records per request
 
@@ -224,6 +225,67 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         Assert.Equal(8, StatusCode(await response.Content.ReadAsByteArrayAsync()));
         Assert.Equal((0L, 0L), (harness.Queue.PendingRecords, harness.Queue.PendingBytes));
+    }
+
+    [Fact]
+    public async Task One_environment_cannot_keep_the_queue_full_for_the_others()
+    {
+        // Each environment may fill half of the six queued records: one logs.pb request of three records.
+        var directory = new ShopStageDirectory { Declared = ["stage", "qa"] };
+        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 6 }, directory: directory);
+        var stage = (await CreateToken(harness)).Secret;
+        var qa = (await CreateToken(harness, environment: "/api/projects/shop/environments/qa/telemetry")).Secret;
+
+        Assert.Equal(200, (await Receive(harness, stage, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+        // The full environment is refused before its body is read, so a full queue costs no decoding.
+        var unread = new GatedStream(Fixture("logs.pb"));
+        var refused = await Receive(harness, stage, unread);
+        Assert.Equal((429, (int?)TelemetryIntakeService.RetryAfterSeconds), (refused.StatusCode, refused.RetryAfterSeconds));
+        Assert.False(unread.Reading.IsCompleted);
+
+        Assert.Equal(200, (await Receive(harness, qa, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+        Assert.Equal(6, harness.Queue.PendingRecords);
+        Assert.Equal(6, await harness.Writer.DrainOnceAsync(CancellationToken.None));
+        Assert.Equal(200, (await Receive(harness, stage, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Shared_attribute_sets_cannot_multiply_stored_bytes_past_the_request_budget()
+    {
+        var harness = await Start();
+        var token = (await CreateToken(harness)).Secret;
+        // About 1 KB of gzip: 20,000 log records sharing 15 attributes of 1,024 '<' would store about 300 MB.
+        var logs = Gzip(TelemetryOtlpDecodingTests.SharedSetLogFlood(records: 20_000));
+        Assert.True(logs.Length < 8 * 1024, $"the compressed flood is {logs.Length} bytes");
+        var points = Gzip(TelemetryOtlpDecodingTests.PointFlood(points: 20_000, resourceAttributes: 15, fill: '<'));
+
+        var refusedLogs = await Send(harness, Logs, logs, token, encoding: "gzip");
+        var refusedPoints = await Send(harness, Metrics, points, token, encoding: "gzip");
+
+        Assert.Equal((HttpStatusCode.RequestEntityTooLarge, HttpStatusCode.RequestEntityTooLarge), (refusedLogs.StatusCode, refusedPoints.StatusCode));
+        Assert.Equal(8, StatusCode(await refusedLogs.Content.ReadAsByteArrayAsync()));
+        Assert.Equal((0L, 0L), (harness.Queue.PendingRecords, harness.Queue.PendingBytes));
+
+        // A thousand such records fit the budget and are stored with '<' as it is.
+        var accepted = await Send(harness, Logs, Gzip(TelemetryOtlpDecodingTests.SharedSetLogFlood(records: 1_000)), token, encoding: "gzip");
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.Equal(1_000, await harness.Writer.DrainOnceAsync(CancellationToken.None));
+        var page = await harness.Client.GetFromJsonAsync<JsonElement>(Environment + "/logs?from=2026-10-16T11:00:00Z&to=2026-10-16T13:00:00Z&limit=1");
+        Assert.Equal(new string('<', 1024), page.GetProperty("records")[0].GetProperty("attributes").GetProperty("r0").GetString());
+    }
+
+    [Theory]
+    [InlineData(Logs, "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"body\":{\"stringValue\":\"\\uD800\"}}]}]}]}")]
+    [InlineData(Metrics, "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{\"name\":\"m\",\"gauge\":{\"dataPoints\":[{\"asDouble\":1e400}]}}]}]}]}")]
+    public async Task Json_lone_surrogates_and_out_of_range_numbers_get_400(string path, string body)
+    {
+        var harness = await Start();
+        var token = (await CreateToken(harness)).Secret;
+
+        var response = await Send(harness, path, Encoding.UTF8.GetBytes(body), token, "application/json");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, harness.Queue.PendingRecords);
     }
 
     [Fact]
