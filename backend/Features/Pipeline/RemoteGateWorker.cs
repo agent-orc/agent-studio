@@ -186,28 +186,16 @@ public static class RemoteGateWorker
             || (invocation.CachePath is { } cachePath
                 && (!Regex.IsMatch(cachePath, "^/[a-zA-Z0-9_./-]+/cache/[0-9a-f]{64}$")
                     || cachePath.Split('/').Any(part => part is "." or "..")))
-            || invocation.Mode == PostStepMode.Off)
+            || invocation.Mode == PostStepMode.Off
+            || invocation.Request.Sharding is { } sharding
+                && (sharding.Part is { IsValid: false } || sharding.Timings is { IsWithinBounds: false }))
             throw new InvalidDataException("Remote gate invocation identity, subject, or budget is invalid.");
     }
 
     private static void WarnIfOversubscribed(int slots, int processors)
     {
-        var hostCores = Environment.ProcessorCount;
-        try
-        {
-            var online = File.ReadAllText("/sys/devices/system/cpu/online").Trim();
-            hostCores = online.Split(',').Sum(range =>
-            {
-                var limits = range.Split('-');
-                return limits.Length == 2 && int.TryParse(limits[0], out var first)
-                    && int.TryParse(limits[1], out var last) && last >= first
-                    ? last - first + 1 : 1;
-            });
-        }
-        catch (IOException exception)
-        {
-            Console.Error.WriteLine("Could not read online host cores: " + exception.Message);
-        }
+        var hostCores = GateHostCapacity.OnlineCores(exception =>
+            Console.Error.WriteLine("Could not read online host cores: " + exception.Message));
         if (IsOversubscribed(slots, processors, hostCores))
             Console.WriteLine($"REMOTE_GATE_CAPACITY_WARNING slots={slots} processors={processors} host_cores={hostCores}");
     }
