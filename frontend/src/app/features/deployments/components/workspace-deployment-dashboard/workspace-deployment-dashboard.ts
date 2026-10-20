@@ -1,12 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { catchError, of } from 'rxjs';
 import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
 import type { DeploymentState, EnvironmentStatus } from '../../models/deployment.model';
 import { DEPLOYMENT_CLOCK, DeploymentStatusService } from '../../services/deployment-status.service';
+import type { DeployMatrixResponse } from '../../services/deployment-status.service';
 
 interface DashboardRow {
   id: string;
   name: string;
   groupId: string;
+  tenant: string | null;
   statuses: EnvironmentStatus[];
 }
 
@@ -20,12 +24,15 @@ interface DashboardRow {
 export class WorkspaceDeploymentDashboardComponent {
   private readonly service = inject(DeploymentStatusService);
   private readonly now = inject(DEPLOYMENT_CLOCK);
+  private readonly matrix = toSignal(this.service.matrix().pipe(catchError(() => of<DeployMatrixResponse>({ environmentKinds: [], projects: [] }))),
+    { initialValue: { environmentKinds: [], projects: [] } as DeployMatrixResponse });
   readonly projectNames = input.required<readonly string[]>();
   readonly projectStorageByName = input<ReadonlyMap<string, string>>(new Map());
   readonly workspaces = input<readonly RegistryWorkspaceListItem[]>([]);
   readonly openDeployment = output<string>();
   readonly groupFilter = signal('all');
   readonly environmentFilter = signal('all');
+  readonly tenantFilter = signal('all');
   readonly environments = [
     { id: 'staging', name: 'Staging' },
     { id: 'production', name: 'Production' },
@@ -34,6 +41,8 @@ export class WorkspaceDeploymentDashboardComponent {
   readonly groups = computed(() => this.workspaces().map(workspace => ({
     id: workspace.id, name: workspace.displayName,
   })));
+  readonly tenants = computed(() => [...new Set(this.matrix().projects.flatMap(row =>
+    row.tenantStatuses.map(status => status.tenant).filter((tenant): tenant is string => !!tenant)))].sort());
 
   readonly rows = computed<DashboardRow[]>(() => {
     const normalized = (path: string) => path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -49,9 +58,15 @@ export class WorkspaceDeploymentDashboardComponent {
       .map(name => ({ id: name, name, groupId: 'unassigned' }));
     return [...registry, ...unassigned]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((project, index) => ({
-        ...project, statuses: this.service.statuses(project.id, index),
-      }))
+      .flatMap(project => {
+        const matrixRow = this.matrix().projects.find(row => row.projectId === project.name || row.projectId === project.id);
+        if (!matrixRow) return [];
+        const tenants = [...new Set(matrixRow.tenantStatuses.map(status => status.tenant).filter((tenant): tenant is string => !!tenant))];
+        return [{ ...project, tenant: null, statuses: matrixRow.statuses },
+          ...tenants.map(tenant => ({ ...project, id: `${project.id}:${tenant}`, tenant,
+            statuses: matrixRow.tenantStatuses.filter(status => status.tenant === tenant) }))];
+      })
+      .filter(project => this.tenantFilter() === 'all' || project.tenant === this.tenantFilter())
       .filter(project => this.groupFilter() === 'all' || project.groupId === this.groupFilter());
   });
 
@@ -60,6 +75,10 @@ export class WorkspaceDeploymentDashboardComponent {
 
   statusFor(row: DashboardRow, kind: 'staging' | 'production'): EnvironmentStatus | undefined {
     return row.statuses.find(status => status.environment.kind === kind);
+  }
+
+  cellLabel(row: DashboardRow, environment: string): string {
+    return [row.name, row.tenant, environment, 'deployment'].filter(Boolean).join(' ');
   }
 
   stateLabel(state: DeploymentState | undefined): string {

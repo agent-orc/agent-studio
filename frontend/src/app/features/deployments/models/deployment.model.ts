@@ -38,6 +38,7 @@ export interface Deployment {
   finishedAtUtc: string | null;
   approvedBy: string | null;
   steps: DeploymentStep[];
+  tenant?: string | null;
 }
 
 export interface EnvironmentStatus {
@@ -47,4 +48,5 @@ export interface EnvironmentStatus {
   newerRelease: Release | null;
   cardsSinceLastDeploy: string[];
   health: 'healthy' | 'unhealthy' | 'unknown';
+  tenant?: string | null;
 }

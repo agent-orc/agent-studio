@@ -58,6 +58,22 @@ public sealed class DeployService
     public IReadOnlyList<DeployEnvironment>? Environments(string project)
         => _environments.Declarations(project) is { } declarations ? MapEnvironments(project, declarations) : null;
 
+    public IReadOnlyList<ProjectTenantDefinition>? Tenants(string project)
+    {
+        lock (_gate)
+        {
+            if (_environments.Declarations(project) is null) return null;
+            var repo = _git.ResolveRepoRootForProject(project);
+            var path = repo is null ? null : Path.Combine(repo, ProjectPreparationPaths.Definition);
+            if (path is not null && File.Exists(path)
+                && ProjectDefinitionReader.Parse(File.ReadAllText(path)) is { IsValid: true } definition
+                && definition.Definition?.Deployment is { } deployment)
+                return deployment.Tenants;
+            return SyncLocked(project)?.Records.Values.OrderByDescending(item => item.Release.CreatedAtUtc)
+                .FirstOrDefault()?.Tenants ?? [];
+        }
+    }
+
     /// <summary>
     /// The integration branch built green: record the immutable release for
     /// the gate artifact, with the environment declarations as committed at
@@ -199,19 +215,20 @@ public sealed class DeployService
         }
     }
 
-    public IReadOnlyList<Deployment>? Deployments(string project, string? environmentId)
+    public IReadOnlyList<Deployment>? Deployments(string project, string? environmentId, string? tenant = null)
     {
         lock (_gate)
         {
             return SyncLocked(project)?.Deployments(project)
-                .Where(item => environmentId is null || item.EnvironmentId == environmentId)
+                .Where(item => (environmentId is null || item.EnvironmentId == environmentId)
+                    && (tenant is null || item.Tenant == tenant))
                 .OrderByDescending(item => item.CreatedAtUtc).ThenByDescending(item => item.Id, StringComparer.Ordinal)
                 .ToArray();
         }
     }
 
     public DeployPage<Deployment>? DeploymentPage(string project, string? environmentId, string? state,
-        DateTime? sinceUtc, int offset, int limit)
+        DateTime? sinceUtc, int offset, int limit, string? tenant = null)
     {
         lock (_gate)
         {
@@ -219,6 +236,7 @@ public sealed class DeployService
             if (snapshot is null) return null;
             var runs = snapshot.Deployments(project)
                 .Where(item => environmentId is null || item.EnvironmentId == environmentId)
+                .Where(item => tenant is null || item.Tenant == tenant)
                 .Where(item => state is null || item.State == state)
                 .Where(item => sinceUtc is null || item.CreatedAtUtc >= sinceUtc)
                 .OrderByDescending(item => item.CreatedAtUtc).ThenByDescending(item => item.Id, StringComparer.Ordinal)
@@ -248,8 +266,9 @@ public sealed class DeployService
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null || snapshot.Runs.All(item => item.Id != deploymentId)) return null;
-            return new(deploymentId, _store.ReadLog(project, deploymentId)
-                .Where(item => step is null || item.Step == step).ToArray());
+            return new DeploymentLogResponse(deploymentId, _store.ReadLog(project, deploymentId)
+                .Where(item => step is null || item.Step == step).ToArray())
+            { Tenant = snapshot.Runs.First(item => item.Id == deploymentId).Tenant };
         }
     }
 
@@ -261,7 +280,7 @@ public sealed class DeployService
         }
     }
 
-    public IReadOnlyList<EnvironmentStatus>? Status(string project)
+    public IReadOnlyList<EnvironmentStatus>? Status(string project, string? tenant = null)
     {
         lock (_gate)
         {
@@ -269,8 +288,15 @@ public sealed class DeployService
             if (snapshot is null) return null;
             var hostHealth = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
                 StringComparer.Ordinal);
-            return EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases,
-                snapshot.Deployments(project), hostHealth);
+            var selected = tenant is null ? snapshot.Environments : snapshot.Environments
+                .Where(environment => (Tenants(project) ?? []).Any(item =>
+                    item.Name == tenant && item.Environments.Contains(environment.Kind, StringComparer.Ordinal))).ToArray();
+            var releases = tenant is null ? snapshot.Releases : snapshot.Records.Values
+                .Where(record => record.Tenants.Any(item => item.Name == tenant))
+                .Select(record => record.Release).ToArray();
+            return EnvironmentStatusProjection.Project(selected, releases,
+                snapshot.Deployments(project).Where(item => item.Tenant == tenant).ToArray(), hostHealth)
+                .Select(item => item with { Tenant = tenant }).ToArray();
         }
     }
 
@@ -286,7 +312,12 @@ public sealed class DeployService
                 // without environment declarations.
                 if (_environments.Declarations(project) is not { Count: > 0 }) continue;
                 var statuses = Status(project);
-                if (statuses is { Count: > 0 }) rows.Add(new(project, statuses, null));
+                if (statuses is { Count: > 0 })
+                    rows.Add(new(project, statuses, null)
+                    {
+                        TenantStatuses = (Tenants(project) ?? []).SelectMany(tenant => Status(project, tenant.Name) ?? [])
+                            .ToArray(),
+                    });
             }
             catch (JsonException ex)
             {
@@ -329,15 +360,18 @@ public sealed class DeployService
             var environment = snapshot.Environments.FirstOrDefault(item => item.Id == request.EnvironmentId);
             if (environment is null)
                 return DeployOutcome<Deployment>.NotFound($"Unknown environment '{request.EnvironmentId}'.");
-            return Start(project, snapshot, record, environment, DeployIntent.Deploy, request.Approve, actor);
+            return Start(project, snapshot, record, environment, DeployIntent.Deploy, request.Approve, actor,
+                request.Tenant);
         }
     }
 
-    public DeployOutcome<Deployment> Redeploy(string project, string environmentId, bool approve, DeployActor actor)
-        => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor);
+    public DeployOutcome<Deployment> Redeploy(string project, string environmentId, bool approve, DeployActor actor,
+        string? tenant = null)
+        => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor, tenant);
 
-    public DeployOutcome<Deployment> Rollback(string project, string environmentId, bool approve, DeployActor actor)
-        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor);
+    public DeployOutcome<Deployment> Rollback(string project, string environmentId, bool approve, DeployActor actor,
+        string? tenant = null)
+        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor, tenant);
 
     /// <summary>
     /// Approves a waiting run. The lifecycle decides again, because another
@@ -362,11 +396,11 @@ public sealed class DeployService
             if (target is null) return MissingSnapshot(release, environment);
             var intent = StandardLifecyclePolicy.IntentFor(run.Trigger);
             var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent,
-                approve: true, actor, excludeRunId: run.Id));
+                approve: true, actor, excludeRunId: run.Id, tenant: run.Tenant));
             if (decision.Outcome == LifecycleOutcome.Reject) return Rejected(decision);
 
             var now = _clock.GetUtcNow().UtcDateTime;
-            var job = QueueJob(project, snapshot, run.Trigger, target, release, actor.Id);
+            var job = QueueJob(project, snapshot, run.Trigger, target, release, actor.Id, run.Tenant);
             if (job is null) return DeployOutcome<Deployment>.Conflict("The deploy job could not be queued.");
             var approved = run with
             {
@@ -375,7 +409,8 @@ public sealed class DeployService
             var runs = snapshot.Runs.Select(item => item.Id == run.Id ? approved : item).ToList();
             var log = new List<DeploymentLogEntry>
             {
-                new(run.Id, DeployStepNames.Approval, now, $"Approved by {actor.Id}."),
+                new(run.Id, DeployStepNames.Approval, now, run.Tenant is null
+                    ? $"Approved by {actor.Id}." : $"Tenant {run.Tenant} approved by {actor.Id}."),
                 new(run.Id, run.DeployStep, now, $"Queued for deploy host {job.HostId}."),
             };
             if (HostChange(record, environment.Id, job) is { } moved) log.Add(new(run.Id, run.DeployStep, now, moved));
@@ -502,7 +537,7 @@ public sealed class DeployService
     }
 
     private DeployOutcome<Deployment> StartForEnvironment(string project, string environmentId, DeployIntent intent,
-        bool approve, DeployActor actor)
+        bool approve, DeployActor actor, string? tenant)
     {
         lock (_gate)
         {
@@ -510,7 +545,8 @@ public sealed class DeployService
             if (snapshot is null) return DeployOutcome<Deployment>.NotFound($"Unknown project '{project}'.");
             var environment = snapshot.Environments.FirstOrDefault(item => item.Id == environmentId);
             if (environment is null) return DeployOutcome<Deployment>.NotFound($"Unknown environment '{environmentId}'.");
-            var runs = snapshot.Deployments(project).Where(item => item.EnvironmentId == environmentId).ToArray();
+            var runs = snapshot.Deployments(project).Where(item => item.EnvironmentId == environmentId
+                && item.Tenant == tenant).ToArray();
             var release = intent == DeployIntent.Rollback
                 ? EnvironmentStatusProjection.PreviousRelease(runs, snapshot.ReleaseById)
                 : EnvironmentStatusProjection.CurrentRelease(runs, snapshot.ReleaseById);
@@ -518,18 +554,21 @@ public sealed class DeployService
                 return DeployOutcome<Deployment>.Conflict(intent == DeployIntent.Rollback
                     ? $"{environment.Name} has no previous release to roll back to."
                     : $"{environment.Name} has no successfully deployed release.");
-            return Start(project, snapshot, snapshot.Records[release.Id], environment, intent, approve, actor);
+            return Start(project, snapshot, snapshot.Records[release.Id], environment, intent, approve, actor, tenant);
         }
     }
 
     private DeployOutcome<Deployment> Start(string project, Snapshot snapshot, ReleaseRecord record,
-        DeployEnvironment environment, DeployIntent intent, bool approve, DeployActor actor)
+        DeployEnvironment environment, DeployIntent intent, bool approve, DeployActor actor, string? tenant = null)
     {
         var release = record.Release;
+        if (tenant is not null && !record.Tenants.Any(item => item.Name == tenant
+                && item.Environments.Contains(environment.Kind, StringComparer.Ordinal)))
+            return DeployOutcome<Deployment>.Invalid($"Tenant '{tenant}' does not participate in {environment.Name} for this release.");
         var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
         if (target is null) return MissingSnapshot(release, environment);
         var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent, approve,
-            actor, excludeRunId: null));
+            actor, excludeRunId: null, tenant: tenant));
         if (decision.Outcome == LifecycleOutcome.Reject) return Rejected(decision);
 
         var trigger = intent switch
@@ -542,21 +581,25 @@ public sealed class DeployService
         DeployJob? job = null;
         if (decision.Outcome == LifecycleOutcome.Queue)
         {
-            job = QueueJob(project, snapshot, trigger, target, release, decision.ApprovedBy ?? actor.Id);
+            job = QueueJob(project, snapshot, trigger, target, release, decision.ApprovedBy ?? actor.Id, tenant);
             if (job is null) return DeployOutcome<Deployment>.Conflict("The deploy job could not be queued.");
         }
         var run = NewRun(release, environment, record.Environments,
             job is null ? DeploymentStates.AwaitingApproval : DeploymentStates.Queued, trigger, actor.Id,
-            decision.ApprovedBy, job, now);
+            decision.ApprovedBy, job, now, tenant);
         var log = new List<DeploymentLogEntry>();
         if (job is null)
             log.Add(new(run.Id, DeployStepNames.Approval, now,
-                $"Requested by {actor.Id}. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}."));
+                tenant is null
+                    ? $"Requested by {actor.Id}. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}."
+                    : $"Requested by {actor.Id} for tenant {tenant}. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}."));
         else if (decision.ApprovedBy is not null)
             log.Add(new(run.Id, DeployStepNames.Approval, now, $"Approved by {decision.ApprovedBy}."));
         if (job is not null)
             log.Add(new(run.Id, run.DeployStep, now,
-                $"Release {release.Version} queued for {environment.Name} by {actor.Id} ({trigger})."));
+                tenant is null
+                    ? $"Release {release.Version} queued for {environment.Name} by {actor.Id} ({trigger})."
+                    : $"Release {release.Version} queued for {environment.Name} tenant {tenant} by {actor.Id} ({trigger})."));
         if (job is not null && HostChange(record, environment.Id, job) is { } moved)
             log.Add(new(run.Id, run.DeployStep, now, moved));
         var action = job is null ? "approval-requested" : trigger switch
@@ -568,7 +611,8 @@ public sealed class DeployService
         var audit = new List<DeployAuditEntry>
         {
             new(now, actor.Id, action, release.Id, run.Id, environment.Id,
-                $"Release {release.Version} {(job is null ? "awaits approval" : "queued")} for {environment.Name} ({trigger})."),
+                $"Release {release.Version} {(job is null ? "awaits approval" : "queued")} for {environment.Name}"
+                + (tenant is null ? "" : $" tenant {tenant}") + $" ({trigger})."),
         };
         var runs = new List<DeploymentRecord>([.. snapshot.Runs, run]);
         if (job is not null) Supersede(project, snapshot, runs, run, intent, release, actor, log, audit, now);
@@ -578,18 +622,20 @@ public sealed class DeployService
 
     /// <summary>The lifecycle facts for one release in one environment, without the run being approved.</summary>
     private static LifecycleRequest Facts(string project, Snapshot snapshot, Release release, DeployEnvironment environment,
-        DeployIntent intent, bool approve, DeployActor actor, string? excludeRunId)
+        DeployIntent intent, bool approve, DeployActor actor, string? excludeRunId, string? tenant)
     {
         var deployments = snapshot.Deployments(project).Where(item => item.Id != excludeRunId).ToArray();
-        var here = deployments.Where(item => item.EnvironmentId == environment.Id).ToArray();
+        var here = deployments.Where(item => item.EnvironmentId == environment.Id && item.Tenant == tenant).ToArray();
+        var tenantDeployments = deployments.Where(item => item.Tenant == tenant).ToArray();
         var previous = snapshot.Environments.Where(item => item.Order < environment.Order)
             .OrderBy(item => item.Order).LastOrDefault();
         return new(intent, environment, actor, approve,
-            previous is null || EnvironmentStatusProjection.SucceededIn(deployments, release.Id, previous.Id),
+            previous is null || EnvironmentStatusProjection.SucceededIn(tenantDeployments, release.Id, previous.Id),
             EnvironmentStatusProjection.Position(release, EnvironmentStatusProjection.CurrentRelease(here, snapshot.ReleaseById)),
             EnvironmentStatusProjection.PreviousRelease(here, snapshot.ReleaseById)?.Id == release.Id,
             here.Any(item => item.ReleaseId == release.Id && DeploymentStates.IsActive(item.State)),
-            here.Any(item => item.State is DeploymentStates.Queued or DeploymentStates.Running));
+            deployments.Any(item => item.EnvironmentId == environment.Id
+                && item.State is DeploymentStates.Queued or DeploymentStates.Running));
     }
 
     /// <summary>
@@ -604,7 +650,7 @@ public sealed class DeployService
         for (var i = 0; i < runs.Count; i++)
         {
             var waiting = runs[i];
-            if (waiting.Id == queued.Id || waiting.EnvironmentId != queued.EnvironmentId
+            if (waiting.Id == queued.Id || waiting.EnvironmentId != queued.EnvironmentId || waiting.Tenant != queued.Tenant
                 || waiting.State != DeploymentStates.AwaitingApproval
                 || !snapshot.ReleaseById.TryGetValue(waiting.ReleaseId, out var waitingRelease)
                 || !StandardLifecyclePolicy.Supersedes(intent, StandardLifecyclePolicy.IntentFor(waiting.Trigger),
@@ -650,7 +696,7 @@ public sealed class DeployService
 
     /// <summary>A waiting plain deploy whose release has a pending AGT-3176 promotion into the environment.</summary>
     private static bool ClosesPromotion(Snapshot snapshot, DeploymentRecord run, Release release)
-        => run.State == DeploymentStates.AwaitingApproval && run.Trigger == DeploymentTriggers.Deploy
+        => run.Tenant is null && run.State == DeploymentStates.AwaitingApproval && run.Trigger == DeploymentTriggers.Deploy
            && snapshot.View.Promotions.Any(item => item.Status == "pending" && item.ProductionId == run.EnvironmentId
                && release.ArtifactDigests.Contains(item.Artifact, StringComparer.Ordinal));
 
@@ -669,17 +715,28 @@ public sealed class DeployService
     /// that promotion, so the older promotion state stays consistent.
     /// </summary>
     private DeployJob? QueueJob(string project, Snapshot snapshot, string trigger, EnvironmentDeclaration target,
-        Release release, string actor)
+        Release release, string actor, string? tenant)
     {
         var artifact = release.ArtifactDigests[0];
-        if (trigger == DeploymentTriggers.Deploy && snapshot.View.Promotions.Any(item => item.Artifact == artifact
+        if (tenant is null && trigger == DeploymentTriggers.Deploy && snapshot.View.Promotions.Any(item => item.Artifact == artifact
                 && item.ProductionId == target.Id && item.Status == "pending"))
         {
             var (decided, job) = _environments.DecidePromotion(project, artifact, true, actor, target);
             if (decided) return job;
         }
+        var record = snapshot.Records[release.Id];
+        var selectedTenant = record.Tenants.FirstOrDefault(item => item.Name == tenant);
+        var environment = target.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production;
+        var resolved = record.Variables.Select(item => item.Name).Distinct(StringComparer.Ordinal)
+            .Select(name => ProjectVariableResolution.Resolve(record.Variables, name, environment, selectedTenant))
+            .Where(item => item is not null).ToArray();
+        var values = resolved.Where(item => item!.Value is not null)
+            .ToDictionary(item => item!.Name, item => item!.Value!, StringComparer.Ordinal);
+        var secrets = resolved.Where(item => item!.Secret is not null)
+            .ToDictionary(item => item!.Name, item => item!.Secret!, StringComparer.Ordinal);
         return _environments.QueueDeployment(project, target, artifact, actor,
-            rollback: trigger == DeploymentTriggers.Rollback);
+            rollback: trigger == DeploymentTriggers.Rollback, tenant: tenant,
+            variables: values, secretVariableRefs: secrets);
     }
 
     private DeployOutcome<Deployment>? FindRun(string project, string deploymentId, out Snapshot? snapshot,
@@ -725,7 +782,8 @@ public sealed class DeployService
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
             repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated), now, ReleaseSnapshot.DefaultChannel);
-        return _store.AppendRelease(project, new(release, declarations));
+        return _store.AppendRelease(project, new ReleaseRecord(release, declarations)
+        { Tenants = definition?.Tenants ?? [], Variables = definition?.Variables ?? [] });
     }
 
     private ProjectDeploymentDefinition? ReadDefinition(string repo, string commit)
@@ -765,12 +823,13 @@ public sealed class DeployService
 
     private static DeploymentRecord NewRun(Release release, DeployEnvironment environment,
         IEnumerable<EnvironmentDeclaration> declarations, string state, string trigger, string requestedBy,
-        string? approvedBy, DeployJob? job, DateTime now)
+        string? approvedBy, DeployJob? job, DateTime now, string? tenant = null)
     {
         var template = declarations.FirstOrDefault(item => item.Id == environment.Id)?.Template ?? "container";
         var run = new DeploymentRecord
         {
             Id = job?.Id ?? Guid.NewGuid().ToString("N"), ReleaseId = release.Id, EnvironmentId = environment.Id,
+            Tenant = tenant,
             State = state, Trigger = trigger, DeployStep = DeployStepNames.ForTemplate(template),
             NeedsApproval = StandardLifecyclePolicy.RequiresApproval(environment),
             RequestedBy = requestedBy, ApprovedBy = approvedBy, ApprovedAtUtc = approvedBy is null ? null : now,
@@ -822,5 +881,5 @@ public sealed class DeployService
         => new(run.Id, run.ReleaseId, run.EnvironmentId, run.State, run.StartedAtUtc, run.FinishedAtUtc, run.ApprovedBy,
             run.Steps.Select(step => new DeploymentStep(step.Name, step.State, step.StartedAtUtc, step.FinishedAtUtc,
                 $"/api/projects/{Uri.EscapeDataString(project)}/deploy/deployments/{run.Id}/log?step={step.Name}")).ToArray(),
-            run.Trigger, run.RequestedBy, run.CreatedAtUtc);
+            run.Trigger, run.RequestedBy, run.CreatedAtUtc) { Tenant = run.Tenant };
 }

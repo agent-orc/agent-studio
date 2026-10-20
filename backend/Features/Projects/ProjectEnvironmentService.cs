@@ -23,7 +23,12 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0)
+{
+    public string? Tenant { get; init; }
+    public IReadOnlyDictionary<string, string> Variables { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> SecretVariableRefs { get; init; } = new Dictionary<string, string>();
+}
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -299,7 +304,8 @@ public sealed class ProjectEnvironmentService
     /// deployment may start.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
-        bool rollback)
+        bool rollback, string? tenant = null, IReadOnlyDictionary<string, string>? variables = null,
+        IReadOnlyDictionary<string, string>? secretVariableRefs = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -307,7 +313,12 @@ public sealed class ProjectEnvironmentService
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, tenant)
+                with { Variables = variables ?? new Dictionary<string, string>(),
+                    SecretVariableRefs = secretVariableRefs ?? new Dictionary<string, string>() };
+            job = job with { SecretRefs = job.SecretRefs.Concat(job.SecretVariableRefs.Values)
+                .Distinct(StringComparer.Ordinal).ToArray() };
+            state.Jobs[^1] = job;
             Save(project, state);
             return job;
         }
@@ -337,9 +348,9 @@ public sealed class ProjectEnvironmentService
             if (aborted)
                 state.History.Add(new(job.EnvironmentId, now,
                     new(now, "failed", job.Artifact, job.PreviousArtifact, AbortedEvidence)));
-            var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
+            var promotion = job.Tenant is null ? state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
                 && (item.Status == "stage-queued" && item.StageId == job.EnvironmentId
-                    || item.Status == "production-queued" && item.ProductionId == job.EnvironmentId));
+                    || item.Status == "production-queued" && item.ProductionId == job.EnvironmentId)) : null;
             if (promotion is not null)
                 state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with { Status = "cancelled", Actor = actor };
             Save(project, state);
@@ -565,11 +576,20 @@ public sealed class ProjectEnvironmentService
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
             if (!success && !job.IsRollback && job.PreviousArtifact is not null
-                && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
+                && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId
+                    && item.Tenant == job.Tenant && item.Status == "queued"))
             {
                 var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
-                if (declaration is not null) Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact),
-                    job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback");
+                if (declaration is not null)
+                {
+                    var previous = state.Jobs.LastOrDefault(item => item.EnvironmentId == job.EnvironmentId
+                        && item.Tenant == job.Tenant && item.Artifact == job.PreviousArtifact && item.Status == "healthy");
+                    var rollbackJob = Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact, job.Tenant),
+                        job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback", tenant: job.Tenant);
+                    if (previous is not null)
+                        state.Jobs[^1] = rollbackJob with { Variables = previous.Variables,
+                            SecretVariableRefs = previous.SecretVariableRefs, SecretRefs = previous.SecretRefs };
+                }
             }
             Save(project, state);
             return true;
@@ -578,6 +598,7 @@ public sealed class ProjectEnvironmentService
 
     private static void ClosePromotionForResult(State state, DeployJob job, bool success, DateTime now)
     {
+        if (job.Tenant is not null) return;
         var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
         if (promotion is null) return;
         var index = state.Promotions.IndexOf(promotion);
@@ -622,9 +643,10 @@ public sealed class ProjectEnvironmentService
     /// (a retired host would never claim it). History from before jobs carried
     /// the declaration falls back to the current one.
     /// </summary>
-    private static EnvironmentDeclaration DeployedSpec(State state, EnvironmentDeclaration current, string artifact)
+    private static EnvironmentDeclaration DeployedSpec(State state, EnvironmentDeclaration current, string artifact,
+        string? tenant = null)
         => state.Jobs.LastOrDefault(job => job.EnvironmentId == current.Id && job.Artifact == artifact
-                && job.Status == "healthy") is { } deployed
+                && job.Tenant == tenant && job.Status == "healthy") is { } deployed
             ? current with
             {
                 Template = deployed.Template, Destination = deployed.Destination,
@@ -653,16 +675,19 @@ public sealed class ProjectEnvironmentService
         => declarations?.Any(item => item.Id == environmentId) == true;
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null)
+        bool rollback = false, string? actor = null, string? tenant = null)
     {
-        var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
-            && (row.Item.Status is "healthy" or "rolled-back"))
-            .LastOrDefault()?.Item.Artifact;
+        var previous = state.Jobs.LastOrDefault(job => job.EnvironmentId == declaration.Id && job.Tenant == tenant
+            && job.Status == "healthy")?.Artifact;
+        if (tenant is null && previous is null && !state.Jobs.Any(job => job.EnvironmentId == declaration.Id
+                && job.Tenant is not null))
+            previous = state.History.Where(row => row.EnvironmentId == declaration.Id
+                && (row.Item.Status is "healthy" or "rolled-back")).LastOrDefault()?.Item.Artifact;
         var job = new DeployJob(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor) { Tenant = tenant };
         state.Jobs.Add(job);
         return job;
     }
