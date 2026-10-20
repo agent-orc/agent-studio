@@ -29,7 +29,13 @@ public sealed class ShadowDecisionStep(IDecisionReceiptPlane plane, EngineOption
         string mode = DecisionReceiptPolicy.ShadowMode)
     {
         var input = await plane.GetGroundsInputAsync(occurrenceId, ct);
-        if (input is null) return null;
+        return input is null ? null : await RecordAsync(input, ct, mode);
+    }
+
+    /// <summary>Records the receipt of an input the caller already fetched.</summary>
+    public async Task<OrchestratorDecisionReceiptV1> RecordAsync(DecisionShadowInputV1 input, CancellationToken ct,
+        string mode = DecisionReceiptPolicy.ShadowMode)
+    {
         if (input.Mode != mode) throw new InvalidOperationException("decision-mode-mismatch");
         var (preparedInput, unavailable) = await PrepareArtifactSourcesAsync(input.Grounds, ct);
         var grounds = DecisionGroundsPolicy.Freeze(preparedInput);
@@ -189,11 +195,16 @@ public sealed class ShadowDecisionService(
     {
         try
         {
-            var receipt = await step.RecordAsync(occurrenceId, ct);
-            if (receipt is not null)
-                logger.LogInformation(
-                    "shadow decision recorded; occurrence={Occurrence} receipt={Receipt} call={Call} matches={Matches}",
-                    occurrenceId, receipt.ReceiptId, receipt.Call.Status, receipt.MatchesDeterministic);
+            var input = await plane.GetGroundsInputAsync(occurrenceId, ct);
+            if (input is null) return;
+            // Only a card-free occurrence is recorded active here; a card input in
+            // another mode is refused by the step as decision-mode-mismatch.
+            var mode = input.Grounds.Scope.Kind == "card" ? DecisionReceiptPolicy.ShadowMode
+                : DecisionReceiptPolicy.ActiveMode;
+            var receipt = await step.RecordAsync(input, ct, mode);
+            logger.LogInformation(
+                "shadow decision recorded; occurrence={Occurrence} receipt={Receipt} call={Call} matches={Matches}",
+                occurrenceId, receipt.ReceiptId, receipt.Call.Status, receipt.MatchesDeterministic);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

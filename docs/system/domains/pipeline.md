@@ -2537,6 +2537,10 @@ Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
 `environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
+Each release hashes these sections at its commit into its process and
+variables versions; the release, lifecycle and deploy-run contract is described
+in
+[Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1).
 
 - `artifacts` name what the gate keeps: `static` (a site bundle `path`) or
   `container` (a `dockerfile`, an optional build-context `path`, and an optional

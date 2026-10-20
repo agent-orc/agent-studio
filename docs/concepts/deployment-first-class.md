@@ -39,13 +39,128 @@ stage automatically. A deploy-role credential claims work through
 `agent-host deploy-loop` runs the container or static template on the declared
 host, resolves secret names from its local secret store, checks health, and
 reports a bounded result code. The Studio shows history and pending promotion.
-The first production release needs a person in Studio. Later releases receive
-the same artifact after a person approves or stage has stayed healthy for ten
-minutes, depending on the declared rule. An approval expires after 24 hours.
+Every production release needs a person in Studio (BD-1). The declaration value
+`approval: stage-healthy-10m` is still accepted but no longer promotes
+production on its own. An approval expires after 24 hours.
 Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
 After the deploy, the control plane keeps probing each environment from outside
 its host; see [environment health checks](../operations/environment-health-checks.md).
+
+### Releases, standard lifecycle and deploy runs (BD-1)
+
+Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
+adds a release layer in `backend/Features/Deploy/`. The host deploy queue above
+stays the only executor; releases and runs describe and steer it.
+
+- **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
+  operator route `POST /api/projects/{project}/environments/releases`) records an
+  immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
+  version (hash of the project.yml schema 2 artifacts, standard lifecycle and
+  deploy steps at the release commit plus the environment declarations), a
+  variables version (hash of the project.yml schema 2 `variables` section at the
+  release commit, where a secret counts only by name, and of the secret
+  reference names per environment), the
+  cards it adds, and channel `default`. Each release is one write-once file under
+  `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
+  flushed temporary file and moved into place without overwrite. The same
+  project, commit and artifacts always resolve to the same release. Cards are
+  those whose integration verification names a commit reachable from the release
+  commit and not from the previous release (at most 200 commits for the first
+  release).
+- **Release order.** Releases never move back in history. A commit that is a
+  strict ancestor of the newest release's commit is refused with 409 and
+  `"reason":"superseded"`, so a gate
+  run that finishes after the run of a later commit cannot create an older
+  release after a newer one. Re-posting an existing release starts Staging again
+  only while it is the newest release; an older one answers the same
+  superseded 409 and moves back
+  only through rollback. A rebuild of the newest commit and a commit unrelated in
+  history stay allowed. Creation order is therefore commit order for every
+  release the lifecycle compares. The ancestry check fails closed: when git
+  cannot answer it (an error, a timeout or an exhausted process budget), the
+  release answers 409 without a reason. The promotion script matches
+  `"reason":"superseded"`, logs that 409 and continues; any other refusal,
+  including every other 409, stops it with exit code 9. A
+  declaration snapshot that git cannot read completely also answers 409;
+  invalid input, including a malformed committed declaration, answers 400.
+- **Declaration snapshot.** The release file also stores the environment
+  declarations (`docs/deployments/environments/*.json`) as committed at the
+  release commit. Every deploy job of the release, redeploy and rollback
+  included, uses that snapshot, so a later change in the working tree or a later
+  commit cannot change what an existing release deploys. The snapshot decides
+  what is deployed (template, destination, health URL, container port, secret
+  references); the current declaration decides where (`targetHostId`). After an
+  environment moves to another host, a rollback or a late approval of an older
+  release goes to the new host, and the run log names the host change. The
+  environment must still be declared; a release without a snapshot for an
+  environment cannot be deployed there. Automatic and history rollbacks of the
+  host queue repeat the declaration the artifact last deployed healthy with, on
+  the currently declared host. A job queued before the host moved stays with the
+  old host; cancel it and deploy again.
+- **Standard lifecycle.** Staging deploys automatically after integration.
+  Production needs a successful Staging run of the same release and approval by
+  Owner or Maintainer. Owner is the Studio owner role; Maintainer is an account
+  with the project's production approval grant. Approval needs a signed-in
+  Studio session in every profile; on the local profile a mutation counts the
+  session only with its CSRF token. A caller without a session, such as a coding
+  agent on the local API, is `local-operator` and never approves.
+- **One environment, one direction.** A request or an approval is refused while
+  another run is queued or running in the environment. The automatic Staging
+  run after integration does not ask the lifecycle: it queues behind the runs
+  already queued, and the host runs them one at a time in queue order. Because
+  releases never move back in history, that queue only moves forward. A deploy
+  moves only to a release newer than the current one;
+  the current release runs again only as a redeploy, and an older release only as
+  the rollback target. An approval decides these rules again, because another
+  run may have finished meanwhile. Queuing a run closes the waiting runs it makes
+  invalid, with their pending promotions: an approved release supersedes waiting
+  deploys of older releases and waiting redeploys and rollbacks. The AGT-3176
+  promotion and rollback routes answer through the same rules.
+- **Deploy run.** Each run of a release in an environment has the state
+  `queued`, `running`, `succeeded`, `failed`, `cancelled` or `awaiting-approval`,
+  and the steps `approval` (production only), `publish-static` or
+  `start-container`, and `health`. The host reports one bounded result code, so
+  the health step has one observed instant. Step log lines are written by the
+  Studio, never copied from host output. Runs follow the queue: jobs started by
+  the gate, the older promotion and rollback routes, and automatic rollback are
+  adopted into runs, and pending promotions become runs that await approval. A
+  failed deploy gets no automatic rollback when a newer job already waits for
+  the environment, so the rollback cannot replace that newer release.
+- **Redeploy and rollback.** Redeploy runs the environment's current release
+  again. Rollback runs the latest successful release older than the current one.
+  Both follow the same approval rule. When the environment's first release has
+  no older release to return to, the AGT-3176 rollback route falls back to the
+  artifact history (the artifact deployed before releases existed), only while
+  the environment is idle and only when the history target belongs to no
+  release. Any other route rollback without an older release (for example
+  after a lifecycle rollback to the oldest release) answers 409 "no previous
+  release to roll back to" and queues nothing. The pre-release artifact has no
+  release, so EnvironmentStatus keeps naming the last release run as current;
+  health follows the host history.
+- **Cancel, abort and lost hosts.** Cancel stops a queued or waiting run. Cancel
+  on a running run aborts it: the host's lease is revoked, so its late report is
+  refused, and the environment records the interrupted deploy as failed. Abort
+  only revokes the lease: the Studio cannot stop the host process, which may
+  still finish its step. Treat the environment as unknown or unhealthy until the
+  next deploy, redeploy or rollback.
+  Closing a pending production promotion and aborting a running production run
+  need Owner or Maintainer. The host's report is accepted while its lease token
+  is valid. After five minutes without a report, the same host may claim its job
+  again (it restarted); each reclaim is logged in the run and the audit. A claim
+  without report or reclaim for 15 minutes fails as `host-lost`, without an
+  automatic rollback to the same host.
+- **Audit.** Every release, request, approval, rejection, cancellation and host
+  transition appends an entry to `audit.jsonl` next to the runs.
+
+Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
+(one EnvironmentStatus per environment), `releases`, `releases/{id}`,
+`deployments[?environmentId=]`, `deployments/{id}`, `deployments/{id}/log[?step=]`
+and `audit`; `POST releases/{id}/deployments` (`{environmentId, approve}`),
+`deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
+`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
+`GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
+caller's projects.
 
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy

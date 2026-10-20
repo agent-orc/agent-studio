@@ -18,54 +18,98 @@ namespace AgentStudio.Runner;
 public static class OrchestratorDecisionEndpoints
 {
     private static readonly JsonSerializerOptions WireJson = DecisionGroundsPolicy.Json;
+    public static readonly TimeSpan MaxHostObservationSkew = TimeSpan.FromMinutes(10);
+    public const string ProxyProfileRefusal = "decision-rules-not-on-proxy-profile";
 
-    public static void MapOrchestratorDecisionEndpoints(this WebApplication app, bool mapsEngineRoutes)
+    /// <param name="proxyProfile">
+    /// True when a standalone Task Server owns workspaces. Studio cannot resolve
+    /// those workspace ids, so rule and host-occurrence routes answer a typed 409.
+    /// </param>
+    public static void MapOrchestratorDecisionEndpoints(this WebApplication app, bool proxyProfile = false)
     {
-        if (mapsEngineRoutes)
+        // Grounds, jobs and receipts share the Studio store with host submissions,
+        // including when Task Server owns the proxied card orchestration routes.
+        var engine = app.MapGroup("/api/v1/orchestration");
+        engine.MapGet("/runs/{runId}/grounds-input", (HttpContext context, string runId,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                : store.GetInputs(runId) is { } input ? Wire(input) : Results.NotFound());
+        engine.MapGet("/decision-grounds/pending", (HttpContext context, int? limit,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                : Wire(store.PendingReceipts(limit ?? 10)));
+        engine.MapPost("/decision-jobs", (HttpContext context, OrchestratorDecisionJobRequest request,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Execute(() =>
+                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                    : Wire(store.CreateJob(request))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+        engine.MapGet("/decision-jobs/{jobId}", (HttpContext context, string jobId,
+            AccessSecurityStore security, OrchestratorDecisionStore store) =>
+            MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
+                : store.GetJob(jobId) is { } job ? Wire(job) : Results.NotFound());
+        engine.MapPut("/runs/{runId}/decision-receipt", async (HttpContext context, string runId,
+            OrchestratorDecisionReceiptV1 receipt, AccessSecurityStore security,
+            OrchestratorDecisionStore store, AgentMessageBusBridge bus, CancellationToken ct) =>
         {
-            var engine = app.MapGroup("/api/v1/orchestration");
-            engine.MapGet("/runs/{runId}/grounds-input", (HttpContext context, string runId,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                    : store.GetInputs(runId) is { } input ? Wire(input) : Results.NotFound());
-            engine.MapGet("/decision-grounds/pending", (HttpContext context, int? limit,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                    : Wire(store.PendingReceipts(limit ?? 10)));
-            engine.MapPost("/decision-jobs", (HttpContext context, OrchestratorDecisionJobRequest request,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Execute(() =>
-                    MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                        : Wire(store.CreateJob(request))));
-            engine.MapGet("/decision-jobs/{jobId}", (HttpContext context, string jobId,
-                AccessSecurityStore security, OrchestratorDecisionStore store) =>
-                MonolithOrchestrationEndpoints.Authorize(context, security) is null ? Results.Unauthorized()
-                    : store.GetJob(jobId) is { } job ? Wire(job) : Results.NotFound());
-            engine.MapPut("/runs/{runId}/decision-receipt", async (HttpContext context, string runId,
-                OrchestratorDecisionReceiptV1 receipt, AccessSecurityStore security,
-                OrchestratorDecisionStore store, AgentMessageBusBridge bus, CancellationToken ct) =>
+            OrchestratorDecisionReceiptV1? createdReceipt = null;
+            IReadOnlyList<DecisionLateCallV1> billedCalls = [];
+            var result = MonolithOrchestrationEndpoints.Execute(() =>
             {
-                OrchestratorDecisionReceiptV1? createdReceipt = null;
-                IReadOnlyList<DecisionLateCallV1> billedCalls = [];
-                var result = MonolithOrchestrationEndpoints.Execute(() =>
+                if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
+                    return Results.Unauthorized();
+                if (receipt.OccurrenceId != runId)
+                    return Results.BadRequest(new ApiError("invalid-request", "Receipt occurrence does not match the route."));
+                var projection = store.PutReceiptWithProjection(receipt);
+                if (projection.Created)
                 {
-                    if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
-                        return Results.Unauthorized();
-                    if (receipt.OccurrenceId != runId)
-                        return Results.BadRequest(new ApiError("invalid-request", "Receipt occurrence does not match the route."));
-                    var projection = store.PutReceiptWithProjection(receipt);
-                    if (projection.Created)
-                    {
-                        createdReceipt = projection.Receipt;
-                        billedCalls = projection.OtherBilledCalls;
-                    }
-                    return Wire(projection.Receipt);
-                });
-                if (createdReceipt is not null)
-                    await bus.EmitDecisionReceiptAsync(createdReceipt, ct, billedCalls);
-                return result;
+                    createdReceipt = projection.Receipt;
+                    billedCalls = projection.OtherBilledCalls;
+                }
+                return Wire(projection.Receipt);
             });
-        }
+            if (createdReceipt is not null)
+                await bus.EmitDecisionReceiptAsync(createdReceipt, ct, billedCalls);
+            return result;
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        var host = app.MapGroup("/api/v1/orchestration");
+        host.MapPost("/host-decisions", (HttpContext context, HostDecisionOccurrenceRequestV1 request,
+            AccessSecurityStore security, OrchestratorDecisionStore store,
+            DecisionRuleVersionStore rules, WorkspaceRegistry workspaces, IConfiguration configuration,
+            TimeProvider time) => MonolithOrchestrationEndpoints.Execute(() =>
+        {
+            if (MonolithOrchestrationEndpoints.Authorize(context, security) is null)
+                return Results.Unauthorized();
+            if (proxyProfile) return ProxyProfileConflict();
+            if (request.WorkspaceId is null || workspaces.Find(request.WorkspaceId) is null) return Results.NotFound();
+            if (HostOccurrenceRefusal(request, time.GetUtcNow().UtcDateTime) is { } refusal)
+                return Results.BadRequest(new ApiError("invalid-host-decision", refusal));
+            if (!security.ListRunners().Any(runner => runner.Id == request.HostId
+                    && runner.Id.StartsWith("runner_", StringComparison.Ordinal)
+                    && runner.RevokedAt is null && runner.RetiredAt is null))
+                return Results.BadRequest(new ApiError("unknown-host", "Host occurrence names no enrolled runner host."));
+            var activeRules = rules.EffectiveRules(request.WorkspaceId);
+            var policyVersion = rules.ActiveVersionId(request.WorkspaceId) ?? "platform.v1";
+            var route = DecisionGroundsCollector.RuleRoute(DecisionGroundsCollector.Route(configuration),
+                activeRules, rules.Models, request.TriggerKind);
+            var at = request.ObservedAt;
+            var ledger = new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0,
+                DecisionTokenUsageV1.Zero, 0, 0, 0, [], DecisionPriceStatuses.NoUsage, "host", []);
+            var grounds = new DecisionGroundsInputV1(request.OccurrenceId,
+                new(request.TriggerKind, request.Profile, at, request.Cadence),
+                new("host", null, null, null, null, null, request.HostId, request.WorkspaceId),
+                null, null, policyVersion, route,
+                request.Facts.Concat(MonolithTransitionAdapter.DecisionRulePolicySignals(activeRules, request.TriggerKind,
+                    request.Facts, policyVersion, at)).ToArray(),
+                MonolithTransitionAdapter.DecisionRulePolicyApply(activeRules, request.TriggerKind, request.Profile,
+                    request.Facts, request.Alternatives, at), [], ledger,
+                new("host.v1", "Host occurrence has no card rounds.", null, 0, 0, 0), request.Omissions);
+            var frozen = store.FreezeHostInputs(new(grounds, DecisionActionKinds.Observe,
+                request.HostId, "Host occurrence", DecisionReceiptPolicy.ActiveMode));
+            return frozen.Input is { } input ? Wire(input)
+                : Results.Json(new ApiError("host-day-cap-exhausted", frozen.CapReason!), WireJson,
+                    statusCode: StatusCodes.Status429TooManyRequests);
+        })).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPost("/api/runner/orchestrator-decisions/claim", (HttpContext context,
             OrchestratorDecisionJobClaimRequest request, OrchestratorDecisionStore store) =>
@@ -97,16 +141,18 @@ public static class OrchestratorDecisionEndpoints
                 && AllowsProject(context, occurrence.Run.ProjectId, projects)
                 ? Wire(occurrence.Run) : Results.NotFound();
         });
-        studio.MapGet("", (HttpContext context, string? taskId, string? projectId, int? limit,
+        studio.MapGet("", (HttpContext context, string? taskId, string? projectId, string? hostId,
+            string? workspaceId, int? limit,
             OrchestratorDecisionStore store, ProjectRegistry projects) =>
             Wire(store.ListReceipts(string.IsNullOrWhiteSpace(taskId) ? null : taskId, limit ?? 20,
                 string.IsNullOrWhiteSpace(projectId) ? null : projectId,
-                project => AllowsProject(context, project, projects))));
-        studio.MapGet("/spend", (HttpContext context, string? taskId, string? projectId,
+                project => AllowsProject(context, project, projects), hostId, workspaceId)));
+        studio.MapGet("/spend", (HttpContext context, string? taskId, string? projectId, string? hostId,
+            string? workspaceId,
             OrchestratorDecisionStore store, ProjectRegistry projects) =>
             Wire(store.SpendSummary(string.IsNullOrWhiteSpace(taskId) ? null : taskId,
                 string.IsNullOrWhiteSpace(projectId) ? null : projectId,
-                project => AllowsProject(context, project, projects))));
+                project => AllowsProject(context, project, projects), hostId, workspaceId)));
         studio.MapGet("/{receiptId}", (HttpContext context, string receiptId,
             OrchestratorDecisionStore store, ProjectRegistry projects) =>
             AuthorizedReceipt(context, receiptId, store, projects) is { } receipt
@@ -154,6 +200,42 @@ public static class OrchestratorDecisionEndpoints
     }
 
     private static IResult Wire(object value) => Results.Json(value, WireJson);
+
+    internal static IResult ProxyProfileConflict()
+        => Results.Json(new ApiError(ProxyProfileRefusal,
+            "The standalone Task Server owns workspaces in this profile; Studio cannot resolve rule or host-occurrence workspace ids."),
+            WireJson, statusCode: StatusCodes.Status409Conflict);
+
+    /// <summary>Boundary validation of a card-free occurrence; null admits it.</summary>
+    internal static string? HostOccurrenceRefusal(HostDecisionOccurrenceRequestV1 request, DateTime now)
+    {
+        if (string.IsNullOrWhiteSpace(request.OccurrenceId) || request.OccurrenceId.Length > 160
+            || string.IsNullOrWhiteSpace(request.HostId) || request.HostId.Length > 128)
+            return "Host occurrence needs a bounded occurrence id and host id.";
+        if (!DecisionRuleTriggers.IsHost(request.TriggerKind) || request.Profile != request.TriggerKind)
+            return $"Host occurrence trigger must be one of: {string.Join(", ", DecisionRuleTriggers.Host)}.";
+        if (request.Cadence is not ("scheduled" or "event"))
+            return "Host occurrence cadence must be scheduled or event.";
+        if (request.ObservedAt.Kind != DateTimeKind.Utc
+            || (request.ObservedAt - now).Duration() > MaxHostObservationSkew)
+            return $"Host occurrence observedAt must be UTC and within {MaxHostObservationSkew.TotalMinutes:0} minutes of now.";
+        if (request.Facts is null || request.Alternatives is null || request.Omissions is null
+            || request.Facts.Count > DecisionGroundsPolicy.MaxFacts
+            || request.Alternatives.Count > DecisionGroundsPolicy.MaxAlternatives)
+            return "Host occurrence needs bounded facts, alternatives and omissions.";
+        var known = DecisionRuleTriggers.KnownFacts(request.TriggerKind);
+        if (request.Facts.Any(fact => fact is null || fact.Source is null
+                || !known.Contains(fact.Id, StringComparer.Ordinal)
+                || string.IsNullOrWhiteSpace(fact.Source.Ref)
+                || fact.Source.Ref.Length > 256
+                || fact.Source.Ref.Contains("raw-session", StringComparison.OrdinalIgnoreCase)
+                || fact.Source.Ref.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                || fact.Source.Ref.StartsWith('/')))
+            return $"Host occurrence facts must come from the {request.TriggerKind} vocabulary with bounded source references.";
+        return request.Alternatives.Any(candidate => candidate is null
+                || !DecisionActionKinds.All.Contains(candidate.Action))
+            ? "Host occurrence candidates must come from the shared action union." : null;
+    }
 
     private static async Task<IResult> ApplyOperatorIntentAsync(HttpContext context, string receiptId,
         DecisionOperatorIntentRequest request, OrchestratorDecisionStore store, ProjectRegistry projects,
@@ -256,7 +338,7 @@ public static class OrchestratorDecisionEndpoints
         return receipt is not null && AllowsProject(context, receipt.Scope.ProjectId, projects) ? receipt : null;
     }
 
-    private static bool AllowsProject(HttpContext context, string? projectId, ProjectRegistry projects)
+    internal static bool AllowsProject(HttpContext context, string? projectId, ProjectRegistry projects)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
             || ProjectAccessAuthorization.Allows(human.User, projectId, projects);
 

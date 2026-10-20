@@ -1,0 +1,13 @@
+[Unit]
+Description=Reapply and verify the Agent Studio zone network policy
+
+[Timer]
+OnBootSec=2min
+# The daemons report the zone policy as unavailable once the last
+# verification is older than twice this interval (ZonePolicyCapability).
+OnUnitActiveSec=15min
+RandomizedDelaySec=1min
+Unit=agent-zone-policy.service
+
+[Install]
+WantedBy=timers.target
