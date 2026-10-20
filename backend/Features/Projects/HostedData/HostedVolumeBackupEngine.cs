@@ -196,7 +196,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
     internal void MoveLiveAside(string destination, string restoreId)
     {
         var marker = MarkerPath(destination);
-        var temporary = marker + ".tmp";
+        var temporary = marker + ".tmp-" + restoreId;
         try
         {
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -218,13 +218,16 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         if ((File.GetAttributes(_volumeRoot) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Volume root is a symbolic link.");
         foreach (var project in Directory.EnumerateDirectories(_volumeRoot))
-        foreach (var environment in Directory.EnumerateDirectories(project))
         {
-            if ((File.GetAttributes(project) & FileAttributes.ReparsePoint) != 0
-                || (File.GetAttributes(environment) & FileAttributes.ReparsePoint) != 0)
+            if ((File.GetAttributes(project) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Volume identity directory is a symbolic link.");
-            foreach (var marker in Directory.EnumerateFiles(environment, "*.restore-pending"))
-                RecoverPendingRestore(marker);
+            foreach (var environment in Directory.EnumerateDirectories(project))
+            {
+                if ((File.GetAttributes(environment) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Volume identity directory is a symbolic link.");
+                foreach (var marker in Directory.EnumerateFiles(environment, "*.restore-pending"))
+                    RecoverPendingRestore(marker);
+            }
         }
     }
 
