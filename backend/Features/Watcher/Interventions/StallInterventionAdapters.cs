@@ -139,10 +139,10 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
                     var sshRemote = string.Equals(configuration["RemoteGate:SshHost"], host,
                         StringComparison.OrdinalIgnoreCase)
                         ? gateSlots.RemoteSnapshot(RemoteSlotsFresh) : null;
-                    int? busy = sshRemote is null && string.Equals(configuration["RemoteGate:SshHost"], host,
+                    int? gateBusy = sshRemote is null && string.Equals(configuration["RemoteGate:SshHost"], host,
                         StringComparison.OrdinalIgnoreCase) ? null
                         : Math.Max(pull.Busy + sshDispatch, sshRemote?.Busy ?? 0);
-                    return new ServiceWorkloadReading(busy, active, pull.Queued,
+                    return new ServiceWorkloadReading(gateBusy, active, pull.Queued,
                         new StallGateSlotFacts(pullGates.Hosts().First(item => item.Id == host).Slots,
                             pull.Busy + sshDispatch, sshRemote?.Busy, active));
                 }
