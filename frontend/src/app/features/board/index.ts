@@ -10,10 +10,8 @@ export { LaneCollapseService } from './state/lane-collapse.service';
 export { CreateTaskFormService } from './state/create-task-form.service';
 export { BoardMutationsService } from './state/board-mutations.service';
 export { BoardDragStateService } from './state/board-drag-state.service';
-export { EpicOverviewService } from './state/epic-overview.service';
 
 // components
-export { EpicOverviewScreenComponent, type EpicOverviewScope } from './components/epic-overview-screen/epic-overview-screen.component';
 export { BoardSearchIconComponent } from './components/board-search-icon/board-search-icon.component';
 export { ActiveBoardFiltersComponent } from './components/active-board-filters/active-board-filters.component';
 export { TagFiltersComponent } from '../../components/tag-filters/tag-filters.component';

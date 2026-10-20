@@ -163,6 +163,12 @@ describe('StudioTabActionsComponent - board actions', () => {
     expect(query(epics, 'studio-board-dossier-toggle')?.getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('keeps the board action strip free of the retired epic grouping toggle', async () => {
+    const fixture = await build({ boardActionsVisible: true });
+    expect(query(fixture, 'studio-board-epic-toggle')).toBeNull();
+    expect(query(fixture, 'studio-board-add-task')).toBeTruthy();
+  });
+
   it('blocks Add task while mutations are blocked', async () => {
     const fixture = await build({ boardActionsVisible: true, mutationsBlocked: true });
     expect((query(fixture, 'studio-board-add-task') as HTMLButtonElement).disabled).toBe(true);

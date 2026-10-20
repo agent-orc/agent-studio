@@ -185,13 +185,13 @@ test('pipeline health shows a stalled workspace evidence flush with repository a
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await expect(page.getByTestId('studio-sidebar')).toBeVisible({ timeout: 15_000 });
 
-  const hubRow = page.getByTestId(`studio-explorer-project-hub-${PROJECT}`);
+  const hubRow = page.getByTestId(`studio-explorer-project-deploy-${PROJECT}`);
   if (!(await hubRow.count()) || !(await hubRow.isVisible())) {
     await page.getByTestId(`studio-explorer-project-${PROJECT}`).first().click();
   }
   await hubRow.click();
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId('project-shell-rail-pipeline').click();
+  await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('deploy-tab-steps').click();
 
   const health = page.getByTestId('pipeline-health');
   await expect(health).toHaveAttribute('data-status', 'alarm');

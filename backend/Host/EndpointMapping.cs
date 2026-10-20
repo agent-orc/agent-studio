@@ -20,6 +20,7 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
         var tasks = app.MapGroup("/api/tasks")
             .AddEndpointFilter<TaskOperationTimingFilter>();
@@ -110,6 +111,8 @@ public static class EndpointMapping
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();
+        app.MapProjectPipelineDefinitionEndpoints();
+        app.MapEnvironmentHealthEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
         app.MapProjectGraphEndpoints();

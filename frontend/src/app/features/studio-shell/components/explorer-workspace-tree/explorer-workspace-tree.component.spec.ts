@@ -453,7 +453,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     expect(projectRow?.classList.contains('tree-row--child')).toBe(false);
 
     // Every destination under the expanded project is indented one level.
-    for (const surface of ['board', 'hub', 'wiki', 'epics']) {
+    for (const surface of ['board', 'workbenches', 'deploy', 'operations', 'wiki', 'hub']) {
       const dest = root.querySelector<HTMLElement>(`[data-testid="studio-explorer-project-${surface}-Alpha"]`);
       expect(dest, surface).toBeTruthy();
       expect(dest?.classList.contains('tree-row--child'), surface).toBe(true);
@@ -467,7 +467,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     ).toBeGreaterThanOrEqual(4);
   });
 
-  it('renders a Wiki row under Deck that emits openWikiRequest', () => {
+  it('renders the six destinations in decision order and opens Wiki', () => {
     const fixture = mount();
     const cmp = fixture.componentInstance;
     fixture.componentRef.setInput('registryWorkspaces', []);
@@ -482,18 +482,40 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const rows = Array.from(
       root.querySelectorAll<HTMLElement>('.studio-tree-children .tree-row[data-testid^="studio-explorer-project-"]'),
     ).map(el => el.getAttribute('data-testid'));
-    // Wiki sits directly after Deck in the per-project child list.
+    // NV-D1 option A is the fixed project navigation order.
     expect(rows).toEqual([
       'studio-explorer-project-board-Alpha',
-      'studio-explorer-project-hub-Alpha',
-      'studio-explorer-project-wiki-Alpha',
       'studio-explorer-project-workbenches-Alpha',
-      'studio-explorer-project-epics-Alpha',
+      'studio-explorer-project-deploy-Alpha',
+      'studio-explorer-project-operations-Alpha',
+      'studio-explorer-project-wiki-Alpha',
+      'studio-explorer-project-hub-Alpha',
     ]);
 
     const wiki = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-wiki-Alpha"]');
     wiki?.click();
     expect(emitted).toEqual(['Alpha']);
+  });
+
+  it('opens Deploy and Operations without exposing an Epics destination', () => {
+    const fixture = mount();
+    fixture.componentRef.setInput('projectRows', [row('Alpha', { isActive: true })]);
+    fixture.componentRef.setInput('expandedProjects', new Set(['Alpha']));
+    fixture.detectChanges();
+    const opened: string[] = [];
+    fixture.componentInstance.openDeployRequest.subscribe(name => opened.push(`deploy:${name}`));
+    fixture.componentInstance.openOperationsRequest.subscribe(name => opened.push(`operations:${name}`));
+    const host = fixture.nativeElement as HTMLElement;
+    host.querySelector<HTMLElement>('[data-testid="studio-explorer-project-deploy-Alpha"]')!.click();
+    host.querySelector<HTMLElement>('[data-testid="studio-explorer-project-operations-Alpha"]')!.click();
+    expect(opened).toEqual(['deploy:Alpha', 'operations:Alpha']);
+    expect(host.querySelector('[data-testid="studio-explorer-project-epics-Alpha"]')).toBeNull();
+    // Deploy (send) and Operations (activity pulse) carry distinct glyphs.
+    const glyph = (surface: string) => host
+      .querySelector(`[data-testid="studio-explorer-project-${surface}-Alpha-glyph"]`)?.innerHTML ?? '';
+    expect(glyph('deploy')).toContain('points="3 12 21 4 13 21 11 13 3 12"');
+    expect(glyph('operations')).toContain('points="4 12 8 12 11 5 13 19 16 12 20 12"');
+    expect(glyph('deploy')).not.toEqual(glyph('operations'));
   });
 
   it('highlights only the Wiki row when the active surface is the wiki rail', () => {
@@ -657,7 +679,8 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     const root: HTMLElement = fixture.nativeElement;
     for (const testid of [
       'studio-explorer-project-wiki-Alpha',
-      'studio-explorer-project-epics-Alpha',
+      'studio-explorer-project-deploy-Alpha',
+      'studio-explorer-project-operations-Alpha',
       'studio-explorer-project-url-Alpha-url-1',
     ]) {
       const child = root.querySelector<HTMLElement>(`[data-testid="${testid}"]`);

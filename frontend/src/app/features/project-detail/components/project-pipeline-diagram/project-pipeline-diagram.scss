@@ -1,0 +1,146 @@
+:host {
+  display: block;
+}
+
+.pipeline-diagram {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(180px, 1fr);
+  gap: var(--studio-spacing-5);
+  margin: 0;
+  padding: 0 0 var(--studio-spacing-2);
+  overflow-x: auto;
+  list-style: none;
+}
+
+.pipeline-diagram__node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+
+/* The connector is a glyph between nodes, not an edge bar on a node. */
+.pipeline-diagram__node:not(:last-child)::after {
+  content: '→';
+  position: absolute;
+  top: 50%;
+  right: calc(-1 * var(--studio-spacing-4));
+  transform: translateY(-50%);
+  color: var(--studio-accent-3-strong);
+  font-size: 1rem;
+}
+
+.pipeline-diagram__node[data-issues='true'] {
+  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-surface-muted));
+}
+
+.pipeline-diagram__node--empty {
+  background: transparent;
+  border-style: dashed;
+}
+
+.pipeline-diagram__kind {
+  color: var(--studio-fg-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pipeline-diagram__name {
+  color: var(--studio-fg-strong);
+  font-size: 0.9rem;
+}
+
+.pipeline-diagram__entry,
+.pipeline-diagram__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+}
+
+.pipeline-diagram__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1);
+}
+
+.pipeline-diagram__badge,
+.pipeline-diagram__issues {
+  align-self: flex-start;
+  padding: 0 var(--studio-spacing-2);
+  border-radius: 999px;
+  background: var(--studio-card-muted-bg);
+  color: var(--studio-fg-muted);
+  font-size: 0.7rem;
+}
+
+.pipeline-diagram__badge--protected {
+  background: color-mix(in srgb, var(--studio-accent-3-strong) 16%, var(--studio-bg-elevated));
+  color: var(--studio-fg-strong);
+}
+
+.pipeline-diagram__issues {
+  background: color-mix(in srgb, var(--studio-warn) 20%, var(--studio-bg-elevated));
+  color: var(--studio-fg-strong);
+}
+
+.pipeline-diagram__list,
+.pipeline-diagram__variables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pipeline-diagram__variables {
+  gap: var(--studio-spacing-1);
+  padding-top: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-border);
+}
+
+.pipeline-diagram__variables li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+}
+
+.pipeline-diagram__meta,
+.pipeline-diagram__muted {
+  color: var(--studio-fg-dim);
+}
+
+.pipeline-diagram__number {
+  font-variant-numeric: tabular-nums;
+}
+
+code {
+  overflow-wrap: anywhere;
+  color: var(--studio-fg);
+  font: 0.72rem/1.4 var(--studio-mono);
+}
+
+@media (max-width: 900px) {
+  .pipeline-diagram {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+  }
+
+  .pipeline-diagram__node:not(:last-child)::after {
+    content: '↓';
+    top: auto;
+    right: 50%;
+    bottom: calc(-1 * var(--studio-spacing-5));
+    transform: translateX(50%);
+  }
+}
