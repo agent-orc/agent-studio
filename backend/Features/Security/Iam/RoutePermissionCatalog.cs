@@ -214,8 +214,10 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix");
         Add("R", IamPermissions.ProjectRead,
             "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
-            "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/{}",
-            "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/{}",
+            "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",
+            "/api/projects/{}/deploy/releases/{}",
+            "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
+            "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit");
         Environment("POST", IamPermissions.EnvironmentDeploy,
             "/api/projects/{}/deploy/releases/{}/deployments", null);

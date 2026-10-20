@@ -373,6 +373,13 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.NotEqual(HttpStatusCode.Forbidden, alphaRead.StatusCode);
         using var betaRead = await viewer.GetAsync("/api/projects/beta/deploy/status");
         Assert.Equal(HttpStatusCode.Forbidden, betaRead.StatusCode);
+        foreach (var collection in new[] { "releases", "deployments" })
+        {
+            using var alphaPage = await viewer.GetAsync($"/api/projects/alpha/deploy/{collection}/page");
+            Assert.NotEqual(HttpStatusCode.Forbidden, alphaPage.StatusCode);
+            using var betaPage = await viewer.GetAsync($"/api/projects/beta/deploy/{collection}/page");
+            Assert.Equal(HttpStatusCode.Forbidden, betaPage.StatusCode);
+        }
         using var refused = await viewer.PostAsJsonAsync("/api/projects/alpha/deploy/releases/missing/deployments",
             new { environmentId = "stage" });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
