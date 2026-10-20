@@ -220,6 +220,10 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
             new { label = "Repository", url = "https://user@example.test/repo.git" }, owner)).Status);
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
             new { label = "Repository", url = first }, owner)).Status);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = second }, oper)).Status);
+        Assert.Equal(first, AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(
+            factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)));
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
             new { label = "Repository", url = second }, owner)).Status);
         var registry = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
@@ -242,9 +246,10 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Delete, path + "/" + ids[1], null, oper)).Status);
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Delete, path + "/" + ids[1], null, owner)).Status);
         Assert.Equal(first, AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
-        Assert.Equal([(null, first), (first, second), (second, "https://example.test/owner-update.git"),
+        Assert.Equal([(null, first), (first, first), (first, second), (second, "https://example.test/owner-update.git"),
             ("https://example.test/owner-update.git", first)],
             registry.RepositoryAudit().Select(row => (row.PreviousRepositoryUrl, row.RepositoryUrl)).ToArray());
+        Assert.Equal(2, registry.RepositoryAudit()[1].CandidatesAfter.Count);
 
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
             new { label = "Preview", url = "https://example.test/preview?token=secret" }, owner)).Status);
@@ -305,6 +310,134 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         Assert.Equal(2, stopper.Calls);
         Assert.Empty(registry.FindById(project)!.Urls);
         Assert.Equal(auditCount + 1, registry.RepositoryAudit().Count);
+    }
+
+    [Fact]
+    public async Task Networked_operator_cannot_stage_or_change_a_hidden_repository_candidate()
+    {
+        using var factory = BuildFactory(SecurityProfiles.Networked);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        var oper = Invite(store, "site.operator", StudioRoles.Operator);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        async Task<HttpResponseMessage> Send(HttpMethod method, string path, object? body,
+            (StudioUser User, string SessionToken, string CsrfToken) caller)
+        {
+            using var request = new HttpRequestMessage(method, path);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            Session(request, caller.SessionToken, caller.CsrfToken);
+            return await client.SendAsync(request);
+        }
+
+        using var created = await Send(HttpMethod.Post, "/api/projects",
+            new { displayName = "Hidden Candidate", workspaceId = "ws-default" }, owner);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var selected = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/selected.git" }, owner);
+        Assert.Equal(HttpStatusCode.OK, selected.StatusCode);
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var before = registry.RepositoryAudit().Count;
+        using var staged = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/hidden.git" }, oper);
+        Assert.Equal(HttpStatusCode.Forbidden, staged.StatusCode);
+        Assert.Equal(before, registry.RepositoryAudit().Count);
+
+        using var ownerStage = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/hidden.git" }, owner);
+        Assert.Equal(HttpStatusCode.OK, ownerStage.StatusCode);
+        var ids = registry.FindById(project)!.Urls.Select(url => url.Id).ToArray();
+        Assert.Equal(2, ids.Length);
+        Assert.Equal("https://example.test/selected.git",
+            AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+        using var changed = await Send(HttpMethod.Put, path + "/" + ids[1],
+            new { label = "Repository", url = "https://example.test/redirect.git" }, oper);
+        using var removed = await Send(HttpMethod.Delete, path + "/" + ids[1], null, oper);
+        Assert.Equal(HttpStatusCode.Forbidden, changed.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, removed.StatusCode);
+        Assert.Equal(before + 1, registry.RepositoryAudit().Count);
+        Assert.Equal("https://example.test/hidden.git", registry.RepositoryAudit().Last()
+            .CandidatesAfter.Single(candidate => candidate.Id == ids[1]).Url);
+
+        using var ownerClear = await Send(HttpMethod.Delete, path + "/" + ids[0], null, owner);
+        Assert.Equal(HttpStatusCode.OK, ownerClear.StatusCode);
+        Assert.Equal("https://example.test/hidden.git",
+            AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+    }
+
+    [Fact]
+    public async Task Url_start_waits_for_concurrent_removal_and_cannot_launch_deleted_record()
+    {
+        using var enteredStop = new ManualResetEventSlim();
+        using var releaseStop = new ManualResetEventSlim();
+        var stopper = new BlockingUrlStopper(_clock, enteredStop, releaseStop);
+        var starter = new RecordingUrlStarter(_clock);
+        using var factory = BuildFactory(SecurityProfiles.Local, stopper: stopper, starter: starter);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var created = await client.PostAsJsonAsync("/api/projects",
+            new { displayName = "Concurrent Preview", workspaceId = "ws-default" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var added = await client.PostAsJsonAsync(path, new
+        {
+            label = "Preview", url = "http://localhost:4200",
+            startRule = new { command = "echo ready" },
+        });
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var urlId = Assert.Single(factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)!.Urls).Id;
+
+        var delete = Task.Run(() => client.DeleteAsync(path + "/" + urlId));
+        Assert.True(enteredStop.Wait(TimeSpan.FromSeconds(10)));
+        var start = Task.Run(() => client.PostAsync(path + "/" + urlId + "/start", null));
+        releaseStop.Set();
+        using var removed = await delete;
+        using var rejectedStart = await start;
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, rejectedStart.StatusCode);
+        Assert.Equal(0, starter.Calls);
+    }
+
+    [Fact]
+    public async Task Url_removal_waits_for_a_start_that_already_resolved_the_record()
+    {
+        using var enteredStart = new ManualResetEventSlim();
+        using var releaseStart = new ManualResetEventSlim();
+        using var enteredStop = new ManualResetEventSlim();
+        var starter = new RecordingUrlStarter(_clock, enteredStart, releaseStart);
+        var stopper = new OrderedUrlStopper(_clock, starter, enteredStop);
+        using var factory = BuildFactory(SecurityProfiles.Local, stopper: stopper, starter: starter);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var created = await client.PostAsJsonAsync("/api/projects",
+            new { displayName = "Start Before Delete", workspaceId = "ws-default" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var added = await client.PostAsJsonAsync(path, new
+        {
+            label = "Preview", url = "http://localhost:4200",
+            startRule = new { command = "echo ready" },
+        });
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var urlId = Assert.Single(factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)!.Urls).Id;
+
+        var start = Task.Run(() => client.PostAsync(path + "/" + urlId + "/start", null));
+        Assert.True(enteredStart.Wait(TimeSpan.FromSeconds(10)));
+        var delete = Task.Run(() => client.DeleteAsync(path + "/" + urlId));
+        var stoppedBeforeLaunch = enteredStop.Wait(TimeSpan.FromSeconds(2));
+        releaseStart.Set();
+        using var started = await start;
+        using var removed = await delete;
+        Assert.False(stoppedBeforeLaunch);
+        Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.True(stopper.SawLaunchAtStop);
+        Assert.Empty(factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)!.Urls);
     }
 
     [Fact]
@@ -392,7 +525,8 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         => request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
 
     private WebApplicationFactory<Program> BuildFactory(string profile, IAtomicJsonFileWriter? writer = null,
-        IProjectUrlProcessStopper? stopper = null) => new TestHostFactory().WithWebHostBuilder(builder =>
+        IProjectUrlProcessStopper? stopper = null, IProjectUrlProcessStarter? starter = null) =>
+        new TestHostFactory().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
@@ -400,6 +534,8 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
             builder.ConfigureTestServices(services => services.AddSingleton(writer));
         if (stopper is not null)
             builder.ConfigureTestServices(services => services.AddSingleton(stopper));
+        if (starter is not null)
+            builder.ConfigureTestServices(services => services.AddSingleton(starter));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
@@ -419,6 +555,51 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
             Calls++;
             return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp", State,
                 1234, clock.GetUtcNow(), null, null, []);
+        }
+    }
+
+    private sealed class BlockingUrlStopper(FakeTimeProvider clock, ManualResetEventSlim entered,
+        ManualResetEventSlim release) : IProjectUrlProcessStopper
+    {
+        public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The test did not release URL removal.");
+            return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp",
+                ProjectUrlProcessStates.Stopped, 1234, clock.GetUtcNow(), null, null, []);
+        }
+    }
+
+    private sealed class RecordingUrlStarter(FakeTimeProvider clock,
+        ManualResetEventSlim? entered = null, ManualResetEventSlim? release = null) : IProjectUrlProcessStarter
+    {
+        public int Calls { get; private set; }
+
+        public ProjectUrlProcessSnapshot StartWithReadiness(ProjectRecord project, ProjectUrlRecord url)
+        {
+            entered?.Set();
+            if (release is not null && !release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The test did not release URL start.");
+            Calls++;
+            return new ProjectUrlProcessSnapshot(project.Id, url.Id, url.StartRule!.Command, "/tmp",
+                ProjectUrlProcessStates.Starting, 1234, clock.GetUtcNow(), null, null, []);
+        }
+
+        public ProjectUrlDiagnostic? Latest(ProjectRecord project, ProjectUrlRecord url) => null;
+    }
+
+    private sealed class OrderedUrlStopper(FakeTimeProvider clock, RecordingUrlStarter starter,
+        ManualResetEventSlim entered) : IProjectUrlProcessStopper
+    {
+        public bool SawLaunchAtStop { get; private set; }
+
+        public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
+        {
+            SawLaunchAtStop = starter.Calls > 0;
+            entered.Set();
+            return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp",
+                ProjectUrlProcessStates.Stopped, 1234, clock.GetUtcNow(), null, null, []);
         }
     }
 

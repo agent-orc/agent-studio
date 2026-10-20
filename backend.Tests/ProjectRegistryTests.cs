@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -519,7 +520,7 @@ public class ProjectRegistryTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => reg.RollbackUpdate(firstRecord, original));
         Assert.Equal(rows, reg.RepositoryAudit());
         var reloaded = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
-        Assert.Equal(rows, reloaded.RepositoryAudit());
+        Assert.Equal(JsonSerializer.Serialize(rows), JsonSerializer.Serialize(reloaded.RepositoryAudit()));
     }
 
     [Fact]

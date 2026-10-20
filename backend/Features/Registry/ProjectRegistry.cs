@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.Security;
@@ -551,11 +553,11 @@ public sealed class ProjectRegistry
             next[idx] = previous;
             var audit = _state.RepositoryAudit.ToList();
             var auditIndex = audit.FindLastIndex(row => row.ProjectId == expected.Id);
-            var beforeUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(previous);
-            var afterUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(expected);
-            if (auditIndex >= 0 && !string.Equals(beforeUrl, afterUrl, StringComparison.Ordinal)
-                && audit[auditIndex].RepositoryUrl == afterUrl
-                && audit[auditIndex].PreviousRepositoryUrl == beforeUrl)
+            var beforeCandidates = RepositoryCandidates(previous);
+            var afterCandidates = RepositoryCandidates(expected);
+            if (auditIndex >= 0 && !beforeCandidates.SequenceEqual(afterCandidates)
+                && audit[auditIndex].CandidatesBefore.SequenceEqual(beforeCandidates)
+                && audit[auditIndex].CandidatesAfter.SequenceEqual(afterCandidates))
                 audit.RemoveAt(auditIndex);
             ReplaceStateAndPersistLocked(_state with { Projects = next, RepositoryAudit = audit });
             _logger.LogWarning("project-registry-basics-rolled-back id={Id}", expected.Id);
@@ -891,6 +893,23 @@ public sealed class ProjectRegistry
         }, "url-removed", actor, beforePersist);
     }
 
+    /// <summary>Keep URL lookup and process start ordered with URL removal.</summary>
+    public T UseUrl<T>(string projectId, string urlId, Func<ProjectRecord, ProjectUrlRecord, T> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        EnsureLoaded();
+        lock (_gate)
+        {
+            var project = _state.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))
+                ?? throw new KeyNotFoundException($"Unknown projectId: {projectId}");
+            var url = project.Urls.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, urlId, StringComparison.Ordinal))
+                ?? throw new KeyNotFoundException($"Unknown url id: {urlId}");
+            return action(project, url);
+        }
+    }
+
     /// <summary>
     /// Reassign sort order from an explicit id sequence. Every existing url id
     /// must appear exactly once in <paramref name="orderedUrlIds"/>; the new
@@ -1044,14 +1063,13 @@ public sealed class ProjectRegistry
     private void ReplaceProjectAndAuditLocked(ProjectRecord previous, ProjectRecord updated,
         List<ProjectRecord> projects, StudioUser? actor, Action? beforePersist = null)
     {
-        foreach (var candidate in updated.Urls.Where(url =>
-            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url.Label, "repo", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase)))
+        var candidatesBefore = RepositoryCandidates(previous);
+        var candidatesAfter = RepositoryCandidates(updated);
+        foreach (var candidate in candidatesAfter)
             ValidateRepositoryUrl(candidate.Url);
         var before = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(previous);
         var after = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(updated);
-        if (string.Equals(before, after, StringComparison.Ordinal))
+        if (candidatesBefore.SequenceEqual(candidatesAfter))
         {
             beforePersist?.Invoke();
             ReplaceStateAndPersistLocked(_state with { Projects = projects });
@@ -1063,10 +1081,24 @@ public sealed class ProjectRegistry
         var audit = _state.RepositoryAudit.ToList();
         if (_networked)
             audit.Add(new ProjectRepositoryAuditEvent(_clock.GetUtcNow().UtcDateTime,
-                previous.Id, actor!.Id, actor.Username, before, after));
+                previous.Id, actor!.Id, actor.Username, before, after)
+            {
+                CandidatesBefore = candidatesBefore,
+                CandidatesAfter = candidatesAfter,
+            });
         beforePersist?.Invoke();
         ReplaceStateAndPersistLocked(_state with { Projects = projects, RepositoryAudit = audit });
     }
+
+    private static IReadOnlyList<ProjectRepositoryCandidateAudit> RepositoryCandidates(ProjectRecord project) =>
+        project.Urls.Where(url =>
+            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url.Label, "repo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase))
+            .Select(url => new ProjectRepositoryCandidateAudit(url.Id, url.Label, url.Url, url.SortOrder,
+                url.StartRule is null ? null : Convert.ToHexString(SHA256.HashData(
+                    Encoding.UTF8.GetBytes(JsonSerializer.Serialize(url.StartRule))))))
+            .ToArray();
 
     /// <summary>F45b hook: append a fully-formed record (used by the CRUD endpoints).</summary>
     internal ProjectRecord Append(ProjectRecord record)

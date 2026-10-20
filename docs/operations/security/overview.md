@@ -99,9 +99,10 @@ that is already allowed to edit that project's checkout.
   plane is unavailable. `AccessSecurityRouteInventory` lists the owner-only
   route families, and its test fails for any mapped route there without the
   declaration. The local loopback profile is unchanged.
-- In the networked profile, changing or clearing a project's repository URL
-  requires the owner, including changes through the generic URL routes.
-  The project, actor, prior URL, new URL, and timestamp are written with the
+- In the networked profile, creating, updating, removing, or reordering a
+  repository-identifying project URL requires the owner, including candidates
+  that are not currently selected. The project, actor, selected URL before and
+  after, candidate lists before and after, and timestamp are written with the
   project mutation in `<TaskRepository>/.metadata/projects.json`.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
@@ -161,8 +162,8 @@ Each authenticated API-token call appends its token id, creator, method, route,
 and response status to `<TaskRepository>/.security/api-token-audit.jsonl`.
 Token values and query strings are omitted from that audit.
 
-Networked project repository URL changes are recorded in the registry's
-`RepositoryAudit` list in the same atomic write as the effective URL.
+Networked project repository candidate changes are recorded in the registry's
+`RepositoryAudit` list in the same atomic write as the project URL records.
 
 Known credential shapes and named authorization, cookie, and password fields
 are redacted from Runner log ingestion. Production exceptions omit stack

@@ -230,7 +230,14 @@ public sealed record ProjectRepositoryAuditEvent(
     string ActorId,
     string Actor,
     string? PreviousRepositoryUrl,
-    string? RepositoryUrl);
+    string? RepositoryUrl)
+{
+    public IReadOnlyList<ProjectRepositoryCandidateAudit> CandidatesBefore { get; init; } = [];
+    public IReadOnlyList<ProjectRepositoryCandidateAudit> CandidatesAfter { get; init; } = [];
+}
+
+public sealed record ProjectRepositoryCandidateAudit(
+    string Id, string Label, string Url, int SortOrder, string? StartRuleDigest);
 
 /// <summary>
 /// Well-known constants for the F45 default workspace.

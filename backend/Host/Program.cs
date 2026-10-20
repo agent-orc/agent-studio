@@ -395,6 +395,8 @@ builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlPortInspector, AgentStudio.Registry.ProjectUrlPortInspector>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlProcessService>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStarter>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStopper>(provider =>
     provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlReadinessService>();
