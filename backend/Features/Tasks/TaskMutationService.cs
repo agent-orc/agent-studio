@@ -933,6 +933,9 @@ public class TaskMutationService
     /// <summary>Removes evidence staged for an operator move that was refused.</summary>
     public bool RemoveIntegrationRecordOnFolder(string folderPath, string recordId)
     {
+        // Operator candidate receipts are final evidence, never staged move
+        // evidence. The rollback path must not erase them.
+        if (recordId.StartsWith("operator-candidate-", StringComparison.Ordinal)) return false;
         var path = Path.Combine(folderPath, "task.json");
         if (!File.Exists(path)) return false;
         try
