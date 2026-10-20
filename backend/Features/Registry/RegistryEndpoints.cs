@@ -426,7 +426,7 @@ public static class RegistryEndpoints
             ProjectRegistry projects, WorkspaceRegistry workspaces,
             AgentStudio.Projects.ProjectSettingsService projectSettings,
             ClientIdentityStore clients, WikiContentCache wikiContentCache, ILoggerFactory loggerFactory,
-            IConfiguration configuration, HttpContext context, AccessSecurityStore accessSecurity) =>
+            IConfiguration configuration, HttpContext context) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
             var previous = projects.FindById(projId);
@@ -457,12 +457,13 @@ public static class RegistryEndpoints
 
             try
             {
-                var result = projects.Update(projId, body, workspaces);
-                if (repositoryUrlChanged && SecurityProfiles.IsNetworked(configuration))
-                    accessSecurity.AppendProjectRepositoryAudit(
-                        projId, human!.User.Id, human.User.Username,
-                        previous.Urls.FirstOrDefault(url => url.Id == "repo")?.Url,
-                        result.Urls.FirstOrDefault(url => url.Id == "repo")?.Url);
+                var result = projects.Update(projId, body, workspaces, out previous, human?.User);
+                if (body.RepositoryUrl != null || body.ClearRepositoryUrl == true
+                    || body.RepositoryPath != null || body.ClearRepositoryPath == true)
+                    clients.InvalidateRunnerProjectPreflights(projId);
+                if (body.WikiSourceBranch != null || body.ClearWikiSourceBranch == true
+                    || body.RepositoryPath != null || body.ClearRepositoryPath == true)
+                    wikiContentCache.Invalidate(projId);
                 if (!string.Equals(previous.DisplayName, result.DisplayName, StringComparison.Ordinal)
                     || updateExecutionRunner)
                 {
@@ -490,15 +491,10 @@ public static class RegistryEndpoints
                             statusCode: StatusCodes.Status500InternalServerError);
                     }
                 }
-                if (body.RepositoryUrl != null || body.ClearRepositoryUrl == true
-                    || body.RepositoryPath != null || body.ClearRepositoryPath == true)
-                    clients.InvalidateRunnerProjectPreflights(projId);
-                if (body.WikiSourceBranch != null || body.ClearWikiSourceBranch == true
-                    || body.RepositoryPath != null || body.ClearRepositoryPath == true)
-                    wikiContentCache.Invalidate(projId);
                 return Results.Ok(ProjectSummary.From(result));
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
             catch (ProjectPersistenceException ex)
@@ -566,58 +562,71 @@ public static class RegistryEndpoints
         });
 
         app.MapPost(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls",
-            (string projId, CreateProjectUrlRequest body, ProjectRegistry projects, ClientIdentityStore clients) =>
+            (string projId, CreateProjectUrlRequest body, ProjectRegistry projects, ClientIdentityStore clients,
+                HttpContext context) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
             try
             {
-                var updated = projects.AddUrl(projId, body.Label, body.Url, body.StartRule);
+                var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+                var updated = projects.AddUrl(projId, body.Label, body.Url, body.StartRule, actor);
                 clients.InvalidateRunnerProjectPreflights(projId);
                 return Results.Ok(updated);
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
         app.MapPut(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}",
-            (string projId, string urlId, UpdateProjectUrlRequest body, ProjectRegistry projects, ClientIdentityStore clients) =>
+            (string projId, string urlId, UpdateProjectUrlRequest body, ProjectRegistry projects, ClientIdentityStore clients,
+                HttpContext context) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
             try
             {
-                var updated = projects.UpdateUrl(projId, urlId, body.Label, body.Url, body.StartRule);
+                var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+                var updated = projects.UpdateUrl(projId, urlId, body.Label, body.Url, body.StartRule, actor);
                 clients.InvalidateRunnerProjectPreflights(projId);
                 return Results.Ok(updated);
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
         app.MapDelete(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}",
-            (string projId, string urlId, ProjectRegistry projects, ProjectUrlProcessService procs, ClientIdentityStore clients) =>
+            (string projId, string urlId, ProjectRegistry projects, ProjectUrlProcessService procs, ClientIdentityStore clients,
+                HttpContext context) =>
         {
             try
             {
                 // A removed URL must not leave an owned process without a UI
                 // surface from which an operator can stop it.
+                var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+                var updated = projects.RemoveUrl(projId, urlId, actor);
                 procs.Stop(projId, urlId);
-                var updated = projects.RemoveUrl(projId, urlId);
                 clients.InvalidateRunnerProjectPreflights(projId);
                 return Results.Ok(updated);
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
         });
 
         app.MapPost(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/reorder",
-            (string projId, ReorderProjectUrlsRequest body, ProjectRegistry projects) =>
+            (string projId, ReorderProjectUrlsRequest body, ProjectRegistry projects, ClientIdentityStore clients,
+                HttpContext context) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
             try
             {
-                var updated = projects.ReorderUrls(projId, body.OrderedUrlIds);
+                var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+                var updated = projects.ReorderUrls(projId, body.OrderedUrlIds, actor);
+                clients.InvalidateRunnerProjectPreflights(projId);
                 return Results.Ok(updated);
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
