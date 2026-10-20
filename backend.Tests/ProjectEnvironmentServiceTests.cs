@@ -77,6 +77,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         state = (await backups.ReadAsync("demo", CancellationToken.None))!;
         Assert.Contains(state.Audit, entry => entry.Action == "backup" && entry.Outcome == "succeeded");
         Assert.Contains(state.Audit, entry => entry.Action == "restore" && entry.Actor == "owner"
+            && entry.BackupId == backup.Id && entry.Outcome == "started");
+        Assert.Contains(state.Audit, entry => entry.Action == "restore" && entry.Actor == "owner"
             && entry.BackupId == backup.Id && entry.Outcome == "succeeded");
     }
 

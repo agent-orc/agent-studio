@@ -104,17 +104,39 @@ public sealed class HostedVolumeBackupService(
                     new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "not-found")) });
                 throw new FileNotFoundException("Backup is not registered for this declared volume.");
             }
+            WriteState(project, state with { Audit = Append(state.Audit,
+                new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "started")) });
             try
             {
                 await engine.RestoreAsync(backup, cancellationToken);
-                WriteState(project, state with { Audit = Append(state.Audit,
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    var failed = ReadState(project);
+                    WriteState(project, failed with { Audit = Append(failed.Audit,
+                        new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId,
+                            ex is OperationCanceledException ? "cancelled" : "failed")) });
+                }
+                catch (Exception auditError)
+                {
+                    logger.LogError(auditError, "Could not record failed hosted volume restore for {Project}/{Environment}/{Volume}",
+                        project, environment, volume);
+                }
+                throw;
+            }
+            try
+            {
+                var completed = ReadState(project);
+                WriteState(project, completed with { Audit = Append(completed.Audit,
                     new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "succeeded")) });
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception auditError)
             {
-                WriteState(project, state with { Audit = Append(state.Audit,
-                    new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "failed")) });
-                throw;
+                // The engine has committed the replacement. An audit write cannot change its result.
+                logger.LogError(auditError, "Hosted volume restored, but audit could not be recorded for {Project}/{Environment}/{Volume}",
+                    project, environment, volume);
             }
         }
         finally { _gate.Release(); }

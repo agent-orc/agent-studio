@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Projects;
 
@@ -23,10 +24,29 @@ public sealed class UnboundHostedVolumeBackupEngine : IHostedVolumeBackupEngine
 }
 
 /// <summary>Filesystem adapter for a co-located host. The run-zone agent can implement the same interface remotely.</summary>
-public sealed class LocalHostedVolumeBackupEngine(string volumeRoot, string backupRoot) : IHostedVolumeBackupEngine
+public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
 {
+    private readonly string _volumeRoot;
+    private readonly string _backupRoot;
+    private readonly ILogger<LocalHostedVolumeBackupEngine> _logger;
+    private readonly Action<string> _deletePrevious;
+
+    public LocalHostedVolumeBackupEngine(string volumeRoot, string backupRoot,
+        ILogger<LocalHostedVolumeBackupEngine>? logger = null)
+        : this(volumeRoot, backupRoot, logger ?? NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            path => Directory.Delete(path, recursive: true)) { }
+
+    internal LocalHostedVolumeBackupEngine(string volumeRoot, string backupRoot,
+        ILogger<LocalHostedVolumeBackupEngine> logger, Action<string> deletePrevious)
+    {
+        _volumeRoot = volumeRoot;
+        _backupRoot = backupRoot;
+        _logger = logger;
+        _deletePrevious = deletePrevious;
+    }
+
     public string VolumePath(HostedVolumeKey key)
-        => Path.Combine(volumeRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
+        => Path.Combine(_volumeRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
 
     public async Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -34,7 +54,7 @@ public sealed class LocalHostedVolumeBackupEngine(string volumeRoot, string back
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Declared volume is absent on the host.");
         EnsureNoLinks(source);
         var id = Guid.NewGuid().ToString("N");
-        var directory = Path.Combine(backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
+        var directory = Path.Combine(_backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
         Directory.CreateDirectory(directory);
         var target = Path.Combine(directory, id + ".zip");
         var temporary = target + ".tmp";
@@ -55,7 +75,7 @@ public sealed class LocalHostedVolumeBackupEngine(string volumeRoot, string back
     public async Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken)
     {
         var key = backup.Volume;
-        var archive = Path.Combine(backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume), backup.Id + ".zip");
+        var archive = Path.Combine(_backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume), backup.Id + ".zip");
         if (!Guid.TryParseExact(backup.Id, "N", out _) || !File.Exists(archive))
             throw new FileNotFoundException("Backup archive is absent.");
         if (!string.Equals(await Digest(archive, cancellationToken), backup.Sha256, StringComparison.OrdinalIgnoreCase))
@@ -88,6 +108,7 @@ public sealed class LocalHostedVolumeBackupEngine(string volumeRoot, string back
                     }
                 }
             }
+            cancellationToken.ThrowIfCancellationRequested();
             if (Directory.Exists(destination))
             {
                 EnsureNoLinks(destination);
@@ -95,7 +116,6 @@ public sealed class LocalHostedVolumeBackupEngine(string volumeRoot, string back
                 moved = true;
             }
             Directory.Move(staging, destination);
-            if (moved) Directory.Delete(previous, recursive: true);
         }
         catch
         {
@@ -105,6 +125,16 @@ public sealed class LocalHostedVolumeBackupEngine(string volumeRoot, string back
         finally
         {
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
+
+        // The replacement is committed. Cleanup cannot turn a completed restore into a failed response.
+        if (moved)
+        {
+            try { _deletePrevious(previous); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Restored volume, but could not remove previous directory {Previous}", previous);
+            }
         }
     }
 

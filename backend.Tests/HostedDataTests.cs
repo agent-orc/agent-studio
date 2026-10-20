@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentStudio.Projects;
 using AgentStudio.Deploy;
 using AgentStudio.Secrets;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -123,5 +124,29 @@ public sealed class HostedDataTests : IDisposable
         File.AppendAllText(archive, "tampered");
         await Assert.ThrowsAsync<InvalidDataException>(() => engine.RestoreAsync(backup, CancellationToken.None));
         Assert.Equal("live", File.ReadAllText(Path.Combine(path, "data.txt")));
+    }
+
+    [Fact]
+    public async Task CleanupFailureAfterReplacementReportsSuccessAndKeepsPreviousData()
+    {
+        string? previous = null;
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"), Path.Combine(_root, "archives"),
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance, path =>
+            {
+                previous = path;
+                throw new IOException("Previous directory is busy.");
+            });
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var path = engine.VolumePath(key);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "backed-up");
+        var backup = await engine.BackupAsync(key, _clock.GetUtcNow(), CancellationToken.None);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "live-before-restore");
+
+        await engine.RestoreAsync(backup, CancellationToken.None);
+
+        Assert.Equal("backed-up", File.ReadAllText(Path.Combine(path, "data.txt")));
+        Assert.NotNull(previous);
+        Assert.Equal("live-before-restore", File.ReadAllText(Path.Combine(previous!, "data.txt")));
     }
 }
