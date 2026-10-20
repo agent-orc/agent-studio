@@ -1,3 +1,10 @@
+# AGT-3227 final delivery fence and body-read follow-up, 20 October 2026
+
+- Result implementation SHA before this status entry: `58171961940e3db9f01a94df1eab1de08c44548b`. This branch merges salvage `993d9c31659b14d36acc2417330d9360a9befd17` into reviewed delivery `f7ac284fdf6301f7aad9e1262e02b01820926895`, then merges `origin/develop` at `7b6fae8ee` without a rebase or squash. Both commits are ancestors. The later status commit is the delivery result.
+- Implemented option: IP-D14 option A, the built-in SQLite store with OTLP/HTTP protobuf and JSON intake, environment-scoped hashed ingest tokens, bounded retention and query APIs, and export interfaces. The AGT-3222 secret provider was unavailable when this implementation was created, so token hashes live in the access store. The latest fix reads no more than one byte past `MaxRequestBytes` for raw and gzip streams. Its `CountingStream` test asserts the limit.
+- Conflict resolution: kept the newer intake code and bounded-read regression test; retained the salvage telemetry status and current develop status entries. Develop contributed unrelated Deploy and gate work. The salvage telemetry files differ only by the bounded-read fix and a small security model/route ordering change.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -maxcpucount:2 -nodeReuse:false -p:UseSharedCompilation=false -v:q` passed with zero errors. The backend filter `FullyQualifiedName~Telemetry|FullyQualifiedName~AccessSecurityTests|FullyQualifiedName~ClientIdentity` passed 222 tests. The `FullyQualifiedName~.Architecture.|Category=Guard` filter passed 98 backend tests and ran with no matches in the other seven .NET test projects. `npm --prefix frontend run lint`, `git diff --check`, and both required ancestry checks passed. Complete logs are in the task results directory.
+
 # AGT-3227 OTLP telemetry intake status
 
 - Result implementation SHA: `6d498377a00a7513452096a3afee4035657dae28`, one commit on top of the delivery `e3247e52bbe233ea0dcc8dcfe3392b68f1af538f` (not rebased, no merge). This status entry is a separate commit on top of it.
