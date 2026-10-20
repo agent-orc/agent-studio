@@ -38,9 +38,9 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     ];
 
     [Fact]
-    public void Every_first_run_route_declares_the_owner_requirement()
+    public void Local_first_run_routes_declare_the_owner_requirement()
     {
-        using var factory = BuildFactory(SecurityProfiles.Networked);
+        using var factory = BuildFactory(SecurityProfiles.Local);
         var endpoints = factory.Services.GetServices<EndpointDataSource>()
             .SelectMany(source => source.Endpoints).ToArray();
         var firstRun = endpoints.OfType<RouteEndpoint>()
@@ -73,6 +73,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     [InlineData(StudioRoles.Owner, StudioRoles.Owner, true)]
     [InlineData(StudioRoles.Owner, StudioRoles.Operator, false)]
     [InlineData(StudioRoles.Owner, StudioRoles.Contributor, false)]
+    [InlineData(StudioRoles.Owner, StudioRoles.ContributorDisplayName, false)]
     [InlineData(StudioRoles.Owner, StudioRoles.Viewer, false)]
     [InlineData(StudioRoles.Operator, StudioRoles.Owner, true)]
     [InlineData(StudioRoles.Operator, StudioRoles.Operator, true)]
@@ -82,51 +83,80 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         => Assert.Equal(admitted, new StudioRoleRequirement(minimum).IsSatisfiedBy(role));
 
     [Fact]
-    public async Task Networked_first_run_routes_admit_only_the_owner()
+    public async Task Networked_monolith_does_not_map_first_run_backend_routes()
+    {
+        using var factory = BuildFactory(SecurityProfiles.Networked);
+        var owner = factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        foreach (var (method, _, path, ownerStatus) in Routes)
+        {
+            using var request = NewRequest(method, path);
+            Session(request, owner.SessionToken, owner.CsrfToken);
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task Networked_project_repository_url_changes_require_owner()
     {
         using var factory = BuildFactory(SecurityProfiles.Networked);
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
-        var operatorSession = Invite(store, "site.operator", StudioRoles.Operator);
-        var viewerSession = Invite(store, "site.viewer", StudioRoles.Viewer);
-        var expires = _clock.GetUtcNow().UtcDateTime.AddDays(1);
-        var operatorToken = store.CreateApiToken(new CreateApiTokenRequest("automation", StudioRoles.Operator,
-            [ProjectAccessAuthorization.AllProjectsGrant], expires), owner.User.Id);
-        var viewerToken = store.CreateApiToken(new CreateApiTokenRequest("reader", StudioRoles.Viewer,
-            [ProjectAccessAuthorization.AllProjectsGrant], expires), owner.User.Id);
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
 
-        var callers = new (string Name, Action<HttpRequestMessage> Authenticate, HttpStatusCode? Status, string? Error)[]
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/api/projects")
         {
-            ("owner", request => Session(request, owner.SessionToken, owner.CsrfToken), null, null),
-            ("operator", request => Session(request, operatorSession.SessionToken, operatorSession.CsrfToken),
-                HttpStatusCode.Forbidden, "owner-required"),
-            ("viewer", request => Session(request, viewerSession.SessionToken, viewerSession.CsrfToken),
-                HttpStatusCode.Forbidden, "owner-required"),
-            ("operator api token", request => Bearer(request, operatorToken.Secret), HttpStatusCode.Forbidden, "owner-required"),
-            ("viewer api token", request => Bearer(request, viewerToken.Secret), HttpStatusCode.Forbidden, null),
-            ("anonymous", _ => { }, HttpStatusCode.Unauthorized, "authentication-required"),
+            Content = JsonContent.Create(new { displayName = "Repository Guard", workspaceId = "ws-default" }),
         };
+        Session(create, owner.SessionToken, owner.CsrfToken);
+        using var created = await client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var previousRepositoryUrl = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .FindById(project)!.Urls.FirstOrDefault(url => url.Id == "repo")?.Url;
+        var invitation = store.InviteUser(new InviteUserRequest("site.operator", "Operator",
+            StudioRoles.Operator, [ProjectAccessAuthorization.AllProjectsGrant]));
+        var contributorInvitation = store.InviteUser(new InviteUserRequest("product.contributor", "Product",
+            StudioRoles.Contributor, [project]));
+        var operatorSession = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, Password));
+        var contributor = store.AcceptInvitation(new AcceptInvitationRequest(contributorInvitation.Token, Password));
 
-        var failures = new List<string>();
-        foreach (var (method, _, path, ownerStatus) in Routes)
+        using var rejected = new HttpRequestMessage(HttpMethod.Put, $"/api/projects/{project}")
         {
-            foreach (var (name, authenticate, status, error) in callers)
-            {
-                using var request = NewRequest(method, path);
-                authenticate(request);
-                using var response = await client.SendAsync(request);
-                var expected = status ?? ownerStatus;
-                var actualError = response.Content.Headers.ContentType?.MediaType == "application/json"
-                                  && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                    ? (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()
-                    : null;
-                if (response.StatusCode != expected || error is not null && actualError != error)
-                    failures.Add($"{name} {method} {path}: expected {(int)expected} {error}, got {(int)response.StatusCode} {actualError}");
-            }
-        }
-        Assert.True(failures.Count == 0, string.Join("\n", failures));
+            Content = JsonContent.Create(new { repositoryUrl = "https://github.com/example/repo.git" }),
+        };
+        Session(rejected, operatorSession.SessionToken, operatorSession.CsrfToken);
+        using var rejectedResponse = await client.SendAsync(rejected);
+        Assert.Equal(HttpStatusCode.Forbidden, rejectedResponse.StatusCode);
+        Assert.Equal("owner-required", (await rejectedResponse.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString());
+        Assert.Equal(previousRepositoryUrl, factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .FindById(project)!.Urls.FirstOrDefault(url => url.Id == "repo")?.Url);
+
+        using var accepted = new HttpRequestMessage(HttpMethod.Put, $"/api/projects/{project}")
+        {
+            Content = JsonContent.Create(new { repositoryUrl = "https://github.com/example/repo.git" }),
+        };
+        Session(accepted, owner.SessionToken, owner.CsrfToken);
+        using var acceptedResponse = await client.SendAsync(accepted);
+        Assert.Equal(HttpStatusCode.OK, acceptedResponse.StatusCode);
+        Assert.Equal("https://github.com/example/repo.git", factory.Services
+            .GetRequiredService<AgentStudio.Registry.ProjectRegistry>().FindById(project)!
+            .Urls.First(url => url.Id == "repo").Url);
+        var auditPath = Path.Combine(_workspace, ".security", "project-repository-audit.jsonl");
+        var audit = JsonSerializer.Deserialize<AgentStudio.Security.ProjectRepositoryAuditEvent>(
+            File.ReadAllText(auditPath).Trim())!;
+        Assert.Equal(project, audit.ProjectId);
+        Assert.Equal(owner.User.Id, audit.ActorId);
+        Assert.Equal(owner.User.Username, audit.Actor);
+        Assert.Equal(previousRepositoryUrl ?? string.Empty, audit.PreviousRepositoryUrl);
+        Assert.Equal("https://github.com/example/repo.git", audit.RepositoryUrl);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, audit.Timestamp);
     }
 
     [Fact]
@@ -163,6 +193,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     {
         request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
         request.Headers.Add("X-CSRF-Token", csrf);
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
     }
 
     private static void Bearer(HttpRequestMessage request, string secret)

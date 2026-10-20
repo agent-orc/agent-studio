@@ -207,3 +207,11 @@ public sealed record RunSecurityAuditEvent(
     string? CredentialId,
     long? FencingToken = null,
     string? Outcome = null);
+
+public sealed record ProjectRepositoryAuditEvent(
+    DateTime Timestamp,
+    string ProjectId,
+    string ActorId,
+    string Actor,
+    string? PreviousRepositoryUrl,
+    string? RepositoryUrl);
