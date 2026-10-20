@@ -51,7 +51,9 @@ internal static class OperatorCandidateAuditLogSearch
         if (row.IndexOf(id) < 0) return false;
         try
         {
-            var entry = JsonSerializer.Deserialize<TimelineEvent>(row, ReadOptions);
+            // TimelineLog writes UTF-8 with a preamble when the file is new.
+            var json = row.StartsWith([0xEF, 0xBB, 0xBF]) ? row[3..] : row;
+            var entry = JsonSerializer.Deserialize<TimelineEvent>(json, ReadOptions);
             return entry?.Kind == TimelineEventKinds.IntegrationVerificationRecorded
                 && entry.Details?.GetValueOrDefault("recordId") == Encoding.UTF8.GetString(id);
         }
