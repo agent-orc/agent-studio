@@ -121,6 +121,14 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Registry/ProjectRepositoryProvisioning.cs"] =
                 "Deletes the checkout of a just-created template project on rollback, never task folders.",
 
+            // AGT-3156 first-run repository access: the probe removes its
+            // OS-temp proof clone, and git setup removes only a checkout it
+            // just failed to clone under its own first-run-git root.
+            ["backend/Features/Registry/LocalFirstRunRepositoryProbe.cs"] =
+                "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
+            ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
+                "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in
             // the prompt for this task.
@@ -138,6 +146,14 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its generated GUID directory and sweeps abandoned GUID-named run folders under the fixed OS-temp transport root, never task storage.",
             ["backend/Features/Pipeline/RemoteGateWorker.cs"] =
                 "Deletes only source.git, the private clone inside the transport-created GUID invocation directory, never task storage.",
+            // AGT-3209 pull gate: the store, the Studio-side transport, and the
+            // worker daemon each delete only their own run staging directories.
+            ["backend/Features/Pipeline/PullGateStore.cs"] =
+                "Deletes only a re-claimed run's stale artifacts folder under the pull-gate storage root, never task storage.",
+            ["backend/Features/Pipeline/PullGateTransport.cs"] =
+                "Deletes only its per-run staging directory under the OS-temp agentstudio-pull-gate root, never task storage.",
+            ["backend/Features/Pipeline/PullGateDaemon.cs"] =
+                "Deletes only its per-run directory under the OS-temp agentstudio-pull-gate-worker root after the run, never task storage.",
 
             // Re-added after the structure migration folded the src/ executor
             // projects back into backend/ (the scan covers them again):

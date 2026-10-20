@@ -144,6 +144,8 @@ function runScript(
       ...(devCheckout ? { DEV_CHECKOUT: devCheckout } : {}),
       ...(isolated && !process.env.WatchPaths__0__Path ? {
         TaskRepository: isolated.taskRepository,
+        GIT_CONFIG_GLOBAL: path.join(isolated.taskRepository, 'gitconfig'),
+        XDG_CONFIG_HOME: path.join(isolated.taskRepository, 'config'),
         Runner__Role: 'test-subject',
         WatchPaths__0__Name: 'Agent Studio Worktree',
         WatchPaths__0__Path: isolated.watchPath,

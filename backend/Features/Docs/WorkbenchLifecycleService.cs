@@ -148,8 +148,8 @@ public sealed class WorkbenchLifecycleService
             $"workbench-lifecycle-{id}",
             $"chore(workbench): document {id}",
             [snapshot.DescriptorRelPath],
-            () => _writer.Write(snapshot.DescriptorPath, descriptor.ToJsonString(
-                new JsonSerializerOptions { WriteIndented = true })));
+            () => _writer.Write(snapshot.DescriptorPath, RepositoryTextLayout.IndentedJsonFor(
+                snapshot.DescriptorPath, descriptor)));
         if (!mutation.Success)
             return Failure(id, "write-failed", $"The descriptor could not be persisted: {mutation.Error}");
 

@@ -6,6 +6,7 @@ export { WorkspaceOverlaysComponent } from './components/workspace-overlays/work
 export { WorkspaceManagementComponent } from './components/workspace-management/workspace-management.component';
 export { UiPreferencesService } from './state/ui-preferences.service';
 export { WorkspaceOverlaysService } from './state/workspace-overlays.service';
+export { FirstRunLaunchService } from './state/first-run-launch.service';
 export type { WorkspaceSettingsSection } from './state/workspace-overlays.service';
 export { WorkspaceManagerService } from './state/workspace-manager.service';
 export { ProjectDragDropService } from './state/project-drag-drop.service';

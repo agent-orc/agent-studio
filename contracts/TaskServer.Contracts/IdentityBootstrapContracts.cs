@@ -110,6 +110,9 @@ public sealed record RegisterProjectRepositoryRequest(
     string DeliveryPolicy = ProjectDeliveryPolicies.ReviewedPublication,
     string? RepositoryVisibility = null);
 
+/// <summary>Updates visibility for an already registered repository from the project setting.</summary>
+public sealed record SetProjectRepositoryVisibilityRequest(string RepositoryUrl, string? Visibility);
+
 public sealed record ProjectRepositoryDto(
     string ProjectId,
     string RepositoryId,

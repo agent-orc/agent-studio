@@ -196,6 +196,7 @@ public sealed record BuildTestGateResult(
     /// <summary>Evidence created by the original execution, also on a cache hit.</summary>
     public string? OriginEvidencePath { get; init; }
     public string? GateRunId { get; init; }
+    public string? ServerArtifactRunId { get; init; }
     public DateTimeOffset? GateStartedAtUtc { get; init; }
     public DateTimeOffset? GateCompletedAtUtc { get; init; }
     public long GateQueueWaitMs { get; init; }
@@ -2185,6 +2186,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         var npmCache = ActiveNpmCachePath;
         psi.Environment["NPM_CONFIG_CACHE"] = npmCache;
+        if (GateArtifactOutput.Current is { } artifactDirectory)
+            psi.Environment["AGENTSTUDIO_GATE_ARTIFACT_DIR"] = artifactDirectory;
         // AGT-2820: gate builds are one-shot. A reused MSBuild node outlives the
         // gate that started it, is reparented to init when the backend or the
         // worker goes away, and accumulates - 26 such nodes held 2963 MB on one

@@ -14,6 +14,9 @@ fi
 
 backend_started=0
 stop() {
+  if [[ "${PW_E2E_PROFILE:-}" == first-run ]] && declare -F first_run_stop_runners >/dev/null; then
+    first_run_stop_runners
+  fi
   if (( backend_started )); then
     "${REPO_ROOT}/api.sh" stop || true
   fi
@@ -30,6 +33,8 @@ export API_PREBUILT_DIR="${REPO_ROOT}/backend/bin/e2e-publish"
 export API_REQUIRE_PREBUILT=1
 export API_START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-90}"
 export TaskRepository="${PW_E2E_WORKSPACE}"
+export GIT_CONFIG_GLOBAL="${PW_E2E_WORKSPACE}/gitconfig"
+export XDG_CONFIG_HOME="${PW_E2E_WORKSPACE}/config"
 export Runner__Role=test-subject
 export WatchPaths__0__Name='Agent Studio Worktree'
 export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/agent-studio-worktree"
@@ -86,11 +91,18 @@ case "${PW_E2E_PROFILE:-standard}" in
     export DeliveryChain__Guarded=false
     export ReviewDecisionOrchestrator__BootDelaySeconds=3600
     ;;
+  first-run)
+    source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
+    first_run_prepare
+    ;;
   *) echo "Unknown PW_E2E_PROFILE: ${PW_E2E_PROFILE}" >&2; exit 2 ;;
 esac
 
 "${REPO_ROOT}/api.sh" start
 backend_started=1
+if [[ "${PW_E2E_PROFILE:-}" == first-run ]]; then
+  first_run_start_runners
+fi
 failures=0
 while true; do
   sleep 2

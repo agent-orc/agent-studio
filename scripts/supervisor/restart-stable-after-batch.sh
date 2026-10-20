@@ -103,7 +103,11 @@ count_lines() {
 # We can't pull in jq portably, but distinguishing those two patterns with
 # a quoted-vs-null grep is unambiguous against this shape.
 stable_active_state() {
-  body="$(curl -fsS --max-time 5 "$STABLE_API/api/runner/status" 2>/dev/null || true)"
+  if [ -n "${AGENT_STUDIO_API_TOKEN:-}" ]; then
+    body="$(curl -fsS --max-time 5 -H "Authorization: Bearer $AGENT_STUDIO_API_TOKEN" "$STABLE_API/api/runner/status" 2>/dev/null || true)"
+  else
+    body="$(curl -fsS --max-time 5 "$STABLE_API/api/runner/status" 2>/dev/null || true)"
+  fi
   [ -n "$body" ] || return 2
   if printf '%s' "$body" | grep -qE '"activeJobId"[[:space:]]*:[[:space:]]*"[^"]+"'; then
     return 0

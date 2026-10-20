@@ -82,6 +82,38 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task Pull_gate_credential_is_exclusive_and_fences_its_routes()
+    {
+        var (store, config, _) = NewStore();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var gate = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("gate-host", [RunnerScopes.Gate], null, null)).Code);
+        var ordinary = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("ordinary-runner", [RunnerScopes.Claim], null, null)).Code);
+        Assert.Throws<SecurityOperationException>(() => store.CreateEnrollment(
+            new RunnerEnrollmentRequest("mixed", [RunnerScopes.Gate, RunnerScopes.Claim], null, null)));
+        foreach (var (method, path) in new[]
+        {
+            ("POST", "/api/pull-gates/register"),
+            ("POST", "/api/pull-gates/claim"),
+            ("GET", "/api/pull-gates/runs/run/request.json"),
+            ("POST", "/api/pull-gates/runs/run/heartbeat"),
+            ("POST", "/api/pull-gates/runs/run/progress"),
+            ("PUT", "/api/pull-gates/runs/run/artifacts/release.zip"),
+            ("POST", "/api/pull-gates/runs/run/result"),
+        })
+        {
+            Assert.True((await Invoke(config, store, method, path, bearer: gate.Secret)).Called.Value, path);
+            Assert.Equal(403, (await Invoke(config, store, method, path, bearer: ordinary.Secret)).Context.Response.StatusCode);
+        }
+        Assert.True((await Invoke(config, store, "GET", "/api/gate-artifacts/run",
+            bearer: store.EnrollRunner(store.CreateEnrollment(
+                new RunnerEnrollmentRequest("artifact-reader", [RunnerScopes.Artifacts], null, null)).Code).Secret)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "GET", "/api/gate-artifacts/run",
+            bearer: gate.Secret)).Context.Response.StatusCode);
+    }
+
+    [Fact]
     public void Runner_lifecycle_and_activity_share_the_credential_registry()
     {
         var (store, _, _) = NewStore();

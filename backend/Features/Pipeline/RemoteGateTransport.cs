@@ -179,14 +179,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             var response = JsonSerializer.Deserialize<RemoteGateResponse>(
                 await File.ReadAllTextAsync(responsePath, ct), RemoteBuildTestGateRunner.Json)
                 ?? throw new InvalidDataException("Remote gate response is empty.");
-            if (response.Version != 1 || response.RunId != runId || response.BundleSha256 != digest)
-                throw new InvalidDataException("Remote gate response does not match this invocation and source bundle.");
-            return response.Result with
-            {
-                GrantedCores = options.ProcessorCount,
-                Executor = "ssh:" + options.Host + "/" + request.Executor,
-                Reason = response.Result.Reason + $" Source bundle {bundleBytes} bytes transferred in {transfer.Elapsed.TotalSeconds:F1}s."
-            };
+            return AcceptResponse(response, runId, digest, options.Host, request.Executor,
+                bundleBytes, transfer.Elapsed) with { GrantedCores = options.ProcessorCount };
         }
         finally
         {
@@ -206,6 +200,20 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             }
             DeleteLocalRunFolder(local, runId);
         }
+    }
+
+    internal static BuildTestGateResult AcceptResponse(RemoteGateResponse response,
+        string runId, string digest, string host, string executor, long bundleBytes,
+        TimeSpan transfer)
+    {
+        if (response.Version != 1 || response.RunId != runId || response.BundleSha256 != digest)
+            throw new InvalidDataException("Remote gate response does not match this invocation and source bundle.");
+        return response.Result with
+        {
+            Executor = "ssh:" + host + "/" + executor,
+            Reason = response.Result.Reason
+                + $" Source bundle {bundleBytes} bytes transferred in {transfer.TotalSeconds:F1}s."
+        };
     }
 
     internal void ReportWorkerLine(string line, string runId, string host, BuildTestGateRequest request)

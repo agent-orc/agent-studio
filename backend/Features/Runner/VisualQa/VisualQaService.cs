@@ -63,7 +63,12 @@ internal sealed record VisualQaCaptureEntry(
 /// backend, capture affected routes with Playwright, attach those images to a
 /// bounded multimodal model verdict, and persist the action receipt.
 /// </summary>
-public sealed class VisualQaService
+public interface IVisualQaService
+{
+    Task<VisualQaResult> RunAsync(VisualQaRequest request, CancellationToken ct);
+}
+
+public sealed class VisualQaService : IVisualQaService
 {
     public const string PromptTemplate = "visual-qa-review.md";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
