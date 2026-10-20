@@ -8,6 +8,7 @@ using System.Text;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -40,6 +41,37 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(["stage", "production"], declarations!.Select(item => item.Id));
         Assert.Equal(["DATABASE_URL"], declarations[1].SecretRefs);
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
+    }
+
+    [Fact]
+    public async Task Bindings_require_production_approval_and_preflight_checks_inherited_and_revoked_values()
+    {
+        var (environments, _, _) = Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+        }).Build();
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance);
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
+        var before = await bindings.CheckAsync("demo", "production");
+        Assert.Equal("not-bound", Assert.Single(before.Missing).Reason);
+        Assert.Throws<SecretAccessDeniedException>(() => bindings.Bind("demo", "production", "DATABASE_URL",
+            "secret://demo/production/DATABASE_URL", "human:owner", null));
+        Assert.Throws<SecretValidationException>(() => bindings.Bind("demo", "production", "DATABASE_URL",
+            "secret://other/DATABASE_URL", "human:owner", "owner"));
+        bindings.Bind("demo", "production", "DATABASE_URL", "secret://demo/production/DATABASE_URL",
+            "human:owner", "owner");
+        Assert.Equal("not-found", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
+        var value = "runtime-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForProject("demo"), "DATABASE_URL", value, SecretActor.Human("owner"));
+        Assert.True((await bindings.CheckAsync("demo", "production")).Ready);
+        Assert.DoesNotContain(value, File.ReadAllText(Directory.GetFiles(Path.Combine(_root, "workspace", ".security", "secret-bindings"))[0]));
+        await provider.RevokeAsync(SecretScope.ForProject("demo"), "DATABASE_URL", null, SecretActor.Human("owner"));
+        Assert.Equal("revoked", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
     }
 
     [Fact]
