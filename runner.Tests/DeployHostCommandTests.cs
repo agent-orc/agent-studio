@@ -86,7 +86,6 @@ public sealed class DeployHostCommandTests
         File.WriteAllText(Path.Combine(repo, "initial"), "initial");
         Git(repo, "add", ".");
         Git(repo, "commit", "-m", "initial");
-        var commit = Git(repo, "rev-parse", "HEAD").Trim();
         File.WriteAllText(Path.Combine(environmentDir, "production.json"), JsonSerializer.Serialize(new
         {
             id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
@@ -136,6 +135,9 @@ public sealed class DeployHostCommandTests
                 healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
                 secretRefs = new[] { "DATABASE_URL" },
             }));
+            Git(repo, "add", "docs/deployments/environments");
+            Git(repo, "commit", "-m", "declare environments");
+            var commit = Git(repo, "rev-parse", "HEAD").Trim();
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
             var value = "runtime-" + Guid.NewGuid().ToString("N");
             await factory.Services.GetRequiredService<ISecretProvider>().PutAsync(
