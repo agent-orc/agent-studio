@@ -5,7 +5,6 @@ using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Xunit;
 
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -23,7 +22,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Engine_defer_to_batch_admits_the_review_at_its_report_time()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 4);
         var deferred = SettleDeferredReview(factory, "DOC-ENGINE-DEFER", "docs/engine-defer.md");
@@ -73,9 +72,8 @@ public sealed partial class BatchGatePilotServiceTests
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
-        // The test owns the retry order of the applying occurrence.
-        await factory.Services.GetServices<IHostedService>()
-            .OfType<MonolithOrchestrationRecoveryService>().Single().StopAsync(CancellationToken.None);
+        // The fixture runs no recovery loop, so the test owns the retry order
+        // of the applying occurrence.
         EnableBatchGate(factory, closeSize: 4);
         var deferred = SettleDeferredReview(factory, "CODE-ENGINE-RETRY", "backend/EngineRetry.cs");
         _gate.Fallback = _ => throw new InvalidOperationException("The gate host was lost.");
@@ -162,7 +160,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Recovery_rearms_only_the_engine_batch_decisions_that_lost_their_admission()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 4);
         var journal = PreFixJournal(factory);
@@ -338,7 +336,7 @@ public sealed partial class BatchGatePilotServiceTests
         using var stopping = new CancellationTokenSource();
 
         var pass = recovery.RearmDeferredBatchAdmissionsAsync(stopping.Token);
-        Assert.Same(entered.Task, await Task.WhenAny(entered.Task, pass).WaitAsync(TimeSpan.FromMinutes(1)));
+        Assert.Same(entered.Task, await Task.WhenAny(entered.Task, pass).WaitAsync(HangGuard));
         stopping.Cancel();
 
         // The pass ends with the cancelled admission instead of admitting the next card.
