@@ -245,13 +245,16 @@ public sealed class HumanReviewEscalation
         string jobId, string watchPath, string project,
         string category, string reason, CancellationToken ct = default,
         AttemptWriteReference? authorityWrite = null,
-        string? statusDetail = null)
+        string? statusDetail = null,
+        string? expectedSourceState = null)
     {
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         // Write the Result scaffold before the lane mutation. The folder moves
         // with status.md on success, and a refused/interrupted move still leaves
         // reviewable evidence at the source instead of a verdict-less card.
-        if (!string.IsNullOrWhiteSpace(beforeFolder))
+        // A card outside the expected source lane gets no verdict stub: its
+        // move is refused and the card keeps its own Result.
+        if (!string.IsNullOrWhiteSpace(beforeFolder) && InSourceLane(jobId, watchPath, beforeFolder, expectedSourceState))
             WriteStatusStubIfMissing(beforeFolder, category, reason, statusDetail);
         var outcome = await _transitions.MoveAsync(
             jobId,
@@ -262,6 +265,9 @@ public sealed class HumanReviewEscalation
             reason: reason,
             authorityWrite: authorityWrite,
             suppressProductExecution: authorityWrite is not null,
+            // A caller that read the source lane passes it, so a concurrent
+            // move (an operator drag, a follow-up) refuses the escalation.
+            expectedSourceState: expectedSourceState,
             transitionCause: LaneChangeCauses.Escalated,
             transitionDetail: category);
         if (outcome.Status == MoveJobStatus.Success)
@@ -561,6 +567,13 @@ public sealed class HumanReviewEscalation
             || value.Equals("- Result: pending.", StringComparison.OrdinalIgnoreCase)
             || value.Equals("- Result: pending", StringComparison.OrdinalIgnoreCase);
     }
+
+    // The flat layout does not name the lane in the path; the scanner knows it.
+    private bool InSourceLane(string jobId, string watchPath, string folder, string? expectedSourceState)
+        => expectedSourceState is null
+           || string.Equals(_scanner?.FindJob(jobId, watchPath)?.State
+                   ?? Path.GetFileName(Path.GetDirectoryName(folder)), expectedSourceState,
+               StringComparison.OrdinalIgnoreCase);
 
     private string? ResolveSourceFolder(string jobId, string watchPath)
     {

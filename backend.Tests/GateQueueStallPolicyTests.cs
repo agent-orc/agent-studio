@@ -24,13 +24,22 @@ public sealed class GateQueueStallPolicyTests : IDisposable
 
     [Theory]
     [InlineData("machine-gate-queue", "queue", TaskStates.AutoReview, true, GateQueueOverrunAction.Requeue)]
-    [InlineData("machine-gate-queue", "queue", TaskStates.AutoReview, false, GateQueueOverrunAction.Settle)]
-    [InlineData("machine-gate-queue", "queue", TaskStates.HumanReview, true, GateQueueOverrunAction.Settle)]
     [InlineData("gate-run", "verification", TaskStates.AutoReview, true, GateQueueOverrunAction.Settle)]
     [InlineData("machine-gate-queue", "preparation", TaskStates.AutoReview, true, GateQueueOverrunAction.Settle)]
     [InlineData(null, null, TaskStates.AutoReview, true, GateQueueOverrunAction.Settle)]
-    public void Only_a_queue_phase_overrun_of_the_current_review_is_requeued(
-        string? budget, string? phase, string lane, bool current, GateQueueOverrunAction expected)
+    // A result of a superseded generation or a card outside Auto Review never
+    // settles, whatever its verdict: the 19./20.10.2026 incident parked such
+    // cards from Ready, In Progress and Human Review.
+    [InlineData("machine-gate-queue", "queue", TaskStates.AutoReview, false, GateQueueOverrunAction.Supersede)]
+    [InlineData("machine-gate-queue", "queue", TaskStates.Ready, true, GateQueueOverrunAction.Supersede)]
+    [InlineData("machine-gate-queue", "queue", TaskStates.Progress, true, GateQueueOverrunAction.Supersede)]
+    [InlineData("machine-gate-queue", "queue", TaskStates.HumanReview, true, GateQueueOverrunAction.Supersede)]
+    [InlineData("gate-run", "verification", TaskStates.AutoReview, false, GateQueueOverrunAction.Supersede)]
+    [InlineData("gate-run", "verification", TaskStates.Ready, true, GateQueueOverrunAction.Supersede)]
+    [InlineData(null, null, TaskStates.AutoReview, false, GateQueueOverrunAction.Supersede)]
+    [InlineData(null, null, null, true, GateQueueOverrunAction.Supersede)]
+    public void Only_the_current_review_in_auto_review_settles_and_only_its_queue_overrun_is_requeued(
+        string? budget, string? phase, string? lane, bool current, GateQueueOverrunAction expected)
         => Assert.Equal(expected, GateQueueStallPolicy.Decide(budget, phase, lane, current));
 
     [Theory]
@@ -49,7 +58,7 @@ public sealed class GateQueueStallPolicyTests : IDisposable
         // The cap never turns an execution overrun or a stale review into a capacity park.
         Assert.Equal(GateQueueOverrunAction.Settle, GateQueueStallPolicy.Decide("gate-run", "verification",
             TaskStates.AutoReview, true, Budget * budgetsWaited, cap));
-        Assert.Equal(GateQueueOverrunAction.Settle, GateQueueStallPolicy.Decide("machine-gate-queue", "queue",
+        Assert.Equal(GateQueueOverrunAction.Supersede, GateQueueStallPolicy.Decide("machine-gate-queue", "queue",
             TaskStates.AutoReview, false, Budget * budgetsWaited, cap));
     }
 
@@ -73,15 +82,41 @@ public sealed class GateQueueStallPolicyTests : IDisposable
         Assert.Null(GateQueueStallPolicy.Assess(facts with { ConfiguredSlots = 2 }).Advisory);
     }
 
+    private static readonly GateQueueReleaseFacts Parked = new(TaskStates.Escalated, "machine-gate-queue", "queue",
+        CurrentGeneration: true, ReviewPassed: true, TaskStates.AutoReview, "escalated", "auto-review-escalation",
+        PendingIntent: false);
+
     [Fact]
     public void Release_requires_an_escalated_card_with_a_current_passed_review_and_a_queue_overrun()
     {
-        Assert.True(GateQueueStallPolicy.Releasable(TaskStates.Escalated, "machine-gate-queue", "queue", true, true));
-        Assert.False(GateQueueStallPolicy.Releasable(TaskStates.AutoReview, "machine-gate-queue", "queue", true, true));
-        Assert.False(GateQueueStallPolicy.Releasable(TaskStates.Escalated, "gate-run", "verification", true, true));
-        Assert.False(GateQueueStallPolicy.Releasable(TaskStates.Escalated, "machine-gate-queue", "queue", false, true));
-        Assert.False(GateQueueStallPolicy.Releasable(TaskStates.Escalated, "machine-gate-queue", "queue", true, false));
+        Assert.True(GateQueueStallPolicy.Releasable(Parked));
+        Assert.True(GateQueueStallPolicy.Releasable(Parked with { EscalationCategory = "gate-capacity" }));
+        Assert.Equal(GateQueueReleaseRefusal.NotEscalated,
+            GateQueueStallPolicy.ReleaseRefusal(Parked with { Lane = TaskStates.AutoReview }));
+        Assert.Equal(GateQueueReleaseRefusal.NotQueueOverrun,
+            GateQueueStallPolicy.ReleaseRefusal(Parked with { BudgetName = "gate-run", BudgetPhase = "verification" }));
+        Assert.Equal(GateQueueReleaseRefusal.ReviewNotCurrent,
+            GateQueueStallPolicy.ReleaseRefusal(Parked with { CurrentGeneration = false }));
+        Assert.Equal(GateQueueReleaseRefusal.ReviewNotCurrent,
+            GateQueueStallPolicy.ReleaseRefusal(Parked with { ReviewPassed = false }));
     }
+
+    [Theory]
+    [InlineData(TaskStates.Ready, "escalated", "auto-review-escalation")]
+    [InlineData(TaskStates.Progress, "escalated", "auto-review-escalation")]
+    [InlineData(TaskStates.HumanReview, "escalated", "auto-review-escalation")]
+    [InlineData(null, null, null)]
+    [InlineData(TaskStates.AutoReview, "operator-move", null)]
+    [InlineData(TaskStates.AutoReview, "escalated", "agent-needs-input")]
+    public void Release_refuses_a_card_that_was_not_escalated_out_of_auto_review_by_the_fallback(
+        string? from, string? cause, string? category)
+        => Assert.Equal(GateQueueReleaseRefusal.NotFallbackEscalation, GateQueueStallPolicy.ReleaseRefusal(
+            Parked with { EscalatedFromLane = from, EscalationCause = cause, EscalationCategory = category }));
+
+    [Fact]
+    public void Release_refuses_a_card_with_a_pending_follow_up()
+        => Assert.Equal(GateQueueReleaseRefusal.PendingIntent,
+            GateQueueStallPolicy.ReleaseRefusal(Parked with { PendingIntent = true }));
 
     [Fact]
     public void Monitor_raises_one_event_per_queue_episode()
@@ -143,6 +178,59 @@ public sealed class GateQueueStallPolicyTests : IDisposable
         Assert.Null(restarted.Remind("demo", facts));
         Assert.Equal([1, 2, 3], store.ListQueueStalls("demo").Select(stall => stall.Raise));
     }
+
+    [Fact]
+    public void Restored_waiters_keep_an_open_episode_open_after_a_restart_until_they_no_longer_wait()
+    {
+        var store = new BatchGateStore(_root);
+        var facts = new GateQueueFacts(1, 2, 2, 2, Budget, TimeSpan.FromMinutes(35), Budget);
+        Assert.NotNull(new GateQueueStallMonitor(store, _clock).QueueOverrun("demo", "AGT-3213", facts));
+        var overranAt = _clock.GetUtcNow();
+        _clock.Advance(TimeSpan.FromMinutes(5));
+
+        // The new process has no live waiter; the ledger restores the request.
+        var restarted = new GateQueueStallMonitor(store, _clock);
+        restarted.Restore("demo", "review-a", overranAt);
+        Assert.False(restarted.Observe("demo", queuedMembers: 0));
+        Assert.Equal(TimeSpan.FromMinutes(5), restarted.Facts("demo", 0, Budget, 2).OldestWait);
+
+        // The resumed gate reports its wait and keeps the restored start.
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        restarted.Waiting("demo", "review-a", 2, 2);
+        restarted.PruneRestored(_ => false);
+        Assert.Equal(TimeSpan.FromMinutes(6), restarted.Facts("demo", 0, Budget, 2).OldestWait);
+        restarted.Left("review-a");
+
+        // A restored request whose gate no longer waits is dropped, and the queue drains.
+        restarted.Restore("demo", "review-b", overranAt);
+        restarted.PruneRestored(key => key != "review-b");
+        Assert.True(restarted.Observe("demo", queuedMembers: 0));
+    }
+
+    [Fact]
+    public void Stall_history_keeps_the_newest_events_per_project_and_reads_only_those()
+    {
+        var store = new BatchGateStore(_root);
+        var legacy = Path.Combine(_root, "queue-stalls", "legacy-episode.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacy)!);
+        File.WriteAllText(legacy, "{}");
+        for (var raise = 1; raise <= BatchGateStore.RetainedQueueStalls + 5; raise++)
+        {
+            store.RecordQueueStall(Stall("demo", raise));
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+        store.RecordQueueStall(Stall("other", 1));
+
+        var kept = store.ListQueueStalls("demo");
+        Assert.Equal(Enumerable.Range(6, BatchGateStore.RetainedQueueStalls), kept.Select(stall => stall.Raise));
+        Assert.Equal([54, 55], store.ListQueueStalls("demo", take: 2).Select(stall => stall.Raise));
+        Assert.Single(store.ListQueueStalls("other"));
+        Assert.False(File.Exists(legacy));
+    }
+
+    private GateQueueStallEvent Stall(string project, int raise)
+        => new("episode-" + project, project, _clock.GetUtcNow(), 3, 1000, 2, 2, 2000, 9_327_000, 0, null,
+            "AGT-3213", raise);
 
     [Fact]
     public void Look_ahead_planner_closes_a_batch_instead_of_a_per_task_gate_behind_a_backlog()

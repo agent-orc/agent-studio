@@ -350,15 +350,20 @@ public sealed partial class BatchGatePilotService
                         $"batch-fallback-{item.ReviewAttemptId}.json")))
                 {
                     _store.ResolvePending(item.ReviewAttemptId, "per-task-gate-red");
+                    _store.ClearQueueWait(item.ReviewAttemptId);
                     continue;
                 }
                 if (task?.State != TaskStates.HumanReview) continue;
                 var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
                 if (ownership?.ReviewAttemptId == item.ReviewAttemptId
                     && ownership.FallbackIntegrated)
+                {
                     _store.ResolvePending(item.ReviewAttemptId,
                         ownership.ContainedInSha is null ? "per-task-gate" : AlreadyIntegratedResolution);
+                    _store.ClearQueueWait(item.ReviewAttemptId);
+                }
             }
+            RestoreQueueWaiters();
             // A persisted active per-task marker with no flight in this process
             // is a gate the process lost: it stopped or the gate threw. Resume
             // it on the same immutable subject; exclusion alone would keep the
@@ -1003,6 +1008,7 @@ public sealed partial class BatchGatePilotService
                     {
                         RecordBatchIntegration(task.FolderPath, manifest, run, replay);
                         _store.ResolvePending(pending.ReviewAttemptId, "published");
+                        _store.ClearQueueWait(pending.ReviewAttemptId);
                     }
                     continue;
                 }
@@ -1169,6 +1175,15 @@ public sealed partial class BatchGatePilotService
                 AbandonSuperseded("superseded during gate");
                 return;
             }
+            if (MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
+            {
+                // The candidate never reached a slot: a queue stall, not a
+                // GateInfra red. The members return to the queue for the next
+                // batch instead of an immediate retry.
+                await RequeueBatchAfterQueueOverrunAsync(manifest, gate, gated, lease.Fence, ct)
+                    .ConfigureAwait(false);
+                return;
+            }
             if (gate.IsInfrastructureFailure)
             {
                 // Only the same candidate SHA can consume the one healthy-host
@@ -1182,6 +1197,12 @@ public sealed partial class BatchGatePilotService
                 }
                 gate = await RunGateAsync(run, repo, cancellation.Token, gated: gated)
                     .ConfigureAwait(false);
+                if (MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
+                {
+                    await RequeueBatchAfterQueueOverrunAsync(manifest, gate, gated, lease.Fence, ct)
+                        .ConfigureAwait(false);
+                    return;
+                }
                 if (gate.IsInfrastructureFailure)
                 {
                     RecordVerdict(run, gate, "infrastructure-red");
@@ -1828,6 +1849,7 @@ public sealed partial class BatchGatePilotService
             task.ProjectName, task.Id, moved.NewFolderPath ?? task.FolderPath,
             "Pass", "Batch gate passed on a verified candidate SHA.");
         _store.ResolvePending(pending.ReviewAttemptId, "published");
+        _store.ClearQueueWait(pending.ReviewAttemptId);
     }
 
     private void RecordBatchIntegration(string folder,
@@ -2033,7 +2055,10 @@ public sealed partial class BatchGatePilotService
                 // Every exit, a cancellation included, ends this request's slot wait.
                 _queueStalls.Left(pending.ReviewAttemptId);
             }
-            if (await RequeueAfterQueueOverrunAsync(task, pending, gate, evidence, recordInStore, ct)
+            // A stale result resolves as superseded; a queue overrun returns
+            // to the queue. Neither reaches the settlement. A cancellation
+            // keeps its own classification below, which supersedes a stale one.
+            if (await ResolveBeforeSettlementAsync(task, pending, gate, evidence, started, recordInStore, ct)
                     .ConfigureAwait(false))
                 return;
             if (!recordInStore && !ct.IsCancellationRequested
@@ -2073,28 +2098,10 @@ public sealed partial class BatchGatePilotService
                     Details = new Dictionary<string, string> { ["reason"] = reason },
                 });
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
-            using (var stream = new FileStream(evidence, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                JsonSerializer.Serialize(stream, gate);
-                stream.Flush(flushToDisk: true);
-            }
-            // Every per-task gate that ran costs host minutes, emergency
-            // fallbacks included; only the queue mutations depend on recordInStore.
-            _store.RecordExecution(new BatchGateExecutionFact(
-                pending.Subject.Project, null, null,
-                gate.TestedSha ?? pending.Subject.ResultSha,
-                gate.CancellationReason ?? gate.Verdict.ToString(), Environment.MachineName,
-                started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
-            Lane(pending, "gate-finished", level: TestExecutionLevels.Full,
-                durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
-                outcome: gate.Verdict.ToString(), reason: "per-task-fallback");
+            RecordFallbackExecution(pending, gate, evidence, started);
             if (gate.CancellationReason == GateCancellationReasons.Superseded)
             {
-                if (recordInStore) ResolveSuperseded(pending, "superseded");
-                else BatchGateOwnershipStore.ClearIfReviewAttempt(
-                    _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath
-                        ?? task.FolderPath, pending.ReviewAttemptId);
+                SupersedeFallbackResult(task, pending, recordInStore);
                 return;
             }
             // Keep the durable active marker. The next host tick spends the
@@ -2115,6 +2122,8 @@ public sealed partial class BatchGatePilotService
                 FallbackTestedSha: gate.TestedSha,
                 FallbackEvidencePath: Path.GetFileName(evidence));
             BatchGateOwnershipStore.Write(task.FolderPath, ownership);
+            // The review passed its gate; its queue wait no longer counts.
+            _store.ClearQueueWait(pending.ReviewAttemptId);
         }
         if (!patchEquivalent)
         {
@@ -2164,6 +2173,27 @@ public sealed partial class BatchGatePilotService
                       + "no batch candidate and no gate ran.");
         }
         else WithdrawBatchShadowIntent(fallbackOccurrenceKey);
+    }
+
+    private void RecordFallbackExecution(BatchGatePendingRecord pending, BuildTestGateResult gate,
+        string evidence, DateTimeOffset started)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
+        using (var stream = new FileStream(evidence, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, gate);
+            stream.Flush(flushToDisk: true);
+        }
+        // Every per-task gate that ran costs host minutes, emergency
+        // fallbacks included; only the queue mutations depend on recordInStore.
+        _store.RecordExecution(new BatchGateExecutionFact(
+            pending.Subject.Project, null, null,
+            gate.TestedSha ?? pending.Subject.ResultSha,
+            gate.CancellationReason ?? gate.Verdict.ToString(), Environment.MachineName,
+            started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
+        Lane(pending, "gate-finished", level: TestExecutionLevels.Full,
+            durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
+            outcome: gate.Verdict.ToString(), reason: "per-task-fallback");
     }
 
     private bool HoldForEngineBatchDecision(TaskInfo task, string reviewAttemptId,
@@ -2270,14 +2300,40 @@ public sealed partial class BatchGatePilotService
         return ownership;
     }
 
+    /// <summary>
+    /// Escalates the card of the current review generation out of Auto Review.
+    /// A generation that is no longer current resolves as superseded instead,
+    /// and the move names its source lane and the review's authority write, so
+    /// a card that left Auto Review meanwhile is refused, not parked.
+    /// </summary>
     private async Task EscalateFallbackAsync(TaskInfo task, BatchGatePendingRecord pending,
         string reason, bool recordInStore, CancellationToken ct,
         string category = HumanReviewEscalationCategories.AutoReviewEscalation)
     {
         var capacity = category == GateQueueStallPolicy.GateCapacityCategory;
+        var review = _authority.GetTaskProjection(pending.Subject.TaskKey).CurrentReviewAttempt;
+        if (review?.AttemptId != pending.ReviewAttemptId || !Refresh(pending).Subject.CurrentGeneration)
+        {
+            _logger.LogWarning(
+                "batch-fallback-escalation-superseded task={TaskKey} attempt={AttemptId} reason={Reason}",
+                pending.Subject.TaskKey, pending.ReviewAttemptId, reason);
+            SupersedeFallbackResult(task, pending, recordInStore);
+            return;
+        }
         var movedRed = await _reviewJournal.EscalateAsync(task.Id,
             task.WatchPath, task.ProjectName, category,
-            reason, ct).ConfigureAwait(false);
+            reason, ct,
+            authorityWrite: new AttemptWriteReference(review.AttemptId, review.LastFence,
+                review.AuthorityEpoch, $"batch-fallback-escalation:{review.AttemptId}"),
+            expectedSourceState: TaskStates.AutoReview).ConfigureAwait(false);
+        if (movedRed.Status == MoveJobStatus.SourceStateMismatch)
+        {
+            _logger.LogWarning(
+                "batch-fallback-escalation-refused task={TaskKey} attempt={AttemptId} message={Message}",
+                pending.Subject.TaskKey, pending.ReviewAttemptId, movedRed.Message);
+            SupersedeFallbackResult(task, pending, recordInStore);
+            return;
+        }
         if (movedRed.Status != MoveJobStatus.Success) return;
         Lane(pending, "ejected", outcome: capacity ? "GateCapacity"
             : reason.StartsWith("GateInfra", StringComparison.Ordinal)
@@ -2286,6 +2342,8 @@ public sealed partial class BatchGatePilotService
             movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
         if (recordInStore)
             _store.ResolvePending(pending.ReviewAttemptId, capacity ? category : "per-task-gate-red");
+        // The escalation ends the generation's wait; a release grants a fresh cap.
+        _store.ClearQueueWait(pending.ReviewAttemptId);
     }
 
     private BatchGatePendingRecord Refresh(BatchGatePendingRecord pending)
@@ -2337,6 +2395,25 @@ public sealed partial class BatchGatePilotService
             BatchGateOwnershipStore.ClearIfReviewAttempt(task.FolderPath,
                 pending.ReviewAttemptId);
         _store.ResolvePending(pending.ReviewAttemptId, reason);
+        _store.ClearQueueWait(pending.ReviewAttemptId);
+    }
+
+    /// <summary>
+    /// A per-task gate result of a review generation that is no longer current:
+    /// the queued record resolves as superseded, an emergency gate only drops
+    /// its ownership. The card keeps its lane.
+    /// </summary>
+    private void SupersedeFallbackResult(TaskInfo task, BatchGatePendingRecord pending, bool recordInStore)
+    {
+        if (recordInStore || _store.IsQueued(pending.ReviewAttemptId))
+        {
+            ResolveSuperseded(pending, "superseded");
+            return;
+        }
+        BatchGateOwnershipStore.ClearIfReviewAttempt(
+            _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath ?? task.FolderPath,
+            pending.ReviewAttemptId);
+        _store.ClearQueueWait(pending.ReviewAttemptId);
     }
 
     // AGT-3070: typed lane events for batch-deferred deliveries. The durable

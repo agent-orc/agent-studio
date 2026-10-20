@@ -68,8 +68,197 @@ public sealed partial class BatchGatePilotServiceTests
         await pilot.TickAsync(CancellationToken.None);
         AssertLane(first.Key, TaskStates.HumanReview);
         AssertLane(second.Key, TaskStates.HumanReview);
+        // A passed review drops its queue wait ledger.
+        Assert.Null(store.ReadQueueWait(first.ReviewAttemptId));
+        Assert.Null(store.ReadQueueWait(second.ReviewAttemptId));
         await pilot.TickAsync(CancellationToken.None);
         Assert.Null(pilot.QueueStalls.OpenEpisode(ProjectName));
+    }
+
+    // The 19./20.10.2026 incident: a gate result that returned after the card
+    // or its review moved on parked the card in Escalated from its new lane.
+    [Fact]
+    public Task Queue_overrun_after_a_person_moved_the_card_to_ready_leaves_it_in_ready()
+        => AssertStaleGateResultIsSuperseded(TaskStates.Ready, (factory, member) => MoveCard(factory, member,
+            TaskStates.Ready), _ => QueueOverrun());
+
+    [Fact]
+    public Task Queue_overrun_after_a_follow_up_was_queued_leaves_the_card_in_auto_review()
+        => AssertStaleGateResultIsSuperseded(TaskStates.AutoReview, SaveContinuation, _ => QueueOverrun());
+
+    [Fact]
+    public Task Queue_overrun_of_a_superseded_review_generation_leaves_the_card_in_auto_review()
+        => AssertStaleGateResultIsSuperseded(TaskStates.AutoReview, ReplaceDelivery, _ => QueueOverrun());
+
+    [Fact]
+    public Task Execution_phase_red_of_a_stale_generation_does_not_escalate()
+        => AssertStaleGateResultIsSuperseded(TaskStates.Ready, (factory, member) => MoveCard(factory, member,
+            TaskStates.Ready), request => Red(request.ExpectedSha));
+
+    [Fact]
+    public Task Execution_phase_red_of_a_superseded_review_generation_does_not_escalate()
+        => AssertStaleGateResultIsSuperseded(TaskStates.AutoReview, ReplaceDelivery,
+            request => Red(request.ExpectedSha));
+
+    private async Task AssertStaleGateResultIsSuperseded(string expectedLane,
+        Action<WebApplicationFactory<Program>, SeededMember> duringWait,
+        Func<BuildTestGateRequest, BuildTestGateResult> result)
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-STALE-" + Guid.NewGuid().ToString("N")[..6], "docs/stale.md");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Fallback = request =>
+        {
+            request.OnMachineGateSlotWaiting?.Invoke(2, 2);
+            duringWait(factory, member);
+            return result(request);
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(member.Key, expectedLane);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        Assert.Null(scanner.FindJob(member.Key, _watchPath)!.ParkedBlocker);
+        Assert.False(store.IsQueued(member.ReviewAttemptId));
+        Assert.Null(Ownership(member.Key));
+        Assert.Null(store.ReadQueueWait(member.ReviewAttemptId));
+        Assert.Empty(store.ListQueueStalls(ProjectName));
+        var folder = scanner.FindJob(member.Key, _watchPath)!.FolderPath;
+        Assert.Contains(IntegrationLaneEvents.Read(folder), lane => lane.Kind == "ejected" && lane.Outcome == "Superseded");
+        Assert.DoesNotContain(factory.Services.GetRequiredService<TimelineLog>().ReadAll(folder), row =>
+            row.Kind == TimelineEventKinds.LaneChanged && row.Details?.GetValueOrDefault("to") == TaskStates.Escalated);
+
+        // Later ticks leave the card where it is.
+        await pilot.TickAsync(CancellationToken.None);
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(member.Key, expectedLane);
+    }
+
+    private void MoveCard(WebApplicationFactory<Program> factory, SeededMember member, string lane)
+    {
+        var moved = factory.Services.GetRequiredService<TaskTransitionService>()
+            .MoveAsync(member.Key, lane, _watchPath, CancellationToken.None, cause: "human:operator")
+            .GetAwaiter().GetResult();
+        Assert.True(moved.Status == MoveJobStatus.Success, $"{moved.Status}: {moved.Message}");
+        factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
+    }
+
+    [Fact]
+    public async Task Batch_gate_queue_overrun_requeues_the_members_for_the_next_batch_without_a_retry()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-BATCH-QUEUE", "docs/batch-queue.md");
+        _gate.Batch = request =>
+        {
+            request.OnMachineGateSlotWaiting?.Invoke(2, 2);
+            return QueueOverrun();
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.StartsWith("gate-queue-overrun",
+            AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned).Reason, StringComparison.Ordinal);
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.True(store.IsQueued(member.ReviewAttemptId));
+        Assert.Null(Ownership(member.Key)?.BatchId);
+        Assert.Equal(1, store.ReadQueueWait(member.ReviewAttemptId)?.Overruns);
+        var stall = Assert.Single(store.ListQueueStalls(ProjectName));
+        Assert.Equal(_clock, stall.RaisedAtUtc);
+        Assert.Equal(member.Key, stall.TriggerTaskKey);
+
+        // The next batch reaches a slot and publishes; the ledger goes with the pass.
+        _gate.Batch = request => Green(request.ExpectedSha);
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Equal(2, _gate.BatchRuns);
+        Assert.Null(store.ReadQueueWait(member.ReviewAttemptId));
+    }
+
+    [Fact]
+    public async Task A_restart_keeps_the_open_stall_episode_until_the_resumed_per_task_gate_ends()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-QUEUE-RESTART", "docs/queue-restart.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = store.ReadPending(member.ReviewAttemptId)!;
+        // The stopped process left an open episode, the review's queue wait
+        // ledger and the active marker of a per-task gate that waited for a slot.
+        var budget = TimeSpan.FromMilliseconds(9_327_000);
+        var opened = new GateQueueStallMonitor(store, factory.Services.GetRequiredService<TimeProvider>())
+            .QueueOverrun(ProjectName, member.Key,
+                new GateQueueFacts(1, 2, 2, 2, budget, TimeSpan.FromMinutes(35), budget));
+        store.AddQueueWait(member.ReviewAttemptId, member.Key, 9_327_018, _clock);
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true, FallbackGateStarts: 1));
+        _clock = _clock.AddMinutes(10);
+        // The resumed gate is still preparing; it has not reported a slot wait.
+        var preparing = new TaskCompletionSource<BuildTestGateResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = (_, ct) => preparing.Task.WaitAsync(ct);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+
+        await pilot.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => _gate.FallbackRuns == 1);
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(opened!.EpisodeId, pilot.QueueStalls.OpenEpisode(ProjectName)?.EpisodeId);
+        Assert.Single(store.ListQueueStalls(ProjectName));
+        Assert.Equal(TimeSpan.FromMinutes(10), pilot.QueueStalls.Facts(ProjectName, 0, budget, 2).OldestWait);
+
+        // The gate passes; nothing waits any more and the episode ends.
+        preparing.SetResult(Green(member.ResultSha));
+        await WaitForAsync(() => Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, member.Key)));
+        await pilot.TickAsync(CancellationToken.None);
+        Assert.Null(pilot.QueueStalls.OpenEpisode(ProjectName));
+        Assert.Equal(1, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task Release_refuses_cards_a_stale_outcome_parked_from_another_lane_or_with_a_follow_up()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var fromReady = SeedMember(factory, "DOC-PARKED-READY", "docs/parked-ready.md");
+        var followUp = SeedMember(factory, "DOC-PARKED-FOLLOW-UP", "docs/parked-follow-up.md");
+        var stalled = SeedMember(factory, "DOC-PARKED-RELEASE", "docs/parked-release.md");
+        // Before this fix a stale outcome escalated a card that had left Auto Review.
+        MoveCard(factory, fromReady, TaskStates.Ready);
+        await ParkAsLegacyFallback(factory, fromReady, QueueOverrun());
+        await ParkAsLegacyFallback(factory, followUp, QueueOverrun());
+        SaveContinuation(factory, followUp);
+        await ParkAsLegacyFallback(factory, stalled, QueueOverrun());
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        Assert.Equal([stalled.Key], pilot.QueueStallReport(ProjectName).Releasable);
+        var release = await pilot.ReleaseQueueStalledAsync(ProjectName, "operator", CancellationToken.None);
+
+        Assert.Equal([stalled.Key], release.Released);
+        Assert.Equal([followUp.Key, fromReady.Key],
+            release.Refused.Select(refusal => refusal.TaskKey).Order(StringComparer.Ordinal));
+        Assert.Contains("not escalated out of", Assert.Single(release.Refused, r => r.TaskKey == fromReady.Key).Reason);
+        Assert.Contains("follow-up", Assert.Single(release.Refused, r => r.TaskKey == followUp.Key).Reason);
+        AssertLane(fromReady.Key, TaskStates.Escalated);
+        AssertLane(followUp.Key, TaskStates.Escalated);
+        AssertLane(stalled.Key, TaskStates.AutoReview);
     }
 
     [Fact]
@@ -194,8 +383,10 @@ public sealed partial class BatchGatePilotServiceTests
         var parked = scanner.FindJob(member.Key, _watchPath)!;
         Assert.Equal(HumanReviewEscalationCategories.GateCapacity, parked.ParkedBlocker?.BlockerType);
         Assert.StartsWith("[gate-capacity] The gate request waited", parked.ParkedBlocker?.Reason);
+        Assert.Contains("across 4 queue overrun(s)", parked.ParkedBlocker?.Reason);
         Assert.False(store.IsQueued(member.ReviewAttemptId));
-        Assert.Equal(4 * 9_327_018L, store.ReadQueueWait(member.ReviewAttemptId)?.TotalQueueWaitMs);
+        // The escalation ends the generation's wait; the reason keeps the total.
+        Assert.Null(store.ReadQueueWait(member.ReviewAttemptId));
 
         // One episode: opened at the first overrun, reminded once after four hours.
         var stalls = store.ListQueueStalls(ProjectName);

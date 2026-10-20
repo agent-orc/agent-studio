@@ -305,8 +305,15 @@ markers that name a cancelled occurrence or a completed one without an active
 choice, and rereads the occurrence after each marker write.
 
 `GateQueueStallPolicy` (AGT-3219) decides what a per-task batch gate result
-does when its budget ran out. Only a `machine-gate-queue` budget spent in the
-`queue` phase, for the current review of a card in Auto Review, is requeued:
+does after the gate returned. The host reads the generation again first: a
+result of any verdict for a review generation that is no longer current (a
+newer delivery or review, or a pending follow-up) or for a card outside Auto
+Review is `Supersede`. It resolves the queued record as superseded with a lane
+event and never moves or escalates the card. The fallback escalation also names
+`expectedSourceState: AutoReview` and the review's authority write, so a card
+that moved in the meantime is refused instead of parked. Only a
+`machine-gate-queue` budget spent in the `queue` phase, for the current review
+of a card in Auto Review, is requeued:
 the request never held a slot, so the card stays in Auto Review, a queued
 member keeps its pending record and sequence, and an emergency gate is admitted
 to the batch queue when the batch accepts it (otherwise its per-task marker
@@ -315,12 +322,19 @@ execution-phase overrun keeps its escalation. Every requeue adds its wait to a
 durable ledger of the review generation; once the summed wait reaches
 `QueueWaitCap` (four queue budgets) the card escalates under the distinct
 `gate-capacity` category instead of looping, and an operator release resets the
-ledger. The batch pilot raises one `GateQueueStallEvent` per queue episode
+ledger; a passed, superseded or escalated review deletes it. A batch candidate whose
+request overruns the queue budget is no GateInfra red: the batch is abandoned
+without a same-candidate retry, its members return to the queue for the next
+batch, and their waits count toward the same cap. The batch pilot raises one
+`GateQueueStallEvent` per queue episode
 (queue depth, oldest wait, busy and total slots, estimated drain time, idle
 configured slots and an advisory) into the batch store and the operator feed.
-The episode is durable in the batch store, so a restart keeps it open; while it
-stays open `RemindsStall` raises the event again every four hours, and it ends
-when the queue drains.
+The episode is durable in the batch store, so a restart keeps it open, and the
+host restores the per-task gates it resumes as waiting requests (from the
+active per-task markers, with the start from the queue wait ledger), so the first
+tick after a restart does not read a drained queue; while it stays open
+`RemindsStall` raises the event again every four hours, and it ends when the
+queue drains. The store keeps the newest 50 events per project.
 `Assess` marks the queue backlogged when the slots in use cannot drain it inside
 one request's queue budget. Both planners then prefer a batch: the look-ahead
 planner closes the other cards instead of a per-task gate for a high-risk
@@ -334,6 +348,11 @@ advisory; host capacity never changes. `Releasable` lets one operator action
 (`POST /api/projects/{project}/batch-gate/queue-stalls/release`, offered in the
 escalation summary) return every card escalated for a queue overrun, by an
 earlier build or at the queue wait cap, to Auto Review and the batch queue.
+`ReleaseRefusal` refuses a card whose last move into Escalated was not the
+fallback's escalation out of Auto Review (cause `escalated`, category
+`auto-review-escalation` or `gate-capacity`) or that carries a pending
+follow-up; the release reports the refusal instead of returning an outdated
+delivery to Auto Review.
 
 ## Verification and architecture guard
 
