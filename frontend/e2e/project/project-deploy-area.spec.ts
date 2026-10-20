@@ -264,6 +264,8 @@ test.describe('Project Deploy area (mocked)', () => {
         await page.getByTestId('deploy-tab-overview').click();
         await expect(page.getByRole('article', { name: 'Staging' })).toContainText('Release 2026.10.19.2');
         if (width === 390) {
+          const areaBounds = await page.getByTestId('project-deploy-area').boundingBox();
+          expect(areaBounds?.width).toBeGreaterThan(280);
           const bounds = await page.getByRole('article', { name: 'Staging' }).boundingBox();
           expect(bounds?.width).toBeLessThanOrEqual(390);
         }
