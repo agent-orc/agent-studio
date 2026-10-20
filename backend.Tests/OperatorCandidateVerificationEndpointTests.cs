@@ -194,11 +194,14 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         });
         scanner.InvalidateCache();
         var newerCard = Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166");
-        Assert.NotEqual(IntegrationStatuses.Integrated,
-            statuses.BuildLookup([newerCard])[newerCard.TaskKey].Status);
-        await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
+        var newerStatus = statuses.BuildLookup([newerCard])[newerCard.TaskKey];
+        Assert.NotEqual(IntegrationStatuses.Integrated, newerStatus.Status);
         Assert.Equal(TaskStates.AutoReview,
-            Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166").State);
+            OperatorDecisionHarness.ReconciliationTarget(newerCard, newerStatus));
+        await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
+        var reconciled = Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166");
+        Assert.NotEqual(IntegrationStatuses.Integrated,
+            statuses.BuildLookup([reconciled])[reconciled.TaskKey].Status);
 
         using var unpublished = await client.PostAsJsonAsync(path, summary with
         {
