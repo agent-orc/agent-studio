@@ -15,6 +15,13 @@ seconds while visible. The view joins the archive-inclusive
 open Watcher cases, and AI Operator decision receipts. Host, queue, and lane
 markers resolve a case's affected card IDs against the current board. A missing
 host metric or unlinked receipt reads as unavailable, never as a healthy zero.
+Each host card also shows the zone network policy the host enforces, from its
+`zone-policy` capability (AGT-3231). It reads as zone and policy version with the
+verification time, as `Verification failed` with the first failed check, as
+`Not verified` with the reason for a record that no longer counts (an earlier
+boot, a stopped timer, a removal), or as `Not reported` for a host without an
+applied policy; see
+[Zone network policy on Docker hosts](../../operations/setup/zone-network-policy.md).
 
 The flow endpoint counts distinct cards entering delivery, human review, and
 completion during the current UTC day; integration uses `integration_succeeded`
@@ -344,7 +351,7 @@ occur. It is not a claim about tunnel transfer time.
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
-  Releases, Pipeline, the existing deployment tools) plus a Run steps view with
+  Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
   the run pipeline panel; old `pipeline` routes open Run steps. Operations reads
   `GET /api/projects/<project>/environments` and shows the recorded health of
   each declared environment, plus the existing Product Runtime observability
@@ -358,6 +365,22 @@ occur. It is not a claim about tunnel transfer time.
   restored Epics tabs open the Dossiers overview tab and rewrite to its URL;
   legacy Epic data and API behavior remain until the separate data-removal
   card.
+- The Deploy overview reads declared environments from AGT-3176 and status,
+  releases, deploy runs, and step logs from `/api/projects/<project>/deploy`.
+  Release and run lists request `/releases/page` and `/deployments/page` with
+  `offset` and `limit`; responses contain `items`, `offset`, `limit`, and the
+  filtered `total`. The server caps each page at 50 items, and the UI requests
+  25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
+  filters apply before paging. The unpaged routes remain for existing clients.
+  Each source has its own loading or error state, so a failed deploy route
+  leaves declared environment cards visible. A route 404 without an error body
+  means the route is unavailable; a 404 with `{ error }` is shown as a server
+  error. Card health reads `/api/projects/<project>/environments/health`, and
+  Pipeline reuses the parsed diagram from `/pipeline-definition`, including
+  validation issues when the file is invalid. Production approvals and running
+  aborts require confirmation; the server remains the authority for refusals.
+  At phone widths the shell hides its Explorer sidebar so the Deploy cards use
+  the editor width while the activity bar stays available.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints

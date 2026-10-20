@@ -55,6 +55,7 @@ builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
+builder.Services.AddSingleton<DecisionRuleVersionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
@@ -521,6 +522,8 @@ builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
 // IP-14: environment health checks run here, in the control plane, not on the app host.
 builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
@@ -898,7 +901,12 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ConventionalGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ConventionalGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateShardTimingStore>();
+// AGT-3232: the conventional pull-or-SSH transport stays the primary gate host;
+// a subject that declares a sharded suite also spreads shards across
+// RemoteGate:ShardHosts (SSH) with a free slot.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ShardedRemoteGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
@@ -1354,15 +1362,24 @@ app.Use(async (context, next) =>
         context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
     await next(context);
 });
-// An explicitly selected standalone Task Server owns all task data. Legacy
-// /api handlers still use TaskRepository; do not let compatibility traffic
-// create a second authority while their route migration is unfinished.
+// An explicitly selected standalone Task Server owns task data. Legacy task
+// handlers still use TaskRepository; keep them closed. Studio's receipt reads,
+// runner decision-job routes and the rule routes (which answer a typed 409)
+// stay on the Studio receipt plane. The operator-intent POST moves cards
+// through TaskRepository and stays closed.
 if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
 {
     app.Use(async (context, next) =>
     {
+        var path = context.Request.Path;
+        var segments = path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
+        var studioDecisionPath = (HttpMethods.IsGet(context.Request.Method)
+                && path.StartsWithSegments("/api/orchestration/decision-receipts"))
+            || path.StartsWithSegments("/api/runner/orchestrator-decisions")
+            || segments is ["api", "workspaces", _, "decision-rules", ..];
         if (context.Request.Path.StartsWithSegments("/api")
-            && !context.Request.Path.StartsWithSegments("/api/v1"))
+            && !context.Request.Path.StartsWithSegments("/api/v1")
+            && !studioDecisionPath)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             await context.Response.WriteAsJsonAsync(new { code = "route-not-on-task-server" });

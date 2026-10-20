@@ -32,6 +32,13 @@ public static class CapabilityProtocol
     public const string TaskServerAuthority = "task-server:authority";
 
     /// <summary>
+    /// Informational: the zone network policy version and zone the host
+    /// enforces, from the state <c>agent-host zone-policy apply --execute</c>
+    /// recorded (AGT-3231). Never a claim requirement.
+    /// </summary>
+    public const string ZonePolicy = "zone-policy";
+
+    /// <summary>
     /// The runner can execute a card through the named coding CLI binary.
     /// Authentication remains a separate capability so binary loss and expired
     /// provider credentials stay independently diagnosable.

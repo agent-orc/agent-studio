@@ -186,7 +186,23 @@ public sealed record ProjectTestSuite(
     string Id,
     string Category,
     int ExpectedDurationSeconds,
-    string Command);
+    string Command)
+{
+    /// <summary>Upper bound for <see cref="Shards"/>.</summary>
+    public const int MaxShards = 16;
+
+    /// <summary><c>shards: auto</c>: the gate derives the count from the measured suite duration.</summary>
+    public const int AutoShards = 0;
+
+    /// <summary>
+    /// Gate shard count for this suite (AGT-3232). Null and 1 keep the suite in
+    /// one process; <see cref="AutoShards"/> lets the gate derive the count from
+    /// the measured suite duration. Sharding is opt-in per suite: on
+    /// agent-runner-01 a class-sharded backend slice ran 2x slower than one
+    /// process, because xUnit already runs classes in parallel in one process.
+    /// </summary>
+    public int? Shards { get; init; }
+}
 
 public sealed record ProjectDevServerRule(
     string Command,
@@ -503,9 +519,21 @@ public static partial class ProjectDefinitionReader
         fields.TryGetValue("id", out var id);
         fields.TryGetValue("category", out var category);
         fields.TryGetValue("command", out var command);
-        if (fields.Keys.Any(key => key is not ("id" or "category" or "expectedDurationSeconds" or "command")))
+        int? shards = null;
+        if (fields.TryGetValue("shards", out var shardsValue))
+        {
+            if (string.Equals(shardsValue, "auto", StringComparison.Ordinal))
+                shards = ProjectTestSuite.AutoShards;
+            else if (int.TryParse(shardsValue, out var parsedShards)
+                && parsedShards is >= 1 and <= ProjectTestSuite.MaxShards)
+                shards = parsedShards;
+            else
+                issues.Add(new($"testSuites[{index}].shards", "suite-shards-invalid",
+                    $"Shards must be auto or a whole number from 1 to {ProjectTestSuite.MaxShards}."));
+        }
+        if (fields.Keys.Any(key => key is not ("id" or "category" or "expectedDurationSeconds" or "command" or "shards")))
             issues.Add(new($"testSuites[{index}]", "unknown-field", "Test suites contain an unsupported field."));
-        return new(id ?? string.Empty, category ?? string.Empty, duration, command ?? string.Empty);
+        return new(id ?? string.Empty, category ?? string.Empty, duration, command ?? string.Empty) { Shards = shards };
     }
 
     private static ProjectDevServerRule? DevServer(
