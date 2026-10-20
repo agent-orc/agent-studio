@@ -1,5 +1,11 @@
 # AGT-3238 networked first-run and repository authority status
 
+## Generic repository URL validation review fix, 20 October 2026
+
+- Result implementation SHA: `4f587ad927f1a5352f80517bdd1c263f60b0f457`. This fix commit descends from the reviewed delivery. A fresh `git fetch origin develop` followed by `git merge origin/develop` found the branch already up to date; `git merge-base --is-ancestor origin/develop HEAD` passed. No rebase or squash was used.
+- Implemented option: validate every project URL whose id or label can make it a repository candidate, including candidates currently hidden by an earlier URL. A generic URL with credentials, query, or fragment cannot later become the selected runner repository through reordering or deletion. Invalid creation and update attempts leave the registry and audit unchanged. Updated `docs/system/domains/tasks.md` to record this behavior.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:2 -nodeReuse:false -p:UseSharedCompilation=false -v:q` passed with zero errors. `FullyQualifiedName~FirstRunOwnerAccessTests|FullyQualifiedName~ProjectRegistryTests|FullyQualifiedName~RemoteProjectRepositoryResolverTests|FullyQualifiedName~ProjectBasicsEndpointsTests` passed 70 backend tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and matched no tests in the other seven .NET test projects; it ran on all eight. `npm --prefix frontend run lint` and `git diff --check` passed. Logs are under `/home/agent/runner-work/tasks/AGT-3238/results`.
+
 ## Stop-failure review fix, 20 October 2026
 
 - Result implementation SHA: `116656373bf3c456763a56a1a09eb9b1997f7b6c`. This fix commit is on top of the reviewed delivery. A fresh `git fetch origin develop` followed by `git merge origin/develop` found the branch already up to date; `git merge-base --is-ancestor origin/develop HEAD` passed. No rebase or squash was used.
