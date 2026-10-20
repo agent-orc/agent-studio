@@ -75,6 +75,37 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Production_binding_uses_declared_kind_when_environment_id_is_custom()
+    {
+        var (environments, repo, _) = Build();
+        var declarations = Path.Combine(repo, "docs", "deployments", "environments");
+        var original = Path.Combine(declarations, "production.json");
+        var custom = Path.Combine(declarations, "live-eu.json");
+        File.Move(original, custom);
+        File.WriteAllText(custom, File.ReadAllText(custom).Replace("\"id\":\"production\"", "\"id\":\"live-eu\"", StringComparison.Ordinal));
+        Assert.Equal("production", environments.Declarations("demo")!.Single(item => item.Id == "live-eu").Kind);
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+        }).Build();
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance);
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
+        const string reference = "secret://demo/live-eu/DATABASE_URL";
+
+        Assert.Throws<SecretAccessDeniedException>(() => bindings.Bind("demo", "live-eu", "DATABASE_URL",
+            reference, "human:owner", null));
+        Assert.Equal("not-bound", Assert.Single((await bindings.CheckAsync("demo", "live-eu")).Missing).Reason);
+        bindings.Bind("demo", "live-eu", "DATABASE_URL", reference, "human:owner", "owner");
+        Assert.Equal(reference, bindings.ApprovedReferences("demo", "live-eu")["DATABASE_URL"]);
+        Assert.Equal("not-found", Assert.Single((await bindings.CheckAsync("demo", "live-eu")).Missing).Reason);
+    }
+
+    [Fact]
     public void ProjectNameWithSpaces_PersistsAndReadsEnvironmentState()
     {
         var (service, repo, _) = Build(project: "Operator Demo");

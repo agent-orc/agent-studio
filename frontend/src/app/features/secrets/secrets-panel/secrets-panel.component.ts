@@ -84,7 +84,7 @@ export class SecretsPanelComponent {
     this.environmentOptions.set([]);
     if (!project) return;
     this.service.environments(project).pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(options => this.environmentOptions.set(options));
+      .subscribe(options => this.environmentOptions.set(options.map(item => item.id)));
   }
 
   add(): void {

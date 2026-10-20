@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { AuthSessionState } from '../../../services/auth.service';
-import { SecretsService } from '../secrets.service';
+import { SecretsService, type SecretEnvironment } from '../secrets.service';
 import { SecretsPanelComponent } from '../secrets-panel/secrets-panel.component';
 
 interface Binding { name: string; reference: string; approvedBy: string | null }
@@ -22,7 +22,9 @@ export class ProjectSecretsPageComponent {
   private readonly auth = inject(AuthSessionState);
   readonly projectName = input.required<string>();
   readonly environment = signal('preview');
-  readonly environments = signal<readonly string[]>(['preview', 'stage', 'prod']);
+  readonly environments = signal<readonly SecretEnvironment[]>([{ id: 'preview', kind: 'preview' }]);
+  readonly isProduction = computed(() => this.environments().some(item =>
+    item.id === this.environment() && item.kind === 'production'));
   readonly check = signal<Preflight | null>(null);
   readonly name = signal('');
   readonly reference = signal('');
@@ -38,8 +40,8 @@ export class ProjectSecretsPageComponent {
   constructor() {
     effect(() => {
       const project = this.projectName();
-      this.secrets.environments(project).subscribe(ids =>
-        this.environments.set([...new Set(['preview', ...ids])]));
+      this.secrets.environments(project).subscribe(items =>
+        this.environments.set([{ id: 'preview', kind: 'preview' }, ...items.filter(item => item.id !== 'preview')]));
     });
     effect(() => this.refresh(this.projectName(), this.environment()));
   }
