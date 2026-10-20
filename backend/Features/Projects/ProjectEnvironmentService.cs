@@ -83,7 +83,9 @@ public sealed class ProjectEnvironmentService
     /// <summary>
     /// BD-1 release snapshot: the declarations as committed at
     /// <paramref name="commit"/>, not as the working tree has them now. Null
-    /// when the project or commit cannot be read.
+    /// when the project, the commit or any declaration file cannot be read:
+    /// release ids are deterministic, so a partial snapshot could never be
+    /// repaired later.
     /// </summary>
     public IReadOnlyList<EnvironmentDeclaration>? DeclarationsAtCommit(string project, string commit)
     {
@@ -94,7 +96,10 @@ public sealed class ProjectEnvironmentService
         if (paths is null) return null;
         var files = new List<(string Name, string Json)>();
         foreach (var path in paths.Where(item => item.EndsWith(".json", StringComparison.Ordinal)))
-            if (_git.GetFileAtCommit(root, commit, path) is { } json) files.Add((Path.GetFileName(path), json));
+        {
+            if (_git.GetFileAtCommit(root, commit, path) is not { } json) return null;
+            files.Add((Path.GetFileName(path), json));
+        }
         return ParseDeclarations(files);
     }
 
@@ -173,7 +178,7 @@ public sealed class ProjectEnvironmentService
     }
 
     public bool QueueRelease(string project, string artifact, string commit)
-        => QueueReleaseJob(project, artifact, commit) is not null;
+        => CanQueueRelease(project, artifact, commit) && QueueReleaseJob(project, artifact, commit) is not null;
 
     /// <summary>
     /// The gate-built artifact may start a release: the gate recorded it for
@@ -197,15 +202,19 @@ public sealed class ProjectEnvironmentService
     }
 
     /// <summary>
-    /// Queues stage for a gate-built artifact and returns the stage job. With
-    /// <paramref name="snapshot"/> (a BD-1 release) the job and the promotion
-    /// use the declarations stored in the release; the environments must still
-    /// be declared.
+    /// Queues stage for a gate-built artifact and returns the stage job. The
+    /// caller has passed <see cref="CanQueueRelease"/> (its git checks stay
+    /// outside the caller's lock); only the recorded artifact and the queue
+    /// state are checked again here. With <paramref name="snapshot"/> (a BD-1
+    /// release) the job and the promotion use the declarations stored in the
+    /// release; the environments must still be declared, and the job goes to
+    /// the host the current declaration names (<see cref="RouteToCurrentHost"/>).
     /// </summary>
     public DeployJob? QueueReleaseJob(string project, string artifact, string commit,
         IReadOnlyList<EnvironmentDeclaration>? snapshot = null)
     {
-        if (!CanQueueRelease(project, artifact, commit)) return null;
+        if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit) || !HasBuiltArtifact(project, artifact, commit))
+            return null;
         lock (_gate)
         {
             var current = Declarations(project);
@@ -217,7 +226,7 @@ public sealed class ProjectEnvironmentService
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
-            var job = Queue(project, stage, artifact, state, actor: "release-gate");
+            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state, actor: "release-gate");
             Save(project, state);
             return job;
         }
@@ -225,8 +234,9 @@ public sealed class ProjectEnvironmentService
 
     /// <summary>
     /// Queues an already released artifact into one environment with the
-    /// release's snapshot of its declaration. The caller (the BD-1 lifecycle)
-    /// has decided that the deployment may start.
+    /// release's snapshot of its declaration, on the host the current
+    /// declaration names. The caller (the BD-1 lifecycle) has decided that the
+    /// deployment may start.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
         bool rollback)
@@ -234,9 +244,10 @@ public sealed class ProjectEnvironmentService
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
         {
-            if (!IsDeclared(Declarations(project), target.Id)) return null;
+            var current = Declarations(project);
+            if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, target, artifact, state, rollback, actor);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
             Save(project, state);
             return job;
         }
@@ -355,7 +366,8 @@ public sealed class ProjectEnvironmentService
     /// <summary>
     /// Decides a pending promotion; an approval returns the production job.
     /// With <paramref name="target"/> (the BD-1 release snapshot of the
-    /// production declaration) the job deploys that snapshot.
+    /// production declaration) the job deploys that snapshot on the host the
+    /// current declaration names.
     /// </summary>
     public (bool Decided, DeployJob? Job) DecidePromotion(string project, string artifact, bool approve, string actor,
         EnvironmentDeclaration? target = null)
@@ -372,7 +384,10 @@ public sealed class ProjectEnvironmentService
             if (production is null || target is not null && target.Id != production.Id) return (false, null);
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
-            var job = approve ? Queue(project, target ?? production, artifact, state, actor: actor) : null;
+            var job = approve
+                ? Queue(project, target is null ? production : RouteToCurrentHost(target, declarations), artifact, state,
+                    actor: actor)
+                : null;
             Save(project, state);
             return (true, job);
         }
@@ -523,18 +538,32 @@ public sealed class ProjectEnvironmentService
 
     /// <summary>
     /// The declaration the artifact last deployed healthy with, so a rollback
-    /// repeats exactly that deploy. History from before jobs carried the
-    /// declaration falls back to the current one.
+    /// repeats exactly that deploy, on the host the environment declares now
+    /// (a retired host would never claim it). History from before jobs carried
+    /// the declaration falls back to the current one.
     /// </summary>
     private static EnvironmentDeclaration DeployedSpec(State state, EnvironmentDeclaration current, string artifact)
         => state.Jobs.LastOrDefault(job => job.EnvironmentId == current.Id && job.Artifact == artifact
                 && job.Status == "healthy") is { } deployed
             ? current with
             {
-                TargetHostId = deployed.HostId, Template = deployed.Template, Destination = deployed.Destination,
+                Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
             }
             : current;
+
+    /// <summary>
+    /// BD-1: the release snapshot decides what is deployed (template,
+    /// destination, health check, secrets); the current declaration decides
+    /// where. After an environment moves to another host, a rollback or a late
+    /// approval of an older release goes to the new host instead of waiting
+    /// for a retired host that never claims.
+    /// </summary>
+    private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
+        IReadOnlyList<EnvironmentDeclaration> current)
+        => current.FirstOrDefault(item => item.Id == snapshot.Id) is { } declared
+            ? snapshot with { TargetHostId = declared.TargetHostId }
+            : snapshot;
 
     private static bool HasOpenPromotion(State state, string artifact)
         => state.Promotions.Any(item => item.Artifact == artifact

@@ -64,14 +64,29 @@ stays the only executor; releases and runs describe and steer it.
   those whose integration verification names a commit reachable from the release
   commit and not from the previous release (at most 200 commits for the first
   release).
+- **Release order.** Releases never move back in history. A commit that is a
+  strict ancestor of the newest release's commit is refused with 409, so a gate
+  run that finishes after the run of a later commit cannot create an older
+  release after a newer one. Re-posting an existing release starts Staging again
+  only while it is the newest release; an older one answers 409 and moves back
+  only through rollback. A rebuild of the newest commit and a commit unrelated in
+  history stay allowed. Creation order is therefore commit order for every
+  release the lifecycle compares. A declaration snapshot that git cannot read
+  completely also answers 409; invalid input keeps answering 400.
 - **Declaration snapshot.** The release file also stores the environment
   declarations (`docs/deployments/environments/*.json`) as committed at the
   release commit. Every deploy job of the release, redeploy and rollback
   included, uses that snapshot, so a later change in the working tree or a later
-  commit cannot change what an existing release deploys. The environment must
-  still be declared; a release without a snapshot for an environment cannot be
-  deployed there. Automatic and history rollbacks of the host queue repeat the
-  declaration the artifact last deployed healthy with.
+  commit cannot change what an existing release deploys. The snapshot decides
+  what is deployed (template, destination, health URL, container port, secret
+  references); the current declaration decides where (`targetHostId`). After an
+  environment moves to another host, a rollback or a late approval of an older
+  release goes to the new host, and the run log names the host change. The
+  environment must still be declared; a release without a snapshot for an
+  environment cannot be deployed there. Automatic and history rollbacks of the
+  host queue repeat the declaration the artifact last deployed healthy with, on
+  the currently declared host. A job queued before the host moved stays with the
+  old host; cancel it and deploy again.
 - **Standard lifecycle.** Staging deploys automatically after integration.
   Production needs a successful Staging run of the same release and approval by
   Owner or Maintainer. Owner is the Studio owner role; Maintainer is an account
@@ -79,9 +94,12 @@ stays the only executor; releases and runs describe and steer it.
   Studio session in every profile; on the local profile a mutation counts the
   session only with its CSRF token. A caller without a session, such as a coding
   agent on the local API, is `local-operator` and never approves.
-- **One environment, one direction.** Only one run at a time is queued or
-  running in an environment; every request and every approval waits until it
-  has finished. A deploy moves only to a release newer than the current one;
+- **One environment, one direction.** A request or an approval is refused while
+  another run is queued or running in the environment. The automatic Staging
+  run after integration does not ask the lifecycle: it queues behind the runs
+  already queued, and the host runs them one at a time in queue order. Because
+  releases never move back in history, that queue only moves forward. A deploy
+  moves only to a release newer than the current one;
   the current release runs again only as a redeploy, and an older release only as
   the rollback target. An approval decides these rules again, because another
   run may have finished meanwhile. Queuing a run closes the waiting runs it makes
@@ -100,10 +118,18 @@ stays the only executor; releases and runs describe and steer it.
   the environment, so the rollback cannot replace that newer release.
 - **Redeploy and rollback.** Redeploy runs the environment's current release
   again. Rollback runs the latest successful release older than the current one.
-  Both follow the same approval rule.
+  Both follow the same approval rule. When the environment's first release has
+  no older release to return to, the AGT-3176 rollback route falls back to the
+  artifact history (the artifact deployed before releases existed), only while
+  the environment is idle. That artifact has no release, so EnvironmentStatus
+  keeps naming the last release run as current; health follows the host
+  history.
 - **Cancel, abort and lost hosts.** Cancel stops a queued or waiting run. Cancel
   on a running run aborts it: the host's lease is revoked, so its late report is
-  refused, and the environment records the interrupted deploy as failed.
+  refused, and the environment records the interrupted deploy as failed. Abort
+  only revokes the lease: the Studio cannot stop the host process, which may
+  still finish its step. Treat the environment as unknown or unhealthy until the
+  next deploy, redeploy or rollback.
   Closing a pending production promotion and aborting a running production run
   need Owner or Maintainer. The host's report is accepted while its lease token
   is valid. After five minutes without a report, the same host may claim its job

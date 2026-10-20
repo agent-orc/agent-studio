@@ -85,7 +85,11 @@ public static class EnvironmentStatusProjection
         => deployments.Any(item => item.ReleaseId == releaseId && item.EnvironmentId == environmentId
             && item.State == DeploymentStates.Succeeded);
 
-    /// <summary>Releases order by creation, then id.</summary>
+    /// <summary>
+    /// Releases order by creation, then id. <see cref="DeployService.CreateRelease"/>
+    /// refuses a commit that is an ancestor of the newest release's commit, so
+    /// creation order never contradicts commit history.
+    /// </summary>
     public static bool IsNewer(Release candidate, Release than)
         => candidate.CreatedAtUtc > than.CreatedAtUtc
            || candidate.CreatedAtUtc == than.CreatedAtUtc && string.CompareOrdinal(candidate.Id, than.Id) > 0;

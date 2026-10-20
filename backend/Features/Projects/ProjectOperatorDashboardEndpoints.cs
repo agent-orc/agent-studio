@@ -16,9 +16,8 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy) =>
             environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
-            && deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate") is
-                { Kind: DeployOutcomeKind.Ok } created
-                ? Results.Accepted(value: created.Value)
+                ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
+                    "Gate artifact or environment declarations are invalid.")
                 : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
@@ -28,10 +27,9 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
-            deploy.CreateRelease(projectName, request.Artifact, request.Commit,
-                DeployEndpoints.Actor(context, projectName).Id) is { Kind: DeployOutcomeKind.Ok } created
-                ? Results.Accepted(value: created.Value)
-                : Results.BadRequest(new { error = "Artifact, commit, or stage and production declarations are invalid." }))
+            ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
+                DeployEndpoints.Actor(context, projectName).Id),
+                "Artifact, commit, or stage and production declarations are invalid."))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Production approval follows the BD-1 standard lifecycle: Owner or
@@ -135,6 +133,18 @@ public static class ProjectOperatorDashboardEndpoints
             return item is null ? Results.NotFound() : Results.Ok(item);
         });
     }
+
+    /// <summary>
+    /// 202 with the release; 409 when the stored releases refuse it (an older
+    /// commit than the newest release, or an unreadable declaration
+    /// snapshot); 400 for every invalid input, as before BD-1.
+    /// </summary>
+    private static IResult ReleaseCreated(DeployOutcome<Release> outcome, string invalid) => outcome switch
+    {
+        { Kind: DeployOutcomeKind.Ok } => Results.Accepted(value: outcome.Value),
+        { Kind: DeployOutcomeKind.Conflict } => Results.Conflict(new { error = outcome.Error }),
+        _ => Results.BadRequest(new { error = invalid }),
+    };
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,
         bool approve, DeployService deploy)

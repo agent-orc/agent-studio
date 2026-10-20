@@ -3,7 +3,8 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Deploy;
 
-public enum DeployOutcomeKind { Ok, NotFound, Conflict, Forbidden }
+/// <summary><c>Invalid</c> is a request the input decides (400); <c>Conflict</c> one the stored state decides (409).</summary>
+public enum DeployOutcomeKind { Ok, NotFound, Conflict, Forbidden, Invalid }
 
 public sealed record DeployOutcome<T>(DeployOutcomeKind Kind, T? Value, string? Error)
 {
@@ -11,6 +12,7 @@ public sealed record DeployOutcome<T>(DeployOutcomeKind Kind, T? Value, string? 
     public static DeployOutcome<T> NotFound(string error) => new(DeployOutcomeKind.NotFound, default, error);
     public static DeployOutcome<T> Conflict(string error) => new(DeployOutcomeKind.Conflict, default, error);
     public static DeployOutcome<T> Forbidden(string error) => new(DeployOutcomeKind.Forbidden, default, error);
+    public static DeployOutcome<T> Invalid(string error) => new(DeployOutcomeKind.Invalid, default, error);
 }
 
 /// <summary>
@@ -58,37 +60,54 @@ public sealed class DeployService
     /// The integration branch built green: record the immutable release for
     /// the gate artifact, with the environment declarations as committed at
     /// that commit, then start the automatic Staging phase from that snapshot.
-    /// Git reads and the archive-inclusive card scan run before the global
-    /// lock.
+    /// Releases never move back in history: a commit that is a strict ancestor
+    /// of the newest release's commit is refused, and an existing release
+    /// starts Staging again only while it is the newest, so creation order is
+    /// commit order for every release the lifecycle compares. Git reads and
+    /// the archive-inclusive card scan run before the global lock; the
+    /// ancestry check repeats under the lock only when another release was
+    /// created meanwhile.
     /// </summary>
     public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor)
     {
+        const string invalid = "Artifact, commit, or stage and production declarations are invalid.";
         if (_environments.Declarations(project) is null) return DeployOutcome<Release>.NotFound($"Unknown project '{project}'.");
-        if (!_environments.CanQueueRelease(project, artifact, commit))
-            return DeployOutcome<Release>.Conflict("Artifact, commit, or stage and production declarations are invalid.");
-        IReadOnlyList<EnvironmentDeclaration> declarations;
+        if (!_environments.CanQueueRelease(project, artifact, commit)) return DeployOutcome<Release>.Invalid(invalid);
+        IReadOnlyList<EnvironmentDeclaration>? declarations;
         try
         {
-            declarations = _environments.DeclarationsAtCommit(project, commit) ?? [];
+            declarations = _environments.DeclarationsAtCommit(project, commit);
         }
         catch (JsonException ex)
         {
-            return DeployOutcome<Release>.Conflict(
+            return DeployOutcome<Release>.Invalid(
                 $"The environment declarations at commit {ShortSha(commit)} are invalid: {ex.Message}");
         }
+        if (declarations is null)
+            return DeployOutcome<Release>.Conflict(
+                $"The environment declarations at commit {ShortSha(commit)} could not be read completely.");
         var environments = MapEnvironments(project, declarations);
         var staging = environments.FirstOrDefault(StandardLifecyclePolicy.IsAutomatic);
         if (staging is null || !environments.Any(StandardLifecyclePolicy.RequiresApproval))
-            return DeployOutcome<Release>.Conflict(
+            return DeployOutcome<Release>.Invalid(
                 $"Staging and production declarations are required at commit {ShortSha(commit)}.");
         var id = ReleaseSnapshot.Id(project, commit, [artifact]);
         var repo = _git.ResolveRepoRootForProject(project);
-        var known = _store.ReadReleases(project).Any(item => item.Id == id);
+        var existing = _store.ReadReleaseRecords(project);
+        var known = existing.Any(item => item.Release.Id == id);
+        var newestSeen = existing.LastOrDefault()?.Release;
+        var orderRejection = OrderRejection(repo, newestSeen, id, commit, known);
+        if (orderRejection is not null) return DeployOutcome<Release>.Conflict(orderRejection);
         var integrated = known || repo is null ? [] : IntegratedCards(project);
         var definition = known || repo is null ? null : ReadDefinition(repo, commit);
 
         lock (_gate)
         {
+            var current = _store.ReadReleaseRecords(project);
+            var newest = current.LastOrDefault()?.Release;
+            if (newest?.Id != newestSeen?.Id && OrderRejection(repo, newest, id, commit,
+                    current.Any(item => item.Release.Id == id)) is { } raced)
+                return DeployOutcome<Release>.Conflict(raced);
             var now = _clock.GetUtcNow().UtcDateTime;
             var (record, created) = FindOrCreateRelease(project, id, commit, [artifact], declarations, definition,
                 repo, integrated, now);
@@ -101,7 +120,7 @@ public sealed class DeployService
             if (job is null)
             {
                 Persist(project, _store.ReadDeployments(project), [], audit);
-                return DeployOutcome<Release>.Conflict("Artifact, commit, or stage and production declarations are invalid.");
+                return DeployOutcome<Release>.Invalid(invalid);
             }
             var runs = _store.ReadDeployments(project).ToList();
             var run = NewRun(release, staging, record.Environments, DeploymentStates.Queued, DeploymentTriggers.Deploy,
@@ -112,12 +131,29 @@ public sealed class DeployService
                 new(run.Id, run.DeployStep, now,
                     $"Release {release.Version} queued for {staging.Name} by {actor} (automatic after integration)."),
             };
+            if (HostChange(record, staging.Id, job) is { } moved) log.Add(new(run.Id, run.DeployStep, now, moved));
             audit.Add(new(now, actor, "deployment-queued", release.Id, run.Id, staging.Id,
                 $"Release {release.Version} queued for {staging.Name}."));
             Persist(project, runs, log, audit);
             SyncLocked(project);
             return DeployOutcome<Release>.Ok(release);
         }
+    }
+
+    /// <summary>
+    /// Why a release of <paramref name="commit"/> may not start Staging after
+    /// <paramref name="newest"/>, or null. A rebuild of the newest commit and
+    /// a commit unrelated in history stay allowed.
+    /// </summary>
+    private string? OrderRejection(string? repo, Release? newest, string id, string commit, bool known)
+    {
+        if (newest is null || newest.Id == id) return null;
+        if (known)
+            return $"The release of commit {ShortSha(commit)} is older than the newest release {newest.Version}. "
+                   + "Staging runs only the newest release; use rollback to move back.";
+        if (newest.CommitSha == commit || repo is null || !_git.IsAncestor(repo, commit, newest.CommitSha)) return null;
+        return $"Commit {ShortSha(commit)} is an ancestor of commit {ShortSha(newest.CommitSha)} of the newest release "
+               + $"{newest.Version}. A release never moves back in history; use rollback.";
     }
 
     public IReadOnlyList<Release>? Releases(string project)
@@ -295,6 +331,7 @@ public sealed class DeployService
                 new(run.Id, DeployStepNames.Approval, now, $"Approved by {actor.Id}."),
                 new(run.Id, run.DeployStep, now, $"Queued for deploy host {job.HostId}."),
             };
+            if (HostChange(record, environment.Id, job) is { } moved) log.Add(new(run.Id, run.DeployStep, now, moved));
             var audit = new List<DeployAuditEntry>
             {
                 new(now, actor.Id, "deployment-approved", release.Id, run.Id, run.EnvironmentId,
@@ -378,7 +415,10 @@ public sealed class DeployService
 
     /// <summary>
     /// The AGT-3176 rollback route: a rollback run through the lifecycle when
-    /// the environment runs a release, the artifact history otherwise.
+    /// the environment has a release to roll back to, the artifact history
+    /// otherwise. The history covers the environment's first release, whose
+    /// predecessor is an artifact from before releases existed; that
+    /// rollback has no release, so it runs only while the environment is idle.
     /// </summary>
     public DeployOutcome<Deployment?> RollbackEnvironment(string project, string environmentId, DeployActor actor)
     {
@@ -387,7 +427,7 @@ public sealed class DeployService
             var snapshot = SyncLocked(project);
             if (snapshot is null) return DeployOutcome<Deployment?>.NotFound($"Unknown project '{project}'.");
             var environment = snapshot.Environments.FirstOrDefault(item => item.Id == environmentId);
-            if (environment is not null && EnvironmentStatusProjection.CurrentRelease(
+            if (environment is not null && EnvironmentStatusProjection.PreviousRelease(
                     snapshot.Deployments(project).Where(item => item.EnvironmentId == environmentId),
                     snapshot.ReleaseById) is not null)
             {
@@ -459,6 +499,8 @@ public sealed class DeployService
         if (job is not null)
             log.Add(new(run.Id, run.DeployStep, now,
                 $"Release {release.Version} queued for {environment.Name} by {actor.Id} ({trigger})."));
+        if (job is not null && HostChange(record, environment.Id, job) is { } moved)
+            log.Add(new(run.Id, run.DeployStep, now, moved));
         var action = job is null ? "approval-requested" : trigger switch
         {
             DeploymentTriggers.Redeploy => "redeploy-queued",
@@ -601,6 +643,14 @@ public sealed class DeployService
     private static DeployOutcome<Deployment> Rejected(LifecycleDecision decision)
         => decision.Forbidden
             ? DeployOutcome<Deployment>.Forbidden(decision.Reason!) : DeployOutcome<Deployment>.Conflict(decision.Reason!);
+
+    /// <summary>The run log line when the environment moved to another host after the release was created.</summary>
+    private static string? HostChange(ReleaseRecord record, string environmentId, DeployJob job)
+        => record.Environments.FirstOrDefault(item => item.Id == environmentId) is { } declared
+           && declared.TargetHostId != job.HostId
+            ? $"Release {record.Release.Version} declared deploy host {declared.TargetHostId}; the environment now "
+              + $"declares deploy host {job.HostId}, so the run goes there with the release's declaration."
+            : null;
 
     private static DeployOutcome<Deployment> MissingSnapshot(Release release, DeployEnvironment environment)
         => DeployOutcome<Deployment>.Conflict(

@@ -7,6 +7,7 @@ namespace AgentStudio.Deploy;
 /// the Studio has no separate Maintainer role yet. Approval needs a signed-in
 /// person in every profile: a caller without a Studio session, such as a
 /// coding agent on the local API, is the local operator and never approves.
+/// Neither does a session that still has to change its temporary password.
 /// </summary>
 public static class DeployApprovalAuthority
 {
@@ -15,7 +16,7 @@ public static class DeployApprovalAuthority
     public static DeployActor Resolve(StudioUser? user, string project)
     {
         if (user is null) return new(LocalOperator, false);
-        var approver = !user.Disabled && (user.Role == StudioRoles.Owner
+        var approver = !user.Disabled && !user.MustChangePassword && (user.Role == StudioRoles.Owner
             || user.ProductionApprovalProjects.Any(grant => string.Equals(grant, project, StringComparison.OrdinalIgnoreCase)));
         return new(user.Id, approver);
     }
@@ -29,9 +30,7 @@ public static class DeployApprovalAuthority
     public static StudioUser? SignedInUser(HttpContext context, AccessSecurityStore store)
     {
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human) return human.User;
-        var session = store.AuthenticateSession(
-            context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-            ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName], touch: false);
+        var session = AccessSecurityEndpoints.FindHuman(context, store, touch: false);
         if (session is null) return null;
         var safe = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method);
         return safe || store.ValidateCsrf(session.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault())

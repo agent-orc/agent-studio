@@ -178,12 +178,16 @@ public sealed class StandardLifecyclePolicyTests
     [InlineData(StudioRoles.Contributor, true, false, true)]
     [InlineData(StudioRoles.Owner, false, true, false)]
     [InlineData(StudioRoles.Viewer, false, false, false)]
-    public void ApprovalAuthority_IsOwnerOrProjectMaintainer(string role, bool grant, bool disabled, bool approver)
+    [InlineData(StudioRoles.Owner, false, false, false, true)]
+    [InlineData(StudioRoles.Operator, true, false, false, true)]
+    public void ApprovalAuthority_IsOwnerOrProjectMaintainer(string role, bool grant, bool disabled, bool approver,
+        bool mustChangePassword = false)
     {
         var user = new StudioUser
         {
             Id = "user-1", Username = "user", DisplayName = "User", Role = role, PasswordHash = "",
             ProductionApprovalProjects = grant ? ["Demo"] : ["other"], Disabled = disabled,
+            MustChangePassword = mustChangePassword,
         };
         var actor = DeployApprovalAuthority.Resolve(user, "demo");
         Assert.Equal("user-1", actor.Id);

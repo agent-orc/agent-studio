@@ -420,11 +420,17 @@ public sealed class DeployServiceTests : IDisposable
         var r2 = CreateRelease(deploy, Artifact('b'), Commit("moved-production"));
         Assert.NotEqual(r1.ProcessVersion, r2.ProcessVersion);
 
-        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo",
-            deploy.Deployments("demo", "production")!.Single(item => item.ReleaseId == r1.Id).Id, Owner).Kind);
-        Assert.Null(environments.Claim("new-host"));
-        var old = environments.Claim("prod-host")!;
+        // r1 deploys its own declaration (port 8082) on the host production
+        // declares now; the retired host never gets the job.
+        var approval = deploy.Approve("demo",
+            deploy.Deployments("demo", "production")!.Single(item => item.ReleaseId == r1.Id).Id, Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, approval.Kind);
+        Assert.Null(environments.Claim("prod-host"));
+        var old = environments.Claim("new-host")!;
         Assert.Equal((Artifact('a'), "8082"), (old.Artifact, old.Destination));
+        Assert.Contains(deploy.Log("demo", approval.Value!.Id, null)!.Lines, line => line.Message
+            == $"Release {r1.Version} declared deploy host prod-host; the environment now declares deploy host new-host, "
+            + "so the run goes there with the release's declaration.");
         Assert.True(environments.Report("demo", old.Id, new(old.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
 
@@ -437,10 +443,118 @@ public sealed class DeployServiceTests : IDisposable
         Assert.True(environments.Report("demo", moved.Id, new(moved.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
 
-        // A rollback repeats r1's snapshot, not the current declaration.
+        // A rollback repeats r1's snapshot, not the current declaration, on
+        // the current host.
         Assert.Equal(DeployOutcomeKind.Ok, deploy.Rollback("demo", "production", approve: true, Owner).Kind);
-        var rollback = environments.Claim("prod-host")!;
+        Assert.Null(environments.Claim("prod-host"));
+        var rollback = environments.Claim("new-host")!;
         Assert.Equal((Artifact('a'), "8082", true), (rollback.Artifact, rollback.Destination, rollback.IsRollback));
+    }
+
+    [Fact]
+    public void ReleasesInReverseCommitOrder_NeverMoveStagingOrProductionBack()
+    {
+        var (deploy, environments, store) = Build();
+        var a = Head();
+        var middle = Commit("middle");
+        var b = Commit("second");
+        var rA = CreateRelease(deploy, Artifact('a'), a);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var rB = CreateRelease(deploy, Artifact('b'), b);
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        // The gate run of an ancestor commit finishes after the run of b.
+        WriteReleaseEvidence(Artifact('d'), middle);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('d'), middle));
+        var late = deploy.CreateRelease("demo", Artifact('d'), middle, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Conflict, late.Kind);
+        Assert.Contains("ancestor", late.Error);
+        Assert.Equal([rA.Id, rB.Id], store.ReadReleases("demo").Select(item => item.Id));
+
+        // Production takes the newest release, which closes the older
+        // release's promotion.
+        var waiting = deploy.Deployments("demo", "production")!.ToDictionary(item => item.ReleaseId, item => item.Id);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting[rB.Id], Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: true);
+        Assert.Contains(environments.Read("demo")!.Promotions, item => item.Artifact == Artifact('a') && item.Status == "rejected");
+
+        // Re-posting the older release after that does not queue Staging backwards.
+        var repost = deploy.CreateRelease("demo", Artifact('a'), a, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Conflict, repost.Kind);
+        Assert.Contains("Staging runs only the newest release", repost.Error);
+        Assert.Null(environments.Claim("stage-host"));
+        Assert.Equal(2, deploy.Deployments("demo", "stage")!.Count);
+
+        // Neither does anything else move production back to the older release.
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.Approve("demo", waiting[rA.Id], Owner).Kind);
+        Assert.Equal(DeployOutcomeKind.Conflict,
+            deploy.RequestDeployment("demo", rA.Id, new("production", Approve: true), Owner).Kind);
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.CreateRelease("demo", Artifact('d'), middle, "release-gate").Kind);
+        Assert.Null(environments.Claim("stage-host"));
+        Assert.Null(environments.Claim("prod-host"));
+        Assert.All(deploy.Status("demo")!, status => Assert.Equal(rB.Id, status.CurrentRelease?.Id));
+
+        // A rebuild of the newest commit is still a release.
+        Assert.Equal(b, CreateRelease(deploy, Artifact('c'), b).CommitSha);
+    }
+
+    [Fact]
+    public void RollbackRoute_OnTheFirstRelease_FallsBackToTheArtifactFromBeforeReleases()
+    {
+        var (deploy, environments, _) = Build();
+        var a = Head();
+        // Production runs an artifact from before releases existed (AGT-3176 only).
+        WriteReleaseEvidence(Artifact('a'), a);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), a));
+        Assert.True(environments.QueueRelease("demo", Artifact('a'), a));
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.DecidePromotion("demo", Artifact('a'), true, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: true);
+        var r1 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.Rollback("demo", "production", approve: true, Owner).Kind);
+
+        // Production moved hosts meanwhile; the history rollback goes to the new one.
+        WriteProduction(host: "new-host", destination: "8082");
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.RollbackEnvironment("demo", "production", Owner).Kind);
+        var busy = deploy.RollbackEnvironment("demo", "production", Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, busy.Kind);
+        Assert.Contains("Wait until", busy.Error);
+        Assert.Null(environments.Claim("prod-host"));
+        var job = environments.Claim("new-host")!;
+        Assert.Equal((Artifact('a'), true, "8082"), (job.Artifact, job.IsRollback, job.Destination));
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal(EnvironmentHealth.Healthy, deploy.Status("demo")![1].Health);
+    }
+
+    [Fact]
+    public void Release_WithAnUnreadableDeclaration_IsRefused_AndNoPartialSnapshotIsStored()
+    {
+        var (deploy, environments, store) = Build();
+        // A file name git would quote without -z still reads.
+        Git("mv", "docs/deployments/environments/production.json", "docs/deployments/environments/produktion-ä.json");
+        var renamed = Commit("renamed");
+        var r1 = CreateRelease(deploy, Artifact('a'), renamed);
+        Assert.Equal(["stage", "production"], store.ReadReleaseRecords("demo").Single().Environments.Select(item => item.Id));
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "other.json"), JsonSerializer.Serialize(new
+        {
+            id = "preview", name = "Preview", kind = "other", targetHostId = "preview-host", address = "https://preview",
+            template = "container", destination = "8083", approval = "person",
+        }));
+        var broken = Commit("other-environment");
+        var blob = Git("rev-parse", $"{broken}:docs/deployments/environments/other.json").Trim();
+        File.Delete(Path.Combine(_repo, ".git", "objects", blob[..2], blob[2..]));
+
+        WriteReleaseEvidence(Artifact('b'), broken);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('b'), broken));
+        var refused = deploy.CreateRelease("demo", Artifact('b'), broken, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("could not be read completely", refused.Error);
+        Assert.Equal([r1.Id], store.ReadReleases("demo").Select(item => item.Id));
+        Assert.Null(environments.Claim("stage-host"));
     }
 
     [Fact]
@@ -478,8 +592,10 @@ public sealed class DeployServiceTests : IDisposable
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
-        var commit = Head();
+        var older = Head();
+        var commit = Commit("second");
         WriteReleaseEvidence(Artifact('a'), commit);
+        WriteReleaseEvidence(Artifact('b'), older);
         await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -514,6 +630,13 @@ public sealed class DeployServiceTests : IDisposable
             new ReleaseArtifactRequest(Artifact('a'), commit));
         Assert.Equal(HttpStatusCode.Accepted, created.StatusCode);
         var releaseId = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString();
+        // An ancestor commit after a newer release is a conflict with the stored releases.
+        Assert.True(factory.Services.GetRequiredService<ProjectEnvironmentService>()
+            .RegisterGateArtifact("demo", Artifact('b'), older));
+        using var backwards = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
+            new ReleaseArtifactRequest(Artifact('b'), older));
+        Assert.Equal(HttpStatusCode.Conflict, backwards.StatusCode);
+        Assert.Contains("ancestor", await backwards.Content.ReadAsStringAsync());
 
         using var status = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/status"));
         var staging = status.RootElement[0];

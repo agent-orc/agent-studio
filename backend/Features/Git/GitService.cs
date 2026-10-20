@@ -8211,11 +8211,12 @@ public class GitService
     }
 
     /// <summary>
-    /// BD-1: repository-relative paths of the files directly inside
+    /// BD-1: repository-relative paths of the files (blobs) directly inside
     /// <paramref name="directory"/> at <paramref name="sha"/>. A release reads
-    /// its environment declarations this way, at the release commit. Empty
-    /// when the directory does not exist there; null when the commit cannot be
-    /// read.
+    /// its environment declarations this way, at the release commit. The
+    /// listing is NUL-separated, so git neither quotes nor escapes a path.
+    /// Empty when the directory does not exist there; null when the commit
+    /// cannot be read.
     /// </summary>
     public IReadOnlyList<string>? ListFilesAtCommit(string repoRoot, string sha, string directory)
     {
@@ -8223,11 +8224,15 @@ public class GitService
             || sha.StartsWith('-') || string.IsNullOrWhiteSpace(directory)) return null;
         var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
         if (!Directory.Exists(root)) return null;
-        var (output, _, code) = RunGitArgs(root, "ls-tree", "--name-only", sha, RevisionsOnly,
+        var (output, _, code) = RunGitArgs(root, "ls-tree", "-z", sha, RevisionsOnly,
             directory.Replace('\\', '/').TrimEnd('/') + "/");
-        return code == 0
-            ? output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            : null;
+        if (code != 0) return null;
+        // Each entry is "<mode> <type> <object>\t<path>".
+        return output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(entry => entry.Split('\t', 2))
+            .Where(parts => parts.Length == 2 && parts[0].Split(' ') is [_, "blob", _])
+            .Select(parts => parts[1])
+            .ToArray();
     }
 
     /// <summary>

@@ -92,6 +92,7 @@ public static class DeployEndpoints
     {
         DeployOutcomeKind.Ok => accepted ? Results.Accepted(value: outcome.Value) : Results.Ok(outcome.Value),
         DeployOutcomeKind.NotFound => Results.NotFound(new { error = outcome.Error }),
+        DeployOutcomeKind.Invalid => Results.BadRequest(new { error = outcome.Error }),
         DeployOutcomeKind.Forbidden => Results.Json(new { error = outcome.Error }, statusCode: StatusCodes.Status403Forbidden),
         _ => Results.Conflict(new { error = outcome.Error }),
     };
