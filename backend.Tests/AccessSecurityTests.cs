@@ -383,7 +383,7 @@ public sealed class AccessSecurityTests : IDisposable
         {
             ["Security:Session:IdleMinutes"] = "1",
             ["Security:Session:AbsoluteMinutes"] = "2",
-            ["Security:LoginThrottle:MaxFailures"] = "2"
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2"
         });
         var password = "correct horse battery staple!";
         var owner = store.Bootstrap(new BootstrapRequest("first.owner", password, null));
