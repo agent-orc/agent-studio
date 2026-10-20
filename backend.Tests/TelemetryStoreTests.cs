@@ -45,6 +45,7 @@ public sealed class TelemetryStoreTests : IDisposable
         Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
         Assert.Equal(0, recovered.PendingRecords);
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(3d, Assert.Single(Assert.Single(Query(store, "recovered", 60).Series).Points).Value);
     }
 
@@ -118,6 +119,7 @@ public sealed class TelemetryStoreTests : IDisposable
             [], _clock.GetUtcNow());
 
         Assert.Equal(2, reloaded.MetricNames(_stage).Single().SeriesCount);
+        _clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal([7d, 2d], Query(reloaded, "size", 60).Series.SelectMany(item => item.Points).Select(item => item.Value));
     }
 

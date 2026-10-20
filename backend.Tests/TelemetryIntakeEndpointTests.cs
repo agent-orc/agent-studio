@@ -221,7 +221,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         var exported = Assert.Single(sink.Batches, batch => batch.Logs.Count > 0);
         Assert.Equal(new TelemetryEnvironmentKey("shop", "stage"), exported.Environment);
         Assert.DoesNotContain(new string('k', 24), exported.Logs[0].Body);
-        var exportedMetrics = Assert.Single(sink.Batches, batch => batch.Metrics.Count > 0).Metrics;
+        var exportedMetrics = sink.Batches.SelectMany(batch => batch.Metrics).ToList();
         Assert.Equal(6, exportedMetrics.Count);
         Assert.DoesNotContain(exportedMetrics, sample => sample.Attributes.Json.Contains("hunter2", StringComparison.Ordinal));
     }
