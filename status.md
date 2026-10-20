@@ -1,5 +1,13 @@
 # AGT-3238 networked first-run and repository authority status
 
+## Stop-failure review fix, 20 October 2026
+
+- Result implementation SHA: `116656373bf3c456763a56a1a09eb9b1997f7b6c`. This fix commit is on top of the reviewed delivery. A fresh `git fetch origin develop` followed by `git merge origin/develop` found the branch already up to date; `git merge-base --is-ancestor origin/develop HEAD` passed. No rebase or squash was used.
+- Implemented option: authorize and validate project URL deletion in the registry, stop the owned preview process before persisting deletion, and retain the URL and repository audit when stopping reports failure. A failed stop returns HTTP 500 so the operator can retry from the existing URL control. The endpoint regression covers an Operator denial, an Owner stop failure, and a successful retry.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:2 -nodeReuse:false -p:UseSharedCompilation=false -v:q` passed with zero errors. The `FullyQualifiedName~FirstRunOwnerAccessTests|FullyQualifiedName~ProjectRegistryTests|FullyQualifiedName~ProjectUrlProcessServiceTests|FullyQualifiedName~ProjectBasicsEndpointsTests` filter passed 77 backend tests. The `FullyQualifiedName~.Architecture.|Category=Guard` filter passed 98 backend tests and matched no tests in the other seven .NET test projects; it ran on all eight. `npm --prefix frontend run lint` and `git diff --check` passed. Logs are under `/home/agent/runner-work/tasks/AGT-3238/results`.
+
+## Previous delivery
+
 - Result implementation SHA: `c34d3f03e8dbdbdca6ed3fef51bbb156203f8587` (the merge of current `origin/develop` into the reviewed delivery `fc7e4df77a3e4ce8dde3ca453d0fcdff6c8f63ba`). The only merge conflict was `status.md`; both task entries were retained. No rebase or squash was used. A final fetch confirmed `git merge-base --is-ancestor origin/develop HEAD`.
 - Implemented the recommended unavailable-plane state: local first-run routes are mapped only in the local profile, and the networked checklist explains when the Task Server plane is absent. All effective repository URL changes through project basics and generic URL routes require the Owner in the networked profile. Prior URL, new URL, actor, project, and injected timestamp are persisted in `ProjectsFile.RepositoryAudit` with the same registry mutation. Settings rollback removes the matching event; failed compensation retains the event with the effective change.
 - Updated `docs/operations/security/overview.md`. `docs/studio-route-ownership/routes.json` already described the local-profile route ownership.
