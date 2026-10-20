@@ -66,6 +66,13 @@ public sealed partial class BatchGatePilotServiceTests
         // The queue drains: both gates reach a slot and pass, which ends the episode.
         _gate.Fallback = request => Green(request.ExpectedSha);
         await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
+        Assert.Equal(6, _gate.FallbackRuns);
+        await PublishIntegrationBranchAsync(factory, first.Key);
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
         AssertLane(first.Key, TaskStates.HumanReview);
         AssertLane(second.Key, TaskStates.HumanReview);
         // A passed review drops its queue wait ledger.
@@ -183,6 +190,8 @@ public sealed partial class BatchGatePilotServiceTests
         // The next batch reaches a slot and publishes; the ledger goes with the pass.
         _gate.Batch = request => Green(request.ExpectedSha);
         await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
         AssertLane(member.Key, TaskStates.HumanReview);
         Assert.Equal(2, _gate.BatchRuns);
         Assert.Null(store.ReadQueueWait(member.ReviewAttemptId));
@@ -216,7 +225,8 @@ public sealed partial class BatchGatePilotServiceTests
         pilot.WaitForFlightsInTick = false;
 
         await pilot.TickAsync(CancellationToken.None);
-        await WaitForAsync(() => _gate.FallbackRuns == 1);
+        await _gate.FirstFallbackStarted;
+        Assert.Equal(1, _gate.FallbackRuns);
         await pilot.TickAsync(CancellationToken.None);
 
         Assert.Equal(opened!.EpisodeId, pilot.QueueStalls.OpenEpisode(ProjectName)?.EpisodeId);
@@ -225,7 +235,11 @@ public sealed partial class BatchGatePilotServiceTests
 
         // The gate passes; nothing waits any more and the episode ends.
         preparing.SetResult(Green(member.ResultSha));
-        await WaitForAsync(() => Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, member.Key)));
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        await PublishIntegrationBranchAsync(factory, member.Key);
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
         await pilot.TickAsync(CancellationToken.None);
         Assert.Null(pilot.QueueStalls.OpenEpisode(ProjectName));
         Assert.Equal(1, _gate.FallbackRuns);
@@ -343,7 +357,15 @@ public sealed partial class BatchGatePilotServiceTests
         factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
             .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
         _gate.Fallback = gate => Green(gate.ExpectedSha);
-        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
+        Assert.Equal(1, _gate.FallbackRuns);
+        await PublishIntegrationBranchAsync(factory, stalled.Key);
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
         AssertLane(stalled.Key, TaskStates.HumanReview);
     }
 
@@ -406,12 +428,37 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Null(store.ReadQueueWait(member.ReviewAttemptId));
         _gate.Fallback = request => Green(request.ExpectedSha);
         await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
+        Assert.Equal(5, _gate.FallbackRuns);
+        await PublishIntegrationBranchAsync(factory, member.Key);
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        RecoverGateOutcomes(factory);
         AssertLane(member.Key, TaskStates.HumanReview);
         await pilot.TickAsync(CancellationToken.None);
         Assert.Null(pilot.QueueStalls.OpenEpisode(ProjectName));
     }
 
     private static readonly JsonSerializerOptions QueueStallJson = new(JsonSerializerDefaults.Web);
+
+    private static void RecoverGateOutcomes(WebApplicationFactory<Program> factory)
+    {
+        var recovery = factory.Services.GetRequiredService<MonolithOrchestrationRecoveryService>();
+        recovery.RecoverOnce();
+        recovery.RecoverShadowOutcomes();
+    }
+
+    private async Task PublishIntegrationBranchAsync(WebApplicationFactory<Program> factory, string taskKey)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        var task = scanner.FindJob(taskKey, _watchPath)!;
+        var result = await factory.Services.GetRequiredService<MergeIntoDevelopRunner>()
+            .PushIntegrationBranchAsync(task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
+                "develop", CancellationToken.None);
+        Assert.True(result.Success, $"Integration publication failed: {result.Status} {result.Error}");
+    }
 
     /// <summary>The escalation the per-task fallback wrote before AGT-3219.</summary>
     private async Task ParkAsLegacyFallback(WebApplicationFactory<Program> factory,
