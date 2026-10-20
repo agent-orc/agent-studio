@@ -53,6 +53,7 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   await expect.poll(() => overrideReason).toBe('Incident response');
   await panel.getByText('Daily trend and biggest consumers').click();
   await expect(panel).toContainText('AGT-1');
+  await expect(panel).toContainText('Mon 12 Oct');
   const results = process.env.JOB_RESULTS_DIR;
   if (results) await panel.screenshot({ path: path.join(results, 'workspace-quota.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'dark'));
@@ -66,11 +67,18 @@ test('a blocked workspace quota shows in the board header and on waiting cards',
   const watchPath = watchPaths[0].path;
   const title = 'Quota waiting card';
   const message = 'Weekly quota reached. New work is paused until Monday 00:00 UTC or an owner override.';
-  const quota = (status: string, codingAllowed: boolean, text: string | null) => JSON.stringify({ status, message: text, overrideActive: false, codingAllowed });
-  await page.route('**/api/workspaces/*/quota', route =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: quota('blocked', false, message) }));
-  await page.route('**/api/workspaces/*/projects/*/quota', route =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: quota('ok', true, null) }));
+  const scope = (project: string | null, status: string, codingAllowed: boolean, text: string | null) =>
+    ({ projectId: project, project, status, message: text, overrideActive: false, codingAllowed, hostingAllowed: codingAllowed, limited: status !== 'ok' });
+  // The board reads the workspace and every project admission in one request per poll.
+  let boardReads = 0;
+  await page.route('**/api/workspaces/*/quota/admission', route => {
+    boardReads++;
+    const workspaceId = new URL(route.request().url()).pathname.split('/')[3];
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      workspaceId, workspace: scope(null, 'blocked', false, message), projects: [scope('Another project', 'ok', true, null)] }) });
+  });
+  const perProjectReads: string[] = [];
+  page.on('request', request => { if (/\/api\/workspaces\/[^/]+\/projects\/[^/]+\/quota$/.test(new URL(request.url()).pathname)) perProjectReads.push(request.url()); });
   // The backend assigns the card key, so cleanup matches this spec's cards by title.
   const removeCards = async () => {
     const tasks = await api<Array<{ id: string; title: string; watchPath: string }>>('/api/tasks?includeFixtures=true');
@@ -87,6 +95,8 @@ test('a blocked workspace quota shows in the board header and on waiting cards',
     await expect(page.getByTestId('workspace-quota-status')).toHaveAttribute('data-status', 'blocked', { timeout: 30_000 });
     await expect(page.getByTestId('workspace-quota-status')).toContainText('Weekly quota reached');
     await expect(card.getByTestId('task-card-workspace-quota')).toContainText('Weekly quota reached');
+    expect(boardReads).toBeGreaterThan(0);
+    expect(perProjectReads).toEqual([]);
     const results = process.env.JOB_RESULTS_DIR;
     if (results) await card.screenshot({ path: path.join(results, 'workspace-quota-card.png') });
   } finally {

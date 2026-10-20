@@ -56,33 +56,38 @@ describe('StudioHeaderCockpit workspace quota', () => {
 
     workspaces.set([workspace('ws-b', 'Workspace B', false, []), workspace('ws-a', 'Workspace A', true, ['p-alpha'])]);
     TestBed.tick();
-    expect(load).toHaveBeenCalledExactlyOnceWith('ws-a', [{ id: 'p-alpha', displayName: 'P-ALPHA' }]);
+    expect(load).toHaveBeenCalledExactlyOnceWith('ws-a');
   });
 
-  it('follows the selected workspace and ignores registry reloads with the same projects', () => {
+  it('follows the selected workspace and ignores registry reloads of the same workspace', () => {
     workspaces.set([workspace('ws-a', 'Workspace A', true, ['p-alpha']), workspace('ws-b', 'Workspace B', false, ['p-beta'])]);
     TestBed.tick();
     load.mockClear();
 
     activeWorkspaceName.set('Workspace B');
     TestBed.tick();
-    expect(load).toHaveBeenCalledExactlyOnceWith('ws-b', [{ id: 'p-beta', displayName: 'P-BETA' }]);
+    expect(load).toHaveBeenCalledExactlyOnceWith('ws-b');
 
     workspaces.set(workspaces().map(ws => ({ ...ws, projects: [...ws.projects] })));
     TestBed.tick();
-    expect(load).toHaveBeenCalledTimes(1);
-
+    // One board read covers every project of the workspace, so a new project needs no extra read.
     workspaces.set([workspace('ws-a', 'Workspace A', true, ['p-alpha']), workspace('ws-b', 'Workspace B', false, ['p-beta', 'p-gamma'])]);
     TestBed.tick();
-    expect(load).toHaveBeenLastCalledWith('ws-b', [{ id: 'p-beta', displayName: 'P-BETA' }, { id: 'p-gamma', displayName: 'P-GAMMA' }]);
+    expect(load).toHaveBeenCalledTimes(1);
+
+    activeWorkspaceName.set(null);
+    TestBed.tick();
+    expect(load).toHaveBeenLastCalledWith('ws-a');
   });
 
-  it('re-reads the current scope on the visible poll', () => {
-    workspaces.set([workspace('ws-a', 'Workspace A', true, [])]);
+  it('re-reads the current workspace once per visible poll', () => {
+    workspaces.set([workspace('ws-a', 'Workspace A', true, ['p-alpha', 'p-beta'])]);
     TestBed.tick();
     load.mockClear();
 
-    vi.advanceTimersByTime(60_000);
-    expect(load).toHaveBeenCalledExactlyOnceWith('ws-a', []);
+    vi.advanceTimersByTime(59_999);
+    expect(load).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(load).toHaveBeenCalledExactlyOnceWith('ws-a');
   });
 });

@@ -4,11 +4,14 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { describe, expect, it } from 'vitest';
 
-import { WorkspaceQuotaBoardState } from '../../state/workspace-quota-board-state.service';
+import { WorkspaceQuotaBoardState, type WorkspaceQuotaAdmission } from '../../state/workspace-quota-board-state.service';
 import { WorkspaceQuotaBannerComponent } from './workspace-quota-banner';
 
+const workspace = (fields: Pick<WorkspaceQuotaAdmission, 'status' | 'message' | 'overrideActive' | 'codingAllowed'>): WorkspaceQuotaAdmission =>
+  ({ projectId: null, project: null, hostingAllowed: fields.status !== 'hosting-full', limited: true, ...fields });
+
 describe('WorkspaceQuotaBannerComponent', () => {
-  it('shows the soft warning and the hard stop, and hides normal use and an active override', async () => {
+  it('shows the soft warning, the hard stop and full hosting slots, and hides normal use and an active override', async () => {
     TestBed.configureTestingModule({
       imports: [WorkspaceQuotaBannerComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
@@ -20,21 +23,26 @@ describe('WorkspaceQuotaBannerComponent', () => {
     fixture.detectChanges();
     expect(status()).toBeNull();
 
-    board.workspaceQuota.set({ status: 'warning', message: 'Workspace A used 85 % of its weekly model tokens.', overrideActive: false, codingAllowed: true });
+    board.workspaceQuota.set(workspace({ status: 'warning', message: 'Workspace A used 85 % of its weekly model tokens.', overrideActive: false, codingAllowed: true }));
     await fixture.whenStable();
     expect(status()?.getAttribute('data-status')).toBe('warning');
     expect(status()?.getAttribute('role')).toBe('status');
     expect(status()?.textContent).toContain('85 %');
 
-    board.workspaceQuota.set({ status: 'blocked', message: 'Workspace A reached its weekly model-token quota.', overrideActive: false, codingAllowed: false });
+    board.workspaceQuota.set(workspace({ status: 'blocked', message: 'Workspace A reached its weekly model-token quota.', overrideActive: false, codingAllowed: false }));
     await fixture.whenStable();
     expect(status()?.getAttribute('data-status')).toBe('blocked');
 
-    board.workspaceQuota.set({ status: 'blocked', message: 'Workspace A reached its weekly model-token quota.', overrideActive: true, codingAllowed: true });
+    board.workspaceQuota.set(workspace({ status: 'hosting-full', message: 'All 2 hosting slots are in use; new deploys wait until an environment stops.', overrideActive: false, codingAllowed: true }));
+    await fixture.whenStable();
+    expect(status()?.getAttribute('data-status')).toBe('hosting-full');
+    expect(status()?.textContent).toContain('All 2 hosting slots are in use');
+
+    board.workspaceQuota.set(workspace({ status: 'blocked', message: 'Workspace A reached its weekly model-token quota.', overrideActive: true, codingAllowed: true }));
     await fixture.whenStable();
     expect(status()).toBeNull();
 
-    board.workspaceQuota.set({ status: 'ok', message: null, overrideActive: false, codingAllowed: true });
+    board.workspaceQuota.set(workspace({ status: 'ok', message: null, overrideActive: false, codingAllowed: true }));
     await fixture.whenStable();
     expect(status()).toBeNull();
   });

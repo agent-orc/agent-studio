@@ -1,14 +1,14 @@
 <section class="workspace-quota" data-testid="workspace-quota" [attr.data-status]="snapshot()?.status">
   <header class="workspace-quota__header">
     <h3>{{ projectId() ? 'Project quota' : 'Workspace quota' }}</h3>
-    @if (snapshot(); as quota) {
-      <span class="workspace-quota__state">{{ quota.overrideActive ? 'Owner override active' : quota.status }}</span>
+    @if (stateLabel(); as label) {
+      <span class="workspace-quota__state" data-testid="workspace-quota-state">{{ label }}</span>
     }
   </header>
   @if (error(); as problem) { <p role="alert">{{ problem }}</p> }
   @if (snapshot(); as quota) {
     <p>Current UTC week ends {{ quota.weekEndUtc | slice:0:10 }}. {{ quota.message }}</p>
-    @if (!quota.meterComplete) { <p role="status">Some usage records are unavailable. Admission waits for the meter.</p> }
+    @if (quota.limits && !quota.meterComplete) { <p role="status" data-testid="workspace-quota-meter">Some usage records are unavailable. Admission waits for the meter.</p> }
     <div class="workspace-quota__metrics">
       <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used
         @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) { / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
@@ -21,8 +21,8 @@
     <details>
       <summary>Daily trend and biggest consumers</summary>
       <div class="workspace-quota__trend">
-        @for (day of quota.dailyTrend; track $index) {
-          <span>Day {{ $index + 1 }}: {{ day.modelTokens | number }} tokens, {{ day.computeCoreHours | number:'1.0-2' }} core hours</span>
+        @for (day of trend(); track day.date) {
+          <span><time [attr.datetime]="day.date | slice:0:10">{{ day.date | date:'EEE d MMM':'UTC' }}</time>: {{ day.modelTokens | number }} tokens, {{ day.computeCoreHours | number:'1.0-2' }} core hours</span>
         }
       </div>
       <ul>

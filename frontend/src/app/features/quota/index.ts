@@ -7,7 +7,8 @@ export { QuotaForecastPanelComponent } from './components/quota-forecast-panel/q
 export { QuotaCurveComponent } from './components/quota-curve/quota-curve';
 export { TaskCardQuotaNoticeComponent } from './components/task-card-quota-notice/task-card-quota-notice';
 export { WorkspaceQuotaBannerComponent } from './components/workspace-quota-banner/workspace-quota-banner';
-export { WorkspaceQuotaBoardState, type WorkspaceQuotaAdmission, type WorkspaceQuotaProjectRef } from './state/workspace-quota-board-state.service';
+export { WorkspaceQuotaComponent } from './components/workspace-quota/workspace-quota.component';
+export { WorkspaceQuotaBoardState, type WorkspaceQuotaAdmission, type WorkspaceQuotaBoardAdmission, type WorkspaceQuotaStatus } from './state/workspace-quota-board-state.service';
 export type { QuotaWindow, QuotaSnapshot, QuotaReport } from './models/quota.model';
 export type { QuotaHistoryResponse, QuotaHistoryWindow, QuotaHistoryPoint, QuotaForecast, QuotaForecastStatus, QuotaWindowKind } from './models/quota-history.model';
 export { quotaFallbackStatus, type QuotaFallbackStatus } from './quota-forecast.util';

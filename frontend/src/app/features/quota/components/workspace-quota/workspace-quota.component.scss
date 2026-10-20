@@ -16,8 +16,7 @@
 .workspace-quota__header h3, .workspace-quota p { margin: 0; }
 .workspace-quota__metrics > div { flex: 1 1 12rem; font-variant-numeric: tabular-nums; }
 .workspace-quota__metrics small { display: block; color: var(--studio-fg-muted); }
-.workspace-quota__state { text-transform: capitalize; }
-.workspace-quota[data-status='warning'] { background: var(--studio-warning-bg, var(--studio-surface-2)); }
+.workspace-quota[data-status='warning'], .workspace-quota[data-status='hosting-full'] { background: var(--studio-warning-bg, var(--studio-surface-2)); }
 .workspace-quota[data-status='blocked'] { background: var(--studio-error-bg, var(--studio-surface-2)); }
 .workspace-quota__trend { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); font-variant-numeric: tabular-nums; }
 .workspace-quota__editor label, .workspace-quota__override label { display: grid; gap: var(--studio-spacing-1); }

@@ -12,7 +12,7 @@ import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ClientDefaultsService } from '../../../../services/client-defaults.service';
-import { QuotaApiService, type ProjectCliQuotaWaitPolicy } from '../../../../features/quota';
+import { QuotaApiService, WorkspaceQuotaComponent, type ProjectCliQuotaWaitPolicy } from '../../../../features/quota';
 // Service-only direct import avoids evaluating the heavy shell component barrel,
 // which closes a runtime cycle when Project Settings mounts in Project Hub.
 import { WorkspaceOverlaysService } from '../../../shell/state/workspace-overlays.service';
@@ -36,16 +36,18 @@ import { ProjectBuildProfileContradictionNoticeComponent } from '../project-buil
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 import { BatchSettingsComponent } from '../../../batch-gate/batch-settings/batch-settings';
-import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
+
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
 const STORAGE_DEFAULT_THINKING_PREFIX = 'defaultThinkingLevel:';
+
 interface CapSummaryRow {
   cliType: CliType;
   label: string;
   icon: string;
   windows: { windowLabel: string; capPct: number }[];
 }
+
 /** ADR-0026 autonomy stops, shared with the per-project slider labels. */
 const AUTONOMY_STOPS: readonly { level: number; name: string }[] = [
   { level: 0, name: 'Manual' },
@@ -54,12 +56,14 @@ const AUTONOMY_STOPS: readonly { level: number; name: string }[] = [
   { level: 3, name: 'Confident' },
   { level: 4, name: 'Fully auto' },
 ];
+
 interface ProjectSummaryLite {
   id: string;
   displayName: string;
   workspaceId: string;
   wikiSourceBranch?: string | null;
 }
+
 interface WorkspaceListItemLite {
   id: string;
   displayName: string;
@@ -100,8 +104,7 @@ interface WorkspaceListItemLite {
     ProjectBuildProfileContradictionNoticeComponent,
     RetentionRulesTableComponent,
     ProjectExecutionDefinitionComponent,
-    BatchSettingsComponent,
-    WorkspaceQuotaComponent,
+    BatchSettingsComponent, WorkspaceQuotaComponent,
   ],
   templateUrl: './project-settings-panel.component.html',
   styleUrl: './project-settings-panel.component.scss',

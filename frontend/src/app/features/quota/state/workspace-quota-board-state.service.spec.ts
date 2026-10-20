@@ -4,62 +4,109 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { WorkspaceQuotaBoardState } from './workspace-quota-board-state.service';
+import { WorkspaceQuotaBoardState, type WorkspaceQuotaAdmission, type WorkspaceQuotaStatus } from './workspace-quota-board-state.service';
 
-const admission = (status: string, codingAllowed: boolean, message: string | null) =>
-  ({ status, message, overrideActive: false, codingAllowed });
+const scope = (project: string | null, status: WorkspaceQuotaStatus, codingAllowed: boolean, message: string | null): WorkspaceQuotaAdmission =>
+  ({ projectId: project ? `p-${project.toLowerCase()}` : null, project, status, message, overrideActive: false, codingAllowed, hostingAllowed: status !== 'hosting-full', limited: status !== 'ok' });
+const board = (workspaceId: string, workspace: WorkspaceQuotaAdmission, projects: WorkspaceQuotaAdmission[] = []) =>
+  ({ workspaceId, workspace, projects });
+const NO_LIMIT = scope(null, 'ok', true, null);
 
 describe('WorkspaceQuotaBoardState', () => {
-  let board: WorkspaceQuotaBoardState;
+  let state: WorkspaceQuotaBoardState;
   let http: HttpTestingController;
 
   beforeEach(() => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
-    board = TestBed.inject(WorkspaceQuotaBoardState);
+    state = TestBed.inject(WorkspaceQuotaBoardState);
     http = TestBed.inject(HttpTestingController);
   });
   afterEach(() => http.verify());
 
-  it('reads workspace and project admission and keeps only refusals as card messages', () => {
-    board.load('ws-a', [{ id: 'p-alpha', displayName: 'Alpha' }, { id: 'p-beta', displayName: 'Beta' }]);
-    http.expectOne('/api/workspaces/ws-a/quota').flush(admission('warning', true, 'Workspace A used 85 % of its weekly model tokens.'));
-    http.expectOne('/api/workspaces/ws-a/projects/p-alpha/quota').flush(admission('blocked', false, 'Alpha reached its weekly compute quota.'));
-    http.expectOne('/api/workspaces/ws-a/projects/p-beta/quota').flush(admission('ok', true, null));
+  it('reads workspace and project admission with one request and keeps only refusals as card messages', () => {
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a', scope(null, 'warning', true, 'Workspace A used 85 % of its weekly model tokens.'), [
+      scope('Alpha', 'blocked', false, 'Alpha reached its weekly compute quota.'),
+      scope('Beta', 'ok', true, null),
+      scope('Gamma', 'warning', true, 'Gamma used 90 % of its weekly model tokens.'),
+    ]));
 
-    expect(board.workspaceQuota()?.status).toBe('warning');
-    expect(board.messageFor('Alpha')).toBe('Alpha reached its weekly compute quota.');
-    expect(board.messageFor('Beta')).toBeNull();
+    expect(state.workspaceQuota()?.status).toBe('warning');
+    expect(state.messageFor('Alpha')).toBe('Alpha reached its weekly compute quota.');
+    expect(state.messageFor('Beta')).toBeNull();
+    expect(state.messageFor('Gamma')).toBeNull();
+  });
+
+  it('makes no per-project reads when no limit applies', () => {
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a', NO_LIMIT, [scope('Alpha', 'ok', true, null), scope('Beta', 'ok', true, null)]));
+    http.expectNone(request => request.url.includes('/projects/'));
+
+    expect(state.workspaceQuota()?.status).toBe('ok');
+    expect(state.messageFor('Alpha')).toBeNull();
   });
 
   it('falls back to the workspace refusal for projects without their own limit', () => {
-    board.load('ws-a', [{ id: 'p-alpha', displayName: 'Alpha' }]);
-    http.expectOne('/api/workspaces/ws-a/quota').flush(admission('blocked', false, 'Workspace A reached its weekly model-token quota.'));
-    http.expectOne('/api/workspaces/ws-a/projects/p-alpha/quota').flush(admission('ok', true, null));
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a',
+      scope(null, 'blocked', false, 'Workspace A reached its weekly model-token quota.'), [scope('Alpha', 'ok', true, null)]));
 
-    expect(board.messageFor('Alpha')).toBe('Workspace A reached its weekly model-token quota.');
+    expect(state.messageFor('Alpha')).toBe('Workspace A reached its weekly model-token quota.');
   });
 
-  it('drops the previous workspace at once and ignores its late answers', () => {
-    board.load('ws-a', [{ id: 'p-alpha', displayName: 'Alpha' }]);
-    const lateWorkspace = http.expectOne('/api/workspaces/ws-a/quota');
-    http.expectOne('/api/workspaces/ws-a/projects/p-alpha/quota').flush(admission('blocked', false, 'Alpha reached its weekly compute quota.'));
-    expect(board.messageFor('Alpha')).toBe('Alpha reached its weekly compute quota.');
+  it('keeps full hosting slots off the cards because coding is still admitted', () => {
+    const hostingFull = 'All 2 hosting slots are in use; new deploys wait until an environment stops.';
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a', scope(null, 'hosting-full', true, hostingFull), [scope('Alpha', 'ok', true, null)]));
 
-    board.load('ws-b', []);
-    expect(board.messageFor('Alpha')).toBeNull();
-    lateWorkspace.flush(admission('blocked', false, 'Workspace A reached its weekly model-token quota.'));
-    expect(board.workspaceQuota()).toBeNull();
-    http.expectOne('/api/workspaces/ws-b/quota').flush(admission('ok', true, null));
-    expect(board.workspaceQuota()?.status).toBe('ok');
-    expect(board.messageFor('Alpha')).toBeNull();
+    expect(state.workspaceQuota()?.status).toBe('hosting-full');
+    expect(state.workspaceQuota()?.message).toBe(hostingFull);
+    expect(state.messageFor('Alpha')).toBeNull();
+  });
+
+  it('drops the previous workspace at once and ignores its late answer', () => {
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a', NO_LIMIT, [scope('Alpha', 'blocked', false, 'Alpha reached its weekly compute quota.')]));
+    expect(state.messageFor('Alpha')).toBe('Alpha reached its weekly compute quota.');
+
+    state.load('ws-a');
+    const lateA = http.expectOne('/api/workspaces/ws-a/quota/admission');
+    state.load('ws-b');
+    expect(state.messageFor('Alpha')).toBeNull();
+    expect(state.workspaceQuota()).toBeNull();
+
+    lateA.flush(board('ws-a', scope(null, 'blocked', false, 'Workspace A reached its weekly model-token quota.')));
+    expect(state.workspaceQuota()).toBeNull();
+    expect(state.messageFor('Alpha')).toBeNull();
+
+    http.expectOne('/api/workspaces/ws-b/quota/admission').flush(board('ws-b', NO_LIMIT));
+    expect(state.workspaceQuota()?.status).toBe('ok');
+    expect(state.messageFor('Alpha')).toBeNull();
+  });
+
+  it('lets only the newest poll of the same workspace land', () => {
+    state.load('ws-a');
+    const first = http.expectOne('/api/workspaces/ws-a/quota/admission');
+    state.load('ws-a');
+    const second = http.expectOne('/api/workspaces/ws-a/quota/admission');
+
+    second.flush(board('ws-a', NO_LIMIT));
+    first.flush(board('ws-a', scope(null, 'blocked', false, 'Workspace A reached its weekly model-token quota.')));
+
+    expect(state.workspaceQuota()?.status).toBe('ok');
+    expect(state.messageFor('Alpha')).toBeNull();
   });
 
   it('keeps the same workspace messages across a refresh until the new answer lands', () => {
-    board.load('ws-a', []);
-    http.expectOne('/api/workspaces/ws-a/quota').flush(admission('blocked', false, 'Workspace A reached its weekly model-token quota.'));
-    board.load('ws-a', []);
-    expect(board.workspaceQuota()?.status).toBe('blocked');
-    http.expectOne('/api/workspaces/ws-a/quota').flush('Unavailable', { status: 503, statusText: 'Service Unavailable' });
-    expect(board.workspaceQuota()).toBeNull();
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a',
+      scope(null, 'blocked', false, 'Workspace A reached its weekly model-token quota.'), [scope('Alpha', 'blocked', false, 'Alpha reached its weekly compute quota.')]));
+    state.load('ws-a');
+    expect(state.workspaceQuota()?.status).toBe('blocked');
+    expect(state.messageFor('Alpha')).toBe('Alpha reached its weekly compute quota.');
+
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush('Unavailable', { status: 503, statusText: 'Service Unavailable' });
+    expect(state.workspaceQuota()).toBeNull();
+    expect(state.messageFor('Alpha')).toBeNull();
   });
 });

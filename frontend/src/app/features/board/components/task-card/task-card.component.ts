@@ -118,9 +118,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    */
   readonly pickNextRequested = output<TaskInfo>();
   private readonly hostRef = inject(ElementRef<HTMLElement>);
-  readonly showWorkspaceQuotaMessage = computed(() => !this.isRunning() && !isTerminalTaskState(this.job().state));
   /** True when this card should render the just-created highlight. */
   readonly isJustCreated = computed(() => this.highlightJobId() === this.job().id);
+
   /** Scroll a newly created card into the board viewport. */
   private readonly scrollEffect = effect(() => {
     if (!this.isJustCreated()) return;
@@ -149,7 +149,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   /** AGT-2795: decision kind badge (title) and the Pick next block explanation. */
   readonly decisionBadge = computed(() => buildDecisionBadge(this.job(), (id) => this.clients.byId().get(id)?.displayName));
   readonly decisionBlockTooltip = computed(() => decisionBlockReason(decisionBlockers(this.job())));
+
   readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byIdForProject(this.job().projectName), this.job().state));
+
   readonly publishableChip = computed(() => {
     if (this.job().state !== TaskState.Completed) return null;
     const labels = this.job().publishSignal?.labels ?? [];

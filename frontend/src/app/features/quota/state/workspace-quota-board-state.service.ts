@@ -1,18 +1,28 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 
-/** Admission view of one quota scope, as `/api/workspaces/{id}[/projects/{id}]/quota` returns it. */
+/** Quota status of one scope; `hosting-full` still admits coding, only new deploys wait. */
+export type WorkspaceQuotaStatus = 'ok' | 'warning' | 'blocked' | 'hosting-full';
+
+/** Admission view of one quota scope (the workspace, or one of its projects). */
 export interface WorkspaceQuotaAdmission {
-  status: string;
+  projectId: string | null;
+  /** Project display name; null for the workspace scope. */
+  project: string | null;
+  status: WorkspaceQuotaStatus;
   message: string | null;
   overrideActive: boolean;
   codingAllowed: boolean;
+  hostingAllowed: boolean;
+  /** A limit applies to this scope. */
+  limited: boolean;
 }
 
-/** One project of the workspace whose quota the board reads. */
-export interface WorkspaceQuotaProjectRef {
-  id: string;
-  displayName: string;
+/** `/api/workspaces/{id}/quota/admission`: the workspace and every project in one answer. */
+export interface WorkspaceQuotaBoardAdmission {
+  workspaceId: string;
+  workspace: WorkspaceQuotaAdmission;
+  projects: WorkspaceQuotaAdmission[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -28,34 +38,31 @@ export class WorkspaceQuotaBoardState {
   reset(): void {
     this.sequence++;
     this.loadedWorkspace = null;
-    this.workspaceQuota.set(null);
-    this.workspaceMessage.set(null);
-    this.projectMessages.set({});
+    this.clear();
   }
 
   /**
-   * Reads the workspace and per-project admission. Switching workspace drops
-   * the previous messages at once; a superseded read never lands.
+   * Reads the workspace and per-project admission with one request. Switching
+   * workspace drops the previous messages at once; a superseded read never lands.
    */
-  load(workspaceId: string, projects: readonly WorkspaceQuotaProjectRef[]): void {
+  load(workspaceId: string): void {
     if (workspaceId !== this.loadedWorkspace) this.reset();
     this.loadedWorkspace = workspaceId;
     const sequence = ++this.sequence;
-    const base = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
-    this.http.get<WorkspaceQuotaAdmission>(`${base}/quota`).subscribe({
-      next: quota => {
+    this.http.get<WorkspaceQuotaBoardAdmission>(`/api/workspaces/${encodeURIComponent(workspaceId)}/quota/admission`).subscribe({
+      next: admission => {
         if (sequence !== this.sequence) return;
-        this.workspaceQuota.set(quota);
-        this.setWorkspace(quota.codingAllowed ? null : quota.message);
+        this.workspaceQuota.set(admission.workspace);
+        this.setWorkspace(refusal(admission.workspace));
+        const messages: Record<string, string> = {};
+        for (const project of admission.projects) {
+          const message = refusal(project);
+          if (project.project && message) messages[project.project] = message;
+        }
+        this.projectMessages.set(messages);
       },
-      error: () => { if (sequence === this.sequence) this.workspaceQuota.set(null); },
+      error: () => { if (sequence === this.sequence) this.clear(); },
     });
-    for (const project of projects) {
-      this.http.get<WorkspaceQuotaAdmission>(`${base}/projects/${encodeURIComponent(project.id)}/quota`).subscribe({
-        next: quota => { if (sequence === this.sequence) this.setProject(project.displayName, quota.codingAllowed ? null : quota.message); },
-        error: () => { if (sequence === this.sequence) this.setProject(project.displayName, null); },
-      });
-    }
   }
 
   setWorkspace(message: string | null): void { this.workspaceMessage.set(message); }
@@ -71,4 +78,15 @@ export class WorkspaceQuotaBoardState {
   messageFor(projectName: string): string | null {
     return this.projectMessages()[projectName] ?? this.workspaceMessage();
   }
+
+  private clear(): void {
+    this.workspaceQuota.set(null);
+    this.workspaceMessage.set(null);
+    this.projectMessages.set({});
+  }
+}
+
+/** Card message of a scope: only a refusal of new coding work is worth a card line. */
+function refusal(scope: WorkspaceQuotaAdmission): string | null {
+  return scope.codingAllowed ? null : scope.message;
 }

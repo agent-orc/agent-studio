@@ -2,7 +2,7 @@ import { DestroyRef, computed, effect, inject, signal, untracked, type OutputEmi
 
 import type { RegistryWorkspaceListItem } from '../../models/task.model';
 import { clearVisibleInterval, setVisibleInterval } from '../../utils/visible-interval';
-import { WorkspaceQuotaBoardState, type WorkspaceQuotaProjectRef } from '../quota';
+import { WorkspaceQuotaBoardState } from '../quota';
 import {
   UsageCockpitHeaderComponent,
   UsageCockpitService,
@@ -18,9 +18,6 @@ export { UsageCockpitHeaderComponent };
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 /** Quota admission changes with metered work, not per keystroke; one read a minute keeps the board current. */
 const QUOTA_POLL_MS = 60_000;
-
-/** Workspace whose quota the board shows: the selected one, else the default (all-projects view). */
-interface QuotaScope { workspaceId: string; projects: WorkspaceQuotaProjectRef[] }
 
 /**
  * Destinations of the header More menu. The inline controls with the same
@@ -63,14 +60,12 @@ export class StudioHeaderCockpit {
   readonly usage = inject(UsageCockpitService);
   readonly alarms = inject(UsageAlarmStateService);
   private readonly quotaBoard = inject(WorkspaceQuotaBoardState);
-  private readonly quotaScope = computed<QuotaScope | null>(() => {
+  /** Workspace whose quota the board shows: the selected one, else the default (all-projects view). */
+  private readonly quotaWorkspaceId = computed<string | null>(() => {
     const workspaces = this.host.registryWorkspaces();
     const name = this.host.activeWorkspaceName();
-    const workspace = workspaces.find(ws => ws.displayName === name) ?? workspaces.find(ws => ws.isDefault) ?? workspaces[0];
-    return workspace
-      ? { workspaceId: workspace.id, projects: workspace.projects.map(project => ({ id: project.id, displayName: project.displayName })) }
-      : null;
-  }, { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
+    return (workspaces.find(ws => ws.displayName === name) ?? workspaces.find(ws => ws.isDefault) ?? workspaces[0])?.id ?? null;
+  });
   readonly navItems = STUDIO_HEADER_NAV_ITEMS;
   /** The CLI the operator last opened from the strip leads the primary order. */
   readonly selectedCli = signal<string | null>(null);
@@ -89,10 +84,10 @@ export class StudioHeaderCockpit {
     const destroyRef = inject(DestroyRef);
     this.usage.connect(destroyRef);
     effect(() => {
-      const scope = this.quotaScope();
-      untracked(() => this.loadQuota(scope));
+      const workspaceId = this.quotaWorkspaceId();
+      untracked(() => this.loadQuota(workspaceId));
     });
-    const quotaPoll = setVisibleInterval(() => this.loadQuota(this.quotaScope()), QUOTA_POLL_MS);
+    const quotaPoll = setVisibleInterval(() => this.loadQuota(this.quotaWorkspaceId()), QUOTA_POLL_MS);
     destroyRef.onDestroy(() => clearVisibleInterval(quotaPoll));
     effect(() => {
       const name = host.activeWorkspaceName();
@@ -143,8 +138,8 @@ export class StudioHeaderCockpit {
       : { kind: 'cost' });
   }
 
-  private loadQuota(scope: QuotaScope | null): void {
-    if (scope) this.quotaBoard.load(scope.workspaceId, scope.projects);
+  private loadQuota(workspaceId: string | null): void {
+    if (workspaceId) this.quotaBoard.load(workspaceId);
     else this.quotaBoard.reset();
   }
 

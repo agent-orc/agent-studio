@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 
 import { WorkspaceQuotaBoardState } from '../../state/workspace-quota-board-state.service';
 
-/** Studio-header line for a workspace quota at the soft warning or the hard stop. */
+/** Studio-header line for a workspace quota at the soft warning, the hard stop, or with every hosting slot in use. */
 @Component({
   selector: 'app-workspace-quota-banner',
   standalone: true,
@@ -14,6 +14,6 @@ export class WorkspaceQuotaBannerComponent {
   private readonly board = inject(WorkspaceQuotaBoardState);
   readonly quota = computed(() => {
     const quota = this.board.workspaceQuota();
-    return quota && quota.status !== 'ok' && !quota.overrideActive ? quota : null;
+    return quota && quota.status !== 'ok' && quota.message && !quota.overrideActive ? quota : null;
   });
 }
