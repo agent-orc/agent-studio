@@ -123,7 +123,7 @@ public static class OperatorCandidateVerificationEndpoints
                     write = mutations.AppendIntegrationRecordOnFolder(card.FolderPath, record);
                     if (write.Succeeded && !write.Conflict)
                     {
-                        if (!audit.EnsureAudit(card.FolderPath, record))
+                        if (!audit.EnsureAudit(card.FolderPath, write.PersistedRecord ?? record))
                         {
                             results.Add(new(address, false, "The record was persisted but its audit event failed; retry this post."));
                             continue;

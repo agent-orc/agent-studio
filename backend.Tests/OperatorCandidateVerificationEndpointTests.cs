@@ -170,6 +170,21 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         repeated.EnsureSuccessStatusCode();
         using var replay = JsonDocument.Parse(await repeated.Content.ReadAsStringAsync());
         Assert.Equal("Already recorded.", replay.RootElement.GetProperty("results")[0].GetProperty("reason").GetString());
+        var secondOperator = store.CreateUser(new CreateUserRequest(
+            "candidate.reviewer", "Candidate reviewer", StudioRoles.Operator, ["*"],
+            "temporary candidate phrase!"));
+        var secondToken = store.CreateApiToken(new CreateApiTokenRequest(
+            "second candidate operator", StudioRoles.Operator, ["*"],
+            _clock.GetUtcNow().UtcDateTime.AddDays(1)), secondOperator.User.Id);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secondToken.Secret);
+        File.Delete(TaskPaths.TimelineLog(cardFolder));
+        using (var secondReplay = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3166"] }))
+        {
+            secondReplay.EnsureSuccessStatusCode();
+            using var secondBody = JsonDocument.Parse(await secondReplay.Content.ReadAsStringAsync());
+            Assert.Equal("Already recorded.", secondBody.RootElement.GetProperty("results")[0]
+                .GetProperty("reason").GetString());
+        }
         using var changed = await client.PostAsJsonAsync(path, summary with
         {
             Cards = ["AGT-3166"], VerificationHost = "other-host",
@@ -177,16 +192,20 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         changed.EnsureSuccessStatusCode();
         using var conflict = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
         Assert.False(conflict.RootElement.GetProperty("results")[0].GetProperty("recorded").GetBoolean());
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Secret);
 
         using var task = JsonDocument.Parse(File.ReadAllText(Path.Combine(cardFolder, "task.json")));
         var record = Assert.Single(task.RootElement.GetProperty("integrationRecords").EnumerateArray());
         Assert.Equal(candidate, record.GetProperty("integrationSha").GetString());
         Assert.Equal(delivery, record.GetProperty("sourceSha").GetString());
         Assert.Equal("gate-host", record.GetProperty("verificationHost").GetString());
+        Assert.Equal(TimelineActors.Human(owner.User.Id), record.GetProperty("actor").GetString());
         Assert.False(factory.Services.GetRequiredService<TaskMutationService>()
             .RemoveIntegrationRecordOnFolder(cardFolder, record.GetProperty("id").GetString()!));
         var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder);
         Assert.Single(timeline, item => item.Details?.GetValueOrDefault("recordId") == record.GetProperty("id").GetString());
+        Assert.Equal(TimelineActors.Human(owner.User.Id), Assert.Single(timeline,
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded).Actor);
         File.Delete(Path.Combine(cardFolder, "logs", "timeline.jsonl"));
         var auditRepair = factory.Services.GetRequiredService<OperatorCandidateAuditRepair>();
         await auditRepair.StartAsync(CancellationToken.None);
@@ -238,6 +257,28 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(movedFolder),
             item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
         Assert.False(Directory.Exists(concurrentFolder));
+
+        var archiveFolder = Path.Combine(watchPath, TaskStates.Archive, "AGT-3166");
+        Directory.CreateDirectory(archiveFolder);
+        File.Copy(Path.Combine(cardFolder, "task.json"), Path.Combine(archiveFolder, "task.json"));
+        TaskJsonFile.UpdateFieldOrThrow(archiveFolder, "state", TaskStates.Archive);
+        scanner.InvalidateCache();
+        auditRepair.RepairAll();
+        Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(archiveFolder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+        Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+
+        var archiveTimeline = TaskPaths.TimelineLog(archiveFolder);
+        using (var writer = new StreamWriter(archiveTimeline, append: true))
+            for (var index = 0; index < 2300; index++) writer.WriteLine(new string('x', 8192));
+        var originalLength = new FileInfo(archiveTimeline).Length;
+        Assert.True(originalLength > BoundedFileRead.LedgerBytes);
+        Assert.DoesNotContain(factory.Services.GetRequiredService<TimelineLog>().ReadAll(archiveFolder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+        auditRepair.RepairAll();
+        auditRepair.RepairAll();
+        Assert.Equal(originalLength, new FileInfo(archiveTimeline).Length);
 
         ReviewSubjectStore.Write(cardFolder, new ReviewSubjectRecord
         {

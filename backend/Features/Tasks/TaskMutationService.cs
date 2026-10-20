@@ -933,13 +933,13 @@ public class TaskMutationService
                 if (record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
                     && !OperatorCandidateEvidenceMatches(existing, record))
                     return new IntegrationRecordWriteResult(false, false, true);
-                return new IntegrationRecordWriteResult(true, false);
+                return new IntegrationRecordWriteResult(true, false, PersistedRecord: existing);
             }
 
             records.Add(record);
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "integrationRecords", records);
             Updated(folderPath);
-            return new IntegrationRecordWriteResult(true, true);
+            return new IntegrationRecordWriteResult(true, true, PersistedRecord: record);
         }
         catch (Exception ex)
         {
@@ -955,7 +955,6 @@ public class TaskMutationService
            && existing.IntegrationSha == proposed.IntegrationSha
            && existing.SourceSha == proposed.SourceSha
            && existing.DeliveryEpoch == proposed.DeliveryEpoch
-           && existing.Actor == proposed.Actor
            && existing.VerificationHost == proposed.VerificationHost
            && existing.SuiteSummary == proposed.SuiteSummary
            && existing.LogHash == proposed.LogHash
@@ -2981,7 +2980,8 @@ public enum PendingIntentAcknowledgeResult
     HistoryWriteFailed,
 }
 
-public sealed record IntegrationRecordWriteResult(bool Succeeded, bool Appended, bool Conflict = false);
+public sealed record IntegrationRecordWriteResult(
+    bool Succeeded, bool Appended, bool Conflict = false, TaskIntegrationRecord? PersistedRecord = null);
 
 public sealed record CommitSupersessionWriteResult(bool Succeeded, int MarkedCommits);
 
