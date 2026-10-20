@@ -128,6 +128,24 @@ public sealed class WatcherActivityProjector
         }
     }
 
+    /// <summary>The feed a project's Watcher entries project to; workspace findings use <see cref="WorkspaceWatchPath"/>.</summary>
+    public string? WatchPathFor(string project) => ResolveWatchPath(project);
+
+    /// <summary>Mirrors an AI Operator stall intervention receipt to the central bus (AGT-3207).</summary>
+    public void EmitIntervention(string project, string? jobId, string summary, string severity, object payload, string correlationId)
+    {
+        try
+        {
+            _ = _bus?.EmitWatcherEventAsync("decision", "stall-intervention",
+                project == QuotaProbeSignalProbe.WorkspaceProject ? null : project, jobId, summary, severity, payload,
+                correlationId: correlationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Bus mirror of stall intervention {InterventionId} failed", correlationId);
+        }
+    }
+
     private string? ResolveWatchPath(string project)
     {
         if (string.Equals(project, QuotaProbeSignalProbe.WorkspaceProject, StringComparison.Ordinal))

@@ -46,6 +46,11 @@ a baseline exception list.
   and asks a person instead of taking an A3 action. The authority applies an
   Act or Ask receipt through the decider's `IAiOperatorEffect`; each effect
   checks the lane and the frozen facts again before it writes.
+- `stall-intervention` keys an occurrence on the stall case or the checked
+  intervention per five-minute period, and the occurrence's task id is the
+  stall subject (`host:<name>`, `gate:<project>:<plan>`), not a card. Its
+  effect implements `IAiOperatorProposalEffect`, so an engine Propose receipt
+  also writes the A2 proposal receipt.
 - The residual deciders `delivery-chain`, `cause-breaker`, `intake-routing` and
   `acceptance-rail` key their occurrences on a hash of the facts
   (`AiOperatorDecisionGateway.FactsSubjectKey`): unchanged facts map to one
@@ -125,6 +130,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | GateEnvironmentRetryHostedService | !PD | decide, operator | AI Operator decider `gate-environment-retry` (`GateEnvironmentRetryPolicy`). Effect: `GateEnvironmentRetryService` replays or parks. The operator's Retry integration intent is validated, not decided. |
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
+| StallInterventionHostedService | !PD | decide, operator | AI Operator decider `stall-intervention` (`StallInterventionPolicy`, AGT-3207) on the AGT-3206 stall cases and the due follow-up checks. Effect: `StallInterventionEffect` lowers or restores coding admission, restarts an allowlisted service through the Operations Server, reroutes a provider, reconciles the batch gate queue or pins the last delivery; it records A2 proposals and escalations. Kill switch `StallIntervention:Enabled`. |
 | OrphanReaperHostedService | !PD | infra | Authority host |
 | CleanContextRetentionHostedService | !PD | infra | Authority host |
 | StaleProgressSweepHostedService | !PD | decide, operator | AI Operator decider `stale-progress` (`StaleProgressPolicy`). Effect: `StaleProgressArchiver`. Folders without `task.json` are not cards; removing or archiving them stays authority filesystem recovery. |

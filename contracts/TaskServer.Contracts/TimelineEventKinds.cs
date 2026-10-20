@@ -257,6 +257,16 @@ public static class TimelineEventKinds
     /// <summary>A failed pipeline boundary raised or attached to an orchestrator follow-up task.</summary>
     public const string FailureInterventionRaised = "failure_intervention_raised";
     /// <summary>
+    /// AGT-3207: the AI Operator intervened on an operational stall that
+    /// affects this card (host admission, restart, provider rerouting, batch
+    /// gate reconciliation, requeue from the last delivery), proposed an A2
+    /// action, or escalated. <see cref="TimelineEvent.Summary"/> is the
+    /// plain-language receipt; <see cref="TimelineEvent.Details"/> carries
+    /// <c>interventionId</c>, <c>subject</c>, <c>action</c>, <c>autonomy</c>,
+    /// <c>status</c> and <c>undo</c>.
+    /// </summary>
+    public const string StallInterventionRecorded = "stall_intervention_recorded";
+    /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through
     /// <c>POST /api/tasks/{id}/external-completion</c> instead of a runner run.

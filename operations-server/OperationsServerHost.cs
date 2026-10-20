@@ -66,7 +66,7 @@ public static class OperationsServerHost
         app.MapGet("/api/operations/v1/catalogue", (HttpContext context) =>
         {
             var denial = OperationsAccessPolicy.Denial(Principal(context), "service", "operations.read");
-            return denial is null ? Results.Ok(new[] { OperationCatalogue.HostInspect }) : Results.Json(new OperationError(denial), statusCode: 403);
+            return denial is null ? Results.Ok(OperationCatalogue.All) : Results.Json(new OperationError(denial), statusCode: 403);
         });
         app.MapPost("/api/operations/v1/agents/register", (AgentCapability capability, HttpContext context, OperationsCoordinator operations) =>
             operations.RegisterAsync(Principal(context), capability));

@@ -1,0 +1,156 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using AgentStudio.Operations.Agent;
+using AgentStudio.Operations.Agent.Features.Execution;
+using AgentStudio.Operations.Contracts;
+using AgentStudio.Operations.Server.Features.Dispatch;
+using Xunit;
+
+namespace OperationsServer.Tests;
+
+/// <summary>
+/// AGT-3207: the AI Operator's bounded restart. The caller names one
+/// allowlisted service; the agent validates the compose configuration before
+/// it recreates exactly that service and never runs anything else.
+/// </summary>
+public sealed class ServiceRestartTests
+{
+    [Fact]
+    public async Task Allowlisted_service_is_validated_then_recreated_with_a_hidden_console()
+    {
+        await using var f = await Start();
+        var calls = new List<ProcessStartInfo>();
+        var agent = Agent(f, calls, exitCodes: [0, 0]);
+        await agent.RegisterAsync(default);
+
+        var attempt = await f.Submit(Restart(f, "review-daemon"));
+        await agent.PollOnceAsync(default);
+
+        var completed = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        Assert.Equal("succeeded", completed!.State);
+        Assert.True(completed.Result!.Output.GetProperty("restarted").GetBoolean());
+        Assert.Equal(2, calls.Count);
+        Assert.All(calls, call => Assert.True(call.CreateNoWindow && !call.UseShellExecute));
+        Assert.Equal(["compose", "-f", f.ComposeFile, "config", "--quiet"], calls[0].ArgumentList);
+        Assert.Equal(["compose", "-f", f.ComposeFile, "up", "-d", "--force-recreate", "--no-deps", "review"], calls[1].ArgumentList);
+    }
+
+    [Fact]
+    public async Task Invalid_configuration_fails_without_touching_the_container()
+    {
+        await using var f = await Start();
+        var calls = new List<ProcessStartInfo>();
+        var agent = Agent(f, calls, exitCodes: [1]);
+        await agent.RegisterAsync(default);
+
+        var attempt = await f.Submit(Restart(f, "review-daemon"));
+        await agent.PollOnceAsync(default);
+
+        var completed = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        Assert.Equal(("failed", "configuration-invalid"), (completed!.State, completed.Result!.ExitClassification));
+        Assert.False(completed.Result.Output.GetProperty("configurationValid").GetBoolean());
+        Assert.Single(calls);
+    }
+
+    [Fact]
+    public async Task Agent_without_an_allowlist_offers_no_restart()
+    {
+        await using var f = await Start();
+        var agent = new OperationsAgentClient(f.Agent, "host-a", "boot-a", Path.Combine(f.Directory, "spool"), f.Clock);
+        await agent.RegisterAsync(default);
+
+        var response = await f.Service.PostAsJsonAsync(Fixture.Api + "commands", Restart(f, "review-daemon"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("agent-unavailable", await response.Content.ReadAsStringAsync());
+    }
+
+    [Theory]
+    [InlineData("{\"service\":\"review-daemon\"}", null)]
+    [InlineData("{\"service\":\"Review Daemon\"}", "invalid-input")]
+    [InlineData("{\"service\":\"review-daemon\",\"path\":\"/etc\"}", "invalid-input")]
+    [InlineData("{\"command\":\"rm -rf /\"}", "invalid-input")]
+    [InlineData("{}", "invalid-input")]
+    public void Admission_accepts_only_one_allowlistable_service_name(string input, string? expected)
+    {
+        var principal = Fixture.Edge with { Scopes = [.. Fixture.Edge.Scopes, "service.restart"] };
+        var element = JsonDocument.Parse(input).RootElement.Clone();
+        var command = Fixture.NewCommand(new TestClock().GetUtcNow()) with
+        {
+            OperationId = "service.restart", Input = element, InputDigest = OperationsProtocol.Digest(element),
+        };
+
+        Assert.Equal(expected, OperationPolicy.Admission(principal, command, new TestClock().GetUtcNow()));
+    }
+
+    [Fact]
+    public void Allowlist_rejects_relative_paths_and_invalid_names()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "restart-allowlist-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var compose = Path.Combine(directory, "compose.yaml");
+            File.WriteAllText(compose, "services: {}");
+            string Write(object document)
+            {
+                var path = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json");
+                File.WriteAllText(path, JsonSerializer.Serialize(document));
+                return path;
+            }
+
+            var valid = RestartableServices.Load(Write(new { services = new Dictionary<string, object>
+            {
+                ["review-daemon"] = new { composeFile = compose, composeService = "review" },
+            } }));
+            Assert.Equal("review", valid.Services["review-daemon"].ComposeService);
+            Assert.Throws<InvalidDataException>(() => RestartableServices.Load(Write(new { services = new Dictionary<string, object>
+            {
+                ["review-daemon"] = new { composeFile = "compose.yaml", composeService = "review" },
+            } })));
+            Assert.Throws<InvalidDataException>(() => RestartableServices.Load(Write(new { services = new Dictionary<string, object>
+            {
+                ["review daemon; rm"] = new { composeFile = compose, composeService = "review" },
+            } })));
+            Assert.Empty(RestartableServices.Load(null).Services);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task<Fixture> Start()
+    {
+        var f = await Fixture.Start();
+        f.SavePrincipals(f.Principals.Select(principal => principal.Id is "edge" or "agent"
+            ? principal with { Scopes = [.. principal.Scopes, "service.restart"] } : principal).ToArray());
+        File.WriteAllText(f.ComposeFile, "services: {}");
+        return f;
+    }
+
+    private static OperationsAgentClient Agent(Fixture f, List<ProcessStartInfo> calls, int[] exitCodes)
+    {
+        var services = new RestartableServices(new Dictionary<string, RestartableService>
+        {
+            ["review-daemon"] = new(f.ComposeFile, "review"),
+        });
+        return new OperationsAgentClient(f.Agent, "host-a", "boot-a", Path.Combine(f.Directory, "spool"), f.Clock,
+            services, (start, _, _) =>
+            {
+                calls.Add(start);
+                return Task.FromResult(new ToolRun(exitCodes[calls.Count - 1], string.Empty, false));
+            });
+    }
+
+    private static OperationCommand Restart(Fixture f, string service)
+    {
+        var input = JsonSerializer.SerializeToElement(new { service });
+        return f.Command("restart-" + service) with
+        {
+            OperationId = "service.restart", Input = input, InputDigest = OperationsProtocol.Digest(input),
+        };
+    }
+}

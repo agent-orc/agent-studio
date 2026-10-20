@@ -21,6 +21,7 @@
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
+    <ProjectReference Include="..\contracts\Operations.Contracts\Operations.Contracts.csproj" />
     <ProjectReference Include="..\cli-hosting\AgentStudio.CliHosting.csproj" />
     <ProjectReference Include="..\retention\AgentStudio.Retention.csproj" />
   </ItemGroup>

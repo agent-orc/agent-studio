@@ -86,6 +86,20 @@ inventory of every hosted service and its owner is
 `OrchestrationEngineReadiness` reports, but never holds: while a profile selects
 the engine, `GET /healthz/orchestration-engine` answers `ready` or
 `engine-not-live`.
+
+AGT-3207 adds the decider `stall-intervention`. `StallInterventionPolicy`
+turns the frozen facts of an AGT-3206 stall case, or of a due follow-up check,
+into a `StallInterventionPlan`: the action with its bounded parameters, the
+autonomy class, and the plain-language receipt parts (observed with numbers,
+done, why, before, after, undo). A0 and A1 plans act, A2 plans become
+proposals, an escalation asks a person, and no plan is A3. The receipt travels
+in `AiOperatorDecision.Intervention`. The policy itself holds the loop
+protection: one pending intervention per subject, a per-host hourly rate
+limit, a repeat limit per subject and action in the loop window, and a hold
+while a proposal, escalation or undo of the current stall episode waits for a
+person. It reads no clock; the observation time is a frozen fact. An effect
+that implements `IAiOperatorProposalEffect` also receives the engine's Propose
+receipts.
 ## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it

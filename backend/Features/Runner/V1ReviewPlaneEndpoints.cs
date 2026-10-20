@@ -3315,10 +3315,13 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         new(StringComparer.Ordinal);
     private readonly object _gate = new();
     private readonly TimeProvider _time;
+    private readonly AgentStudio.Watcher.ProviderRouteExclusions? _routeExclusions;
 
-    public V1ReviewExecutorRegistry(TimeProvider? time = null)
+    public V1ReviewExecutorRegistry(TimeProvider? time = null,
+        AgentStudio.Watcher.ProviderRouteExclusions? routeExclusions = null)
     {
         _time = time ?? TimeProvider.System;
+        _routeExclusions = routeExclusions;
     }
 
     public Contract.RunnerDto Register(string runnerId, Contract.RegisterRunnerRequest request)
@@ -4077,6 +4080,11 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                         "credential_invalid" or "provider_incident" or "indeterminate";
                 if (unavailable) admitted.Remove(capability.Key);
             }
+            // AGT-3207: the AI Operator rerouted this provider away from the host
+            // until its login works again.
+            if (_routeExclusions is not null)
+                admitted.RemoveWhere(key => key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                    && _routeExclusions.IsExcluded(registration.HostId, runnerId, key["provider-auth:".Length..]));
             // AGT-3077: a registered repository-read key names a configured
             // credential, not a working one. Admit it only while the current
             // advertisement reports a fresh read proof for it.
