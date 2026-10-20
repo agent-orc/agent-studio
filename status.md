@@ -1,3 +1,13 @@
+# AGT-3224 networked first-run Owner requirement status
+
+- Result implementation SHA: `796053a7b262bf3fc5860ba62b0101bc23e014c4`, on `6eebe196d`. This status entry is a separate commit on top of it.
+- Implemented option: declared endpoint metadata, not ad-hoc handler checks. `StudioRoleRequirement` (new, `backend/Features/Security/StudioRoleRequirement.cs`) is attached with `.RequireStudioRole(StudioRoles.Owner)` to the `/api/first-run/git-setups` group (start, read, verify) and to `GET /api/first-run/projects/{projectId}/repository`. `AccessSecurityMiddleware` enforces it in the networked profile for human sessions and API tokens (`403 owner-required`), before CSRF and project-scope checks. The local loopback profile returns before the middleware's networked checks and is unchanged.
+- `AccessSecurityRouteInventory.OwnerRoutePrefixes` lists `/api/first-run/` as an owner-only route family. `FirstRunOwnerAccessTests.Every_first_run_route_declares_the_owner_requirement` fails for any mapped route in that family without the Owner declaration.
+- Finding: before the fix an operator API token with the `*` grant could also read both GET first-run routes in the networked profile; only token writes were rejected. The new matrix test covers this.
+- Monolith first-run routes today are the four listed above. Provider logins in the first-run checklist use the Task Server `runner-device-logins` routes, which already require the Owner role. Any later `/api/first-run/` route falls under the inventory test.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` passed. `FirstRunOwnerAccessTests` passed 12 tests; with the requirement removed from the repository route, the inventory and matrix tests failed as expected. The related classes (`FirstRunOwnerAccessTests|NetworkedSecurityEndpointTests|AccessSecurityTests|ApiTokenAccessTests|LocalFirstRun|LocalProfileAuthEndpointTests|PublicDemoExecutionProfileTests|ConnectorProfileTests|ScopedOperatorAuthorizationTests|ContributorAccessTests`) passed 207 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests; the other seven .NET test projects had no matching tests. `npm --prefix frontend run lint` passed. No frontend change, so component-size baselines are untouched.
+- Documentation: `docs/operations/security/overview.md` describes the role requirement and the owner-only first-run routes.
+
 # AGT-3208 live environment flow status
 
 - Original delivery result SHA: `958fbf241162267c4dcbca2943c2e3ae28547ce8` (changed-file SHA-256: `306af8705440b109b8850bd2909a3763c584d746fd951a91afb5fc41ba08554c`; base: `2c4ec9e8c62e55f1b88763442277e426aab862a4`).
