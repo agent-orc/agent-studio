@@ -1,0 +1,11 @@
+[Unit]
+Description=Agent Studio coding and review work
+Before=slices.target
+
+[Slice]
+CPUWeight=25
+IOWeight=25
+# The apply script replaces these safe bootstrap values from host size.
+CPUQuota=100%
+MemoryHigh=1382M
+MemoryMax=1536M

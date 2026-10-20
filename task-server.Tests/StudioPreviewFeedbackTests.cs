@@ -56,6 +56,11 @@ public sealed class StudioPreviewFeedbackTests
         var saved = await client.GetAsync($"{path}/attachments/{match.Groups[1].Value}");
         saved.EnsureSuccessStatusCode();
         Assert.Equal(crop, await saved.Content.ReadAsByteArrayAsync());
+
+        using var runnerRead = await client.GetAsync(
+            $"/api/v1/runner/tasks/{task.TaskKey}/attachments/{match.Groups[1].Value}");
+        runnerRead.EnsureSuccessStatusCode();
+        Assert.Equal(crop, await runnerRead.Content.ReadAsByteArrayAsync());
     }
 
     private static async Task<TResponse> PostAsync<TRequest, TResponse>(HttpClient client, string path, TRequest request)

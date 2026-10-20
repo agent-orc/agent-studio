@@ -18,6 +18,12 @@ if (args is ["--remote-build-test-gate-worker", var remoteGateRequest])
     return;
 }
 
+if (args is ["--pull-build-test-gate-worker", var serverUrl])
+{
+    Environment.ExitCode = await AgentStudio.Pipeline.PullGateDaemon.RunAsync(serverUrl);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -42,6 +48,8 @@ Log.Logger = new LoggerConfiguration()
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
+builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
 builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
@@ -400,6 +408,7 @@ builder.Services.AddHttpClient("project-url-preview", client =>
     AllowAutoRedirect = false,
     UseCookies = false,
 });
+builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlPreviewAccess>();
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskKeyResolver>();
 builder.Services.AddSingleton<ScreenshotIndexService>();
 // F21: per-project write mutex for the lane tree. Must be registered
@@ -437,6 +446,10 @@ builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "pull-gates"),
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<ProjectCycleTimeService>();
 builder.Services.AddSingleton<ProjectVisualEvidenceService>();
 builder.Services.AddSingleton<ProjectGraphDiscoveryService>();
@@ -602,6 +615,7 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<PromptCallTelemetryService>();
 builder.Services.AddSingleton<RuntimePromptService>();
 builder.Services.AddSingleton<VisualQaService>();
+builder.Services.AddSingleton<IVisualQaService>(provider => provider.GetRequiredService<VisualQaService>());
 builder.Services.AddSingleton<PromptReviewService>();
 builder.Services.AddSingleton<PromptAdminService>();
 builder.Services.AddSingleton<TitleGenerationService>();
@@ -862,7 +876,9 @@ builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
         client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ConventionalGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
@@ -948,6 +964,8 @@ builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
+builder.Services.AddSingleton<ProjectRepositoryVisibilitySync>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectRepositoryVisibilitySync>());
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();
 builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<BranchRetentionEvidenceWriter>();
@@ -1058,6 +1076,7 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.IntegrationFailureRepetitionProbe>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.TaskLaneIntegrationContradictionProbe>();
 builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.QuotaProbeSignalProbe>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.OperationalStallProbe>();
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
@@ -2032,6 +2051,7 @@ taskRunner.OnRunnerStatusChanged += (projectName, status) =>
 app.MapAllEndpoints();
 app.MapConversationEndpoints();
 app.MapHub<TaskHub>("/hubs/jobs");
+ApiTokenRouteScopes.Declare(app);
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());

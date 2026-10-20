@@ -19,10 +19,29 @@ export interface ProjectRegistryEntry {
   workspaceId: string;
   archived: boolean;
   storageLocation?: string;
+  repositoryUrl?: string | null;
+  repositoryPath?: string | null;
 }
 
-export function activeRegisteredProjects(entries: readonly ProjectRegistryEntry[]): RegisteredProject[] {
-  return entries.filter(entry => !entry.archived && !!entry.id)
+/** The standalone authority uses resource names; the local registry uses UI names. */
+export interface TaskServerProjectRegistryEntry {
+  projectId: string;
+  workspaceId: string;
+  name: string;
+  taskKeyPrefix: string;
+}
+
+export type ProjectRegistryRead = ProjectRegistryEntry | TaskServerProjectRegistryEntry;
+
+export function normalizeProjectRegistryEntries(entries: readonly ProjectRegistryRead[]): ProjectRegistryEntry[] {
+  return entries.map(entry => 'projectId' in entry
+    ? { id: entry.projectId, workspaceId: entry.workspaceId, displayName: entry.name,
+      shortCode: entry.taskKeyPrefix, archived: false }
+    : entry);
+}
+
+export function activeRegisteredProjects(entries: readonly ProjectRegistryRead[]): RegisteredProject[] {
+  return normalizeProjectRegistryEntries(entries).filter(entry => !entry.archived && !!entry.id)
     .map(entry => ({ projectId: entry.id, workspaceId: entry.workspaceId,
       name: entry.displayName || entry.id }));
 }

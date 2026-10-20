@@ -67,7 +67,11 @@ export async function runBackfill(options, dependencies = {}) {
   if (!options.project?.trim()) throw new Error('A project name is required');
   if (!options.clientId?.trim()) throw new Error('A client id is required');
 
-  const headers = { 'X-Client-Id': options.clientId };
+  const headers = {
+    'X-Client-Id': options.clientId,
+    ...(process.env.AGENT_STUDIO_API_TOKEN
+      ? { Authorization: `Bearer ${process.env.AGENT_STUDIO_API_TOKEN}` } : {}),
+  };
   const watchPathsResponse = await fetchImpl(`${options.baseUrl}/api/watch-paths`, { headers });
   if (!watchPathsResponse.ok)
     throw new Error(`watch-path lookup failed: ${watchPathsResponse.status} ${await responseBody(watchPathsResponse)}`);

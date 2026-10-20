@@ -1,5 +1,6 @@
 using AgentStudio.Runner;
 using AgentStudio.Persistence;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -96,6 +97,38 @@ public sealed class RemoteRunStopAndLostWorkerContinuationTests
             Assert.Equal(observed, restarted.Observe("AGT-2869", "attempt-1", 4));
             Assert.Equal("observed", new RemoteRunStopRequestStore(root, () => Now.AddMinutes(4))
                 .GetReceipt("stop-1")?.State);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Host_without_TaskRepository_builds_the_store_and_refuses_only_recording()
+    {
+        var store = new RemoteRunStopRequestStore(new ConfigurationBuilder().Build(), () => Now);
+
+        Assert.Null(store.Peek("AGT-2869"));
+        Assert.Empty(store.ListForTask("AGT-2869"));
+        Assert.Null(store.Observe("AGT-2869", "attempt-1", 4));
+        Assert.Null(store.Clear("AGT-2869"));
+        Assert.Throws<InvalidOperationException>(() => store.Record("AGT-2869",
+            RemoteRunStopReasons.User, "attempt-1", "operator", 4, "stop-1"));
+    }
+
+    [Fact]
+    public void Configured_store_resolves_TaskRepository_on_first_use_and_keeps_durable_receipts()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-lazy-root-").FullName;
+        try
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection().Build();
+            var store = new RemoteRunStopRequestStore(configuration, () => Now);
+            configuration["TaskRepository"] = root;
+
+            var requested = store.Record("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", fencingToken: 4, commandId: "stop-1");
+
+            Assert.True(File.Exists(Path.Combine(root, RemoteRunStopRequestStore.RelativePath)));
+            Assert.Equal(requested, new RemoteRunStopRequestStore(configuration, () => Now).Peek("AGT-2869"));
         }
         finally { Directory.Delete(root, recursive: true); }
     }

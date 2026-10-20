@@ -423,6 +423,15 @@ public sealed class GitWorkspace
         var probeMayExist = false;
         Directory.CreateDirectory(projectPath);
 
+        Task<ProcessResult> NetworkGit(IReadOnlyList<string> args, string directory,
+            CancellationToken token)
+        {
+            var (selected, environment) = RunnerFirstRunGitCredentials.ForProjectGit(
+                options.StateDir, expected, args);
+            return ProcessRunner.RunAsync("git", selected, directory,
+                environment: environment, ct: token);
+        }
+
         await GitMetadataGate.WaitAsync(ct);
         try
         {
@@ -432,8 +441,7 @@ public sealed class GitWorkspace
                 // A full clone, like the one PrepareAsync makes: a `--no-checkout`
                 // clone leaves an empty index, which the first claim's stable
                 // checkout update reads as local changes and refuses (AGT-2985).
-                var clone = await ProcessRunner.RunAsync(
-                    "git", ["clone", expected, sharedRepoPath], projectPath, ct: ct);
+                var clone = await NetworkGit(["clone", expected, sharedRepoPath], projectPath, ct);
                 if (!clone.Success) return Failed("clone", clone, expected, expected);
             }
 
@@ -456,8 +464,7 @@ public sealed class GitWorkspace
                 return new(false, fetchUrl, pushUrl,
                     $"fetch/push URL mismatch: registered={expected}, fetch={fetchUrl}, push={pushUrl}");
 
-            var fetchResult = await ProcessRunner.RunAsync(
-                "git", ["fetch", "origin", "--prune"], sharedRepoPath, ct: ct);
+            var fetchResult = await NetworkGit(["fetch", "origin", "--prune"], sharedRepoPath, ct);
             if (!fetchResult.Success) return Failed("fetch", fetchResult, fetchUrl, pushUrl);
 
             probeRef = $"refs/heads/runner/{SafeSegment(options.RunnerId)}/delivery-preflight-{Guid.NewGuid():N}";
@@ -471,13 +478,11 @@ public sealed class GitWorkspace
                     pushUrl,
                     $"target branch '{defaultBranch.Trim()}' does not exist on the registered repository");
             probeMayExist = true;
-            var writable = await ProcessRunner.RunAsync(
-                "git", ["push", "origin", $"{sourceRef}:{probeRef}"], sharedRepoPath, ct: ct);
+            var writable = await NetworkGit(["push", "origin", $"{sourceRef}:{probeRef}"], sharedRepoPath, ct);
             if (!writable.Success)
                 return Failed("write probe", writable, fetchUrl, pushUrl);
 
-            var cleanup = await ProcessRunner.RunAsync(
-                "git", ["push", "origin", $":{probeRef}"], sharedRepoPath, ct: ct);
+            var cleanup = await NetworkGit(["push", "origin", $":{probeRef}"], sharedRepoPath, ct);
             probeMayExist = !cleanup.Success;
             return cleanup.Success
                 ? new(
@@ -496,8 +501,8 @@ public sealed class GitWorkspace
             if (probeMayExist && probeRef is not null
                 && Directory.Exists(Path.Combine(sharedRepoPath, ".git")))
             {
-                var cleanup = await ProcessRunner.RunAsync(
-                    "git", ["push", "origin", $":{probeRef}"], sharedRepoPath, ct: CancellationToken.None);
+                var cleanup = await NetworkGit(["push", "origin", $":{probeRef}"],
+                    sharedRepoPath, CancellationToken.None);
                 if (!cleanup.Success)
                     log($"project-delivery-preflight-cleanup-failed project={projectId} ref={probeRef} error={OneLine(cleanup.StdErr)}");
             }
@@ -623,9 +628,9 @@ public sealed class GitWorkspace
         var root = Path.Combine(_options.StateDir, "quarantine", _safeTaskKey);
         Directory.CreateDirectory(root);
         var destination = Path.Combine(root, DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + Guid.NewGuid().ToString("N"));
-        var refs = await ProcessRunner.RunAsync("git",
+        var refs = await ProjectGitAsync(
             ["ls-remote", "--heads", "origin", $"refs/heads/agent-studio/salvage/{SafeSegment(_options.RunnerId)}/{_safeTaskKey}/*"],
-            workingDirectory: SharedRepoPath, ct: ct);
+            SharedRepoPath, ct);
         var availableRefs = refs.Success
             ? string.Join(",", refs.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.Split('\t').Last()))
@@ -1250,11 +1255,9 @@ public sealed class GitWorkspace
     {
         _log($"result-transfer-started ref={immutableRef} sha={expectedHead} path={RepoPath}");
         await Git(["push", "origin", $"HEAD:{immutableRef}"], RepoPath, ct);
-        var result = await ProcessRunner.RunAsync(
-            "git",
+        var result = await ProjectGitAsync(
             ["ls-remote", RegisteredRepositoryUrl(), immutableRef],
-            workingDirectory: SharedRepoPath,
-            ct: ct);
+            SharedRepoPath, ct);
         if (!result.Success)
             throw new InvalidOperationException(
                 $"git ls-remote against the registered project repository for {immutableRef} " +
@@ -1314,10 +1317,9 @@ public sealed class GitWorkspace
 
     private async Task<string?> RemoteBranchHeadAsync(string branch, CancellationToken ct)
     {
-        var result = await ProcessRunner.RunAsync(
-            "git",
+        var result = await ProjectGitAsync(
             ["ls-remote", "--heads", RegisteredRepositoryUrl(), $"refs/heads/{branch}"],
-            workingDirectory: SharedRepoPath, ct: ct);
+            SharedRepoPath, ct);
         if (!result.Success)
             throw new InvalidOperationException(
                 $"git ls-remote against the registered project repository for {branch} " +
@@ -1340,11 +1342,9 @@ public sealed class GitWorkspace
 
     private async Task<bool> BranchExistsOnOrigin(string branch, CancellationToken ct)
     {
-        var result = await ProcessRunner.RunAsync(
-            "git",
+        var result = await ProjectGitAsync(
             ["ls-remote", "--heads", RegisteredRepositoryUrl(), branch],
-            workingDirectory: SharedRepoPath,
-            ct: ct);
+            SharedRepoPath, ct);
         return result.Success && result.StdOut.Contains($"refs/heads/{branch}", StringComparison.Ordinal);
     }
 
@@ -1364,9 +1364,21 @@ public sealed class GitWorkspace
         return branch.StartsWith(prefix, StringComparison.Ordinal) ? branch[prefix.Length..] : null;
     }
 
-    private static async Task<ProcessResult> Git(IReadOnlyList<string> args, string workingDirectory, CancellationToken ct)
+    private Task<ProcessResult> ProjectGitAsync(IReadOnlyList<string> args,
+        string workingDirectory, CancellationToken ct)
     {
-        var result = await ProcessRunner.RunAsync("git", args, workingDirectory: workingDirectory, ct: ct);
+        IReadOnlyList<string> selected = args;
+        IReadOnlyDictionary<string, string?>? environment = null;
+        if (_isProjectClone && _gitRemote is not null)
+            (selected, environment) = RunnerFirstRunGitCredentials.ForProjectGit(
+                _options.StateDir, _gitRemote, args);
+        return ProcessRunner.RunAsync("git", selected, workingDirectory: workingDirectory,
+            environment: environment, ct: ct);
+    }
+
+    private async Task<ProcessResult> Git(IReadOnlyList<string> args, string workingDirectory, CancellationToken ct)
+    {
+        var result = await ProjectGitAsync(args, workingDirectory, ct);
         if (!result.Success)
             throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({result.ExitCode}): {result.StdErr.Trim()}");
         return result;

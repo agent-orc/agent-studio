@@ -313,8 +313,8 @@ public sealed class WorkbenchDecisionService
             $"workbench-decision-{id}",
             $"chore(workbench): {(rework ? "request revision for" : archive ? "archive" : "record decision for")} {id}",
             [snapshot.DescriptorRelPath],
-            () => _fileWriter.Write(snapshot.DescriptorPath, descriptor.ToJsonString(
-                new JsonSerializerOptions { WriteIndented = true })));
+            () => _fileWriter.Write(snapshot.DescriptorPath, RepositoryTextLayout.IndentedJsonFor(
+                snapshot.DescriptorPath, descriptor)));
         if (!mutation.Success)
         {
             return Failure(id, body.OperationId, "write-failed",
