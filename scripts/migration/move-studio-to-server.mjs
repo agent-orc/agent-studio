@@ -3,12 +3,13 @@
 // classification, path mapping generation, and delta selection. The shell
 // script owns every process, SSH, Git, tar, and Docker side effect; this module
 // only reads the workspace and writes plan files into the local state directory.
-import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const SERVER_WORKSPACE = '/data/workspace';
 export const SERVER_PROJECTS = '/data/projects';
+export const SERVER_TASK_STORAGE = '/data/projects/.task-storage';
 
 const windowsPath = /^(?:[a-z]:[\\/]|\\\\)/i;
 const normalized = value => value.replaceAll('\\', '/').replace(/\/+$/, '');
@@ -314,9 +315,24 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
       };
     });
 
+  const storageRoots = [];
+  const storageIds = new Set();
+  for (const project of projects) {
+    const source = project.storageLocation;
+    if (!source || isUnder(source, workspace)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(project.id) || storageIds.has(project.id)) {
+      issues.push({ code: 'invalid-storage-id', projects: [project.id], path: source });
+      continue;
+    }
+    storageIds.add(project.id);
+    const target = `${SERVER_TASK_STORAGE}/${project.id}`;
+    storageRoots.push({ id: project.id, source, target });
+    if (windowsPath.test(source)) mapping[source] = target;
+  }
+
   const mapped = value => covered(value) || checkouts.some(checkout => isUnder(value, checkout.source));
   for (const project of projects) {
-    for (const [kind, value] of [['StorageLocation', project.storageLocation], ['RootPath', project.rootPath]]) {
+    for (const [kind, value] of [['RootPath', project.rootPath]]) {
       if (value && windowsPath.test(value) && !mapped(value)) issues.push({ code: 'unmapped-path', projects: [project.id], field: kind, path: value });
     }
   }
@@ -324,7 +340,9 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
     if (!windowsPath.test(from) || typeof to !== 'string' || !to.startsWith('/')) throw new Error(`Invalid extra mapping: ${from}`);
     mapping[from] = to;
   }
-  return { mapping, checkouts, issues };
+  // A broad operator mapping must never redirect task storage away from its copied root.
+  for (const root of storageRoots) if (windowsPath.test(root.source)) mapping[root.source] = root.target;
+  return { mapping, checkouts, storageRoots, issues };
 }
 
 /**
@@ -421,7 +439,7 @@ export function tokenStateIssues(entries, roots = []) {
     .filter(entry => entry.reason === 'token-pattern')
     .filter(entry => {
       const first = entry.path.split('/')[0];
-      return first === '.metadata' || first.startsWith('.orchestration-')
+      return (first !== '.runtime' && first !== 'logs' && first !== '.logs')
         || ['results', 'attachments'].includes(entry.area) || roots.some(root => isUnder(entry.path, root));
     })
     .map(entry => ({ code: 'token-in-state', path: entry.path, token: entry.token }));
@@ -434,7 +452,7 @@ export function tokenStateIssues(entries, roots = []) {
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
-  scanTokens = null, previousEntries = [],
+  scanTokens = null, previousEntries = [], storageSnapshots = [],
 }) {
   const classified = classifyWorkspace({ files, tracked, dirty });
   const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, previous: previousEntries }) : classified;
@@ -450,7 +468,9 @@ export function buildInventory({
     })),
     mapping: plan.mapping,
     checkouts: plan.checkouts,
-    issues: [...plan.issues, ...tokenStateIssues(entries, taskRoots(workspace, projects))],
+    storageRoots: storageSnapshots,
+    issues: [...plan.issues, ...tokenStateIssues(entries, taskRoots(workspace, projects)),
+      ...storageSnapshots.flatMap(root => root.issues)],
     credentials: credentialChecklist({ home, exists, credentialHelper }),
     entries,
   };
@@ -481,6 +501,13 @@ export function formatInventory(inventory) {
   for (const checkout of inventory.checkouts) {
     const note = checkout.strippedCredentials ? '; credentials removed from the URL, the server uses its own' : '';
     lines.push(`  ${checkout.target} <- ${checkout.repositoryUrl ?? 'NO REPOSITORY URL'} (${checkout.projects.join(', ')}${note})`);
+  }
+  lines.push('Task storage copied as separate delta roots:');
+  for (const root of inventory.storageRoots) {
+    lines.push(`  ${root.id} ${root.source} -> ${root.target}: ${root.summary?.totals.files ?? 0} files`);
+    for (const entry of root.entries.filter(item => item.transfer === 'exclude' && item.reason !== 'transient')) {
+      lines.push(`    not copied (${entry.reason === 'token-pattern' ? `contains a ${entry.token}` : entry.reason}): ${entry.path}`);
+    }
   }
   lines.push('Credentials that are not copied:');
   for (const item of inventory.credentials) lines.push(`  ${item.present ? '[found]' : '[absent]'} ${item.label}: ${item.replacement}`);
@@ -533,13 +560,34 @@ export function runCli(argv, {
   if (command === 'inventory') {
     const out = options['out-dir'];
     const previous = readJson(path.join(out, 'inventory.json'), null);
+    const registry = readProjectRegistry(options.workspace);
+    const plan = generateMapping({ workspace: options['source-workspace'] ?? options.workspace,
+      projects: registry, remotes: readRemotes(options.remotes), extra: readJson(options['extra-mapping'], {}) });
+    const storageSnapshots = plan.storageRoots.map(root => {
+      if (!existsSync(root.source)) {
+        return { ...root, entries: [], issues: [{ code: 'missing-storage-root', projects: [root.id], path: root.source }] };
+      }
+      try {
+        if (!statSync(root.source).isDirectory()) throw new Error('the source is not a directory');
+        const classified = classifyWorkspace({ files: scanWorkspace(root.source) });
+        const entries = screenTokens(classified, {
+          scan: relative => fileTokenPattern(path.join(root.source, ...relative.split('/'))),
+          previous: previous?.storageRoots?.find(item => item.id === root.id)?.entries ?? [],
+        });
+        return { ...root, entries, summary: summarize(entries), issues: entries
+          .filter(entry => entry.reason === 'token-pattern')
+          .map(entry => ({ code: 'token-in-state', project: root.id, path: `${root.source}/${entry.path}`, token: entry.token })) };
+      } catch (error) {
+        return { ...root, entries: [], issues: [{ code: 'unreadable-storage-root', projects: [root.id], path: root.source, reason: error.message }] };
+      }
+    });
     const inventory = buildInventory({
       // The registry records the workspace in its Windows form; Git Bash may hand a different spelling to --workspace.
       workspace: options['source-workspace'] ?? options.workspace,
       files: scanWorkspace(options.workspace),
       tracked: readList(options.tracked),
       dirty: readList(options.dirty),
-      projects: readProjectRegistry(options.workspace),
+      projects: registry,
       remotes: readRemotes(options.remotes),
       extra: readJson(options['extra-mapping'], {}),
       home: options.home ?? '',
@@ -548,17 +596,21 @@ export function runCli(argv, {
       now,
       scanTokens: relative => fileTokenPattern(path.join(options.workspace, ...relative.split('/'))),
       previousEntries: previous?.tokenScreened ? previous.entries : [],
+      storageSnapshots,
     });
     writeFileSync(path.join(out, 'inventory.json'), JSON.stringify(inventory, null, 2) + '\n');
     writeFileSync(path.join(out, 'path-map.json'), JSON.stringify(inventory.mapping, null, 2) + '\n');
     writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts.map(item => `${item.name}\t${item.repositoryUrl ?? ''}\n`).join(''));
+    writeFileSync(path.join(out, 'storage.tsv'), inventory.storageRoots.map(item => `${item.id}\t${item.source}\n`).join(''));
     write(formatInventory(inventory) + '\n');
     return inventory.issues.length ? 3 : 0;
   }
   if (command === 'delta') {
     const inventory = readJson(options.inventory, null);
     if (!inventory) throw new Error('delta needs --inventory');
-    const delta = selectDelta({ entries: inventory.entries, previous: readJson(options.previous, null) });
+    const storage = options['storage-id'] ? inventory.storageRoots.find(item => item.id === options['storage-id']) : null;
+    if (options['storage-id'] && !storage) throw new Error(`Unknown storage root: ${options['storage-id']}`);
+    const delta = selectDelta({ entries: storage ? storage.entries : inventory.entries, previous: readJson(options.previous, null) });
     writeFileSync(options.copy, delta.copy.map(item => item + '\0').join(''));
     writeFileSync(options.remove, delta.remove.map(item => item + '\0').join(''));
     writeFileSync(options.manifest, JSON.stringify({ generatedAt: now().toISOString(), ...delta.manifest }) + '\n');

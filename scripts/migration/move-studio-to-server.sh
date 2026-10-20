@@ -210,10 +210,10 @@ server_smoke() {
   echo "check: sign-in ok ($endpoint as $username)"
 
   c --fail -b "$jar" "$base/api/projects" >"$work/projects.json" || fail 'board: GET /api/projects failed'
-  project=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const l=Array.isArray(p)?p:(p.projects??p.items??[]);process.stdout.write(l.length?String(l[0].id??l[0].Id):"");' "$work/projects.json")
-  if [ -n "$project" ]; then
-    c --fail -b "$jar" "$base/api/tasks?project=$project" >/dev/null || fail "board: GET /api/tasks?project=$project failed"
-    echo "check: board read ok ($project)"
+  board_project=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const l=Array.isArray(p)?p:(p.projects??p.items??[]);process.stdout.write(l.length?String(l[0].id??l[0].Id):"");' "$work/projects.json")
+  if [ -n "$board_project" ]; then
+    c --fail -b "$jar" "$base/api/tasks?project=$board_project" >/dev/null || fail "board: GET /api/tasks?project=$board_project failed"
+    echo "check: board read ok ($board_project)"
   else
     echo 'check: board read ok (no projects registered)'
   fi
@@ -251,10 +251,10 @@ server_rehearse() {
   fi
   stack="$root/stack"
   rehearsal="$root/move-rehearsal"
-  project=studio-move-rehearsal
+  rehearsal_project=studio-move-rehearsal
   host=move-rehearsal.studio.test
   [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the transfer pass did not run'
-  compose() { docker compose -p "$project" -f "$stack/compose.yaml" -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
+  compose() { docker compose -p "$rehearsal_project" -f "$stack/compose.yaml" -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
   teardown() {
     result=$?
     if [ -f "$rehearsal/.env" ]; then
@@ -275,6 +275,10 @@ server_rehearse() {
   mkdir -p "$rehearsal/data/home" "$rehearsal/data/caddy-data" "$rehearsal/data/caddy-config" "$rehearsal/data/projects"
   cp -a "$root/move-staging/workspace" "$rehearsal/data/workspace"
   if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$rehearsal/data/projects/"; fi
+  if [ -d "$root/move-staging/storage" ]; then
+    mkdir -p "$rehearsal/data/projects/.task-storage"
+    cp -a "$root/move-staging/storage/." "$rehearsal/data/projects/.task-storage/"
+  fi
   server_relocate "$root" "$rehearsal/data/workspace" "$rehearsal/data/projects"
   echo 'check: path relocation ok (0 unresolved)'
   server_disable_push "$rehearsal/data/workspace"
@@ -362,7 +366,7 @@ server_apply() {
     exit "$result"
   }
   trap stop_after_failure EXIT
-  trap 'exit 130' HUP INT TERM
+  trap 'exit 130' HUP INT TERM PIPE
   switched=1
   for name in workspace projects; do
     if [ -e "$data_dir/$name" ]; then mv "$data_dir/$name" "$data_dir/$name.pre-move-$stamp"; fi
@@ -370,6 +374,10 @@ server_apply() {
   cp -a "$root/move-staging/workspace" "$data_dir/workspace"
   mkdir -p "$data_dir/projects" "$data_dir/home"
   if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$data_dir/projects/"; fi
+  if [ -d "$root/move-staging/storage" ]; then
+    mkdir -p "$data_dir/projects/.task-storage"
+    cp -a "$root/move-staging/storage/." "$data_dir/projects/.task-storage/"
+  fi
   server_relocate "$root" "$data_dir/workspace" "$data_dir/projects"
   echo 'check: path relocation ok (0 unresolved)'
   protect_access_state "$data_dir/workspace"
@@ -389,6 +397,7 @@ server_apply() {
     echo "check: https://$domain answers locally; the workstation had no accounts, so the first visit needs STUDIO_BOOTSTRAP_CODE from $stack/.env"
   fi
   printf 'moved_at=%s\ndata_dir=%s\n' "$stamp" "$data_dir" >"$marker"
+  switched=0
   echo "moved: marker $marker written"
   # Staging is a second full copy of the access state; the data directory now has it.
   rm -rf "$root/move-staging"
@@ -408,6 +417,7 @@ if [ "${1:-}" = --server-side ]; then
     clone-workspace) server_clone_workspace "$@" ;;
     sync-workspace) server_sync_workspace "$@" ;;
     receive-archive) server_receive_archive "$@" ;;
+    ensure-dir) if [ -d "$1" ]; then echo existing; else private_dir "$1"; echo created; fi ;;
     remove-paths) cd "$1" && xargs -0 rm -f -- ;;
     clone-checkout) server_clone_checkout "$@" ;;
     rehearse) server_rehearse "$@" ;;
@@ -553,7 +563,7 @@ inventory() {
   node "$script_dir/move-studio-to-server.mjs" "$@" || inventory_status=$?
   case "$inventory_status" in
     0) ;;
-    3) [ "$mode" = dry-run ] || fail 'blocking inventory issues above; resolve them (registry repo URL or --extra-mapping) before moving' ;;
+    3) [ "$mode" = dry-run ] || fail 'blocking inventory issues above; resolve the source task storage, token hit, repository URL, or path before moving' ;;
     *) fail "inventory failed with exit $inventory_status" ;;
   esac
 }
@@ -595,6 +605,37 @@ transfer_pass() {
     server_side clone-checkout "$staging/projects/$name" "$url" </dev/null
     log "checkout /data/projects/$name from $url"
   done <"$state_dir/checkouts.tsv"
+
+  # Task storage in a project checkout is usually untracked. A clone cannot
+  # carry it, so each external StorageLocation has its own manifest and delta.
+  while IFS="$tab" read -r storage_id storage_source; do
+    [ -n "$storage_id" ] || continue
+    storage_local=$storage_source
+    if command -v cygpath >/dev/null 2>&1; then storage_local=$(cygpath -u "$storage_source"); fi
+    [ -d "$storage_local" ] || fail "task storage $storage_id disappeared before transfer: $storage_source"
+    storage_stage="$staging/storage/$storage_id"
+    storage_state=$(server_side ensure-dir "$storage_stage")
+    storage_manifest="$state_dir/storage-$storage_id.manifest.json"
+    [ "$storage_state" != created ] || rm -f "$storage_manifest"
+    set -- delta --inventory "$state_dir/inventory.json" --storage-id "$storage_id" \
+      --copy "$state_dir/storage-$storage_id.copy.z" --remove "$state_dir/storage-$storage_id.remove.z" \
+      --manifest "$state_dir/storage-$storage_id.manifest.next.json"
+    [ ! -f "$storage_manifest" ] || set -- "$@" --previous "$storage_manifest"
+    node "$script_dir/move-studio-to-server.mjs" "$@"
+    storage_copy="$state_dir/storage-$storage_id.copy.z"
+    storage_remove="$state_dir/storage-$storage_id.remove.z"
+    if [ -s "$storage_copy" ]; then
+      {
+        tar_status=0
+        tar -C "$storage_local" --null -T "$storage_copy" --warning=no-file-changed -cf - || tar_status=$?
+        echo "$tar_status" >"$state_dir/storage-$storage_id.tar.status"
+      } | gzip -1 | server_side receive-archive "$storage_stage"
+      case "$(cat "$state_dir/storage-$storage_id.tar.status")" in 0|1) ;; *) fail "tar failed while streaming task storage $storage_id" ;; esac
+    fi
+    [ ! -s "$storage_remove" ] || server_side remove-paths "$storage_stage" <"$storage_remove"
+    mv "$state_dir/storage-$storage_id.manifest.next.json" "$storage_manifest"
+    log "task storage $storage_id staged at /data/projects/.task-storage/$storage_id"
+  done <"$state_dir/storage.tsv"
 }
 
 server_side_preflight() {
@@ -613,6 +654,9 @@ rollback_hint() {
   [ "$maintenance_ours" -eq 1 ] || [ ! -e "$stable_maintenance" ] \
     || log "$stable_maintenance was set before this apply; remove it too once the watchdog may restart Stable."
   log "After a completed apply the server keeps $server_root/moved-to-server, so a later --apply needs --force."
+  if [ "$force" -eq 1 ]; then
+    log "Forced switch snapshot, if the data move began: <data>/workspace.pre-move-$stamp and <data>/projects.pre-move-$stamp (resolve <data> from STUDIO_DATA_DIR in $server_root/stack/.env)."
+  fi
 }
 
 # Nothing on the server changed yet, no earlier apply left state behind, and

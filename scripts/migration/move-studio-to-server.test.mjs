@@ -36,13 +36,18 @@ const credentialFiles = {
 async function materialize(files) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'move-studio-'));
   const workspace = path.join(root, 'workspace');
+  const registry = structuredClone(fixture.registry);
+  const storage = path.join(root, 'external', '.orchestrator', 'jobs');
+  registry.Projects.find(project => project.Id === 'PROJ-005').StorageLocation = storage;
+  await mkdir(path.join(storage, 'AGT-1'), { recursive: true });
+  await writeFile(path.join(storage, 'AGT-1', 'task.md'), '# external task\n');
   for (const [relative, content] of Object.entries(files)) {
     const file = path.join(workspace, ...relative.split('/'));
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, content);
   }
   await mkdir(path.join(workspace, '.metadata'), { recursive: true });
-  await writeFile(path.join(workspace, '.metadata', 'projects.json'), JSON.stringify(fixture.registry, null, 2));
+  await writeFile(path.join(workspace, '.metadata', 'projects.json'), JSON.stringify(registry, null, 2));
   await mkdir(path.join(workspace, '.git', 'objects'), { recursive: true });
   await writeFile(path.join(workspace, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   await mkdir(path.join(workspace, 'node_modules', 'pkg'), { recursive: true });
@@ -132,7 +137,10 @@ test('generates workspace and checkout mappings with stable unique names', () =>
     'D:\\Code\\Demo': '/data/projects/demo',
     'E:\\Other\\Demo': '/data/projects/demo-2',
     'F:\\Legacy': '/data/projects/legacy',
+    'F:\\Legacy\\.orchestrator\\jobs': '/data/projects/.task-storage/PROJ-005',
   });
+  assert.deepEqual(plan.storageRoots, [{ id: 'PROJ-005', source: 'F:\\Legacy\\.orchestrator\\jobs',
+    target: '/data/projects/.task-storage/PROJ-005' }]);
   assert.deepEqual(plan.checkouts.map(item => [item.name, item.repositoryUrl, item.projects]), [
     ['demo', 'git@github.com:example/demo.git', ['PROJ-001', 'PROJ-002']],
     ['demo-2', 'https://github.com/example/demo-two.git', ['PROJ-003']],
@@ -154,8 +162,24 @@ test('extra mapping and an origin remote resolve every blocking issue', () => {
   });
   assert.deepEqual(plan.issues, []);
   assert.equal(plan.mapping['G:\\Elsewhere\\legacy-root'], '/data/projects/legacy/root');
+  assert.equal(plan.mapping['F:\\Legacy\\.orchestrator\\jobs'], '/data/projects/.task-storage/PROJ-005');
   assert.equal(plan.checkouts.find(item => item.name === 'demo').repositoryUrl, 'git@github.com:example/demo.git');
   assert.throws(() => generateMapping({ workspace: fixture.workspace, projects, extra: { 'relative': '/x' } }), /Invalid extra mapping/);
+});
+
+test('task storage under a checkout or outside it gets its own copied root', () => {
+  const projects = [
+    { id: 'PROJ-011', storageLocation: 'C:\\Projects\\repo\\.orchestrator\\jobs', repositoryPath: 'C:\\Projects\\repo', urls: [] },
+    { id: 'PROJ-014', storageLocation: 'D:\\Tasks\\jobs', repositoryPath: null, rootPath: null, urls: [] },
+  ];
+  const plan = generateMapping({ workspace: 'C:\\Projects\\workspace', projects,
+    remotes: { 'PROJ-011': 'git@example.invalid:repo.git' },
+    extra: { 'D:\\Tasks': '/data/projects/incorrect' } });
+  assert.deepEqual(plan.storageRoots.map(root => root.target),
+    ['/data/projects/.task-storage/PROJ-011', '/data/projects/.task-storage/PROJ-014']);
+  assert.equal(plan.mapping['C:\\Projects\\repo\\.orchestrator\\jobs'], plan.storageRoots[0].target);
+  assert.equal(plan.mapping['D:\\Tasks\\jobs'], plan.storageRoots[1].target);
+  assert.deepEqual(plan.issues, []);
 });
 
 test('reports conflicting repository URLs for one shared checkout', () => {
@@ -328,6 +352,8 @@ test('token hits in metadata, orchestration state, and task folders block the in
     hit('.metadata/attempt-authority.json', 'attempt-authority'),
     hit('.metadata/runs/AGT-1.json', 'metadata'),
     hit('.orchestration-ai-asks/ask-1.json', 'orchestration-state'),
+    hit('.orchestrator-decisions/decision.json', 'other'),
+    hit('project-settings.json', 'other'),
     hit('projects/demo/tasks/3-done/AGT-1/status.md', 'other', { state: 'tracked-modified' }),
     hit('projects/elsewhere/AGT-9/results/report.html', 'results'),
     hit('.runtime/cli-output/AGT-1.log', 'runtime'),
@@ -338,6 +364,8 @@ test('token hits in metadata, orchestration state, and task folders block the in
     ['token-in-state', '.metadata/attempt-authority.json', 'github-token'],
     ['token-in-state', '.metadata/runs/AGT-1.json', 'github-token'],
     ['token-in-state', '.orchestration-ai-asks/ask-1.json', 'github-token'],
+    ['token-in-state', '.orchestrator-decisions/decision.json', 'github-token'],
+    ['token-in-state', 'project-settings.json', 'github-token'],
     ['token-in-state', 'projects/demo/tasks/3-done/AGT-1/status.md', 'github-token'],
     ['token-in-state', 'projects/elsewhere/AGT-9/results/report.html', 'github-token'],
   ]);
@@ -359,6 +387,27 @@ test('inventory exits 3 when a task folder file contains a token', async () => {
     const inventory = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
     assert.deepEqual(inventory.issues.map(issue => [issue.code, issue.path]), [['token-in-state', 'projects/demo/tasks/3-done/AGT-1/notes.md']]);
     assert.match(output.join(''), /not copied \(contains a github-token\): \.runtime\/cli-output\/AGT-1\.log/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('external task storage blocks on token hits and missing source despite extra mapping', async () => {
+  const { root, workspace } = await materialize({});
+  const task = path.join(root, 'external', '.orchestrator', 'jobs', 'AGT-1', 'task.md');
+  try {
+    await writeFile(task, `credential ${fakeToken.github()}\n`);
+    await writeFile(path.join(root, 'extra.json'), JSON.stringify({ 'F:\\Legacy': '/data/projects/wrong' }));
+    const args = ['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--home', fixture.home,
+      '--extra-mapping', path.join(root, 'extra.json'), '--out-dir', root];
+    assert.equal(runCli(args, { now: fixedClock, write: () => {} }), 3);
+    let inventory = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
+    assert.equal(inventory.issues.some(issue => issue.code === 'token-in-state' && issue.project === 'PROJ-005'), true);
+    assert.equal(inventory.storageRoots[0].entries[0].transfer, 'exclude');
+    await rm(path.join(root, 'external'), { recursive: true });
+    assert.equal(runCli(args, { now: fixedClock, write: () => {} }), 3);
+    inventory = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
+    assert.equal(inventory.issues.some(issue => issue.code === 'missing-storage-root' && issue.projects[0] === 'PROJ-005'), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -408,6 +457,14 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     assert.match(output.join(''), /not copied \(contains a github-token\): \.runtime\/cli-output\/AGT-9\.log/);
     const checkouts = await readFile(path.join(state, 'checkouts.tsv'), 'utf8');
     assert.equal(checkouts.split('\n').filter(Boolean).length, 3);
+    const storage = JSON.parse(await readFile(path.join(state, 'inventory.json'), 'utf8')).storageRoots[0];
+    assert.equal(storage.target, '/data/projects/.task-storage/PROJ-005');
+    assert.deepEqual(storage.entries.map(entry => entry.path), ['AGT-1/task.md']);
+    const storageDelta = ['delta', '--inventory', path.join(state, 'inventory.json'), '--storage-id', 'PROJ-005',
+      '--copy', path.join(state, 'storage-copy.z'), '--remove', path.join(state, 'storage-remove.z'),
+      '--manifest', path.join(state, 'storage-manifest.json')];
+    assert.equal(run(storageDelta), 0);
+    assert.deepEqual((await readFile(path.join(state, 'storage-copy.z'), 'utf8')).split('\0').filter(Boolean), ['AGT-1/task.md']);
 
     const deltaArgs = ['delta', '--inventory', path.join(state, 'inventory.json'), '--copy', path.join(state, 'copy.z'),
       '--remove', path.join(state, 'remove.z'), '--manifest', path.join(state, 'manifest.json')];
@@ -430,6 +487,15 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
       ['logs/bus/2026-10-18.jsonl', 'projects/demo/tasks/3-done/AGT-1/status.md']);
     assert.deepEqual((await readFile(path.join(state, 'remove.z'), 'utf8')).split('\0').filter(Boolean),
       ['projects/demo/tasks/3-done/AGT-2/task.md']);
+    await mkdir(path.join(root, 'external', '.orchestrator', 'jobs', 'AGT-2'));
+    await writeFile(path.join(root, 'external', '.orchestrator', 'jobs', 'AGT-2', 'task.md'), '# second task\n');
+    assert.equal(run(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace,
+      '--tracked', path.join(state, 'tracked.z'), '--dirty', path.join(state, 'dirty.z'),
+      '--remotes', path.join(state, 'remotes.tsv'), '--extra-mapping', path.join(state, 'extra.json'),
+      '--home', fixture.home, '--out-dir', state]), 0);
+    assert.equal(run([...storageDelta, '--previous', path.join(state, 'storage-manifest.json'),
+      '--manifest', path.join(state, 'storage-manifest.next.json')]), 0);
+    assert.deepEqual((await readFile(path.join(state, 'storage-copy.z'), 'utf8')).split('\0').filter(Boolean), ['AGT-2/task.md']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -32,6 +32,12 @@ cat >"$work/bin/docker" <<'DOCKER'
 #!/bin/sh
 printf '%s\n' "$*" >>"$FAKE_LOG"
 case "$*" in *' ps --status '*' --quiet') [ -z "${FAKE_DOCKER_RUNNING:-}" ] || echo "$FAKE_DOCKER_RUNNING" ;; esac
+case "$*" in
+  *'-p studio-move-rehearsal '*' up -d'*)
+    [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-004/AGT-4/task.md" ] || exit 45
+    [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-011/AGT-11/new.md" ] || exit 46
+    [ "${FAKE_REHEARSE_UP_FAIL:-0}" != 1 ] || exit 47 ;;
+esac
 DOCKER
 cat >"$work/bin/curl" <<'CURL'
 #!/bin/sh
@@ -67,6 +73,7 @@ if [ -n "$out" ]; then printf '%s' "$body" >"$out"; else printf '%s' "$body"; fi
 CURL
 chmod 0755 "$work/bin/ssh" "$work/bin/docker" "$work/bin/curl"
 export FAKE_LOG="$work/fake.log" FAKE_BOOTSTRAP=true FAKE_STABLE_UP="$work/stable-up"
+export FAKE_SERVER_ROOT="$work/server"
 PATH="$work/bin:$PATH"
 export PATH
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
@@ -99,6 +106,11 @@ git -C "$work/code/Demo" commit -qm 'demo'
 # scp-style URL: a usable remote for the planner, served through the fake ssh.
 git -C "$work/code/Demo" remote add origin "git@test-server:$work/remotes/demo.git"
 git -C "$work/code/Demo" push -q origin main
+storage_inside="$work/code/Demo/.orchestrator/jobs"
+storage_outside="$work/code/TaskOnly/.orchestrator/jobs"
+mkdir -p "$storage_inside/AGT-4" "$storage_outside/AGT-11"
+printf '# AGT-4\n' >"$storage_inside/AGT-4/task.md"
+printf '# AGT-11\n' >"$storage_outside/AGT-11/task.md"
 
 # Workspace with pushed history, one unpushed commit, and untracked state.
 ws="$projects_root/agent-taskboard-workspace"
@@ -109,7 +121,9 @@ mkdir -p "$ws/.metadata" "$ws/projects/demo/tasks/AGT-1" "$ws/projects/demo/task
 url_password="pw-$(date +%s)"
 cat >"$ws/.metadata/projects.json" <<EOF
 {"Projects":[{"Id":"PROJ-001","DisplayName":"Demo","StorageLocation":"$ws/projects/demo/tasks","RepositoryPath":"$work/code/Demo",
- "Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]}]}
+ "Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]},
+ {"Id":"PROJ-004","DisplayName":"Checkout tasks","StorageLocation":"$storage_inside","RepositoryPath":"$work/code/Demo","Urls":[{"Id":"repo","Label":"Repository","Url":"ssh://operator:$url_password@test-server$work/remotes/demo.git"}]},
+ {"Id":"PROJ-011","DisplayName":"Task only","StorageLocation":"$storage_outside","Urls":[]}]}
 EOF
 printf '# AGT-1\n' >"$ws/projects/demo/tasks/AGT-1/task.md"
 printf 'open\n' >"$ws/projects/demo/tasks/AGT-1/status.md"
@@ -168,6 +182,8 @@ check grep -q 'not copied (credential): .docker/config.json' "$work/out"
 check grep -q 'not copied (contains a github-token): .runtime/cli-output/leak.log' "$work/out"
 check grep -q 'credentials removed from the URL' "$work/out"
 check grep -q 'server preflight passed' "$work/out"
+check grep -q "PROJ-004 $storage_inside -> /data/projects/.task-storage/PROJ-004" "$work/out"
+check grep -q "PROJ-011 $storage_outside -> /data/projects/.task-storage/PROJ-011" "$work/out"
 check grep -q 'Git Credential Manager entries' "$work/out"
 [ ! -e "$work/server/move-bin" ] || fail 'dry run wrote to the server'
 [ ! -e "$work/server/move-staging" ] || fail 'dry run created staging'
@@ -182,6 +198,8 @@ check test -f "$staged/.runtime/cli-output/AGT-1.log"
 check test -f "$staged/logs/bus/day.jsonl"
 check test -f "$staged/projects/demo/tasks/AGT-1/results/report.html"
 check test -f "$staged/.orchestration-occurrences/o.json"
+check test -f "$work/server/move-staging/storage/PROJ-004/AGT-4/task.md"
+check test -f "$work/server/move-staging/storage/PROJ-011/AGT-11/task.md"
 [ ! -e "$staged/.git-credentials" ] || fail 'credential file was transferred'
 [ ! -e "$staged/runner.env" ] || fail 'runner.env was transferred'
 [ ! -e "$staged/.docker/config.json" ] || fail 'Docker config was transferred'
@@ -205,10 +223,20 @@ printf 'new' >"$ws/.runtime/cli-output/AGT-3.log"
 rm "$ws/.runtime/cli-output/AGT-1.log"
 run --transfer
 check grep -q 'Delta: 3 to copy, 2 to remove' "$work/out"
+check grep -q 'Delta: 0 to copy, 0 to remove, 1 unchanged' "$work/out"
 check test "$(wc -l <"$staged/logs/bus/day.jsonl")" -eq 2
 check test -f "$staged/.runtime/cli-output/AGT-3.log"
 [ ! -e "$staged/.runtime/cli-output/AGT-1.log" ] || fail 'removed source file still exists in staging'
 check test "$(cat "$staged/projects/demo/tasks/AGT-1/status.md")" = 'edited after commit'
+
+# The external task root has its own manifest. A later pass sends only its
+# changed file, removes a vanished one, and leaves the checkout root intact.
+printf '# AGT-12\n' >"$storage_outside/AGT-11/new.md"
+rm "$storage_outside/AGT-11/task.md"
+run --transfer
+check test -f "$work/server/move-staging/storage/PROJ-011/AGT-11/new.md"
+[ ! -e "$work/server/move-staging/storage/PROJ-011/AGT-11/task.md" ] || fail 'vanished external task file remained in staging'
+check grep -q 'Delta: 1 to copy, 1 to remove' "$work/out"
 
 # Unchanged third pass: the Git reset restores tracked state, so the modified
 # tracked file is sent and the deleted tracked file removed again; nothing else.
@@ -240,6 +268,7 @@ for line in 'check: path relocation ok' 'check: access state parses' 'check: hea
   check grep -qF "$line" "$work/out"
 done
 check grep -q -- '-p studio-move-rehearsal' "$FAKE_LOG"
+check grep -q -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG"
 check grep -q 'HEADER X-CSRF-Token: csrf-1' "$FAKE_LOG"
 check grep -q 'CONFIG header = "Authorization: Bearer test-secret"' "$FAKE_LOG"
 check grep -q '"availableSlots":0' "$FAKE_LOG"
@@ -248,6 +277,12 @@ check grep -q 'BODY {"username":"move.rehearsal.owner","password":"Rehearsal-[0-
 check grep -qx 'BODY {"code":"enrol-1"}' "$FAKE_LOG"
 [ ! -e "$work/server/move-rehearsal" ] || fail 'rehearsal copy was not torn down'
 check test -f "$staged/.security/access-state.json"
+
+: >"$FAKE_LOG"
+FAKE_REHEARSE_UP_FAIL=1 run_fails --rehearse
+check grep -q -- '-p studio-move-rehearsal .* logs --tail 80' "$FAKE_LOG"
+check grep -q -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG"
+[ ! -e "$work/server/move-rehearsal" ] || fail 'failed rehearsal copy was not torn down'
 
 # Apply. Stable scripts record what ran; the guard and the maintenance marker
 # live in the devspace, where api.sh and the watchdog look, not beside the workspace.
@@ -401,6 +436,9 @@ check test -f "$work/stable-stopped"
 check test "$(git -C "$data/workspace" rev-parse HEAD)" = "$head"
 check test -f "$data/workspace/logs/bus/day.jsonl"
 check test -d "$data/projects/demo/.git"
+check test -f "$data/projects/.task-storage/PROJ-004/AGT-4/task.md"
+check test -f "$data/projects/.task-storage/PROJ-011/AGT-11/new.md"
+[ ! -e "$data/projects/.task-storage/PROJ-011/AGT-11/task.md" ] || fail 'vanished task was copied on apply'
 check test "$(pre_moves)" -eq 2
 check test "$(stat -c %a "$data/workspace/.security/access-state.json")" = 600
 [ -z "$(find "$data/workspace" "$data/projects" ! -type l -perm /077 | head -n 1)" ] || fail 'moved data is readable by other accounts'
@@ -432,6 +470,7 @@ fresh
 blocking_stop
 FAKE_BOOTSTRAP=false run_fails --apply --yes --force
 check grep -q 'missing-repository-url' "$work/out"
+check grep -q '<data>/workspace.pre-move-' "$work/out"
 check grep -q 'an earlier apply left a moved marker or guard' "$work/out"
 kept_down
 check grep -qx 'status=moved' "$guard"
