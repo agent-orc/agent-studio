@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -29,19 +30,86 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         var registry = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
         var record = registry.Record(new string('c', 32), "gate-a", "/srv/gates");
         var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
-        string? sshCommand = null;
+        var remoteExists = true;
+        var commands = new List<string>();
         Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
             CancellationToken ct, Action<string>? output)
         {
-            if (fileName == "ssh") sshCommand = args.Last();
+            if (fileName == "ssh")
+            {
+                var command = args.Last();
+                commands.Add(command);
+                if (command.Contains("rm -rf --", StringComparison.Ordinal)) remoteExists = false;
+                if (command.StartsWith("test ! -e", StringComparison.Ordinal) && remoteExists)
+                    throw new IOException("remote directory remains");
+            }
             return Task.CompletedTask;
         }
         var transport = Transport(current, Run);
 
         await transport.CancelOrphanedRunsAsync();
 
-        Assert.Contains("/srv/gates/" + record.RunId + "/cancel", sshCommand);
+        Assert.Contains(commands, command => command.Contains("/srv/gates/" + record.RunId + "/cancel", StringComparison.Ordinal));
+        Assert.False(remoteExists);
         Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
+    public async Task Never_started_orphan_directory_is_removed_before_record_is_deleted()
+    {
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        var record = previous.Record(new string('c', 32), "gate-a", "/srv/gates");
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        var remoteExists = true;
+        var refuseRemoval = true;
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            var command = args.Last();
+            if (command.Contains("rm -rf --", StringComparison.Ordinal) && !refuseRemoval)
+                remoteExists = false;
+            if (command.StartsWith("test ! -e", StringComparison.Ordinal) && remoteExists)
+                throw new IOException("remote directory remains");
+            return Task.CompletedTask;
+        }
+        var transport = Transport(current, Run);
+
+        await transport.CancelOrphanedRunsAsync();
+        Assert.True(remoteExists);
+        Assert.Equal(record, Assert.Single(current.ReadAll()));
+
+        refuseRemoval = false;
+        await transport.CancelOrphanedRunsAsync();
+        Assert.False(remoteExists);
+        Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
+    public async Task Default_identity_path_is_unique_per_installation_under_one_account()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        var data = Path.Combine(_root, "shared-account");
+        var firstPath = Path.Combine(_root, "installation-a");
+        var secondPath = Path.Combine(_root, "installation-b");
+        var first = RemoteGateTransport.CreateDefaultRegistry(_clock, config, firstPath, data);
+        var reopened = RemoteGateTransport.CreateDefaultRegistry(_clock, config, firstPath, data);
+        var second = RemoteGateTransport.CreateDefaultRegistry(_clock, config, secondPath, data);
+        first.Record(new string('c', 32), "gate-a", "/srv/gates");
+
+        Assert.Equal(first.InstallationId, reopened.InstallationId);
+        Assert.NotEqual(first.InstallationId, second.InstallationId);
+        Assert.Single(reopened.ReadAll());
+        Assert.Empty(second.ReadAll());
+        var calls = 0;
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            calls++;
+            return Task.CompletedTask;
+        }
+        await Transport(second, Run).CancelOrphanedRunsAsync();
+        Assert.Equal(0, calls);
+        Assert.Single(reopened.ReadAll());
     }
 
     [Fact]
@@ -87,6 +155,53 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task Earlier_process_with_live_invocation_is_left_alone_until_it_exits()
+    {
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        previous.Record(new string('c', 32), "gate-a", "/srv/gates");
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        var ownerAlive = true;
+        var calls = 0;
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            calls++;
+            return Task.CompletedTask;
+        }
+        var transport = Transport(current, Run, ownerIsAlive: _ => ownerAlive);
+
+        await transport.CancelOrphanedRunsAsync();
+        Assert.Equal(0, calls);
+        Assert.Single(current.ReadAll());
+
+        ownerAlive = false;
+        await transport.CancelOrphanedRunsAsync();
+        Assert.True(calls > 0);
+        Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
+    public async Task Orphan_cancellation_is_appended_to_product_activity()
+    {
+        var watchPath = Path.Combine(_root, "project");
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        var record = previous.Record(new string('c', 32), "gate-a", "/srv/gates", "project", watchPath);
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        _clock.Advance(TimeSpan.FromMinutes(25));
+        var activity = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+
+        await Transport(current, (_, _, _, _, _, _) => Task.CompletedTask,
+            activity: activity).CancelOrphanedRunsAsync();
+
+        var entry = Assert.Single(activity.Read(watchPath));
+        Assert.Equal("remote-gate-orphan", entry.Topic);
+        Assert.Equal(OrchestratorLogKinds.Action, entry.Kind);
+        Assert.Contains(record.RunId, entry.Reasoning);
+        Assert.Contains("gate-a", entry.Reasoning);
+        Assert.Contains("1500 seconds", entry.Reasoning);
+    }
+
+    [Fact]
     public void Worker_stops_when_injected_clock_passes_heartbeat_bound()
     {
         var now = _clock.GetUtcNow();
@@ -115,7 +230,8 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     private RemoteGateTransport Transport(RemoteGateRunRegistry registry,
-        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> run)
+        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> run,
+        Func<RemoteGateRunRecord, bool>? ownerIsAlive = null, OrchestratorLog? activity = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -124,7 +240,8 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
             ["RemoteGate:Root"] = "/srv/gates",
         }).Build();
         return new RemoteGateTransport(configuration, NullLogger<RemoteGateTransport>.Instance,
-            _clock, Path.Combine(_root, "local"), _ => { }, runProcess: run, runRegistry: registry);
+            _clock, Path.Combine(_root, "local"), _ => { }, runProcess: run, runRegistry: registry,
+            ownerIsAlive: ownerIsAlive ?? (_ => false), activity: activity);
     }
 
     public void Dispose()

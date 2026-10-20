@@ -93,19 +93,23 @@ is recorded as `Gate cancelled: shutdown`.
 `RemoteGateTransport` writes a durable record for each dispatched SSH worker
 under local application data. The record includes the run id, host, remote
 root, start time, persistent installation id, and owning Studio process
-instance. The id comes from `RemoteGate:InstallationId`, the configured
-connectivity manifest, or a generated per-data-directory id. Startup and the one-minute recovery sweep touch the worker's `cancel`
-marker when that invocation no longer has a live owner. Recovery is scoped to
+identity (PID and process start time). The id comes from `RemoteGate:InstallationId`,
+the configured connectivity manifest, or a generated id in a directory scoped
+to the Studio installation path under local application data. Startup and the
+one-minute recovery sweep touch the worker's `cancel` marker only after the
+owning process is gone. Recovery is scoped to
 the installation id and recorded host/root; a different Studio installation
 sharing a gate host is left alone. The record is removed after the remote run
-directory is confirmed gone.
+directory is removed under the worker lock and confirmed gone. A run that never
+started is removed by the same recovery path.
 
 The transport refreshes a per-run heartbeat every ten seconds. The worker
 cancels gate execution when that heartbeat is absent or older than 35 seconds,
-then removes its remote run directory after writing its terminal response.
+then releases its worker lock; recovery removes its remote directory after the
+lock becomes available. On session loss the worker removes its own directory.
 Cancelled workers report `REMOTE_GATE_SLOT <runId> release`, and recovery logs
 the typed `remote gate run orphaned and cancelled` event with the run id, host,
-and age.
+and age. It also appends the event to the project's activity feed.
 
 ## Exact-SHA gate verdict cache
 

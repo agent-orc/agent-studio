@@ -1,10 +1,13 @@
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace AgentStudio.Pipeline;
 
 internal sealed record RemoteGateRunRecord(
     string RunId, string Host, string Root, DateTimeOffset StartedAtUtc,
-    string OwnerProcessInstance, string InstallationId);
+    string OwnerProcessInstance, string InstallationId,
+    int OwnerProcessId = 0, long OwnerProcessStartTicks = 0,
+    string? Project = null, string? WatchPath = null);
 
 /// <summary>Durable ownership ledger for SSH workers that can outlive Studio.</summary>
 internal sealed class RemoteGateRunRegistry
@@ -15,21 +18,27 @@ internal sealed class RemoteGateRunRegistry
     private readonly TimeProvider _time;
     internal string InstallationId { get; }
     internal string ProcessInstance { get; }
+    internal int ProcessId { get; }
+    internal long ProcessStartTicks { get; }
 
     internal RemoteGateRunRegistry(string root, TimeProvider time, string? installationId = null,
-        string? processInstance = null)
+        string? processInstance = null, int? processId = null, long? processStartTicks = null)
     {
         _root = root;
         _time = time;
         Directory.CreateDirectory(root);
         InstallationId = installationId ?? LoadOrCreateInstallationId(root);
         ProcessInstance = processInstance ?? CurrentProcessInstance;
+        using var process = Process.GetCurrentProcess();
+        ProcessId = processId ?? process.Id;
+        ProcessStartTicks = processStartTicks ?? process.StartTime.ToUniversalTime().Ticks;
     }
 
-    internal RemoteGateRunRecord Record(string runId, string host, string remoteRoot)
+    internal RemoteGateRunRecord Record(string runId, string host, string remoteRoot,
+        string? project = null, string? watchPath = null)
     {
         var record = new RemoteGateRunRecord(runId, host, remoteRoot, _time.GetUtcNow(),
-            ProcessInstance, InstallationId);
+            ProcessInstance, InstallationId, ProcessId, ProcessStartTicks, project, watchPath);
         Write(record);
         return record;
     }
