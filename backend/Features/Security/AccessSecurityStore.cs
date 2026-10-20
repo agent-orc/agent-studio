@@ -145,7 +145,7 @@ public sealed class AccessSecurityStore
                 && (_clientLoginAttempts.Count >= MaxTrackedClients
                     || _overflowClientAttempts.HasActiveFailures(clientKey, now, LoginWindow))
                 && !_overflowClientAttempts.CanHash(clientKey, clientKey, now, LoginWindow,
-                    _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay))
+                    _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay, ClientLockout))
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
             if (!_usernameLoginAttempts.ContainsKey(normalized)
                 && (_usernameLoginAttempts.Count >= MaxTrackedUsernames
@@ -215,7 +215,7 @@ public sealed class AccessSecurityStore
                             _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null, MaxTrackedUsernames);
                     if (!clientRecorded)
                         _overflowClientAttempts.RecordFailure(clientKey, clientKey, now, LoginWindow,
-                            _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay);
+                            _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay, ClientLockout);
                     if (!usernameRecorded)
                         _overflowUsernameAttempts.RecordFailure(normalized, loginKey!, now, LoginWindow,
                             _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), overflowDelay);
@@ -770,6 +770,7 @@ public sealed class AccessSecurityStore
     }
 
     private TimeSpan LoginWindow => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
+    private TimeSpan ClientLockout => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15));
 
     private bool RegisterLoginFailureLocked(Dictionary<string, LoginAttempt> attempts, string key, DateTime now,
         int maxFailures, TimeSpan? lockout, int capacity)

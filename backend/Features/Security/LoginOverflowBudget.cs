@@ -17,22 +17,28 @@ internal sealed class LoginOverflowBudget
         return bucket.Failures > 0;
     }
 
-    public bool CanHash(string key, string delayKey, DateTime now, TimeSpan window, int maxFailures, TimeSpan delay)
+    public bool CanHash(string key, string delayKey, DateTime now, TimeSpan window, int maxFailures, TimeSpan delay,
+        TimeSpan? lockout = null)
     {
         ref var bucket = ref GetBucket(key);
         ResetExpiredWindow(ref bucket, now, window);
         if (bucket.Failures < Math.Max(1, maxFailures)) return true;
+        if (lockout is not null) return bucket.LockedUntil <= now;
         return PassedDelay(delayKey, now, delay);
     }
 
-    public void RecordFailure(string key, string delayKey, DateTime now, TimeSpan window, int maxFailures, TimeSpan delay)
+    public void RecordFailure(string key, string delayKey, DateTime now, TimeSpan window, int maxFailures, TimeSpan delay,
+        TimeSpan? lockout = null)
     {
         ref var bucket = ref GetBucket(key);
         ResetExpiredWindow(ref bucket, now, window);
         if (bucket.Failures == 0) bucket.WindowStartedAt = now;
         if (bucket.Failures < int.MaxValue) bucket.Failures++;
         if (bucket.Failures >= Math.Max(1, maxFailures))
-            _retryAt[BucketIndex(delayKey)] = now + PositiveDelay(delay);
+        {
+            if (lockout is { } duration) bucket.LockedUntil = now + duration;
+            else _retryAt[BucketIndex(delayKey)] = now + PositiveDelay(delay);
+        }
     }
 
     public bool PassedDelay(string key, DateTime now, TimeSpan delay)
@@ -55,7 +61,7 @@ internal sealed class LoginOverflowBudget
 
     private static void ResetExpiredWindow(ref Bucket bucket, DateTime now, TimeSpan window)
     {
-        if (bucket.Failures > 0 && now - bucket.WindowStartedAt > window)
+        if (bucket.Failures > 0 && now - bucket.WindowStartedAt > window && bucket.LockedUntil <= now)
             bucket = default;
     }
 
@@ -66,5 +72,6 @@ internal sealed class LoginOverflowBudget
     {
         public int Failures;
         public DateTime WindowStartedAt;
+        public DateTime LockedUntil;
     }
 }

@@ -116,7 +116,7 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
         {
             ["Security:LoginThrottle:MaxTrackedClients"] = "1",
             ["Security:LoginThrottle:MaxTrackedUsernames"] = "1",
-            ["Security:LoginThrottle:ClientMaxFailures"] = "2",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "100",
             ["Security:LoginThrottle:UsernameMaxFailures"] = "2",
             ["Security:LoginThrottle:UsernameDelaySeconds"] = "3"
         }, (password, _) =>
@@ -141,6 +141,49 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(3));
         Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
         Assert.Equal(afterBudget + 1, hashes);
+    }
+
+    [Fact]
+    public void Overflow_client_lockout_outlasts_short_delay_and_failure_window()
+    {
+        const string overflowClient = "192.0.2.2";
+        var newClient = Enumerable.Range(3, 200)
+            .Select(i => "198.51.100." + i)
+            .First(client => LoginOverflowBudget.BucketIndex(client)
+                != LoginOverflowBudget.BucketIndex(overflowClient));
+        var hashes = 0;
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2",
+            ["Security:LoginThrottle:ClientLockoutMinutes"] = "3",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "100",
+            ["Security:LoginThrottle:WindowMinutes"] = "1",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "2"
+        }, (password, _) => { hashes++; return password == Password; });
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "192.0.2.1")).Status);
+
+        for (var i = 0; i < 2; i++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", "wrong", overflowClient)).Status);
+        var afterBudget = hashes;
+        _clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, overflowClient)).Status);
+        Assert.Equal(afterBudget, hashes);
+
+        Assert.Equal("owner", store.Login("owner", Password, newClient).User.Username);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, overflowClient)).Status);
+        Assert.Equal(afterBudget + 1, hashes);
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal("owner", store.Login("owner", Password, overflowClient).User.Username);
+        Assert.Equal(afterBudget + 2, hashes);
     }
 
     [Theory]
