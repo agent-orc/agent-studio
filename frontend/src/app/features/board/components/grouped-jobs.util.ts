@@ -33,4 +33,3 @@ export function flattenGrouped(grouped: GroupedJobs): TaskInfo[] {
   }
   return out;
 }
-
