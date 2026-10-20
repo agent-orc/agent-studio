@@ -206,6 +206,17 @@ describe('deploy area model', () => {
       });
     });
 
+    it('uses a newer host report when the same release artifact was redeployed outside release runs', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].history.unshift({
+        at: '2026-10-19T11:59:00Z', status: 'healthy', artifact: ARTIFACT_C,
+        previousArtifact: ARTIFACT_C, evidence: 'host-redeploy',
+      });
+      const card = buildEnvironmentCards(sources)[0];
+      expect(card).toMatchObject({ releaseVersion: RELEASE_3.version, deployedAt: '2026-10-19T11:59:00Z',
+        lastRun: { deploymentId: null, at: '2026-10-19T11:59:00Z' } });
+    });
+
     it('prefers AGT-3201 health over the host report and maps the host "failed" to unhealthy', () => {
       const sources = deploySourcesFixture();
       sources.statuses![0].health = 'unhealthy';

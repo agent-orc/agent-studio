@@ -350,7 +350,8 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       ? status.currentDeployment : null;
     const matchingRun = runs?.filter(item => item.state === 'succeeded' && item.releaseId === release?.id)
       .sort((a, b) => Date.parse(b.finishedAtUtc ?? '') - Date.parse(a.finishedAtUtc ?? ''))[0] ?? null;
-    const deployedAt = current?.finishedAtUtc ?? matchingRun?.finishedAtUtc ?? report?.at ?? null;
+    const deployedAt = [current?.finishedAtUtc, matchingRun?.finishedAtUtc, report?.at]
+      .filter((at): at is string => !!at).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
     const releaseRun = runs?.length ? lastRunOf(runs) : null;
     const hostRun = lastReportOf(base.view);
     const lastRun = hostRun && (!releaseRun || Date.parse(hostRun.at) > Date.parse(releaseRun.at)) ? hostRun : releaseRun;
