@@ -48,6 +48,8 @@ public sealed record BuildTestGateRequest(
     bool RequireExactSubject = true)
 {
     public bool DisableVerdictCache { get; init; }
+    /// <summary>True when the exact delivery was integrated before this gate began.</summary>
+    public bool DeliveryIntegratedAtStart { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
     public string? Project { get; init; }
     public string? WatchPath { get; init; }

@@ -620,12 +620,29 @@ public sealed partial class MergeIntoDevelopRunner
             }
             var returnedGate = preMainResult ?? preDevelopResult;
             CancellationSubject? staleGateSubject = null;
-            bool HasSupersededGateResult()
+            bool HasSupersededGateResult(bool useFetchedTrackingRef = false)
             {
                 if (returnedGate is null || supersededCancellation) return false;
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
-                var published = _git.CheckPublishedDelivery(developerRoot, branch,
-                    delivery.ExpectedResultSha ?? "");
+                var checkPublished = !startedContained
+                    && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive);
+                var published = PublishedDeliveryContainment.Unavailable;
+                if (checkPublished)
+                {
+                    var expectedSha = delivery.ExpectedResultSha ?? "";
+                    if (useFetchedTrackingRef)
+                    {
+                        var publishedTip = _git.GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
+                        if (publishedTip is not null && ReviewSubjectStore.IsValidResultSha(expectedSha))
+                            published = _git.IsDeliveryPublished(repoRoot, expectedSha, publishedTip)
+                                ? PublishedDeliveryContainment.Contained
+                                : PublishedDeliveryContainment.Missing;
+                    }
+                    else
+                    {
+                        published = _git.CheckPublishedDelivery(developerRoot, branch, expectedSha);
+                    }
+                }
                 if (live.Lane is TaskStates.Completed or TaskStates.Archive
                     && (cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         || returnedGate.Verdict == BuildTestGateVerdict.Fail)
@@ -649,7 +666,7 @@ public sealed partial class MergeIntoDevelopRunner
                 var admittedPushSha = approvedPushSha;
                 if (!publicationFence(() =>
                     {
-                        if (HasSupersededGateResult())
+                        if (HasSupersededGateResult(useFetchedTrackingRef: true))
                         {
                             staleGateResult = true;
                             return;

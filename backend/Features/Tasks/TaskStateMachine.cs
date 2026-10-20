@@ -289,7 +289,7 @@ public class TaskStateMachine
                     _scanner.PublishCoreFromFolder(recheck.FolderPath, recheck.WatchPath, recheck.ProjectName, targetState);
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
                     ClearReviewPriorityOnExit(recheck, targetState);
-                    ClearCompletionGateCancellation(recheck);
+                    UpdateCompletionGateCancellation(recheck, targetState);
                 }
                 return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
             }
@@ -368,7 +368,7 @@ public class TaskStateMachine
             _scanner.PublishCoreFromFolder(targetDir, recheck.WatchPath, recheck.ProjectName, targetState);
             EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, targetSlug, recheck.State, targetState);
             ClearReviewPriorityOnExit(recheck, targetState);
-            ClearCompletionGateCancellation(recheck);
+            UpdateCompletionGateCancellation(recheck, targetState);
             // Hand the post-move path back to the caller so chat-log writes
             // and follow-up files cannot land in the now-vanished source
             // folder via a stale FindJob result (see MoveJobOutcome docs).
@@ -381,10 +381,13 @@ public class TaskStateMachine
         }
     }
 
-    // A reopened card runs fresh gates; only the Completed stay cancels them.
-    private void ClearCompletionGateCancellation(TaskInfo card)
+    // Keep the registry and the lane mutation atomic with respect to reopen.
+    private void UpdateCompletionGateCancellation(TaskInfo card, string targetState)
     {
-        if (card.State == TaskStates.Completed) _gateCancellation?.Reopen(card.ProjectName, card.Id);
+        if (targetState == TaskStates.Completed && card.State != TaskStates.Completed)
+            _gateCancellation?.CancelOnCompletion(card.ProjectName, card.Id);
+        if (card.State == TaskStates.Completed && targetState != TaskStates.Completed)
+            _gateCancellation?.Reopen(card.ProjectName, card.Id);
     }
 
     private void ClearReviewPriorityOnExit(TaskInfo card, string targetState)

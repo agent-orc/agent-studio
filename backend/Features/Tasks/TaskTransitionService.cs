@@ -757,8 +757,6 @@ public sealed class TaskTransitionService
 
         if (outcome.Status == MoveJobStatus.Success && fromState != targetState)
         {
-            if (targetState == TaskStates.Completed)
-                _gateCancellation?.CancelOnCompletion(info.ProjectName, info.Id);
             if (TaskModes.IsConcept(info.Mode)
                 && fromState == TaskStates.HumanReview
                 && targetState == TaskStates.Completed)

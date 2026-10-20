@@ -61,7 +61,8 @@ public sealed class RemoteBuildTestGateRunner(
             return Failure(request, BuildTestGateFailureKind.Environment,
                 "Remote verification requires a positive run budget of at most 12 hours.");
         using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        using var registration = cancellationRegistry?.Register(request.Project, request.JobId, gateCancellation);
+        using var registration = cancellationRegistry?.Register(request.Project, request.JobId, gateCancellation,
+            cancelOnIntegration: !request.DeliveryIntegratedAtStart);
         // The caller's token stays the shutdown signal; the registry only
         // cancels a gate whose card was completed or integrated meanwhile.
         var gateToken = gateCancellation.Token;

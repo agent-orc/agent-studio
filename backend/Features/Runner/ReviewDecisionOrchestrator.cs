@@ -181,6 +181,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
     internal Func<Task>? GateFailureDecisionCheckpointAsync { get; set; }
     internal Func<Task>? GateInterventionApplyCheckpointAsync { get; set; }
+    internal Func<TaskInfo, bool>? GateDeliveryIntegratedProbe { get; set; }
 
     private readonly AgentStudio.AdHoc.AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
@@ -4519,6 +4520,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     private bool IsGateDeliveryIntegrated(TaskInfo? live)
     {
+        if (live is not null && GateDeliveryIntegratedProbe is { } probe) return probe(live);
         if (live is null || _integrationStatus is null) return false;
         try
         {
@@ -4689,6 +4691,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             timeoutSeconds + infrastructureTimeoutSeconds);
         var gateChanges = ResolveLatestRunChangedFileChanges(current, entry.Path);
         var changedFiles = gateChanges?.Select(change => change.Path).ToArray();
+        var deliveryIntegratedAtStart = IsGateDeliveryIntegrated(current);
 
         var request = new BuildTestGateRequest(
             repoPath,
@@ -4704,6 +4707,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             WatchPath = entry.Path,
             JobId = current.Id,
             Lane = current.State,
+            DeliveryIntegratedAtStart = deliveryIntegratedAtStart,
             TestExecution = settings?.TestExecution,
             ChangedFileStatuses = gateChanges?.ToDictionary(change => change.Path,
                 change => change.Status, StringComparer.OrdinalIgnoreCase),
@@ -4791,7 +4795,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     subject.AttemptChainId, liveSubject?.AttemptChainId,
                     current.State, liveSubjectTask?.State,
                     liveSubjectTask?.PendingIntent is not null)
-                    || IsGateDeliveryIntegrated(liveSubjectTask)))
+                    || (!request.DeliveryIntegratedAtStart && IsGateDeliveryIntegrated(liveSubjectTask))))
             {
                 var folder = liveSubjectTask?.FolderPath ?? current.FolderPath;
                 WriteBuildTestGateLog(folder, result, changedFiles);

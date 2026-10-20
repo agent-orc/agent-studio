@@ -4,10 +4,11 @@ namespace AgentStudio.Pipeline;
 public sealed class TaskGateCancellationRegistry
 {
     private readonly object _sync = new();
-    private readonly Dictionary<string, HashSet<CancellationTokenSource>> _active = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<CancellationTokenSource, bool>> _active = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _completed = new(StringComparer.OrdinalIgnoreCase);
 
-    public IDisposable Register(string? project, string? jobId, CancellationTokenSource source)
+    public IDisposable Register(string? project, string? jobId, CancellationTokenSource source,
+        bool cancelOnIntegration = true)
     {
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(jobId))
             return new Registration(null);
@@ -20,7 +21,7 @@ public sealed class TaskGateCancellationRegistry
             if (_completed.Contains(key)) source.Cancel();
             if (!_active.TryGetValue(key, out var sources))
                 _active[key] = sources = [];
-            sources.Add(source);
+            sources[source] = cancelOnIntegration;
         }
         return new Registration(() =>
         {
@@ -59,7 +60,8 @@ public sealed class TaskGateCancellationRegistry
             var key = Key(project, jobId);
             if (completed) _completed.Add(key);
             if (!_active.TryGetValue(key, out var sources)) return;
-            foreach (var source in sources) source.Cancel();
+            foreach (var (source, cancelOnIntegration) in sources)
+                if (completed || cancelOnIntegration) source.Cancel();
         }
     }
 

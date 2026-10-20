@@ -101,7 +101,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             NullLogger<TaskTransitionService>.Instance);
         _cancellationScanner!.InvalidateCache();
         var accepted = await _cancellationTransitions!.MoveAsync(slug, TaskStates.Completed, _watchPath,
-            cause: "operator:test", reason: "Accepted the reviewed result.", operatorOverride: true);
+            cause: "operator:test", reason: "Accepted the reviewed result.", operatorOverride: true)
+            .WaitAsync(AsyncTestDeadline);
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         await tick.WaitAsync(AsyncTestDeadline);
 
@@ -142,6 +143,64 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             .ReadAll(folder), item => item.Kind == "gate-cancelled").Details!["reason"]);
     }
 
+    [Fact]
+    public async Task Delivery_integrated_before_gate_start_survives_reconcile_and_gate_success()
+    {
+        const string slug = "integrated-before-gate";
+        var sha = new string('a', 40);
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        WriteRemoteSubject(slug, sha, "already-integrated");
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aspect = new CountingAspect();
+        var registry = new TaskGateCancellationRegistry();
+        var transport = new IntegratedGateTransport(started, release, sha);
+        var orchestrator = BuildOrchestrator(aspect.Cli, 0,
+            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance, registry),
+            new CancellationClock(), gateCancellation: registry);
+        orchestrator.GateDeliveryIntegratedProbe = _ => true;
+
+        var firstTick = orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        await started.Task.WaitAsync(AsyncTestDeadline);
+        // The integration reconciler's ordinary cancellation leaves gates
+        // alone when they started on a delivery already present on develop.
+        registry.Cancel(Project, slug);
+        Assert.False(firstTick.IsCompleted);
+        release.SetResult();
+        await firstTick.WaitAsync(AsyncTestDeadline);
+
+        Assert.True(aspect.Invocations > 0);
+        Assert.Equal(1, transport.Calls);
+    }
+
+    [Fact]
+    public async Task Gate_cancelled_by_publication_is_replaced_by_a_normal_gate_next_tick()
+    {
+        const string slug = "publication-next-gate";
+        var sha = new string('a', 40);
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        WriteRemoteSubject(slug, sha, "published-during-gate");
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var integrated = false;
+        var aspect = new CountingAspect();
+        var registry = new TaskGateCancellationRegistry();
+        var transport = new PublicationRaceTransport(started, sha);
+        var orchestrator = BuildOrchestrator(aspect.Cli, 0,
+            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance, registry),
+            new CancellationClock(), gateCancellation: registry);
+        orchestrator.GateDeliveryIntegratedProbe = _ => integrated;
+
+        var firstTick = orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+        await started.Task.WaitAsync(AsyncTestDeadline);
+        integrated = true;
+        registry.Cancel(Project, slug);
+        await firstTick.WaitAsync(AsyncTestDeadline);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None).WaitAsync(AsyncTestDeadline);
+        Assert.True(aspect.Invocations > 0);
+        Assert.Equal(2, transport.Calls);
+    }
+
     private sealed class WaitingTransport(TaskCompletionSource started) : IRemoteGateTransport
     {
         public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
@@ -153,6 +212,47 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             using var registration = ct.Register(() => cancelled.TrySetCanceled(ct));
             started.SetResult();
             return await cancelled.Task;
+        }
+    }
+
+    private sealed class IntegratedGateTransport(TaskCompletionSource started,
+        TaskCompletionSource release, string sha) : IRemoteGateTransport
+    {
+        public int Calls { get; private set; }
+
+        public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, AgentStudio.Shared.BuildProfile? profile,
+            PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+        {
+            Assert.True(request.DeliveryIntegratedAtStart);
+            Calls++;
+            if (Calls == 1)
+            {
+                started.SetResult();
+                await release.Task.WaitAsync(ct);
+            }
+            return new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 10, "", "passed", true, false)
+            { ExpectedSha = sha, TestedSha = sha, GateId = request.GateId };
+        }
+    }
+
+    private sealed class PublicationRaceTransport(TaskCompletionSource started, string sha) : IRemoteGateTransport
+    {
+        public int Calls { get; private set; }
+
+        public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, AgentStudio.Shared.BuildProfile? profile,
+            PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+        {
+            Calls++;
+            if (Calls == 1)
+            {
+                started.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+            Assert.True(request.DeliveryIntegratedAtStart);
+            return new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 10, "", "passed", true, false)
+            { ExpectedSha = sha, TestedSha = sha, GateId = request.GateId };
         }
     }
 
