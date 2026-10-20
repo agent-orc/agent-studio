@@ -61,7 +61,9 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         WriteCard(watchPath, "AGT-3185", missing);
         WriteCard(watchPath, "AGT-3187", delivery);
         var legacyFolder = Path.Combine(watchPath, "5-human-review", "AGT-3187");
-        ReviewSubjectStore.Write(legacyFolder, ReviewSubjectStore.Read(legacyFolder)! with { RunAttemptId = "" });
+        File.WriteAllText(ReviewSubjectStore.PathFor(legacyFolder), JsonSerializer.Serialize(
+            ReviewSubjectStore.Read(legacyFolder)! with { RunAttemptId = "" },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
