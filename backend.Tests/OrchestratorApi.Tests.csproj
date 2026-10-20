@@ -33,6 +33,7 @@
     <None Include="Fixtures\gate-failure-triage\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\token-aggregation\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\summary-assessment\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\otlp\*.pb;Fixtures\otlp\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
