@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-17
+Version: 2026-10-20
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -21,6 +21,13 @@ provider probe are required before completion. Terminal results are audited
 with actor, host, provider and outcome, without the code. Timeout and cancel
 clear the instructions. Each runner keeps its own native credential store;
 neither Task Server nor Studio distributes ChatGPT login files.
+
+Task Server records credential-bound model acceptance advertisements. When a
+provider refuses a primary model without salvage, it holds that model for the
+host until a later successful probe. A queued continuation that explicitly
+selects another accepted model remains claimable; the first queued selection
+is the route delivered to the runner. A fallback without host acceptance
+remains held.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

@@ -48,6 +48,9 @@ public static class CapabilityProtocol
 
     public static string ProviderAuthentication(string provider)
         => $"provider-auth:{provider.Trim().ToLowerInvariant()}";
+
+    public static string ModelAcceptance(string provider, string model)
+        => $"model-acceptance:{provider.Trim().ToLowerInvariant()}:{model.Trim().ToLowerInvariant()}";
 }
 
 public static class CapabilityHealthStates

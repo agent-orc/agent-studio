@@ -147,16 +147,56 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
+        string runnerId,
+        DateTime now,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // A held primary route may be superseded by the first queued, explicit
+        // continuation. Admit that route only when this host has accepted it;
+        // the claim then delivers the same saved selection to the runner.
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
                    t.archive_state, t.archived_at
               FROM tasks t
+              LEFT JOIN task_studio_fields primary_route ON primary_route.task_id = t.id
              WHERE t.state = '2-ready'
                AND NOT EXISTS (
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
+               AND NOT EXISTS (
+                   SELECT 1 FROM events held
+                    WHERE held.task_id = t.id
+                      AND held.kind = 'execution.model-capability-held'
+                      AND json_extract(held.payload_json, '$.runnerId') = $runner
+                      AND COALESCE(NULLIF(lower(primary_route.cli_type), ''), 'claude') =
+                          lower(json_extract(held.payload_json, '$.provider'))
+                      AND lower(primary_route.model) = lower(json_extract(held.payload_json, '$.model'))
+                      AND NOT EXISTS (
+                          SELECT 1 FROM runner_capabilities recovery
+                           WHERE recovery.runner_id = $runner
+                             AND recovery.capability_key =
+                                 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
+                                 || ':' || json_extract(held.payload_json, '$.model')
+                             AND recovery.advertised_status = 'ready'
+                             AND recovery.credential_observed_at > held.occurred_at
+                             AND recovery.fresh_until > $now)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM continuation_intents intent
+                            JOIN runner_capabilities accepted
+                              ON accepted.runner_id = $runner
+                             AND accepted.capability_key =
+                                 'model-acceptance:' || lower(intent.cli_type) || ':' || lower(intent.model)
+                           WHERE intent.command_id = (
+                               SELECT first_intent.command_id FROM continuation_intents first_intent
+                                WHERE first_intent.task_id = t.id AND first_intent.status = 'queued'
+                                ORDER BY first_intent.round LIMIT 1)
+                             AND intent.explicit_selection = 1
+                             AND intent.model IS NOT NULL
+                             AND accepted.capability_key <>
+                                 'model-acceptance:' || lower(json_extract(held.payload_json, '$.provider'))
+                                 || ':' || lower(json_extract(held.payload_json, '$.model'))
+                             AND accepted.advertised_status = 'ready'
+                             AND accepted.fresh_until > $now))
                AND (
                    NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
@@ -170,7 +210,7 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$host", hostId));
+            """, transaction, ("$host", hostId), ("$runner", runnerId), ("$now", Iso(now)));
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             yield return ReadTask(reader);

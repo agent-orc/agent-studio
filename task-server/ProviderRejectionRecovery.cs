@@ -16,7 +16,8 @@ public sealed partial class TaskServerStore
         ProviderRequestRejection Rejection,
         string Model,
         int RefusalCount,
-        string EscalationReason)
+        string EscalationReason,
+        bool HostModelUnavailable = false)
     {
         public bool Continue => Fallback is not null;
     }
@@ -91,6 +92,11 @@ public sealed partial class TaskServerStore
             && string.Equals(item.From, model, StringComparison.OrdinalIgnoreCase));
         var count = await CountProviderRefusalsAsync(connection, transaction, taskId, model, ct);
         var safeReason = $"Provider refused the request ({DescribeProviderRejection(rejection)}): {rejection.Message}";
+        if (ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model)
+            && string.IsNullOrWhiteSpace(request.SalvageCommitSha))
+            return new(null, rejection, model, count,
+                safeReason + " Host model capability is unavailable; the card waits in Ready.",
+                HostModelUnavailable: true);
         if (string.IsNullOrWhiteSpace(request.SalvageBranch)
             || string.IsNullOrWhiteSpace(request.SalvageCommitSha)
             || decision.RecoveryAction != ExecutionRecoveryAction.StartFreshAttemptFromSalvage)
