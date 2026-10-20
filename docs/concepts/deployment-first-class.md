@@ -70,6 +70,28 @@ extracting them. Registry provenance is not exposed through a public browser
 route. The installation must retain `release-registry/provenance.key` together
 with the registry in backups; losing the key makes stored provenance unverifiable.
 
+The host contract is `GET /api/deploy/jobs/{project}/{jobId}/artifact` with
+`Authorization: Bearer <runner.deploy token>` and
+`X-Deploy-Lease: <leaseToken from the claimed job>`. In networked profiles,
+the credential's runner identity must equal the job's `hostId`. The lease must
+still be current and the job claimed. The response is a JSON provenance record
+with `project`, `commit`, `artifact`, `digest`, `gateRunId`, `template`,
+`builderIdentity`, `location`, `sourceDigest`, and its server signature. The
+server selects a release containing that artifact and matching the job's
+environment template, then verifies the record before replying. The host
+compares the record to the claimed job before it transfers or deploys anything.
+
+For `static`, the host repeats the same leased request with `?content=1` to
+download `application/octet-stream` from the built-in blob store. Both server
+and host hash the bytes against the artifact digest. For `container`, the
+record's `location` is `external`; the host pulls the immutable image reference
+by digest from the external registry. A bad or expired lease returns `403`; a
+job with no matching release or unverified provenance returns `409`. The
+content request returns `409` when no built-in blob is available. The host
+reports a failed deploy when any of these checks fails. The gate's required
+files and `runner.release` push request are specified in the
+[promotion handoff](../operations/develop-main-promotion.md#release-evidence-and-registry-handoff).
+
 ### Releases, standard lifecycle and deploy runs (BD-1)
 
 Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
