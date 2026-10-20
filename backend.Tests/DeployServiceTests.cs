@@ -825,6 +825,67 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
     }
 
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("reject")]
+    public async Task PromotionRoute_DecidesOnlyThePendingRegistryDigest(string action)
+    {
+        Build();
+        var artifact = Artifact('a');
+        var commit = Head();
+        WriteReleaseEvidence(artifact, commit);
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
+            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Path", _watch);
+            builder.UseSetting("WatchPaths:0:RootPath", _repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
+            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            username = "local.owner", password = $"test-{Guid.NewGuid():N}!", displayName = "Local Owner",
+        });
+        bootstrap.EnsureSuccessStatusCode();
+        var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", auth!.CsrfToken);
+
+        var hosts = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+        var deploy = factory.Services.GetRequiredService<DeployService>();
+        Assert.True(hosts.RegisterGateArtifact("demo", artifact, commit));
+        using var release = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
+            new ReleaseArtifactRequest(artifact, commit));
+        Assert.Equal(HttpStatusCode.Accepted, release.StatusCode);
+        var stage = hosts.Claim("stage-host")!;
+        Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
+
+        var route = $"/api/projects/demo/environments/promotions/{action}";
+        using var wrong = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(Artifact('b')));
+        Assert.Equal(HttpStatusCode.Conflict, wrong.StatusCode);
+        Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
+
+        using var decision = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(artifact));
+        Assert.Equal(HttpStatusCode.OK, decision.StatusCode);
+        Assert.Equal(action == "approve" ? "production-queued" : "rejected",
+            Assert.Single(hosts.Read("demo")!.Promotions).Status);
+        var production = hosts.Claim("prod-host");
+        if (action == "approve") Assert.Equal(artifact, production!.Artifact);
+        else Assert.Null(production);
+    }
+
     private void DeployThroughProduction(DeployService deploy, ProjectEnvironmentService environments,
         Release release, DeployActor approver)
     {
