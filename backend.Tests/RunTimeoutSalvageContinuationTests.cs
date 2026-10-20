@@ -71,7 +71,9 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_workspaceRoot, recursive: true); } catch { /* best-effort */ }
+        try { Directory.Delete(_workspaceRoot, recursive: true); }
+        catch (IOException exception) { System.Diagnostics.Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
+        catch (UnauthorizedAccessException exception) { System.Diagnostics.Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
     }
 
     // ---- pure policy matrix -------------------------------------------------
@@ -159,6 +161,10 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
 
         var queued = _scanner.FindJob(JobId, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
+        var baseForClaim = ContinuationBaseStore.ConsumeForClaim(queued.FolderPath);
+        Assert.Equal($"refs/heads/{SalvageBranch}", baseForClaim?.Ref);
+        Assert.Equal(SalvageSha, baseForClaim?.CommitSha);
+        Assert.Equal(SalvageSha, ContinuationBaseStore.ConsumeForClaim(queued.FolderPath)?.CommitSha);
 
         // The next claim carries the finishing instruction: a saved intent plus
         // the prompt.md addendum the remote runner fetches verbatim.
@@ -248,6 +254,7 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Equal(TaskStates.Progress, unchanged.State);
         Assert.Equal(originalPrompt, File.ReadAllText(promptPath));
         Assert.Null(unchanged.PendingIntent);
+        Assert.Null(ContinuationBaseStore.Read(unchanged.FolderPath));
         Assert.Null(unchanged.ContextMode);
         using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(unchanged.FolderPath, "task.json")));
         Assert.False(taskJson.RootElement.TryGetProperty("contextMode", out _));

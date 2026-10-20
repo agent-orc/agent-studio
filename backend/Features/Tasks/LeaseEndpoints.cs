@@ -1634,6 +1634,7 @@ public static class LeaseEndpoints
                 hasArtifactManifestDigest: IsSha256(req.ArtifactManifestDigest));
             var responseOutcome = reportedOutcome;
             string? unverifiedDelivery = null;
+            var fencedBaseRefusal = false;
             if (envelopeDecision.ShouldPersist)
             {
                 resultEnvelope = new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
@@ -1929,23 +1930,21 @@ public static class LeaseEndpoints
                         attributionWarning);
                 }
 
-                // AGT-2220: a delivery the repository actively contradicts must
-                // not ride on into 4-auto-review as if it were clean. That is
-                // exactly what happened to AGT-2220 itself on 28.07.: origin held
-                // 744deb89 while the completion claimed f538f896, the mismatch
-                // was logged as a warning only, commits[] stayed empty - and the
-                // card was stamped Done anyway. A *disproved* delivery now routes
-                // to the honest escalated state. "Could not check" (no origin, no
-                // branch, no SHA) is deliberately NOT treated as disproof - it is
-                // recorded, never upgraded to proof.
+                // A disproved delivery never becomes a review subject. A verified
+                // result whose claimed base is outside its ancestry is recoverable
+                // from both commits, so it returns to Ready. Other disproofs keep
+                // the AGT-2220 escalation boundary.
                 if (deliveryRange is not null && deliveryRange.IsDisproved)
                 {
                     unverifiedDelivery =
                         $"Delivery not verified against the target repository: {attributionWarning} "
                         + "No completion stamp was written (AGT-2220).";
-                    targetState = TaskStates.Escalated;
-                    mutations.AddJobTag(
-                        task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
+                    fencedBaseRefusal = MonolithTransitionAdapter.FencedDeliveryRefusal(
+                        deliveryRange.BaseNotAncestor) == TransitionAction.ReturnToReady;
+                    targetState = fencedBaseRefusal ? TaskStates.Ready : TaskStates.Escalated;
+                    if (!fencedBaseRefusal)
+                        mutations.AddJobTag(
+                            task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
                 }
             }
 
@@ -2221,6 +2220,23 @@ public static class LeaseEndpoints
                     CredentialRedactor.Redact(req.SalvageRecoveryBranch ?? req.SalvageBranch),
                     CredentialRedactor.Redact(req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha),
                     CredentialRedactor.Redact(req.SalvageRecoveryBranchUrl ?? req.SalvageBranchUrl));
+                artifactCommits.TryCommitArtifactUpload(
+                    null, task.Id, task.FolderPath, ["status.md", "prompt.md"]);
+            }
+            if (fencedBaseRefusal)
+            {
+                var resultRef = deliveryBranch!.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? deliveryBranch
+                    : $"refs/heads/{deliveryBranch}";
+                FencedDeliveryRefusalNote.Append(task.FolderPath, attemptId,
+                    req.BaseSha!, req.ResultSha!, resultRef, unverifiedDelivery!);
+                if (!ContinuationBaseStore.Save(task.FolderPath,
+                        new ContinuationBaseRecord(resultRef, req.ResultSha!,
+                            FencedDeliveryRefusalNote.ContinuationReason, attemptId, DateTime.UtcNow)))
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Fenced delivery continuation could not be persisted",
+                        detail: "Retry the same completion delivery.");
                 artifactCommits.TryCommitArtifactUpload(
                     null, task.Id, task.FolderPath, ["status.md", "prompt.md"]);
             }
@@ -2753,7 +2769,8 @@ public static class LeaseEndpoints
             var pendingCodingOccurrence = priorCodingOccurrence is not null
                 && priorCodingOccurrence.Status is ("pending" or "leased" or "applying")
                 && orchestration.GetOccurrence(priorCodingOccurrence.RunId)?.Shadow == false;
-            if ((codingMode is (OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
+            if (!fencedBaseRefusal
+                && (codingMode is (OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
                     || pendingCodingOccurrence)
                 && !string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
             {
@@ -2842,6 +2859,8 @@ public static class LeaseEndpoints
                     task.Id, targetState, task.WatchPath, ct,
                     cause: operatorStopped
                         ? $"remote-operator-stop:{source}"
+                        : fencedBaseRefusal
+                            ? $"remote-fenced-base-retry:{source}"
                         : deliveryFailure is null
                             ? $"remote-runner-completion:{source}"
                             : $"remote-delivery-envelope-retry:{deliveryFailure.Attempt}/{deliveryFailure.MaximumAttempts}",
@@ -2850,12 +2869,14 @@ public static class LeaseEndpoints
                     // A verified completion is the delivery hand-off; an unverified
                     // one is requeued for another delivery round by the runner, and
                     // an operator stop returns the card without claiming either.
-                    transitionCause: deliveryFailure is null && !operatorStopped
+                    transitionCause: deliveryFailure is null && !fencedBaseRefusal && !operatorStopped
                         && outcome != "mechanicalfallback"
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
                     transitionDetail: operatorStopped
                         ? "operator-stop"
+                        : fencedBaseRefusal
+                            ? "fenced-base-refusal"
                         : deliveryFailure is null
                             ? outcome
                             : $"delivery-envelope-retry {deliveryFailure.Attempt}/{deliveryFailure.MaximumAttempts}");
@@ -2964,7 +2985,7 @@ public static class LeaseEndpoints
             }
             return Results.Ok(new RemoteRunCompletionResponse(
                 req.TaskKey, responseOutcome, targetState,
-                Message: deliveryFailure is null ? null : unverifiedDelivery,
+                Message: deliveryFailure is null && !fencedBaseRefusal ? null : unverifiedDelivery,
                 RunAttemptId: attemptId,
                 ReviewAttemptId: reviewAttempt?.AttemptId,
                 ReviewSubjectId: reviewAttempt?.Subject.SubjectId));

@@ -18,9 +18,8 @@ namespace AgentStudio.Runner;
 /// </param>
 /// <param name="StartsFromSalvage">
 /// Whether the next round's worktree is prepared on the salvage commit instead
-/// of the integration branch. Timeouts keep their AGT-2861 behaviour and start
-/// on the integration branch, because their agent is alive to fetch the ref
-/// itself; a lost worker's round starts on the rescued work.
+/// of the integration branch. A salvage continuation always carries its work
+/// into the checkout before the next agent starts.
 /// </param>
 public sealed record RunContinuationCause(
     string Reason,
@@ -36,7 +35,8 @@ public sealed record RunContinuationCause(
             RunTimeoutSalvageContinuationPolicy.ContinuationReason,
             "remote-run-timeout-continuation",
             $"hit the run timeout{ReportedOutcome(reportedReason)}",
-            "timeout");
+            "timeout",
+            StartsFromSalvage: true);
 
     /// <summary>AGT-2870: the detached worker died before it recorded a result.</summary>
     public static RunContinuationCause WorkerLost(string? reportedReason, string? crashLine)
@@ -177,16 +177,21 @@ public sealed class RunTimeoutContinuationService
         // A round whose previous agent is gone cannot fetch the salvage itself,
         // so the claim hands the ref to the runner and the next worktree is
         // prepared on the rescued commit.
-        if (cause.StartsFromSalvage)
+        var previousBase = ContinuationBaseStore.Read(task.FolderPath);
+        if (cause.StartsFromSalvage && !ContinuationBaseStore.Save(task.FolderPath,
+                new ContinuationBaseRecord(
+                    salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
+                        ? salvage.Branch
+                        : $"refs/heads/{salvage.Branch}",
+                    salvage.CommitSha,
+                    cause.Reason,
+                    attemptId,
+                    DateTime.UtcNow)))
         {
-            ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
-                salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
-                    ? salvage.Branch
-                    : $"refs/heads/{salvage.Branch}",
-                salvage.CommitSha,
-                cause.Reason,
-                attemptId,
-                DateTime.UtcNow));
+            _mutations.DiscardPendingIntent(task.FolderPath);
+            _mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt);
+            _mutations.RestoreContextModeOnFolder(task.FolderPath, previousContextMode);
+            return Failed("The salvage continuation base could not be persisted.");
         }
 
         var move = await _transitions.MoveAsync(
@@ -202,6 +207,11 @@ public sealed class RunTimeoutContinuationService
         if (move.Status != MoveJobStatus.Success)
         {
             _mutations.DiscardPendingIntent(task.FolderPath);
+            if (cause.StartsFromSalvage)
+            {
+                if (previousBase is null) ContinuationBaseStore.Clear(task.FolderPath);
+                else ContinuationBaseStore.Save(task.FolderPath, previousBase);
+            }
             if (!_mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt))
             {
                 _logger.LogWarning(

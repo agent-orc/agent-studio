@@ -7,6 +7,15 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+An Unknown or interrupted run with a published salvage keeps that ref and SHA
+as the next claim's required continuation base. The runner prepares the new
+worktree there, merges the current integration head when Git can do so without
+conflicts, and records the resulting checkout HEAD as the delivery envelope's
+base. A missing or moved continuation ref fails preparation; it never starts a
+new checkout on the integration branch. If a delivered result still fails the
+base ancestry fence, completion returns the card to Ready with both the earlier
+base and the current result named in its automatic continuation instruction.
+
 ## Host-owned Codex device login
 
 The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time

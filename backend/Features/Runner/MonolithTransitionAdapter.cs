@@ -31,6 +31,9 @@ public static class MonolithTransitionAdapter
         IReadOnlyList<ReviewVerdictDto> verdicts)
         => RemoteDeliveryIntegrationPolicy.Decide(hasSettledResultEnvelope, reviewOutcome, reviewPlan, verdicts);
 
+    public static TransitionAction FencedDeliveryRefusal(bool baseNotAncestor)
+        => FencedDeliveryRefusalPolicy.Decide(baseNotAncestor);
+
     public static ReviewRoundBudgetDecision ReviewRoundBudget(
         ReviewRoundBudgetLedger ledger, string attemptId, IEnumerable<string> blockedAspects,
         int maximumRounds, int consecutiveBlockRounds,

@@ -27,6 +27,7 @@ public sealed class TransitionDecisionBoundaryTests
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
         "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
+        "FencedDeliveryRefusalPolicy",
     ];
 
     [Fact]

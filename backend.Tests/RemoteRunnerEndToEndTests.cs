@@ -1570,6 +1570,68 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task Agt3245_fenced_salvage_base_refusal_requeues_with_both_commits()
+    {
+        var origin = await SeedOriginAsync();
+        var repo = Path.Combine(_workspace, "agt3245-repo");
+        await GitAsync(_workspace, "clone", origin, repo);
+        await GitAsync(repo, "config", "user.email", "test@example.invalid");
+        await GitAsync(repo, "config", "user.name", "Test");
+        await GitAsync(repo, "checkout", "-B", "previous", "origin/main");
+        await File.WriteAllTextAsync(Path.Combine(repo, "salvage.txt"), "work from Unknown attempt");
+        await GitAsync(repo, "add", "--all");
+        await GitAsync(repo, "commit", "-m", "wip(runner): salvage before teardown - outcome Unknown");
+        var salvageSha = (await GitAsync(repo, "rev-parse", "HEAD")).StdOut.Trim();
+        await GitAsync(repo, "push", "origin", "HEAD:refs/heads/agent-studio/salvage/AGT-3245/previous");
+
+        await GitAsync(repo, "checkout", "-B", "main", "origin/main");
+        await File.WriteAllTextAsync(Path.Combine(repo, "develop.txt"), "current develop");
+        await GitAsync(repo, "add", "--all");
+        await GitAsync(repo, "commit", "-m", "chore: advance develop");
+        await GitAsync(repo, "push", "origin", "HEAD:main");
+        await File.WriteAllTextAsync(Path.Combine(repo, "next.txt"), "good work from next attempt");
+        await GitAsync(repo, "add", "--all");
+        await GitAsync(repo, "commit", "-m", "fix: deliver next attempt");
+        var resultSha = (await GitAsync(repo, "rev-parse", "HEAD")).StdOut.Trim();
+        Assert.NotEqual(salvageSha,
+            (await GitAsync(repo, "merge-base", salvageSha, resultSha)).StdOut.Trim());
+
+        SeedTask(TaskStates.Progress, TaskKey, "Fenced salvage continuation", "Finish the previous work.");
+        using var factory = BuildFactory(repositoryPath: repo);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await client.RegisterAsync(ProjectName, "service", CancellationToken.None);
+        var lease = await client.AcquireLeaseAsync(
+            new RAcquire(TaskKey, RunnerId, ProjectName, "hetzner-test", 4242, "codex"), CancellationToken.None);
+        Assert.True(lease.Granted);
+        var immutableRef = Contract.FencedGitRefs.ImmutableResult(
+            lease.Lease!.AttemptId!, lease.Lease.FencingToken, resultSha);
+        await GitAsync(repo, "push", "origin", $"{resultSha}:{immutableRef}");
+
+        var completion = await client.CompleteRunAsync(new RRemoteComplete(
+            TaskKey, lease.Lease.LeaseId, lease.Lease.FencingToken, RunnerId, "Done",
+            Source: ProjectName, ResultSha: resultSha, AttemptChainId: lease.Lease.LeaseId,
+            Repository: origin, AttemptId: lease.Lease.AttemptId,
+            AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "agt3245-fenced-base-refusal",
+            BaseSha: salvageSha, ImmutableResultRef: immutableRef,
+            ArtifactManifestDigest: new string('a', 64),
+            IntegrationBranch: "refs/heads/main"), CancellationToken.None);
+
+        Assert.Equal(TaskStates.Ready, completion!.TargetState);
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        var status = File.ReadAllText(Path.Combine(ready, "status.md"));
+        var prompt = File.ReadAllText(Path.Combine(ready, "prompt.md"));
+        Assert.Contains(salvageSha, status);
+        Assert.Contains(resultSha, status);
+        Assert.Contains(salvageSha, prompt);
+        Assert.Contains(resultSha, prompt);
+        Assert.Equal(immutableRef, ContinuationBaseStore.Read(ready)?.Ref);
+        Assert.Equal(resultSha, ContinuationBaseStore.Read(ready)?.CommitSha);
+        Assert.Null(ReviewSubjectStore.Read(ready));
+    }
+
+    [Fact]
     public async Task Second_consecutive_envelope_failure_escalates_as_unverified_delivery()
     {
         const string resultSha = "589c462f589c462f589c462f589c462f589c462f";

@@ -82,7 +82,7 @@ gate-environment-retry, delivery-chain, cause-breaker, intake-routing and
 acceptance-rail rules live here (`RunLivenessPolicy`, `StaleProgressPolicy`,
 `SteerTimeoutPolicy`, `RunTimeoutSalvageContinuationPolicy`,
 `GateEnvironmentRetryPolicy`, `GateCancellationPolicy`, `DeliveryChainPolicy`, `CauseBreakerClosePolicy`,
-`IntakeRoutingPolicy`, `AcceptanceRailDecisionPolicy`). `AiOperatorDecisionPolicy`
+`IntakeRoutingPolicy`, `AcceptanceRailDecisionPolicy`, `FencedDeliveryRefusalPolicy`). `AiOperatorDecisionPolicy`
 is the AI Operator role of AGT-W73 O1 A: it selects the decider's policy,
 classifies the effect with an autonomy class, and limits it (A0 and A1 act, A2
 becomes a proposal, A3 is asked of a person). The monolith submits frozen facts

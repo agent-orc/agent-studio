@@ -239,6 +239,61 @@ public static class RemoteDeliveryFailureNote
     }
 }
 
+/// <summary>
+/// Recovery instruction for a result whose ref and SHA were verified but whose
+/// claimed base is outside its ancestry. Both histories remain named on the
+/// card, and the next claim starts from the result ref before merging the
+/// earlier base.
+/// </summary>
+public static class FencedDeliveryRefusalNote
+{
+    public const string ContinuationReason = "fenced-delivery-base-refusal";
+
+    public static void Append(
+        string folderPath,
+        string attemptId,
+        string fencedBaseSha,
+        string resultSha,
+        string resultRef,
+        string reason)
+    {
+        var marker = $"<!-- agent-studio:fenced-base-refusal:{attemptId} -->";
+        var statusPath = Path.Combine(folderPath, "status.md");
+        var status = File.Exists(statusPath) ? File.ReadAllText(statusPath) : string.Empty;
+        if (!status.Contains(marker, StringComparison.Ordinal))
+        {
+            var separator = status.Length == 0 ? string.Empty
+                : status.EndsWith(Environment.NewLine, StringComparison.Ordinal)
+                    ? Environment.NewLine : Environment.NewLine + Environment.NewLine;
+            File.AppendAllText(statusPath,
+                separator + marker + Environment.NewLine
+                + "## Fenced delivery refused" + Environment.NewLine + Environment.NewLine
+                + $"- Earlier salvage base: `{fencedBaseSha}`." + Environment.NewLine
+                + $"- Current result: `{resultSha}` on `{resultRef}`." + Environment.NewLine
+                + $"- Reason: {reason.Trim()}" + Environment.NewLine
+                + "- Action: automatically returned to Ready for a continuation that joins both histories."
+                + Environment.NewLine, Encoding.UTF8);
+        }
+
+        var promptPath = Path.Combine(folderPath, "prompt.md");
+        var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+        if (!prompt.Contains(marker, StringComparison.Ordinal))
+        {
+            var nl = PromptText.NewLine;
+            var separator = prompt.Length == 0 ? string.Empty
+                : prompt.EndsWith(nl, StringComparison.Ordinal) ? nl : nl + nl;
+            File.AppendAllText(promptPath,
+                separator + marker + nl + "## Automatic fenced delivery continuation" + nl + nl
+                + $"The previous attempt produced result `{resultSha}` on `{resultRef}`, "
+                + $"but its fence named earlier salvage `{fencedBaseSha}` outside that result's history. "
+                + "The runner starts this attempt from the current result. Merge the earlier salvage "
+                + "commit into this work without dropping either attempt's changes, resolve conflicts, "
+                + "then build, test, and deliver. The result and salvage commits are both retained."
+                + nl, Encoding.UTF8);
+        }
+    }
+}
+
 public sealed record RemoteDeliveryFailureState(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("consecutiveAttempts")] int ConsecutiveAttempts,

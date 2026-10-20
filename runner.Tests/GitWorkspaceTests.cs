@@ -846,12 +846,11 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    public async Task A_salvage_base_that_moved_fails_preparation_without_dropping_work()
     {
         await SeedOriginAsync();
         var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
         await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
-        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
 
         var continuation = CreateWorkspace(
             sourceRunAttemptId: "run_next",
@@ -859,9 +858,41 @@ public sealed class GitWorkspaceTests : IDisposable
             continuationBaseRef: resultRef,
             continuationBaseSha: reviewedSha,
             continuationBaseReason: "lost-worker-with-salvage");
-        await continuation.PrepareAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
 
-        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+        Assert.Equal(ContinuationBaseUnavailableException.Moved, failure.ReasonCode);
+        Assert.Equal(reviewedSha, failure.ExpectedSha);
+        Assert.False(Directory.Exists(continuation.RepoPath));
+    }
+
+    [Fact]
+    public async Task Agt3245_unknown_salvage_is_merged_with_current_develop_and_fence_accepts_result()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace(sourceRunAttemptId: "run_previous", fencingToken: 1);
+        await first.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "earlier-work.txt"), "salvaged work");
+        var salvage = await first.TeardownAsync("Unknown", CancellationToken.None);
+        var salvageSha = salvage.CommitSha!;
+        var developSha = await PublishRemoteCommitAsync("main", "develop-work.txt", "current develop", "advance develop");
+
+        var second = CreateWorkspace(
+            sourceRunAttemptId: "run_next", fencingToken: 2,
+            continuationBaseRef: $"refs/heads/{salvage.Branch}",
+            continuationBaseSha: salvageSha,
+            continuationBaseReason: "run-timeout-with-salvage");
+        await second.PrepareAsync(CancellationToken.None);
+        var startSha = second.BaseSha!;
+        Assert.True((await RunGitAsync(second.RepoPath, "merge-base", "--is-ancestor", salvageSha, startSha)).Success);
+        Assert.True((await RunGitAsync(second.RepoPath, "merge-base", "--is-ancestor", developSha, startSha)).Success);
+        Assert.Equal("salvaged work", await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "earlier-work.txt")));
+        Assert.Equal("current develop", await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "develop-work.txt")));
+
+        await File.WriteAllTextAsync(Path.Combine(second.RepoPath, "next-work.txt"), "next attempt");
+        var result = await second.TeardownAsync("Done", CancellationToken.None);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor", salvageSha, result.ResultSha!)).Success);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor", startSha, result.ResultSha!)).Success);
     }
 
     [Fact]
@@ -989,7 +1020,9 @@ public sealed class GitWorkspaceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(_root, recursive: true); }
+        catch (IOException exception) { System.Diagnostics.Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
+        catch (UnauthorizedAccessException exception) { System.Diagnostics.Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
     }
 
     private GitWorkspace CreateWorkspace(

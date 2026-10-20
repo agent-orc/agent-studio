@@ -24,8 +24,8 @@ public sealed class ReviewFixRoundBaseTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_folder, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException exception) { System.Diagnostics.Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
+        catch (UnauthorizedAccessException exception) { System.Diagnostics.Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
     }
 
     [Theory]
@@ -152,15 +152,14 @@ public sealed class ReviewFixRoundBaseTests : IDisposable
     }
 
     [Fact]
-    public void Other_bases_keep_todays_single_use_claim()
+    public void Salvage_base_survives_a_failed_claim_and_clears_after_completion()
     {
         var salvage = new ContinuationBaseRecord(
             "refs/heads/agent-studio/salvage/x", ReviewedSha, LostWorkerContinuationPolicy.ContinuationReason, "run_1", Now);
         Assert.True(ContinuationBaseStore.Save(_folder, salvage));
-        ContinuationBaseStore.ClearAfterCompletion(_folder);
-        Assert.NotNull(ContinuationBaseStore.Read(_folder));
-
         Assert.Equal(salvage.Ref, ContinuationBaseStore.ConsumeForClaim(_folder)?.Ref);
+        Assert.Equal(salvage.Ref, ContinuationBaseStore.ConsumeForClaim(_folder)?.Ref);
+        ContinuationBaseStore.ClearAfterCompletion(_folder);
         Assert.Null(ContinuationBaseStore.Read(_folder));
     }
 

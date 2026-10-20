@@ -3020,6 +3020,13 @@
           <td>The applier maps <code>DeferToBatch</code> to no target lane and returned in that branch before its only batch admission, which was unreachable. A completed occurrence is final, so nothing drove the cards on.</td>
           <td>The observed terminal was Auto Review without an owner. The applier now admits the settled review at its report time in that branch and runs the per-task emergency gate when the queue refuses it. As in the monolith, only a card in <span class="lane">4-auto-review</span> is admitted: a card the report found in another lane, a card that left Auto Review since, or a review that is no longer current completes with an operator-feed reason, and any other failed admission stays <code>applying</code> for retry. The recovery loop re-arms a completed newest decision whose card still waits in Auto Review without a pending record or ownership that records a batch, a passed per-task gate or a containment, at most four per pass; a bare marker or an interrupted per-task gate marker is admitted again, so the gate resumes within its start budget. It also clears wait markers that name a finished occurrence.</td>
         </tr>
+        <tr id="case-salvage-fence-base-diverged">
+          <td>2026-10-20</td>
+          <td><code>AGT-3245 / AGT-3246 / AGT-3227</code><br><span class="small">salvage-fence-base-diverged</span></td>
+          <td>Unknown attempts were salvaged, but the next attempt's worktree started from develop while its delivery fence named the previous salvage commit. The new result did not contain that commit.</td>
+          <td>The timeout continuation told the agent to fetch salvage but did not set its required worktree base. An ancestry refusal then used the generic unverified-delivery escalation.</td>
+          <td>The observed terminal was Escalated with no completion stamp. A salvage continuation now starts on the named commit and merges a clean current integration head. An unavailable ref stops preparation. A remaining base ancestry refusal returns to Ready with both commits named and a result-based continuation.</td>
+        </tr>
       </tbody>
     </table>
 

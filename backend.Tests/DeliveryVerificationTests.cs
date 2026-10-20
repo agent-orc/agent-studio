@@ -202,6 +202,26 @@ public sealed class DeliveryVerificationTests
     }
 
     [Fact]
+    public void InspectRemoteDeliveryCommitRange_Distinguishes_an_unrelated_salvage_base_from_a_valid_start()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            var salvageSha = DivergentSha(repo, fixture);
+            var refused = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/main", salvageSha);
+            Assert.True(refused.IsDisproved);
+            Assert.True(refused.BaseNotAncestor);
+            Assert.Contains(salvageSha[..8], refused.Warning!);
+
+            var accepted = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/main", fixture.First);
+            Assert.True(accepted.Success, accepted.Warning);
+            Assert.False(accepted.BaseNotAncestor);
+            Assert.Equal(fixture.First, accepted.MergeBaseSha);
+        });
+    }
+
+    [Fact]
     public void InspectRemoteDeliveryCommitRange_MissingRepository_IsNotDisproved()
     {
         var git = NewGitService(Path.GetTempPath());
@@ -464,7 +484,9 @@ public sealed class DeliveryVerificationTests
 
     private static void TryDelete(string path)
     {
-        try { Directory.Delete(path, recursive: true); } catch { }
+        try { Directory.Delete(path, recursive: true); }
+        catch (IOException exception) { Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
+        catch (UnauthorizedAccessException exception) { Debug.WriteLine($"Fixture cleanup failed: {exception}"); }
     }
 
     private static string RunGit(string cwd, string arguments)
@@ -477,6 +499,7 @@ public sealed class DeliveryVerificationTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         })!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();

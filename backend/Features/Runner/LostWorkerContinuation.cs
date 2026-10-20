@@ -77,10 +77,8 @@ public static class LostWorkerContinuationPolicy
 
 /// <summary>
 /// The commit a continuation round starts its worktree from, saved on the card
-/// so the next claim can hand it to the runner. Single use: the claim that reads
-/// it clears it, because a later round of the same card must not silently start
-/// on a stale generation's salvage. A review fix-round base lives until its run
-/// completes (<see cref="ContinuationBaseStore.ConsumeForClaim"/>).
+/// so the next claim can hand it to the runner. It remains until completion so
+/// a failed preparation cannot silently retry from the integration branch.
 /// </summary>
 /// <param name="Ref">Full <c>refs/heads/...</c> name of the salvage ref.</param>
 public sealed record ContinuationBaseRecord(
@@ -150,27 +148,19 @@ public static class ContinuationBaseStore
     }
 
     /// <summary>
-    /// The claim path's read. Every base is single use and cleared by the claim
-    /// that reads it, except a review fix round's (AGT-3056): a claim that fails
-    /// before the agent starts must not leave the retry to begin silently on the
-    /// integration branch, so that base stays until a run of the card completes
-    /// (<see cref="ClearAfterCompletion"/>) or a later round replaces it.
+    /// The claim path's read. Keep the base until completion: a claim that fails
+    /// before the agent starts must not leave the retry on the integration branch.
     /// </summary>
     public static ContinuationBaseRecord? ConsumeForClaim(string folderPath)
-    {
-        var record = Read(folderPath);
-        if (record is not null && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
-        return record;
-    }
+        => Read(folderPath);
 
     /// <summary>
-    /// Retires a review fix-round base once a run that started from it settled.
-    /// A base of any other reason was already consumed by its claim, or belongs
-    /// to a round this completion has just opened, and is left alone.
+    /// Retires the base of the run that settled. A new continuation base is
+    /// written after this call and is therefore left for the next claim.
     /// </summary>
     public static void ClearAfterCompletion(string folderPath)
     {
-        if (ReviewFixRoundBase.IsFixRound(Read(folderPath)?.Reason)) Clear(folderPath);
+        Clear(folderPath);
     }
 
     public static void Clear(string folderPath)

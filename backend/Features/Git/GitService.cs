@@ -344,7 +344,8 @@ public sealed record RemoteDeliveryCommitRange(
     /// repository contradicts this delivery" (never stamp) from "we could not
     /// look" (record honestly, do not upgrade to proof).
     /// </summary>
-    DeliveryVerificationStatus Verification = DeliveryVerificationStatus.NotVerifiable)
+    DeliveryVerificationStatus Verification = DeliveryVerificationStatus.NotVerifiable,
+    bool BaseNotAncestor = false)
 {
     /// <summary>True when the repository actively contradicts the claimed delivery.</summary>
     public bool IsDisproved =>
@@ -4786,7 +4787,7 @@ public partial class GitService
             if (ancestorCode != 0)
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
-                    DeliveryVerificationStatus.ShaMismatch);
+                    DeliveryVerificationStatus.ShaMismatch) with { BaseNotAncestor = true };
 
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)

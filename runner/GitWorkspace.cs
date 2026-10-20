@@ -25,6 +25,7 @@ public sealed class GitWorkspace
     private readonly string? _continuationBaseRef;
     private readonly string? _continuationBaseSha;
     private readonly bool _continuationBaseRequired;
+    private readonly bool _mergeIntegrationForContinuation;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
     private readonly string? _restoredBaseSha;
@@ -88,7 +89,11 @@ public sealed class GitWorkspace
         // AGT-3056: a review fix round exists to continue the graded delivery.
         // Its base is never swapped for the integration branch, and a half
         // reference keeps its known half for the typed failure.
-        _continuationBaseRequired = ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _continuationBaseRequired = continuationBranch is not null
+            || continuationSha is not null
+            || ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _mergeIntegrationForContinuation = continuationComplete
+            && !ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
         _continuationBaseRef = continuationComplete || _continuationBaseRequired ? continuationBranch : null;
         _continuationBaseSha = continuationComplete ? continuationSha : null;
     }
@@ -304,6 +309,24 @@ public sealed class GitWorkspace
 
             _startedFromSalvage = continuation is not null
                 || string.Equals(branch, _workBranch, StringComparison.Ordinal);
+            if (continuation is not null && _mergeIntegrationForContinuation)
+            {
+                var integrationHead = await FetchRemoteBranchHeadAsync(requestedBase, ct)
+                    ?? throw new InvalidOperationException($"Integration branch 'origin/{requestedBase}' disappeared during continuation preparation.");
+                if (!await IsAncestorAsync(integrationHead, authoritativeBase, ct))
+                {
+                    var merge = await ProjectGitAsync(
+                        ["-c", "user.name=Agent Studio Runner", "-c", "user.email=runner@agent-studio.invalid",
+                            "merge", "--no-edit", integrationHead], RepoPath, ct);
+                    if (merge.Success)
+                        _log($"worktree-continuation-merged salvage={continuation.CommitSha} integration={integrationHead} head={(await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim()}");
+                    else
+                    {
+                        await Git(["merge", "--abort"], RepoPath, ct);
+                        _log($"worktree-continuation-merge-conflict salvage={continuation.CommitSha} integration={integrationHead} error={OneLine(merge.StdErr)}; starting on the salvage commit for agent resolution");
+                    }
+                }
+            }
             _startedHead = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
             WriteWorktreeLease(_startedHead);
             _log($"task worktree ready on '{_workBranch}' at {ShortSha(_startedHead)}");
@@ -317,12 +340,8 @@ public sealed class GitWorkspace
 
     /// <summary>
     /// The continuation base this claim was given, resolved against origin, or
-    /// null when the claim named none. A ref that disappeared or moved is
-    /// reported and skipped rather than failing the round: the card's prompt
-    /// still names the salvage, and a round on the integration branch is a
-    /// worse outcome than no round at all only if it is silent. A review fix
-    /// round's base is required instead: any of those cases throws
-    /// <see cref="ContinuationBaseUnavailableException"/> (AGT-3056).
+    /// null when the claim named none. Any named continuation base is required:
+    /// a missing or moved ref fails preparation rather than losing prior work.
     /// </summary>
     private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
     {
@@ -339,31 +358,15 @@ public sealed class GitWorkspace
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (_continuationBaseRequired)
-                throw Unavailable(ContinuationBaseUnavailableException.Unreadable, observedSha: null, ex);
-            _log(
-                $"worktree-continuation-base-unreadable ref=refs/heads/{_continuationBaseRef} " +
-                $"error={OneLine(ex.Message)}; starting from the integration branch");
-            return null;
+            throw Unavailable(ContinuationBaseUnavailableException.Unreadable, observedSha: null, ex);
         }
         if (head is null)
         {
-            if (_continuationBaseRequired)
-                throw Unavailable(ContinuationBaseUnavailableException.Missing, observedSha: null);
-            _log(
-                $"worktree-continuation-base-missing ref=refs/heads/{_continuationBaseRef} " +
-                $"expectedSha={_continuationBaseSha}; starting from the integration branch");
-            return null;
+            throw Unavailable(ContinuationBaseUnavailableException.Missing, observedSha: null);
         }
         if (!string.Equals(head, _continuationBaseSha, StringComparison.OrdinalIgnoreCase))
         {
-            if (_continuationBaseRequired)
-                throw Unavailable(ContinuationBaseUnavailableException.Moved, head);
-            _log(
-                $"worktree-continuation-base-moved ref=refs/heads/{_continuationBaseRef} " +
-                $"expectedSha={_continuationBaseSha} observedSha={head}; " +
-                "starting from the integration branch");
-            return null;
+            throw Unavailable(ContinuationBaseUnavailableException.Moved, head);
         }
         _log(
             $"worktree-continuation-base ref=refs/heads/{_continuationBaseRef} " +
@@ -1430,7 +1433,7 @@ public sealed record ProjectDeliveryPreflightResult(
 public sealed record SalvageContinuationBase(string Branch, string CommitSha);
 
 /// <summary>
-/// A review fix round's base could not be used (AGT-3056). The round fails its
+/// A continuation base could not be used. The round fails its
 /// preparation with this typed reason instead of silently starting on the
 /// integration branch, which would discard the graded delivery the prompt asks
 /// the agent to correct.
@@ -1445,7 +1448,7 @@ public sealed class ContinuationBaseUnavailableException : InvalidOperationExcep
     public ContinuationBaseUnavailableException(
         string reasonCode, string? reference, string? expectedSha, string? observedSha, Exception? inner = null)
         : base(
-            $"{reasonCode}: the review fix round must start from {reference ?? "an unnamed ref"} at " +
+            $"{reasonCode}: the continuation must start from {reference ?? "an unnamed ref"} at " +
             $"{expectedSha ?? "an unnamed commit"}" +
             (observedSha is null ? string.Empty : $" (origin now has {observedSha})") +
             "; it was not restarted from the integration branch",
