@@ -263,6 +263,103 @@ public sealed partial class BatchGatePilotServiceTests
             EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
     }
 
+    [Fact]
+    public async Task Contained_engine_member_keeps_its_first_occurrence_when_the_published_tip_advances()
+    {
+        using var factory = BuildFactory(new Dictionary<string, string?>
+        {
+            ["Orchestration:ShadowMatchThreshold"] = "1",
+        });
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = ShadowGateResult(factory);
+        var matched = await RunEmergencyFallbackAsync(factory, "CODE-GR-CONTAIN-MATCH", red: true);
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        await DecideGateResultAsEngineAsync(factory,
+            Assert.Single(GateResultOccurrences(orchestration, matched.Key)).Run.RunId);
+        rollout.Switch("GateResult", "engine", "operator", "matched canary");
+
+        var member = SeedMember(factory, "DOC-GR-CONTAIN-ENGINE", "docs/gr-contain-engine.md");
+        var firstTip = PublishPatchEquivalent(member.ResultSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var first = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.False(first.Shadow);
+        Assert.Equal($"batch-fallback:{member.ReviewAttemptId}:{firstTip}", first.IdempotencyKey);
+        Assert.Equal(first.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+
+        AdvancePublishedTip(firstTip);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var retry = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal((first.Run.RunId, first.IdempotencyKey, first.Run.PayloadJson),
+            (retry.Run.RunId, retry.IdempotencyKey, retry.Run.PayloadJson));
+        Assert.Equal(firstTip, Ownership(member.Key)?.ContainedInSha);
+        Assert.Equal(first.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+        Assert.Contains(orchestration.WaitingOccurrences(), item => item.Run.RunId == first.Run.RunId);
+    }
+
+    [Fact]
+    public async Task Contained_shadow_release_compares_once_after_tip_advances_during_a_failed_move()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = ShadowGateResult(factory);
+        var member = SeedMember(factory, "DOC-GR-CONTAIN-SHADOW", "docs/gr-contain-shadow.md");
+        var firstTip = PublishPatchEquivalent(member.ResultSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path prevents the release.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var first = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal($"batch-fallback:{member.ReviewAttemptId}:{firstTip}", first.IdempotencyKey);
+        Assert.Null(first.MonolithReceipt);
+        await DecideGateResultAsEngineAsync(factory, first.Run.RunId);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        AdvancePublishedTip(firstTip);
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var retry = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal((first.Run.RunId, first.IdempotencyKey, first.Run.PayloadJson),
+            (retry.Run.RunId, retry.IdempotencyKey, retry.Run.PayloadJson));
+        Assert.Equal(firstTip, Ownership(member.Key)?.ContainedInSha);
+        Assert.Null(retry.MonolithReceipt);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        File.Delete(blocker);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var compared = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal(first.Run.RunId, compared.Run.RunId);
+        Assert.Equal(nameof(TransitionAction.Continue), compared.MonolithReceipt?.Action);
+        Assert.Equal(nameof(TransitionAction.Continue), compared.EngineReceipt?.Action);
+        Assert.Equal((1, 0), (rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak,
+            rollout.GetProfiles().Single(item => item.Profile == "GateResult").MismatchCount));
+    }
+
+    private string AdvancePublishedTip(string firstTip)
+    {
+        Git(_repo, "checkout", "-q", "--detach", firstTip);
+        File.WriteAllText(Path.Combine(_repo, "newer-publication.txt"), "newer published work\n");
+        Git(_repo, "add", "newer-publication.txt");
+        Git(_repo, "commit", "-qm", "newer publication");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var tip = RemoteTip();
+        Assert.NotEqual(firstTip, tip);
+        return tip;
+    }
+
     private static OrchestrationRolloutStore ShadowGateResult(WebApplicationFactory<Program> factory)
     {
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();

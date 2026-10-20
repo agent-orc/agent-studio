@@ -1955,7 +1955,12 @@ public sealed partial class BatchGatePilotService
         var evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath),
             $"batch-fallback-{pending.ReviewAttemptId}.json");
         var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
-        if (containedInSha is null && ownership?.FallbackIntegrated == true)
+        // The first containment is this gate outcome's durable fact. A later
+        // publication fetch may see a newer tip, but changing the SHA here
+        // would change the occurrence key and strand an engine wait or count
+        // another shadow observation for the same release.
+        if (ownership?.ReviewAttemptId == pending.ReviewAttemptId
+            && ownership.ContainedInSha is not null)
             containedInSha = ownership.ContainedInSha;
         // An engine-owned decision on this generation's gate outcome, a
         // release or a red gate, holds the card until the engine applies it.
