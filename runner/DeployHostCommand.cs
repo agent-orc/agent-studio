@@ -75,8 +75,8 @@ public static class DeployHostCommand
                             if (step.HealthUrl is not null && !await CheckStepHealth(step.HealthUrl,
                                     step.HealthTimeoutSeconds, healthTransport, clock, claim.Token))
                             {
-                                stepResults.Add(new(name, false));
                                 await AppendLog(client, job, name, "Step health check failed.", claim.Token);
+                                stepResults.Add(new(name, false));
                                 break;
                             }
                             stepResults.Add(new(name, true));
