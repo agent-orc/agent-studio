@@ -135,6 +135,27 @@ public static class ContinuationBaseStore
         }
     }
 
+    /// <summary>Only remove the base that the caller read, preserving a later writer's choice.</summary>
+    public static bool TryClearWhen(string folderPath, ContinuationBaseRecord expected)
+    {
+        lock (Sync)
+        {
+            var path = Path.Combine(folderPath, FileName);
+            if (!File.Exists(path) || Read(folderPath) != expected) return false;
+            try
+            {
+                File.Delete(path);
+                return !File.Exists(path);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                SilentCatch.Note(exception, $"continuation base could not be conditionally cleared in {folderPath}");
+                return false;
+            }
+        }
+    }
+
     public static ContinuationBaseRecord? Read(string folderPath)
     {
         lock (Sync)
