@@ -5,7 +5,7 @@ namespace AgentStudio.Security;
 
 /// <summary>
 /// Small-organization security store. The state file contains password, session,
-/// enrollment, and Runner credential hashes only. Plaintext credentials are
+/// enrollment, API token, and Runner credential hashes only. Plaintext credentials are
 /// returned once by the operation that creates them and are never persisted.
 /// </summary>
 public sealed class AccessSecurityStore
@@ -172,6 +172,87 @@ public sealed class AccessSecurityStore
         lock (_gate) return StateLocked().Users.OrderBy(x => x.Username).ToList();
     }
 
+    public (StudioApiToken Token, string Secret) CreateApiToken(CreateApiTokenRequest request, string creatorId)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 100)
+            throw new SecurityOperationException(400, "invalid-name", "Token name must be 1 to 100 characters.");
+        if (request.Role is not StudioRoles.Operator and not StudioRoles.Viewer)
+            throw new SecurityOperationException(400, "invalid-role", "API tokens must use the operator or viewer role.");
+        var now = Now;
+        if (request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(365))
+            throw new SecurityOperationException(400, "invalid-expiry", "Token expiry must be within the next 365 days.");
+        var projects = NormalizeProjects(request.Projects);
+        if (projects.Count == 0)
+            throw new SecurityOperationException(400, "project-required", "Choose at least one project or the all-projects grant.");
+        var id = Guid.NewGuid().ToString("N");
+        var secret = $"api.{id}.{PasswordSecretHasher.RandomToken()}";
+        var token = new StudioApiToken
+        {
+            Id = id, Name = request.Name.Trim(), Role = request.Role, Projects = projects,
+            SecretHash = PasswordSecretHasher.HashSecret(secret), CreatedBy = creatorId,
+            CreatedAt = now, ExpiresAt = request.ExpiresAt
+        };
+        lock (_gate) { var state = StateLocked(); state.ApiTokens.Add(token); SaveLocked(state); }
+        return (token, secret);
+    }
+
+    public IReadOnlyList<StudioApiToken> ListApiTokens()
+    {
+        lock (_gate) return StateLocked().ApiTokens.OrderBy(x => x.Name).ToList();
+    }
+
+    public void RevokeApiToken(string id)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var token = state.ApiTokens.FirstOrDefault(x => x.Id == id)
+                ?? throw new SecurityOperationException(404, "token-not-found", "API token not found.");
+            state.ApiTokens[state.ApiTokens.IndexOf(token)] = token with { RevokedAt = token.RevokedAt ?? Now };
+            SaveLocked(state);
+        }
+    }
+
+    public ApiTokenPrincipal? AuthenticateApiToken(string? bearer)
+    {
+        if (!TryTokenParts(bearer, "api", out var id)) return null;
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var token = state.ApiTokens.FirstOrDefault(x => x.Id == id);
+            if (token is null || token.RevokedAt is not null || token.ExpiresAt <= Now
+                || !PasswordSecretHasher.VerifySecret(bearer!, token.SecretHash)) return null;
+            var creator = state.Users.FirstOrDefault(x => x.Id == token.CreatedBy && !x.Disabled);
+            if (creator is null) return null;
+            var now = Now;
+            // A token is a service identity: its own role and grants never inherit
+            // a later expansion of the creator's human account.
+            var user = creator with
+            {
+                Id = $"api:{token.Id}", Role = token.Role, Projects = token.Projects,
+                ProductionApprovalProjects = [], PasswordHash = string.Empty
+            };
+            state.ApiTokens[state.ApiTokens.IndexOf(token)] = token with { LastUsedAt = now };
+            SaveLocked(state);
+            return new ApiTokenPrincipal(token with { LastUsedAt = now }, user);
+        }
+    }
+
+    public void AppendApiTokenAudit(StudioApiToken token, string method, string path, int status)
+    {
+        lock (_gate)
+        {
+            Directory.CreateDirectory(SecurityFolder);
+            var file = Path.Combine(SecurityFolder, "api-token-audit.jsonl");
+            File.AppendAllText(file, JsonSerializer.Serialize(new
+            {
+                timestamp = Now, tokenId = token.Id, tokenName = token.Name, actor = $"api:{token.Id}",
+                token.CreatedBy, method, path, status
+            }) + Environment.NewLine);
+            RestrictPermissions(file);
+        }
+    }
+
     public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request)
     {
         ValidateUsername(request.Username);
@@ -334,6 +415,23 @@ public sealed class AccessSecurityStore
         };
         lock (_gate) { var state = StateLocked(); state.Enrollments.Add(enrollment); SaveLocked(state); }
         return (enrollment, code);
+    }
+
+    public IReadOnlyList<RunnerEnrollment> ListEnrollments()
+    {
+        lock (_gate) return StateLocked().Enrollments.OrderByDescending(x => x.CreatedAt).ToList();
+    }
+
+    public void RevokeEnrollment(string id)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var enrollment = state.Enrollments.FirstOrDefault(x => x.Id == id)
+                ?? throw new SecurityOperationException(404, "enrollment-not-found", "Enrollment not found.");
+            state.Enrollments[state.Enrollments.IndexOf(enrollment)] = enrollment with { ExpiresAt = Now };
+            SaveLocked(state);
+        }
     }
 
     public (RunnerServiceIdentity Runner, RunnerCredential Credential, string Secret) EnrollRunner(string code)

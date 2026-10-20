@@ -136,6 +136,8 @@ x-runner-environment: &runner-environment
   RUNNER_ALLOW_INSECURE_HTTP: "1"
   RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
   RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+  RUNNER_STATE_DIR: /var/lib/agent-host/coding-state
+  GIT_CONFIG_GLOBAL: /var/lib/agent-host/coding-state/first-run-gitconfig
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: credential.helper
   GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
@@ -154,6 +156,7 @@ x-runner: &runner
     RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
   volumes:
     - runner-workspaces:/var/lib/agent-host
+    - runner-home:/home/runner
     - type: volume
       source: secrets
       target: /run/agent-studio-secrets
@@ -257,9 +260,12 @@ services:
       RUNNER_ID: distributed-review-runner
       RUNNER_NAME: distributed-review-runner
       RUNNER_ROLE: review
+      RUNNER_STATE_DIR: /var/lib/agent-host/review-state
+      GIT_CONFIG_GLOBAL: /var/lib/agent-host/review-state/first-run-gitconfig
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
     volumes:
       - runner-workspaces:/var/lib/agent-host
+      - review-home:/home/runner
       - type: volume
         source: secrets
         target: /run/agent-studio-secrets
@@ -400,9 +406,12 @@ services:
       RUNNER_ID: distributed-review-runner
       RUNNER_NAME: distributed-review-runner
       RUNNER_ROLE: review
+      RUNNER_STATE_DIR: /var/lib/agent-host/review-state
+      GIT_CONFIG_GLOBAL: /var/lib/agent-host/review-state/first-run-gitconfig
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
     volumes:
       - runner-workspaces:/var/lib/agent-host
+      - review-home:/home/runner
       - type: volume
         source: secrets
         target: /run/agent-studio-secrets
@@ -423,6 +432,8 @@ volumes:
   workspace:
   projects:
   runner-workspaces:
+  runner-home:
+  review-home:
   secrets:
   runner-claude-auth:
   runner-codex-auth:

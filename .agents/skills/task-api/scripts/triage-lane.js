@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import http from 'node:http';
+import { taskApiRequest } from './access.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.TASKBOARD_PORT ?? 5031);
@@ -19,7 +19,7 @@ const BOGUS_ASPECT = /Aspect runner produced no parseable verdict/i;
 function request(method, reqPath, bodyObj = null) {
   return new Promise(resolve => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
-    const req = http.request({
+    const req = taskApiRequest({
       hostname: HOST,
       port: PORT,
       path: reqPath,

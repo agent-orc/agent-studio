@@ -115,7 +115,8 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
             fi
             chown "$SERVICE_USER:$SERVICE_USER" "$studio_token_file" "$engine_token_file" 2>/dev/null || true
             chown "$SERVICE_USER:$SERVICE_USER" "$owner_bootstrap_code_file" 2>/dev/null || true
-            chmod 0640 "$studio_token_file" "$engine_token_file" "$owner_bootstrap_code_file"
+            chmod 0600 "$studio_token_file" "$engine_token_file"
+            chmod 0640 "$owner_bootstrap_code_file"
             ;;
         *) die "Authentication mode must be 'none' or 'bearer'." ;;
     esac

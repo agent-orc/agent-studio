@@ -23,6 +23,7 @@ describe('standalone Studio identity projection', () => {
 
   it('opens an authenticated standalone session from the Task Server status shape', () => {
     auth.initialize();
+    http.expectOne('/api/auth/status').flush({ profile: 'local', bootstrapRequired: false, authenticated: false });
     http.expectOne('/api/v1/studio/auth/status').flush({
       bootstrapRequired: false, authenticated: true, user,
     });
@@ -40,6 +41,7 @@ describe('standalone Studio identity projection', () => {
 
   it('sends the installer code and holds the owner recovery code until custody is acknowledged', () => {
     auth.initialize();
+    http.expectOne('/api/auth/status').flush({ profile: 'local', bootstrapRequired: false, authenticated: false });
     http.expectOne('/api/v1/studio/auth/status').flush({
       bootstrapRequired: true, bootstrapCodeRequired: true, authenticated: false,
     });
@@ -60,6 +62,7 @@ describe('standalone Studio identity projection', () => {
 
   it('does not require an installer code when standalone bootstrap has no armed code', () => {
     auth.initialize();
+    http.expectOne('/api/auth/status').flush({ profile: 'local', bootstrapRequired: false, authenticated: false });
     http.expectOne('/api/v1/studio/auth/status').flush({
       bootstrapRequired: true, bootstrapCodeRequired: false, authenticated: false,
     });
@@ -68,5 +71,20 @@ describe('standalone Studio identity projection', () => {
     const request = http.expectOne('/api/v1/studio/auth/bootstrap');
     expect(request.request.body).not.toHaveProperty('bootstrapCode');
     request.flush({ status: { bootstrapRequired: false, authenticated: true, user } });
+  });
+
+  it('uses the monolith session for the networked Access page', () => {
+    auth.initialize();
+    http.expectOne('/api/auth/status').flush({
+      profile: 'networked', bootstrapRequired: false, authenticated: false,
+    });
+    http.expectNone('/api/v1/studio/auth/status');
+    auth.login('owner', 'password').subscribe();
+    http.expectOne('/api/auth/login').flush({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner',
+        projects: [], disabled: false, mustChangePassword: false },
+    });
+    expect(auth.status()?.user?.id).toBe('usr_owner');
   });
 });

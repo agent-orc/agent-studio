@@ -639,7 +639,11 @@ public sealed class IdentityBootstrapTests
             "/api/v1/runners/other-host/project-probes/prj-alpha",
             new ProjectRepositoryProbeRequest("https://github.com/org/alpha.git", null, true, true, false))).StatusCode);
 
+        var visibility = await ownerClient.PutAsJsonAsync("/api/v1/projects/repository-visibility",
+            new SetProjectRepositoryVisibilityRequest("https://GitHub.com/org/alpha.git/", "private"));
+        Assert.Equal(HttpStatusCode.OK, visibility.StatusCode);
         var status = await ownerClient.GetFromJsonAsync<ProjectRepositoryStatusDto>("/api/v1/projects/prj-alpha/repository");
+        Assert.Equal("private", status!.Registration.RepositoryVisibility);
         Assert.Single(status!.Probes);
         Assert.True(status.Probes[0].Admitted);
     }

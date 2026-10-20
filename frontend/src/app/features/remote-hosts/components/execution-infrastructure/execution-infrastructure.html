@@ -12,12 +12,20 @@
       @if (infrastructure.gate.host) {
         <p data-testid="remote-gate-host"><strong>Gate · {{ infrastructure.gate.host }}</strong>
           <span>{{ infrastructure.gate.busy }} / {{ infrastructure.gate.total }} slots · {{ infrastructure.gate.reachability }}
-            @if (infrastructure.gate.reachability === 'unverified') { · no recent SSH gate probe }
-            @if (infrastructure.gate.reachability === 'unreachable') { · check SSH access and the remote gate worker }
+            @if (infrastructure.gate.transport === 'pull') { · outbound pull worker }
+            @if (infrastructure.gate.reachability === 'unverified') { · no recent gate contact }
+            @if (infrastructure.gate.reachability === 'unreachable') { · check the gate worker }
           </span>
         </p>
       } @else {
-        <p><strong>Gate</strong><span>RemoteGate:SshHost is not configured. Configure it to run remote build and test gates.</span></p>
+        <p><strong>Gate</strong><span>No healthy pull worker or SSH fallback is available.</span></p>
+      }
+      @for (worker of infrastructure.gate.workers ?? []; track worker.id) {
+        <p data-testid="pull-gate-worker"><strong>{{ worker.name }} · pull gate</strong>
+          <span>{{ worker.busy }} / {{ worker.slots }} slots · last heartbeat {{ worker.lastHeartbeat }}
+            @if (worker.currentRun) { · current run {{ worker.currentRun }} }
+          </span>
+        </p>
       }
     </div>
   } @else if (error()) {

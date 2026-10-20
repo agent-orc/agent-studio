@@ -1,0 +1,202 @@
+using System.Text.Json;
+using System.Diagnostics;
+using AgentStudio.Registry;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+public sealed class LocalFirstRunGitSetupTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "first-run-git-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Registered_url_without_checkout_is_cloned_and_persisted_before_proof()
+    {
+        Directory.CreateDirectory(_root);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+        }).Build();
+        var projects = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var workspaces = new WorkspaceRegistry(config, NullLogger<WorkspaceRegistry>.Instance);
+        var project = projects.EnsureProjectForStorage(Path.Combine(_root, "project"), "Fresh", "ws-default");
+        projects.Update(project.Id, new UpdateProjectRequest
+        {
+            RepositoryUrl = "https://github.com/example/demo.git",
+        }, workspaces);
+        var git = new GitProbe();
+        var probe = new LocalFirstRunRepositoryProbe(new FakeTimeProvider(), git);
+        var setup = new LocalFirstRunGitSetup(projects, probe,
+            Path.Combine(_root, "secrets"), Path.Combine(_root, "gitconfig"), git: git);
+        var started = await setup.StartAsync(new(project.Id, "token", "test-" + new string('x', 36)), default);
+
+        var verified = await setup.VerifyAsync(started.Id, default);
+
+        Assert.Equal("verified", verified?.State);
+        Assert.Equal(Path.Combine(_root, "secrets", "checkouts", project.Id),
+            projects.FindById(project.Id)?.RepositoryPath);
+        Assert.Equal(projects.FindById(project.Id)?.RepositoryPath,
+            projects.FindById(project.Id)?.RootPath);
+        Assert.Contains(git.Calls, args => args[0] == "clone"
+            && args[2] == "https://github.com/example/demo.git");
+        Assert.Contains(git.Environments, env => env.TryGetValue("GIT_CONFIG_GLOBAL", out var path)
+            && path == Path.Combine(_root, "secrets", started.Id, "probe.gitconfig"));
+    }
+
+    [Fact]
+    public async Task Token_stays_in_protected_host_file_and_verify_uses_real_probe_result()
+    {
+        Directory.CreateDirectory(_root);
+        var repository = Path.Combine(_root, "checkout");
+        Directory.CreateDirectory(repository);
+        Directory.CreateDirectory(Path.Combine(repository, ".git"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+        }).Build();
+        var projects = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var workspaces = new WorkspaceRegistry(config, NullLogger<WorkspaceRegistry>.Instance);
+        var project = projects.EnsureProjectForStorage(Path.Combine(_root, "project"), "Demo", "ws-default");
+        projects.Update(project.Id, new UpdateProjectRequest
+        {
+            RepositoryUrl = "https://github.com/example/demo.git",
+            RepositoryPath = repository,
+        }, workspaces);
+        var git = new GitProbe();
+        var probe = new LocalFirstRunRepositoryProbe(new FakeTimeProvider(), git);
+        var setup = new LocalFirstRunGitSetup(projects, probe,
+            Path.Combine(_root, "secrets"), Path.Combine(_root, "gitconfig"),
+            Path.Combine(_root, "ssh", "config"), git);
+        var token = "test-" + new string('x', 36);
+
+        var started = await setup.StartAsync(new(project.Id, "token", token), default);
+        Assert.DoesNotContain(token, JsonSerializer.Serialize(started));
+        Assert.Equal(token, File.ReadAllText(Path.Combine(_root, "secrets", started.Id, "token")).Trim());
+        Assert.DoesNotContain(token, File.ReadAllText(Path.Combine(_root, "gitconfig")));
+        Assert.Contains("password=" + token, GitCredential("example/demo.git"));
+        Assert.DoesNotContain(token, GitCredential("example/other.git"));
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                File.GetUnixFileMode(Path.Combine(_root, "secrets", started.Id, "token")));
+
+        var verified = await setup.VerifyAsync(started.Id, default);
+        Assert.Equal("verified", verified?.State);
+        Assert.True(verified!.FetchVerified);
+        Assert.True(verified.PushVerified);
+        Assert.DoesNotContain(token, JsonSerializer.Serialize(verified));
+        Assert.Contains(git.Calls, args => args[0] == "push" && args[2].StartsWith(':'));
+        Assert.Contains(git.Calls, args => args.SequenceEqual(new[]
+            { "config", "--local", "include.path", Path.Combine(_root, "secrets", started.Id, "probe.gitconfig") }));
+
+        var keySetup = await setup.StartAsync(new(project.Id, "deploy-key", null), default);
+        Assert.StartsWith("ssh-ed25519 ", keySetup.PublicKey);
+        Assert.True(File.Exists(Path.Combine(_root, "secrets", keySetup.Id, "deploy-key")));
+        Assert.DoesNotContain("PRIVATE KEY", JsonSerializer.Serialize(keySetup));
+        Assert.Equal("https://github.com/example/demo.git",
+            GitUrl("https://github.com/example/demo.git"));
+        Assert.Equal("https://github.com/example/demo-tools.git",
+            GitUrl("https://github.com/example/demo-tools.git"));
+        Assert.DoesNotContain("sshCommand", File.ReadAllText(Path.Combine(_root, "gitconfig")));
+        Assert.False(File.Exists(Path.Combine(_root, "ssh", "config")));
+        var keyVerified = await setup.VerifyAsync(keySetup.Id, default);
+        Assert.Equal("verified", keyVerified?.State);
+        Assert.Contains(git.Calls, args => args[0] == "ls-remote"
+            && args[2] == "git@github.com:example/demo.git");
+        Assert.Contains(git.Environments, env => env.TryGetValue("GIT_SSH_COMMAND", out var command)
+            && command!.Contains(Path.Combine(_root, "secrets", keySetup.Id, "deploy-key").Replace('\\', '/')));
+        Assert.Contains(git.Calls, args => args.SequenceEqual(new[]
+            { "config", "--local", "remote.origin.url", "git@github.com:example/demo.git" }));
+        var resumed = new LocalFirstRunGitSetup(projects, probe,
+            Path.Combine(_root, "secrets"), Path.Combine(_root, "gitconfig"), git: git);
+        Assert.Equal(keySetup.Id, resumed.Get(keySetup.Id)?.Id);
+        var credential = resumed.ResolveCredential(project.Id, "https://github.com/example/demo.git");
+        Assert.Equal(Path.Combine(_root, "secrets", keySetup.Id, "deploy-key"), credential.KeyPath);
+
+        var secondKey = await setup.StartAsync(new(project.Id, "deploy-key", null), default);
+        Assert.Equal("https://github.com/example/demo.git",
+            GitUrl("https://github.com/example/demo.git"));
+        Assert.False(File.Exists(Path.Combine(_root, "ssh", "config")));
+        Assert.NotEqual(keySetup.Id, secondKey.Id);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+    }
+
+    private string GitCredential(string path)
+    {
+        using var process = new Process { StartInfo = new ProcessStartInfo
+        {
+            FileName = "git", RedirectStandardInput = true, RedirectStandardOutput = true,
+            RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
+        } };
+        process.StartInfo.ArgumentList.Add("credential");
+        process.StartInfo.ArgumentList.Add("fill");
+        process.StartInfo.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(_root, "gitconfig");
+        process.StartInfo.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        process.StartInfo.Environment["GCM_INTERACTIVE"] = "Never";
+        process.StartInfo.Environment["HOME"] = _root;
+        Assert.True(process.Start());
+        process.StandardInput.Write($"protocol=https\nhost=github.com\npath={path}\n\n");
+        process.StandardInput.Close();
+        var output = process.StandardOutput.ReadToEnd();
+        _ = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return output;
+    }
+
+    private string GitUrl(string origin)
+    {
+        using var process = new Process { StartInfo = new ProcessStartInfo
+        {
+            FileName = "git", RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        } };
+        process.StartInfo.ArgumentList.Add("ls-remote");
+        process.StartInfo.ArgumentList.Add("--get-url");
+        process.StartInfo.ArgumentList.Add(origin);
+        process.StartInfo.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(_root, "gitconfig");
+        process.StartInfo.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        Assert.True(process.Start());
+        var output = process.StandardOutput.ReadToEnd();
+        _ = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+        return output.Trim();
+    }
+
+    private sealed class GitProbe : ILocalFirstRunGitCommand
+    {
+        public List<IReadOnlyList<string>> Calls { get; } = [];
+        public List<IReadOnlyDictionary<string, string?>> Environments { get; } = [];
+        private string _remote = "https://github.com/example/demo.git";
+
+        public Task<(bool Success, string Output)> RunAsync(string directory,
+            IReadOnlyList<string> args, IReadOnlyDictionary<string, string?> environment,
+            CancellationToken ct)
+        {
+            Environments.Add(environment);
+            return RunAsync(directory, args, ct);
+        }
+
+        public Task<(bool Success, string Output)> RunAsync(
+            string directory, IReadOnlyList<string> args, CancellationToken ct)
+        {
+            Calls.Add(args);
+            if (args[0] == "clone" && args[^1] != "source")
+            {
+                Directory.CreateDirectory(args[^1]);
+                Directory.CreateDirectory(Path.Combine(args[^1], ".git"));
+            }
+            if (args.Count > 3 && args[0] == "config" && args[2] == "remote.origin.url")
+                _remote = args[3];
+            return Task.FromResult((true,
+                args[0] == "config" && args.Contains("--get") ? _remote : ""));
+        }
+    }
+}
