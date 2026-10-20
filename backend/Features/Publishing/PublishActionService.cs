@@ -227,6 +227,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             Workflow = workflow,
             Status = "queued",
             TriggeredAt = DateTime.UtcNow,
+            ReservedHostingSlot = reserved,
         });
         _logger.LogInformation(
             "website-deploy-triggered project={Project} workflow={Workflow} branch={Branch}",
@@ -264,8 +265,12 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
                 Url = StringValue(e, "html_url"),
                 Error = null,
             };
+            // A failed redeploy keeps the slot of the deployment that is still live.
             if (targetId == "website" && refreshed.Status == "completed" && refreshed.Conclusion != "success")
-                _workspaceQuota?.SetProjectEnvironment(project, "website", false);
+            {
+                if (stored.ReservedHostingSlot) _workspaceQuota?.SetProjectEnvironment(project, "website", false);
+                refreshed = refreshed with { ReservedHostingSlot = false };
+            }
             else if (targetId == "website" && refreshed.Status == "completed")
                 ReconcileWebsiteDeployment(root, repo, project);
             return StoreRun(refreshed);

@@ -8,11 +8,16 @@ public static class WorkspaceQuotaEndpoints
 {
     public static void MapWorkspaceQuotaEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/quota/admission/{project}", (string project,
-            WorkspaceQuotaService quotas, AgentStudio.Registry.ProjectRegistry projects) =>
-            Results.Ok(projects.FindByIdOrDisplayName(project) is null
-                ? new QuotaAdmission(false, "Project is not registered for quota admission.")
-                : quotas.Admit(project)));
+        // An unregistered project is admitted with MeterUnavailable so a name
+        // mismatch surfaces as a meter event instead of stopping its claims.
+        app.MapGet("/api/quota/admission/{project}", (string project, WorkspaceQuotaService quotas) =>
+            Results.Ok(quotas.Admit(project)));
+        app.MapGet("/api/workspaces/{workspaceId}/quota/admission", (string workspaceId,
+            WorkspaceQuotaService quotas) =>
+        {
+            try { return Results.Ok(quotas.BoardAdmission(workspaceId)); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+        });
         app.MapGet("/api/workspaces/{workspaceId}/quota", (string workspaceId,
             WorkspaceQuotaService quotas) => Read(() => quotas.Snapshot(workspaceId)));
         app.MapGet("/api/workspaces/{workspaceId}/projects/{projectId}/quota", (string workspaceId,
@@ -47,9 +52,12 @@ public static class WorkspaceQuotaEndpoints
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     }
 
-    private static string Actor(HttpContext context)
-        => (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Id
-            ?? "local-owner";
+    /// <summary>An API token acts as its owner but is audited under its own token id.</summary>
+    internal static string Actor(HttpContext context)
+        => context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] is ApiTokenPrincipal token
+            ? "api:" + token.Token.Id
+            : (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Id
+              ?? "local-owner";
 
     private static bool Owner(HttpContext context)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal principal

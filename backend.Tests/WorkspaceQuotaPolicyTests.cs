@@ -63,10 +63,31 @@ public sealed class WorkspaceQuotaPolicyTests
     }
 
     [Fact]
-    public void Cached_input_is_counted_once()
+    public void Full_hosting_slots_are_their_own_state_and_never_block_coding()
     {
-        Assert.Equal(120, WorkspaceQuotaPolicy.ModelTokens(100, 20, 70, 0, inputIncludesCached: true));
-        Assert.Equal(190, WorkspaceQuotaPolicy.ModelTokens(100, 20, 70, 0, inputIncludesCached: false));
+        var limits = new QuotaLimits(100, 10, 2);
+        var full = new QuotaUsage(10, 0, 1, 2);
+        Assert.Equal("hosting-full", WorkspaceQuotaPolicy.Status(limits, full));
+        Assert.Equal("All 2 hosting slots are in use; new deploys wait until an environment stops.",
+            WorkspaceQuotaPolicy.Message("hosting-full", limits));
+        Assert.True(WorkspaceQuotaPolicy.Allows(limits, full, hosting: false));
+        Assert.Equal("blocked", WorkspaceQuotaPolicy.Status(limits, full with { ModelTokens = 100 }));
+        Assert.Equal("warning", WorkspaceQuotaPolicy.Status(limits, new QuotaUsage(85, 0, 0, 1)));
+    }
+
+    [Fact]
+    public void Every_token_column_counts_once()
+        => Assert.Equal(120, WorkspaceQuotaPolicy.ModelTokens(30, 20, 70, 0));
+
+    [Fact]
+    public void Claimed_deploy_without_report_counts_until_its_lease_ends()
+    {
+        var started = _clock.GetUtcNow().UtcDateTime;
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(started.AddMinutes(2), WorkspaceQuotaPolicy.DeployEnd(started, null, _clock));
+        _clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(started.AddMinutes(5), WorkspaceQuotaPolicy.DeployEnd(started, null, _clock));
+        Assert.Equal(started.AddMinutes(1), WorkspaceQuotaPolicy.DeployEnd(started, started.AddMinutes(1), _clock));
     }
 
     [Fact]

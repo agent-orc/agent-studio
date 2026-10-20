@@ -149,6 +149,7 @@ public sealed class MonolithGateStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(request.ExecutorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.InstanceId);
+        var verdicts = QuotaVerdicts();
         lock (_gate)
         {
             ReconcileTimeouts();
@@ -167,16 +168,14 @@ public sealed class MonolithGateStore
                          .Where(item => item.attempt.Attempt.State == GateStates.Queued)
                          .OrderBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
             {
-                if (_workspaceQuota is not null)
+                if (verdicts is not null)
                 {
-                    var project = _scanner?.ScanAllJobsRaw().FirstOrDefault(task =>
-                        task.Id == record.Subject.TaskId || task.TaskKey == record.Subject.TaskId)?.ProjectName;
-                    if (project is null)
+                    // A subject queued after the verdicts were read waits for the next poll.
+                    if (!verdicts.TryGetValue(record.Subject.TaskId, out var admission))
                     {
-                        quotaReason = "Gate project could not be resolved for quota admission.";
+                        quotaReason = "Gate quota admission is pending for this subject.";
                         continue;
                     }
-                    var admission = _workspaceQuota.Admit(project);
                     if (!admission.Allowed) { quotaReason = admission.Message; continue; }
                 }
                 var number = candidate.Attempt.AttemptNumber;
@@ -215,6 +214,40 @@ public sealed class MonolithGateStore
             }
             return new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }
+    }
+
+    /// <summary>
+    /// Quota verdicts per queued subject task, read before the claim lock: one
+    /// task index read and at most one admission per project. Null when no
+    /// quota limit exists, so claims do no quota work at all.
+    /// </summary>
+    private Dictionary<string, AgentStudio.Quota.QuotaAdmission>? QuotaVerdicts()
+    {
+        if (_workspaceQuota is null || !_workspaceQuota.HasLimits()) return null;
+        string[] taskIds;
+        lock (_gate)
+            taskIds = _subjects.Values.Where(record => record.Attempts.Any(item =>
+                    item.Attempt.State == GateStates.Queued))
+                .Select(record => record.Subject.TaskId).Distinct(StringComparer.Ordinal).ToArray();
+        var verdicts = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.Ordinal);
+        if (taskIds.Length == 0) return verdicts;
+        var projects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in _scanner?.ScanAllJobsWithArchive() ?? [])
+            foreach (var alias in new[] { task.Id, task.Key, task.TaskKey })
+                if (!string.IsNullOrWhiteSpace(alias)) projects.TryAdd(alias, task.ProjectName);
+        var byProject = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
+        foreach (var taskId in taskIds)
+        {
+            if (!projects.TryGetValue(taskId, out var project))
+            {
+                verdicts[taskId] = new(false, "Gate project could not be resolved for quota admission.");
+                continue;
+            }
+            if (!byProject.TryGetValue(project, out var admission))
+                byProject[project] = admission = _workspaceQuota.Admit(project);
+            verdicts[taskId] = admission;
+        }
+        return verdicts;
     }
 
     public GateLease Renew(string attemptId, GateRenewRequest request)

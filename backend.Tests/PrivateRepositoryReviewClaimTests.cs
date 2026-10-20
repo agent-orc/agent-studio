@@ -266,6 +266,34 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
     }
 
     [Fact]
+    public async Task Workspace_quota_defers_the_review_claim_without_consuming_the_attempt()
+    {
+        SeedTask("AGT-1");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(credentialsFile: null));
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace();
+        var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var project = projects.FindByIdOrDisplayName(ProjectName)
+            ?? projects.EnsureProjectForStorage(_watchPath, ProjectName, workspace.Id);
+        var quota = services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>();
+        quota.SetLimits(project.WorkspaceId, null, new AgentStudio.Quota.QuotaLimits(0, null, null));
+        var authority = services.GetRequiredService<AttemptAuthorityService>();
+        CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+
+        var deferred = await ClaimAsync(http);
+        quota.SetLimits(project.WorkspaceId, null, null);
+        var claimed = await ClaimAsync(http);
+
+        Assert.Equal("empty", deferred.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.QuotaDeferred, deferred.Reason);
+        Assert.Contains("Weekly quota reached", deferred.Message!, StringComparison.Ordinal);
+        Assert.Equal("claimed", claimed.Status);
+        Assert.Equal("AGT-1", claimed.Attempt!.TaskId);
+    }
+
+    [Fact]
     public async Task Repository_visibility_change_replans_queued_review_attempts()
     {
         SeedTask("WEB-23");

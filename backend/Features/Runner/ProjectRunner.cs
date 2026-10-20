@@ -429,6 +429,12 @@ public class ProjectRunner
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
 
+    /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
+    internal RunRejection? WorkspaceQuotaRefusal()
+        => _workspaceQuota?.Admit(ProjectName) is { Allowed: false } admission
+            ? new RunRejection(RunRejectReason.QuotaCapExceeded, admission.Message ?? "Workspace quota reached.")
+            : null;
+
     public ProjectRunner(
         string projectName,
         WatchPathEntry entry,
@@ -2581,10 +2587,8 @@ public class ProjectRunner
             // Resolve the run through the canonical admission boundary exactly
             // once. The decision is run-scoped and never mutates job.json, so a
             // recovered provider is selected again on the next launch.
-            var workspaceAdmission = _workspaceQuota?.Admit(ProjectName);
-            if (workspaceAdmission is { Allowed: false })
-                return RunOutcome.Reject(new RunRejection(
-                    RunRejectReason.QuotaCapExceeded, workspaceAdmission.Message ?? "Workspace quota reached."));
+            if (WorkspaceQuotaRefusal() is { } quotaRefusal)
+                return RunOutcome.Reject(quotaRefusal);
             var admissionPlan = PlanQuotaAdmission(info);
             var route = new CliRouteDecision(
                 admissionPlan.CliType,
