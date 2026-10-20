@@ -309,6 +309,13 @@ public sealed class MonolithOrchestrationApplier(
                 requireJournal: !HasPayloadProperty(occurrence.Run.PayloadJson, "monolithGateResult"));
         }
 
+        // AGT-3234: a batch member's gate decision that does not release it
+        // leaves the batch route like the monolith's red per-task gate.
+        if (occurrence.Profile == "GateResult" && decision is { Action: not TransitionAction.Continue }
+            && BatchMemberReview(occurrence.Run.PayloadJson) is { } batchReview)
+            batches.LeaveAfterEngineGateDecision(task, batchReview, decision.Reason,
+                HasTrueProperty(occurrence.Run.PayloadJson, "infrastructureFailure"));
+
         if (target == TaskStates.AutoReview)
         {
             using var payload = JsonDocument.Parse(occurrence.Run.PayloadJson);
@@ -650,6 +657,23 @@ public sealed class MonolithOrchestrationApplier(
     {
         using var payload = JsonDocument.Parse(payloadJson);
         return payload.RootElement.TryGetProperty(property, out _);
+    }
+
+    /// <summary>The review attempt of a batch member's gate outcome; the per-task gate payload names none.</summary>
+    private static string? BatchMemberReview(string payloadJson)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        return payload.RootElement.TryGetProperty("monolithGateResult", out _)
+            && payload.RootElement.TryGetProperty("reviewAttemptId", out var review)
+            && review.ValueKind == JsonValueKind.String
+                ? review.GetString() : null;
+    }
+
+    private static bool HasTrueProperty(string payloadJson, string property)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        return payload.RootElement.TryGetProperty(property, out var value)
+            && value.ValueKind == JsonValueKind.True;
     }
 
     private static string GateReason(string payloadJson)
