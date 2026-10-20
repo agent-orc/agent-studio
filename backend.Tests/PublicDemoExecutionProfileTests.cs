@@ -201,7 +201,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
         // and maps the engine decision-job (Start) and receipt (Continue) routes in
         // every profile.
-        Assert.Equal(125, routes.Count);
+        // AGT-3239 added the operator candidate verification record on PostStep:
+        // it appends immutable integrated-verified evidence after a passed suite.
+        Assert.Equal(126, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -214,6 +216,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         foreach (var (routePath, admissionPath) in new[]
         {
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
+            ("/api/projects/{project}/operator-candidate-verifications", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/deploy/environments/{environmentId}/redeploy", ExecutionAdmissionPath.Start),
@@ -264,7 +267,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
-                [ExecutionAdmissionPath.PostStep] = 17,
+                [ExecutionAdmissionPath.PostStep] = 18,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
