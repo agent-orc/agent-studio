@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Configuration;
@@ -131,6 +132,76 @@ public sealed partial class MergeIntoDevelopRunnerTests
 
         Assert.Equal(1, gate.Invocations);
         Assert.NotEqual(AcceptedIntegrationFailureCodes.StaleAttempt, result.FailureCode);
+        Assert.DoesNotContain(fixture.Timeline.ReadAll(fixture.Folder),
+            item => item.Kind == "gate-result-superseded");
+    }
+
+    [Fact]
+    public async Task Equivalent_commit_published_during_gate_rolls_back_unpublished_local_merge()
+    {
+        const string jobId = "equivalent-during-gate";
+        var fixture = SeedLateGateFixture("equivalent-during-gate", jobId, publishDelivery: false);
+        var before = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false), duringRun: () =>
+        {
+            File.WriteAllText(Path.Combine(fixture.Repo, "delivery.txt"), "reviewed delivery");
+            Commit(fixture.Repo, "feat: independently published delivery");
+            RunGit(fixture.Repo, "push -q origin develop");
+        });
+        var queue = new IntegrationPushQueue();
+        var runner = new MergeIntoDevelopRunner(fixture.Git, fixture.Log,
+            NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue,
+            projectSettings: fixture.Settings, preDevelopBuildGate: new PreDevelopBuildGate(gate),
+            taskScanner: fixture.Scanner, timeline: fixture.Timeline, timeProvider: fixture.Clock);
+
+        var result = await runner.RunAsync("Fixture", jobId, fixture.Folder, fixture.WatchPath,
+            "develop", CancellationToken.None);
+
+        var published = RunGit(fixture.Repo, "rev-parse origin/develop").Out.Trim();
+        Assert.NotEqual(gate.Request!.ExpectedSha, published);
+        Assert.Equal(RunGit(fixture.Repo, $"rev-parse {gate.Request.ExpectedSha}^{{tree}}").Out.Trim(),
+            RunGit(fixture.Repo, $"rev-parse {published}^{{tree}}").Out.Trim());
+        Assert.Equal(AcceptedIntegrationFailureCodes.StaleAttempt, result.FailureCode);
+        Assert.Equal(before, Lane(fixture.Repo, "develop"));
+        Assert.False(queue.Reader.TryRead(out _));
+        Assert.Single(fixture.Timeline.ReadAll(fixture.Folder),
+            item => item.Kind == "gate-result-superseded");
+    }
+
+    [Fact]
+    public async Task Unavailable_first_fetch_recovers_published_baseline_before_gate()
+    {
+        const string jobId = "first-fetch-unavailable";
+        var fixture = SeedLateGateFixture("first-fetch-unavailable", jobId, publishDelivery: true);
+        var tip = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        var evidence = Path.Combine(fixture.Folder, "post-steps");
+        Directory.CreateDirectory(evidence);
+        File.WriteAllText(Path.Combine(evidence, "pre-develop-build-gate-1.log"),
+            "verdict=Ok exit=0 durationMs=20\n" +
+            $"expectedSha={tip} testedSha={tip}\n" +
+            "reason=exact gate passed\n");
+        var fetches = 0;
+        fixture.Git.IntegrationFetchForTesting = (start, timeout, ct) =>
+        {
+            if (Interlocked.Increment(ref fetches) == 1)
+                return new GitProcessResult(1, "", "first fetch unavailable", GitProcessFailureKind.None);
+            return GitNetworkProcessRunner.Run(start, null, timeout, ct);
+        };
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, 1, 10, "", "receipt should be reused", true, false));
+        var runner = new MergeIntoDevelopRunner(fixture.Git, fixture.Log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: fixture.Settings, preDevelopBuildGate: new PreDevelopBuildGate(gate),
+            taskScanner: fixture.Scanner, timeline: fixture.Timeline, timeProvider: fixture.Clock);
+
+        var result = await runner.RunAsync("Fixture", jobId, fixture.Folder, fixture.WatchPath,
+            "develop", CancellationToken.None);
+
+        Assert.True(fetches >= 2);
+        Assert.True(result.Outcome.IsAlreadyContained(), result.Error);
+        Assert.Null(result.FailureCode);
+        Assert.Equal(0, gate.Invocations);
         Assert.DoesNotContain(fixture.Timeline.ReadAll(fixture.Folder),
             item => item.Kind == "gate-result-superseded");
     }

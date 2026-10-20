@@ -332,7 +332,7 @@ public sealed partial class MergeIntoDevelopRunner
             // a fresh local merge even when origin already carries an equivalent
             // delivery, so that outcome cannot establish when it was published.
             var publishedAtStart = _git.CheckPublishedDelivery(developerRoot, branch,
-                delivery.ExpectedResultSha ?? "", ct) == PublishedDeliveryContainment.Contained;
+                delivery.ExpectedResultSha ?? "", ct);
 
             // From here on every git mutation runs in the integration worktree.
             // The developer checkout is only ever read: the uncommitted changes
@@ -392,6 +392,12 @@ public sealed partial class MergeIntoDevelopRunner
                     developAvailable: false,
                     mainIsAncestorOfDevelop: false);
             }
+
+            // A failed initial fetch is unknown, not proof that delivery was missing.
+            // Branch sync supplies another chance to establish the pre-gate baseline.
+            if (synchronized.Success && publishedAtStart == PublishedDeliveryContainment.Unavailable)
+                publishedAtStart = _git.CheckPublishedDelivery(developerRoot, branch,
+                    delivery.ExpectedResultSha ?? "", ct);
 
             // The synchronized local tips a refused publication restores. Every
             // local mutation below stays unpublished until the fence admits it.
@@ -630,7 +636,7 @@ public sealed partial class MergeIntoDevelopRunner
                     delivery.ExpectedResultSha ?? "");
                 if (live.Lane is TaskStates.Completed or TaskStates.Archive
                     && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
-                    || !publishedAtStart
+                    || publishedAtStart == PublishedDeliveryContainment.Missing
                         && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         && published == PublishedDeliveryContainment.Contained)
                 {
@@ -673,14 +679,8 @@ public sealed partial class MergeIntoDevelopRunner
                 // A stale verdict never authorizes an unpublished merge. Report
                 // rollback failure as a repairable integration error instead of
                 // claiming routine supersession while the local ref is dirty.
-                var alreadyPublished = result.Outcome.IsFreshMerge()
-                    && !string.IsNullOrWhiteSpace(result.MergedSha)
-                    && _git.CheckPublishedDelivery(developerRoot, branch, result.MergedSha)
-                        == PublishedDeliveryContainment.Contained;
-                var clean = true;
-                var rollback = alreadyPublished
-                    ? null
-                    : RollBackSupersededPublication(repoRoot, fenceAnchors, out clean);
+                var rollback = RollBackSupersededPublication(repoRoot, fenceAnchors,
+                    out var clean, preservePublishedCommits: true);
                 _timeline?.Append(live.Folder, new TimelineEvent
                 {
                     Ts = _gateTime.GetUtcNow().UtcDateTime,
@@ -1701,20 +1701,25 @@ public sealed partial class MergeIntoDevelopRunner
         bool MechanicalAttributionHandled);
 
     /// <summary>
-    /// Restores the synchronized local tips after a successor review generation
-    /// refused publication. Nothing reached origin, so the rollback is local.
+    /// Restores unpublished local tips after publication was refused or a gate
+    /// result became stale. A stale result preserves only exact published commits.
     /// </summary>
     private MergeIntoIntegrationResult RollBackSupersededPublication(
         string repoRoot,
         IReadOnlyDictionary<string, string> anchors,
-        out bool rolledBack)
+        out bool rolledBack,
+        bool preservePublishedCommits = false)
     {
         var failures = new List<string>();
         foreach (var (anchoredBranch, anchorSha) in anchors)
         {
             var integrationRef = _git.IntegrationLineRef(repoRoot, anchoredBranch);
-            if (string.Equals(_git.GetBranchTip(repoRoot, integrationRef), anchorSha,
-                    StringComparison.OrdinalIgnoreCase))
+            var currentSha = _git.GetBranchTip(repoRoot, integrationRef);
+            if (string.Equals(currentSha, anchorSha, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (preservePublishedCommits && currentSha is not null
+                && _git.CheckPublishedDelivery(repoRoot, anchoredBranch, currentSha,
+                    exactCommit: true) == PublishedDeliveryContainment.Contained)
                 continue;
             var reset = _git.ResetIntegrationBranch(repoRoot, anchoredBranch, anchorSha);
             if (!reset.Success) failures.Add($"{anchoredBranch}: {reset.Error ?? "reset failed"}");
