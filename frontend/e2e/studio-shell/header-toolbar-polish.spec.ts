@@ -85,6 +85,7 @@ test.describe('Header toolbar polish', () => {
     await expect(epicToggle).toBeVisible();
     await expect(addTask).toBeVisible();
     await expect(cluster.getByTestId('studio-board-compact-toggle')).toHaveCount(0);
+    await expect(cluster.getByTestId('studio-board-epic-toggle')).toHaveCount(0);
     await expect(cluster.getByTestId('studio-board-dossier-toggle')).toHaveCount(1);
     await expect(cluster.getByTestId('studio-board-add-task')).toHaveCount(1);
 
