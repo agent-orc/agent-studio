@@ -37,6 +37,13 @@ describe('hostZonePolicy', () => {
       .toEqual({ state: 'failed', label: 'Verification failed', detail: null });
   });
 
+  it('names a record that no longer counts as not verified', () => {
+    const detail = 'recorded before the last reboot (verified at 2026-10-20T09:30:00Z); the rules and ipsets are gone';
+    expect(hostZonePolicy({ capabilityHealth: [capability({ advertisedStatus: 'unavailable', detail })] })).toEqual({
+      state: 'failed', label: 'Not verified · 2026-10-20.1', detail,
+    });
+  });
+
   it('marks a stale report and a host that reports no zone policy', () => {
     expect(hostZonePolicy({ capabilityHealth: [capability({ isFresh: false })] }).state).toBe('stale');
     expect(hostZonePolicy({ capabilityHealth: [capability({ key: 'git:fetch' })] })).toEqual({

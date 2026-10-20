@@ -22,36 +22,63 @@ This change uses **iptables rules**, for these reasons:
 - The verification measures the same thing the rules enforce: TCP reachability
   from a container on the zone network.
 
-The trade-off is that the rules match addresses, not names. Host names are
-resolved when the rules are applied. The hourly timer reapplies them so the
-addresses stay current. A destination behind a CDN whose addresses change
-faster than that can be listed by CIDR instead (for example GitHub's published
-ranges).
+Rules match addresses, not names, and the Git hosts, package registries and
+model APIs sit behind CDNs that hand out different addresses from one lookup to
+the next. A snapshot taken at apply time would reject traffic whenever a
+container resolved to another address. So the allowed set follows what the
+containers resolve:
+
+- A host-side **zone resolver** (dnsmasq, unit `agent-zone-dns.service`)
+  listens on the bridge gateway of every work network. Work containers use it
+  as their only resolver (`--dns 172.30.0.1`). The work zone may not reach any
+  other resolver.
+- For each allowed destination with host names, apply creates the ipset
+  `agent-zone-<destination>` (`hash:ip`, `timeout 86400`). dnsmasq adds every
+  IPv4 answer for one of those names, or for a subdomain of one, to that set
+  before it answers the container. Each new answer refreshes the entry's
+  timeout. An address that nobody resolved for `resolver.setTimeoutSeconds`
+  expires.
+- The work rules match a named destination with
+  `-m set --match-set agent-zone-<destination> dst` and its ports. IPv4
+  addresses and CIDRs in the policy stay literal `-d` rules.
+
+An address stays allowed after its DNS TTL ran out, so a container that reuses
+an older answer still connects. A name is resolved on the host only where an
+address must be known up front: for the run zone's denials and for blocked
+probes. Those are internal addresses that the timer re-resolves.
 
 ## Files
 
 | File | Role |
 |---|---|
 | [deploy/zones/zone-policy.json](../../../deploy/zones/zone-policy.json) | The policy: destinations, zones, networks, verification probes. Raise `version` with every change. |
-| [deploy/zones/apply-zone-policy.sh](../../../deploy/zones/apply-zone-policy.sh) | Operator entry point. Dry run by default; `--execute` applies, verifies, and records the result. |
-| [deploy/systemd/agent-zone-policy.service](../../../deploy/systemd/agent-zone-policy.service), [`.timer`](../../../deploy/systemd/agent-zone-policy.timer) | Reapply after boot and every hour. |
-| [deploy/zones/compose.work-zone.yaml](../../../deploy/zones/compose.work-zone.yaml) | Compose overlay that moves the agent-host containers of a work host onto `agent-work`. |
-| `agent-host zone-policy render\|apply\|verify` | The renderer, applier and verifier (`runner/ZonePolicy*.cs`). |
-| `/var/lib/agent-studio/zone-policy/applied.json` | Applied state: policy version and digest, rules digest, zones, last verification. |
+| [deploy/zones/apply-zone-policy.sh](../../../deploy/zones/apply-zone-policy.sh) | Operator entry point. Dry run by default; `--execute` applies, verifies, and records the result. `--remove` rolls the rules back. |
+| [deploy/systemd/agent-zone-policy.service](../../../deploy/systemd/agent-zone-policy.service), [`.timer`](../../../deploy/systemd/agent-zone-policy.timer) | Apply at boot (`WantedBy=multi-user.target`) and reapply and verify every 15 minutes. |
+| [deploy/systemd/agent-zone-dns.service](../../../deploy/systemd/agent-zone-dns.service) | The zone resolver (dnsmasq). Apply writes its configuration and starts or restarts it. |
+| [deploy/zones/compose.work-zone.yaml](../../../deploy/zones/compose.work-zone.yaml) | Compose overlay that moves the agent-host containers of a work host onto `agent-work` with the zone resolver as DNS. |
+| `agent-host zone-policy render\|apply\|verify\|remove` | The renderer, applier, verifier and rollback (`runner/ZonePolicy*.cs`). |
+| `/var/lib/agent-studio/zone-policy/applied.json` | Applied state: policy version and digest, rules digest, zones, last verification, kernel boot id, removal time. |
+| `/var/lib/agent-studio/zone-policy/dnsmasq.conf` | Rendered zone resolver configuration. |
 
 ## Network model
 
 | Zone | Network | Inbound | Egress |
 |---|---|---|---|
-| work | `agent-work`, bridge `br-agent-work`, `172.30.0.0/24`, inter-container traffic off | none: no published ports, no connection into the bridge | allowlist only: DNS resolvers, control plane, Git hosts, package registries, model provider APIs; everything else is rejected |
-| run | one network per tenant (`agent-run-<tenant>`, bridge `br-run-<tenant>`) | not changed by this cut; the TLS proxy of the run-zone host agent publishes apps (IP-1, AGT-3229) | open, except every `control-plane` and `secret-store` destination; no path to another tenant, to a work bridge, or to host services other than DNS |
+| work | `agent-work`, bridge `br-agent-work`, `172.30.0.0/24`, gateway `172.30.0.1`, inter-container traffic off, IPv6 off | none: no published ports, no connection into the bridge | allowlist only: the zone resolver on the gateway, control plane, Git hosts, package registries, model provider APIs; everything else is rejected |
+| run | one network per tenant (`agent-run-<tenant>`, bridge `br-run-<tenant>`), IPv6 off | not changed by this cut; the TLS proxy of the run-zone host agent publishes apps (IP-1, AGT-3229) | open, except every `control-plane` and `secret-store` destination, also through a published port; no path to another tenant, a work bridge, a Compose network (`br-*`), `docker0`, or host services other than DNS |
 
 Validation enforces the Dossier's fixed boundaries. A work zone cannot allow a
 `secret-store` destination. A run zone must deny every `control-plane` and
 `secret-store` destination. Every run network names its own tenant. Subnets
 and bridge names must not overlap. Each zone needs at least one reachable and
 one blocked probe. Addresses are IPv4 only, because the zone networks are
-created without IPv6.
+created with `--ipv6=false`; an existing zone network with IPv6 enabled is a
+conflict. Zone, network, tenant and destination names must match
+`^[a-z0-9][a-z0-9-]{0,47}$`, because they appear verbatim in the rule
+comments. An allowed destination's name is at most 20 characters, so its ipset
+name fits the kernel's 31-character limit. Host entries are IPv4 addresses,
+canonical CIDRs (rendered as `addr/prefix`) or DNS names. The probe image must
+be pinned by digest.
 
 ### Rules
 
@@ -65,23 +92,47 @@ else:
 - `AGENT-ZONE-IN`, jumped to from the top of `INPUT`, covers container traffic
   to the host itself, including the bridge gateway address. Without it, a
   container could reach a service on the same host through the gateway
-  address.
+  address. The work zone may use only port 53 of its gateway (the zone
+  resolver) there.
 
 Both chains first return established and related traffic. Rejections use
-`icmp-admin-prohibited`, so a blocked tool fails at once instead of timing out.
-The golden files in `runner.Tests/Fixtures/zone-policy/` show the full rendered
-rules and plan for the checked-in policy.
+`icmp-admin-prohibited`, so a blocked tool fails at once ("No route to host")
+instead of timing out.
+
+The run zone's denials in `AGENT-ZONE-FWD` match `-m conntrack --ctorigdst`.
+FORWARD sees a connection after Docker's port forwarding has rewritten its
+destination. Without `--ctorigdst`, an app that dials a port the control plane
+publishes on the host would get through. After the denials, a run network may
+reach its own bridge. Every other `br-+` bridge and `docker0` is dropped.
+
+An IPv6 payload, loaded with `ip6tables-restore --noflush`, declares the same
+two chains and drops every packet on a zone bridge, in and out. Its
+`AGENT-ZONE-FWD` hangs off the IPv6 `DOCKER-USER`, or off `FORWARD` when
+Docker runs without ip6tables support and that chain does not exist. Its
+`AGENT-ZONE-IN` hangs off the IPv6 `INPUT`.
+
+The golden files in `runner.Tests/Fixtures/zone-policy/` show the full IPv4
+and IPv6 rules, the resolver configuration and the plan for the checked-in
+policy.
 
 ## Install on a Docker host
 
-1. Copy the policy and the script, and create the environment file:
+1. Install the tools, copy the policy, the script and the units, and create
+   the environment file. `dnsmasq-base` ships the dnsmasq binary without the
+   distribution's own `dnsmasq.service`, which would claim port 53 on every
+   interface:
 
    ```sh
+   sudo apt-get install -y ipset dnsmasq-base
    sudo install -d -m 0755 /etc/agent-studio/zone-policy /var/lib/agent-studio/zone-policy
    sudo install -m 0644 deploy/zones/zone-policy.json /etc/agent-studio/zone-policy/zone-policy.json
    sudo install -m 0755 deploy/zones/apply-zone-policy.sh /usr/local/libexec/agent-apply-zone-policy
+   sudo install -m 0644 deploy/systemd/agent-zone-policy.service deploy/systemd/agent-zone-policy.timer \
+     deploy/systemd/agent-zone-dns.service /etc/systemd/system/
+   sudo systemctl daemon-reload
    sudo tee /etc/agent-studio/zone-policy/zone-policy.env >/dev/null <<'EOF'
-   # Upstream resolvers Docker's embedded DNS forwards to (see /run/systemd/resolve/resolv.conf).
+   # Upstream resolvers the zone resolver forwards to (IPv4 addresses, see
+   # /run/systemd/resolve/resolv.conf). They must resolve the control-plane host.
    AGENT_ZONE_DNS_RESOLVERS=192.0.2.53
    # Host of RUNNER_SERVER_URL and the Studio edge.
    AGENT_ZONE_CONTROL_PLANE_HOSTS=task-server.example.internal
@@ -104,22 +155,29 @@ rules and plan for the checked-in policy.
      /usr/local/libexec/agent-apply-zone-policy
    ```
 
-   It prints the numbered plan, the full rules, and one line per step:
-   `unchanged`, `would-create`, `would-apply` (the rules passed
-   `iptables-restore --test`) or `would-insert`. Run without root, the rule
-   checks read `unchecked`. A `conflict` means a zone network already exists
+   It prints the numbered plan, the full rules and the resolver
+   configuration, and one line per step: `unchanged`, `would-create`,
+   `would-write`, `would-start`, `would-apply` (the rules passed
+   `iptables-restore --test`) or `would-insert`. Run without root, the
+   ipset and rule checks read `unchecked`. On a fresh host the IPv4 rule check
+   also reads `unchecked`, because the kernel checks set matches only against
+   existing sets. A `conflict` means a zone network or ipset already exists
    with other settings. The script never recreates such a network under
-   running containers. Detach the containers and remove the network, or change
-   the policy.
+   running containers. Detach the containers and remove the network, or
+   change the policy. For an ipset, roll back (see below), run
+   `ipset destroy <set>`, and apply again.
 
-3. Apply and enable the timer:
+3. Apply, then enable the service for boot and the timer:
 
    ```sh
-   sudo install -m 0644 deploy/systemd/agent-zone-policy.service deploy/systemd/agent-zone-policy.timer /etc/systemd/system/
-   sudo systemctl daemon-reload
    sudo systemctl start agent-zone-policy.service   # same as: agent-apply-zone-policy --execute
+   sudo systemctl enable agent-zone-policy.service
    sudo systemctl enable --now agent-zone-policy.timer
    ```
+
+   The rules and ipsets do not survive a reboot. The enabled service applies
+   them again at boot, after Docker. Containers that Docker restarts on its
+   own run without the zone rules for those few seconds.
 
 4. Attach the work containers. For the Compose agent hosts:
 
@@ -129,31 +187,47 @@ rules and plan for the checked-in policy.
      up -d --no-deps agent-host-distributed agent-host-review-distributed
    ```
 
-   Other work containers join with `--network agent-work` and no `-p`. Mount
-   `/var/lib/agent-studio/zone-policy` read-only into each daemon container.
-   A native daemon reads the default path directly (`RUNNER_ZONE_POLICY_STATE`
-   overrides it).
+   Other work containers join with `--network agent-work --dns 172.30.0.1`
+   and no `-p`. Without `--dns`, a container asks an upstream resolver
+   directly. That request is rejected, and the container cannot resolve any
+   name. Mount `/var/lib/agent-studio/zone-policy` read-only into each daemon
+   container and set
+   `RUNNER_ZONE_POLICY_STATE=/var/lib/agent-studio/zone-policy/applied.json`.
+   The overlay does both. A native daemon reports the zone policy only with
+   that variable in its environment file. There is no default path.
 
 ## Verification
 
 `--execute` ends with the verification. `--verify` repeats it at any time, and
 `--verify --record` also updates the recorded result. For each zone network,
-one throw-away container (`bash:5.2`, label `org.agent-studio.zone-probe=true`)
-opens each probe connection with bash's `/dev/tcp` under `timeout`:
+one throw-away container (`bash:5.2` pinned by digest, label
+`org.agent-studio.zone-probe=true`) opens each probe connection with bash's
+`/dev/tcp` under `timeout`. On a work network the container uses the zone
+resolver (`--dns <gateway>`), as the work containers do:
 
-- A **reachable** probe connects by name, so the resolver allowance is tested
-  too. It passes only on a completed connection.
+- A **reachable** probe connects by name. That tests the zone resolver and the
+  set it fills as well. It passes only on a completed connection.
 - A **blocked** probe connects to every resolved address of the destination,
-  so a DNS failure cannot pass for a block. It passes on a refusal or a timeout.
+  on every port the destination lists unless the probe names one, so a DNS
+  failure cannot pass for a block. It passes only on "No route to host" (the
+  zone's `icmp-admin-prohibited` reject) or a timeout (a drop). "Connection
+  refused" is a reset from the real destination. Nothing blocked that
+  connection, so the check fails, like any other connect error.
+- A **control** probe runs once per blocked target from
+  `verification.controlNetwork` (Docker's default `bridge`, outside every
+  zone). It passes when the target answers there, with a connection or a
+  reset. A timeout or reject means the target is unreachable anyway, so the
+  block proves nothing, and the check fails.
 - **No inbound** passes when no container on a work network publishes a port.
 - A probe container that cannot start, or a name that does not resolve, is
   inconclusive. It fails the verification.
 
 Exit codes: `0` passed, `1` verification failed, `2` usage, policy or apply
-error. A failed apply or verification is recorded too. The daemons then report
+error. Under `--execute`, a failed apply or verification is recorded, and so
+is a policy, environment or name resolution error. The daemons then report
 `zone-policy` as `unavailable`, and the host reads as degraded. If the rendered
-rules differ from the applied ones because the policy or DNS changed,
-`--verify --record` refuses and asks for `--execute`.
+rules differ from the applied ones because the policy or a denied address
+changed, `--verify --record` refuses and asks for `--execute`.
 
 ## Capability and Environment view
 
@@ -163,16 +237,68 @@ advertisement:
 | Field | Value |
 |---|---|
 | key | `zone-policy` (category `zone`) |
-| status | `ready` after a passed verification, `unavailable` after a failed one or for an unreadable record |
+| status | `ready` after a passed verification of this boot within the last 30 minutes; otherwise `unavailable` |
 | version | the policy `version` |
 | identity | the work zone's name |
-| detail | `verifiedAt=…; networks=…; rules=sha256:<12>` or the first failed check |
+| detail | `verifiedAt=…; networks=…; rules=sha256:<12>`, or why the record does not count |
 
-The capability is informational and never a claim requirement. A host without
-a record (for example a Windows workstation) reports no entry. The Environment
-view shows each host's zone policy: the zone and version when verified,
-`verification failed` with the reason otherwise, and `Not reported` when
+The record does not count, and the status is `unavailable`, when:
+
+- the verification failed (the detail names the first failed check);
+- the record carries another kernel boot id than the host
+  (`/proc/sys/kernel/random/boot_id`, which a container shares with its host),
+  because a reboot dropped the rules and ipsets;
+- the last verification is older than twice the timer interval (30 minutes),
+  because the timer stopped;
+- `zone-policy remove --execute` removed the rules;
+- the record is unreadable or from the first cut (schema 1, without a boot id).
+
+The capability is informational and never a claim requirement. A daemon
+reports it only when `RUNNER_ZONE_POLICY_STATE` is set. A daemon without the
+variable, or without the file, reports no entry. The Environment view shows each
+host's zone policy: the zone and version when verified,
+`verification failed` with the reason after a failed check, `not verified`
+with the reason for any other `unavailable` record, and `Not reported` when
 there is no entry.
+
+## Rollback
+
+`--remove` takes the zone rules off the host. Like apply, it is a dry run
+unless `--execute` is given, and a second run changes nothing:
+
+1. Stop the timer and the boot unit, so nothing reapplies the rules:
+
+   ```sh
+   sudo systemctl disable --now agent-zone-policy.timer agent-zone-policy.service
+   ```
+
+2. Read the plan, then remove:
+
+   ```sh
+   /usr/local/libexec/agent-apply-zone-policy --remove
+   sudo /usr/local/libexec/agent-apply-zone-policy --remove --execute
+   ```
+
+   It deletes the jumps from `DOCKER-USER` and `INPUT` (IPv4 and IPv6, plus
+   the IPv6 `FORWARD` fallback), then the `AGENT-ZONE-FWD` and
+   `AGENT-ZONE-IN` chains of both families. It also marks the applied state as
+   removed, so the daemons report `zone-policy` as `unavailable`. Unset
+   `RUNNER_ZONE_POLICY_STATE` to stop reporting it.
+
+3. Docker networks, ipsets and the zone resolver stay, because work
+   containers may still use them (`--dns 172.30.0.1`). Once the containers
+   run without the zone (the Compose services without
+   `compose.work-zone.yaml`), remove them too:
+
+   ```sh
+   sudo systemctl stop agent-zone-dns.service
+   for set in $(sudo ipset list -n | grep '^agent-zone-'); do sudo ipset destroy "$set"; done
+   docker network rm agent-work agent-run-default
+   sudo rm -f /var/lib/agent-studio/zone-policy/dnsmasq.conf
+   ```
+
+To return to the zone policy, enable the service and timer again (install
+step 3). The first apply recreates everything.
 
 ## Limits of this cut
 
@@ -183,3 +309,6 @@ there is no entry.
   networks and are not covered by the work zone rules.
 - Run-zone inbound (TLS proxy, domains) and app-declared egress belong to the
   run-zone host agent (IP-1, AGT-3229). This cut only guarantees the denials.
+- A name the work zone allows also allows its subdomains (dnsmasq's `ipset=`
+  semantics). A container that connects to a resolved address without asking
+  the zone resolver first is rejected. That is intended.

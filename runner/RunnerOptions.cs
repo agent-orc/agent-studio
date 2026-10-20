@@ -294,9 +294,9 @@ public sealed class RunnerOptions
     /// <summary>
     /// AGT-3231: the zone policy state <c>agent-host zone-policy apply
     /// --execute</c> records on this host. The daemon reports it as the
-    /// <c>zone-policy</c> capability; a missing file reports nothing. Parsed
-    /// options default to <see cref="ZonePolicyStateStore.DefaultPath"/> on
-    /// Linux and to none elsewhere.
+    /// <c>zone-policy</c> capability; a missing file reports nothing. Only
+    /// an explicit <c>RUNNER_ZONE_POLICY_STATE</c> sets it, so a host that
+    /// never opted in reports no zone policy.
     /// </summary>
     public string ZonePolicyStatePath { get; init; } = "";
 
@@ -560,8 +560,7 @@ public sealed class RunnerOptions
             CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
             DockerDataRoot = Env("RUNNER_DOCKER_DATA_ROOT", "/var/lib/docker"),
-            ZonePolicyStatePath = Env("RUNNER_ZONE_POLICY_STATE",
-                OperatingSystem.IsLinux() ? ZonePolicyStateStore.DefaultPath : ""),
+            ZonePolicyStatePath = Env("RUNNER_ZONE_POLICY_STATE", ""),
             ComposeScenarioMinFreePercent = Math.Min(100, EnvIntAllowingZero(
                 "RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT",
                 ComposeScenarioDiskAdmission.DefaultMinFreePercent)),

@@ -44,7 +44,9 @@ internal static class RunnerCapabilityProbe
         string? gitDetail = null,
         ProviderAuthProbe? providerAuth = null,
         TaskServerConnectivitySnapshot? connectivity = null,
-        ReviewRepositoryReadProbe? repositoryRead = null)
+        ReviewRepositoryReadProbe? repositoryRead = null,
+        TimeProvider? clock = null,
+        string? hostBootId = null)
     {
         var list = new List<AdvertisedCapabilityDto>
         {
@@ -158,7 +160,9 @@ internal static class RunnerCapabilityProbe
         foreach (var requirement in ReviewLibraryStepPolicy.ToolchainRequirements)
             AddToolchain(list, requirement.Key, requirement.ProbeExecutable);
         AddComposeRender(list, ComposeRenderVersion);
-        if (ZonePolicyCapability.Describe(options.ZonePolicyStatePath, ZoneKinds.Work) is { } zonePolicy)
+        if (!string.IsNullOrWhiteSpace(options.ZonePolicyStatePath)
+            && ZonePolicyCapability.Describe(options.ZonePolicyStatePath, ZoneKinds.Work, clock ?? TimeProvider.System,
+                hostBootId ?? ZonePolicyStateStore.CurrentBootId()) is { } zonePolicy)
             list.Add(zonePolicy);
         return list;
     }

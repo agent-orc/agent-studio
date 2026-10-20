@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace AgentRunner;
 
@@ -22,7 +24,19 @@ public sealed record ZonePolicyDocument(
     string Version,
     IReadOnlyDictionary<string, ZoneDestination> Destinations,
     IReadOnlyList<ZoneDefinition> Zones,
-    ZoneVerificationSettings? Verification = null);
+    ZoneVerificationSettings? Verification = null,
+    ZoneResolverSettings? Resolver = null);
+
+/// <summary>
+/// The host-side resolver of the work zones. Work containers resolve through
+/// it (<c>--dns</c> the bridge gateway); every answer for a name a work zone
+/// allows lands in that destination's ipset, so the allowed set follows what
+/// the containers actually resolve.
+/// </summary>
+/// <param name="Upstreams">IPv4 resolvers the zone resolver forwards to.</param>
+/// <param name="SetTimeoutSeconds">How long an address stays allowed after the
+/// last answer that contained it.</param>
+public sealed record ZoneResolverSettings(IReadOnlyList<string> Upstreams, int SetTimeoutSeconds = 86400);
 
 /// <param name="Class"><c>egress</c>, <c>control-plane</c> or <c>secret-store</c>.</param>
 /// <param name="Ports">Empty or absent means every port and protocol.</param>
@@ -59,7 +73,13 @@ public sealed record ZoneProbes(
 /// </summary>
 public sealed record ZoneProbeTarget(string? Destination = null, string? Host = null, int? Port = null);
 
-public sealed record ZoneVerificationSettings(string ProbeImage = ZonePolicyRules.DefaultProbeImage, int TimeoutSeconds = 4);
+/// <param name="ProbeImage">Pinned by digest, so every host probes with the same binary.</param>
+/// <param name="ControlNetwork">The non-zone Docker network the positive control of
+/// each blocked probe runs from.</param>
+public sealed record ZoneVerificationSettings(
+    string ProbeImage = ZonePolicyRules.DefaultProbeImage,
+    int TimeoutSeconds = 4,
+    string ControlNetwork = ZonePolicyRules.DefaultControlNetwork);
 
 public static class ZoneKinds
 {
@@ -76,14 +96,26 @@ public static class ZoneDestinationClasses
 
 /// <summary>A destination after <c>${NAME}</c> expansion and name resolution.</summary>
 /// <param name="Hosts">The configured hosts after expansion, for reachable probes.</param>
-/// <param name="Addresses">IPv4 CIDRs the rules match, sorted and distinct.</param>
+/// <param name="Literals">The IPv4 addresses and CIDRs listed literally; the rules
+/// match them as they are.</param>
+/// <param name="Names">The host names. A work zone allows them through the
+/// destination's ipset, which the zone resolver fills.</param>
+/// <param name="Addresses">What a denial and a blocked probe match: the literals
+/// plus, for a destination that a zone denies or a blocked probe names, the
+/// addresses its names resolved to at apply time. Sorted and distinct.</param>
 public sealed record ResolvedZoneDestination(
     string Name,
     string Class,
     IReadOnlyList<string> Hosts,
+    IReadOnlyList<string> Literals,
+    IReadOnlyList<string> Names,
     IReadOnlyList<string> Addresses,
     IReadOnlyList<int> Ports,
-    IReadOnlyList<string> Protocols);
+    IReadOnlyList<string> Protocols)
+{
+    /// <summary>The ipset a work zone matches the names by, or null without names.</summary>
+    public string? IpSet => Names.Count > 0 ? ZonePolicyRules.IpSetName(Name) : null;
+}
 
 /// <param name="Host">The name shown in reports.</param>
 /// <param name="Address">What the probe connects to: the host name for a
@@ -99,11 +131,16 @@ public sealed record ResolvedZone(
     IReadOnlyList<ResolvedZoneDestination> Denied,
     IReadOnlyList<ResolvedZoneProbe> Probes);
 
+/// <param name="Upstreams">IPv4 addresses after expansion.</param>
+public sealed record ResolvedZoneResolver(IReadOnlyList<string> Upstreams, int SetTimeoutSeconds);
+
+/// <param name="Resolver">Null when no work zone is selected.</param>
 public sealed record ResolvedZonePolicy(
     string Version,
     string PolicySha256,
     IReadOnlyList<ResolvedZone> Zones,
-    ZoneVerificationSettings Verification);
+    ZoneVerificationSettings Verification,
+    ResolvedZoneResolver? Resolver = null);
 
 public interface IZoneAddressResolver
 {
@@ -127,6 +164,22 @@ public static class ZonePolicyParser
     public const int SchemaVersion = 1;
     private const int MaxBridgeNameLength = 15;
     private const int MaxMultiportPorts = 15;
+    private const int MaxSetTimeoutSeconds = 2147483;
+
+    /// <summary>
+    /// Zone, network, tenant and destination names go verbatim into the
+    /// <c>#</c> lines and <c>--comment</c> values of the iptables-restore
+    /// payload, so they carry no quote, space or line break.
+    /// </summary>
+    private static readonly Regex NamePattern = new("^[a-z0-9][a-z0-9-]{0,47}$", RegexOptions.CultureInvariant);
+
+    /// <summary>A DNS name as the zone resolver's configuration lines carry it.</summary>
+    private static readonly Regex HostNamePattern = new(
+        "^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
+        RegexOptions.CultureInvariant);
+
+    private static readonly Regex DigestPinnedImage = new("^[^\\s@]+@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+    private static readonly Regex DockerNetworkName = new("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$", RegexOptions.CultureInvariant);
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -172,6 +225,8 @@ public static class ZonePolicyParser
         foreach (var (name, destination) in document.Destinations)
             ValidateDestination(name, destination, errors);
         if (document.Zones.Count == 0) errors.Add("at least one zone is required");
+        if (document.Zones.Any(zone => zone.Kind == ZoneKinds.Work))
+            ValidateResolver(document.Resolver, errors);
 
         var zoneNames = new HashSet<string>(StringComparer.Ordinal);
         var networkNames = new HashSet<string>(StringComparer.Ordinal);
@@ -179,9 +234,11 @@ public static class ZonePolicyParser
         var subnets = new List<(string Network, uint Start, uint End)>();
         foreach (var zone in document.Zones)
         {
-            var label = $"zone {zone.Name}";
+            var label = $"zone {Shown(zone.Name)}";
             if (string.IsNullOrWhiteSpace(zone.Name) || !zoneNames.Add(zone.Name))
                 errors.Add($"{label}: a unique zone name is required");
+            else if (!IsName(zone.Name))
+                errors.Add($"{label}: {NameRule}");
             if (zone.Kind is not (ZoneKinds.Work or ZoneKinds.Run))
                 errors.Add($"{label}: kind must be '{ZoneKinds.Work}' or '{ZoneKinds.Run}'");
             if (zone.Networks is not { Count: > 0 })
@@ -189,7 +246,9 @@ public static class ZonePolicyParser
             foreach (var network in zone.Networks ?? [])
             {
                 if (string.IsNullOrWhiteSpace(network.Name) || !networkNames.Add(network.Name))
-                    errors.Add($"{label}: network name '{network.Name}' must be present and unique");
+                    errors.Add($"{label}: network name '{Shown(network.Name)}' must be present and unique");
+                else if (!IsName(network.Name))
+                    errors.Add($"{label}: network name {Shown(network.Name)}: {NameRule}");
                 if (string.IsNullOrWhiteSpace(network.Bridge) || network.Bridge.Length > MaxBridgeNameLength
                     || !network.Bridge.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')
                     || !bridges.Add(network.Bridge))
@@ -203,7 +262,9 @@ public static class ZonePolicyParser
                     subnets.Add((network.Name, start, end));
                 }
                 if (zone.Kind == ZoneKinds.Run && string.IsNullOrWhiteSpace(network.Tenant))
-                    errors.Add($"{label}: run network {network.Name} must name its tenant");
+                    errors.Add($"{label}: run network {Shown(network.Name)} must name its tenant");
+                else if (network.Tenant is { } tenant && !IsName(tenant))
+                    errors.Add($"{label}: tenant {Shown(tenant)}: {NameRule}");
             }
             if (zone.Kind == ZoneKinds.Run)
             {
@@ -216,17 +277,56 @@ public static class ZonePolicyParser
         }
         if (document.Verification is { } verification)
         {
-            if (string.IsNullOrWhiteSpace(verification.ProbeImage))
-                errors.Add("verification.probeImage must not be empty");
+            if (string.IsNullOrWhiteSpace(verification.ProbeImage) || !DigestPinnedImage.IsMatch(verification.ProbeImage))
+                errors.Add("verification.probeImage must be pinned by digest (name@sha256:<64 hex>)");
             if (verification.TimeoutSeconds is < 1 or > 60)
                 errors.Add("verification.timeoutSeconds must be between 1 and 60");
+            if (string.IsNullOrWhiteSpace(verification.ControlNetwork) || !DockerNetworkName.IsMatch(verification.ControlNetwork))
+                errors.Add("verification.controlNetwork must name a Docker network");
+            else if (networkNames.Contains(verification.ControlNetwork))
+                errors.Add($"verification.controlNetwork {verification.ControlNetwork} is a zone network; "
+                           + "the positive control runs outside the zones");
         }
         return errors;
     }
 
+    private const string NameRule = "names match ^[a-z0-9][a-z0-9-]{0,47}$ (they go verbatim into the rule comments)";
+
+    private static bool IsName(string value) => NamePattern.IsMatch(value);
+
+    /// <summary>A value as an error message may show it: quotes, backslashes and control characters escaped.</summary>
+    private static string Shown(string? value)
+        => value is null
+            ? "(none)"
+            : string.Concat(value.Select(character => character switch
+            {
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                '"' => "\\\"",
+                '\\' => "\\\\",
+                _ when char.IsControl(character) => $"\\u{(int)character:x4}",
+                _ => character.ToString(),
+            }));
+
+    private static void ValidateResolver(ZoneResolverSettings? resolver, List<string> errors)
+    {
+        if (resolver is null)
+        {
+            errors.Add("resolver is required: work containers resolve through the zone resolver, which fills the allowed sets");
+            return;
+        }
+        if (resolver.Upstreams is not { Count: > 0 } || resolver.Upstreams.Any(string.IsNullOrWhiteSpace))
+            errors.Add("resolver.upstreams needs at least one resolver");
+        if (resolver.SetTimeoutSeconds is < 60 or > MaxSetTimeoutSeconds)
+            errors.Add($"resolver.setTimeoutSeconds must be between 60 and {MaxSetTimeoutSeconds}");
+    }
+
     private static void ValidateDestination(string name, ZoneDestination destination, List<string> errors)
     {
-        var label = $"destination {name}";
+        var label = $"destination {Shown(name)}";
+        if (!IsName(name))
+            errors.Add($"{label}: {NameRule}");
         if (destination.Class is not (ZoneDestinationClasses.Egress or ZoneDestinationClasses.ControlPlane
             or ZoneDestinationClasses.SecretStore))
             errors.Add($"{label}: class must be egress, control-plane or secret-store");
@@ -254,7 +354,7 @@ public static class ZonePolicyParser
         var allow = zone.Egress.Allow ?? [];
         var deny = zone.Egress.Deny ?? [];
         foreach (var reference in allow.Concat(deny).Where(reference => !destinations.ContainsKey(reference)))
-            errors.Add($"{label}: unknown destination '{reference}'");
+            errors.Add($"{label}: unknown destination '{Shown(reference)}'");
         if (zone.Kind == ZoneKinds.Work)
         {
             if (zone.Egress.Default != "deny")
@@ -264,6 +364,9 @@ public static class ZonePolicyParser
             foreach (var reference in allow.Where(reference => destinations.TryGetValue(reference, out var destination)
                          && destination.Class == ZoneDestinationClasses.SecretStore))
                 errors.Add($"{label}: a work zone must not reach the secret store '{reference}'");
+            foreach (var reference in allow.Where(reference => ZonePolicyRules.IpSetName(reference).Length > ZonePolicyRules.MaxIpSetNameLength))
+                errors.Add($"{label}: allowed destination '{Shown(reference)}' is too long for its ipset "
+                           + $"{ZonePolicyRules.IpSetName(reference)} (at most {ZonePolicyRules.MaxIpSetNameLength} characters)");
         }
         else if (zone.Kind == ZoneKinds.Run)
         {
@@ -300,7 +403,7 @@ public static class ZonePolicyParser
             if (probe.Destination is { } reference)
             {
                 if (!destinations.TryGetValue(reference, out var destination))
-                    errors.Add($"{label}: probe names unknown destination '{reference}'");
+                    errors.Add($"{label}: probe names unknown destination '{Shown(reference)}'");
                 else if (probe.Port is null && (destination.Ports ?? []).Count == 0)
                     errors.Add($"{label}: probe of '{reference}' needs a port because the destination has none");
             }
@@ -310,9 +413,11 @@ public static class ZonePolicyParser
     }
 
     /// <summary>
-    /// Expand <c>${NAME}</c> references and resolve host names to IPv4
-    /// addresses. Resolution happens on the host at apply time; the rendered
-    /// rules record the addresses that were current then.
+    /// Expand <c>${NAME}</c> references and sort each destination's hosts into
+    /// literal addresses and names. A work zone allows names through the
+    /// destination's ipset, which the zone resolver fills with whatever the
+    /// containers resolve, so a name is resolved here only where an address
+    /// must be known up front: for a run zone's denial and for a blocked probe.
     /// </summary>
     public static async Task<ResolvedZonePolicy> ResolveAsync(
         ZonePolicyDocument document,
@@ -327,7 +432,7 @@ public static class ZonePolicyParser
             .Where(zone => zoneNames is not { Count: > 0 } || zoneNames.Contains(zone.Name, StringComparer.Ordinal))
             .ToList();
         foreach (var unknown in (zoneNames ?? []).Where(name => document.Zones.All(zone => zone.Name != name)))
-            errors.Add($"zone '{unknown}' is not in the policy");
+            errors.Add($"zone '{Shown(unknown)}' is not in the policy");
         // A work host never needs the run zone's secret-store address and the
         // reverse, so only destinations the selected zones use are resolved.
         var referenced = selected
@@ -335,52 +440,42 @@ public static class ZonePolicyParser
                 .Concat(zone.Verify.Reachable.Concat(zone.Verify.Blocked)
                     .Select(probe => probe.Destination).OfType<string>()))
             .ToHashSet(StringComparer.Ordinal);
+        var needAddresses = selected
+            .SelectMany(zone => (zone.Egress.Deny ?? [])
+                .Concat(zone.Verify.Blocked.Where(probe => probe.Host is null).Select(probe => probe.Destination).OfType<string>()))
+            .ToHashSet(StringComparer.Ordinal);
         var resolved = new Dictionary<string, ResolvedZoneDestination>(StringComparer.Ordinal);
         foreach (var (name, destination) in document.Destinations
                      .Where(item => referenced.Contains(item.Key))
                      .OrderBy(item => item.Key, StringComparer.Ordinal))
         {
+            var label = $"destination {name}";
             var hosts = new List<string>();
             foreach (var entry in destination.Hosts)
-                hosts.AddRange(Expand(entry, $"destination {name}", environment, errors));
-            var addresses = new SortedSet<string>(StringComparer.Ordinal);
+                hosts.AddRange(Expand(entry, label, environment, errors));
+            var literals = new SortedSet<string>(StringComparer.Ordinal);
+            var names = new List<string>();
             foreach (var host in hosts)
             {
-                if (TryNormalizeCidr(host, out var cidr))
+                if (ClassifyHost(host, label, errors) is not { } classified) continue;
+                if (classified.IsLiteral) literals.Add(classified.Value);
+                else if (!names.Contains(classified.Value, StringComparer.Ordinal)) names.Add(classified.Value);
+            }
+            var addresses = new SortedSet<string>(literals, StringComparer.Ordinal);
+            if (needAddresses.Contains(name))
+            {
+                foreach (var host in names)
                 {
-                    addresses.Add(cidr);
-                    continue;
+                    foreach (var address in await ResolveIpv4Async(resolver, host, label, errors, ct))
+                        addresses.Add($"{address}/32");
                 }
-                if (host.Contains('/'))
-                {
-                    errors.Add($"destination {name}: '{host}' is not a canonical IPv4 CIDR");
-                    continue;
-                }
-                if (IPAddress.TryParse(host, out _) || host.Contains(':'))
-                {
-                    errors.Add($"destination {name}: '{host}' is not an IPv4 address; zone networks carry IPv4 only");
-                    continue;
-                }
-                IReadOnlyList<IPAddress> found;
-                try
-                {
-                    found = await resolver.ResolveAsync(host, ct);
-                }
-                catch (SocketException exception)
-                {
-                    errors.Add($"destination {name}: '{host}' does not resolve ({exception.SocketErrorCode})");
-                    continue;
-                }
-                var ipv4 = found.Where(address => address.AddressFamily == AddressFamily.InterNetwork).ToList();
-                if (ipv4.Count == 0) errors.Add($"destination {name}: '{host}' has no IPv4 address");
-                foreach (var address in ipv4) addresses.Add($"{address}/32");
             }
             var ports = (destination.Ports ?? []).Distinct().ToList();
             var protocols = ports.Count == 0
                 ? new List<string>()
                 : (destination.Protocols is { Count: > 0 } configured ? configured.Distinct().ToList() : ["tcp"]);
-            resolved[name] = new ResolvedZoneDestination(
-                name, destination.Class, hosts, addresses.OrderBy(SortKey).ToList(), ports, protocols);
+            resolved[name] = new ResolvedZoneDestination(name, destination.Class, hosts,
+                literals.OrderBy(SortKey).ToList(), names, addresses.OrderBy(SortKey).ToList(), ports, protocols);
         }
 
         var zones = new List<ResolvedZone>();
@@ -408,37 +503,98 @@ public static class ZonePolicyParser
             }
             foreach (var probe in zone.Verify.Blocked)
             {
+                // Without a port, a blocked probe covers every port the
+                // destination declares: a denial must hold on each of them.
+                IReadOnlyList<int> ports = probe.Port is { } given ? [given] : resolved[probe.Destination!].Ports;
                 if (probe is { Destination: { } reference, Host: null })
                 {
-                    var destination = resolved[reference];
-                    var port = probe.Port ?? destination.Ports.FirstOrDefault();
-                    foreach (var address in destination.Addresses)
+                    foreach (var address in resolved[reference].Addresses)
+                    foreach (var port in ports)
                         probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, reference, FirstHost(address), port));
                     continue;
                 }
                 var target = probe.Host!;
-                var blockedPort = probe.Port ?? resolved[probe.Destination!].Ports[0];
                 if (TryNormalizeCidr(target, out var literal))
                 {
-                    probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, FirstHost(literal), blockedPort));
+                    foreach (var port in ports)
+                        probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, FirstHost(literal), port));
                     continue;
                 }
-                IReadOnlyList<IPAddress> found;
-                try { found = await resolver.ResolveAsync(target, ct); }
-                catch (SocketException exception)
-                {
-                    errors.Add($"zone {zone.Name}: blocked probe host '{target}' does not resolve ({exception.SocketErrorCode})");
-                    continue;
-                }
-                var first = found.FirstOrDefault(address => address.AddressFamily == AddressFamily.InterNetwork);
-                if (first is null) errors.Add($"zone {zone.Name}: blocked probe host '{target}' has no IPv4 address");
-                else probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, first.ToString(), blockedPort));
+                var first = (await ResolveIpv4Async(resolver, target, $"zone {zone.Name}: blocked probe host", errors, ct))
+                    .FirstOrDefault();
+                if (first is null) continue;
+                foreach (var port in ports)
+                    probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, first.ToString(), port));
             }
             zones.Add(new ResolvedZone(zone.Name, zone.Kind, zone.Networks, allow, deny, probes));
         }
+
+        ResolvedZoneResolver? zoneResolver = null;
+        if (selected.Any(zone => zone.Kind == ZoneKinds.Work) && document.Resolver is { } settings)
+        {
+            var upstreams = new List<string>();
+            foreach (var entry in settings.Upstreams)
+            {
+                foreach (var upstream in Expand(entry, "resolver", environment, errors))
+                {
+                    if (IPAddress.TryParse(upstream, out var address) && address.AddressFamily == AddressFamily.InterNetwork
+                        && TryNormalizeCidr(upstream, out var single) && single.EndsWith("/32", StringComparison.Ordinal))
+                    {
+                        if (!upstreams.Contains(address.ToString(), StringComparer.Ordinal)) upstreams.Add(address.ToString());
+                    }
+                    else
+                        errors.Add($"resolver: upstream '{Shown(upstream)}' is not an IPv4 address");
+                }
+            }
+            zoneResolver = new ResolvedZoneResolver(upstreams, settings.SetTimeoutSeconds);
+        }
         if (errors.Count > 0) throw new ZonePolicyException(errors);
         return new ResolvedZonePolicy(document.Version, policySha256, zones,
-            document.Verification ?? new ZoneVerificationSettings());
+            document.Verification ?? new ZoneVerificationSettings(), zoneResolver);
+    }
+
+    /// <summary>
+    /// A host entry is an IPv4 address or canonical CIDR (kept literal) or a
+    /// DNS name (lower-cased). Anything else is an error.
+    /// </summary>
+    private static (bool IsLiteral, string Value)? ClassifyHost(string host, string label, List<string> errors)
+    {
+        if (TryNormalizeCidr(host, out var cidr)) return (true, cidr);
+        if (host.Contains('/'))
+        {
+            errors.Add($"{label}: '{Shown(host)}' is not a canonical IPv4 CIDR");
+            return null;
+        }
+        if (host.Contains(':'))
+        {
+            errors.Add($"{label}: '{Shown(host)}' is not an IPv4 address; zone networks carry IPv4 only");
+            return null;
+        }
+        var name = host.ToLowerInvariant().TrimEnd('.');
+        if (IPAddress.TryParse(host, out _) || !HostNamePattern.IsMatch(name) || name.Split('.')[^1].All(char.IsAsciiDigit))
+        {
+            errors.Add($"{label}: '{Shown(host)}' is neither an IPv4 address nor a DNS name");
+            return null;
+        }
+        return (false, name);
+    }
+
+    private static async Task<IReadOnlyList<IPAddress>> ResolveIpv4Async(
+        IZoneAddressResolver resolver, string host, string label, List<string> errors, CancellationToken ct)
+    {
+        IReadOnlyList<IPAddress> found;
+        try
+        {
+            found = await resolver.ResolveAsync(host, ct);
+        }
+        catch (SocketException exception)
+        {
+            errors.Add($"{label}: '{host}' does not resolve ({exception.SocketErrorCode})");
+            return [];
+        }
+        var ipv4 = found.Where(address => address.AddressFamily == AddressFamily.InterNetwork).ToList();
+        if (ipv4.Count == 0) errors.Add($"{label}: '{host}' has no IPv4 address");
+        return ipv4;
     }
 
     private static IEnumerable<string> Expand(
@@ -462,14 +618,32 @@ public static class ZonePolicyParser
     }
 
     internal static bool TryParseCidr(string? value, out uint start, out uint end)
+        => TryParseCidr(value, out start, out end, out _);
+
+    /// <summary>
+    /// A dotted-quad IPv4 network with a prefix and no host bits. Octets are
+    /// plain decimal, so the octal and hexadecimal forms
+    /// <see cref="IPAddress.TryParse(string?, out IPAddress?)"/> accepts never
+    /// turn into a different address.
+    /// </summary>
+    private static bool TryParseCidr(string? value, out uint start, out uint end, out int prefix)
     {
         start = end = 0;
+        prefix = 0;
         if (string.IsNullOrWhiteSpace(value)) return false;
         var parts = value.Split('/');
-        if (parts.Length != 2 || !int.TryParse(parts[1], out var prefix) || prefix is < 0 or > 32) return false;
-        if (!IPAddress.TryParse(parts[0], out var address) || address.AddressFamily != AddressFamily.InterNetwork) return false;
-        var bytes = address.GetAddressBytes();
-        var raw = (uint)bytes[0] << 24 | (uint)bytes[1] << 16 | (uint)bytes[2] << 8 | bytes[3];
+        if (parts.Length != 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out prefix)
+            || prefix is < 0 or > 32) return false;
+        var octets = parts[0].Split('.');
+        if (octets.Length != 4) return false;
+        uint raw = 0;
+        foreach (var octet in octets)
+        {
+            if (octet.Length is < 1 or > 3 || !octet.All(char.IsAsciiDigit) || (octet.Length > 1 && octet[0] == '0')) return false;
+            var number = uint.Parse(octet, CultureInfo.InvariantCulture);
+            if (number > 255) return false;
+            raw = raw << 8 | number;
+        }
         var mask = prefix == 0 ? 0u : uint.MaxValue << (32 - prefix);
         if ((raw & ~mask) != 0) return false;
         start = raw;
@@ -477,22 +651,35 @@ public static class ZonePolicyParser
         return true;
     }
 
-    /// <summary>An IPv4 literal becomes <c>a.b.c.d/32</c>; a CIDR must be canonical.</summary>
+    /// <summary>
+    /// An IPv4 literal becomes <c>a.b.c.d/32</c>; a CIDR must have no host
+    /// bits. The result is always the canonical <c>addr/prefix</c> form, so
+    /// <c>10.0.0.0/08</c> and <c>10.0.0.0/8</c> render the same rule.
+    /// </summary>
     internal static bool TryNormalizeCidr(string value, out string cidr)
     {
         cidr = string.Empty;
         var candidate = value.Contains('/') ? value : value + "/32";
-        if (!TryParseCidr(candidate, out _, out _)) return false;
-        cidr = candidate;
+        if (!TryParseCidr(candidate, out var start, out _, out var prefix)) return false;
+        cidr = $"{ToAddress(start)}/{prefix.ToString(CultureInfo.InvariantCulture)}";
         return true;
     }
+
+    /// <summary>The address Docker gives the bridge itself: the subnet's first host.</summary>
+    public static string GatewayOf(string subnet)
+    {
+        TryParseCidr(subnet, out var start, out _);
+        return ToAddress(start + 1);
+    }
+
+    private static string ToAddress(uint value)
+        => new IPAddress([(byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value]).ToString();
 
     /// <summary>The address a blocked probe connects to inside a CIDR.</summary>
     private static string FirstHost(string cidr)
     {
         TryParseCidr(cidr, out var start, out var end);
-        var host = end > start + 1 ? start + 1 : start;
-        return new IPAddress([(byte)(host >> 24), (byte)(host >> 16), (byte)(host >> 8), (byte)host]).ToString();
+        return ToAddress(end > start + 1 ? start + 1 : start);
     }
 
     private static (uint, int) SortKey(string cidr)

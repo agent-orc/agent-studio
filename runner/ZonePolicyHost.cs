@@ -73,6 +73,11 @@ public sealed class ProcessZoneHost(TimeSpan timeout) : IZoneHost
 public enum ZoneProbeOutcome
 {
     Connected,
+
+    /// <summary>"No route to host": the ICMP admin-prohibited reject the zone rules send.</summary>
+    Rejected,
+
+    /// <summary>"Connection refused": a reset from the destination itself.</summary>
     Refused,
     TimedOut,
     Unresolved,
@@ -87,8 +92,11 @@ public interface IZoneNetworkProbe
     /// <summary>Make the probe ready (for Docker: pull the image once, outside any probe's wait).</summary>
     Task PrepareAsync(CancellationToken ct);
 
-    /// <summary>Open one TCP connection from a fresh container on <paramref name="network"/>.</summary>
-    Task<ZoneProbeObservation> ConnectAsync(string network, string address, int port, CancellationToken ct);
+    /// <summary>
+    /// Open one TCP connection from a fresh container on <paramref name="network"/>,
+    /// resolving names through <paramref name="dns"/> when given.
+    /// </summary>
+    Task<ZoneProbeObservation> ConnectAsync(string network, string? dns, string address, int port, CancellationToken ct);
 
     /// <summary>Containers attached to <paramref name="network"/> that publish a host port, as "name: ports".</summary>
     Task<IReadOnlyList<string>> PublishedPortsAsync(string network, CancellationToken ct);
@@ -113,22 +121,28 @@ public sealed class DockerZoneNetworkProbe(IZoneHost host, string image, int tim
             throw new InvalidOperationException($"probe image {image} could not be pulled: {FirstLine(pull.Error)}");
     }
 
-    public async Task<ZoneProbeObservation> ConnectAsync(string network, string address, int port, CancellationToken ct)
+    public async Task<ZoneProbeObservation> ConnectAsync(
+        string network, string? dns, string address, int port, CancellationToken ct)
     {
-        var result = await host.RunAsync("docker",
+        var args = new List<string> { "run", "--rm", "--network", network };
+        if (dns is not null) args.AddRange(["--dns", dns]);
+        args.AddRange(
         [
-            "run", "--rm", "--network", network, "--label", ProbeLabel, image,
+            "--label", ProbeLabel, image,
             "timeout", timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "bash", "-c", "exec 3<>\"/dev/tcp/$0/$1\"", address, port.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        ], null, ct);
-        return Classify(result);
+        ]);
+        return Classify(await host.RunAsync("docker", args, null, ct));
     }
 
     /// <summary>
     /// Exit 0 is a completed connection. 124 (coreutils) or 143 and 137
     /// (busybox, the child killed by TERM or KILL) is the probe's own timeout,
     /// a dropped connection. 125 to 127 are Docker or image failures and a
-    /// negative code an overrun host command; neither proves anything.
+    /// negative code an overrun host command; neither proves anything. Of the
+    /// connect errors, "No route to host" is the zone rules' reject and
+    /// "Connection refused" the destination's reset; any other error is
+    /// inconclusive.
     /// </summary>
     internal static ZoneProbeObservation Classify(ZoneCommandResult result)
     {
@@ -143,7 +157,12 @@ public sealed class DockerZoneNetworkProbe(IZoneHost host, string image, int tim
             || result.Error.Contains("Name does not resolve", StringComparison.OrdinalIgnoreCase)
             || result.Error.Contains("name resolution", StringComparison.OrdinalIgnoreCase))
             return new ZoneProbeObservation(ZoneProbeOutcome.Unresolved, detail);
-        return new ZoneProbeObservation(ZoneProbeOutcome.Refused, detail.Length > 0 ? detail : $"exit {result.ExitCode}");
+        if (result.Error.Contains("No route to host", StringComparison.OrdinalIgnoreCase))
+            return new ZoneProbeObservation(ZoneProbeOutcome.Rejected, detail);
+        if (result.Error.Contains("Connection refused", StringComparison.OrdinalIgnoreCase))
+            return new ZoneProbeObservation(ZoneProbeOutcome.Refused, detail);
+        return new ZoneProbeObservation(ZoneProbeOutcome.ProbeError,
+            $"inconclusive connect error (exit {result.ExitCode}): {(detail.Length > 0 ? detail : "no message")}");
     }
 
     public async Task<IReadOnlyList<string>> PublishedPortsAsync(string network, CancellationToken ct)

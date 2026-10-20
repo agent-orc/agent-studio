@@ -1,0 +1,33 @@
+# Rendered by agent-host zone-policy from policy 2026-10-20.2 (sha256:<policy-sha256>).
+# Zone resolver (dnsmasq): work containers use it with --dns <bridge gateway>.
+port=53
+bind-dynamic
+except-interface=lo
+interface=br-agent-work
+no-resolv
+no-hosts
+server=192.0.2.53
+server=192.0.2.54
+ipset=/api.anthropic.com/agent-zone-model-providers
+ipset=/api.github.com/agent-zone-git-hosts
+ipset=/api.nuget.org/agent-zone-package-registries
+ipset=/api.openai.com/agent-zone-model-providers
+ipset=/auth.openai.com/agent-zone-model-providers
+ipset=/builds.dotnet.microsoft.com/agent-zone-package-registries
+ipset=/chatgpt.com/agent-zone-model-providers
+ipset=/claude.ai/agent-zone-model-providers
+ipset=/codeload.github.com/agent-zone-git-hosts
+ipset=/console.anthropic.com/agent-zone-model-providers
+ipset=/files.pythonhosted.org/agent-zone-package-registries
+ipset=/generativelanguage.googleapis.com/agent-zone-model-providers
+ipset=/ghcr.io/agent-zone-package-registries
+ipset=/github.com/agent-zone-git-hosts
+ipset=/globalcdn.nuget.org/agent-zone-package-registries
+ipset=/oauth2.googleapis.com/agent-zone-model-providers
+ipset=/objects.githubusercontent.com/agent-zone-git-hosts
+ipset=/pkg-containers.githubusercontent.com/agent-zone-package-registries
+ipset=/platform.claude.com/agent-zone-model-providers
+ipset=/pypi.org/agent-zone-package-registries
+ipset=/raw.githubusercontent.com/agent-zone-git-hosts
+ipset=/registry.npmjs.org/agent-zone-package-registries
+ipset=/task-server.example.internal/agent-zone-control-plane

@@ -17,8 +17,10 @@ markers resolve a case's affected card IDs against the current board. A missing
 host metric or unlinked receipt reads as unavailable, never as a healthy zero.
 Each host card also shows the zone network policy the host enforces, from its
 `zone-policy` capability (AGT-3231). It reads as zone and policy version with the
-verification time, as `Verification failed` with the first failed check, or as
-`Not reported` for a host without an applied policy; see
+verification time, as `Verification failed` with the first failed check, as
+`Not verified` with the reason for a record that no longer counts (an earlier
+boot, a stopped timer, a removal), or as `Not reported` for a host without an
+applied policy; see
 [Zone network policy on Docker hosts](../../operations/setup/zone-network-policy.md).
 
 The flow endpoint counts distinct cards entering delivery, human review, and

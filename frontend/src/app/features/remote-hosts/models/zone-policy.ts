@@ -12,16 +12,20 @@ export interface HostZonePolicy {
 /**
  * The zone network policy a host enforces, from its `zone-policy` capability:
  * zone and policy version after a passed verification, the first failed check
- * otherwise. A host that never applied the policy reports no capability.
+ * after a failed one, and the reason for any other record that no longer
+ * counts (an earlier boot, a stopped timer, a removal). A host that never
+ * applied the policy reports no capability.
  */
 export function hostZonePolicy(host: { capabilityHealth?: readonly RemoteHostCapabilityHealth[] }): HostZonePolicy {
   const capability = host.capabilityHealth?.find(entry => entry.key === ZONE_POLICY_CAPABILITY);
   if (!capability) return { state: 'not-reported', label: 'Not reported', detail: null };
   const version = capability.version ?? 'unknown version';
   if (capability.advertisedStatus !== 'ready') {
+    const failed = !capability.detail || capability.detail.startsWith('verification failed');
+    const label = failed ? 'Verification failed' : 'Not verified';
     return {
       state: 'failed',
-      label: capability.version ? `Verification failed · ${capability.version}` : 'Verification failed',
+      label: capability.version ? `${label} · ${capability.version}` : label,
       detail: capability.detail ?? null,
     };
   }

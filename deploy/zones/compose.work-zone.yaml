@@ -6,8 +6,9 @@
 #
 # Each agent host leaves the stack's control and runner networks for the zone's
 # agent-work network, which deploy/zones/apply-zone-policy.sh --execute creates
-# and firewalls; it publishes no port and reads the applied zone policy state to
-# report it as its zone-policy capability. Export RUNNER_SERVER_URL as the
+# and firewalls; it publishes no port, resolves through the zone resolver on the
+# bridge gateway (172.30.0.1, so its answers open the egress allowlist), and
+# reads the applied zone policy state to report it as its zone-policy capability. Export RUNNER_SERVER_URL as the
 # remote control plane URL, whose host the policy's control-plane destination
 # allows. Do not use this overlay on a one-box install, where the agent hosts
 # reach the Task Server over the stack's control network.
@@ -20,6 +21,7 @@ x-zone-policy-state: &zone-policy-state
 services:
   agent-host-distributed:
     networks: !override [agent-work]
+    dns: [172.30.0.1]
     ports: !reset []
     depends_on: !reset {}
     environment:
@@ -30,6 +32,7 @@ services:
 
   agent-host-review-distributed:
     networks: !override [agent-work]
+    dns: [172.30.0.1]
     ports: !reset []
     depends_on: !reset {}
     environment:

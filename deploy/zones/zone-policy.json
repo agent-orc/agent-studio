@@ -3,17 +3,20 @@
 // docs/operations/setup/zone-network-policy.md. ${NAME} values come from the
 // host's /etc/agent-studio/zone-policy/zone-policy.env. Raise "version" with
 // every change: the daemons report it as their zone-policy capability.
+//
+// A work zone allows a named host (and its subdomains) through the
+// destination's ipset agent-zone-<destination>: work containers resolve
+// through the zone resolver on their bridge gateway, which adds every answer
+// to the set, so the allowed addresses follow what the containers resolve.
+// IPv4 addresses and CIDRs stay literal rules.
 {
   "schemaVersion": 1,
-  "version": "2026-10-20.1",
+  "version": "2026-10-20.2",
+  "resolver": {
+    "upstreams": ["${AGENT_ZONE_DNS_RESOLVERS}"],
+    "setTimeoutSeconds": 86400
+  },
   "destinations": {
-    "dns": {
-      "class": "egress",
-      "description": "Resolvers the Docker embedded DNS forwards to",
-      "hosts": ["${AGENT_ZONE_DNS_RESOLVERS}"],
-      "ports": [53],
-      "protocols": ["udp", "tcp"]
-    },
     "control-plane": {
       "class": "control-plane",
       "description": "Task Server and Studio edge (RUNNER_SERVER_URL host)",
@@ -78,7 +81,7 @@
       ],
       "egress": {
         "default": "deny",
-        "allow": ["dns", "control-plane", "git-hosts", "package-registries", "model-providers"]
+        "allow": ["control-plane", "git-hosts", "package-registries", "model-providers"]
       },
       "verify": {
         "reachable": [
@@ -113,7 +116,8 @@
     }
   ],
   "verification": {
-    "probeImage": "bash:5.2",
-    "timeoutSeconds": 4
+    "probeImage": "bash:5.2@sha256:a54fb4422b18f05dd3107c36f39d67b26334fda7ec89f4126052b45e228e2f15",
+    "timeoutSeconds": 4,
+    "controlNetwork": "bridge"
   }
 }

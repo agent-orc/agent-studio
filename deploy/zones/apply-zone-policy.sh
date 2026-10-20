@@ -1,15 +1,18 @@
 #!/bin/sh
 # Render, apply and verify the zone network policy on a Docker host
-# (AGT-3231). A dry run by default: it prints the plan and the rendered
-# iptables rules, validates them with iptables-restore --test and changes
-# nothing. With --execute (as root) it ensures the zone networks, replaces the
-# AGENT-ZONE-* chains, inserts their jumps, proves the rules with probe
-# containers and records the result for the daemons' zone-policy capability.
-# Rerunning it with an unchanged policy changes nothing.
+# (AGT-3231). A dry run by default: it prints the plan, the rendered iptables
+# and ip6tables rules and the zone resolver configuration, validates the rules
+# with iptables-restore --test and changes nothing. With --execute (as root) it
+# ensures the zone networks, ipsets and resolver, replaces the AGENT-ZONE-*
+# chains, inserts their jumps, proves the rules with probe containers and
+# records the result for the daemons' zone-policy capability. Rerunning it
+# with an unchanged policy changes nothing. --remove rolls the rules back
+# (again a dry run unless --execute).
 #
 #   deploy/zones/apply-zone-policy.sh [--execute] [--zones work] [--state FILE] [--env-file FILE]
 #   deploy/zones/apply-zone-policy.sh --verify [--record] [--zones work]
 #   deploy/zones/apply-zone-policy.sh --render [--out-dir DIR]
+#   deploy/zones/apply-zone-policy.sh --remove [--execute] [--state FILE]
 #
 # The policy defaults to the checked-in zone-policy.json next to this script
 # (override with --policy or ZONE_POLICY_FILE). AGENT_ZONES=work limits a work
@@ -45,6 +48,7 @@ verb=apply
 case "${1:-}" in
     --verify) verb=verify; shift ;;
     --render) verb=render; shift ;;
+    --remove) verb=remove; shift ;;
 esac
 
 has_policy=false
@@ -54,7 +58,7 @@ for argument in "$@"; do
         --policy) has_policy=true ;;
         --zones) has_zones=true ;;
         --execute)
-            [ "$(id -u)" -eq 0 ] || die "--execute changes Docker networks and iptables; run it as root."
+            [ "$(id -u)" -eq 0 ] || die "--execute changes Docker networks, ipsets and iptables; run it as root."
             ;;
     esac
 done
@@ -62,12 +66,13 @@ done
 agent_host=$(resolve_agent_host) \
     || die "agent-host not found; set AGENT_HOST_BIN or install the agent host first."
 
-if [ "$has_policy" = false ]; then
+# remove needs no policy: it deletes the jumps and the AGENT-ZONE-* chains.
+if [ "$verb" != remove ] && [ "$has_policy" = false ]; then
     policy=${ZONE_POLICY_FILE:-$here/zone-policy.json}
     [ -f "$policy" ] || die "policy file $policy does not exist."
     set -- --policy "$policy" "$@"
 fi
-if [ "$has_zones" = false ] && [ -n "${AGENT_ZONES:-}" ]; then
+if [ "$verb" != remove ] && [ "$has_zones" = false ] && [ -n "${AGENT_ZONES:-}" ]; then
     set -- --zones "$AGENT_ZONES" "$@"
 fi
 
