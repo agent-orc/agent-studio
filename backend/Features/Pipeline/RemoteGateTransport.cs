@@ -119,7 +119,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             throw new InvalidOperationException("Remote gate total budget must be at most 24 hours.");
         TrySweepStaleRunFolders();
         Directory.CreateDirectory(local);
-        var remoteCreated = false;
+        var remoteCreationAttempted = false;
         try
         {
             long sourcePackKiB = 0;
@@ -189,9 +189,11 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json), ct);
             TrackLiveRun(runId);
             _runs.Record(runId, options.Host, options.Root, request.Project, request.WatchPath);
+            // SSH can fail after mkdir succeeds on the host. From this point,
+            // cleanup must prove the directory is gone before dropping its record.
+            remoteCreationAttempted = true;
             await Ssh(options, local,
                 "umask 077; mkdir -p -- " + Quote(options.Root) + "; mkdir -- " + Quote(remote), infra, ct);
-            remoteCreated = true;
             var transfer = Stopwatch.StartNew();
             try
             {
@@ -245,7 +247,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         {
             LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
             _slotUsage.Released(runId);
-            if (remoteCreated)
+            if (remoteCreationAttempted)
             {
                 // Cancellation is a worker-owned marker, not an arbitrary PID
                 // kill. The worker observes it while queued or executing. An

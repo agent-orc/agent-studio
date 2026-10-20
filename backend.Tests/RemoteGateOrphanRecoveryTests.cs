@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using Microsoft.Extensions.Configuration;
@@ -82,6 +83,54 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         await transport.CancelOrphanedRunsAsync();
         Assert.False(remoteExists);
         Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
+    public async Task Failed_ssh_after_mkdir_keeps_the_record_until_the_directory_is_removed()
+    {
+        var repository = Path.Combine(_root, "source");
+        Directory.CreateDirectory(_root);
+        Git("init", "-q", repository);
+        Git("-C", repository, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "fixture");
+        var sha = Git("-C", repository, "rev-parse", "HEAD").Trim();
+        var registry = new RemoteGateRunRegistry(Path.Combine(_root, "records"), _clock,
+            new string('a', 32), new string('b', 32));
+        var remoteExists = false;
+        var allowRemoval = false;
+        var commands = new List<string>();
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            if (fileName != "ssh") return Task.CompletedTask;
+            var command = args.Last();
+            commands.Add(command);
+            if (command.Contains("; mkdir -- '/srv/gates/", StringComparison.Ordinal))
+            {
+                remoteExists = true;
+                throw new IOException("SSH lost its acknowledgement after mkdir");
+            }
+            if (command.Contains("rm -rf --", StringComparison.Ordinal) && allowRemoval)
+                remoteExists = false;
+            if (command.StartsWith("test ! -e", StringComparison.Ordinal) && remoteExists)
+                throw new IOException("remote directory remains");
+            return Task.CompletedTask;
+        }
+        var transport = Transport(registry, Run);
+
+        await Assert.ThrowsAsync<IOException>(() => transport.RunAsync(
+            new BuildTestGateRequest(repository, sha, "integration-gate"), [], null,
+            PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None));
+
+        Assert.True(remoteExists);
+        var record = Assert.Single(registry.ReadAll());
+        Assert.Contains(commands, command => command.Contains(record.RunId + "/cancel", StringComparison.Ordinal));
+
+        allowRemoval = true;
+        await transport.CancelOrphanedRunsAsync();
+
+        Assert.False(remoteExists);
+        Assert.Empty(registry.ReadAll());
     }
 
     [Fact]
@@ -329,6 +378,22 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         return new RemoteGateTransport(configuration, NullLogger<RemoteGateTransport>.Instance,
             _clock, Path.Combine(_root, "local"), _ => { }, runProcess: run, runRegistry: registry,
             ownerIsAlive: ownerIsAlive ?? (_ => false), activity: activity, section: section);
+    }
+
+    private static string Git(params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start) ?? throw new IOException("git did not start");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new IOException("git failed: " + error);
+        return output;
     }
 
     public void Dispose()
