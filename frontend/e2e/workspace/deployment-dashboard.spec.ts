@@ -79,6 +79,10 @@ test('workspace deployment matrix filters and opens project deployment in both t
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width === 390) {
+      await expect.poll(() => dashboard.locator('table').evaluate(table =>
+        table.parentElement!.scrollWidth <= table.parentElement!.clientWidth)).toBe(true);
+    }
     const shot = path.join(resultsDir, `agt-3200-deployment-dashboard-${width}.png`);
     await dashboard.screenshot({ path: shot });
     await test.info().attach(`deployment-dashboard-${width}`, { path: shot, contentType: 'image/png' });
