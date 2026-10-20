@@ -59,6 +59,9 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         WriteCard(watchPath, "AGT-3166", delivery);
         WriteCard(watchPath, "AGT-3171", ancestor);
         WriteCard(watchPath, "AGT-3185", missing);
+        WriteCard(watchPath, "AGT-3187", delivery);
+        var legacyFolder = Path.Combine(watchPath, "5-human-review", "AGT-3187");
+        ReviewSubjectStore.Write(legacyFolder, ReviewSubjectStore.Read(legacyFolder)! with { RunAttemptId = "" });
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -93,7 +96,7 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
             .SetIntegrationBranch(project.DisplayName, "develop");
         var path = $"/api/projects/{project.Id}/operator-candidate-verifications";
         var summary = new RecordOperatorCandidateRequest(candidate,
-            ["AGT-3166", "AGT-3171", "AGT-3185"], "gate-host",
+            ["AGT-3166", "AGT-3171", "AGT-3185", "AGT-3187"], "gate-host",
             [new OperatorCandidateSuite("dotnet test", 120, 0, 2)],
             _clock.GetUtcNow().AddMinutes(-40), _clock.GetUtcNow(), new string('a', 64));
 
@@ -112,6 +115,8 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         Assert.True(results[1].GetProperty("recorded").GetBoolean());
         Assert.False(results[2].GetProperty("recorded").GetBoolean());
         Assert.Contains("not contained", results[2].GetProperty("reason").GetString());
+        Assert.False(results[3].GetProperty("recorded").GetBoolean());
+        Assert.Contains("current review attempt", results[3].GetProperty("reason").GetString());
 
         using var repeated = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3166"] });
         repeated.EnsureSuccessStatusCode();

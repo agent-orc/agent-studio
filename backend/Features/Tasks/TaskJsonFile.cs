@@ -209,6 +209,12 @@ internal static class TaskJsonFile
     /// </summary>
     internal static bool RemoveField(string jobDir, string fieldName, ILogger logger)
     {
+        lock (FolderLock(jobDir))
+            return RemoveFieldCore(jobDir, fieldName, logger);
+    }
+
+    private static bool RemoveFieldCore(string jobDir, string fieldName, ILogger logger)
+    {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return false;
 
@@ -242,6 +248,12 @@ internal static class TaskJsonFile
     /// <see cref="TaskStateMachine.ReorderJobs"/>.
     /// </summary>
     internal static void UpdateOrder(string jobDir, int order, ILogger logger)
+    {
+        lock (FolderLock(jobDir))
+            UpdateOrderCore(jobDir, order, logger);
+    }
+
+    private static void UpdateOrderCore(string jobDir, int order, ILogger logger)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return;

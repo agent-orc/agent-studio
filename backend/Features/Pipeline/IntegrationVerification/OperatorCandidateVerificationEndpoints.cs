@@ -81,6 +81,11 @@ public static class OperatorCandidateVerificationEndpoints
                     results.Add(new(address, false, "Card has no full reviewed delivery SHA."));
                     continue;
                 }
+                if (string.IsNullOrWhiteSpace(subject!.RunAttemptId))
+                {
+                    results.Add(new(address, false, "Card has no current review attempt to bind this proof to."));
+                    continue;
+                }
                 if (!git.IsDeliveryInPublished(root, delivery!, sha))
                 {
                     results.Add(new(address, false, $"Delivery {delivery} is not contained in candidate {sha} by ancestry or patch equivalence."));
