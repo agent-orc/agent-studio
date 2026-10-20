@@ -128,7 +128,15 @@ export class ProjectDeployAreaComponent {
     });
   }
 
-  show(view: DeployView): void { this.view.set(view); this.viewChange.emit(view); }
+  show(view: DeployView): void {
+    if (view !== 'history' && this.historyFilter() !== ALL_DEPLOY_RUNS) {
+      this.historyFilter.set(ALL_DEPLOY_RUNS);
+      this.historyOffset.set(0);
+      this.reloadRuns(this.projectName(), false);
+    }
+    this.view.set(view);
+    this.viewChange.emit(view);
+  }
 
   refresh(): void { this.load(this.projectName(), false); }
 

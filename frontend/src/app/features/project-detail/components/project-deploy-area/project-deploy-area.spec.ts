@@ -367,7 +367,7 @@ describe('ProjectDeployAreaComponent', () => {
     expect(data.requests).toContain('releases:25');
   });
 
-  it('keeps server history filters when moving between Deploy views', async () => {
+  it('clears server history filters when leaving History so the reopened controls match the data', async () => {
     data.serveEverything();
     await settle();
     await click('deploy-tab-history');
@@ -377,9 +377,10 @@ describe('ProjectDeployAreaComponent', () => {
     await settle();
     expect(fixture.componentInstance.historyFilter().environmentId).toBe('production');
     await click('deploy-tab-releases');
+    expect(fixture.componentInstance.historyFilter().environmentId).toBe('all');
     await click('deploy-tab-history');
-    expect((byTestId('deploy-history-filter-environment') as HTMLSelectElement).value).toBe('production');
-    expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(2);
+    expect((byTestId('deploy-history-filter-environment') as HTMLSelectElement).value).toBe('all');
+    expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
   });
 
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
