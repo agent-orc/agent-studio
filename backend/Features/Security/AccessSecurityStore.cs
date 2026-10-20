@@ -25,15 +25,31 @@ public sealed class AccessSecurityStore
     private readonly ILogger<AccessSecurityStore> _logger;
     private readonly TimeProvider _clock;
     private readonly object _gate = new();
-    private readonly Dictionary<string, LoginAttempt> _loginAttempts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LoginAttempt> _clientLoginAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LoginAttempt> _usernameLoginAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _recentSuccessfulLogins = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _usernameClientDelays = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _clientsHashing = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _passwordHashSlots;
+    private readonly Func<string, string, bool> _verifyPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
 
     public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null)
+        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword)
+    {
+    }
+
+    internal AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger,
+        TimeProvider? clock, Func<string, string, bool> verifyPassword)
     {
         _configuration = configuration;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
+        _verifyPassword = verifyPassword;
+        _passwordHashSlots = new SemaphoreSlim(Math.Clamp(
+            configuration.GetValue("Security:LoginThrottle:MaxConcurrentHashes", Math.Max(2, Environment.ProcessorCount)),
+            1, Math.Max(2, Environment.ProcessorCount)));
     }
 
     public string SecurityFolder => Path.Combine(
@@ -74,34 +90,78 @@ public sealed class AccessSecurityStore
         }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) Login(string username, string password, string throttleKey)
+    public (StudioUser User, string SessionToken, string CsrfToken) Login(string username, string password, string clientKey)
     {
         var normalized = NormalizeUsername(username ?? string.Empty);
+        clientKey = string.IsNullOrWhiteSpace(clientKey) ? "unknown" : clientKey.Trim().ToLowerInvariant();
+        var loginKey = normalized + "|" + clientKey;
+        StudioUser? candidate;
         lock (_gate)
         {
             var now = Now;
-            if (_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
+            if (_clientLoginAttempts.TryGetValue(clientKey, out var attempt) && attempt.LockedUntil > now)
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
-
-            var state = StateLocked();
-            var user = state.Users.FirstOrDefault(x => x.Username == normalized);
-            var passwordCandidate = password ?? string.Empty;
-            var passwordLengthAllowed = passwordCandidate.Length <= 128;
-            var passwordMatches = passwordLengthAllowed && PasswordSecretHasher.VerifyPassword(
-                passwordCandidate,
-                user?.PasswordHash ?? DummyPasswordHash);
-            var valid = user is not null && !user.Disabled && passwordMatches;
-            if (!valid)
+            var usernameBudget = _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20);
+            if (_usernameLoginAttempts.TryGetValue(normalized, out var usernameAttempt)
+                && usernameAttempt.Failures >= usernameBudget
+                && now - usernameAttempt.WindowStartedAt <= LoginWindow
+                && (!_recentSuccessfulLogins.TryGetValue(loginKey, out var successAt)
+                    || now - successAt > TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:RecentSuccessMinutes", 1440))))
             {
-                RegisterLoginFailureLocked(throttleKey, now);
-                throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
+                var delay = TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
+                if (!_usernameClientDelays.TryGetValue(loginKey, out var retryAt))
+                {
+                    _usernameClientDelays[loginKey] = now + delay;
+                    throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
+                }
+                if (retryAt > now)
+                    throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
+                _usernameClientDelays.Remove(loginKey);
             }
-
-            _loginAttempts.Remove(throttleKey);
-            var created = CreateSessionLocked(state, user!);
-            SaveLocked(state);
-            return (user!, created.Token, created.Csrf);
+            candidate = StateLocked().Users.FirstOrDefault(x => x.Username == normalized);
+            if (!_clientsHashing.Add(clientKey))
+                throw new SecurityOperationException(429, "login-throttled", "Another login from this client is in progress.");
         }
+
+        try
+        {
+            if (!_passwordHashSlots.Wait(0))
+                throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+            bool passwordMatches;
+            try
+            {
+                var passwordCandidate = password ?? string.Empty;
+                passwordMatches = passwordCandidate.Length <= 128 && _verifyPassword(
+                    passwordCandidate, candidate?.PasswordHash ?? DummyPasswordHash);
+            }
+            finally { _passwordHashSlots.Release(); }
+
+            lock (_gate)
+            {
+                var state = StateLocked();
+                var current = state.Users.FirstOrDefault(x => x.Username == normalized);
+                var now = Now;
+                if (current is null || current.Disabled || !ReferenceEquals(current, candidate) || !passwordMatches)
+                {
+                    RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
+                        _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
+                        TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)));
+                    RegisterLoginFailureLocked(_usernameLoginAttempts, normalized, now,
+                        _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null);
+                    if (_usernameLoginAttempts[normalized].Failures >= _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20))
+                        _usernameClientDelays[loginKey] = now + TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
+                    throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
+                }
+
+                _clientLoginAttempts.Remove(clientKey);
+                _recentSuccessfulLogins[loginKey] = now;
+                _usernameClientDelays.Remove(loginKey);
+                var created = CreateSessionLocked(state, current);
+                SaveLocked(state);
+                return (current, created.Token, created.Csrf);
+            }
+        }
+        finally { lock (_gate) _clientsHashing.Remove(clientKey); }
     }
 
     public HumanPrincipal? AuthenticateSession(string? token, bool touch = true)
@@ -635,14 +695,16 @@ public sealed class AccessSecurityStore
         return (session, token, csrf);
     }
 
-    private void RegisterLoginFailureLocked(string key, DateTime now)
+    private TimeSpan LoginWindow => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
+
+    private void RegisterLoginFailureLocked(Dictionary<string, LoginAttempt> attempts, string key, DateTime now,
+        int maxFailures, TimeSpan? lockout)
     {
-        var window = TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
-        var max = _configuration.GetValue("Security:LoginThrottle:MaxFailures", 5);
-        var lockout = TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:LockoutMinutes", 15));
-        var prior = _loginAttempts.GetValueOrDefault(key);
-        var failures = prior is null || now - prior.WindowStartedAt > window ? 1 : prior.Failures + 1;
-        _loginAttempts[key] = new LoginAttempt(failures, prior is null || now - prior.WindowStartedAt > window ? now : prior.WindowStartedAt, failures >= max ? now + lockout : null);
+        var prior = attempts.GetValueOrDefault(key);
+        var newWindow = prior is null || now - prior.WindowStartedAt > LoginWindow;
+        var failures = newWindow ? 1 : prior!.Failures + 1;
+        attempts[key] = new LoginAttempt(failures, newWindow ? now : prior!.WindowStartedAt,
+            failures >= maxFailures && lockout is { } duration ? now + duration : null);
     }
 
     private SecurityState StateLocked()

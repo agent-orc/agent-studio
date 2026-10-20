@@ -72,7 +72,7 @@ builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 1;
+    options.ForwardLimit = 2;
     foreach (var raw in (builder.Configuration["Security:TrustedProxyAddresses"] ?? "")
                  .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
