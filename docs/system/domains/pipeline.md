@@ -257,6 +257,35 @@ fields remain accepted on input. The default scope is `documentation`.
 the latest plan decision, pending members, recent batches and member status.
 `POST .../close-now` and `POST .../members/{taskKey}/eject` request operator
 intervention. Mutations require `X-Client-Id`.
+
+### Batch gate queue stall API (AGT-3219)
+
+AGT-3219 adds two project-scoped routes for machine gate queue overruns. A
+queue overrun means the gate did not acquire a slot and did not test the card.
+The routes use the project's configured name in place of `{projectName}`.
+
+| Route | Result | Errors |
+|---|---|---|
+| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. | HTTP 404 for an unknown project. |
+| `POST /api/projects/{projectName}/batch-gate/queue-stalls/release` | HTTP 200 with `released` (task keys) and `refused` (objects with `taskKey` and `reason`). The request has no body. A partial release is still HTTP 200; inspect both arrays. | HTTP 400 when `X-Client-Id` is missing or blank; HTTP 404 for an unknown project. |
+
+The POST requires `X-Client-Id`, as do the other batch gate mutations. Each
+stall event has `episodeId`, `project`, `raisedAtUtc`, `queueDepth`,
+`oldestWaitMs`, `slotsBusy`, `slotsTotal`, `estimatedDrainMs`, `queueBudgetMs`,
+`idleConfiguredSlots`, `advisory`, `triggerTaskKey`, `raise`, and
+`episodeOpenedAtUtc`. Times are UTC; durations are milliseconds. An open
+episode survives a restart and a reminder increments `raise` without creating
+a new episode. `advisory` and `episodeOpenedAtUtc` can be null.
+
+Release considers cards escalated for a machine gate queue overrun of their
+current passed review. It moves each eligible card to Auto Review and admits
+that review to the durable batch queue, preserving its pending sequence and
+resetting its cumulative queue wait cap. A card with a pending follow-up, an
+ineligible batch subject, or an escalation that did not come from the per-card
+fallback is refused with a reason. If admission fails after the lane move, the
+card returns to Escalated and appears in `refused`. The route does not change
+gate host capacity or claim that an unrun gate passed.
+
 The hosted worker closes manifests at the configured size, age, pressure, or
 look-ahead decision, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.

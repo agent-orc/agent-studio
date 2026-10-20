@@ -42,7 +42,8 @@ public static class ZonePolicyCommand
                 .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value ?? string.Empty, StringComparer.Ordinal),
             settings => new DockerZoneNetworkProbe(host, settings.ProbeImage, settings.TimeoutSeconds),
             ZonePolicyStateStore.CurrentBootId(),
-            ct);
+            ct, args.Count > 0 && (args[0] == "render" || args[0] == "apply" || args[0] == "verify")
+                ? ZoneZeroTierNetworks.Detect() : []);
     }
 
     public static async Task<int> RunAsync(
@@ -55,7 +56,8 @@ public static class ZonePolicyCommand
         IReadOnlyDictionary<string, string> processEnvironment,
         Func<ZoneVerificationSettings, IZoneNetworkProbe> probeFactory,
         string? bootId,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyCollection<string>? zeroTierHostRanges = null)
     {
         var verb = args.Count > 0 ? args[0] : string.Empty;
         if (!VerbOptions.TryGetValue(verb, out var allowed))
@@ -113,7 +115,8 @@ public static class ZonePolicyCommand
                 var environment = LoadEnvironment(options.GetValueOrDefault("--env-file"), processEnvironment, problems);
                 if (environment is not null)
                     policy = await ZonePolicyParser.ResolveAsync(
-                        document, ZonePolicyParser.Sha256(json), environment, resolver, ct, zones);
+                        document, ZonePolicyParser.Sha256(json), environment, resolver, ct, zones,
+                        zeroTierHostRanges);
             }
         }
         catch (ZonePolicyException exception)
@@ -139,8 +142,9 @@ public static class ZonePolicyCommand
         }
         var resolved = policy!;
         var rules = ZonePolicyRules.Render(resolved);
-        // A denied name that does not resolve leaves its denial out; every
-        // other rule still loads, and the verification records the problem.
+        // A denied name that does not resolve leaves its denial out; protected
+        // run-zone names also withhold private allowances. Verification records
+        // the problem after the safe rules load.
         var unresolved = resolved.Problems ?? [];
         foreach (var problem in unresolved)
             error.WriteLine($"error: {problem.Detail}; its denial is missing from the rules");
