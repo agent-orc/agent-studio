@@ -1,9 +1,10 @@
 namespace AgentStudio.Publishing;
 
-/// <summary>Reconciles hosting reservations even when nobody opens the publish panel.</summary>
+/// <summary>Reconciles hosting reservations even when nobody opens the publish or environment panel.</summary>
 public sealed class PublishEnvironmentReconciliationService(
     IPublishEnvironmentReconciler actions, TimeProvider clock,
-    ILogger<PublishEnvironmentReconciliationService> logger) : BackgroundService
+    ILogger<PublishEnvironmentReconciliationService> logger,
+    AgentStudio.Projects.ProjectEnvironmentService? environments = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -18,5 +19,7 @@ public sealed class PublishEnvironmentReconciliationService(
     {
         try { actions.ReconcileRunningWebsites(); }
         catch (Exception ex) { logger.LogWarning(ex, "website-environment-reconciliation-failed"); }
+        try { environments?.ReconcileHostingSlots(); }
+        catch (Exception ex) { logger.LogWarning(ex, "declared-environment-slot-reconciliation-failed"); }
     }
 }

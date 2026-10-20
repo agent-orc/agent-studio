@@ -284,7 +284,8 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
 
     public void ReconcileRunningWebsites()
     {
-        if (_workspaceQuota is null) return;
+        // A slot only matters against a limit; without one the reconciler asks GitHub nothing.
+        if (_workspaceQuota is null || !_workspaceQuota.HasLimits()) return;
         foreach (var project in _workspaceQuota.RunningWebsiteProjects())
         {
             lock (_runGate)

@@ -344,6 +344,35 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
     }
 
+    [Fact]
+    public void Expired_unreported_deploy_claim_gives_its_slot_back_and_reading_changes_no_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        Assert.True(service.Claim("stage-host")!.ReservedSlot);
+        // A slot of a declaration that no longer exists stays until the reconciliation, not the GET read.
+        quota.SetProjectEnvironment("demo", ProjectEnvironmentService.SlotKey("retired"), true);
+
+        service.Read("demo");
+        Assert.Equal(2, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        // The deploy host never reports; after the five-minute lease the reservation is released.
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        service.ReconcileHostingSlots();
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(Assert.Single(service.Read("demo")!.Jobs).ReservedSlot);
+        // A later claim of the same job reserves the slot again.
+        Assert.True(service.Claim("stage-host")!.ReservedSlot);
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
     private WebApplicationFactory<Program> QuotaFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");

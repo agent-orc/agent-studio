@@ -146,11 +146,6 @@ public sealed class ProjectEnvironmentService
             var state = Load(project);
             AdvanceTimedPromotions(project, declarations, state);
             Save(project, state);
-            // A removed declaration no longer runs and gives its hosting slot back.
-            foreach (var environmentId in _quota?.ProjectEnvironmentIds(project) ?? [])
-                if (environmentId.StartsWith("env:", StringComparison.Ordinal)
-                    && declarations.All(item => SlotKey(item.Id) != environmentId))
-                    _quota!.SetProjectEnvironment(project, environmentId, false);
             return new(project, declarations.Select(item =>
             {
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
@@ -337,6 +332,42 @@ public sealed class ProjectEnvironmentService
                 return claimed;
             }
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Gives hosting slots back that no deploy holds any more: a declaration
+    /// that was removed, and a slot reserved by a claimed deploy job whose lease
+    /// expired without a report (a later claim of the job reserves it again).
+    /// Runs in the background reconciliation only while a quota limit exists.
+    /// </summary>
+    public void ReconcileHostingSlots()
+    {
+        if (_quota is null || !_quota.HasLimits()) return;
+        lock (_gate)
+        {
+            var root = StoreRoot();
+            if (!Directory.Exists(root)) return;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            foreach (var file in Directory.EnumerateFiles(root, "*.json").ToArray())
+            {
+                var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
+                var declarations = Declarations(project);
+                if (declarations is not null)
+                    foreach (var environmentId in _quota.ProjectEnvironmentIds(project))
+                        if (environmentId.StartsWith("env:", StringComparison.Ordinal)
+                            && declarations.All(item => SlotKey(item.Id) != environmentId))
+                            _quota.SetProjectEnvironment(project, environmentId, false);
+                var state = Load(project);
+                var expired = state.Jobs.Where(job => job is { Status: "claimed", ReservedSlot: true }
+                    && job.ClaimedAt < now.AddMinutes(-5)).ToList();
+                foreach (var job in expired)
+                {
+                    _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+                    state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
+                }
+                if (expired.Count > 0) Save(project, state);
+            }
         }
     }
 
