@@ -147,6 +147,8 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
+        string runnerId,
+        DateTime now,
         [EnumeratorCancellation] CancellationToken ct)
     {
         await using var command = Command(connection, """
@@ -157,6 +159,31 @@ public sealed partial class TaskServerStore
                AND NOT EXISTS (
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
+               AND NOT EXISTS (
+                   SELECT 1 FROM task_studio_fields fields
+                    WHERE fields.task_id = t.id
+                      AND fields.cli_type IS NOT NULL AND fields.model IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM runner_capabilities capability
+                           WHERE capability.runner_id = $runner
+                             AND capability.capability_key =
+                                 'model-acceptance:' || lower(fields.cli_type) || ':' || lower(fields.model)
+                             AND capability.advertised_status = 'ready'
+                             AND capability.fresh_until > $now))
+               AND NOT EXISTS (
+                   SELECT 1 FROM events held
+                    WHERE held.task_id = t.id
+                      AND held.kind = 'execution.model-capability-held'
+                      AND json_extract(held.payload_json, '$.runnerId') = $runner
+                      AND NOT EXISTS (
+                          SELECT 1 FROM runner_capabilities recovery
+                           WHERE recovery.runner_id = $runner
+                             AND recovery.capability_key =
+                                 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
+                                 || ':' || json_extract(held.payload_json, '$.model')
+                             AND recovery.advertised_status = 'ready'
+                             AND recovery.advertised_at > held.occurred_at
+                             AND recovery.fresh_until > $now))
                AND (
                    NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
@@ -170,7 +197,7 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$host", hostId));
+            """, transaction, ("$host", hostId), ("$runner", runnerId), ("$now", Iso(now)));
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             yield return ReadTask(reader);

@@ -567,6 +567,8 @@ public static class V1ReviewPlaneEndpoints
                     subjectTask,
                     quotaAdmission,
                     quotaAdmissionRecorder,
+                    (provider, model) => registry.AcceptsModel(
+                        runnerId, request.InstanceId, provider, model),
                     out quotaDeferredReason);
             else
                 quotaDeferredReason = null;
@@ -2465,6 +2467,7 @@ public static class V1ReviewPlaneEndpoints
         TaskInfo task,
         QuotaAdmissionService quotaAdmission,
         QuotaAdmissionRecorder recorder,
+        Func<string, string?, bool> modelAccepted,
         out string? deferredReason)
     {
         var switched = false;
@@ -2481,7 +2484,8 @@ public static class V1ReviewPlaneEndpoints
                 command.ThinkingLevel,
                 task.ProjectName,
                 OccupiedSlots: 0,
-                ExecutionPath: "remote-review-claim"));
+                ExecutionPath: "remote-review-claim",
+                ModelAccepted: modelAccepted));
             recorder.EmitAdmissionDecision(task, plan, source: "review-claim");
             if (!plan.ShouldLaunch)
             {
@@ -3656,6 +3660,9 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 request.Generation,
                 capabilities,
                 request.Telemetry);
+            foreach (var modelCapability in capabilities.Where(item =>
+                         item.Key.StartsWith("model-acceptance:", StringComparison.Ordinal)))
+                _rejectedModels.Remove($"{runnerId}|{modelCapability.Key}");
             // A generic advertisement is not a recovery verdict. Provider auth
             // is the deliberate exception: an explicit successful status probe
             // is stronger evidence than the earlier run failure and clears only
@@ -4263,6 +4270,58 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             return capability is null
                 ? null
                 : new CliModelCapability(capability.Version, capability.SupportedModels);
+        }
+    }
+
+    /// <summary>Only a fresh, credentialed host probe admits a quota fallback model.</summary>
+    public bool AcceptsModel(string runnerId, string? instanceId, string cliType, string? model)
+    {
+        // The provider-auth real request already proves the CLI's implicit
+        // default route. Model acceptance applies to named model pins.
+        if (string.IsNullOrWhiteSpace(model)) return true;
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            if (_rejectedModels.Contains($"{runnerId}|{key}")) return false;
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return false;
+            return state.Capabilities.Any(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal)
+                && item.FreshUntil > _time.GetUtcNow().UtcDateTime
+                && string.Equals(item.AdvertisedStatus, "ready", StringComparison.Ordinal));
+        }
+    }
+
+    public string? CurrentInstanceId(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration)
+                ? registration.InstanceId : null;
+    }
+
+    private readonly HashSet<string> _rejectedModels = new(StringComparer.Ordinal);
+
+    public void MarkModelRejected(string runnerId, string cliType, string model)
+    {
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            _rejectedModels.Add($"{runnerId}|{key}");
+            if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
+            _capabilityStates[runnerId] = state with
+            {
+                Capabilities = state.Capabilities.Select(item => item.Key == key
+                    ? item with
+                    {
+                        AdvertisedStatus = "unavailable",
+                        Detail = "The provider refused this model for the host login.",
+                    }
+                    : item).ToArray(),
+            };
         }
     }
 

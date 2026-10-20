@@ -135,7 +135,7 @@ wall-clock backend.Tests/Projection/ConversationProjectionTests.cs 4
 wall-clock backend.Tests/ProviderLimitRegistryTests.cs 1
 wall-clock backend.Tests/PublicDemoReadOnlyEdgeTests.cs 1
 wall-clock backend.Tests/PublishTargetServiceTests.cs 1
-wall-clock backend.Tests/QuotaFallbackCrossPathTests.cs 5
+wall-clock backend.Tests/QuotaFallbackCrossPathTests.cs 4
 wall-clock backend.Tests/QuotaServiceGracefulDegradationTests.cs 1
 wall-clock backend.Tests/QuotaServiceSuspiciousSnapshotTests.cs 1
 wall-clock backend.Tests/RealTlsTransportTests.cs 5

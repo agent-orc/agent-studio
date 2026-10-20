@@ -68,6 +68,22 @@ public static class ProviderRejectionContinuationPolicy
         => new(ProviderRejectionContinuationAction.Escalate, null, false, reason);
 }
 
+/// <summary>A refusal of the requested model before any work is a host capability hold.</summary>
+public static class ProviderModelCapabilityRecoveryPolicy
+{
+    public static bool ShouldHold(
+        ProviderRequestRejection? rejection,
+        string? model,
+        bool hasSalvage,
+        bool deliveryFailed,
+        bool operatorStopped)
+        => rejection is not null
+           && !hasSalvage
+           && !deliveryFailed
+           && !operatorStopped
+           && ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model);
+}
+
 public sealed record ProviderRejectionContinuationResult(
     bool Started,
     string Reason,
