@@ -22,7 +22,6 @@ public sealed record ProjectCycleTimeCoverage(
     int ExcludedNoCompletionTimestamp,
     /// <summary>Tasks not yet terminal; cycle time is defined on completion.</summary>
     int ExcludedInFlight,
-    int ExcludedEpics,
     /// <summary>Window tasks whose ledger is missing; their lead time is reported as unattributed.</summary>
     int TasksWithoutLedger,
     /// <summary>Window tasks whose completion time came from the legacy lane-entry fallback.</summary>
@@ -251,7 +250,6 @@ public sealed class ProjectCycleTimeService
             rows.Count,
             analyses.Count(a => a.ExclusionReason == TaskCycleAnalysis.ExcludedNoCompletion),
             analyses.Count(a => a.ExclusionReason == TaskCycleAnalysis.ExcludedNotCompleted),
-            analyses.Count(a => a.ExclusionReason == TaskCycleAnalysis.ExcludedEpic),
             evidenced.Count(r => r.DataGaps.Contains("no-ledger")),
             evidenced.Count(r => r.CompletionSource == TaskCycleTimeAnalyzer.LaneEntryCompletionSource),
             rows.Count - evidenced.Count)
@@ -348,11 +346,6 @@ public sealed class ProjectCycleTimeService
         var work = new List<TaskInfo>();
         foreach (var task in tasks)
         {
-            if (string.Equals(task.Kind, TaskKinds.Epic, StringComparison.OrdinalIgnoreCase))
-            {
-                results.Add(new TaskCycleAnalysis(null, TaskCycleAnalysis.ExcludedEpic));
-                continue;
-            }
             var terminal = string.Equals(task.State, TaskStates.Completed, StringComparison.Ordinal)
                            || string.Equals(task.State, TaskStates.Archive, StringComparison.Ordinal);
             if (!terminal)

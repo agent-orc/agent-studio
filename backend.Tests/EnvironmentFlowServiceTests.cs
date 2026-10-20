@@ -45,30 +45,6 @@ public sealed class EnvironmentFlowServiceTests
         Assert.Equal(1d / 24d, result.Queues.Single(q => q.Queue == "Gate").ThroughputPerHour);
     }
 
-    [Fact]
-    public void Aggregate_KeepsCurrentWaitingReasonsAndDoesNotCountEpics()
-    {
-        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
-        var tasks = new[]
-        {
-            Task("ready", TaskStates.Ready, now.AddMinutes(-90)),
-            Task("review", TaskStates.AutoReview, now.AddMinutes(-30)),
-            Task("epic", TaskStates.Ready, now.AddMinutes(-10)) with { Kind = TaskKinds.Epic },
-        };
-        var result = EnvironmentFlowService.Aggregate(tasks, _ => [], now,
-            [new DateTimeOffset(now.AddHours(-2))], [now.AddMinutes(-45)], 12);
-
-        Assert.Equal(2, result.Today.Created);
-        Assert.Equal(1, result.Queues.Single(q => q.Queue == "Coding").Waiting);
-        Assert.Equal(90, result.Queues.Single(q => q.Queue == "Coding").OldestWaitMinutes);
-        Assert.Equal(1, result.Queues.Single(q => q.Queue == "Batch gate").Waiting);
-        Assert.Equal(120, result.Queues.Single(q => q.Queue == "Batch gate").OldestWaitMinutes);
-        Assert.Equal(1, result.Queues.Single(q => q.Queue == "Gate").Waiting);
-        Assert.Equal(45, result.Queues.Single(q => q.Queue == "Gate").OldestWaitMinutes);
-        Assert.Equal(0.5d, result.Queues.Single(q => q.Queue == "Batch gate").ThroughputPerHour);
-        Assert.Contains(result.WaitingReasons, r => r.Reason == "Waiting for coding slot" && r.Count == 1);
-        Assert.Contains(result.WaitingReasons, r => r.Reason == "Waiting for review" && r.Count == 1);
-    }
 
     private static TaskInfo Task(string id, string lane, DateTime at) => new()
     {

@@ -146,7 +146,6 @@ public class DecisionCardPolicyTests
         Assert.Equal(TaskKinds.Decision, TaskKinds.Normalize("Decision"));
         Assert.Equal(TaskKinds.Task, TaskKinds.Normalize("garbage"));
         Assert.True(TaskKinds.IsDecision("decision"));
-        Assert.False(TaskKinds.IsDecision("epic"));
     }
 
     [Fact]

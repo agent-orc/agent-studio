@@ -2095,11 +2095,6 @@ public sealed class TaskServerClient : IDisposable
             ct);
     }
 
-    public async Task<RemoteEpicPlanningPromptResponse?> GetEpicPlanningPromptAsync(
-        RemoteEpicPlanningPromptRequest req, CancellationToken ct)
-        => await PostJsonAsync<RemoteEpicPlanningPromptRequest, RemoteEpicPlanningPromptResponse>(
-            "/api/runner/epic-planning-prompt", req, ct);
-
     /// <summary>Fetch a text file from the task's job folder, e.g. prompt.md. Returns null on 404.</summary>
     public async Task<string?> ReadTaskFileAsync(string jobId, string relativePath, CancellationToken ct)
     {

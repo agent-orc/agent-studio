@@ -3134,7 +3134,6 @@ public sealed partial class TaskServerStore
 
         foreach (var (kind, wanted) in new (string Kind, long Count)[]
                  {
-                     ("epic", expected.Epics),
                      ("dossier", expected.Dossiers),
                      ("orchestrator-session", expected.OrchestratorSessions),
                      ("context-chat", expected.ContextChats),
@@ -5380,7 +5379,6 @@ internal sealed record LegacyTaskImport(
     IReadOnlyList<LegacyArtifactImport> Artifacts,
     string MetadataJson,
     string SourcePath,
-    bool IsEpic,
     int GitCommits,
     int IntegrationRecords,
     int PendingIntegrationRecords,

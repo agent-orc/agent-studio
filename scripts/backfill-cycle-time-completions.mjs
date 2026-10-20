@@ -321,7 +321,7 @@ export async function run(options, dependencies = {}) {
   const evidenceByPath = gitEvidence(repoRoot, prefix, options.verbose, write);
 
   const stats = {
-    folders: 0, unreadable: 0, epics: 0, nonTerminal: 0,
+    folders: 0, unreadable: 0, nonTerminal: 0,
     ledgerCovered: 0, laneEntryCovered: 0, candidates: 0,
     bySource: {}, unresolved: [],
   };
@@ -332,7 +332,6 @@ export async function run(options, dependencies = {}) {
     stats.folders++;
     const task = loadTask(folder);
     if (!task) { stats.unreadable++; continue; }
-    if (task.kind.toLowerCase() === 'epic') { stats.epics++; continue; }
     if (!TERMINAL_STATES.has(task.state)) { stats.nonTerminal++; continue; }
 
     let timelineText = null;
@@ -372,7 +371,7 @@ export async function run(options, dependencies = {}) {
   const { doc, unchanged } = buildSidecar(entries, previous, { project: prefix });
 
   write(`Project ${prefix} (repo ${repoRoot})`);
-  write(`  task folders: ${stats.folders} (unreadable ${stats.unreadable}, epics ${stats.epics}, non-terminal ${stats.nonTerminal})`);
+  write(`  task folders: ${stats.folders} (unreadable ${stats.unreadable}, non-terminal ${stats.nonTerminal})`);
   write(`  already covered by the reader: ledger ${stats.ledgerCovered}, completed-lane entry ${stats.laneEntryCovered}`);
   write(`  backfill candidates: ${stats.candidates}, resolved: ${Object.keys(entries).length}, unresolved: ${stats.unresolved.length}`);
   for (const [source, count] of Object.entries(stats.bySource).sort((l, r) => r[1] - l[1]))

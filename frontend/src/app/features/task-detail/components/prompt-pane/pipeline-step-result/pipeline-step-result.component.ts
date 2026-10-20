@@ -31,7 +31,7 @@ export interface PipelineStepResultHeader {
 }
 
 /**
- * Popover, well-formatted result view for one pipeline step (Epic: per-step
+ * Popover, well-formatted result view for one pipeline step (Per-step
  * structured result). Renders beside its Overview pipeline row trigger as a
  * card with a header (title + status + verdict + model / timing / token / cost
  * meta) and a body that lazily fetches the

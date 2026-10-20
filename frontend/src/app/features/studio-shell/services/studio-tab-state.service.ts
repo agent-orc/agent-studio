@@ -27,12 +27,6 @@ interface PersistedState {
   activeKey: string | null;
 }
 
-/** A persisted tab of the retired Epics overview restores as the Dossiers overview of the same scope. */
-function migrateRetiredEpicsTab(tab: StudioTab): StudioTab {
-  const legacy = tab as { kind?: string; projectName?: string | null };
-  return legacy?.kind === 'epics' ? { kind: 'workbenches', projectName: legacy.projectName ?? null } : tab;
-}
-
 /**
  * Owns the open-editor-tab list and the active tab for the studio shell.
  *
@@ -403,16 +397,14 @@ export class StudioTabStateService {
       // studioTabKey. This is also the migration for persisted Backlog Triage
       // tabs from builds that still exposed that feature.
       this.restoredRetiredChatHistory = parsed.tabs.some(t => (t as { kind?: string })?.kind === 'chat-history');
-      const safeTabs = parsed.tabs.map(migrateRetiredEpicsTab).filter(t => {
+      const safeTabs = parsed.tabs.filter(t => {
         try { return typeof studioTabKey(t) === 'string'; }
         catch { return false; }
       });
       this._tabs.set(this.dedupe(safeTabs.map(t => this.normalizeTab(t))));
       // Only restore the active key if it points at a surviving tab.
       const normalizedTabs = this._tabs();
-      const activeKey = parsed.activeKey?.startsWith('epics:')
-        ? `workbenches:${parsed.activeKey.slice('epics:'.length)}`
-        : parsed.activeKey;
+      const activeKey = parsed.activeKey;
       const validKey = normalizedTabs.some(t => studioTabKey(t) === activeKey);
       this._activeKey.set(
         validKey
@@ -446,12 +438,6 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
-      case 'epic':
-        return {
-          kind: 'epic',
-          epicKey: tab.epicKey,
-          viewTaskKey: tab.viewTaskKey || undefined,
-        };
       case 'task': {
         const scope = normalizeTaskTabScope(tab.scope);
         return { kind: 'task', taskKey: tab.taskKey, ...(scope ? { scope } : {}) };
