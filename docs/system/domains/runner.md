@@ -2154,6 +2154,27 @@ Maintainer; approval queues the frozen steps through the existing deploy host
 claim and report lease. No artifact is required and the release and deployment
 history remain unchanged. Runs share the deployment log and audit store.
 
+The project deployment API uses the prefix
+`/api/projects/{projectName}/deploy`. The environment page uses these
+runbook routes:
+
+| Method | Path after the prefix | Purpose |
+|---|---|---|
+| `GET` | `/runbooks` | List runbook definitions from the integration branch. |
+| `GET` | `/runbooks/runs?environmentId={environmentId}` | List runs for one environment; omit the query to list all project runs. |
+| `GET` | `/runbooks/runs/{runId}` | Read one run, including its steps and approval state. |
+| `GET` | `/runbooks/runs/{runId}/log?step={stepName}` | Read the run log; omit `step` for every step. |
+| `POST` | `/environments/{environmentId}/runbooks/{name}/runs` | Request a run with no request body. Returns `202 Accepted` and the run. |
+| `POST` | `/runbooks/runs/{runId}/approve` | Approve a waiting run and queue its frozen steps. Returns the updated run. |
+| `POST` | `/runbooks/runs/{runId}/reject` | Reject a waiting run. Returns the updated run. |
+
+The mutation routes use the signed-in project actor and the same public-demo
+execution admission as deployment mutations. Production approval and rejection
+require an Owner or Maintainer. `GET /audit` under the same prefix includes
+runbook request, approval, rejection and completion events. A run response
+includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
+each step has a `logRef` for its filtered log.
+
 The target host keeps operator-owned scripts at
 `/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
 `sh` and no shell text from the repository. It supplies
