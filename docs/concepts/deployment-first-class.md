@@ -210,6 +210,8 @@ files named by the declared `secretRefs`. Secret values never enter the API,
 job state, or audit history. The claim response carries names only.
 Container jobs also carry resolved plain `variables` and
 `secretVariableRefs` as variable-name to provider-entry-name mappings. The
+automatic Staging job and approved Production job use the same release snapshot
+and variable resolution as explicit deployment requests. The
 host reads the mapped secret files locally and writes a private temporary
 Docker environment file. A provider entry may have a different name from the
 workload variable. Static jobs reject workload variables because they have no

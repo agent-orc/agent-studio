@@ -324,7 +324,9 @@ public sealed class ProjectEnvironmentService
     /// the host the current declaration names (<see cref="RouteToCurrentHost"/>).
     /// </summary>
     public DeployJob? QueueReleaseJob(string project, string artifact, string commit,
-        IReadOnlyList<EnvironmentDeclaration>? snapshot = null)
+        IReadOnlyList<EnvironmentDeclaration>? snapshot = null,
+        IReadOnlyDictionary<string, string>? variables = null,
+        IReadOnlyDictionary<string, string>? secretVariableRefs = null)
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit) || !HasBuiltArtifact(project, artifact, commit))
             return null;
@@ -336,10 +338,16 @@ public sealed class ProjectEnvironmentService
             var production = declarations?.FirstOrDefault(item => item.Kind == "production");
             if (stage is null || production is null || !IsDeclared(current, stage.Id) || !IsDeclared(current, production.Id))
                 return null;
+            if (stage.Template == "static" && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return null;
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
-            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state, actor: "release-gate");
+            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state, actor: "release-gate")
+                with { Variables = variables ?? new Dictionary<string, string>(),
+                    SecretVariableRefs = secretVariableRefs ?? new Dictionary<string, string>() };
+            job = job with { SecretRefs = job.SecretRefs.Concat(job.SecretVariableRefs.Values)
+                .Distinct(StringComparer.Ordinal).ToArray() };
+            state.Jobs[^1] = job;
             Save(project, state);
             return job;
         }
@@ -497,7 +505,8 @@ public sealed class ProjectEnvironmentService
     /// current declaration names.
     /// </summary>
     public (bool Decided, DeployJob? Job) DecidePromotion(string project, string artifact, bool approve, string actor,
-        EnvironmentDeclaration? target = null)
+        EnvironmentDeclaration? target = null, IReadOnlyDictionary<string, string>? variables = null,
+        IReadOnlyDictionary<string, string>? secretVariableRefs = null)
     {
         lock (_gate)
         {
@@ -509,12 +518,21 @@ public sealed class ProjectEnvironmentService
                 || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return (false, null);
             var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
             if (production is null || target is not null && target.Id != production.Id) return (false, null);
+            if (approve && (target ?? production).Template == "static"
+                && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return (false, null);
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
             var job = approve
                 ? Queue(project, target is null ? production : RouteToCurrentHost(target, declarations), artifact, state,
-                    actor: actor)
+                    actor: actor) with { Variables = variables ?? new Dictionary<string, string>(),
+                        SecretVariableRefs = secretVariableRefs ?? new Dictionary<string, string>() }
                 : null;
+            if (job is not null)
+            {
+                job = job with { SecretRefs = job.SecretRefs.Concat(job.SecretVariableRefs.Values)
+                    .Distinct(StringComparer.Ordinal).ToArray() };
+                state.Jobs[^1] = job;
+            }
             Save(project, state);
             return (true, job);
         }

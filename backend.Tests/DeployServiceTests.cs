@@ -716,6 +716,28 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Automatic_stage_and_approved_production_jobs_bind_release_variables()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml("variables:\n  - name: MODE\n    value: standard\n  - name: API_TOKEN\n    secret: provider-entry\n");
+        var release = CreateRelease(deploy, Artifact('a'), Commit("release-variables"));
+        var stage = environments.Claim("stage-host")!;
+        Assert.Equal("standard", stage.Variables["MODE"]);
+        Assert.Equal("provider-entry", stage.SecretVariableRefs["API_TOKEN"]);
+        Assert.Contains("provider-entry", stage.SecretRefs);
+        Assert.True(environments.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+
+        var waiting = deploy.Deployments("demo", "production")!.Single(item =>
+            item.ReleaseId == release.Id && item.State == DeploymentStates.AwaitingApproval);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        var production = environments.Claim("prod-host")!;
+        Assert.Equal("standard", production.Variables["MODE"]);
+        Assert.Equal("provider-entry", production.SecretVariableRefs["API_TOKEN"]);
+        Assert.Contains("provider-entry", production.SecretRefs);
+    }
+
+    [Fact]
     public void Tenant_deployments_keep_independent_lifecycle_approval_variables_and_matrix_cells()
     {
         var (deploy, environments, _) = Build();

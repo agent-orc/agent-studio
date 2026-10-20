@@ -138,7 +138,9 @@ public sealed class DeployService
             if (created)
                 audit.Add(new(now, actor, "release-created", release.Id, null, null,
                     $"Release {release.Version} for commit {ShortSha(commit)} with {release.CardKeys.Count} card(s)."));
-            var job = _environments.QueueReleaseJob(project, artifact, commit, record.Environments);
+            var (stageVariables, stageSecrets) = ResolveVariables(record, staging.Kind, null);
+            var job = _environments.QueueReleaseJob(project, artifact, commit, record.Environments,
+                stageVariables, stageSecrets);
             if (job is null)
             {
                 Persist(project, _store.ReadDeployments(project), [], audit);
@@ -738,15 +740,24 @@ public sealed class DeployService
         Release release, string actor, string? tenant)
     {
         var artifact = release.ArtifactDigests[0];
+        var record = snapshot.Records[release.Id];
+        var environment = target.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production;
+        var (values, secrets) = ResolveVariables(record, environment, tenant);
         if (tenant is null && trigger == DeploymentTriggers.Deploy && snapshot.View.Promotions.Any(item => item.Artifact == artifact
                 && item.ProductionId == target.Id && item.Status == "pending"))
         {
-            var (decided, job) = _environments.DecidePromotion(project, artifact, true, actor, target);
+            var (decided, job) = _environments.DecidePromotion(project, artifact, true, actor, target, values, secrets);
             if (decided) return job;
         }
-        var record = snapshot.Records[release.Id];
+        return _environments.QueueDeployment(project, target, artifact, actor,
+            rollback: trigger == DeploymentTriggers.Rollback, tenant: tenant,
+            variables: values, secretVariableRefs: secrets);
+    }
+
+    private static (IReadOnlyDictionary<string, string> Values, IReadOnlyDictionary<string, string> Secrets)
+        ResolveVariables(ReleaseRecord record, string environment, string? tenant)
+    {
         var selectedTenant = record.Tenants.FirstOrDefault(item => item.Name == tenant);
-        var environment = target.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production;
         var resolved = record.Variables.Select(item => item.Name).Distinct(StringComparer.Ordinal)
             .Select(name => ProjectVariableResolution.Resolve(record.Variables, name, environment, selectedTenant))
             .Where(item => item is not null).ToArray();
@@ -754,9 +765,7 @@ public sealed class DeployService
             .ToDictionary(item => item!.Name, item => item!.Value!, StringComparer.Ordinal);
         var secrets = resolved.Where(item => item!.Secret is not null)
             .ToDictionary(item => item!.Name, item => item!.Secret!, StringComparer.Ordinal);
-        return _environments.QueueDeployment(project, target, artifact, actor,
-            rollback: trigger == DeploymentTriggers.Rollback, tenant: tenant,
-            variables: values, secretVariableRefs: secrets);
+        return (values, secrets);
     }
 
     private DeployOutcome<Deployment>? FindRun(string project, string deploymentId, out Snapshot? snapshot,
