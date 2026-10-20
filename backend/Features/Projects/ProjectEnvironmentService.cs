@@ -92,8 +92,20 @@ public sealed class ProjectEnvironmentService
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
         if (!Directory.Exists(directory)) return [];
-        return ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
-            .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
+        var readable = new List<(string Name, string Json)>();
+        var failures = new List<EnvironmentDeclarationFile>();
+        foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                readable.Add((Path.GetFileName(file), File.ReadAllText(file)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failures.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{Path.GetFileName(file)}: {ex.Message}"));
+            }
+        }
+        return [.. ParseDeclarationFiles(readable), .. failures];
     }
 
     /// <summary>
@@ -137,7 +149,7 @@ public sealed class ProjectEnvironmentService
             }
             catch (JsonException ex)
             {
-                result.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{file}: {ex.Message}"));
+                result.Add(new(BrokenDeclarationId(file, json), null, $"{file}: {ex.Message}"));
             }
         }
         var duplicates = result.Where(item => item.Declaration is not null).GroupBy(item => item.EnvironmentId, StringComparer.Ordinal)
@@ -146,6 +158,24 @@ public sealed class ProjectEnvironmentService
                 ? item with { Declaration = null, Error = "Environment ids must be unique within a project." } : item)
             .OrderBy(item => item.Declaration?.Kind switch { null => 3, "stage" => 0, "production" => 1, _ => 2 })
             .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
+    }
+
+    private static string BrokenDeclarationId(string file, string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                && id.GetString() is { } value && Identifier.IsMatch(value))
+                return value;
+        }
+        catch (JsonException)
+        {
+            return Path.GetFileNameWithoutExtension(file);
+        }
+        return Path.GetFileNameWithoutExtension(file);
     }
 
     /// <summary>

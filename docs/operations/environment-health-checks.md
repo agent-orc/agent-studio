@@ -62,6 +62,9 @@ use no proxy and close the connection after each request.
 | RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), shared address space (`100.64.0.0/10`), IPv6 unique-local (`fc00::/7`) | Only with `"healthChecksAllowPrivateNetwork": true` on the environment |
 | Everything else | Allowed |
 
+IPv4 addresses embedded in `64:ff9b::/96` and `2002::/16` follow the same
+blocked, private, or public classification as the embedded IPv4 address.
+
 A refused target fails with `address-blocked` before a byte is sent. That is a
 declaration problem, not an outage: the check shows `invalid`, and the result
 is neither stored in the series nor counted toward an incident.
@@ -127,6 +130,8 @@ checks fail together raises one alert and one card. Reports
   still fail comments too (`check-recovered`).
 - Recovery: when the last check recovers, an `observation` Activity entry
   `environment-incident-recovered` and a `recovered` comment with the duration.
+  The comment and Activity entry are tracked separately so a failed Activity
+  write does not repeat a successful card comment.
 - Removed checks: a check (or environment) that no longer appears in the
   declarations closes its open incident on the next tick (`check-removed`); the
   recovery report says so. A broken declaration file does not count as a
@@ -135,7 +140,7 @@ checks fail together raises one alert and one card. Reports
   of expiry and once more within 3 days (`environment-certificate-expiring`).
   The first warning creates a chore card, and the second one comments on it.
 
-Cards use a deterministic slug (`health-<environment>-<start>`,
+Cards use a deterministic slug (`health-<environment>-<start-to-second>`,
 `certificate-<environment>-<check>-<notAfter>`). A tick that stopped after
 creating a card but before saving its id therefore adopts the existing card.
 Targets in cards, Activity and the API appear without user info, query string
