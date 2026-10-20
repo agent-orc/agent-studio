@@ -151,6 +151,9 @@ public sealed partial class TaskServerStore
         DateTime now,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // The stored model is the primary route. The quota planner checks host
+        // acceptance after resolving any fallback, so filtering on the stored
+        // model here would hide cards that this host can run on a fallback.
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
                    t.archive_state, t.archived_at
@@ -159,17 +162,6 @@ public sealed partial class TaskServerStore
                AND NOT EXISTS (
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
-               AND NOT EXISTS (
-                   SELECT 1 FROM task_studio_fields fields
-                    WHERE fields.task_id = t.id
-                      AND fields.cli_type IS NOT NULL AND fields.model IS NOT NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM runner_capabilities capability
-                           WHERE capability.runner_id = $runner
-                             AND capability.capability_key =
-                                 'model-acceptance:' || lower(fields.cli_type) || ':' || lower(fields.model)
-                             AND capability.advertised_status = 'ready'
-                             AND capability.fresh_until > $now))
                AND NOT EXISTS (
                    SELECT 1 FROM events held
                     WHERE held.task_id = t.id

@@ -2333,6 +2333,33 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Claim_does_not_filter_a_card_by_its_primary_model_before_fallback_routing()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("claude", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("claude-opus-5", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [new AdvertisedCapabilityDto(
+                CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"),
+                "model-acceptance", "ready", CredentialGeneration: "login-1",
+                CredentialObservedAt: clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
+
+        var claim = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(task.TaskId, claim.Task?.TaskId);
+    }
+
+    [Fact]
     public async Task Unsupported_host_model_returns_ready_and_holds_claim_until_new_acceptance()
     {
         using var temp = new TempDirectory();
