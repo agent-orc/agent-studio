@@ -12,7 +12,11 @@ namespace AgentStudio.Deploy;
 /// these declarations, so a later change in the working tree cannot alter
 /// what the release deploys.
 /// </summary>
-public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments);
+public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments)
+{
+    public IReadOnlyList<ProjectTenantDefinition> Tenants { get; init; } = [];
+    public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+}
 
 /// <summary>Release identity, numbering and snapshot versions. Pure.</summary>
 public static class ReleaseSnapshot
@@ -48,6 +52,7 @@ public static class ReleaseSnapshot
             artifacts = definition?.Artifacts,
             lifecycle = definition?.StandardLifecycle,
             deploy = definition?.Deploy,
+            tenants = definition?.Tenants,
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {
                 item.Id, item.Kind, item.TargetHostId, item.Address, item.Template, item.Destination,
@@ -68,6 +73,12 @@ public static class ReleaseSnapshot
             variables = (definition?.Variables ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new
             {
                 item.Name, item.Value, item.Secret, environments = item.Environments.Order(StringComparer.Ordinal),
+                tenants = item.Tenants.Order(StringComparer.Ordinal), tenantTags = item.TenantTags.Order(StringComparer.Ordinal),
+            }),
+            tenants = (definition?.Tenants ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new
+            {
+                item.Name, tags = item.Tags.Order(StringComparer.Ordinal),
+                environments = item.Environments.Order(StringComparer.Ordinal),
             }),
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {

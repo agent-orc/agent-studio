@@ -7,6 +7,15 @@ const projects = [
   { id: 'site', displayName: 'Website', shortCode: 'WEB', workspaceId: 'web', storageLocation: 'C:/fixtures/website' },
   { id: 'api', displayName: 'API', shortCode: 'API', workspaceId: 'services', storageLocation: 'C:/fixtures/api' },
 ];
+const matrixStatus = (projectId: string, kind: 'staging' | 'production', tenant: string | null) => ({
+  environment: { id: kind, projectId, name: kind, order: kind === 'staging' ? 0 : 1, kind },
+  currentRelease: { id: `${projectId}-release`, projectId, version: '2026.10.16.1', commitSha: 'a'.repeat(40),
+    artifactDigests: [], processVersion: '1', variablesVersion: '1', cardKeys: [], createdAtUtc: '2026-10-16T10:00:00Z', channel: 'default' },
+  currentDeployment: { id: `${projectId}-${kind}-${tenant}`, releaseId: `${projectId}-release`, environmentId: kind,
+    state: tenant === 'acme' && kind === 'production' ? 'awaiting-approval' : 'succeeded',
+    startedAtUtc: '2026-10-16T11:00:00Z', finishedAtUtc: '2026-10-16T11:30:00Z', approvedBy: null, steps: [], tenant },
+  newerRelease: null, cardsSinceLastDeploy: [], health: 'healthy', tenant,
+});
 
 test('workspace deployment matrix filters and opens project deployment in both themes', async ({ page }) => {
   fs.mkdirSync(resultsDir, { recursive: true });
@@ -35,6 +44,11 @@ test('workspace deployment matrix filters and opens project deployment in both t
     if (url.includes('/api/usage/cockpit')) return json({ workspaceId: 'web', clis: [], cost: null });
     if (url.includes('/api/cli/usage')) return json({ at: '2026-10-16T00:00:00Z', sessions: [] });
     if (url.includes('/api/cli/quota')) return json({ at: '2026-10-16T00:00:00Z', ttlSeconds: 600, snapshots: [] });
+    if (url.includes('/api/deploy/matrix')) return json({ environmentKinds: ['staging', 'production'], projects: [
+      { projectId: 'Website', error: null, statuses: ['staging', 'production'].map(kind => matrixStatus('Website', kind as 'staging' | 'production', null)),
+        tenantStatuses: ['staging', 'production'].map(kind => matrixStatus('Website', kind as 'staging' | 'production', 'acme')) },
+      { projectId: 'API', error: null, statuses: ['staging', 'production'].map(kind => matrixStatus('API', kind as 'staging' | 'production', null)), tenantStatuses: [] },
+    ] });
     return json([]);
   });
   await page.setViewportSize({ width: 1500, height: 900 });
@@ -42,18 +56,20 @@ test('workspace deployment matrix filters and opens project deployment in both t
   const dashboard = page.getByTestId('deployment-dashboard');
   await expect(dashboard).toBeVisible();
   await expect(dashboard.getByRole('columnheader')).toHaveCount(3);
-  await expect(dashboard.getByRole('row')).toHaveCount(3);
-  await expect(dashboard.getByText('Sample data until deployment API is available')).toBeVisible();
+  await expect(dashboard.getByRole('row')).toHaveCount(4);
+  await expect(dashboard.getByRole('row', { name: /Website.*acme/ })).toBeVisible();
   for (const theme of ['dark', 'light'] as const) {
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
-    const shot = path.join(resultsDir, `agt-3200-deployment-dashboard-${theme}.png`);
+    const shot = path.join(resultsDir, `agt-3261-deployment-dashboard-${theme}.png`);
     await dashboard.screenshot({ path: shot });
     await test.info().attach(`deployment-dashboard-${theme}`, { path: shot, contentType: 'image/png' });
   }
   await dashboard.getByTestId('deployment-group-filter').selectOption('web');
   await dashboard.getByTestId('deployment-environment-filter').selectOption('production');
+  await dashboard.getByTestId('deployment-tenant-filter').selectOption('acme');
   await expect(dashboard.getByRole('row')).toHaveCount(2);
   await expect(dashboard.getByRole('columnheader')).toHaveCount(2);
-  await dashboard.getByRole('button', { name: 'Website Production deployment' }).click();
+  await expect(dashboard.getByText('Awaiting approval')).toBeVisible();
+  await dashboard.getByRole('button', { name: 'Website acme Production deployment' }).click();
   await expect(page.getByTestId('studio-tab-hub:Website')).toBeVisible();
 });
