@@ -21,6 +21,7 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapPullGateEndpoints();
         var tasks = app.MapGroup("/api/tasks")
             .AddEndpointFilter<TaskOperationTimingFilter>();
         tasks.MapTaskCrudEndpoints();
@@ -76,6 +77,11 @@ public static class EndpointMapping
         app.MapDemoReplayEndpoints();
         app.MapArtifactIngestionEndpoints();
         app.MapRegistryEndpoints();
+        if (mapsLocalV1)
+        {
+            app.MapLocalFirstRunRepositoryEndpoints();
+            app.MapLocalFirstRunGitSetupEndpoints();
+        }
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
         app.MapProjectSettingsEndpoints();
@@ -136,6 +142,9 @@ public static class EndpointMapping
         // inside this ownership branch. Never mount a local v1 writer beside
         // the standalone proxy.
         if (mapsLocalV1) app.MapManagementEndpoints();
+        // Environment describes this control host, so its exact read route
+        // remains local even when the rest of /api/v1 is proxied.
+        app.MapEnvironmentEndpoint();
     }
 
     internal static bool MapsLocalV1(IConfiguration configuration)

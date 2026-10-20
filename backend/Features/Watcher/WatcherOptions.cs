@@ -11,6 +11,7 @@ public sealed record WatcherOptions
     public const string ConfigurationSection = "Watcher";
 
     public bool Enabled { get; init; }
+    public bool OperationalMonitoringEnabled { get; init; } = true;
     public int IntervalSeconds { get; init; } = 300;
 
     /// <summary>A case must be observed in this many distinct sweeps before W2 drafts a proposal (§10.3 "persists over two sweeps").</summary>
@@ -19,15 +20,27 @@ public sealed record WatcherOptions
     /// <summary>How long a rejected fingerprint stays suppressed (§10.4).</summary>
     public int SuppressionDays { get; init; } = 14;
 
+    public OperationalStallThresholds OperationalThresholds { get; init; } = new();
+
     public static WatcherOptions FromConfiguration(IConfiguration configuration)
     {
         var section = configuration.GetSection(ConfigurationSection);
         return new WatcherOptions
         {
             Enabled = section.GetValue("Enabled", false),
+            OperationalMonitoringEnabled = section.GetValue("OperationalMonitoringEnabled", true),
             IntervalSeconds = Math.Clamp(section.GetValue("IntervalSeconds", 300), 30, 3600),
             PersistenceSweepsBeforeProposal = Math.Max(1, section.GetValue("PersistenceSweepsBeforeProposal", 2)),
             SuppressionDays = Math.Max(1, section.GetValue("SuppressionDays", 14)),
+            OperationalThresholds = new OperationalStallThresholds(
+                Math.Clamp(section.GetValue("HostTargetPercent", 85.0), 1, 100),
+                Math.Max(1, section.GetValue("HostOverloadMinutes", 10)),
+                Math.Clamp(section.GetValue("MemoryUsedPercent", 90.0), 1, 100),
+                Math.Max(1, section.GetValue("SwapBytesPerSecond", 65536.0)),
+                Math.Max(1, section.GetValue("IdleWaitMinutes", 15)),
+                Math.Max(1, section.GetValue("GatePendingHours", 2)),
+                Math.Max(1, section.GetValue("LaneBudgetHours", 24)),
+                Math.Max(1, section.GetValue("HostHeartbeatMinutes", 10))),
         };
     }
 }

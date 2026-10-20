@@ -43,6 +43,13 @@ export function providerSignInLabel(badge: ProviderAuthBadge): string | null {
   return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
 }
 
+export function providerLoginStateLabel(badge: ProviderAuthBadge): string {
+  if (badge.state === 'limited') return 'rate limited';
+  if (badge.state === 'unavailable' && badge.healthOutcome === 'credential_invalid') return 'expired';
+  if (badge.state === 'unavailable' && badge.signal === 'signed-out') return 'missing';
+  return badge.state;
+}
+
 export interface ProviderAuthWaitReason {
   provider: string;
   label: string;
@@ -83,19 +90,20 @@ export interface CodexSignInTarget {
 
 export interface CodexSignInStartResponse {
   handle: string;
-  state: 'pending';
-  verificationUrl: string;
-  userCode: string;
+  state: 'queued' | 'running' | 'completed' | 'failed';
+  verificationUrl: string | null;
+  userCode: string | null;
+  sessionKey: string;
   expiresAt: string;
 }
 
 export interface CodexSignInStatusResponse {
   handle: string;
-  state: 'pending' | 'completed' | 'failed';
-  detail: string;
-  requestedAt: string;
+  state: 'queued' | 'running' | 'completed' | 'failed';
+  detail: string | null;
+  verificationUrl: string | null;
+  userCode: string | null;
   expiresAt: string;
-  completedAt: string | null;
 }
 
 export interface ClaudeSignInTarget {

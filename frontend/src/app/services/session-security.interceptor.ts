@@ -27,7 +27,9 @@ export const sessionSecurityInterceptor: HttpInterceptorFn = (req, next) => {
     if (error instanceof HttpErrorResponse
         && error.status === 401
         && !req.url.endsWith('/api/v1/studio/auth/login')
-        && !req.url.endsWith('/api/v1/studio/auth/bootstrap')) {
+        && !req.url.endsWith('/api/v1/studio/auth/bootstrap')
+        && !req.url.endsWith('/api/auth/login')
+        && !req.url.endsWith('/api/auth/bootstrap')) {
       auth.expireNetworkedSession();
     }
     return throwError(() => error);

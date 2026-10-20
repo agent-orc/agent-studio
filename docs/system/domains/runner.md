@@ -1,11 +1,26 @@
 # Runner Domain Map
 
-Version: 2026-10-10
+Version: 2026-10-17
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
+
+## Host-owned Codex device login
+
+The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
+Codex login session for a registered host. Task Server holds the browser URL and
+one-time code only in memory. A random session key is returned solely to the
+initiating browser session and is required to read or cancel those instructions.
+The runner claims the command through its outbound Task Server channel, holds a
+local provider login lock, starts `codex login --device-auth` in its own service
+account, and reports the URL and
+code without logging them. A changed local `auth.json` and a successful real
+provider probe are required before completion. Terminal results are audited
+with actor, host, provider and outcome, without the code. Timeout and cancel
+clear the instructions. Each runner keeps its own native credential store;
+neither Task Server nor Studio distributes ChatGPT login files.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
@@ -49,6 +64,13 @@ in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infr
 
 ## Key Code
 
+Coding claims carry the effective emergency process limit and its source from
+project setting, workspace default, or the 24-hour platform constant. The
+runner logs both before launch. Watchdog expiry stops the CLI process and
+continues through the existing typed timeout and salvage result path; the limit
+does not size the card. A separate Human Operator card limit wins for later
+runs. Mechanical session resumes retain their shorter safety ceiling.
+
 `runner/WorkstationProfile.cs` and
 [workstation runner-host setup](../../operations/setup/workstation-runner-host.md)
 adapt the same `agent-host` binary for a Windows operator workstation. Its
@@ -56,6 +78,21 @@ named local roots and required tools are checked again before worker creation;
 preview links are bounded result artifacts. The Connector remains the browser
 edge, and the native host manager owns installation and service lifecycle. The
 Task Server remains the sole claim, lease, and report authority.
+
+For a claimed continuation, `RemoteTaskRunner` reads attachment references from
+the claimed follow-up prompt, downloads each task attachment through the
+task-key-based `/api/v1/runner/tasks/{taskKey}/attachments/{fileName}` read (or
+the local runner API in the legacy profile), and places it under `attachments/`
+in the prepared worktree
+before starting the CLI. The runner adds exact paths to the checkout's Git
+exclude file so feedback crops remain available during the run without entering
+the result commit. A missing attachment fails preparation rather than launching
+an agent with an unreadable reference.
+
+The Environment view's `/api/v1/management/environment` read remains on the
+backend control host in both local and standalone Task Server deployments. Its
+exact route takes precedence over the standalone `/api/v1` proxy and reads the
+control host's installation, gate slots, and engine readiness.
 
 ### Scheduled coverage run
 
@@ -68,6 +105,15 @@ measures each integration-branch commit once. `--dry-run` prints the commands.
 Setup: [Scheduled coverage run](../../operations/setup/linux-runner-host.md#scheduled-coverage-run).
 
 ### Claimable gate host and Task API
+
+The build/test integration gate also has an outbound pull worker in the
+backend release binary. It is separate from the review gate subject daemon
+below. Enroll a Runner credential with only `gate.execute`, set
+`GATE_WORKER_TOKEN`, and start
+`dotnet OrchestratorApi.dll --pull-build-test-gate-worker https://studio.example`.
+The worker needs only outbound HTTPS to Studio. The server owns per-host
+capacity and keeps bundles, results, and uploaded release files in its
+instance-scoped artifact store.
 
 `RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
 Use a stable `RUNNER_ID`, a unique runner instance, the normal Task Server URL
@@ -812,6 +858,15 @@ unreported claim expires with its lease and is queued again.
   likewise allows `queue` and `park` only without an active lease. This stop
   receipt path serves the current monolith API; the standalone v1 lease wire
   reserves a stop directive but does not yet expose an active-stop command.
+  The stop route targets the card's canonical authority key for both remote and
+  local leases. A local lease can remain held while preparation or
+  post-processing runs without a CLI process. Its owner observes a fenced stop
+  before starting the next step, releases the lease with outcome `Stopped`, and
+  settles the stop receipt so the card shows the stopped attempt. The endpoint
+  shares a gate with CLI launch and review moves. A stop accepted while visual
+  QA is running is checked before the UI card can enter Human Review. The store
+  resolves `TaskRepository` on first use, so a host without it still starts:
+  it reads no receipts, and a stop that would need one returns 409.
 - `backend/Features/Clients/ClientDeletionPolicy.cs` (AGT-2748): the pure
   eligibility decision for permanently deleting a retired client identity,
   shared by `DELETE /api/clients/{id}/permanent` and the bulk
@@ -2041,6 +2096,36 @@ queued form and never render in terminal lanes.
 the endpoint answers `409` with the reason while the intent stays persisted.
 The preservation half is the detector, so a run that legitimately finishes in
 under a second is never reported as lost.
+
+## Operational stall monitoring (AGT-3206)
+
+The Watcher runs an operational sweep every five minutes by default, including
+when proposal drafting is disabled. `Watcher:OperationalMonitoringEnabled` is
+the separate kill switch (default `true`). The observe-first option from the
+Watcher dossier is implemented: a finding enters Activity with evidence and a
+suggested intervention; creating a proposal card still requires
+`Watcher:Enabled`. No capacity, credential, gate, or deployment mutation is
+authorized by a detector observation alone.
+
+The sweep reads the existing host telemetry, review-host capability and slot
+advertisements, the authoritative remote gate slot tracker, pending review
+attempts, batch-gate pending records, card lane
+timestamps and claim failures, and the host release drift snapshot. Thresholds
+under `Watcher` are `HostTargetPercent` (85), `HostOverloadMinutes` (10),
+`MemoryUsedPercent` (90), `SwapBytesPerSecond` (65536), `IdleWaitMinutes` (15),
+`GatePendingHours` (2), `LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10).
+Every finding has a stable
+case fingerprint, subject, severity, since time, affected card count, evidence,
+and suggested action. A successful healthy sweep resolves an open operational
+case; a failed probe cannot close cases. `GET /api/watcher/stalls` supplies the
+open count and cases for the red Studio marker, Execution Hosts, and board lane
+headers. Activity records the opening and closing transitions once each.
+
+The live release comparison covers registered runner roles. A container with
+no reported release identity has no comparable running-version fact and is
+not labelled as drift. The policy accepts a deployment start error when one is
+provided by a release source; the current collector does not yet receive
+compose errors or image digests for arbitrary containers.
 
 ## Verification
 

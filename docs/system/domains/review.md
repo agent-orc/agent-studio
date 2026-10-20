@@ -372,9 +372,12 @@ budget.
 - **Plan.** The project setting `repositoryVisibility` (`public` by default,
   `PUT /api/projects/{project}/repository-visibility`) is sealed into every
   review plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`.
-  Task Server repository registrations may also declare `repositoryVisibility`;
-  the credential inventory uses a registered `private` value to require read
-  access on every review host before any review attempt exists.
+  Task Server repository registrations may also declare `repositoryVisibility`.
+  The existing project setting is copied to matching registrations when it
+  changes and reconciled on startup and periodically, including registrations
+  created before the setting was copied. The credential inventory uses the
+  registered `private` value to require read access on every review host before
+  any review attempt exists.
   Changing it re-plans every ReviewAttempt still queued for the project, like a
   build-profile or pipeline-step edit, so an attempt queued before the flip
   carries the new visibility.
