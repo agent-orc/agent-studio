@@ -70,7 +70,7 @@ test('owner manages access from Settings and sees each created token once', asyn
 
   await page.goto('/');
   await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('status-bar-settings').click();
   await page.getByTestId('workspace-settings-rail-access').click();
   const access = page.getByTestId('access-settings');
   await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible();
