@@ -1,5 +1,27 @@
 # AGT-3218 engine applier contract and canary status
 
+## Follow-up 2 (operator review of 20.10.2026, BLOCK on f3f79a3be)
+
+- Result SHA: `bffbca43766c640aae8056a93e9df92d314b513a`. This status entry is a separate commit on top of it. History, not rebased or squashed: `f3f79a3be` -> `fe18ec77a` (the review fixes, salvaged from the refused round) -> merge of `origin/develop` at `6eebe196d578ce71b876fcc8533ba935005435a0` (no conflicts) -> `bffbca437` (two test fixes). `git merge-base --is-ancestor origin/develop HEAD` passes.
+- Fixes for the review:
+  - Blocker: the applier re-reads the card after `integration.EnqueueAsync`. When the integration started an agent round (Conflict or AgentRoundRequired; `IntegrationAgentRoundHandoff` finds the reviewed SHA's recovery row and the settlement journal of this review), the applier moves the journal to `LaneSettled`, clears the wait marker and completes. A retry that finds the card in Ready does the same instead of throwing `orchestration-source-state-mismatch`. The contract table has an `AcceptAndIntegrate`/`agent-round` variant: the real integration ends in Conflict and the real agent round service moves the card. A separate test retries an applier that failed before the fix. The probe has an `AgentRoundHandoff` effect and basis.
+  - Major: any exit from the source lane that this decision's write key did not write is `source-exit` (not counted), with actor and lane-change cause as evidence. DeferToBatch is exempt.
+  - Major: while the card's integration lane shows the delivery `enqueued`, `agent-round-re-entry` or `dequeued` since the observation and no terminal row, the check waits (`waitingOn: integration-in-flight`). At the apply deadline it is not counted, never missing.
+  - Major: the canary judges nothing until `RecoverApplyingAsync` has finished one pass after start. Every deadline counts from max(observation or completion, process start). A card missing from the snapshot waits (`card-not-found`) and is not counted at the deadline.
+  - Minor: a gate decision whose card left Auto Review, got a pending intent or a new run attempt is `gate-superseded` (not counted). `ReviewDecisionOrchestratorEngineGateDispatchTests` drives the real handler's second pass in engine mode and asserts `engine_gate_dispatched`.
+  - Minor: a probe exception is `probe-failed`: an `applier-canary-probe` alert, not counted, no rollback.
+  - Minor: BatchAdmitted requires the queue ownership, the admission feed entry, the per-task gate's keyed `batch-fallback:<review>` write to Human Review, or an escalation with that review's fallback execution evidence.
+  - Minor: `WriteEngineIntent`, `TakeEngineIntent` and receipt recording share one lock, and the tick claims the intent file by atomic rename. Receipts older than seven days are pruned from `engine-intent-receipts/`. `BatchGateStore.Replace<T>` is unchanged (AGT-3219 renames its copy).
+- Fixed in this round: the salvaged `fe18ec77a` did not compile, because the gate dispatch contract case named an out-of-scope `run`. After the develop merge, `Applier_probe_requires_the_per_task_gate_write_for_a_settled_defer_to_batch` moved a card with an unintegrated result into Human Review under the guarded delivery chain. It now runs unguarded, like the other Human Review contract cases.
+- Verification on agent-runner-01 after the develop merge:
+  - `dotnet build agent-taskboard.sln --no-restore` built every project; the only error was the compile error above. After the fix, `backend.Tests` rebuilt with 0 errors.
+  - `FullyQualifiedName~BatchGateEngineApplierContractTests|FullyQualifiedName~BatchGateEngineIntentStoreTests|FullyQualifiedName~EngineApplierContractGuardTests|FullyQualifiedName~ReviewDecisionOrchestratorEngineGateDispatchTests|FullyQualifiedName~ReviewDecisionOrchestratorCompletionGateTests|FullyQualifiedName~OrchestrationRolloutTests|FullyQualifiedName~BatchGatePilotServiceTests`: 230 of 231 passed; the one failure was the guarded-chain case above.
+  - After the fix, `FullyQualifiedName~Applier_probe_requires_the_per_task_gate_write|FullyQualifiedName~MonolithOrchestrationStoreTests|FullyQualifiedName~MonolithOrchestrationEndpointTests|FullyQualifiedName~IntegrationAgentRound|FullyQualifiedName~TransitionDecisionBoundaryTests|FullyQualifiedName~MonolithDecisionBoundaryTests` passed 53 tests.
+  - `FullyQualifiedName~.Architecture.|Category=Guard` passed 134 backend tests (TestClockGuardTests included); runner.Tests and task-server.Tests have no matching tests.
+  - `npm --prefix frontend run lint` passed.
+
+## Follow-up 1 (operator review of 19.10.2026)
+
 - Result SHA: `304cadb788ac8cb980a87dabde83e492e478049e`, one commit on the earlier delivery `ef3995c7ec5d40ae27d8e5e918f51d9bf652259b` (not rebased). This status entry is a separate commit on top of it.
 - The follow-up fixes the operator review of 19.10.2026 (BLOCK on ef3995c7e):
   - Blocker: a decision the applier has not completed waits until `Orchestration:ApplierCanary:ApplyDeadlineSeconds` (default 10800) after its observation. The effect window (`WindowSeconds`, default 120) now starts at `CompletedAt`. A card that a person moved out of the source lane (the applier then refuses the decision with `orchestration-source-state-mismatch`) is `not-counted`, not missing.
