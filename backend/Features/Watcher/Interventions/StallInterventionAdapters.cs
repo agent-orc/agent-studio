@@ -84,7 +84,7 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
         if (pull is null) return null;
         if (!string.Equals(configuration["RemoteGate:SshHost"], host, StringComparison.OrdinalIgnoreCase))
             return pull;
-        var ssh = gateSlots.TryFenceDispatch();
+        var ssh = gateSlots.TryFenceDispatch(requireFreshRemote: true);
         if (ssh is not null) return new CombinedRestartFence((IRestartClaimFence)pull, ssh);
         pull.Dispose();
         return null;
@@ -136,9 +136,15 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
                         || gates.ListPending().Any(item => item.Subject.ActivePerTaskGate);
                     var sshDispatch = string.Equals(configuration["RemoteGate:SshHost"], host,
                         StringComparison.OrdinalIgnoreCase) ? gateSlots.Dispatching : 0;
-                    return new ServiceWorkloadReading(pull.Busy + sshDispatch, active, pull.Queued,
+                    var sshRemote = string.Equals(configuration["RemoteGate:SshHost"], host,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? gateSlots.RemoteSnapshot(RemoteSlotsFresh) : null;
+                    int? busy = sshRemote is null && string.Equals(configuration["RemoteGate:SshHost"], host,
+                        StringComparison.OrdinalIgnoreCase) ? null
+                        : Math.Max(pull.Busy + sshDispatch, sshRemote?.Busy ?? 0);
+                    return new ServiceWorkloadReading(busy, active, pull.Queued,
                         new StallGateSlotFacts(pullGates.Hosts().First(item => item.Id == host).Slots,
-                            pull.Busy + sshDispatch, pull.Busy + sshDispatch, active));
+                            pull.Busy + sshDispatch, sshRemote?.Busy, active));
                 }
                 var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
                 if (string.IsNullOrWhiteSpace(gateHost) || !string.Equals(gateHost, host, StringComparison.OrdinalIgnoreCase))

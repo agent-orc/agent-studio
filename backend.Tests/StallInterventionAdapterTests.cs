@@ -203,6 +203,7 @@ public sealed class StallInterventionAdapterTests : IDisposable
             ["RemoteGate:SshHost"] = "kori-gate",
         }).Build();
         var slots = new GateSlotUsageTracker(gateConfig, _clock);
+        slots.RemoteWaiting(0, 2);
         var reader = new ServiceWorkloadReader(new V1ReviewExecutorRegistry(_clock,
                 new ProviderRouteExclusions(() => _root)), Authority(),
             new BatchGateStore(Path.Combine(_root, "gates")),
@@ -210,6 +211,10 @@ public sealed class StallInterventionAdapterTests : IDisposable
 
         Assert.Equal((0, 1), (reader.Read("kori-gate", "gate", Now)!.BusySlots,
             reader.Read("kori-gate", "gate", Now)!.ClaimableWaiting));
+        slots.RemoteWaiting(2, 2); // Workers from an earlier Studio process still hold both slots.
+        Assert.Equal(2, reader.Read("kori-gate", "gate", Now)!.BusySlots);
+        Assert.Null(reader.TryFenceClaims("kori-gate", "gate"));
+        slots.RemoteWaiting(0, 2);
         using (var queued = slots.TryBeginDispatch("gate-already-queued"))
         {
             Assert.NotNull(queued);

@@ -41,11 +41,12 @@ public sealed class GateSlotUsageTracker
         }
     }
 
-    public IRestartClaimFence? TryFenceDispatch()
+    public IRestartClaimFence? TryFenceDispatch(bool requireFreshRemote = false)
     {
         lock (_dispatchGate)
         {
-            if (_restartFenced || _dispatching.Count > 0 || !_active.IsEmpty) return null;
+            if (_restartFenced || _dispatching.Count > 0 || !_active.IsEmpty
+                || requireFreshRemote && RemoteSnapshot(TimeSpan.FromMinutes(10)) is not { Busy: 0 }) return null;
             _restartFenced = true;
             return new DispatchFence(this);
         }
