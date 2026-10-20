@@ -132,6 +132,9 @@ public static class TaskServerPlaneProxy
 
         foreach (var (name, values) in context.Request.Headers)
         {
+            if (context.Request.Path.StartsWithSegments("/api/v1/management/device-logins")
+                && string.Equals(name, "X-Actor-Id", StringComparison.OrdinalIgnoreCase))
+                continue;
             if (!ForwardsRequestHeader(name))
             {
                 continue;
@@ -145,6 +148,12 @@ public static class TaskServerPlaneProxy
 
         if (ActingRole(context, context.RequestServices.GetRequiredService<IConfiguration>()) is { } actingRole)
             request.Headers.TryAddWithoutValidation(CredentialViewProtocol.ActingRoleHeader, actingRole);
+        if (context.Request.Path.StartsWithSegments("/api/v1/management/device-logins"))
+        {
+            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                ? human.User.Id : DefaultClientIdentity.Id;
+            request.Headers.TryAddWithoutValidation("X-Actor-Id", actor);
+        }
 
         try
         {

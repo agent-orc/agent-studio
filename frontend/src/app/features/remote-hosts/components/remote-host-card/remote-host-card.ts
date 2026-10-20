@@ -43,6 +43,7 @@ import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
+  providerLoginStateLabel,
   providerSignInLabel,
   signInTarget,
   type ProviderAuthBadge,
@@ -58,11 +59,9 @@ interface Meter {
   pct: number;
   tone: MeterTone;
 }
-
 /**
  * One execution location in the Remote-Hosts table (AGT-1921 / AGT-2629): one
- * compact primary row followed by an optional detail row. The parent owns and
- * persists disclosure state so sorting never loses an operator's open rows.
+ * compact row with detail. The parent preserves disclosure across sorting.
  *
  * Status is encoded with a dot + a badge, and acute states (degraded / offline)
  * additionally wash the affected row with a warn / error tint, never a left
@@ -97,6 +96,7 @@ interface Meter {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RemoteHostCardComponent {
+  readonly providerLoginStateLabel = providerLoginStateLabel;
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   readonly host = input.required<RemoteHost>();

@@ -134,6 +134,45 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new OneTimeEnrollmentResponse(created.Code, created.Enrollment.Name, created.Enrollment.Scopes, created.Enrollment.ExpiresAt));
             }));
 
+        auth.MapGet("/runner-enrollments", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                return Results.Ok(store.ListEnrollments().Select(x =>
+                    new RunnerEnrollmentResponse(x.Id, x.Name, x.Scopes, x.CreatedAt, x.ExpiresAt, x.UsedAt)));
+            }));
+
+        auth.MapDelete("/runner-enrollments/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                store.RevokeEnrollment(id);
+                return Results.NoContent();
+            }));
+
+        auth.MapGet("/api-tokens", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                return Results.Ok(store.ListApiTokens().Select(ToApiTokenResponse));
+            }));
+
+        auth.MapPost("/api-tokens", (CreateApiTokenRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                var owner = RequireOwner(context, store);
+                var created = store.CreateApiToken(request, owner.User.Id);
+                return Results.Ok(new CreatedApiTokenResponse(ToApiTokenResponse(created.Token), created.Secret));
+            }));
+
+        auth.MapDelete("/api-tokens/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                store.RevokeApiToken(id);
+                return Results.NoContent();
+            }));
+
         auth.MapPost("/runner-enroll", (RunnerEnrollRequest request, AccessSecurityStore store,
             AgentStudio.Clients.ClientIdentityStore clients) =>
             Execute(() =>
@@ -199,6 +238,10 @@ public static class AccessSecurityEndpoints
         try { return operation(); }
         catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
     }
+
+    private static ApiTokenResponse ToApiTokenResponse(StudioApiToken token)
+        => new(token.Id, token.Name, token.Role, token.Projects, token.CreatedBy,
+            token.CreatedAt, token.ExpiresAt, token.LastUsedAt, token.RevokedAt);
 
     internal static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal

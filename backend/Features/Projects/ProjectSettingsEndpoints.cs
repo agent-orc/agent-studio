@@ -13,6 +13,9 @@ using ProjectDefinitionReader = AgentStudio.TaskServer.Contracts.ProjectDefiniti
 using ProjectPreparationManifest = AgentStudio.TaskServer.Contracts.ProjectPreparationManifest;
 using ProjectPreparationPaths = AgentStudio.TaskServer.Contracts.ProjectPreparationPaths;
 
+public sealed record SetProjectCodingEmergencyLimitRequest(int? Seconds);
+
+
 /// <summary>
 /// Body for <c>PUT /api/projects/{name}/intake</c>. Enables or disables the
 /// orchestrator-intake gate. See <see cref="ProjectSettings.IntakeEnabled"/>.
@@ -274,6 +277,9 @@ public static class ProjectSettingsEndpoints
                     executionRunner = kv.Value.ExecutionRunner,
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,
+                    codingEmergencyLimitSeconds = kv.Value.CodingEmergencyLimitSeconds,
+                    effectiveCodingEmergencyLimitSeconds = defaults.ResolveCodingEmergencyLimit(kv.Key).Seconds,
+                    codingEmergencyLimitSource = defaults.ResolveCodingEmergencyLimit(kv.Key).Source,
                     chatMetadataEnabled = kv.Value.ChatMetadataEnabled,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
                     // Epic decomposition (planning) run knobs (way 3): null
@@ -704,15 +710,17 @@ public static class ProjectSettingsEndpoints
             });
         });
 
-        app.MapPut("/api/projects/{projectName}/repository-visibility", (
+        app.MapPut("/api/projects/{projectName}/repository-visibility", async (
             string projectName,
             SetRepositoryVisibilityRequest req,
             ProjectSettingsService settings,
+            ProjectRepositoryVisibilitySync visibilitySync,
             TaskScannerService scanner,
             ProjectRegistry projects,
             GitService git,
             RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            CancellationToken ct) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -722,6 +730,7 @@ public static class ProjectSettingsEndpoints
             if (req.Visibility is not null && normalized is null)
                 return Results.BadRequest(new { error = $"Unsupported repository visibility '{req.Visibility}'" });
 
+            await visibilitySync.SyncAsync(projectName, normalized, ct);
             settings.SetRepositoryVisibility(projectName, normalized);
             // Attempts queued before the flip (WEB-23) must carry the new
             // visibility, or they still reach a host without the credential.
@@ -1300,6 +1309,21 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(settings.Get(projectName));
         });
 
+        app.MapPut("/api/projects/{projectName}/coding-emergency-limit", (
+            string projectName, SetProjectCodingEmergencyLimitRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner,
+            OrchestratorDefaultsProvider defaults) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (request.Seconds is not null && request.Seconds is < 1 or > AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.MaximumSeconds)
+                return Results.BadRequest(new { error = "seconds must be between 1 and 604800, or null to inherit." });
+            settings.SetCodingEmergencyLimit(projectName, request.Seconds);
+            var resolved = defaults.ResolveCodingEmergencyLimit(projectName);
+            return Results.Ok(new { codingEmergencyLimitSeconds = request.Seconds,
+                effectiveSeconds = resolved.Seconds, source = resolved.Source });
+        });
+
         // Epic decomposition (planning) run knobs (way 3): the model that
         // authors the sub-task list and whether generated sub-tasks land in
         // 2-ready instead of 0-backlog. Null fields leave that knob untouched.
@@ -1480,6 +1504,7 @@ public static class ProjectSettingsEndpoints
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings,
                 integrationRef, resultSha, changedFiles, resultRef);
         });
+
     }
 
     /// <summary>

@@ -114,8 +114,8 @@ public sealed class WorkbenchReviewService
                 $"workbench-review-{id}",
                 $"chore(workbench): record relevance review for {id}",
                 [snapshot.DescriptorRelPath],
-                () => _writer.Write(snapshot.DescriptorPath, snapshot.Descriptor.ToJsonString(
-                    new JsonSerializerOptions { WriteIndented = true })));
+                () => _writer.Write(snapshot.DescriptorPath, RepositoryTextLayout.IndentedJsonFor(
+                    snapshot.DescriptorPath, snapshot.Descriptor)));
             if (!mutation.Success)
                 return Failure(id, $"The Dossier review could not be persisted: {mutation.Error}", "write-failed");
             _notifier?.PublishReviewRecorded(projectName, id);
