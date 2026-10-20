@@ -27,7 +27,8 @@ public static class LogIngestionEndpoints
             ITaskScanner scanner,
             RunLeaseService leases,
             AttemptAuthorityService authority,
-            AgentStudio.Docs.WikiAgentReadService wikiReads) =>
+            AgentStudio.Docs.WikiAgentReadService wikiReads,
+            AgentStudio.Secrets.SecretValueScrubber secretValues) =>
         {
             if (!RunnerLeaseAuthorization.IsCurrent(context, leases, req.TaskKey, req.RunnerId, req.LeaseId, req.FencingToken))
                 return Results.Conflict(new LogIngestResponse(req.TaskKey, 0, "The authenticated Runner does not hold the current fenced lease."));
@@ -42,7 +43,7 @@ public static class LogIngestionEndpoints
             var logPath = Path.Combine(logsDir, "cli-output.log");
 
             var rendered = string.Join(Environment.NewLine,
-                req.Lines.Select(l => $"[{l.Timestamp:HH:mm:ss.fff}] [{l.Stream}] {CredentialRedactor.Redact(AnsiText.Strip(l.Text))}"));
+                req.Lines.Select(l => $"[{l.Timestamp:HH:mm:ss.fff}] [{l.Stream}] {secretValues.Scrub(CredentialRedactor.Redact(AnsiText.Strip(l.Text)))}"));
             var deliveryReceipt = DeliveryReceipt(req);
 
             try

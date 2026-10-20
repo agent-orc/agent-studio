@@ -12,6 +12,7 @@ import {
 } from '../../../cli';
 import { RemoteHostsPanelComponent } from '../../../remote-hosts';
 import { CredentialInventoryComponent } from '../../../credentials/credential-inventory/credential-inventory.component';
+import { SecretsPanelComponent } from '../../../secrets/secrets-panel/secrets-panel.component';
 import { TaskServerPanelComponent } from '../../../task-server';
 import { OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
@@ -81,6 +82,7 @@ interface SettingsRailItem {
     CliPathsPanelComponent,
     RemoteHostsPanelComponent,
     CredentialInventoryComponent,
+    SecretsPanelComponent,
     TaskServerPanelComponent,
     PromptAdminPanelComponent,
     OrchestratorLogicPanelComponent,
@@ -129,6 +131,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'workspaces', label: 'Workspaces', description: 'Manage every workspace and its projects.', icon: 'folder', group: 'global' },
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },
     { key: 'credentials', label: 'Credentials', description: 'Required access, observed custody, expiry and gaps across the installation.', icon: 'check', group: 'global' },
+    { key: 'secrets', label: 'Secrets', description: 'Write-only secrets per workspace, project and environment, with versions, rotation, revocation and audit.', icon: 'check', group: 'global' },
     { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
@@ -210,6 +213,7 @@ export class WorkspaceOverlaysComponent {
       case 'workspaces': return 'workspace-management-overlay';
       case 'task-server': return 'workspace-task-server-overlay';
       case 'credentials': return 'workspace-credentials-overlay';
+      case 'secrets': return 'workspace-secrets-overlay';
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
       case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';

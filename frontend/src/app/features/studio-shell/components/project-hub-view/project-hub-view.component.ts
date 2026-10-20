@@ -4,11 +4,12 @@ import {
   ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
   ProjectDeployAreaComponent,
+  ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
   SecurityPanelComponent,
   UxuiPanelComponent,
   ProjectObservabilityPanelComponent,
-  ProjectPipelinePanelComponent,
+  ProjectProductRuntimePanelComponent,
   ProjectSteeringDocsSectionComponent,
   ProjectWikiSectionComponent,
   ProjectUrlsPanelComponent,
@@ -27,8 +28,9 @@ import { RegressionRadarComponent } from '../../../regression-radar';
 import {
   DEFAULT_PROJECT_RAIL_KEY,
   ProjectRailKey,
-  isProjectRailKey,
+  resolveProjectSection,
 } from '../../../project-detail/components/project-shell/project-shell.config';
+import type { DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
 import { ProjectOverlaysService } from '../../../project-detail/state/project-overlays.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import type { WikiTabNavigationRequest, WikiTabTarget } from '../../studio-shell.types';
@@ -37,7 +39,6 @@ import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 /** Rails whose content panel is real (not the project-shell placeholder). */
 const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRailKey>([
   'overview',
-  'deploy',
   'project-urls',
   'git',
   'integration',
@@ -51,13 +52,12 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   'test-quality',
   'token-usage',
   'cycle-time',
-  'observability',
+  'agent-activity',
   'steering',
   'wiki',
   // Nav-rebuild step 2 (T5b): Pipeline / Workflow host real content moved
   // out of Project Settings, and Prompts keeps the application-wide
   // prompt-admin surface from the Context segment.
-  'pipeline',
   'workflow',
   'prompts',
   'settings',
@@ -84,6 +84,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   standalone: true,
   imports: [
     ProjectShellComponent,
+    ProjectEnvironmentOverviewComponent,
     ProjectDetailComponent,
     ProjectOverviewDashboardComponent,
     ProjectDeployAreaComponent,
@@ -93,7 +94,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectTokenUsagePanelComponent,
     ProjectCycleTimePanelComponent,
     ProjectObservabilityPanelComponent,
-    ProjectPipelinePanelComponent,
+    ProjectProductRuntimePanelComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,
     ProjectUrlsPanelComponent,
@@ -129,11 +130,14 @@ export class ProjectHubViewComponent {
   readonly openTask = output<{ jobId: string; watchPath: string }>();
 
   readonly activeRail = signal<ProjectRailKey>(DEFAULT_PROJECT_RAIL_KEY);
+  readonly deployView = signal<DeployView>('overview');
 
   constructor() {
     effect(() => {
-      const raw = this.initialSection();
-      this.activeRail.set(raw === 'deployment' ? 'deploy' : (isProjectRailKey(raw) ? raw : DEFAULT_PROJECT_RAIL_KEY));
+      const target = resolveProjectSection(this.initialSection());
+      // The route only records Run steps; other Deploy views stay local.
+      this.deployView.update(view => target.deployView === 'steps' ? 'steps' : (view === 'steps' ? 'overview' : view));
+      this.activeRail.set(target.rail);
     });
   }
 
@@ -147,15 +151,26 @@ export class ProjectHubViewComponent {
     return rail === 'settings' || rail === 'settings-defaults' || rail === 'settings-overrides';
   }
 
-  setRail(rail: ProjectRailKey): void {
+  setRail(requested: ProjectRailKey): void {
     const projectName = this.projectName();
+    const { rail, deployView } = resolveProjectSection(requested);
+    if (rail === 'deploy') this.deployView.set(deployView);
     this.activeRail.set(rail);
     this.tabState.open({
       kind: 'hub',
       projectName,
-      section: rail,
+      // The hub tab keeps Deploy's Run steps view as its `pipeline` section.
+      section: deployView === 'steps' ? 'pipeline' : rail,
       ...(rail === 'wiki' ? { wikiTarget: { kind: 'overview' } as const } : {}),
     });
+  }
+
+  /** Entering or leaving Run steps updates the tab section and thereby the route. */
+  onDeployView(view: DeployView): void {
+    const runSteps = view === 'steps';
+    const changed = runSteps !== (this.deployView() === 'steps');
+    this.deployView.set(view);
+    if (changed) this.tabState.open({ kind: 'hub', projectName: this.projectName(), section: runSteps ? 'pipeline' : 'deploy' });
   }
 
   openWikiTarget(request: WikiTabNavigationRequest): void {

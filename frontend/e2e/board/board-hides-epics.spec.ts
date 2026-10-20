@@ -207,4 +207,9 @@ test.describe('Board hides epics (tasks-only lanes)', () => {
       await page.screenshot({ path: path.join(process.env['JOB_RESULTS_DIR'], `dossier-board-${theme}.png`) });
     }
   });
+
+  test('the retired epic grouping control stays absent', async ({ page }) => {
+    await gotoBoard(page);
+    await expect(page.getByTestId('studio-board-epic-toggle')).toHaveCount(0);
+  });
 });
