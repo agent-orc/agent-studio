@@ -146,14 +146,50 @@ public sealed class DeployServiceTests : IDisposable
     public void RewrittenCommitWithoutCardKey_UsesDurableIntegrationVerification()
     {
         var (deploy, _, _) = Build();
-        CreateRelease(deploy, Artifact('a'), Head());
-        Card("DEMO-5", new string('0', 40));
-        var rewritten = Commit("Improve the product after integration");
+        var first = Head();
+        CreateRelease(deploy, Artifact('a'), first);
+        var integrated = Commit("integrated");
+        Card("DEMO-5", integrated);
+        // A squash from develop onto the release branch keeps the integrated tree but neither the SHA nor the key.
+        var rewritten = Git("commit-tree", integrated + "^{tree}", "-p", first,
+            "-m", "Improve the product after integration").Trim();
+        Git("checkout", "-b", "main", rewritten);
 
         var release = CreateRelease(deploy, Artifact('b'), rewritten);
 
         Assert.Equal(["DEMO-5"], release.CardKeys);
         Assert.Equal(release.CardKeys, deploy.ReleaseDetail("demo", release.Id)!.Release.CardKeys);
+    }
+
+    [Fact]
+    public void ReleaseWithoutTheIntegratedTree_DoesNotClaimEarlierVerifiedCard()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        CreateRelease(deploy, Artifact('a'), first);
+        Card("DEMO-7", Commit("integrated"));
+        _clock.Advance(TimeSpan.FromHours(1));
+        Git("checkout", "-b", "hotfix", first);
+        var hotfix = Commit("hotfix");
+
+        var release = CreateRelease(deploy, Artifact('b'), hotfix);
+
+        Assert.Empty(release.CardKeys);
+    }
+
+    [Fact]
+    public void SquashMessageNamingAReleasedCard_AddsOnlyTheNewCard()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        Card("DEMO-1", first);
+        CreateRelease(deploy, Artifact('a'), first);
+        var squashed = Commit("Squash DEMO-1 and DEMO-2");
+        Card("DEMO-2", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('b'), squashed);
+
+        Assert.Equal(["DEMO-2"], release.CardKeys);
     }
 
     [Fact]

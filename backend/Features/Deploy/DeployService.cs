@@ -39,6 +39,17 @@ public sealed class DeployService
     private readonly ILogger<DeployService> _logger;
     private readonly TaskMutationService? _mutations;
 
+    /// <summary>
+    /// Ancestry answers between release commits. Commits are immutable, so a
+    /// definite answer never changes; card badge polls then ask git only about
+    /// a release pair they have not seen.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Repo, string Ancestor, string Descendant), bool>
+        _ancestry = new();
+
+    /// <summary>Failed Production runs whose failure card exists or was attempted in this process.</summary>
+    private readonly HashSet<string> _failureCardsHandled = new(StringComparer.Ordinal);
+
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
         TaskMutationService? mutations)
@@ -292,7 +303,7 @@ public sealed class DeployService
             var repo = _git.ResolveRepoRootForProject(project);
             return CardDeploymentProjection.Project(project, snapshot.Environments,
                 snapshot.Releases, snapshot.Deployments(project), cardKeys,
-                (origin, target) => repo is not null && _git.IsAncestor(repo, origin.CommitSha, target.CommitSha));
+                (origin, target) => repo is not null && Contains(repo, origin.CommitSha, target.CommitSha));
         }
     }
 
@@ -791,11 +802,10 @@ public sealed class DeployService
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
         var previous = existing.LastOrDefault()?.Release;
         var priorKeys = existing.Where(item => repo is not null &&
-                _git.IsAncestor(repo, item.Release.CommitSha, commit))
+                Contains(repo, item.Release.CommitSha, commit))
             .SelectMany(item => item.Release.CardKeys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var cardKeys = repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated, priorKeys, now,
-            previous?.CreatedAtUtc);
+        var cardKeys = repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated, priorKeys);
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
@@ -811,7 +821,7 @@ public sealed class DeployService
             ? ProjectDefinitionReader.Parse(yaml).Definition?.Deployment : null;
 
     private sealed record IntegratedCard(string Key, string Title, IReadOnlyList<string> Shas,
-        DateTime RecordedAtUtc);
+        string IntegrationBranch);
 
     /// <summary>Cards of the project with an integration verification and the commits it names.</summary>
     private IReadOnlyList<IntegratedCard> IntegratedCards(string project)
@@ -823,36 +833,70 @@ public sealed class DeployService
                 string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key,
                 item.Task.Title,
                 [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas],
-                item.Record.RecordedAtUtc.UtcDateTime))
+                item.Record.IntegrationBranch))
             .ToArray();
 
     /// <summary>
-    /// The integration verification is the durable card mapping. A rewritten
-    /// merge, rebase or squash may retain the verified work without retaining
-    /// either its SHA or the card key in a commit message. The verification
-    /// timestamp places that card in the next release after integration.
+    /// The integration verification is the durable card mapping. A card joins
+    /// the release that adds a commit its verification names, or a commit whose
+    /// message keeps its key. A rewritten merge, rebase or squash may keep
+    /// neither, so the release also adds the cards behind an integration-branch
+    /// commit whose tree the release delta carries unchanged. Cards of an
+    /// ancestor release never join again.
     /// </summary>
     private IReadOnlyList<string> CardKeys(string repo, string commit, string? previousCommit,
-        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys, DateTime now,
-        DateTime? previousCreatedAt)
+        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys)
     {
-        var revisions = _git.ListRevisions(repo, commit, previousCommit,
-                previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (revisions.Count == 0) return [];
-        var messages = _git.ListRevisionMessages(repo, commit, previousCommit,
-            previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow);
-        var mentioned = ReleaseCardAttribution.FindKeys(messages);
-        var committedAt = _git.GetCommitterDateUtc(repo, commit);
-        return integrated.Where(card => !priorKeys.Contains(card.Key) &&
-                (card.Shas.Any(revisions.Contains) || mentioned.Contains(card.Key)
-                 || committedAt is { } commitTime && card.RecordedAtUtc > DateTime.MinValue
-                    && card.RecordedAtUtc <= commitTime && card.RecordedAtUtc <= now &&
-                    (previousCreatedAt is null || card.RecordedAtUtc > previousCreatedAt)))
+        var window = previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow;
+        var delta = _git.ListRevisionDetails(repo, commit, previousCommit, window);
+        if (delta.Count == 0) return [];
+        var revisions = delta.Select(item => item.Sha).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mentioned = ReleaseCardAttribution.FindKeys(delta.Select(item => item.Message));
+        var candidates = integrated.Where(card => !priorKeys.Contains(card.Key)).ToArray();
+        var direct = candidates.Where(card => card.Shas.Any(revisions.Contains) || mentioned.Contains(card.Key))
             .Select(card => card.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var rewritten = candidates.Where(card => !direct.Contains(card.Key))
+            .GroupBy(card => card.IntegrationBranch, StringComparer.Ordinal)
+            .SelectMany(group =>
+            {
+                var carried = RewrittenIntegration(repo, group.Key, delta, previousCommit, window);
+                return group.Where(card => card.Shas.Any(carried.Contains)).Select(card => card.Key);
+            });
+        return direct.Concat(rewritten)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Integration-branch commits the release carries as rewritten content: the
+    /// history of the newest branch commit whose tree equals a delta commit's
+    /// tree, down to the branch commit the previous release carried the same way.
+    /// </summary>
+    private IReadOnlySet<string> RewrittenIntegration(string repo, string branch,
+        IReadOnlyList<RevisionDetail> delta, string? previousCommit, int window)
+    {
+        if (string.IsNullOrWhiteSpace(branch)) return new HashSet<string>();
+        var history = _git.ListRevisionDetails(repo, "origin/" + branch, null, ReleaseCommitWindow, includeMessages: false);
+        if (history.Count == 0)
+            history = _git.ListRevisionDetails(repo, branch, null, ReleaseCommitWindow, includeMessages: false);
+        var trees = delta.Select(item => item.Tree).ToHashSet(StringComparer.Ordinal);
+        if (history.FirstOrDefault(item => trees.Contains(item.Tree)) is not { } carried)
+            return new HashSet<string>();
+        var previousTree = previousCommit is null ? null
+            : _git.ListRevisionDetails(repo, previousCommit, null, 1, includeMessages: false).FirstOrDefault()?.Tree;
+        var boundary = history.FirstOrDefault(item => item.Tree == previousTree)?.Sha ?? previousCommit;
+        return _git.ListRevisions(repo, carried.Sha, boundary, window).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private bool Contains(string repo, string ancestor, string descendant)
+    {
+        if (string.Equals(ancestor, descendant, StringComparison.OrdinalIgnoreCase)) return true;
+        if (_ancestry.TryGetValue((repo, ancestor, descendant), out var known)) return known;
+        var answer = _git.TryIsAncestor(repo, ancestor, descendant);
+        if (answer is { } definite) _ancestry[(repo, ancestor, descendant)] = definite;
+        return answer == true;
     }
 
     private static DeploymentRecord NewRun(Release release, DeployEnvironment environment,
@@ -884,31 +928,39 @@ public sealed class DeployService
         return new(environments, records, result.Deployments, view);
     }
 
+    /// <summary>
+    /// Creates one backlog bug card per failed Production run. Each run is
+    /// handled once per process: storage is read only when a run first fails,
+    /// and the stable card id keeps a restart from creating a duplicate.
+    /// </summary>
     private void CreateProductionFailureCards(string project, IReadOnlyList<DeployEnvironment> environments,
         IReadOnlyList<ReleaseRecord> records, IReadOnlyList<DeploymentRecord> runs)
     {
-        if (_mutations is null)
-        {
-            _logger.LogWarning("Production failure card creation is unavailable without task mutations");
-            return;
-        }
         var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
             .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var pending = runs.Where(item => item.State == DeploymentStates.Failed
+                && production.Contains(item.EnvironmentId)
+                && !_failureCardsHandled.Contains(project + "/" + item.Id))
+            .ToArray();
+        if (pending.Length == 0) return;
+        foreach (var run in pending) _failureCardsHandled.Add(project + "/" + run.Id);
         var watchPath = _scanner.GetWatchPaths()
             .FirstOrDefault(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase))?.Path;
-        if (watchPath is null)
+        if (_mutations is null || watchPath is null)
         {
-            _logger.LogWarning("Production failure card creation has no watch path for {Project}", project);
+            _logger.LogWarning("Cannot create Production failure cards for {Project} deployments {DeploymentIds}: "
+                + "task mutations or the project watch path are unavailable", project,
+                string.Join(", ", pending.Select(item => item.Id)));
             return;
         }
-        foreach (var run in runs.Where(item => item.State == DeploymentStates.Failed
-                     && production.Contains(item.EnvironmentId)))
+        // The published task index can lag a new card. Read storage once so a
+        // restart cannot mint a duplicate for a run that already has its card.
+        var existing = _scanner.ScanAllJobsRaw()
+            .Where(item => WatchPathComparison.PathsEqual(item.WatchPath, watchPath))
+            .Select(item => item.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var run in pending.Where(item => !existing.Contains(FailureCardId(item.Id))))
         {
-            var slug = "production-deploy-failed-" + run.Id;
-            // The published task index can lag a new card. Read storage for this rare
-            // failure path so a second reconciliation cannot mint a duplicate.
-            if (_scanner.ScanAllJobsRaw().Any(item => item.Id == slug
-                    && WatchPathComparison.PathsEqual(item.WatchPath, watchPath))) continue;
             var release = records.FirstOrDefault(item => item.Release.Id == run.ReleaseId)?.Release;
             if (release is null) continue;
             var cards = string.Join(", ", release.CardKeys);
@@ -918,7 +970,7 @@ public sealed class DeployService
             {
                 var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
                 {
-                    Id = slug,
+                    Id = FailureCardId(run.Id),
                     Title = $"Investigate Production deployment of release {release.Version}",
                     PromptMarkdown = $"# Production deployment failed\n\nRelease: {release.Version} (`{release.Id}`)"
                         + $"\nDeployment: `{run.Id}`\nIncluded cards: {cards}\n\nRecent deployment log:\n{excerpt}\n",
@@ -934,10 +986,14 @@ public sealed class DeployService
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
+                // A transient storage failure retries on the next reconciliation.
+                _failureCardsHandled.Remove(project + "/" + run.Id);
                 _logger.LogWarning(ex, "Could not create Production failure card for deployment {DeploymentId}", run.Id);
             }
         }
     }
+
+    private static string FailureCardId(string deploymentId) => "production-deploy-failed-" + deploymentId;
 
     private void Persist(string project, IReadOnlyList<DeploymentRecord> runs,
         IReadOnlyList<DeploymentLogEntry> log, IReadOnlyList<DeployAuditEntry> audit)

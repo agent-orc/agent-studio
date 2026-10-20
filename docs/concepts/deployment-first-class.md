@@ -65,13 +65,16 @@ stays the only executor; releases and runs describe and steer it.
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
   project, commit and artifacts always resolve to the same release. Card
-  attribution reads verified integration records, including their recorded
-  integration time. A matching commit or card key in the release delta is used
-  when present; the verification record also keeps the mapping when a rebase or
-  squash rewrites both the SHA and commit message, provided the rewritten commit
-  was committed after verification. This bound keeps a delayed gate for an older
-  commit from claiming later cards. Cards already included by an ancestor
-  release are excluded from the new release's added cards.
+  attribution reads verified integration records. A matching commit or card
+  key in the release delta is used when present. When a rebase or squash
+  rewrites both the SHA and commit message, the verified integration-branch
+  commit still maps the card: the release adds the cards behind the newest
+  integration-branch commit whose tree a release delta commit carries
+  unchanged, down to the commit the previous release carried. A release
+  without that tree, such as a hotfix branch, claims no card by time alone.
+  Cards already included by an ancestor release are excluded from the new
+  release's added cards. A failed Production run is checked for its failure
+  card once per process.
 - **Release order.** Releases never move back in history. A commit that is a
   strict ancestor of the newest release's commit is refused with 409 and
   `"reason":"superseded"`, so a gate

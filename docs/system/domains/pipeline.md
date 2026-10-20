@@ -2632,8 +2632,10 @@ and secret name patterns equal to `ProjectDeploymentVocabulary`.
 
 Release card attribution first matches archived integration-verification SHAs
 against the commits added since the previous release. A retained card key in
-an added commit message also matches after a rebase or squash; this fallback
-does not repeat a card already included in an earlier release. The release
+an added commit message also matches after a rebase or squash. When the
+rewrite keeps neither, an added commit whose tree equals an integration-branch
+commit carries the verified cards behind that commit. Neither fallback repeats
+a card already included in an earlier release. The release
 stores that card-key delta immutably. Environment card badges project that
 delta through successful deployments and mark cards withdrawn by rollback.
 Release notes use the included cards' titles captured at release creation;

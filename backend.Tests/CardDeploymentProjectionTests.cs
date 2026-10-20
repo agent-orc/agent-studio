@@ -100,18 +100,7 @@ public sealed class CardDeploymentProjectionTests
     [InlineData("Fix WEB-20", "WEB-2", false)]
     public void CommitMessageAttribution_SurvivesRebaseAndSquashWithoutPrefixCollisions(
         string message, string key, bool expected)
-        => Assert.Equal(expected, ReleaseCardAttribution.ContainsKey(message, key));
-
-    [Fact]
-    public void RewrittenHistory_DoesNotReincludeACardFromAnEarlierRelease()
-    {
-        var revisions = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "new-sha" };
-        var mentioned = ReleaseCardAttribution.FindKeys(["Squash WEB-1 and WEB-2"]);
-        var prior = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "WEB-1" };
-        Assert.False(ReleaseCardAttribution.Includes("WEB-1", ["old-sha"], revisions, mentioned, prior));
-        Assert.True(ReleaseCardAttribution.Includes("WEB-2", ["old-sha"], revisions, mentioned, prior));
-        Assert.True(ReleaseCardAttribution.Includes("WEB-1", ["new-sha"], revisions, mentioned, prior));
-    }
+        => Assert.Equal(expected, ReleaseCardAttribution.FindKeys([message]).Contains(key));
 
     private static Release Release(string id, int sequence, string[] cards)
         => new(id, "demo", $"2026.10.16.{sequence}", new string((char)('0' + sequence), 40),

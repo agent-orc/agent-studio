@@ -26,6 +26,9 @@ public record GitPushResult(bool Success, string Sha, string Status, string? Err
 public record GitDiffLookupResult(bool Success, string Diff, string? Error);
 public record GitWorkerCommitCleanupResult(bool Success, string Status, string? Error);
 
+/// <summary>BD-2: one commit of a revision range with its tree and full message.</summary>
+public sealed record RevisionDetail(string Sha, string Tree, string Message);
+
 public enum IntegrationBranchSyncOutcome
 {
     UpToDate,
@@ -8170,29 +8173,30 @@ public partial class GitService
             : [];
     }
 
-    /// <summary>Commit messages in a release delta. Card references survive rebase and squash.</summary>
-    public IReadOnlyList<string> ListRevisionMessages(string repoRoot, string tip, string? exclusiveBase, int maxCount)
+    /// <summary>
+    /// BD-2: commit, tree and message of each commit reachable from
+    /// <paramref name="tip"/> but not from <paramref name="exclusiveBase"/>,
+    /// newest first. The tree identifies the same content after a rebase or
+    /// squash; the message keeps any card key the rewrite retained. Both
+    /// revisions may be a SHA or a branch such as <c>origin/develop</c>.
+    /// Empty when a revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<RevisionDetail> ListRevisionDetails(string repoRoot, string tip, string? exclusiveBase,
+        int maxCount, bool includeMessages = true)
     {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
-            || !ReviewSubjectStore.IsValidResultSha(tip)
-            || exclusiveBase is not null && !ReviewSubjectStore.IsValidResultSha(exclusiveBase)) return [];
-        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", "--format=%B%x00", tip };
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(tip)
+            || exclusiveBase is not null && !IsLikelyBranchName(exclusiveBase)) return [];
+        var format = includeMessages ? "--format=%H%x1f%T%x1f%B%x1e" : "--format=%H%x1f%T%x1e";
+        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", format, tip };
         if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
         arguments.Add(RevisionsOnly);
         var (output, _, code) = RunGitArgs(repoRoot, [.. arguments]);
-        return code == 0 ? output.Split('\0', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
-    }
-
-    /// <summary>The UTC committer time of a release commit, including a rewritten rebase or squash.</summary>
-    public DateTime? GetCommitterDateUtc(string repoRoot, string commit)
-    {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
-            || !ReviewSubjectStore.IsValidResultSha(commit)) return null;
-        var (output, _, code) = RunGitArgs(repoRoot, "log", "-1", "--pretty=format:%cI", commit);
-        return code == 0 && DateTime.TryParse(output.Trim(),
-            System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-            out var committedAt) ? DateTime.SpecifyKind(committedAt, DateTimeKind.Utc) : null;
+        if (code != 0) return [];
+        return output.Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => entry.Split('\x1f', 3))
+            .Where(fields => fields.Length >= 2)
+            .Select(fields => new RevisionDetail(fields[0], fields[1], fields.Length > 2 ? fields[2] : ""))
+            .ToArray();
     }
 
     /// <summary>
