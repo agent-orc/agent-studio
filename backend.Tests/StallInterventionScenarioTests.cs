@@ -613,7 +613,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         _h.Raise(Overload());
         await _h.Service.RunOnceAsync();
         _h.Clear();
-        _h.Clock.Advance(TimeSpan.FromMinutes(12));
+        _h.Clock.Advance(TimeSpan.FromMinutes(17));
         _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with
         { Load1 = 4.0, CalmSince = _h.Now.AddMinutes(-16) };
         _h.Admission.ChangeBeforeCompare = 5;

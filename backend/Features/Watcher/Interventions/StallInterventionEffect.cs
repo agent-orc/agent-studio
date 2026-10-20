@@ -364,8 +364,11 @@ public sealed class StallInterventionEffect(
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
                 if (record.Action == StallInterventionActions.LowerAdmission && LiveMismatch(record) is { } admissionMismatch)
                     return Superseded(record, now, admissionMismatch);
-                if (record.PreviousAdmission is not { } expected || record.TargetAdmission is not { } target
-                    || !admission.TrySetAdmission(record.HostClientId!, expected, target))
+                if (record.PreviousAdmission is not { } expected || record.TargetAdmission is not { } target)
+                    throw new InvalidDataException("The admission plan has no before-value or target.");
+                if (!admission.TrySetAdmission(record.HostClientId!, expected, target)
+                    && admission.Read(record.HostClientId!, StallInterventionOptions.FromConfiguration(configuration)
+                        .Limits.RestoreBelowTargetFraction, now)?.Admission != expected)
                     return Superseded(record, now, "the admission changed before the atomic update");
                 break;
             case StallInterventionActions.RestartService or StallInterventionActions.RetryEngineStart:
