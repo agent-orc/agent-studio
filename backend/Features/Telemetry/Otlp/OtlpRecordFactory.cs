@@ -42,8 +42,15 @@ public sealed class OtlpLimitException(string message) : Exception(message);
 /// <see cref="OtlpLimits.MaxDecodedBytes"/> estimated bytes it throws
 /// <see cref="OtlpLimitException"/>, so decoding stops before the rest of the
 /// body is turned into records.</para>
+/// <para>It bounds the CPU time of one request as well. The decoders read at
+/// most <see cref="OtlpLimits.MaxAttributes"/> entries of every attribute list
+/// (<see cref="TakesAttribute"/>) and skip the rest without creating strings.
+/// Each resource set is built once and every scope starts from it, resources
+/// and scopes count toward <see cref="OtlpLimits.MaxScopes"/>, and every unit
+/// of work is charged to <see cref="Work"/>, which checks the cancellation
+/// token (request aborted or intake deadline passed) every few thousand units.</para>
 /// </summary>
-internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano)
+internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano, CancellationToken cancellationToken = default)
 {
     /// <summary>OTLP DataPointFlags.FLAG_NO_RECORDED_VALUE: a staleness marker, not a value.</summary>
     private const uint NoRecordedValue = 1;
@@ -52,15 +59,41 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
     private const int RecordBytes = 160;
     private const int StringHeaderBytes = 24;
     private const int ReferenceBytes = 16;
+    private const int CancellationCheckInterval = 4096;
 
     private readonly List<MetricSample> _metrics = [];
     private readonly List<TelemetryLogRecord> _logs = [];
     private long _rejected;
     private string? _message;
     private long _records;
+    private int _scopes;
     private long _estimatedBytes;
+    private long _work;
+    private long _nextCancellationCheck = CancellationCheckInterval;
 
     public OtlpLimits Limits => limits;
+
+    /// <summary>Attribute entries read or skipped, attribute entries copied, metrics, resources, scopes, and records so far.</summary>
+    public long Work => _work;
+
+    /// <summary>Counts decoding work; throws <see cref="OperationCanceledException"/> once the token is cancelled.</summary>
+    public void Charge(long units = 1)
+    {
+        _work += units;
+        if (_work < _nextCancellationCheck) return;
+        _nextCancellationCheck = _work + CancellationCheckInterval;
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    /// <summary>
+    /// Whether the next entry of an attribute list that already holds
+    /// <paramref name="read"/> entries is decoded; the decoder skips it otherwise.
+    /// </summary>
+    public bool TakesAttribute(int read)
+    {
+        Charge();
+        return read < limits.MaxAttributes;
+    }
 
     public void Reject(string reason, long count = 1)
     {
@@ -69,15 +102,37 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         _message ??= reason;
     }
 
-    /// <summary>The attribute set every record of one resource and scope refers to; the scope name becomes <c>otel.scope.name</c>.</summary>
-    public TelemetryAttributes Scope(IReadOnlyList<KeyValuePair<string, string>> resource, string scopeName)
+    /// <summary>The capped attribute set of one resource, built once; every scope of the resource starts from it.</summary>
+    public TelemetryAttributes Resource(IReadOnlyList<KeyValuePair<string, string>> attributes)
     {
-        var builder = new OtlpAttributeBuilder(limits).AddRange(resource);
-        if (scopeName.Length > 0) builder.Add("otel.scope.name", scopeName);
-        var shared = builder.Build(shared: true);
+        CountScope();
+        Charge(attributes.Count);
+        var shared = new OtlpAttributeBuilder(limits).AddRange(attributes).Build(shared: true);
         // The strings, the reference array, and the JSON text the store caches for a shared set.
         long bytes = RecordBytes + ReferenceBytes * shared.Count;
         foreach (var (key, value) in shared.Items) bytes += 2 * StringHeaderBytes + 4L * (key.Length + value.Length + 6);
+        Account(bytes);
+        return shared;
+    }
+
+    /// <summary>
+    /// The attribute set every record of one resource and scope refers to; the
+    /// scope name becomes <c>otel.scope.name</c>. A scope without a name, or
+    /// one whose name does not fit, shares the resource set itself.
+    /// </summary>
+    public TelemetryAttributes Scope(TelemetryAttributes resource, string scopeName)
+    {
+        CountScope();
+        if (scopeName.Length == 0) return resource;
+        Charge(resource.Count + 1);
+        var builder = new OtlpAttributeBuilder(limits, resource);
+        builder.Add("otel.scope.name", scopeName);
+        if (!builder.Changed) return resource;
+        var shared = builder.Build(shared: true);
+        // References to the resource strings, the scope name, and the JSON text the store caches for a shared set.
+        long bytes = RecordBytes + ReferenceBytes * shared.Count + StringHeaderBytes
+            + 2L * Math.Min(scopeName.Length, limits.MaxAttributeValueChars + 1);
+        foreach (var (key, value) in shared.Items) bytes += 2L * (key.Length + value.Length + 6);
         Account(bytes);
         return shared;
     }
@@ -165,6 +220,7 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
     private TelemetryAttributes Merge(TelemetryAttributes scope, List<KeyValuePair<string, string>> own)
     {
         if (own.Count == 0) return scope;
+        Charge(scope.Count + own.Count);
         var builder = new OtlpAttributeBuilder(limits, scope).AddRange(own);
         return builder.Changed ? builder.Build() : scope;
     }
@@ -182,8 +238,16 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
 
     private void CountRecord()
     {
+        Charge();
         if (++_records > limits.MaxRecords)
             throw new OtlpLimitException($"The request has more than {limits.MaxRecords} data points or log records.");
+    }
+
+    private void CountScope()
+    {
+        Charge();
+        if (++_scopes > limits.MaxScopes)
+            throw new OtlpLimitException($"The request has more than {limits.MaxScopes} resources and instrumentation scopes.");
     }
 
     private void Account(long bytes)

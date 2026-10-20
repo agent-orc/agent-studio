@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Telemetry;
 
@@ -8,11 +9,12 @@ namespace AgentStudio.Telemetry;
 /// unbounded text nor build unbounded memory before the intake refuses it.
 /// </summary>
 public sealed record OtlpLimits(int MaxAttributes, int MaxAttributeValueChars, int MaxBodyChars,
-    int MaxAttributeBytes, int MaxRecords, long MaxDecodedBytes)
+    int MaxAttributeBytes, int MaxRecords, long MaxDecodedBytes, int MaxScopes)
 {
     public static OtlpLimits From(TelemetryOptions options)
         => new(options.MaxAttributesPerRecord, options.MaxAttributeValueChars, options.MaxLogBodyChars,
-            options.MaxAttributeBytesPerRecord, options.MaxRecordsPerRequest, options.MaxDecodedBytesPerRequest);
+            options.MaxAttributeBytesPerRecord, options.MaxRecordsPerRequest, options.MaxDecodedBytesPerRequest,
+            options.MaxScopesPerRequest);
 }
 
 /// <summary>
@@ -73,6 +75,16 @@ internal sealed class OtlpAttributeBuilder
         var cut = char.IsHighSurrogate(value[maxChars - 1]) ? maxChars - 1 : maxChars;
         return value[..cut] + "…";
     }
+
+    /// <summary>
+    /// UTF-8 bytes past which JSON text certainly holds more than
+    /// <paramref name="maxChars"/> + 1 characters (a UTF-16 character takes at
+    /// most three bytes), so a value cut there truncates to the same text.
+    /// </summary>
+    public static long JsonByteBudget(int maxChars) => 3L * maxChars + 3;
+
+    /// <summary>True once the writer is past <paramref name="budget"/>; further array and list entries are skipped.</summary>
+    public static bool IsFull(Utf8JsonWriter writer, long budget) => writer.BytesCommitted + writer.BytesPending > budget;
 
     public static string Number(double value) => value.ToString("R", CultureInfo.InvariantCulture);
 

@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net.Http.Headers;
-using System.Text.Json;
 using AgentStudio.Security;
 
 namespace AgentStudio.Telemetry;
@@ -11,9 +10,12 @@ public sealed record OtlpIntakeOutcome(int StatusCode, byte[] Body, string Conte
 /// <summary>
 /// OTLP/HTTP intake for <c>/v1/metrics</c> and <c>/v1/logs</c>. Order: media
 /// type, ingest token, a still-declared environment, signal scope, a free
-/// request slot, bounded body read (gzip allowed), decoding with a record and
-/// memory cap, time-window admission, then a non-blocking enqueue. Nothing here
-/// touches the store; a full queue or no free slot answers 429 with Retry-After.
+/// request slot (in total and for the environment), bounded body read (gzip
+/// allowed), decoding with record, scope, attribute, and memory caps,
+/// time-window admission, then a non-blocking enqueue. Body read and decoding
+/// share one deadline; past it the request gets 408 and frees its slot.
+/// Nothing here touches the store; a full queue or no free slot answers 429
+/// with Retry-After.
 /// </summary>
 public sealed class TelemetryIntakeService
 {
@@ -25,18 +27,20 @@ public sealed class TelemetryIntakeService
     private readonly TelemetryIntakeQueue _queue;
     private readonly TelemetryOptions _options;
     private readonly TimeProvider _clock;
-    private readonly SemaphoreSlim _slots;
+    private readonly ILogger<TelemetryIntakeService> _logger;
+    private readonly TelemetryIntakeSlots _slots;
     private readonly ConcurrentDictionary<string, DeclaredEnvironments> _declared = new(StringComparer.OrdinalIgnoreCase);
 
     public TelemetryIntakeService(ITelemetryIngestCredentials credentials, ITelemetryEnvironmentDirectory directory,
-        TelemetryIntakeQueue queue, TelemetryOptions options, TimeProvider clock)
+        TelemetryIntakeQueue queue, TelemetryOptions options, TimeProvider clock, ILogger<TelemetryIntakeService> logger)
     {
         _credentials = credentials;
         _directory = directory;
         _queue = queue;
         _options = options;
         _clock = clock;
-        _slots = new SemaphoreSlim(options.MaxConcurrentRequests, options.MaxConcurrentRequests);
+        _logger = logger;
+        _slots = new TelemetryIntakeSlots(options.MaxConcurrentRequests, options.MaxConcurrentRequestsPerEnvironment);
     }
 
     public async Task<OtlpIntakeOutcome> ReceiveAsync(string signal, string? contentType, string? contentEncoding,
@@ -60,19 +64,24 @@ public sealed class TelemetryIntakeService
         if (contentLength > _options.MaxRequestBytes) return TooLarge(encoding.Value);
 
         // Body, decoded records, and the JSON document live only while a slot is held.
-        if (!_slots.Wait(0)) return Busy(encoding.Value);
+        var environment = new TelemetryEnvironmentKey(principal.Project, principal.Environment);
+        using var slot = _slots.TryAcquire(environment);
+        if (slot is null) return Busy(encoding.Value);
+        using var deadline = new CancellationTokenSource(_options.RequestDeadline, _clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            return await ReceiveAuthorizedAsync(signal, encoding.Value, contentEncoding, principal, body, cancellationToken);
+            return await ReceiveAuthorizedAsync(signal, encoding.Value, contentEncoding, environment, body, linked.Token);
         }
-        finally
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            _slots.Release();
+            return Error(encoding.Value, 408, 4,
+                $"The request was not received and decoded within {_options.RequestDeadlineSeconds} seconds.");
         }
     }
 
     private async Task<OtlpIntakeOutcome> ReceiveAuthorizedAsync(string signal, OtlpEncoding encoding, string? contentEncoding,
-        TelemetryIngestPrincipal principal, Stream body, CancellationToken cancellationToken)
+        TelemetryEnvironmentKey environment, Stream body, CancellationToken cancellationToken)
     {
         byte[]? payload;
         try
@@ -90,8 +99,7 @@ public sealed class TelemetryIntakeService
         if (payload is null) return TooLarge(encoding);
 
         var now = _clock.GetUtcNow();
-        var factory = new OtlpRecordFactory(OtlpLimits.From(_options), TelemetryAdmissionPolicy.UnixNanos(now));
-        var environment = new TelemetryEnvironmentKey(principal.Project, principal.Environment);
+        var factory = new OtlpRecordFactory(OtlpLimits.From(_options), TelemetryAdmissionPolicy.UnixNanos(now), cancellationToken);
         TelemetryIngestBatch batch;
         long rejected;
         string? message;
@@ -140,7 +148,10 @@ public sealed class TelemetryIntakeService
     /// <summary>
     /// Whether the token's environment is still declared, so a token stops
     /// working once its environment is removed. Null when the declarations
-    /// cannot be read; the sender retries instead of losing its token.
+    /// cannot be read; the sender retries instead of losing its token. Both
+    /// answers, the unreadable one included, are kept for
+    /// <see cref="EnvironmentRecheck"/>, so a flood of requests reads the
+    /// repository files at most once per interval.
     /// </summary>
     private bool? IsDeclared(TelemetryIngestPrincipal principal)
     {
@@ -149,14 +160,18 @@ public sealed class TelemetryIntakeService
         {
             try
             {
-                declared = new DeclaredEnvironments(now, _directory.Environments(principal.Project));
+                declared = new DeclaredEnvironments(now, Readable: true, _directory.Environments(principal.Project));
             }
-            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                return null;
+                _logger.LogWarning(ex,
+                    "Telemetry intake cannot read the environment declarations of {Project}; ingest requests get 503 for {Seconds} seconds",
+                    principal.Project, EnvironmentRecheck.TotalSeconds);
+                declared = new DeclaredEnvironments(now, Readable: false, null);
             }
             _declared[principal.Project] = declared;
         }
+        if (!declared.Readable) return null;
         return declared.Environments?.Contains(principal.Environment, StringComparer.Ordinal) == true;
     }
 
@@ -208,5 +223,5 @@ public sealed class TelemetryIntakeService
     private static OtlpIntakeOutcome Error(OtlpEncoding encoding, int status, int code, string message)
         => new(status, OtlpResponses.Status(encoding, code, message), OtlpResponses.ContentType(encoding));
 
-    private sealed record DeclaredEnvironments(DateTimeOffset CheckedAt, IReadOnlyCollection<string>? Environments);
+    private sealed record DeclaredEnvironments(DateTimeOffset CheckedAt, bool Readable, IReadOnlyCollection<string>? Environments);
 }

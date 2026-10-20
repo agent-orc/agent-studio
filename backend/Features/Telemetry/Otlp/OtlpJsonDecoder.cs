@@ -10,7 +10,9 @@ namespace AgentStudio.Telemetry;
 /// Decodes OTLP/JSON bodies. Keys are lowerCamelCase as the OTLP specification
 /// requires; like any proto3 JSON parser, the original snake_case field names
 /// are accepted too. 64-bit integers may be strings or numbers, enums may be
-/// integers or names, and trace and span ids are hex strings.
+/// integers or names, and trace and span ids are hex strings. Attribute lists
+/// stop at <see cref="OtlpLimits.MaxAttributes"/> entries; later entries are
+/// skipped without reading them.
 /// </summary>
 internal static class OtlpJsonDecoder
 {
@@ -23,7 +25,7 @@ internal static class OtlpJsonDecoder
         using var document = Parse(body);
         foreach (var resourceMetrics in Array(document.RootElement, "resourceMetrics"))
         {
-            var resource = ReadResource(resourceMetrics, factory.Limits);
+            var resource = factory.Resource(ReadResource(resourceMetrics, factory));
             foreach (var scopeMetrics in Array(resourceMetrics, "scopeMetrics"))
             {
                 var scoped = WithScope(scopeMetrics, resource, factory);
@@ -38,11 +40,11 @@ internal static class OtlpJsonDecoder
         using var document = Parse(body);
         foreach (var resourceLogs in Array(document.RootElement, "resourceLogs"))
         {
-            var resource = ReadResource(resourceLogs, factory.Limits);
+            var resource = factory.Resource(ReadResource(resourceLogs, factory));
             foreach (var scopeLogs in Array(resourceLogs, "scopeLogs"))
             {
                 var scoped = WithScope(scopeLogs, resource, factory);
-                foreach (var record in Array(scopeLogs, "logRecords")) factory.AddLog(scoped, ReadLogRecord(record, factory.Limits));
+                foreach (var record in Array(scopeLogs, "logRecords")) factory.AddLog(scoped, ReadLogRecord(record, factory));
             }
         }
         return factory.Logs();
@@ -68,6 +70,7 @@ internal static class OtlpJsonDecoder
 
     private static void ReadMetric(JsonElement metric, TelemetryAttributes scope, OtlpRecordFactory factory)
     {
+        factory.Charge();
         RequireObject(metric, "metric");
         var name = String(metric, "name");
         var unit = String(metric, "unit");
@@ -86,12 +89,12 @@ internal static class OtlpJsonDecoder
                     _ => MetricTemporality.Unspecified
                 };
             foreach (var point in Array(data, "dataPoints"))
-                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(point, kind, factory.Limits));
+                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(point, kind, factory));
             return;
         }
     }
 
-    private static OtlpPointFields ReadPoint(JsonElement element, MetricKind kind, OtlpLimits limits)
+    private static OtlpPointFields ReadPoint(JsonElement element, MetricKind kind, OtlpRecordFactory factory)
     {
         RequireObject(element, "data point");
         var point = new OtlpPointFields
@@ -100,7 +103,7 @@ internal static class OtlpJsonDecoder
             TimeUnixNano = Nanos(element, "timeUnixNano"),
             Flags = (uint)Math.Clamp(Int64(element, "flags") ?? 0, 0, uint.MaxValue)
         };
-        point.Attributes.AddRange(Attributes(element, limits));
+        point.Attributes.AddRange(Attributes(element, factory));
         if (kind is MetricKind.Gauge or MetricKind.Sum)
         {
             point.Number = Double(element, "asDouble") ?? Int64(element, "asInt");
@@ -113,7 +116,7 @@ internal static class OtlpJsonDecoder
         return point;
     }
 
-    private static OtlpLogFields ReadLogRecord(JsonElement element, OtlpLimits limits)
+    private static OtlpLogFields ReadLogRecord(JsonElement element, OtlpRecordFactory factory)
     {
         RequireObject(element, "log record");
         var log = new OtlpLogFields
@@ -122,42 +125,43 @@ internal static class OtlpJsonDecoder
             ObservedTimeUnixNano = Nanos(element, "observedTimeUnixNano"),
             SeverityNumber = SeverityNumber(element),
             SeverityText = String(element, "severityText"),
-            Body = TryProperty(element, "body", out var body) ? AnyValueText(body) : "",
+            Body = TryProperty(element, "body", out var body) ? AnyValueText(body, factory.Limits.MaxBodyChars) : "",
             TraceId = HexIdentifier(element, "traceId", 16),
             SpanId = HexIdentifier(element, "spanId", 8),
             EventName = String(element, "eventName")
         };
-        log.Attributes.AddRange(Attributes(element, limits));
+        log.Attributes.AddRange(Attributes(element, factory));
         return log;
     }
 
-    private static List<KeyValuePair<string, string>> ReadResource(JsonElement container, OtlpLimits limits)
+    private static List<KeyValuePair<string, string>> ReadResource(JsonElement container, OtlpRecordFactory factory)
     {
         RequireObject(container, "resource entry");
-        return Object(container, "resource") is { } resource ? Attributes(resource, limits) : [];
+        return Object(container, "resource") is { } resource ? Attributes(resource, factory) : [];
     }
 
-    private static TelemetryAttributes WithScope(JsonElement container,
-        IReadOnlyList<KeyValuePair<string, string>> resource, OtlpRecordFactory factory)
+    private static TelemetryAttributes WithScope(JsonElement container, TelemetryAttributes resource, OtlpRecordFactory factory)
     {
         RequireObject(container, "scope entry");
         return factory.Scope(resource, Object(container, "scope") is { } scope ? String(scope, "name") : "");
     }
 
-    private static List<KeyValuePair<string, string>> Attributes(JsonElement element, OtlpLimits limits)
+    private static List<KeyValuePair<string, string>> Attributes(JsonElement element, OtlpRecordFactory factory)
     {
+        var maxChars = factory.Limits.MaxAttributeValueChars;
         var attributes = new List<KeyValuePair<string, string>>();
         foreach (var pair in Array(element, "attributes"))
         {
+            if (!factory.TakesAttribute(attributes.Count)) continue;
             RequireObject(pair, "attribute");
-            var value = TryProperty(pair, "value", out var any) ? AnyValueText(any) : "";
-            attributes.Add(KeyValuePair.Create(String(pair, "key"), OtlpAttributeBuilder.Truncate(value, limits.MaxAttributeValueChars)));
+            var value = TryProperty(pair, "value", out var any) ? AnyValueText(any, maxChars) : "";
+            attributes.Add(KeyValuePair.Create(String(pair, "key"), OtlpAttributeBuilder.Truncate(value, maxChars)));
         }
         return attributes;
     }
 
-    /// <summary>Scalar AnyValue as text; arrays and key-value lists as compact JSON.</summary>
-    private static string AnyValueText(JsonElement value)
+    /// <summary>Scalar AnyValue as text; arrays and key-value lists as compact JSON, cut once longer than <paramref name="maxChars"/>.</summary>
+    private static string AnyValueText(JsonElement value, int maxChars)
     {
         if (value.ValueKind != JsonValueKind.Object) return "";
         if (TryProperty(value, "stringValue", out var text)) return text.ValueKind == JsonValueKind.String ? text.GetString()! : text.GetRawText();
@@ -167,11 +171,11 @@ internal static class OtlpJsonDecoder
         if (TryProperty(value, "bytesValue", out _)) return String(value, "bytesValue");
         if (!TryProperty(value, "arrayValue", out _) && !TryProperty(value, "kvlistValue", out _)) return "";
         var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer)) WriteAnyValue(value, writer, 0);
+        using (var writer = new Utf8JsonWriter(buffer)) WriteAnyValue(value, writer, 0, OtlpAttributeBuilder.JsonByteBudget(maxChars));
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
-    private static void WriteAnyValue(JsonElement value, Utf8JsonWriter writer, int depth)
+    private static void WriteAnyValue(JsonElement value, Utf8JsonWriter writer, int depth, long budget)
     {
         if (depth > MaxValueDepth) throw new OtlpFormatException("AnyValue nesting is too deep.");
         if (value.ValueKind != JsonValueKind.Object) { writer.WriteNullValue(); return; }
@@ -188,7 +192,8 @@ internal static class OtlpJsonDecoder
         else if (TryProperty(value, "arrayValue", out var array))
         {
             writer.WriteStartArray();
-            foreach (var item in Array(array, "values")) WriteAnyValue(item, writer, depth + 1);
+            foreach (var item in Array(array, "values"))
+                if (!OtlpAttributeBuilder.IsFull(writer, budget)) WriteAnyValue(item, writer, depth + 1, budget);
             writer.WriteEndArray();
         }
         else if (TryProperty(value, "kvlistValue", out var list))
@@ -196,9 +201,10 @@ internal static class OtlpJsonDecoder
             writer.WriteStartObject();
             foreach (var pair in Array(list, "values"))
             {
+                if (OtlpAttributeBuilder.IsFull(writer, budget)) continue;
                 RequireObject(pair, "key-value");
                 writer.WritePropertyName(String(pair, "key"));
-                if (TryProperty(pair, "value", out var inner)) WriteAnyValue(inner, writer, depth + 1);
+                if (TryProperty(pair, "value", out var inner)) WriteAnyValue(inner, writer, depth + 1, budget);
                 else writer.WriteNullValue();
             }
             writer.WriteEndObject();

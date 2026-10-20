@@ -135,7 +135,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     [Fact]
     public async Task Burst_beyond_the_queue_budget_is_refused_with_retry_after_and_never_waits()
     {
-        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 10, MaxConcurrentRequests = 64 });
+        var harness = await Start(new TelemetryOptions { MaxQueuedRecords = 10, MaxConcurrentRequests = 64, MaxConcurrentRequestsPerEnvironment = 64 });
         var token = (await CreateToken(harness)).Secret;
         var body = Fixture("logs.pb"); // three records per request
 
@@ -229,21 +229,53 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     [Fact]
     public async Task Requests_beyond_the_concurrent_slots_get_429_while_a_body_is_still_arriving()
     {
-        var harness = await Start(new TelemetryOptions { MaxConcurrentRequests = 1 });
+        var harness = await Start(new TelemetryOptions { MaxConcurrentRequests = 1, MaxConcurrentRequestsPerEnvironment = 1 });
         var token = (await CreateToken(harness)).Secret;
-        var intake = harness.Services.GetRequiredService<TelemetryIntakeService>();
-        Task<OtlpIntakeOutcome> Receive(Stream body) => intake.ReceiveAsync(TelemetrySignals.Logs, "application/x-protobuf", null,
-            "Bearer " + token, null, body, CancellationToken.None);
         var slow = new GatedStream(Fixture("logs.pb"));
 
-        var first = Receive(slow);
+        var first = Receive(harness, token, slow);
         Assert.True(slow.Reading.IsCompleted);
-        var second = await Receive(new MemoryStream(Fixture("logs.pb")));
+        var second = await Receive(harness, token, new MemoryStream(Fixture("logs.pb")));
 
         Assert.Equal((429, (int?)TelemetryIntakeService.RetryAfterSeconds), (second.StatusCode, second.RetryAfterSeconds));
         slow.Open();
         Assert.Equal(200, (await first).StatusCode);
-        Assert.Equal(200, (await Receive(new MemoryStream(Fixture("logs.pb")))).StatusCode);
+        Assert.Equal(200, (await Receive(harness, token, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+    }
+
+    [Fact]
+    public async Task One_environment_cannot_take_the_slots_of_the_others()
+    {
+        var directory = new ShopStageDirectory { Declared = ["stage", "qa"] };
+        var harness = await Start(new TelemetryOptions { MaxConcurrentRequests = 2, MaxConcurrentRequestsPerEnvironment = 1 }, directory: directory);
+        var stage = (await CreateToken(harness)).Secret;
+        var qa = (await CreateToken(harness, environment: "/api/projects/shop/environments/qa/telemetry")).Secret;
+        var slow = new GatedStream(Fixture("logs.pb"));
+
+        var first = Receive(harness, stage, slow);
+        Assert.True(slow.Reading.IsCompleted);
+
+        Assert.Equal(429, (await Receive(harness, stage, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+        Assert.Equal(200, (await Receive(harness, qa, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+        slow.Open();
+        Assert.Equal(200, (await first).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_body_that_stalls_past_the_deadline_gets_408_and_frees_its_slot()
+    {
+        var harness = await Start(new TelemetryOptions { MaxConcurrentRequests = 1, MaxConcurrentRequestsPerEnvironment = 1 });
+        var token = (await CreateToken(harness)).Secret;
+        var stalled = new GatedStream(Fixture("logs.pb"));
+
+        var first = Receive(harness, token, stalled);
+        Assert.True(stalled.Reading.IsCompleted);
+        _clock.Advance(new TelemetryOptions().RequestDeadline);
+        var outcome = await first;
+
+        Assert.Equal((408, 4), (outcome.StatusCode, StatusCode(outcome.Body)));
+        Assert.Equal(200, (await Receive(harness, token, new MemoryStream(Fixture("logs.pb")))).StatusCode);
+        Assert.Equal(3, harness.Queue.PendingRecords);
     }
 
     [Fact]
@@ -262,14 +294,19 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, removed.StatusCode);
         Assert.Equal(16, StatusCode(await removed.Content.ReadAsByteArrayAsync()));
 
-        // Unreadable declarations are a retryable outage, not a reason to drop the token.
+        // Unreadable declarations are a retryable outage, not a reason to drop the token. Any failure
+        // of the directory counts, and it is kept for EnvironmentRecheck like a successful read.
         directory.Declared = ["stage"];
-        directory.Unreadable = true;
+        directory.Failure = new KeyNotFoundException("the environment has no target");
         _clock.Advance(TelemetryIntakeService.EnvironmentRecheck);
         var unreadable = await Send(harness, Logs, Fixture("logs.pb"), token);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, unreadable.StatusCode);
         Assert.Equal("2", unreadable.Headers.GetValues("Retry-After").Single());
-        directory.Unreadable = false;
+        var reads = directory.Reads;
+        directory.Failure = null;
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await Send(harness, Logs, Fixture("logs.pb"), token)).StatusCode);
+        Assert.Equal(reads, directory.Reads);
+        _clock.Advance(TelemetryIntakeService.EnvironmentRecheck);
         Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Fixture("logs.pb"), token)).StatusCode);
     }
 
@@ -391,9 +428,10 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
             app.Services.GetRequiredService<TelemetryWriter>(), app.Services);
     }
 
-    private static async Task<TelemetryIngestTokenCreatedResponse> CreateToken(Harness harness, string[]? signals = null, DateTime? expiresAt = null)
+    private static async Task<TelemetryIngestTokenCreatedResponse> CreateToken(Harness harness, string[]? signals = null,
+        DateTime? expiresAt = null, string environment = Environment)
     {
-        var response = await harness.Client.PostAsJsonAsync(Environment + "/tokens", new { name = "collector", signals, expiresAt });
+        var response = await harness.Client.PostAsJsonAsync(environment + "/tokens", new { name = "collector", signals, expiresAt });
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<TelemetryIngestTokenCreatedResponse>())!;
     }
@@ -407,6 +445,11 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return harness.Client.SendAsync(request);
     }
+
+    /// <summary>Calls the intake directly, so a test controls when the body arrives.</summary>
+    private static Task<OtlpIntakeOutcome> Receive(Harness harness, string token, Stream body)
+        => harness.Services.GetRequiredService<TelemetryIntakeService>().ReceiveAsync(TelemetrySignals.Logs,
+            "application/x-protobuf", null, "Bearer " + token, null, body, CancellationToken.None);
 
     private static byte[] Fixture(string name) => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "otlp", name));
 
@@ -458,11 +501,13 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     private sealed class ShopStageDirectory : ITelemetryEnvironmentDirectory
     {
         public IReadOnlyCollection<string> Declared { get; set; } = ["stage"];
-        public bool Unreadable { get; set; }
+        public Exception? Failure { get; set; }
+        public int Reads { get; private set; }
 
         public IReadOnlyCollection<string>? Environments(string project)
         {
-            if (Unreadable) throw new IOException("environment declarations are being rewritten");
+            Reads++;
+            if (Failure is not null) throw Failure;
             return string.Equals(project, "shop", StringComparison.OrdinalIgnoreCase) ? Declared : null;
         }
     }
