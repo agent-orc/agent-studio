@@ -660,6 +660,7 @@ test.describe('Studio route restoration', () => {
     await page.goto('/#/epics', { waitUntil: 'commit' });
     await expect(page.getByTestId('workbench-overview')).toBeVisible();
     await expect(page.getByTestId('epic-overview-screen')).toHaveCount(0);
+    await expect.poll(() => new URL(page.url()).hash).toBe('#/workbenches');
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('workbench-overview')).toBeVisible();
 
@@ -667,6 +668,8 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('workbench-overview')).toBeVisible();
     await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
     await expect(page.getByTestId('epic-overview-screen')).toHaveCount(0);
+    await expect.poll(() => new URL(page.url()).hash).toBe(`#/projects/${PROJECT_SLUG}/workbenches`);
+    await expect(page.locator(`[data-testid="studio-tab-workbenches:${PROJECT}"]`)).toHaveCount(1);
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
   });

@@ -252,7 +252,8 @@ test.describe('Explorer · project destinations', () => {
       await expect(page.getByTestId('project-deploy-area')).toBeVisible();
       await expect(page.getByTestId('deploy-tab-steps')).toBeVisible();
       await expect(page.getByText('Loading environments…')).toHaveCount(0);
-      await expect(page.getByTestId('project-shell-rail-deployment')).toHaveCount(0);
+      // Deploy is a project main item, not a Deck rail.
+      await expect(page.getByTestId('project-shell')).toHaveCount(0);
       if (results) await page.screenshot({ path: path.join(results, `project-deploy-${theme}.png`), animations: 'disabled' });
       await page.getByTestId(`studio-explorer-project-operations-${name}`).click();
       await expect(page.getByTestId(`studio-explorer-project-operations-${name}`)).toHaveAttribute('aria-current', 'page');
@@ -296,6 +297,12 @@ test.describe('Explorer · project destinations', () => {
       .click();
     await expect(page.getByRole('tab', { name: / · Deck$/ }))
       .toHaveAttribute('aria-selected', 'true', { timeout: 5_000 });
+    // Deploy and Operations are project main items; agent work stays in the Deck.
+    await expect(page.getByTestId('project-shell-rail-overview')).toBeVisible();
+    for (const key of ['deploy', 'operations', 'pipeline', 'observability']) {
+      await expect(page.getByTestId(`project-shell-rail-${key}`)).toHaveCount(0);
+    }
+    await expect(page.getByTestId('project-shell-rail-agent-activity')).toBeVisible();
   });
 
 });

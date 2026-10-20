@@ -48,3 +48,25 @@ test('Deploy area shows the P1 views and preserves review captures in both theme
   await page.getByRole('button', { name: 'Existing deployment tools' }).click();
   await expect(page.getByTestId('project-deployment-panel')).toBeVisible();
 });
+
+test('Run steps stay in the route and retired Pipeline and Observability URLs move to the new areas', async ({ page }) => {
+  const slug = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const hash = () => new URL(page.url()).hash;
+  await page.goto(`/#/projects/${slug}/pipeline`);
+  await expect(page.getByTestId('deploy-tab-steps')).toHaveAttribute('aria-current', 'page');
+  await expect.poll(hash).toMatch(/^#\/projects\/[^/?&]+\/deploy\?view=steps(&|$)/);
+  await page.reload();
+  await expect(page.getByTestId('deploy-tab-steps')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible();
+
+  await page.getByTestId('deploy-tab-releases').click();
+  await expect.poll(hash).toMatch(/^#\/projects\/[^/?&]+\/deploy(&|$)/);
+  await page.getByTestId('deploy-tab-steps').click();
+  await expect.poll(hash).toMatch(/\/deploy\?view=steps(&|$)/);
+  await page.reload();
+  await expect(page.getByTestId('deploy-tab-steps')).toHaveAttribute('aria-current', 'page');
+
+  await page.goto(`/#/projects/${slug}/observability`);
+  await expect(page.getByTestId('project-operations-area')).toBeVisible();
+  await expect.poll(hash).toMatch(/^#\/projects\/[^/?&]+\/operations(&|$)/);
+});

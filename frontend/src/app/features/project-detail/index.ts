@@ -3,6 +3,8 @@
 // state
 export { ProjectOverlaysService } from './state/project-overlays.service';
 export {
+  DEPLOY_STEPS_QUERY,
+  isDeployStepsQuery,
   isProjectHubRoute,
   parseProjectHubRoute,
   projectHubRoute,
@@ -54,6 +56,7 @@ export {
   DEFAULT_PROJECT_RAIL_KEY,
   isProjectRailKey,
   projectRailLabel,
+  resolveProjectSection,
   toProjectSlug,
   type ProjectRailKey,
 } from './components/project-shell/project-shell.config';

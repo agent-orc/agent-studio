@@ -1,3 +1,18 @@
+@if (styleGuide(); as guide) {
+  <span #styleGuideRow class="studio-workbench-style-guide">
+    <app-tree-row level="child" glyph="book" label="Style Guide"
+                  [active]="isActive(guide)"
+                  [ariaCurrent]="isActive(guide) ? 'page' : null"
+                  [ariaLabel]="'Style Guide, ' + accessibleMeta(guide)"
+                  [tooltip]="navTooltip(guide)"
+                  [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + guide.id"
+                  [testid]="'studio-explorer-project-style-guide-' + projectName()"
+                  (selectRequest)="openWorkbench.emit(guide)">
+      <i class="studio-workbench-status-dot" aria-hidden="true" [attr.data-status]="guide.status"></i>
+    </app-tree-row>
+  </span>
+}
+
 <app-tree-row level="child" glyph="book" label="Dossiers"
               [chevron]="expanded() ? 'expanded' : 'collapsed'"
               [count]="pendingDecisionCount() > 0 ? pendingDecisionCount() : null"
@@ -8,20 +23,6 @@
               (chevronClick)="toggle()" (selectRequest)="openOverviewPage()" />
 @if (expanded()) {
   <div class="studio-workbench-topics" [attr.data-testid]="'studio-explorer-workbench-list-' + projectName()">
-    @if (styleGuide(); as guide) {
-      <span #styleGuideRow class="studio-workbench-style-guide">
-        <app-tree-row level="child" glyph="book" label="Style Guide"
-                      [active]="isActive(guide)"
-                      [ariaCurrent]="isActive(guide) ? 'page' : null"
-                      [ariaLabel]="'Style Guide, ' + accessibleMeta(guide)"
-                      [tooltip]="navTooltip(guide)"
-                      [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + guide.id"
-                      [testid]="'studio-explorer-project-style-guide-' + projectName()"
-                      (selectRequest)="openWorkbench.emit(guide)">
-          <i class="studio-workbench-status-dot" aria-hidden="true" [attr.data-status]="guide.status"></i>
-        </app-tree-row>
-      </span>
-    }
     @if (loading()) {
       <span class="studio-workbench-topics__state">Loading…</span>
     } @else {

@@ -23,6 +23,8 @@ export class ProjectDeployAreaComponent {
   readonly initialView = input<DeployView>('overview');
   readonly focusStepId = input<string | undefined>();
   readonly openPrompts = output<void>();
+  /** Emits each view the user selects so the host can keep Run steps in the route. */
+  readonly viewChange = output<DeployView>();
   readonly snapshot = signal<ProjectDeploySnapshot | null>(null);
   readonly view = signal<DeployView>('overview');
 
@@ -35,5 +37,8 @@ export class ProjectDeployAreaComponent {
     });
   }
 
-  show(view: DeployView): void { this.view.set(view); }
+  show(view: DeployView): void {
+    this.view.set(view);
+    this.viewChange.emit(view);
+  }
 }

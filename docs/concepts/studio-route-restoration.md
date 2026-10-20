@@ -74,7 +74,7 @@ such as `AGT-2291`. Values are percent encoded.
 | Dossier | `#/projects/<project>/workbenches/<workbench-id>` | Project, exact Dossier, repository HTML artifact | iframe scroll, in-artifact anchor, runtime script state |
 | Task detail | `#/tasks/<task>` | Exact task and default Overview / Result tabs | Pane sizes, visible pane set, maximized pane, edit drafts, open menus, poll cache |
 | Task detail with active tabs | `#/tasks/<task>?view=<detail-tab>:<inspector-tab>` | Exact task, left detail tab (`overview`, `timeline`, `evidence`, `code-review`, `description`) and right inspector tab (`protocol`, `activity`) | Activity subview, selected run, source viewer, splitter positions, composer draft |
-| Legacy Epics overview | `#/epics` or `#/projects/<project>/epics` | Dossiers overview compatibility view | Scroll |
+| Legacy Epics overview | `#/epics` or `#/projects/<project>/epics` | Opens the Dossiers overview of the same scope and rewrites the URL to `#/workbenches` or `#/projects/<project>/workbenches` | Scroll |
 | Epic detail | `#/epics/<task>` | Exact Epic task through the public task resolver | Expanded child task, pane layout, scroll |
 | Workspace Settings | `#/workspace/settings[/<section>][/<detail>]` | Settings editor tab, active section, and the optional token-provider detail | Unsaved form values, confirmation dialogs, scroll |
 | Project Settings | `#/projects/<project>/settings` | Project Hub and Settings rail | Unsaved form values, nested disclosure state, scroll |

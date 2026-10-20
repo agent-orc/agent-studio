@@ -342,10 +342,15 @@ occur. It is not a claim about tunnel transfer time.
   `GET /api/projects/<project>/environments` and shows the recorded health of
   each declared environment, plus the existing Product Runtime observability
   panel; without environments it invites setup in Deploy. The Deck rail
-  excludes Deploy, Deployment, Pipeline, and Observability. The Epic overview
-  and Epic grouping controls are retired from navigation (the board groups by
-  Dossier instead); legacy Epic data and API behavior remain until the separate
-  data-removal card.
+  excludes Deploy, Deployment, Pipeline, and Observability. Agent-work panels
+  stay in the Deck as the Insight rail Agent activity: the message bus panel,
+  token summary, supervisor and meta-cycle sections, and analysis reports.
+  Legacy `observability` sections open Operations. The Epic overview and Epic
+  grouping controls are retired from navigation (the board groups by Dossier
+  instead). Legacy `#/epics` and `#/projects/<project>/epics` routes and
+  restored Epics tabs open the Dossiers overview tab and rewrite to its URL;
+  legacy Epic data and API behavior remain until the separate data-removal
+  card.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints

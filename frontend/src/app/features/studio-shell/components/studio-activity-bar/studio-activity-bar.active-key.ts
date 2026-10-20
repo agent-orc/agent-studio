@@ -35,8 +35,6 @@ export function resolveActiveActivityKey(state: {
   switch (state.activeTabKind) {
     case 'feed':
       return 'activity';
-    case 'epics':
-      return 'workbenches';
     case 'workbenches':
       return 'workbenches';
     case 'workspace-settings':

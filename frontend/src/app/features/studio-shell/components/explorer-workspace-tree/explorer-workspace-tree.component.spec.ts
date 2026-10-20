@@ -510,6 +510,12 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     host.querySelector<HTMLElement>('[data-testid="studio-explorer-project-operations-Alpha"]')!.click();
     expect(opened).toEqual(['deploy:Alpha', 'operations:Alpha']);
     expect(host.querySelector('[data-testid="studio-explorer-project-epics-Alpha"]')).toBeNull();
+    // Deploy (send) and Operations (activity pulse) carry distinct glyphs.
+    const glyph = (surface: string) => host
+      .querySelector(`[data-testid="studio-explorer-project-${surface}-Alpha-glyph"]`)?.innerHTML ?? '';
+    expect(glyph('deploy')).toContain('points="3 12 21 4 13 21 11 13 3 12"');
+    expect(glyph('operations')).toContain('points="4 12 8 12 11 5 13 19 16 12 20 12"');
+    expect(glyph('deploy')).not.toEqual(glyph('operations'));
   });
 
   it('highlights only the Wiki row when the active surface is the wiki rail', () => {

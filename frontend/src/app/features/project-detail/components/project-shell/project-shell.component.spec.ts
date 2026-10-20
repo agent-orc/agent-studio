@@ -5,7 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectShellComponent } from './project-shell.component';
-import type { ProjectRailKey } from './project-shell.config';
+import { resolveProjectSection, type ProjectRailKey } from './project-shell.config';
 
 /**
  * Render-path coverage for the Deck nav IA (ASS-1711): collapsible
@@ -280,13 +280,21 @@ describe('ProjectShellComponent rail IA', () => {
     expect(railEl(host, 'overview')?.querySelector('.tree-row__chev--placeholder')).toBeTruthy();
   });
 
-  it('keeps Deployment, Pipeline, and Observability outside the Deck groups', () => {
+  it('keeps Deploy, Operations, Pipeline, and Observability outside the Deck groups', () => {
     const host = mount().nativeElement as HTMLElement;
-    for (const key of ['deployment', 'pipeline', 'observability']) {
+    for (const key of ['deploy', 'operations', 'pipeline', 'observability']) {
       expect(railEl(host, key), key).toBeNull();
     }
     expect(railEl(host, 'workflow')).toBeTruthy();
     expect(railEl(host, 'prompts')).toBeTruthy();
+  });
+
+  it('lists Agent activity in the Insight group', () => {
+    const fixture = mount();
+    const host = fixture.nativeElement as HTMLElement;
+    const insight = fixture.componentInstance.railGroups().find(group => group.id === 'insight');
+    expect(insight?.nodes.map(node => node.item.key)).toContain('agent-activity');
+    expect(railEl(host, 'agent-activity')?.textContent).toContain('Agent activity');
   });
 
   it('clicking a leaf rail emits its key; re-clicking the active rail is a no-op', () => {
@@ -300,5 +308,21 @@ describe('ProjectShellComponent rail IA', () => {
     fixture.detectChanges();
 
     expect(emitted).toEqual(['security']);
+  });
+});
+
+describe('resolveProjectSection', () => {
+  it.each([
+    ['deploy', 'deploy', 'overview'],
+    ['deployment', 'deploy', 'overview'],
+    ['pipeline', 'deploy', 'steps'],
+    ['operations', 'operations', 'overview'],
+    ['observability', 'operations', 'overview'],
+    ['agent-activity', 'agent-activity', 'overview'],
+    ['wiki', 'wiki', 'overview'],
+    ['epics', 'overview', 'overview'],
+    [null, 'overview', 'overview'],
+  ] as const)('opens %s on rail %s with Deploy view %s', (section, rail, deployView) => {
+    expect(resolveProjectSection(section)).toEqual({ rail, deployView });
   });
 });

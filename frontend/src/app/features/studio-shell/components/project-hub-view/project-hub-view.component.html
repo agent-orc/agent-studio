@@ -1,12 +1,17 @@
 @if (activeRail() === 'deploy') {
   <div class="project-area">
-    <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
-      [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')" />
+    @defer (on immediate) {
+      <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
+        [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')"
+        (viewChange)="onDeployView($event)" />
+    }
   </div>
 } @else if (activeRail() === 'operations') {
   <div class="project-area" data-testid="project-operations-area">
-    <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')" />
-    <app-project-product-runtime-panel [projectName]="projectName()" />
+    @defer (on immediate) {
+      <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')" />
+      <app-project-product-runtime-panel [projectName]="projectName()" />
+    }
   </div>
 } @else {
 <app-project-shell class="hub-shell"
@@ -108,6 +113,15 @@
       <app-project-cycle-time-panel
         [projectName]="projectName()"
         (openTask)="openTask.emit($event)" />
+    }
+  }
+  @defer (when activeRail() === 'agent-activity') {
+    @if (activeRail() === 'agent-activity') {
+      <app-project-observability-panel [projectName]="projectName()" />
+      <app-project-detail
+        [projectName]="projectName()"
+        view="observability"
+        (openReport)="openReport($event)" />
     }
   }
   @defer (when activeRail() === 'steering') {

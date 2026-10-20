@@ -248,10 +248,7 @@ export class ExplorerWorkbenchListComponent {
     const revealKey = `${this.projectName()}:${activeWorkbenchId}`;
     if (this.lastRevealedWorkbench === revealKey) return;
     this.lastRevealedWorkbench = revealKey;
-    if (item.id === this.styleGuide()?.id) {
-      this.setExpanded(true);
-      return;
-    }
+    if (item.id === this.styleGuide()?.id) return;
     this.setExpanded(true);
     if (item.status === 'documented' || item.status === 'archived') {
       this.sectionState.setExpanded(this.sectionScope(), 'history', true);

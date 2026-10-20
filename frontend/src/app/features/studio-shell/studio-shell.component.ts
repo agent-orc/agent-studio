@@ -299,7 +299,6 @@ export class StudioShellComponent {
     const tab = this.activeTab();
     if (!tab) return null;
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : tab.projectName;
-    if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
     return this.currentProjectName();
   });
@@ -590,7 +589,6 @@ export class StudioShellComponent {
     }
     if (tab.kind === 'workbenches') return tab.projectName === null ? null : 'workbenches';
     if (tab.kind === 'workbench') return 'workbench';
-    if (tab.kind === 'epics') return tab.projectName === null ? null : 'workbenches';
     return null;
   });
 
@@ -606,7 +604,6 @@ export class StudioShellComponent {
     const tab = this.activeTab();
     if (!tab) return null;
     if (tab.kind === 'board') return tab.projectName === ALL_PROJECTS_BOARD_NAME ? null : tab.projectName;
-    if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
     if (tab.kind === 'hub') return tab.projectName;
     if (tab.kind === 'workbench') return tab.projectName;
@@ -1125,8 +1122,6 @@ export class StudioShellComponent {
         return tab.projectName === '__all__' ? 'All projects · Board' : `${this.projectShortLabel(tab.projectName)} · Board`;
       case 'feed':
         return 'Activity across projects';
-      case 'epics':
-        return tab.projectName === null ? 'All projects · Dossiers' : `${this.projectShortLabel(tab.projectName)} · Dossiers`;
       case 'workbenches':
         return 'Dossiers';
       case 'epic': {
@@ -1177,8 +1172,6 @@ export class StudioShellComponent {
         return this.findJob(tab.taskKey)?.key || this.taskIdFromKey(tab.taskKey);
       case 'board':
         return tab.projectName === '__all__' ? 'All' : this.projectShortLabel(tab.projectName);
-      case 'epics':
-        return tab.projectName === null ? 'All' : this.projectShortLabel(tab.projectName);
       case 'hub':
         return this.projectShortLabel(tab.projectName);
       default:
@@ -1194,7 +1187,6 @@ export class StudioShellComponent {
         return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
       }
       case 'board': return 'Board';
-      case 'epics': return 'Dossiers';
       case 'hub': {
         const area = this.projectAreaLabel(tab.section);
         if (area) return area;
@@ -1224,7 +1216,8 @@ export class StudioShellComponent {
    *  epic tab keeps its own dedicated glyph in the template). */
   tabIcon(tab: StudioTab): StudioIconName | null {
     if (tab.kind === 'hub') {
-      if (this.projectAreaLabel(tab.section)) return 'activity';
+      const area = this.projectAreaLabel(tab.section);
+      if (area) return area === 'Deploy' ? 'send' : 'activity';
       return this.railItemForSection(tab.section).railIcon ?? null;
     }
     if (tab.kind === 'url-preview') return 'link';
@@ -1237,14 +1230,13 @@ export class StudioShellComponent {
    * AGT-2034 — resolve the owning project name for a tab so the tab strip
    * can paint the project's colour dot and keep the full name in the
    * tooltip. Returns `null` for tabs that do not belong to a single project
-   * (All-projects board/epics, workspace settings, welcome, diff),
+   * (All-projects board/Dossiers, workspace settings, welcome, diff),
    * so no dot renders there.
    */
   private tabProjectName(tab: StudioTab): string | null {
     switch (tab.kind) {
       case 'board':
         return tab.projectName === '__all__' ? null : tab.projectName;
-      case 'epics':
       case 'workbenches':
       case 'hub':
       case 'workbench':

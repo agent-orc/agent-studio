@@ -25,6 +25,7 @@ export type ProjectRailKey =
   | 'test-quality'
   | 'token-usage'
   | 'cycle-time'
+  | 'agent-activity'
   | 'observability'
   | 'steering'
   | 'wiki'
@@ -69,7 +70,7 @@ export interface ProjectRailItem {
 export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
   // ---- INSIGHT: what the project IS / does ----
   // Order matches the current Deck IA:
-  // Overview · Visual Evidence · Drift · Token Usage.
+  // Overview · Visual Evidence · Drift · Agent activity · Token Usage.
   // Architecture used to live here; it now sits in Context (ASS-1711)
   // because it is thematically a doc surface, not a live-health surface.
   {
@@ -131,6 +132,18 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     empty: 'No drift reports yet. Run a comparison to produce the first one.',
     icon: '↯',
     railIcon: 'diff',
+  },
+  {
+    // Agent-work observability stays in the Deck; application health moved
+    // to the project-level Operations area.
+    key: 'agent-activity',
+    group: 'insight',
+    label: 'Agent activity',
+    panelTitle: 'Agent activity',
+    description: 'Agent communication on the message bus, token summary, supervisor and meta-cycle activity, and analysis reports',
+    empty: 'No bus messages for this project yet. Once the orchestrator, an agent, or the supervisor speaks, the timeline and counters fill in here.',
+    icon: '⌁',
+    railIcon: 'activity',
   },
   {
     key: 'token-usage',
@@ -337,6 +350,26 @@ export function isProjectRailKey(value: string | null | undefined): value is Pro
 }
 
 export const DEFAULT_PROJECT_RAIL_KEY: ProjectRailKey = 'overview';
+
+/** Deck rail and Deploy view that a requested section opens. */
+export interface ProjectSectionTarget {
+  rail: ProjectRailKey;
+  /** `steps` opens the Run steps view of the Deploy area. */
+  deployView: 'overview' | 'steps';
+}
+
+/**
+ * Resolve a requested section, including retired names, to the area that
+ * now hosts it: `deployment` and `pipeline` open Deploy (`pipeline` on its
+ * Run steps view), and `observability` opens Operations.
+ */
+export function resolveProjectSection(section: string | null | undefined): ProjectSectionTarget {
+  if (section === 'deploy' || section === 'deployment' || section === 'pipeline') {
+    return { rail: 'deploy', deployView: section === 'pipeline' ? 'steps' : 'overview' };
+  }
+  if (section === 'observability') return { rail: 'operations', deployView: 'overview' };
+  return { rail: isProjectRailKey(section) ? section : DEFAULT_PROJECT_RAIL_KEY, deployView: 'overview' };
+}
 
 /** Canonical user-facing label for a Deck rail section. */
 export function projectRailLabel(section: string | null | undefined): string {

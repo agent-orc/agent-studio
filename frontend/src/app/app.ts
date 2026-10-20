@@ -841,9 +841,6 @@ export class App implements OnInit, OnDestroy {
         case 'hub':
           project = tab.projectName;
           break;
-        case 'epics':
-          project = tab.projectName;
-          break;
         case 'task':
           // AGT-2692: the scope stamped when the tab was opened wins over the
           // task's own project, so opening a card from the All-projects board
@@ -1111,7 +1108,6 @@ export class App implements OnInit, OnDestroy {
       if (this.showCreate()) return;
       if (this.workspaceOverlays.settingsOpen()) return;
       if (this.projectShellName() !== null) return;
-      if (this.studioTabState.activeTab()?.kind === 'epics') return;
       const target = ev.target as HTMLElement | null;
       if (target) {
         const tag = target.tagName;
@@ -2063,6 +2059,7 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'workbenches':
         this.studioTabState.open({ kind: 'workbenches', projectName });
+        if (route.legacy) replaceStudioRoute(studioRouteForTab({ kind: 'workbenches', projectName })!);
         break;
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });
@@ -2073,9 +2070,6 @@ export class App implements OnInit, OnDestroy {
         this.pendingStudioTaskReference = route.reference;
         this.jobSelection.restoreFromUrl(fromHistory);
         return true;
-      case 'epics':
-        this.studioTabState.open({ kind: 'epics', projectName });
-        break;
       case 'epic':
         this.pendingStudioTaskReference = route.reference;
         this.jobSelection.restoreFromUrl(fromHistory);
@@ -2108,7 +2102,7 @@ export class App implements OnInit, OnDestroy {
       ? decodeURIComponent(rawHash.slice('#epics:'.length))
       : '';
     const projectName = rawProject || null;
-    this.studioTabState.open({ kind: 'epics', projectName });
+    this.studioTabState.open({ kind: 'workbenches', projectName });
   }
 
   /**

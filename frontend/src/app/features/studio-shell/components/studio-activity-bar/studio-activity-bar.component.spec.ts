@@ -120,9 +120,9 @@ describe('StudioActivityBarComponent settings destination', () => {
  */
 describe('resolveActiveActivityKey', () => {
   it('lets the editor destination win over an open sidebar panel', () => {
-    // Explorer sidebar open and an Epics tab active. Only Epics wins.
+    // Explorer sidebar open and a Dossiers tab active. Only Dossiers wins.
     expect(resolveActiveActivityKey({
-      activeTabKind: 'epics',
+      activeTabKind: 'workbenches',
       activePanel: 'explorer',
       sidebarVisible: true,
     })).toBe('workbenches');
@@ -142,14 +142,6 @@ describe('resolveActiveActivityKey', () => {
       activePanel: 'explorer',
       sidebarVisible: true,
     })).toBe('activity');
-  });
-
-  it('maps a legacy epics tab to Dossiers', () => {
-    expect(resolveActiveActivityKey({
-      activeTabKind: 'epics',
-      activePanel: 'explorer',
-      sidebarVisible: true,
-    })).toBe('workbenches');
   });
 
   it('marks the Chats rail button while the sidebar Chats panel is open', () => {
@@ -178,7 +170,7 @@ describe('resolveActiveActivityKey', () => {
 
   it('keeps the destination marker even when the sidebar is hidden', () => {
     expect(resolveActiveActivityKey({
-      activeTabKind: 'epics',
+      activeTabKind: 'workbenches',
       activePanel: 'explorer',
       sidebarVisible: false,
     })).toBe('workbenches');

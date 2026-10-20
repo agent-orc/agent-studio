@@ -429,6 +429,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `project-hub-deep-links.spec.ts` | an id-based Project Hub URL survives reload and rail history |
 | `project-hub-nav-ia.spec.ts` | default rail shows four collapsible segments with Agent Docs + Prompts in Context |
 | `project-identity.spec.ts` | Project identity & running prominence |
+| `project-observability-panel.spec.ts` | Deck Agent activity rail opens the message bus panel; the legacy observability section opens Operations |
 | `project-overview-cli-environment.spec.ts` | overview is operator-only and settings owns CLI environment details |
 | `project-overview-dashboard.spec.ts` | Project Overview · operator dashboard |
 | `project-product-runtime-panel.spec.ts` | rail entry opens the product runtime panel and shows empty state when no events |
