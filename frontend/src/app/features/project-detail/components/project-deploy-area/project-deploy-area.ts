@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
-import { Subscription } from 'rxjs';
+import { Subscription, filter, take } from 'rxjs';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
@@ -8,6 +8,9 @@ import { ProjectDeployHistoryComponent } from '../project-deploy-history/project
 import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-run-drawer/deploy-run-drawer';
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
+import { ProjectOperationsComponent } from '../project-operations/project-operations';
+import { TaskService } from '../../../../services/task.service';
+import { OperationsReleaseSelectionService } from '../../state/operations-release-selection.service';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
@@ -39,6 +42,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent,
+    ProjectOperationsComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -46,6 +50,8 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 })
 export class ProjectDeployAreaComponent {
   private readonly data = inject(ProjectDeployDataService);
+  private readonly tasks = inject(TaskService);
+  private readonly releaseSelection = inject(OperationsReleaseSelectionService);
   private readonly clock = inject(DEPLOY_CLOCK);
   private subscriptions = new Subscription();
   private runReads = new Subscription();
@@ -62,6 +68,7 @@ export class ProjectDeployAreaComponent {
   readonly initialView = input<DeployView>('overview');
   readonly focusStepId = input<string | undefined>();
   readonly openPrompts = output<void>();
+  readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly viewChange = output<DeployView>();
   readonly view = signal<DeployView>('overview');
   readonly now = signal(this.clock());
@@ -81,6 +88,28 @@ export class ProjectDeployAreaComponent {
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
+  readonly highlightedReleaseId = signal<string | null>(null);
+
+  openRelease(id: string): void {
+    this.highlightedReleaseId.set(id);
+    this.show('releases');
+    this.data.releases(this.projectName()).pipe(filter(panel => panel.status !== 'loading'), take(1)).subscribe(panel => {
+      if (panel.status !== 'ready') return;
+      const sorted = [...panel.value].sort((a, b) => Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc));
+      const index = sorted.findIndex(item => item.id === id);
+      if (index >= 0) this.changeReleasePage(Math.floor(index / 25) * 25);
+    });
+  }
+
+  openCard(key: string): void {
+    const card = this.tasks.jobs().find(item => item.projectName === this.projectName()
+      && (item.key === key || item.id === key));
+    if (card) { this.openTask.emit({ jobId: card.id, watchPath: card.watchPath }); return; }
+    this.tasks.getArchivedTasks({ project: this.projectName(), search: key, limit: 50 }).pipe(take(1)).subscribe(result => {
+      const archived = result.items.find(item => item.key === key || item.taskKey === key || item.id === key);
+      if (archived) this.openTask.emit({ jobId: archived.id, watchPath: archived.watchPath });
+    });
+  }
 
   private readonly sources = computed(() => ({
     environments: ready(this.environmentPanel()),
@@ -113,6 +142,10 @@ export class ProjectDeployAreaComponent {
 
   constructor() {
     effect(() => this.view.set(this.initialView()));
+    effect(() => {
+      const id = this.releaseSelection.releaseId();
+      if (id) untracked(() => { this.releaseSelection.consume(); this.openRelease(id); });
+    });
     effect(onCleanup => {
       const project = this.projectName();
       untracked(() => this.load(project, true));

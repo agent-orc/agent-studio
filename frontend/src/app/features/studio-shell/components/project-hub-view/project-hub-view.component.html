@@ -9,7 +9,9 @@
 } @else if (activeRail() === 'operations') {
   <div class="project-area" data-testid="project-operations-area">
     @defer (on immediate) {
-      <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')" />
+      <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')"
+        (openRelease)="setRail('deploy')"
+        (openTask)="openTask.emit($event)" />
       <app-project-product-runtime-panel [projectName]="projectName()" />
     }
   </div>

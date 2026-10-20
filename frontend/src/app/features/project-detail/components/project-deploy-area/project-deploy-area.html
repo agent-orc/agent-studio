@@ -31,11 +31,15 @@
           <p class="deploy-area__tools-link">Deploy commands and the AGT-3176 promotion and rollback controls live in the
             <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">existing deployment tools</button>.</p>
         }
-        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()"
+        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()" [highlightedReleaseId]="highlightedReleaseId()"
           [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading pipeline…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
-        @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
+        @case ('operations') {
+          <app-environment-health-panel [projectName]="projectName()" />
+          @defer { <app-project-operations [projectName]="projectName()" (openRelease)="openRelease($event)" (openCard)="openCard($event)" /> }
+          @placeholder { <p>Loading operations…</p> }
+        }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"

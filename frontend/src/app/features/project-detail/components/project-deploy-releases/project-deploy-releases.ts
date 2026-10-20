@@ -19,6 +19,7 @@ export class ProjectDeployReleasesComponent {
   readonly now = input.required<number>();
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
+  readonly highlightedReleaseId = input<string | null>(null);
   readonly pageChange = output<number>();
   readonly selectedId = signal<string | null>(null);
 
@@ -33,7 +34,7 @@ export class ProjectDeployReleasesComponent {
     return panel.status === 'error' ? `${panel.message} Environments and history are unaffected; try Refresh.` : '';
   });
   readonly selected = computed<Release | null>(() =>
-    this.releases().find(release => release.id === this.selectedId()) ?? this.releases()[0] ?? null);
+    this.releases().find(release => release.id === (this.selectedId() ?? this.highlightedReleaseId())) ?? this.releases()[0] ?? null);
   readonly liveIn = computed(() => {
     const release = this.selected();
     return release

@@ -141,6 +141,35 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const release = deployReleasesFixture()[0];
+    await page.route(`**${DEPLOY}/releases`, route => answer(route, deployReleasesFixture()));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null,
+        markers: [{ deploymentId: 'rollback-1', releaseId: release.id, version: release.version,
+          atUtc: '2026-10-19T10:00:00Z', trigger: 'rollback', state: 'succeeded', cardKeys: release.cardKeys }] }],
+      dora: { successfulProductionDeploys: 2, deploysPerWeek: 0.5, medianCardToProductionHours: 12,
+        cardsMeasured: 1, changeFailureRate: 0.25, medianRecoveryHours: 3, recoveriesMeasured: 1 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs?*`, route => answer(route, { telemetryAvailable: false, lines: [] }));
+    await page.getByTestId('deploy-tab-operations').click();
+    const operations = page.getByTestId('project-operations');
+    await expect(operations).toContainText('Telemetry is not available yet');
+    await expect(operations.getByTestId('operations-dora')).toContainText('0.5 per week');
+    await operations.getByTestId('operations-search-logs').click();
+    await expect(operations.getByTestId('operations-logs-empty')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await operations.screenshot({ path: path.join(results, `operations-${theme}--mocked.png`) });
+    }
+    await operations.getByTestId(`operations-release-${release.id}`).click();
+    await expect(page.getByTestId('deploy-release-detail')).toContainText(release.version);
+  });
+
   test('works with partial data: AGT-3176 environments only, AGT-3201 and AGT-3221 routes missing', async ({ page }) => {
     await openDeploy(page, { environments: deployEnvironmentsFixture(), ...HOST_ONLY, pipelineDefinition: MISSING });
     const area = page.getByTestId('project-deploy-area');

@@ -1,0 +1,105 @@
+<section class="project-operations" data-testid="project-operations" aria-labelledby="project-operations-title">
+  <header class="project-operations__head">
+    <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
+    <button type="button" (click)="load(projectName())">Refresh</button>
+  </header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  @if (snapshot(); as state) {
+    @if (!state.environments.length) { <p>No application environments are configured.</p> }
+    @for (row of state.environments; track row.environment.id) {
+      <article class="project-operations__environment" [attr.data-testid]="'operations-' + row.environment.id">
+        <h3>{{ row.environment.name }} <small>{{ row.environment.kind }}</small></h3>
+        @if (row.metrics; as m) {
+          @if (m.samples.length) {
+            <div class="project-operations__trends">
+              <app-operations-trend label="Response p95" measure="responseP95Ms" [metrics]="m" [markers]="row.markers" [since]="state.since" [until]="state.until" (openRelease)="openRelease.emit($event)" />
+              <app-operations-trend label="Error rate" measure="errorRate" [metrics]="m" [markers]="row.markers" [since]="state.since" [until]="state.until" (openRelease)="openRelease.emit($event)" />
+              <app-operations-trend label="Requests" measure="requests" [metrics]="m" [markers]="row.markers" [since]="state.since" [until]="state.until" (openRelease)="openRelease.emit($event)" />
+              <app-operations-trend label="CPU" measure="cpuCores" [metrics]="m" [markers]="row.markers" [since]="state.since" [until]="state.until" (openRelease)="openRelease.emit($event)" />
+              <app-operations-trend label="Memory" measure="memoryBytes" [metrics]="m" [markers]="row.markers" [since]="state.since" [until]="state.until" (openRelease)="openRelease.emit($event)" />
+              <app-operations-trend label="Disk" measure="diskBytes" [metrics]="m" [markers]="row.markers" [since]="state.since" [until]="state.until" (openRelease)="openRelease.emit($event)" />
+            </div>
+          }
+          <dl class="project-operations__metrics">
+            <div><dt>Response median</dt><dd>{{ metric(m.responseP50Ms, ' ms') }}</dd></div>
+            <div><dt>Response p95</dt><dd>{{ metric(m.responseP95Ms, ' ms') }}</dd></div>
+            <div><dt>Error rate</dt><dd>{{ m.errorRate === null ? 'No data' : metric(m.errorRate * 100, '%') }}</dd></div>
+            <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div>
+            <div><dt>Requests</dt><dd>{{ metric(m.requests) }}</dd></div>
+            <div><dt>Sessions</dt><dd>{{ metric(m.sessions) }}</dd></div>
+            <div><dt>Active users per day</dt><dd>{{ metric(m.activeUsers) }}</dd></div>
+            <div><dt>CPU / reserved</dt><dd>{{ ratio(m.cpuCores, m.cpuReservedCores, ' cores') }}</dd></div>
+            <div><dt>Memory / reserved</dt><dd>{{ ratio(m.memoryBytes, m.memoryReservedBytes, ' bytes') }}</dd></div>
+            <div><dt>Disk / reserved</dt><dd>{{ ratio(m.diskBytes, m.diskReservedBytes, ' bytes') }}</dd></div>
+            <div><dt>Network</dt><dd>{{ metric(m.networkBytes, ' bytes') }}</dd></div>
+          </dl>
+          @if (m.dailyUsage.length) {
+            <h4>Daily usage</h4>
+            <div class="project-operations__table-wrap"><table><thead><tr><th>Day</th><th>Requests</th><th>Sessions</th><th>Active users</th></tr></thead>
+              <tbody>@for (day of m.dailyUsage; track day.day) { <tr><th>{{ day.day }}</th><td>{{ metric(day.requests) }}</td><td>{{ metric(day.sessions) }}</td><td>{{ metric(day.activeUsers) }}</td></tr> }</tbody>
+            </table></div>
+          }
+          @if (m.topEndpoints.length) {
+            <h4>Top endpoints</h4>
+            <ul>@for (endpoint of m.topEndpoints; track endpoint.path) { <li><code>{{ endpoint.path }}</code> · {{ metric(endpoint.requests) }} requests</li> }</ul>
+          }
+        } @else {
+          <p class="project-operations__empty" role="status">Telemetry is not available yet. Monitoring, usage, load and logs will appear when the intake store is connected.</p>
+        }
+        <h4>Deploy and rollback markers</h4>
+        @if (!row.markers.length) { <p>No deploy runs in the last 30 days.</p> }
+        <ol class="project-operations__markers">
+          @for (marker of row.markers; track marker.deploymentId) {
+            <li>
+              <time [attr.datetime]="marker.atUtc">{{ marker.atUtc | date:'medium':'UTC' }} UTC</time>
+              <span>{{ marker.trigger }} · {{ marker.state }}</span>
+              <button type="button" [attr.data-testid]="'operations-release-' + marker.releaseId" (click)="openRelease.emit(marker.releaseId)">Release {{ marker.version }}</button>
+              <span class="project-operations__cards">@for (card of marker.cardKeys; track card) { <button type="button" (click)="openCard.emit(card)">{{ card }}</button> }</span>
+            </li>
+          }
+        </ol>
+      </article>
+    }
+    <section class="project-operations__dora" aria-labelledby="project-dora-title" data-testid="operations-dora">
+      <h3 id="project-dora-title">Delivery performance</h3>
+      <p>Production deploy runs in the last 30 days. Card lead time starts when each card was created.</p>
+      <dl class="project-operations__metrics">
+        <div><dt>Deployment frequency</dt><dd>{{ metric(state.dora.deploysPerWeek, ' per week') }}</dd></div>
+        <div><dt>Card to Production</dt><dd>{{ metric(state.dora.medianCardToProductionHours, ' h') }}</dd></div>
+        <div><dt>Change failure rate</dt><dd>{{ state.dora.changeFailureRate === null ? 'No data' : metric(state.dora.changeFailureRate * 100, '%') }}</dd></div>
+        <div><dt>Time to restore</dt><dd>{{ metric(state.dora.medianRecoveryHours, ' h') }}</dd></div>
+      </dl>
+      <p>{{ state.dora.successfulProductionDeploys }} successful production deploys · {{ state.dora.cardsMeasured }} cards measured · {{ state.dora.recoveriesMeasured }} recoveries measured</p>
+    </section>
+    <section class="project-operations__logs" aria-labelledby="operations-logs-title" data-testid="operations-logs">
+      <h3 id="operations-logs-title">Search application logs</h3>
+      @if (!telemetryAvailable() && !logs()) { <p role="status">Application logs will be searchable when the telemetry intake store is connected.</p> }
+      <div class="project-operations__filters">
+        <label>Environment <select data-testid="operations-log-environment" [value]="selectedEnvironment()" (change)="selectedEnvironment.set($any($event.target).value)">
+          @for (row of state.environments; track row.environment.id) { <option [value]="row.environment.id">{{ row.environment.name }}</option> }
+        </select></label>
+        <label>From <input type="datetime-local" [value]="since()" (change)="since.set($any($event.target).value)"></label>
+        <label>To <input type="datetime-local" [value]="until()" (change)="until.set($any($event.target).value)"></label>
+        <label>Level <select [value]="level()" (change)="level.set($any($event.target).value)">
+          <option value="">All levels</option><option value="error">Error</option><option value="warn">Warning</option><option value="info">Info</option><option value="debug">Debug</option>
+        </select></label>
+        <label>Release <select [value]="release()" (change)="release.set($any($event.target).value)">
+          <option value="">All releases</option>
+          @for (option of releaseOptions(); track option[0]) { <option [value]="option[0]">{{ option[1] }}</option> }
+        </select></label>
+        <label>Text <input type="search" [value]="searchText()" (input)="searchText.set($any($event.target).value)" placeholder="Search text"></label>
+        <button type="button" data-testid="operations-search-logs" (click)="search()">Search logs</button>
+      </div>
+      @if (logError(); as message) { <p role="alert">{{ message }}</p> }
+      @if (logs(); as result) {
+        @if (!result.telemetryAvailable) { <p role="status" data-testid="operations-logs-empty">Application logs are not available until the telemetry intake store is connected.</p> }
+        @else if (!result.lines.length) { <p role="status">No logs match these filters.</p> }
+        @else { <ol class="project-operations__log-lines">@for (line of result.lines; track line.at + line.message) {
+          <li><time [attr.datetime]="line.at">{{ line.at | date:'medium':'UTC' }} UTC</time><strong>{{ line.level }}</strong><span>{{ line.message }}</span>
+            @if (line.releaseId) { <button type="button" (click)="openRelease.emit(line.releaseId)">Release {{ line.releaseId }}</button> }
+          </li>
+        }</ol> }
+      }
+    </section>
+  } @else if (!error()) { <app-loading-surface kind="list" label="Loading operations…" /> }
+</section>

@@ -217,6 +217,8 @@
         "src/app/features/board/components/task-column/task-column.scss",
         "src/app/features/board/components/dossier-group-board/dossier-group-board.component.scss",
         "src/app/features/project-detail/components/dossier-card-list/dossier-card-list.component.scss",
+        "src/app/features/project-detail/components/project-operations/project-operations.scss",
+        "src/app/features/project-detail/components/operations-trend/operations-trend.scss",
         "src/app/features/credentials/credential-alerts/credential-alerts.component.scss",
         "src/app/features/credentials/credential-inventory/credential-inventory.component.scss",
         "src/app/features/credentials/host-credential-badge/host-credential-badge.component.scss",

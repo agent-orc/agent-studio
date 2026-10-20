@@ -44,6 +44,24 @@ public static class DeployEndpoints
         project.MapGet("/audit", (string projectName, DeployService deploy) =>
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/operations", (string projectName, AgentStudio.Projects.ProjectOperationsService operations) =>
+            operations.Read(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/operations/logs", (string projectName, string environmentId, DateTimeOffset? since,
+            DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit,
+            AgentStudio.Projects.ProjectOperationsService operations) =>
+        {
+            try
+            {
+                return operations.SearchLogs(projectName, environmentId, since, until, level, releaseId, text, limit)
+                    is { } value ? Results.Ok(value) : Results.NotFound(new { error = "Unknown project or environment." });
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
+
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
             string releaseId, DeploymentRequest request, DeployService deploy) =>
             Respond(deploy.RequestDeployment(projectName, releaseId, request, Actor(context, projectName)), accepted: true))

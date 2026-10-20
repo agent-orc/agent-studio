@@ -30,7 +30,9 @@ describe('ProjectOverviewDashboardComponent', () => {
     const fixture = TestBed.createComponent(ProjectOverviewDashboardComponent);
     fixture.componentRef.setInput('projectName', 'Demo Project');
     const openedTasks: { jobId: string; watchPath: string }[] = [];
+    const openedRails: string[] = [];
     fixture.componentInstance.openTask.subscribe(task => openedTasks.push(task));
+    fixture.componentInstance.openRail.subscribe(rail => openedRails.push(rail));
     fixture.detectChanges();
 
     const http = TestBed.inject(HttpTestingController);
@@ -80,6 +82,8 @@ describe('ProjectOverviewDashboardComponent', () => {
     expect(host.querySelector('[data-testid="project-overview-branch-task-agt-2200"]')).toBeTruthy();
     host.querySelector<HTMLButtonElement>('[data-testid="project-overview-planning-agt-2200"]')!.click();
     expect(openedTasks).toEqual([{ jobId: 'agt-2200', watchPath: 'C:/tasks/demo' }]);
+    host.querySelector<HTMLButtonElement>('[data-testid="project-overview-open-operations"]')!.click();
+    expect(openedRails).toContain('operations');
 
     const text = host.textContent ?? '';
     expect(text).not.toContain('Watch path');
