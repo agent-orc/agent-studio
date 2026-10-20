@@ -289,7 +289,15 @@ public sealed partial class BatchGatePilotServiceTests
         => BuildFactory(
             configuration: action == nameof(TransitionAction.HumanReview) || variant == "batch-hold"
                 ? UnguardedDeliveryChain : null,
-            testServices: variant == AgentRoundVariant ? ConflictingIntegration : null);
+            testServices: variant == AgentRoundVariant ? ConflictingIntegration : PublishingIntegration);
+
+    /// <summary>
+    /// The fixture removes every hosted service; an integrated delivery is
+    /// published to the target branch by the push worker, without which the
+    /// guarded lane move to Human Review finds the delivery merged locally only.
+    /// </summary>
+    private static void PublishingIntegration(IServiceCollection services)
+        => services.AddHostedService<IntegrationPushWorker>();
 
     /// <summary>
     /// The per-project integration ends in Conflict and hands the card to the
