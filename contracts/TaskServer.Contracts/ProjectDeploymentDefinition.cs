@@ -385,10 +385,10 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"{path}.name", "artifact-name-invalid", "Artifact names must be unique lower-case identifiers."));
             if (!ProjectDeploymentVocabulary.ArtifactTypes.Contains(artifact.Type))
                 issues.Add(new($"{path}.type", "artifact-type-invalid", "P1 artifact type must be static or container."));
-            if (artifact.Type == "static" && !ArtifactPath(artifact.Path))
+            if (artifact.Type == "static" && !ArtifactFilePath(artifact.Path))
                 issues.Add(new($"{path}.path", "artifact-path-invalid",
                     $"A static artifact needs a repository-relative bundle path such as dist. {ArtifactPathRule}"));
-            if (artifact.Type == "container" && !ArtifactPath(artifact.Dockerfile))
+            if (artifact.Type == "container" && !ArtifactFilePath(artifact.Dockerfile))
                 issues.Add(new($"{path}.dockerfile", "artifact-dockerfile-invalid",
                     $"A container artifact needs a repository-relative dockerfile such as Dockerfile. {ArtifactPathRule}"));
             if (artifact.Type == "container" && artifact.Path is not null && !ArtifactPath(artifact.Path))
@@ -553,6 +553,9 @@ public static partial class ProjectDefinitionValidator
 
     private static bool ArtifactPath(string? value)
         => value is not null && !value.Contains('\n') && ArtifactPathShape().IsMatch(value);
+
+    private static bool ArtifactFilePath(string? value)
+        => value != "." && ArtifactPath(value);
 
     [GeneratedRegex(ProjectDeploymentVocabulary.RemotePathPattern, RegexOptions.CultureInvariant)]
     private static partial Regex RemotePathShape();

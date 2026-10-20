@@ -86,7 +86,8 @@ public sealed class ProjectPipelineDefinitionService
     {
         if (Repository(projectName) is not { } root)
             return PipelineDefinitionResult<PipelineDefinitionResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
-        var (text, read) = ReadCurrent(root, Hosts(Declarations(projectName)));
+        var (declarations, readable) = Declarations(projectName);
+        var (text, read) = ReadCurrent(root, Hosts(declarations), readable);
         return PipelineDefinitionResult<PipelineDefinitionResponse>.Ok(View(projectName, text is not null, read));
     }
 
@@ -99,16 +100,17 @@ public sealed class ProjectPipelineDefinitionService
             return PipelineDefinitionResult<PipelineDefinitionResponse>.Fail("validation", $"yaml exceeds {MaxDefinitionBytes} bytes.");
         if (Repository(projectName) is not { } root)
             return PipelineDefinitionResult<PipelineDefinitionResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
+        var (declarations, readable) = Declarations(projectName);
         return PipelineDefinitionResult<PipelineDefinitionResponse>.Ok(
-            View(projectName, true, ProjectDefinitionReader.Parse(yaml, root, Hosts(Declarations(projectName)))));
+            View(projectName, true, WithDeclarationIssue(ProjectDefinitionReader.Parse(yaml, root, Hosts(declarations)), readable)));
     }
 
     public PipelineDefinitionResult<PipelineMigrationResponse> DryRun(string projectName)
     {
         if (Repository(projectName) is not { } root)
             return PipelineDefinitionResult<PipelineMigrationResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
-        var (read, proposal, hosts) = Propose(projectName, root);
-        return PipelineDefinitionResult<PipelineMigrationResponse>.Ok(MigrationView(projectName, root, read, proposal, hosts));
+        var (read, proposal, hosts, readable) = Propose(projectName, root);
+        return PipelineDefinitionResult<PipelineMigrationResponse>.Ok(MigrationView(projectName, root, read, proposal, hosts, readable));
     }
 
     public PipelineDefinitionResult<PipelineMigrationConfirmResponse> Confirm(
@@ -123,7 +125,10 @@ public sealed class ProjectPipelineDefinitionService
         var fullPath = DefinitionPath(root);
         (string Code, string Message)? refusal = null;
         PipelineMigrationProposal? confirmed = null;
-        var mutation = _mutations.Execute(
+        ManagedRepositoryMutationResult mutation;
+        try
+        {
+            mutation = _mutations.Execute(
             projectName,
             root,
             "project-definition-schema-2",
@@ -132,11 +137,17 @@ public sealed class ProjectPipelineDefinitionService
             () => File.WriteAllText(fullPath, confirmed!.ProposedYaml, new UTF8Encoding(HasUtf8Bom(fullPath))),
             precondition: () =>
             {
-                var (read, proposal, hosts) = Propose(projectName, root);
+                var (read, proposal, hosts, _) = Propose(projectName, root);
                 refusal = ConfirmRefusal(root, request, read, proposal, hosts);
                 confirmed = proposal;
                 return refusal?.Message;
             });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Fail(
+                "write-failed", $"project.yml could not be written: {ex.Message}");
+        }
         if (refusal is { } refused)
             return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Fail(refused.Code, refused.Message);
         if (!mutation.Success)
@@ -146,7 +157,8 @@ public sealed class ProjectPipelineDefinitionService
         _logger.LogInformation(
             "project-definition-migrated project={Project} from={Base} to={Proposal} changed={Changed} sha={Sha} pushQueued={PushQueued}",
             projectName, request.BaseSha256, confirmed?.ProposalSha256, mutation.Changed, mutation.CommitSha, mutation.PushQueued);
-        var (_, after) = ReadCurrent(root, Hosts(Declarations(projectName)));
+        var (declarations, readable) = Declarations(projectName);
+        var (_, after) = ReadCurrent(root, Hosts(declarations), readable);
         return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Ok(new(
             mutation.Changed, mutation.CommitSha, mutation.PushQueued, View(projectName, true, after)));
     }
@@ -165,18 +177,18 @@ public sealed class ProjectPipelineDefinitionService
         return null;
     }
 
-    private (ProjectDefinitionReadResult Read, PipelineMigrationProposal Proposal, ProjectDeployHostRegistry Hosts) Propose(
+    private (ProjectDefinitionReadResult Read, PipelineMigrationProposal Proposal, ProjectDeployHostRegistry Hosts, bool Readable) Propose(
         string projectName, string root)
     {
-        var declarations = Declarations(projectName);
+        var (declarations, readable) = Declarations(projectName);
         var hosts = Hosts(declarations);
-        var (text, read) = ReadCurrent(root, hosts);
+        var (text, read) = ReadCurrent(root, hosts, readable);
         var facts = new PipelineMigrationFacts(
             PipelineMigrationPolicy.ProjectIdFor(projectName),
             declarations,
             File.Exists(Path.Combine(root, "Dockerfile")),
             BundleCandidates.FirstOrDefault(candidate => Directory.Exists(Path.Combine(root, candidate))));
-        return (read, PipelineMigrationPolicy.Propose(text, read, facts), hosts);
+        return (read, PipelineMigrationPolicy.Propose(text, read, facts), hosts, readable);
     }
 
     /// <summary>
@@ -192,11 +204,11 @@ public sealed class ProjectPipelineDefinitionService
                 group => (IReadOnlyList<string>)group.Select(item => item.TargetHostId).Distinct(StringComparer.Ordinal).ToArray(),
                 StringComparer.Ordinal));
 
-    private IReadOnlyList<EnvironmentDeclaration> Declarations(string projectName)
+    private (IReadOnlyList<EnvironmentDeclaration> Items, bool Readable) Declarations(string projectName)
     {
         try
         {
-            return _environments.Declarations(projectName) ?? [];
+            return (_environments.Declarations(projectName) ?? [], true);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException
                                        or InvalidOperationException or KeyNotFoundException)
@@ -204,7 +216,7 @@ public sealed class ProjectPipelineDefinitionService
             // AGT-3176 declarations are optional input to the proposal; an unreadable
             // one leaves the proposal on the default environments and is logged.
             _logger.LogWarning(ex, "project-definition-migration declarations unreadable project={Project}", projectName);
-            return [];
+            return ([], false);
         }
     }
 
@@ -224,11 +236,12 @@ public sealed class ProjectPipelineDefinitionService
     }
 
     private static PipelineMigrationResponse MigrationView(string projectName, string root,
-        ProjectDefinitionReadResult current, PipelineMigrationProposal proposal, ProjectDeployHostRegistry hosts)
+        ProjectDefinitionReadResult current, PipelineMigrationProposal proposal, ProjectDeployHostRegistry hosts, bool readable)
     {
         if (!proposal.Available || proposal.ProposedYaml is null)
-            return new(projectName, false, proposal.Reason, current.DefinitionSha256, null, null, false, [], proposal.Notes, null);
-        var proposed = ProjectDefinitionReader.Parse(proposal.ProposedYaml, root, hosts);
+            return new(projectName, false, proposal.Reason, current.DefinitionSha256, null, null, false,
+                current.Issues, proposal.Notes, null);
+        var proposed = WithDeclarationIssue(ProjectDefinitionReader.Parse(proposal.ProposedYaml, root, hosts), readable);
         return new(projectName, true, null, current.DefinitionSha256, proposal.ProposedYaml, proposal.ProposalSha256,
             proposed.IsValid, proposed.Issues, proposal.Notes,
             proposed.Parsed is null ? null : PipelineDiagramProjection.Project(proposed.Parsed));
@@ -246,13 +259,18 @@ public sealed class ProjectPipelineDefinitionService
         => Path.Combine(root, ProjectPreparationPaths.Definition.Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>Reads the file once so the digest, the issues, and the proposal describe the same bytes.</summary>
-    private static (string? Text, ProjectDefinitionReadResult Read) ReadCurrent(string root, ProjectDeployHostRegistry hosts)
+    private static (string? Text, ProjectDefinitionReadResult Read) ReadCurrent(string root, ProjectDeployHostRegistry hosts, bool readable)
     {
         var path = DefinitionPath(root);
-        if (!File.Exists(path)) return (null, ProjectDefinitionReader.ReadWorkspace(root));
+        if (!File.Exists(path)) return (null, WithDeclarationIssue(ProjectDefinitionReader.ReadWorkspace(root), readable));
         var text = File.ReadAllText(path);
-        return (text, ProjectDefinitionReader.Parse(text, root, hosts));
+        return (text, WithDeclarationIssue(ProjectDefinitionReader.Parse(text, root, hosts), readable));
     }
+
+    private static ProjectDefinitionReadResult WithDeclarationIssue(ProjectDefinitionReadResult read, bool readable)
+        => readable ? read : read with { Issues = [.. read.Issues.Where(issue => issue.Code != "deploy-target-unregistered"),
+            new ProjectDefinitionIssue("environments", "declarations-unreadable",
+                "Environment declarations could not be read. Check the declaration files and try again.")] };
 
     private static bool HasUtf8Bom(string path)
     {

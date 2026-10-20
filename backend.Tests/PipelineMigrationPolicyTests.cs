@@ -79,6 +79,18 @@ public sealed class PipelineMigrationPolicyTests
     }
 
     [Fact]
+    public void Static_destination_outside_srv_is_quoted_and_explained()
+    {
+        var staging = Staging with { Destination = "/var/www/site # old" };
+        var proposal = Propose(SchemaOne, [staging]);
+
+        Assert.Contains("directory: \"/var/www/site # old\"", proposal.ProposedYaml);
+        Assert.Contains(proposal.Notes, note => note.Contains("outside /srv", StringComparison.Ordinal));
+        var parsed = ProjectDefinitionReader.Parse(proposal.ProposedYaml!);
+        Assert.Contains(parsed.Issues, issue => issue.Code == "deploy-directory-invalid");
+    }
+
+    [Fact]
     public void Container_declaration_gets_a_compose_default_and_names_every_assumption()
     {
         var container = Production with { Template = "container", Destination = "18080" };

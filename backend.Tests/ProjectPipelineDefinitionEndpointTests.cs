@@ -225,10 +225,22 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
         Assert.True(root.GetProperty("valid").GetBoolean());
         var proposed = root.GetProperty("proposedYaml").GetString()!;
         Assert.Contains("  - step: static-site", proposed, StringComparison.Ordinal);
-        Assert.Contains("    directory: /srv/www/_staging/site", proposed, StringComparison.Ordinal);
+        Assert.Contains("    directory: \"/srv/www/_staging/site\"", proposed, StringComparison.Ordinal);
         Assert.Equal(2, root.GetProperty("diagram").GetProperty("environments").GetArrayLength());
         Assert.Equal(SchemaOne, File.ReadAllText(DefinitionFile));
         Assert.Equal("1", Git("rev-list", "--count", "HEAD"));
+    }
+
+    [Fact]
+    public async Task Unreadable_declarations_report_one_issue_instead_of_unregistered_targets()
+    {
+        using var migration = await GetJson("/api/projects/Website/pipeline-definition/migration");
+        File.WriteAllText(DefinitionFile, migration.RootElement.GetProperty("proposedYaml").GetString());
+        File.WriteAllText(Path.Combine(Repository, "docs", "deployments", "environments", "staging.json"), "{");
+
+        using var read = await GetJson("/api/projects/Website/pipeline-definition");
+        var issue = Assert.Single(read.RootElement.GetProperty("issues").EnumerateArray());
+        Assert.Equal("declarations-unreadable", issue.GetProperty("code").GetString());
     }
 
     [Fact]
