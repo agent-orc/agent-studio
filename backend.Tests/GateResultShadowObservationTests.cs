@@ -211,6 +211,58 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(nameof(TransitionAction.Escalate), observed.MonolithReceipt?.Action);
     }
 
+    [Fact]
+    public async Task Engine_retry_after_shadow_gate_occurrence_creates_a_claimable_run()
+    {
+        using var factory = BuildFactory(new Dictionary<string, string?>
+        {
+            ["Orchestration:ShadowMatchThreshold"] = "1",
+        });
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var rollout = ShadowGateResult(factory);
+        var matched = await RunEmergencyFallbackAsync(factory, "CODE-GR-SWITCH-MATCH", red: true);
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var matchedShadow = Assert.Single(GateResultOccurrences(orchestration, matched.Key));
+        await DecideGateResultAsEngineAsync(factory, matchedShadow.Run.RunId);
+        Assert.Equal("ready", rollout.GetProfiles().Single(item => item.Profile == "GateResult").State);
+
+        var member = SeedMember(factory, "CODE-GR-SWITCH-RETRY", "src/gr-switch-retry.cs",
+            settleReview: false);
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.Escalated, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path prevents escalation.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+        var shadow = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.True(shadow.Shadow);
+        Assert.Null(shadow.MonolithReceipt);
+        AssertLane(member.Key, TaskStates.AutoReview);
+
+        rollout.Switch("GateResult", "engine", "operator", "matched canary");
+        File.Delete(blocker);
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var occurrences = GateResultOccurrences(orchestration, member.Key);
+        Assert.Equal(2, occurrences.Count);
+        var engine = Assert.Single(occurrences, item => !item.Shadow);
+        Assert.Equal(shadow.IdempotencyKey + ":engine", engine.IdempotencyKey);
+        Assert.Equal(engine.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+        Assert.Contains(orchestration.WaitingOccurrences(), item => item.Run.RunId == engine.Run.RunId);
+
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+        Assert.Equal(2, GateResultOccurrences(orchestration, member.Key).Count);
+        Assert.Equal(engine.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+    }
+
     private static OrchestrationRolloutStore ShadowGateResult(WebApplicationFactory<Program> factory)
     {
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();

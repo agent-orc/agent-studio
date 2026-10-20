@@ -2231,19 +2231,28 @@ public sealed partial class BatchGatePilotService
         if (mode == OrchestrationExecutionMode.Monolith) return false;
         var orchestration = _services?.GetService<MonolithOrchestrationStore>()
             ?? throw new InvalidOperationException("The orchestration authority is unavailable.");
+        // A retry after promotion must not inherit the shadow occurrence. The
+        // engine applier never claims shadow runs, so that would hold the card.
+        var prior = orchestration.GetByIdempotencyKey(outcome.OccurrenceKey);
+        var occurrenceKey = mode == OrchestrationExecutionMode.Engine && prior is not null
+            && orchestration.GetOccurrence(prior.RunId)?.Shadow == true
+                ? outcome.OccurrenceKey + ":engine" : outcome.OccurrenceKey;
+        if (occurrenceKey != outcome.OccurrenceKey && EngineDecisionPending(occurrenceKey)) return true;
         var source = _authority.GetTaskProjection(task.Key ?? task.Id).CurrentRunAttempt
             ?? throw new InvalidOperationException("The batch source attempt is unavailable.");
         // A repeated outcome of the same generation, such as a red gate that
         // ran again after its escalation failed, reuses the first occurrence:
         // its facts may differ in wording, and the generation decides once.
-        var occurrence = orchestration.GetByIdempotencyKey(outcome.OccurrenceKey)
+        var occurrence = orchestration.GetByIdempotencyKey(occurrenceKey)
             ?? orchestration.Create(task.ProjectName, task.Id,
                 AgentStudio.TaskServer.Contracts.OrchestrationStage.GateDispatch,
-                outcome.Payload(reviewAttemptId), outcome.OccurrenceKey,
+                outcome.Payload(reviewAttemptId), occurrenceKey,
                 TaskStates.AutoReview, source.AttemptId, source.LastFence,
                 source.AuthorityEpoch, profile: "GateResult",
                 shadow: mode == OrchestrationExecutionMode.Shadow);
         if (mode == OrchestrationExecutionMode.Shadow) return false;
+        if (orchestration.GetOccurrence(occurrence.RunId)?.Shadow == true)
+            throw new InvalidOperationException("The engine gate occurrence is shadow-only.");
         if (occurrence.Status is "pending" or "leased" or "applying")
             EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
         _scanner.InvalidateCache();
