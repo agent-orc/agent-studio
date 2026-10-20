@@ -1,28 +1,54 @@
 <div class="deploy-area" data-testid="project-deploy-area">
   <header class="deploy-area__head">
-    <div><p class="deploy-eyebrow">{{ projectName() }} / Project delivery</p><h1>Deploy</h1><p>Releases, environments and the path to Production.</p></div>
-    @if (snapshot()?.source === 'fixture') { <span class="deploy-source">Preview data · deployment API pending</span> }
+    <div><p class="deploy-eyebrow">{{ projectName() }} / Project delivery</p><h1>Deploy</h1><p>Environments, releases, and the path to Production.</p></div>
+    <button type="button" class="deploy-area__refresh" data-testid="deploy-refresh" (click)="refresh()">Refresh</button>
   </header>
   <nav class="deploy-tabs" aria-label="Deploy views">
     <button type="button" data-testid="deploy-tab-overview" [attr.aria-current]="view() === 'overview' ? 'page' : null" (click)="show('overview')">Overview</button>
     <button type="button" data-testid="deploy-tab-releases" [attr.aria-current]="view() === 'releases' ? 'page' : null" (click)="show('releases')">Releases</button>
     <button type="button" data-testid="deploy-tab-pipeline" [attr.aria-current]="view() === 'pipeline' ? 'page' : null" (click)="show('pipeline')">Pipeline</button>
+    <button type="button" data-testid="deploy-tab-history" [attr.aria-current]="view() === 'history' ? 'page' : null" (click)="show('history')">History</button>
     <button type="button" data-testid="deploy-tab-steps" [attr.aria-current]="view() === 'steps' ? 'page' : null" (click)="show('steps')">Run steps</button>
     <button type="button" disabled title="Planned for P2">Variables · P2</button>
     <button type="button" disabled title="Planned for P2">Runbooks · P2</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
-  @if (snapshot(); as data) {
-    @switch (view()) {
-      @case ('overview') { <app-project-deploy-overview [snapshot]="data" (openTools)="show('tools')" (openReleases)="show('releases')" /> }
-      @case ('releases') { <app-project-deploy-releases [snapshot]="data" /> }
-      @case ('pipeline') { <app-project-deploy-pipeline [snapshot]="data" /> }
-      @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
-      @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
-      @case ('tools') {
-        <section class="deploy-section"><button type="button" (click)="show('overview')">Back to overview</button><h2>Deployment tools and history</h2><p class="deploy-muted">Existing deployment commands and history remain available here.</p></section>
-        <app-project-deployment-panel [projectName]="projectName()" />
-      }
-    }
+  @if (notices().length) {
+    <div class="deploy-area__notices" role="status" data-testid="deploy-source-notices">
+      @for (notice of notices(); track notice) { <p>{{ notice }}</p> }
+    </div>
   }
+  <div class="deploy-area__body" [class.deploy-area__body--drawer]="selectedRun()">
+    <div class="deploy-area__main">
+      @switch (view()) {
+        @case ('overview') {
+          <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
+            (openRun)="openRun($event)" (openTools)="show('tools')" />
+          @defer { <app-project-deploy-history [panel]="deploymentPanel()" [runs]="runs()" [environments]="environmentOptions()"
+            [now]="now()" [selectedRunId]="selectedRunId()" (openRun)="openRun($event)" /> }
+          @placeholder { <p>Loading deploy history…</p> }
+          <p class="deploy-area__tools-link">Deploy commands and the AGT-3176 promotion and rollback controls live in the
+            <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">existing deployment tools</button>.</p>
+        }
+        @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()" /> }
+        @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading pipeline…</p> } }
+        @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
+        @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
+        @case ('history') {
+          @defer { <app-project-deploy-history [panel]="deploymentPanel()" [runs]="runs()" [environments]="environmentOptions()"
+            [now]="now()" [selectedRunId]="selectedRunId()" (openRun)="openRun($event)" /> }
+          @placeholder { <p>Loading deploy history…</p> }
+        }
+        @case ('tools') {
+          <section class="deploy-section"><button type="button" (click)="show('overview')">Back to overview</button><h2>Deployment tools and history</h2><p class="deploy-muted">Existing deployment commands and history remain available here.</p></section>
+          <app-project-deployment-panel [projectName]="projectName()" />
+        }
+      }
+    </div>
+    @if (selectedRun(); as run) {
+      @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
+        (act)="act($event)" (closeRequest)="closeRun()" /> }
+      @placeholder { <p>Loading run details…</p> }
+    }
+  </div>
 </div>
