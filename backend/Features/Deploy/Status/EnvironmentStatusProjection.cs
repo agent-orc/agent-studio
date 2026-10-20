@@ -75,11 +75,18 @@ public static class EnvironmentStatusProjection
             .LastOrDefault(release => release is not null && IsNewer(current, release));
     }
 
+    public static ReleasePosition Position(Release release, Release? current)
+        => current is null ? ReleasePosition.NoCurrent
+            : release.Id == current.Id ? ReleasePosition.Current
+            : IsNewer(release, current) ? ReleasePosition.Newer
+            : ReleasePosition.Older;
+
     public static bool SucceededIn(IEnumerable<Deployment> deployments, string releaseId, string environmentId)
         => deployments.Any(item => item.ReleaseId == releaseId && item.EnvironmentId == environmentId
             && item.State == DeploymentStates.Succeeded);
 
-    private static bool IsNewer(Release candidate, Release than)
+    /// <summary>Releases order by creation, then id.</summary>
+    public static bool IsNewer(Release candidate, Release than)
         => candidate.CreatedAtUtc > than.CreatedAtUtc
            || candidate.CreatedAtUtc == than.CreatedAtUtc && string.CompareOrdinal(candidate.Id, than.Id) > 0;
 }

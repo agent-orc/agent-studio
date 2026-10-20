@@ -4,8 +4,9 @@ namespace AgentStudio.Deploy;
 
 /// <summary>
 /// Files under <c>&lt;TaskRepository&gt;/deployments/projects/&lt;project&gt;/</c>:
-/// one write-once file per release, the run list, an append-only log per run
-/// and an append-only audit trail. Callers serialize access per project.
+/// one write-once file per release (the release and its environment
+/// declaration snapshot), the run list, an append-only log per run and an
+/// append-only audit trail. Callers serialize access per project.
 /// </summary>
 public sealed class DeployStore
 {
@@ -17,35 +18,43 @@ public sealed class DeployStore
     public DeployStore(IConfiguration configuration) => _configuration = configuration;
 
     public IReadOnlyList<Release> ReadReleases(string project)
+        => ReadReleaseRecords(project).Select(item => item.Release).ToArray();
+
+    public IReadOnlyList<ReleaseRecord> ReadReleaseRecords(string project)
     {
         var directory = Path.Combine(ProjectRoot(project), "releases");
         if (!Directory.Exists(directory)) return [];
         return Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
-            .Select(file => JsonSerializer.Deserialize<Release>(File.ReadAllText(file), _json)
-                ?? throw new JsonException($"Release file {Path.GetFileName(file)} is empty."))
-            .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
+            .Select(ReadRelease)
+            .OrderBy(item => item.Release.CreatedAtUtc).ThenBy(item => item.Release.Id, StringComparer.Ordinal)
             .ToArray();
     }
 
     /// <summary>
-    /// Writes a release once. A second write with the same id never replaces
-    /// the file; it returns the stored release and <c>false</c>.
+    /// Writes a release once: a flushed temporary file moved into place
+    /// without overwrite, so a crash leaves either no release or a complete
+    /// one. A second write with the same id never replaces the file; it
+    /// returns the stored release and <c>false</c>.
     /// </summary>
-    public (Release Stored, bool Created) AppendRelease(string project, Release release)
+    public (ReleaseRecord Stored, bool Created) AppendRelease(string project, ReleaseRecord release)
     {
         var directory = Path.Combine(ProjectRoot(project), "releases");
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, release.Id + ".json");
+        var path = Path.Combine(directory, release.Release.Id + ".json");
+        if (File.Exists(path)) return (ReadRelease(path), false);
+        var temporary = WriteFlushed(path, release);
         try
         {
-            using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            JsonSerializer.Serialize(stream, release, _json);
+            File.Move(temporary, path, overwrite: false);
             return (release, true);
         }
         catch (IOException) when (File.Exists(path))
         {
-            return (JsonSerializer.Deserialize<Release>(File.ReadAllText(path), _json)
-                ?? throw new JsonException($"Release file {release.Id}.json is empty."), false);
+            return (ReadRelease(path), false);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
         }
     }
 
@@ -62,9 +71,7 @@ public sealed class DeployStore
         var root = ProjectRoot(project);
         Directory.CreateDirectory(root);
         var path = Path.Combine(root, "deployments.json");
-        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(deployments, _json));
-        File.Move(temporary, path, true);
+        File.Move(WriteFlushed(path, deployments), path, true);
     }
 
     public void AppendLog(string project, IEnumerable<DeploymentLogEntry> entries)
@@ -105,6 +112,22 @@ public sealed class DeployStore
         return File.ReadLines(path).Where(line => line.Length > 0)
             .Select(line => JsonSerializer.Deserialize<DeployAuditEntry>(line, _line)!)
             .Reverse().Take(limit).ToArray();
+    }
+
+    private ReleaseRecord ReadRelease(string path)
+        => JsonSerializer.Deserialize<ReleaseRecord>(File.ReadAllText(path), _json) is { Release: not null } record
+            ? record with { Environments = record.Environments ?? [] }
+            : throw new JsonException($"Release file {Path.GetFileName(path)} has no release.");
+
+    private string WriteFlushed<T>(string path, T value)
+    {
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, value, _json);
+            stream.Flush(flushToDisk: true);
+        }
+        return temporary;
     }
 
     private string ProjectRoot(string project) => Path.Combine(_configuration["TaskRepository"]

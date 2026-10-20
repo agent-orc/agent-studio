@@ -263,7 +263,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
-    public void TimedPromotion_WaitsForInjectedClock()
+    public void TimedApproval_NeverQueuesProductionWithoutAPerson()
     {
         var (service, repo, watch) = Build(timedApproval: true);
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
@@ -282,10 +282,11 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.True(QueueGateRelease(service, _artifact, commit));
         var stage = service.Claim("stage-host")!;
         Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
-        _clock.Advance(TimeSpan.FromMinutes(9));
+        // BD-1: production always waits for a person, also under the timed rule.
+        _clock.Advance(TimeSpan.FromMinutes(30));
         Assert.Equal("pending", service.Read("demo")!.Promotions.Last().Status);
-        _clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.Equal("production-queued", service.Read("demo")!.Promotions.Last().Status);
+        Assert.Null(service.Claim("prod-host"));
+        Assert.True(service.Decide("demo", _artifact, true, "operator"));
         Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);
     }
 

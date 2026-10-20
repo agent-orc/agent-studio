@@ -27,39 +27,41 @@ public static class ProjectOperatorDashboardEndpoints
                 ? Results.Ok(value) : Results.NotFound());
 
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
-            ReleaseArtifactRequest request, DeployService deploy, IConfiguration configuration) =>
+            ReleaseArtifactRequest request, DeployService deploy) =>
             deploy.CreateRelease(projectName, request.Artifact, request.Commit,
-                DeployEndpoints.Actor(context, projectName, configuration).Id) is { Kind: DeployOutcomeKind.Ok } created
+                DeployEndpoints.Actor(context, projectName).Id) is { Kind: DeployOutcomeKind.Ok } created
                 ? Results.Accepted(value: created.Value)
                 : Results.BadRequest(new { error = "Artifact, commit, or stage and production declarations are invalid." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Production approval follows the BD-1 standard lifecycle: Owner or
-        // Maintainer only, on these AGT-3176 routes as on the deploy routes.
+        // Maintainer only, on these AGT-3176 routes as on the deploy routes,
+        // and the lifecycle decides each approval again.
         app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
-            HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments,
-            DeployService deploy, IConfiguration configuration) =>
-            DecidePromotion(context, projectName, request, approve: true, environments, deploy, configuration))
+            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
+            DecidePromotion(context, projectName, request, approve: true, deploy))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
-            HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments,
-            DeployService deploy, IConfiguration configuration) =>
-            DecidePromotion(context, projectName, request, approve: false, environments, deploy, configuration))
+            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
+            DecidePromotion(context, projectName, request, approve: false, deploy))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/rollback", (
-            HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments,
-            DeployService deploy, IConfiguration configuration) =>
+            HttpContext context, string projectName, string environmentId, DeployService deploy) =>
         {
-            var actor = DeployEndpoints.Actor(context, projectName, configuration);
+            var actor = DeployEndpoints.Actor(context, projectName);
             if (!actor.IsApprover && deploy.Environments(projectName)?.FirstOrDefault(item => item.Id == environmentId)
                     is { } environment && StandardLifecyclePolicy.RequiresApproval(environment))
                 return ApprovalRequired();
-            if (!environments.Rollback(projectName, environmentId, actor.Id))
-                return Results.Conflict(new { error = "No previous artifact is available." });
-            deploy.SyncAfterHostCall(projectName);
-            return Results.Accepted();
+            return deploy.RollbackEnvironment(projectName, environmentId, actor) switch
+            {
+                { Kind: DeployOutcomeKind.Ok } => Results.Accepted(),
+                { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "No previous artifact is available." }),
+                { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
+                    statusCode: StatusCodes.Status403Forbidden),
+                var refused => Results.Conflict(new { error = refused.Error }),
+            };
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
@@ -135,14 +137,18 @@ public static class ProjectOperatorDashboardEndpoints
     }
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,
-        bool approve, ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration)
+        bool approve, DeployService deploy)
     {
-        var actor = DeployEndpoints.Actor(context, project, configuration);
+        var actor = DeployEndpoints.Actor(context, project);
         if (!actor.IsApprover) return ApprovalRequired();
-        if (!environments.Decide(project, request.Artifact, approve, actor.Id))
-            return Results.Conflict(new { error = "Promotion is not pending." });
-        deploy.SyncAfterHostCall(project);
-        return Results.Ok();
+        return deploy.DecidePromotion(project, request.Artifact, approve, actor) switch
+        {
+            { Kind: DeployOutcomeKind.Ok } => Results.Ok(),
+            { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "Promotion is not pending." }),
+            { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
+                statusCode: StatusCodes.Status403Forbidden),
+            var refused => Results.Conflict(new { error = refused.Error }),
+        };
     }
 
     private static IResult ApprovalRequired() => Results.Json(

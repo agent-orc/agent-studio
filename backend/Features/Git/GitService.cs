@@ -8211,6 +8211,26 @@ public class GitService
     }
 
     /// <summary>
+    /// BD-1: repository-relative paths of the files directly inside
+    /// <paramref name="directory"/> at <paramref name="sha"/>. A release reads
+    /// its environment declarations this way, at the release commit. Empty
+    /// when the directory does not exist there; null when the commit cannot be
+    /// read.
+    /// </summary>
+    public IReadOnlyList<string>? ListFilesAtCommit(string repoRoot, string sha, string directory)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(sha) || !IsLikelyShaOrRef(sha)
+            || sha.StartsWith('-') || string.IsNullOrWhiteSpace(directory)) return null;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return null;
+        var (output, _, code) = RunGitArgs(root, "ls-tree", "--name-only", sha, RevisionsOnly,
+            directory.Replace('\\', '/').TrimEnd('/') + "/");
+        return code == 0
+            ? output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : null;
+    }
+
+    /// <summary>
     /// Reads one tracked file from the first parent of a validated commit. The
     /// Dossier maintenance gate uses this as the immutable baseline for proving
     /// that a delivery only appended inside its bounded implementation log.

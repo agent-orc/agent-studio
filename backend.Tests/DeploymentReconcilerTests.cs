@@ -178,11 +178,58 @@ public sealed class DeploymentReconcilerTests
         Assert.Equal(DeploymentStates.Succeeded, run.Steps[0].State);
     }
 
+    [Fact]
+    public void PromotionRun_TakesItsDeployStepFromTheReleaseSnapshot()
+    {
+        var promotion = new EnvironmentPromotion(Artifact, "stage", "production", T0.AddMinutes(2), "pending",
+            ExpiresAt: T0.AddHours(24));
+        var staticProduction = new ReleaseRecord(R1, [Declaration("stage", "container"), Declaration("production", "static")]);
+        var run = Assert.Single(DeploymentReconciler.Reconcile(new([Staging, Production], [staticProduction], [], [],
+            [promotion])).Deployments);
+        Assert.Equal(DeployStepNames.PublishStatic, run.DeployStep);
+    }
+
+    [Fact]
+    public void EachReclaimByARestartedHost_IsLogged()
+    {
+        var claimed = Job("job-1", "stage", "claimed", T0) with { ClaimedAt = T0.AddMinutes(1), Claims = 1 };
+        var first = Reconcile([], [claimed]);
+        Assert.Equal(1, Assert.Single(first.Deployments).HostClaims);
+
+        var reclaimed = claimed with { ClaimedAt = T0.AddMinutes(7), Claims = 2 };
+        var second = Reconcile(first.Deployments, [reclaimed]);
+        var run = Assert.Single(second.Deployments);
+        Assert.Equal((DeploymentStates.Running, T0.AddMinutes(1), 2), (run.State, run.StartedAtUtc, run.HostClaims));
+        var line = Assert.Single(second.Log);
+        Assert.Equal((T0.AddMinutes(7), DeployStepNames.StartContainer), (line.AtUtc, line.Step));
+        Assert.Contains("claimed the job again", line.Message);
+        Assert.Equal(("deployment-reclaimed", "stage-host"), (Assert.Single(second.Audit).Action, second.Audit[0].Actor));
+        Assert.False(Reconcile(second.Deployments, [reclaimed]).Changed);
+    }
+
+    [Fact]
+    public void LostHost_FailsTheRunWithTheReason()
+    {
+        var claimed = Job("job-1", "stage", "claimed", T0) with { ClaimedAt = T0.AddMinutes(1), Claims = 1 };
+        var running = Reconcile([], [claimed]).Deployments;
+        var lost = claimed with { Status = "failed", FinishedAt = T0.AddMinutes(16), Evidence = DeployEvidence.HostLost };
+        var result = Reconcile(running, [lost]);
+        var run = Assert.Single(result.Deployments);
+        Assert.Equal((DeploymentStates.Failed, T0.AddMinutes(16)), (run.State, run.FinishedAtUtc));
+        Assert.Equal((DeploymentStates.Failed, DeploymentStepStates.Skipped), (run.Steps[0].State, run.Steps[1].State));
+        Assert.Contains(result.Log, item => item.Message.Contains("stopped reporting") && item.Message.Contains("host-lost"));
+        Assert.Contains("host-lost", Assert.Single(result.Audit).Detail);
+    }
+
     private static ReconcileResult Reconcile(IReadOnlyList<DeploymentRecord> runs, IReadOnlyList<DeployJob> jobs,
         IReadOnlyList<EnvironmentPromotion>? promotions = null)
         => DeploymentReconciler.Reconcile(new([Staging, Production],
-            new Dictionary<string, string> { ["stage"] = DeployStepNames.StartContainer, ["production"] = DeployStepNames.StartContainer },
-            [R1], runs, jobs, promotions ?? []));
+            [new ReleaseRecord(R1, [Declaration("stage", "container"), Declaration("production", "container")])],
+            runs, jobs, promotions ?? []));
+
+    private static EnvironmentDeclaration Declaration(string id, string template)
+        => new(id, id, id == "stage" ? "stage" : "production", id + "-host", "https://example", template,
+            template == "static" ? "/srv/site" : "8081", "https://example/health", "person", [], 8080);
 
     private static DeployJob Job(string id, string environmentId, string status, DateTime createdAt)
         => new(id, "demo", environmentId, environmentId == "stage" ? "stage-host" : "prod-host", Artifact,

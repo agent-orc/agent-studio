@@ -24,6 +24,8 @@ public sealed record DeploymentRecord
     public string? CancelledBy { get; init; }
     public string? JobId { get; init; }
     public string? HostId { get; init; }
+    /// <summary>Claims of the job seen so far; a higher count on the job is a reclaim.</summary>
+    public int HostClaims { get; init; }
     /// <summary>Stage-healthy time of the AGT-3176 promotion that asked for this approval.</summary>
     public DateTime? PromotionStageHealthyAtUtc { get; init; }
     public string? Evidence { get; init; }
@@ -53,6 +55,10 @@ public static class DeployEvidence
     public const string HealthOk = "health-ok";
     public const string HealthFailed = "health-http-failed";
     public const string DeployFailed = "deploy-step-failed";
+    /// <summary>The claim expired without report or reclaim.</summary>
+    public const string HostLost = "host-lost";
+    /// <summary>A person aborted the run while the host ran it.</summary>
+    public const string Aborted = "deploy-aborted";
 }
 
 public static class DeployIds

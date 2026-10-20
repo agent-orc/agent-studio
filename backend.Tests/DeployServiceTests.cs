@@ -62,10 +62,13 @@ public sealed class DeployServiceTests : IDisposable
         // other content nor by the deploys that follow.
         var file = Directory.GetFiles(Path.Combine(_root, "workspace", "deployments", "projects", "demo", "releases")).Single();
         var bytes = File.ReadAllBytes(file);
-        var (stored, created) = store.AppendRelease("demo", release with { Version = "tampered", CardKeys = ["X-1"] });
+        var (stored, created) = store.AppendRelease("demo",
+            new ReleaseRecord(release with { Version = "tampered", CardKeys = ["X-1"] }, []));
         Assert.False(created);
-        Assert.Equal(release.Version, stored.Version);
-        Assert.Equal(release.CardKeys, stored.CardKeys);
+        Assert.Equal(release.Version, stored.Release.Version);
+        Assert.Equal(release.CardKeys, stored.Release.CardKeys);
+        Assert.Equal(["stage", "production"], stored.Environments.Select(item => item.Id));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(file)!, "*.tmp"));
         DeployThroughProduction(deploy, environments, release, Owner);
         Assert.Equal(bytes, File.ReadAllBytes(file));
         var reread = Assert.Single(deploy.Releases("demo")!);
@@ -199,7 +202,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void Cancel_StopsQueuedWorkBeforeAHostClaimsIt()
+    public void Cancel_StopsQueuedWork_AndAbortsWorkTheHostRuns()
     {
         var (deploy, environments, _) = Build();
         var release = CreateRelease(deploy, Artifact('a'), Head());
@@ -212,11 +215,21 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("cancelled", environments.Read("demo")!.Promotions.Single().Status);
         Assert.Equal(DeployOutcomeKind.Conflict, deploy.Cancel("demo", staging.Id, Operator).Kind);
 
-        // The cancelled release can start again.
+        // The cancelled release can start again. Once a host claims it, a
+        // cancel aborts the run and revokes the host's lease.
         Assert.Equal(release.Id, CreateRelease(deploy, Artifact('a'), release.CommitSha).Id);
-        Assert.Equal("stage", environments.Claim("stage-host")!.EnvironmentId);
-        Assert.Equal(DeployOutcomeKind.Conflict,
-            deploy.Cancel("demo", deploy.Deployments("demo", "stage")!.First().Id, Operator).Kind);
+        var job = environments.Claim("stage-host")!;
+        Assert.Equal("stage", job.EnvironmentId);
+        var running = deploy.Deployments("demo", "stage")!.First();
+        Assert.Equal(DeploymentStates.Running, running.State);
+        var aborted = deploy.Cancel("demo", running.Id, Operator);
+        Assert.Equal(DeployOutcomeKind.Ok, aborted.Kind);
+        Assert.Equal(DeploymentStates.Cancelled, aborted.Value!.State);
+        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        Assert.Contains(deploy.Log("demo", running.Id, null)!.Lines,
+            line => line.Message == "Aborted by operator while deploy host stage-host was running it.");
+        Assert.Equal("deployment-aborted", deploy.Audit("demo")![0].Action);
+        Assert.Equal(EnvironmentHealth.Unhealthy, deploy.Status("demo")![0].Health);
     }
 
     [Fact]
@@ -243,6 +256,206 @@ public sealed class DeployServiceTests : IDisposable
                 ("deployment-cancelled", "operator"),
             ],
             actions);
+    }
+
+    [Fact]
+    public void TwoReleasesWaitingForProduction_ApprovingTheNewer_SupersedesTheOlder()
+    {
+        var (deploy, environments, _) = Build();
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!;
+        Assert.Equal([r2.Id, r1.Id], waiting.Select(item => item.ReleaseId));
+        Assert.All(waiting, item => Assert.Equal(DeploymentStates.AwaitingApproval, item.State));
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting[0].Id, Owner).Kind);
+        var older = deploy.DeploymentById("demo", waiting[1].Id)!;
+        Assert.Equal(DeploymentStates.Cancelled, older.State);
+        Assert.Contains(deploy.Log("demo", older.Id, null)!.Lines,
+            line => line.Message == $"Superseded by release {r2.Version} (deploy) queued by owner.");
+        Assert.Contains(environments.Read("demo")!.Promotions, item => item.Artifact == Artifact('a') && item.Status == "rejected");
+
+        // Neither the deploy route nor the AGT-3176 promotion route brings the older release back.
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.Approve("demo", older.Id, Owner).Kind);
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.DecidePromotion("demo", Artifact('a'), true, Owner).Kind);
+        var queued = environments.Claim("prod-host")!;
+        Assert.Equal(Artifact('b'), queued.Artifact);
+        Assert.True(environments.Report("demo", queued.Id, new(queued.LeaseToken!, true, "health-ok")));
+        var backwards = deploy.RequestDeployment("demo", r1.Id, new("production", Approve: true), Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, backwards.Kind);
+        Assert.Contains("Use rollback", backwards.Error);
+        Assert.Equal(r2.Id, deploy.Status("demo")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
+        Assert.Null(environments.Claim("prod-host"));
+    }
+
+    [Fact]
+    public void TwoReleasesWaitingForProduction_ApprovingTheOlder_HoldsTheNewerUntilItFinished()
+    {
+        var (deploy, environments, _) = Build();
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.ToDictionary(item => item.ReleaseId, item => item.Id);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting[r1.Id], Owner).Kind);
+        Assert.Equal(DeploymentStates.AwaitingApproval, deploy.DeploymentById("demo", waiting[r2.Id])!.State);
+        var refused = deploy.Approve("demo", waiting[r2.Id], Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("Wait until", refused.Error);
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.DecidePromotion("demo", Artifact('b'), true, Owner).Kind);
+
+        Report(deploy, environments, "prod-host", healthy: true);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.DecidePromotion("demo", Artifact('b'), true, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: true);
+        var production = deploy.Status("demo")!.Single(item => item.Environment.Id == "production");
+        Assert.Equal(r2.Id, production.CurrentRelease?.Id);
+        Assert.Equal([DeploymentStates.Succeeded, DeploymentStates.Succeeded],
+            deploy.Deployments("demo", "production")!.Select(item => item.State));
+    }
+
+    [Fact]
+    public void LostHost_FailsTheRunAfterItsClaimExpires_AndLogsEachReclaim()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var first = environments.Claim("stage-host")!;
+        deploy.SyncAfterHostCall("demo");
+        var run = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(DeploymentStates.Running, run.State);
+
+        // Within the lease the host gets no second job; after it, the
+        // restarted host claims its own job again with a new lease.
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.Null(environments.Claim("stage-host"));
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        var second = environments.Claim("stage-host")!;
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal((first.Id, 2), (second.Id, second.Claims));
+        Assert.False(environments.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        Assert.Contains(deploy.Log("demo", run.Id, null)!.Lines,
+            line => line.Message == "Deploy host stage-host claimed the job again after its lease expired (claim 2).");
+        Assert.Contains(deploy.Audit("demo")!, item => item.Action == "deployment-reclaimed");
+
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter);
+        run = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(DeploymentStates.Failed, run.State);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, run.FinishedAtUtc);
+        Assert.Contains(deploy.Log("demo", run.Id, null)!.Lines, line => line.Message.Contains("host-lost"));
+        Assert.Equal(EnvironmentHealth.Unhealthy, deploy.Status("demo")![0].Health);
+        Assert.False(environments.Report("demo", second.Id, new(second.LeaseToken!, true, "health-ok")));
+        Assert.Null(environments.Claim("stage-host"));
+        Assert.Equal("failed", environments.Read("demo")!.Promotions.Single().Status);
+
+        // The environment is free again: the release can start over.
+        Assert.Equal(release.Id, CreateRelease(deploy, Artifact('a'), release.CommitSha).Id);
+        Assert.NotEqual(first.Id, environments.Claim("stage-host")!.Id);
+    }
+
+    [Fact]
+    public void FailedDeploy_WithANewerJobQueued_GetsNoAutomaticRollbackBehindIt()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        CreateRelease(deploy, Artifact('b'), Commit("second"));
+        var r3 = CreateRelease(deploy, Artifact('c'), Commit("third"));
+
+        Report(deploy, environments, "stage-host", healthy: false);
+        var next = environments.Claim("stage-host")!;
+        Assert.Equal((Artifact('c'), false), (next.Artifact, next.IsRollback));
+        Assert.True(environments.Report("demo", next.Id, new(next.LeaseToken!, true, "health-ok")));
+        Assert.Null(environments.Claim("stage-host"));
+        Assert.Equal(r3.Id, deploy.Status("demo")![0].CurrentRelease?.Id);
+    }
+
+    [Fact]
+    public void ReportAfterTheLease_IsAcceptedWhileTheClaimStands()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        var job = environments.Claim("stage-host")!;
+        _clock.Advance(TimeSpan.FromMinutes(8));
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal(DeploymentStates.Succeeded, deploy.Deployments("demo", "stage")!.Single().State);
+    }
+
+    [Fact]
+    public void RunningProductionDeployment_IsAbortedOnlyByAnApprover()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+
+        // Closing the pending promotion is an approval decision.
+        Assert.Equal(DeployOutcomeKind.Forbidden, deploy.Cancel("demo", waiting.Id, Operator).Kind);
+        Assert.Equal("pending", environments.Read("demo")!.Promotions.Single().Status);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        var job = environments.Claim("prod-host")!;
+        deploy.SyncAfterHostCall("demo");
+
+        var refused = deploy.Cancel("demo", waiting.Id, Operator);
+        Assert.Equal(DeployOutcomeKind.Forbidden, refused.Kind);
+        Assert.Contains("Aborting a running Production deployment", refused.Error);
+        var aborted = deploy.Cancel("demo", waiting.Id, Owner);
+        Assert.Equal(DeploymentStates.Cancelled, aborted.Value!.State);
+        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        Assert.Equal("cancelled", environments.Read("demo")!.Promotions.Single().Status);
+        Assert.Null(environments.Claim("prod-host"));
+    }
+
+    [Fact]
+    public void ChangedDeclarationAfterReleaseCreation_DoesNotChangeWhatTheReleaseDeploys()
+    {
+        var (deploy, environments, _) = Build();
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        // The working tree changes production after the release: a new host
+        // and port, first uncommitted, then committed.
+        WriteProduction(host: "new-host", destination: "9090");
+        Report(deploy, environments, "stage-host", healthy: true);
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("moved-production"));
+        Assert.NotEqual(r1.ProcessVersion, r2.ProcessVersion);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo",
+            deploy.Deployments("demo", "production")!.Single(item => item.ReleaseId == r1.Id).Id, Owner).Kind);
+        Assert.Null(environments.Claim("new-host"));
+        var old = environments.Claim("prod-host")!;
+        Assert.Equal((Artifact('a'), "8082"), (old.Artifact, old.Destination));
+        Assert.True(environments.Report("demo", old.Id, new(old.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+
+        // The newer release deploys its own snapshot.
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", deploy.Deployments("demo", "production")!
+            .Single(item => item.ReleaseId == r2.Id && item.State == DeploymentStates.AwaitingApproval).Id, Owner).Kind);
+        var moved = environments.Claim("new-host")!;
+        Assert.Equal((Artifact('b'), "9090"), (moved.Artifact, moved.Destination));
+        Assert.True(environments.Report("demo", moved.Id, new(moved.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+
+        // A rollback repeats r1's snapshot, not the current declaration.
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Rollback("demo", "production", approve: true, Owner).Kind);
+        var rollback = environments.Claim("prod-host")!;
+        Assert.Equal((Artifact('a'), "8082", true), (rollback.Artifact, rollback.Destination, rollback.IsRollback));
+    }
+
+    [Fact]
+    public void Approve_AfterTheDeclarationWasRemoved_IsAConflict()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+        File.Delete(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"));
+
+        var refused = deploy.Approve("demo", waiting.Id, Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("no longer declared", refused.Error);
+        Assert.Null(environments.Claim("prod-host"));
     }
 
     [Fact]
@@ -331,6 +544,26 @@ public sealed class DeployServiceTests : IDisposable
         using var log = JsonDocument.Parse(await client.GetStringAsync(
             run.GetProperty("steps")[0].GetProperty("logRef").GetString()!));
         Assert.Contains("queued for Stage", log.RootElement.GetProperty("lines")[0].GetProperty("message").GetString());
+
+        // Production approval needs a signed-in Owner or Maintainer, also on
+        // the local profile: a caller without a session, such as a coding
+        // agent, is refused on the deploy and the AGT-3176 routes.
+        var hosts = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+        var service = factory.Services.GetRequiredService<DeployService>();
+        var stage = hosts.Claim("stage-host")!;
+        Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        service.SyncAfterHostCall("demo");
+        var production = Assert.Single(service.Deployments("demo", "production")!);
+        using var agent = factory.CreateClient();
+        agent.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var refused = await agent.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        using var refusedPromotion = await agent.PostAsJsonAsync("/api/projects/demo/environments/promotions/approve",
+            new PromotionDecisionRequest(Artifact('a')));
+        Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
+        using var approved = await client.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
+        Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+        Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
     }
 
     private void DeployThroughProduction(DeployService deploy, ProjectEnvironmentService environments,
@@ -420,12 +653,7 @@ public sealed class DeployServiceTests : IDisposable
             address = "https://stage.example", template = "container", destination = "8081",
             healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
         }));
-        File.WriteAllText(Path.Combine(declarations, "production.json"), JsonSerializer.Serialize(new
-        {
-            id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
-            address = "https://example", template = "container", destination = "8082",
-            healthUrl = "https://example/health", approval = "person", secretRefs = new[] { "DATABASE_URL" },
-        }));
+        WriteProduction(host: "prod-host", destination: "8082");
         Commit("initial");
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -444,6 +672,15 @@ public sealed class DeployServiceTests : IDisposable
         return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance),
             environments, store);
     }
+
+    private void WriteProduction(string host, string destination)
+        => File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "production", name = "Production", kind = "production", targetHostId = host,
+                address = "https://example", template = "container", destination,
+                healthUrl = "https://example/health", approval = "person", secretRefs = new[] { "DATABASE_URL" },
+            }));
 
     private string Head() => Git("rev-parse", "HEAD").Trim();
 

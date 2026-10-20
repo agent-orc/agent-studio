@@ -6,6 +6,14 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Deploy;
 
+/// <summary>
+/// The stored release: the contract record plus the environment declarations
+/// as committed at the release commit. Every deploy of the release runs with
+/// these declarations, so a later change in the working tree cannot alter
+/// what the release deploys.
+/// </summary>
+public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments);
+
 /// <summary>Release identity, numbering and snapshot versions. Pure.</summary>
 public static class ReleaseSnapshot
 {

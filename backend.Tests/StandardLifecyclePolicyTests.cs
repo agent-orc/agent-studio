@@ -57,6 +57,7 @@ public sealed class StandardLifecyclePolicyTests
             previousSucceeded: true));
         Assert.Equal(LifecycleOutcome.Reject, decision.Outcome);
         Assert.Contains("Owner or Maintainer", decision.Reason);
+        Assert.True(decision.Forbidden);
     }
 
     [Theory]
@@ -66,39 +67,61 @@ public sealed class StandardLifecyclePolicyTests
     public void ActiveRunOfSameRelease_IsRejected(DeployIntent intent)
     {
         var decision = StandardLifecyclePolicy.Decide(Request(intent, Staging, Owner, false,
-            previousSucceeded: true, succeededHere: true, activeForRelease: true, activeInEnvironment: true));
+            position: PositionFor(intent), rollbackTarget: true, activeForRelease: true, onHost: true));
         Assert.Equal(LifecycleOutcome.Reject, decision.Outcome);
         Assert.Contains("already", decision.Reason);
     }
 
     [Theory]
+    [InlineData(DeployIntent.Deploy)]
     [InlineData(DeployIntent.Redeploy)]
     [InlineData(DeployIntent.Rollback)]
-    public void RedeployAndRollback_WaitForActiveRunInEnvironment(DeployIntent intent)
+    public void EveryIntent_WaitsForTheRunOnTheHost(DeployIntent intent)
     {
         var decision = StandardLifecyclePolicy.Decide(Request(intent, Production, Owner, true,
-            succeededHere: true, activeInEnvironment: true));
+            position: PositionFor(intent), rollbackTarget: true, onHost: true));
         Assert.Equal(LifecycleOutcome.Reject, decision.Outcome);
         Assert.Contains("Wait until", decision.Reason);
+        Assert.False(decision.Forbidden);
+    }
+
+    [Theory]
+    // intent, position, rollback target -> allowed, reason fragment
+    [InlineData(DeployIntent.Deploy, ReleasePosition.NoCurrent, false, true, null)]
+    [InlineData(DeployIntent.Deploy, ReleasePosition.Newer, false, true, null)]
+    [InlineData(DeployIntent.Deploy, ReleasePosition.Current, false, false, "Use redeploy")]
+    [InlineData(DeployIntent.Deploy, ReleasePosition.Older, true, false, "Use rollback")]
+    [InlineData(DeployIntent.Redeploy, ReleasePosition.Current, false, true, null)]
+    [InlineData(DeployIntent.Redeploy, ReleasePosition.Older, false, false, "current release")]
+    [InlineData(DeployIntent.Redeploy, ReleasePosition.Newer, false, false, "current release")]
+    [InlineData(DeployIntent.Rollback, ReleasePosition.Older, true, true, null)]
+    [InlineData(DeployIntent.Rollback, ReleasePosition.Older, false, false, "before the current one")]
+    [InlineData(DeployIntent.Rollback, ReleasePosition.Newer, false, false, "before the current one")]
+    [InlineData(DeployIntent.Rollback, ReleasePosition.Current, false, false, "before the current one")]
+    public void OnlyARollbackMovesBack(DeployIntent intent, ReleasePosition position, bool rollbackTarget,
+        bool allowed, string? reason)
+    {
+        var decision = StandardLifecyclePolicy.Decide(Request(intent, Staging, Owner, false,
+            position: position, rollbackTarget: rollbackTarget));
+        Assert.Equal(allowed ? LifecycleOutcome.Queue : LifecycleOutcome.Reject, decision.Outcome);
+        if (reason is not null) Assert.Contains(reason, decision.Reason);
     }
 
     [Theory]
     [InlineData(DeployIntent.Redeploy)]
     [InlineData(DeployIntent.Rollback)]
-    public void RedeployAndRollback_RequireAnEarlierSuccessInTheEnvironment(DeployIntent intent)
+    public void RedeployAndRollback_InProduction_DoNotNeedStagingAgain_ButNeedApproval(DeployIntent intent)
     {
-        var refused = StandardLifecyclePolicy.Decide(Request(intent, Staging, Owner, false, succeededHere: false));
-        Assert.Equal(LifecycleOutcome.Reject, refused.Outcome);
-
-        // A production rollback does not need the release in staging again,
-        // but it still needs approval.
         var waiting = StandardLifecyclePolicy.Decide(Request(intent, Production, Operator, false,
-            previousSucceeded: false, succeededHere: true));
+            previousSucceeded: false, position: PositionFor(intent), rollbackTarget: true));
         Assert.Equal(LifecycleOutcome.AwaitApproval, waiting.Outcome);
         var approved = StandardLifecyclePolicy.Decide(Request(intent, Production, Owner, true,
-            previousSucceeded: false, succeededHere: true));
+            previousSucceeded: false, position: PositionFor(intent), rollbackTarget: true));
         Assert.Equal(LifecycleOutcome.Queue, approved.Outcome);
         Assert.Equal("owner", approved.ApprovedBy);
+        var refused = StandardLifecyclePolicy.Decide(Request(intent, Production, Operator, true,
+            previousSucceeded: false, position: PositionFor(intent), rollbackTarget: true));
+        Assert.True(refused.Forbidden);
     }
 
     [Theory]
@@ -114,14 +137,39 @@ public sealed class StandardLifecyclePolicyTests
     }
 
     [Theory]
-    [InlineData(DeploymentStates.Queued, true)]
-    [InlineData(DeploymentStates.AwaitingApproval, true)]
-    [InlineData(DeploymentStates.Running, false)]
-    [InlineData(DeploymentStates.Succeeded, false)]
-    [InlineData(DeploymentStates.Failed, false)]
-    [InlineData(DeploymentStates.Cancelled, false)]
-    public void Cancel_OnlyBeforeAHostClaims(string state, bool allowed)
-        => Assert.Equal(allowed, StandardLifecyclePolicy.CancelRejection(state) is null);
+    // queued intent, waiting intent, waiting release newer -> superseded
+    [InlineData(DeployIntent.Deploy, DeployIntent.Deploy, false, true)]
+    [InlineData(DeployIntent.Deploy, DeployIntent.Deploy, true, false)]
+    [InlineData(DeployIntent.Deploy, DeployIntent.Redeploy, false, true)]
+    [InlineData(DeployIntent.Deploy, DeployIntent.Rollback, false, true)]
+    [InlineData(DeployIntent.Rollback, DeployIntent.Deploy, true, false)]
+    [InlineData(DeployIntent.Rollback, DeployIntent.Redeploy, true, true)]
+    [InlineData(DeployIntent.Redeploy, DeployIntent.Deploy, true, false)]
+    [InlineData(DeployIntent.Redeploy, DeployIntent.Rollback, false, false)]
+    public void QueuedRun_SupersedesTheWaitingRunsItInvalidates(DeployIntent queued, DeployIntent waiting,
+        bool waitingNewer, bool superseded)
+        => Assert.Equal(superseded, StandardLifecyclePolicy.Supersedes(queued, waiting, waitingNewer));
+
+    [Theory]
+    // state, environment, approver, closes promotion -> rejection fragment
+    [InlineData(DeploymentStates.Queued, "production", false, false, null)]
+    [InlineData(DeploymentStates.AwaitingApproval, "production", false, false, null)]
+    [InlineData(DeploymentStates.AwaitingApproval, "production", false, true, "Closing the approval")]
+    [InlineData(DeploymentStates.AwaitingApproval, "production", true, true, null)]
+    [InlineData(DeploymentStates.Running, "stage", false, false, null)]
+    [InlineData(DeploymentStates.Running, "production", false, false, "Aborting a running")]
+    [InlineData(DeploymentStates.Running, "production", true, false, null)]
+    [InlineData(DeploymentStates.Succeeded, "stage", true, false, "already finished")]
+    [InlineData(DeploymentStates.Failed, "stage", true, false, "already finished")]
+    [InlineData(DeploymentStates.Cancelled, "stage", true, false, "already finished")]
+    public void Cancel_BeforeTheHostClaims_AbortWhileItRuns(string state, string environmentId, bool approver,
+        bool closesPromotion, string? reason)
+    {
+        var rejection = StandardLifecyclePolicy.CancelRejection(state, environmentId == "stage" ? Staging : Production,
+            approver ? Owner : Operator, closesPromotion);
+        if (reason is null) Assert.Null(rejection);
+        else Assert.Contains(reason, rejection);
+    }
 
     [Theory]
     [InlineData(StudioRoles.Owner, false, false, true)]
@@ -137,24 +185,30 @@ public sealed class StandardLifecyclePolicyTests
             Id = "user-1", Username = "user", DisplayName = "User", Role = role, PasswordHash = "",
             ProductionApprovalProjects = grant ? ["Demo"] : ["other"], Disabled = disabled,
         };
-        var actor = DeployApprovalAuthority.Resolve(user, "demo", localProfile: true);
+        var actor = DeployApprovalAuthority.Resolve(user, "demo");
         Assert.Equal("user-1", actor.Id);
         Assert.Equal(approver, actor.IsApprover);
     }
 
-    [Theory]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    public void ApprovalAuthority_WithoutSession_IsTheLocalOperatorOnlyInLocalProfile(bool local, bool approver)
+    [Fact]
+    public void ApprovalAuthority_WithoutSession_IsTheLocalOperatorAndNeverApproves()
     {
-        var actor = DeployApprovalAuthority.Resolve(null, "demo", local);
+        // A coding agent on the local API has no Studio session.
+        var actor = DeployApprovalAuthority.Resolve(null, "demo");
         Assert.Equal(DeployApprovalAuthority.LocalOperator, actor.Id);
-        Assert.Equal(approver, actor.IsApprover);
+        Assert.False(actor.IsApprover);
     }
 
     private static LifecycleRequest Request(DeployIntent intent, DeployEnvironment environment, DeployActor actor,
-        bool approveNow, bool previousSucceeded = true, bool succeededHere = false, bool activeForRelease = false,
-        bool activeInEnvironment = false)
-        => new(intent, environment, actor, approveNow, previousSucceeded, succeededHere, activeForRelease,
-            activeInEnvironment);
+        bool approveNow, bool previousSucceeded = true, ReleasePosition position = ReleasePosition.Newer,
+        bool rollbackTarget = false, bool activeForRelease = false, bool onHost = false)
+        => new(intent, environment, actor, approveNow, previousSucceeded, position, rollbackTarget, activeForRelease,
+            onHost);
+
+    private static ReleasePosition PositionFor(DeployIntent intent) => intent switch
+    {
+        DeployIntent.Redeploy => ReleasePosition.Current,
+        DeployIntent.Rollback => ReleasePosition.Older,
+        _ => ReleasePosition.Newer,
+    };
 }

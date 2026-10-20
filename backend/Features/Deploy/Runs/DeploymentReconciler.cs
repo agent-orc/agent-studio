@@ -2,8 +2,7 @@ namespace AgentStudio.Deploy;
 
 public sealed record ReconcileInput(
     IReadOnlyList<DeployEnvironment> Environments,
-    IReadOnlyDictionary<string, string> DeployStepByEnvironment,
-    IReadOnlyList<Release> Releases,
+    IReadOnlyList<ReleaseRecord> Releases,
     IReadOnlyList<DeploymentRecord> Deployments,
     IReadOnlyList<DeployJob> Jobs,
     IReadOnlyList<EnvironmentPromotion> Promotions);
@@ -20,7 +19,8 @@ public sealed record ReconcileResult(
 /// second pass over its own output yields no log or audit entries. Jobs that
 /// the queue starts on its own (gate staging, timed promotion, automatic
 /// rollback, the older promotion routes) are adopted here, so every path ends
-/// in a run with steps, log and audit.
+/// in a run with steps, log and audit. Each reclaim by a restarted host and
+/// each lost host is logged.
 /// </summary>
 public static class DeploymentReconciler
 {
@@ -33,7 +33,7 @@ public static class DeploymentReconciler
         var log = new List<DeploymentLogEntry>();
         var audit = new List<DeployAuditEntry>();
         var environments = input.Environments.ToDictionary(item => item.Id, StringComparer.Ordinal);
-        var releases = input.Releases.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var releases = input.Releases.ToDictionary(item => item.Release.Id, item => item.Release, StringComparer.Ordinal);
 
         AdoptJobs(input, runs, environments, log, audit);
         FollowJobs(input, runs, releases, environments, log, audit);
@@ -73,7 +73,7 @@ public static class DeploymentReconciler
         {
             if (!environments.TryGetValue(job.EnvironmentId, out var environment)) continue;
             // Jobs from before the release existed (pre-BD-1 history) stay unattributed.
-            var release = ReleaseForArtifact(input.Releases, job.Artifact, job.CreatedAt);
+            var release = ReleaseForArtifact(input.Releases.Select(item => item.Release), job.Artifact, job.CreatedAt);
             if (release is null) continue;
             var actor = job.RequestedBy ?? LifecycleActor;
             var waiting = job.IsRollback ? null : runs.LastOrDefault(item => item.EnvironmentId == environment.Id
@@ -106,7 +106,7 @@ public static class DeploymentReconciler
             {
                 Id = job.Id, ReleaseId = release.Id, EnvironmentId = environment.Id,
                 State = DeploymentStates.Queued, Trigger = trigger,
-                DeployStep = StepFor(input, environment.Id), NeedsApproval = needsApproval,
+                DeployStep = DeployStepNames.ForTemplate(job.Template), NeedsApproval = needsApproval,
                 RequestedBy = actor, ApprovedBy = needsApproval ? actor : null,
                 ApprovedAtUtc = needsApproval ? job.CreatedAt : null, JobId = job.Id, CreatedAtUtc = job.CreatedAt,
             };
@@ -129,8 +129,12 @@ public static class DeploymentReconciler
         foreach (var promotion in input.Promotions.Where(item => item.Status == "pending"))
         {
             if (!environments.TryGetValue(promotion.ProductionId, out var environment)) continue;
-            var release = ReleaseForArtifact(input.Releases, promotion.Artifact, promotion.StageHealthyAt);
-            if (release is null) continue;
+            var record = input.Releases.Where(item => item.Release.ArtifactDigests.Contains(promotion.Artifact, StringComparer.Ordinal)
+                    && item.Release.CreatedAtUtc <= promotion.StageHealthyAt)
+                .OrderBy(item => item.Release.CreatedAtUtc).ThenBy(item => item.Release.Id, StringComparer.Ordinal)
+                .LastOrDefault();
+            if (record is null) continue;
+            var release = record.Release;
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.
             if (runs.Any(item => item.EnvironmentId == environment.Id && item.ReleaseId == release.Id
@@ -140,7 +144,7 @@ public static class DeploymentReconciler
             {
                 Id = DeployIds.For($"{release.Id}|{environment.Id}|{promotion.StageHealthyAt.Ticks}"),
                 ReleaseId = release.Id, EnvironmentId = environment.Id, State = DeploymentStates.AwaitingApproval,
-                Trigger = DeploymentTriggers.Deploy, DeployStep = StepFor(input, environment.Id), NeedsApproval = true,
+                Trigger = DeploymentTriggers.Deploy, DeployStep = StepFor(record, environment.Id), NeedsApproval = true,
                 RequestedBy = LifecycleActor, PromotionStageHealthyAtUtc = promotion.StageHealthyAt,
                 CreatedAtUtc = promotion.StageHealthyAt,
             };
@@ -188,19 +192,32 @@ public static class DeploymentReconciler
             if (run.JobId is null || !jobs.TryGetValue(run.JobId, out var job)) continue;
             if (DeploymentStates.IsFinished(run.State)) continue;
             var state = StateForJob(job.Status);
-            if (state == run.State) continue;
             var version = releases.TryGetValue(run.ReleaseId, out var release) ? release.Version : run.ReleaseId;
             var environmentName = environments.TryGetValue(run.EnvironmentId, out var environment)
                 ? environment.Name : run.EnvironmentId;
-            var updated = run with { State = state };
+            var updated = run;
             if (state != DeploymentStates.Cancelled && run.StartedAtUtc is null && job.ClaimedAt is { } claimedAt)
             {
-                updated = updated with { StartedAtUtc = claimedAt, HostId = job.HostId };
+                updated = updated with { StartedAtUtc = claimedAt, HostId = job.HostId, HostClaims = job.Claims };
                 log.Add(new(run.Id, run.DeployStep, claimedAt, $"Deploy host {job.HostId} claimed the job."));
                 if (state == DeploymentStates.Running)
                     audit.Add(new(claimedAt, job.HostId, "deployment-started", run.ReleaseId, run.Id, run.EnvironmentId,
                         $"Release {version} started in {environmentName}."));
             }
+            else if (run.StartedAtUtc is not null && job.Claims > run.HostClaims && job.ClaimedAt is { } reclaimedAt)
+            {
+                updated = updated with { HostClaims = job.Claims };
+                var message = $"Deploy host {job.HostId} claimed the job again after its lease expired (claim {job.Claims}).";
+                log.Add(new(run.Id, run.DeployStep, reclaimedAt, message));
+                audit.Add(new(reclaimedAt, job.HostId, "deployment-reclaimed", run.ReleaseId, run.Id, run.EnvironmentId,
+                    $"Release {version} in {environmentName}: {message}"));
+            }
+            if (state == run.State)
+            {
+                if (!ReferenceEquals(updated, run)) runs[i] = updated;
+                continue;
+            }
+            updated = updated with { State = state };
             if (DeploymentStates.IsFinished(state))
             {
                 var at = job.FinishedAt ?? job.ClaimedAt ?? job.CreatedAt;
@@ -224,6 +241,11 @@ public static class DeploymentReconciler
                 log.Add(new(run.Id, run.DeployStep, at, "Deploy host completed the step."));
                 log.Add(new(run.Id, DeployStepNames.Health, at, $"Health check passed ({run.Evidence ?? DeployEvidence.HealthOk})."));
                 break;
+            case DeploymentStates.Failed when run.Evidence == DeployEvidence.HostLost:
+                log.Add(new(run.Id, run.DeployStep, at,
+                    $"Deploy host {run.HostId} stopped reporting and its claim expired ({DeployEvidence.HostLost})."));
+                log.Add(new(run.Id, DeployStepNames.Health, at, "Skipped because the deploy host was lost."));
+                break;
             case DeploymentStates.Failed when run.Evidence == DeployEvidence.HealthFailed:
                 log.Add(new(run.Id, run.DeployStep, at, "Deploy host completed the step."));
                 log.Add(new(run.Id, DeployStepNames.Health, at, $"Health check failed ({DeployEvidence.HealthFailed})."));
@@ -238,6 +260,7 @@ public static class DeploymentReconciler
         }
     }
 
-    private static string StepFor(ReconcileInput input, string environmentId)
-        => input.DeployStepByEnvironment.TryGetValue(environmentId, out var step) ? step : DeployStepNames.StartContainer;
+    private static string StepFor(ReleaseRecord release, string environmentId)
+        => release.Environments.FirstOrDefault(item => item.Id == environmentId) is { } declaration
+            ? DeployStepNames.ForTemplate(declaration.Template) : DeployStepNames.StartContainer;
 }

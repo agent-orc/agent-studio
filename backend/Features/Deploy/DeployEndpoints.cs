@@ -36,35 +36,35 @@ public static class DeployEndpoints
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
-            string releaseId, DeploymentRequest request, DeployService deploy, IConfiguration configuration) =>
-            Respond(deploy.RequestDeployment(projectName, releaseId, request, Actor(context, projectName, configuration)), accepted: true))
+            string releaseId, DeploymentRequest request, DeployService deploy) =>
+            Respond(deploy.RequestDeployment(projectName, releaseId, request, Actor(context, projectName)), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
-            string deploymentId, DeployService deploy, IConfiguration configuration) =>
-            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName, configuration))))
+            string deploymentId, DeployService deploy) =>
+            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/reject", (HttpContext context, string projectName,
-            string deploymentId, DeployService deploy, IConfiguration configuration) =>
-            Respond(deploy.Reject(projectName, deploymentId, Actor(context, projectName, configuration))))
+            string deploymentId, DeployService deploy) =>
+            Respond(deploy.Reject(projectName, deploymentId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/cancel", (HttpContext context, string projectName,
-            string deploymentId, DeployService deploy, IConfiguration configuration) =>
-            Respond(deploy.Cancel(projectName, deploymentId, Actor(context, projectName, configuration))))
+            string deploymentId, DeployService deploy) =>
+            Respond(deploy.Cancel(projectName, deploymentId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
-            string environmentId, EnvironmentActionRequest? request, DeployService deploy, IConfiguration configuration) =>
+            string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName, configuration)), accepted: true))
+                Actor(context, projectName)), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
-            string environmentId, EnvironmentActionRequest? request, DeployService deploy, IConfiguration configuration) =>
+            string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName, configuration)), accepted: true))
+                Actor(context, projectName)), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/deploy/matrix", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>
@@ -80,10 +80,10 @@ public static class DeployEndpoints
         });
     }
 
-    public static DeployActor Actor(HttpContext context, string project, IConfiguration configuration)
+    public static DeployActor Actor(HttpContext context, string project)
         => DeployApprovalAuthority.Resolve(
-            (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User,
-            project, SecurityProfiles.IsLocal(configuration));
+            DeployApprovalAuthority.SignedInUser(context, context.RequestServices.GetRequiredService<AccessSecurityStore>()),
+            project);
 
     private static IResult UnknownProject(string project)
         => Results.NotFound(new { error = $"Unknown project '{project}'" });
