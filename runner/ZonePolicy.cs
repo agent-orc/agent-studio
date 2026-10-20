@@ -14,9 +14,10 @@ namespace AgentRunner;
 /// model of the work and run zones on a Docker host. The policy file names
 /// destinations (control plane, Git hosts, package registries, model APIs,
 /// secret store) and zones with their bridge networks. A work zone has no
-/// inbound path and an egress allowlist; a run zone may leave the host but
-/// never reaches a control-plane or secret-store destination, and each tenant
-/// gets its own network. Installation-specific addresses come in as
+/// inbound path and an egress allowlist; a run zone can reach public egress
+/// but denies private, ZeroTier, control-plane and secret-store destinations.
+/// Each tenant gets its own network and audited private exceptions.
+/// Installation-specific addresses come in as
 /// <c>${NAME}</c> references, so the same file serves every host.
 /// </summary>
 public sealed record ZonePolicyDocument(
@@ -55,13 +56,18 @@ public sealed record ZoneDefinition(
     ZoneEgress Egress,
     ZoneProbes Verify);
 
-public sealed record ZoneNetwork(string Name, string Bridge, string Subnet, string? Tenant = null);
+public sealed record ZoneNetwork(string Name, string Bridge, string Subnet, string? Tenant = null,
+    IReadOnlyList<ZonePrivateAllowance>? PrivateAllow = null);
+
+/// <summary>An audited, tenant-scoped exception to the run zone's private egress deny.</summary>
+public sealed record ZonePrivateAllowance(string Cidr, string Reason);
 
 /// <param name="Default"><c>deny</c> for a work zone, <c>allow</c> for a run zone.</param>
 public sealed record ZoneEgress(
     string Default,
     IReadOnlyList<string>? Allow = null,
-    IReadOnlyList<string>? Deny = null);
+    IReadOnlyList<string>? Deny = null,
+    IReadOnlyList<string>? ZeroTierRanges = null);
 
 public sealed record ZoneProbes(
     IReadOnlyList<ZoneProbeTarget> Reachable,
@@ -71,7 +77,8 @@ public sealed record ZoneProbes(
 /// A probe names a destination (its first host and first port unless given)
 /// or a literal host and port.
 /// </summary>
-public sealed record ZoneProbeTarget(string? Destination = null, string? Host = null, int? Port = null);
+public sealed record ZoneProbeTarget(string? Destination = null, string? Host = null, int? Port = null,
+    bool RequireControl = true);
 
 /// <param name="ProbeImage">Pinned by digest, so every host probes with the same binary.</param>
 /// <param name="ControlNetwork">The non-zone Docker network the positive control of
@@ -123,12 +130,13 @@ public sealed record ResolvedZoneDestination(
 /// probe (so a DNS failure cannot pass as a blocked connection).</param>
 /// <param name="Unresolved">Why a blocked probe's host has no address. The
 /// probe then fails during verification instead of stopping the apply.</param>
-public sealed record ResolvedZoneProbe(string Expectation, string Host, string Address, int Port, string? Unresolved = null);
+public sealed record ResolvedZoneProbe(string Expectation, string Host, string Address, int Port,
+    string? Unresolved = null, bool RequireControl = true);
 
 /// <summary>
 /// A denied name that did not resolve at apply time. Its denial is missing
-/// from the rules; every other rule still loads, and the verification records
-/// the problem as a failed check.
+/// from the rules. A protected run-zone denial also suspends tenant private
+/// allowances, and verification records the problem as a failed check.
 /// </summary>
 public sealed record ZoneResolutionProblem(string Destination, string Detail);
 
@@ -138,7 +146,8 @@ public sealed record ResolvedZone(
     IReadOnlyList<ZoneNetwork> Networks,
     IReadOnlyList<ResolvedZoneDestination> Allowed,
     IReadOnlyList<ResolvedZoneDestination> Denied,
-    IReadOnlyList<ResolvedZoneProbe> Probes);
+    IReadOnlyList<ResolvedZoneProbe> Probes,
+    IReadOnlyList<string>? ZeroTierRanges = null);
 
 /// <param name="Upstreams">IPv4 addresses after expansion.</param>
 public sealed record ResolvedZoneResolver(IReadOnlyList<string> Upstreams, int SetTimeoutSeconds);
@@ -287,6 +296,16 @@ public static class ZonePolicyParser
                     errors.Add($"{label}: run network {Shown(network.Name)} must name its tenant");
                 else if (network.Tenant is { } tenant && !IsName(tenant))
                     errors.Add($"{label}: tenant {Shown(tenant)}: {NameRule}");
+                if (zone.Kind != ZoneKinds.Run && network.PrivateAllow is { Count: > 0 })
+                    errors.Add($"{label}: privateAllow is only valid on a run network");
+                foreach (var allowance in network.PrivateAllow ?? [])
+                {
+                    if (!TryNormalizeCidr(allowance.Cidr, out var allowed) || allowed != allowance.Cidr)
+                        errors.Add($"{label}: privateAllow '{Shown(allowance.Cidr)}' must be a canonical IPv4 address or CIDR");
+                    if (string.IsNullOrWhiteSpace(allowance.Reason) || allowance.Reason.Length > 80
+                        || allowance.Reason.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not (' ' or '-' or '_' or '.' or '/')))
+                        errors.Add($"{label}: privateAllow {Shown(allowance.Cidr)} needs an audit reason of at most 80 plain characters");
+                }
             }
             if (zone.Kind == ZoneKinds.Run)
             {
@@ -377,6 +396,8 @@ public static class ZonePolicyParser
         }
         var allow = zone.Egress.Allow ?? [];
         var deny = zone.Egress.Deny ?? [];
+        if (zone.Kind != ZoneKinds.Run && zone.Egress.ZeroTierRanges is { Count: > 0 })
+            errors.Add($"{label}: zeroTierRanges is only valid on a run zone");
         foreach (var reference in allow.Concat(deny).Where(reference => !destinations.ContainsKey(reference)))
             errors.Add($"{label}: unknown destination '{Shown(reference)}'");
         if (zone.Kind == ZoneKinds.Work)
@@ -415,8 +436,14 @@ public static class ZonePolicyParser
             errors.Add($"{label}: verify needs at least one reachable and one blocked probe");
             return;
         }
-        foreach (var probe in zone.Verify.Reachable.Concat(zone.Verify.Blocked))
+        foreach (var (probe, blocked) in zone.Verify.Reachable.Select(probe => (probe, false))
+                     .Concat(zone.Verify.Blocked.Select(probe => (probe, true))))
         {
+            if (!probe.RequireControl && (zone.Kind != ZoneKinds.Run || !blocked))
+                errors.Add($"{label}: requireControl=false is only valid for a blocked run probe");
+            if (!probe.RequireControl && zone.Kind == ZoneKinds.Run && blocked
+                && probe.Host != "169.254.169.254")
+                errors.Add($"{label}: only metadata 169.254.169.254 may omit an outside-zone control");
             if (probe.Destination is null && probe.Host is null)
             {
                 errors.Add($"{label}: a probe names a destination, a host, or a host of a destination");
@@ -444,8 +471,9 @@ public static class ZonePolicyParser
     /// must be known up front: for a run zone's denial and for a blocked probe.
     /// A configuration error throws. A name that does not resolve does not: a
     /// denied name becomes a <see cref="ZoneResolutionProblem"/> and a blocked
-    /// probe host an unresolved probe, so the apply still loads every other
-    /// rule (DNS may not be up yet at boot) and records the state as failed.
+    /// probe host an unresolved probe. Apply loads the safe rules and records
+    /// the state as failed; unresolved protected run-zone names suspend tenant
+    /// private allowances until their addresses are known.
     /// </summary>
     public static async Task<ResolvedZonePolicy> ResolveAsync(
         ZonePolicyDocument document,
@@ -453,7 +481,8 @@ public static class ZonePolicyParser
         IReadOnlyDictionary<string, string> environment,
         IZoneAddressResolver resolver,
         CancellationToken ct,
-        IReadOnlyCollection<string>? zoneNames = null)
+        IReadOnlyCollection<string>? zoneNames = null,
+        IReadOnlyCollection<string>? zeroTierHostRanges = null)
     {
         var errors = new List<string>();
         var problems = new List<ZoneResolutionProblem>();
@@ -512,8 +541,31 @@ public static class ZonePolicyParser
         var zones = new List<ResolvedZone>();
         foreach (var zone in selected)
         {
+            var zeroTierRanges = new SortedSet<string>(StringComparer.Ordinal);
+            if (zone.Kind == ZoneKinds.Run)
+            {
+                foreach (var entry in zone.Egress.ZeroTierRanges ?? [])
+                foreach (var range in ExpandOptional(entry, "zeroTierRanges", environment))
+                    AddZeroTierRange(range, errors, zeroTierRanges);
+                foreach (var range in zeroTierHostRanges ?? [])
+                    AddZeroTierRange(range, errors, zeroTierRanges);
+            }
             var allow = (zone.Egress.Allow ?? []).Select(name => resolved[name]).ToList();
             var deny = (zone.Egress.Deny ?? []).Select(name => resolved[name]).ToList();
+            foreach (var network in zone.Networks)
+            foreach (var allowance in network.PrivateAllow ?? [])
+            {
+                if (!TryParseCidr(allowance.Cidr, out var allowedStart, out var allowedEnd)) continue;
+                var restricted = ZonePolicyRules.PrivateIpv4Ranges.Concat(zeroTierRanges)
+                    .Any(range => TryParseCidr(range, out var start, out var end)
+                                  && start <= allowedStart && allowedEnd <= end);
+                if (!restricted)
+                    errors.Add($"zone {zone.Name}: tenant {network.Tenant} privateAllow {allowance.Cidr} is not within a denied private or ZeroTier range");
+                if (deny.SelectMany(destination => destination.Addresses).Any(address =>
+                        TryParseCidr(address, out var start, out var end)
+                        && start <= allowedEnd && allowedStart <= end))
+                    errors.Add($"zone {zone.Name}: tenant {network.Tenant} privateAllow {allowance.Cidr} overlaps a denied control-plane or secret-store destination");
+            }
             var probes = new List<ResolvedZoneProbe>();
             foreach (var probe in zone.Verify.Reachable)
             {
@@ -525,6 +577,8 @@ public static class ZonePolicyParser
                     errors.Add($"zone {zone.Name}: reachable probe of '{probe.Destination}' has no host");
                     continue;
                 }
+                host = ExpandProbeHost(host, zone.Name, environment, errors);
+                if (host is null) continue;
                 if (TryNormalizeCidr(host, out var cidr) && !cidr.EndsWith("/32", StringComparison.Ordinal))
                 {
                     errors.Add($"zone {zone.Name}: reachable probe needs a host, not the range {cidr}");
@@ -541,24 +595,34 @@ public static class ZonePolicyParser
                 {
                     foreach (var address in resolved[reference].Addresses)
                     foreach (var port in ports)
-                        probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, reference, FirstHost(address), port));
+                        probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, reference, FirstHost(address), port,
+                            RequireControl: probe.RequireControl));
                     continue;
                 }
-                var target = probe.Host!;
+                var target = ExpandProbeHost(probe.Host!, zone.Name, environment, errors);
+                if (target is null) continue;
                 if (TryNormalizeCidr(target, out var literal))
                 {
                     foreach (var port in ports)
-                        probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, FirstHost(literal), port));
+                        probes.Add(new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, FirstHost(literal), port,
+                            RequireControl: probe.RequireControl));
                     continue;
                 }
                 var (resolvedTarget, unresolved) = await ResolveIpv4Async(resolver, target, ct);
                 foreach (var port in ports)
                     probes.Add(resolvedTarget.Count > 0
-                        ? new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, resolvedTarget[0].ToString(), port)
+                        ? new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, resolvedTarget[0].ToString(), port,
+                            RequireControl: probe.RequireControl)
                         : new ResolvedZoneProbe(ZoneProbeExpectations.Blocked, target, target, port,
-                            $"zone {zone.Name}: blocked probe host {unresolved}"));
+                            $"zone {zone.Name}: blocked probe host {unresolved}", probe.RequireControl));
             }
-            zones.Add(new ResolvedZone(zone.Name, zone.Kind, zone.Networks, allow, deny, probes));
+            foreach (var probe in probes.Where(probe => !probe.RequireControl && probe.Unresolved is null))
+            {
+                if (probe.Address != "169.254.169.254")
+                    errors.Add($"zone {zone.Name}: only metadata 169.254.169.254 may omit an outside-zone control");
+            }
+            zones.Add(new ResolvedZone(zone.Name, zone.Kind, zone.Networks, allow, deny, probes,
+                zeroTierRanges.OrderBy(SortKey).ToList()));
         }
 
         ResolvedZoneResolver? zoneResolver = null;
@@ -648,6 +712,35 @@ public static class ZonePolicyParser
         return value.Split([',', ' ', '\t', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
+    private static IEnumerable<string> ExpandOptional(
+        string entry, string label, IReadOnlyDictionary<string, string> environment)
+    {
+        if (entry.StartsWith("${", StringComparison.Ordinal) && entry.EndsWith('}')
+            && (!environment.TryGetValue(entry[2..^1], out var configured) || string.IsNullOrWhiteSpace(configured)))
+            return [];
+        var errors = new List<string>();
+        var expanded = Expand(entry, label, environment, errors).ToList();
+        if (errors.Count > 0) throw new ZonePolicyException(errors);
+        return expanded;
+    }
+
+    private static string? ExpandProbeHost(string host, string zone,
+        IReadOnlyDictionary<string, string> environment, List<string> errors)
+    {
+        var expanded = Expand(host, $"zone {zone} probe", environment, errors).ToList();
+        if (expanded.Count == 1) return expanded[0];
+        if (expanded.Count > 1) errors.Add($"zone {zone}: a probe host must resolve to one address");
+        return null;
+    }
+
+    private static void AddZeroTierRange(string value, List<string> errors, SortedSet<string> ranges)
+    {
+        if (!TryNormalizeCidr(value, out var canonical) || canonical != value)
+            errors.Add($"zeroTierRanges '{Shown(value)}' must be a canonical IPv4 address or CIDR");
+        else
+            ranges.Add(canonical);
+    }
+
     internal static bool TryParseCidr(string? value, out uint start, out uint end)
         => TryParseCidr(value, out start, out end, out _);
 
@@ -694,6 +787,16 @@ public static class ZonePolicyParser
         if (!TryParseCidr(candidate, out var start, out _, out var prefix)) return false;
         cidr = $"{ToAddress(start)}/{prefix.ToString(CultureInfo.InvariantCulture)}";
         return true;
+    }
+
+    internal static string NetworkOf(IPAddress address, int prefix)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork || prefix is < 0 or > 32)
+            throw new ArgumentOutOfRangeException(nameof(prefix));
+        var bytes = address.GetAddressBytes();
+        var raw = (uint)bytes[0] << 24 | (uint)bytes[1] << 16 | (uint)bytes[2] << 8 | bytes[3];
+        var mask = prefix == 0 ? 0u : uint.MaxValue << (32 - prefix);
+        return $"{ToAddress(raw & mask)}/{prefix}";
     }
 
     /// <summary>The address Docker gives the bridge itself: the subnet's first host.</summary>
