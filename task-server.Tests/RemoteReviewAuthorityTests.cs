@@ -53,7 +53,7 @@ public sealed partial class RemoteReviewAuthorityTests
     }
 
     [Fact]
-    public async Task Missing_meter_warns_on_review_claim_and_keeps_review_moving()
+    public async Task Unreachable_meter_warns_on_review_claim_and_keeps_review_moving()
     {
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
@@ -62,13 +62,33 @@ public sealed partial class RemoteReviewAuthorityTests
         await SeedReviewSubjectAsync(seed);
         await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
-            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null,
-            new UnconfiguredWorkspaceQuotaAdmission());
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new UnreachableReviewQuota());
         await guarded.InitializeAsync();
         var claim = await guarded.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         Assert.Equal("claimed", claim.Status);
-        Assert.Contains("not configured", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unavailable", claim.Message!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Unconfigured_meter_claims_review_without_quota_message()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReviewSubjectAsync(seed);
+        await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
+        var claim = await seed.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+    }
+
+    private sealed class UnreachableReviewQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(true, "Quota admission is temporarily unavailable.", true));
     }
 
     [Theory]

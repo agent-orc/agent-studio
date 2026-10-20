@@ -85,7 +85,7 @@ public sealed partial class TaskServerStore
     private readonly IResultFinalizationSummaryGenerator _resultSummaries;
     private readonly ITaskServerEventPublisher? _operationalEvents;
     private readonly ILogger<TaskServerStore>? _logger;
-    private readonly IWorkspaceQuotaAdmission? _workspaceQuota;
+    private readonly WorkspaceQuotaVerdictCache? _quotaVerdicts;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly DateTime _startedAt;
     private static readonly JsonSerializerOptions OutcomeJson = CreateOutcomeJson();
@@ -127,7 +127,7 @@ public sealed partial class TaskServerStore
         _resultSummaries = resultSummaries;
         _operationalEvents = operationalEvents;
         _logger = logger;
-        _workspaceQuota = workspaceQuota;
+        _quotaVerdicts = workspaceQuota is null ? null : new WorkspaceQuotaVerdictCache(workspaceQuota, clock);
         _startedAt = UtcNow;
     }
 
@@ -139,9 +139,44 @@ public sealed partial class TaskServerStore
     public TaskServerMode Mode => _mode;
     private DateTime UtcNow => _clock.GetUtcNow().UtcDateTime;
 
-    private Task<WorkspaceQuotaVerdict> AdmitWorkspaceQuotaAsync(string projectName, CancellationToken ct)
-        => _workspaceQuota?.AdmitAsync(projectName, ct)
-            ?? Task.FromResult(new WorkspaceQuotaVerdict(true, null));
+    /// <summary>"off" without a configured meter, else "on" or "unreachable" (see <see cref="WorkspaceQuotaAdmissionStates"/>).</summary>
+    public string QuotaAdmissionState => _quotaVerdicts?.State ?? WorkspaceQuotaAdmissionStates.Off;
+
+    /// <summary>
+    /// Refreshes stale quota verdicts of the projects a claim may pick, before the
+    /// claim takes the write gate: a plain read lists the projects, the meter is
+    /// asked outside any transaction, and only availability transitions raise an
+    /// operational event and a log line (once per outage and once per recovery).
+    /// </summary>
+    private async Task RefreshWorkspaceQuotaAsync(
+        string projectNamesSql, string actorId, CancellationToken ct,
+        params (string Name, object? Value)[] parameters)
+    {
+        if (_quotaVerdicts is null) return;
+        var names = new List<string>();
+        await using (var connection = await OpenReadyAsync(ct))
+        await using (var command = Command(connection, projectNamesSql, parameters))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                names.Add(reader.GetString(0));
+        var transitions = await _quotaVerdicts.RefreshAsync(names, ct);
+        foreach (var transition in transitions)
+            if (transition.MeterUnavailable)
+                _logger?.LogWarning("quota-meter-unavailable project={Project} detail={Detail}",
+                    transition.ProjectName, transition.Message);
+            else
+                _logger?.LogInformation("quota-meter-recovered project={Project}", transition.ProjectName);
+        await PublishOperationalEventsAsync(transitions.Select(transition => new TaskServerOperationalEvent(
+            transition.MeterUnavailable ? "quota.meter-unavailable" : "quota.meter-recovered", UtcNow, actorId,
+            new { project = transition.ProjectName, message = transition.Message })).ToList(), ct);
+    }
+
+    /// <summary>Cached verdict only (no I/O). A project without a verdict yet is admitted without an event.</summary>
+    private WorkspaceQuotaVerdict CachedWorkspaceQuota(string projectName)
+        => _quotaVerdicts?.Read(projectName) ?? new WorkspaceQuotaVerdict(true, null);
+
+    /// <summary>The outage message for the first claimed card of a project after its meter became unavailable.</summary>
+    private string? ConsumeQuotaCardNotice(string projectName) => _quotaVerdicts?.TryConsumeCardNotice(projectName);
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
         => await InitializeCoreAsync(quarantineActiveAuthority: true, cancellationToken);
@@ -277,7 +312,8 @@ public sealed partial class TaskServerStore
             _startedAt,
             _outboxBacklog,
             _oldestUnacknowledgedSequence,
-            _finalHandoffStates);
+            _finalHandoffStates,
+            QuotaAdmissionState);
     }
 
     public async Task<WorkspaceDto> CreateWorkspaceAsync(CreateWorkspaceRequest request, string actorId, CancellationToken ct)
@@ -1320,7 +1356,14 @@ public sealed partial class TaskServerStore
         else
             RequireWritable();
         ClaimResponse? response = null;
-        TaskServerOperationalEvent? quotaEvent = null;
+        if (request.AvailableSlots > 0)
+            await RefreshWorkspaceQuotaAsync("""
+                SELECT DISTINCT p.name FROM tasks t JOIN projects p ON p.id = t.project_id
+                 WHERE t.state = '2-ready'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM leases l
+                        WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'));
+                """, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ValidateRunnerAsync(connection, transaction, request.RunnerId, request.InstanceId, ct);
@@ -1467,7 +1510,7 @@ public sealed partial class TaskServerStore
                 ? null
                 : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(telemetryJson)?.CpuPercent;
             var hostAdmission = capabilityAdmission;
-            var quotaWarnings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var quotaProjectNames = new Dictionary<string, string>(StringComparer.Ordinal);
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
                 var projectName = await ScalarAsync(connection,
@@ -1475,12 +1518,11 @@ public sealed partial class TaskServerStore
                     ("$project", projectId)) as string;
                 var quota = projectName is null
                     ? new WorkspaceQuotaVerdict(false, "Project could not be resolved for quota admission.")
-                    : await AdmitWorkspaceQuotaAsync(projectName, ct);
+                    : CachedWorkspaceQuota(projectName);
                 if (!quota.Allowed)
                     return new ClaimPlacementVerdict(projectId,
                         quota.Message ?? "Workspace quota reached.", null, null);
-                if (quota.MeterUnavailable && quota.Message is not null)
-                    quotaWarnings[projectId] = quota.Message;
+                quotaProjectNames[projectId] = projectName!;
                 var registered = Convert.ToInt64(await ScalarAsync(connection, """
                     SELECT count(*) FROM project_repositories WHERE project_id = $project;
                     """, ct, transaction, ("$project", projectId))) > 0;
@@ -1550,7 +1592,7 @@ public sealed partial class TaskServerStore
             {
                 response = new ClaimResponse(
                     "empty",
-                    Message: quotaWarnings.Values.LastOrDefault() ?? "No admissible task is ready.",
+                    Message: "No admissible task is ready.",
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
                     PlacementReason: placementReason);
@@ -1652,13 +1694,15 @@ public sealed partial class TaskServerStore
                     placementVersion = selectedPlacement?.Version,
                     placementReason,
                 }), ct);
-            quotaWarnings.TryGetValue(task.ProjectId, out var quotaWarning);
-            if (quotaWarning is not null)
+            string? quotaWarning = null;
+            if (quotaProjectNames.TryGetValue(task.ProjectId, out var claimedProjectName))
             {
-                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
-                    "quota.meter-unavailable", new { message = quotaWarning }, ct);
-                quotaEvent = new TaskServerOperationalEvent("quota.meter-unavailable", UtcNow,
-                    actorId, new { task.TaskId, task.ProjectId, message = quotaWarning });
+                var claimedQuota = CachedWorkspaceQuota(claimedProjectName);
+                quotaWarning = claimedQuota.MeterUnavailable ? claimedQuota.Message : null;
+                var cardNotice = ConsumeQuotaCardNotice(claimedProjectName);
+                if (cardNotice is not null)
+                    await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                        "quota.meter-unavailable", new { message = cardNotice }, ct);
             }
 
             var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null,
@@ -1685,12 +1729,6 @@ public sealed partial class TaskServerStore
                 PlacementReason: placementReason,
                 ContinuationIntent: continuationIntent);
         }, ct);
-        if (quotaEvent is not null)
-        {
-            _logger?.LogWarning("quota-meter-unavailable task={Task} detail={Detail}",
-                response?.Task?.TaskId, response?.Message);
-            await PublishOperationalEventsAsync([quotaEvent], ct);
-        }
         return response!;
     }
 

@@ -199,7 +199,15 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         GateClaimResponse? response = null;
-        TaskServerOperationalEvent? quotaEvent = null;
+        if (request.AvailableGateSlots > 0)
+            await RefreshWorkspaceQuotaAsync("""
+                SELECT DISTINCT p.name
+                  FROM gate_attempts a
+                  JOIN gate_subjects s ON s.id = a.subject_id
+                  JOIN tasks t ON t.id = s.task_id
+                  JOIN projects p ON p.id = t.project_id
+                 WHERE a.state = 'queued';
+                """, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ReconcileGateTimeoutsAsync(connection, transaction, ct);
@@ -250,7 +258,7 @@ public sealed partial class TaskServerStore
                     ct, transaction, ("$task", candidate.Subject.TaskId)) as string;
                 var quota = projectName is null
                     ? new WorkspaceQuotaVerdict(false, "Gate project could not be resolved for quota admission.")
-                    : await AdmitWorkspaceQuotaAsync(projectName, ct);
+                    : CachedWorkspaceQuota(projectName);
                 if (!quota.Allowed)
                 {
                     quotaReason = quota.Message ?? "Workspace quota reached.";
@@ -308,13 +316,10 @@ public sealed partial class TaskServerStore
                     ("$deadline", Iso(deadline)), ("$attempt", candidate.AttemptId));
                 await AuditAsync(connection, transaction, actorId, "gate.claimed", "gate-attempt",
                     candidate.AttemptId, JsonSerializer.Serialize(new { fence, hostId }), ct);
-                if (quotaWarning is not null)
-                {
+                var quotaCardNotice = ConsumeQuotaCardNotice(projectName!);
+                if (quotaCardNotice is not null)
                     await AppendLifecycleEventAsync(connection, transaction, candidate.Subject.SourceRunId,
-                        candidate.Subject.TaskId, 0, "quota.meter-unavailable", new { message = quotaWarning }, ct);
-                    quotaEvent = new TaskServerOperationalEvent("quota.meter-unavailable", UtcNow,
-                        actorId, new { candidate.Subject.TaskId, message = quotaWarning });
-                }
+                        candidate.Subject.TaskId, 0, "quota.meter-unavailable", new { message = quotaCardNotice }, ct);
                 var attempt = await ReadGateAttemptAsync(connection, transaction, candidate.AttemptId, ct);
                 response = new GateClaimResponse("claimed", candidate.Subject, attempt,
                     new GateLease(leaseId, candidate.AttemptId, request.ExecutorId, request.InstanceId,
@@ -323,7 +328,6 @@ public sealed partial class TaskServerStore
             }
             response = new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }, ct);
-        if (quotaEvent is not null) await PublishOperationalEventsAsync([quotaEvent], ct);
         return response!;
     }
 

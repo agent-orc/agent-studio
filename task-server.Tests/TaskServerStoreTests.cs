@@ -40,7 +40,7 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
-    public async Task Missing_meter_warns_on_coding_card_but_claim_still_starts()
+    public async Task Unconfigured_meter_claims_without_quota_events_and_reports_admission_off()
     {
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
@@ -49,18 +49,104 @@ public sealed partial class TaskServerStoreTests
         var (_, project, task) = await SeedReadyTaskAsync(seed);
         await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         var events = new RecordingQuotaEvents();
+        var unmetered = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), events, null);
+        await unmetered.InitializeAsync();
+        var claim = await unmetered.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+        var timeline = await unmetered.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default);
+        Assert.DoesNotContain(timeline.Entries, entry => entry.EventKind?.StartsWith("quota.") == true);
+        Assert.DoesNotContain(events.Published, evt => evt.Kind.StartsWith("quota.", StringComparison.Ordinal));
+        Assert.Equal(WorkspaceQuotaAdmissionStates.Off, unmetered.Status().QuotaAdmission);
+    }
+
+    [Fact]
+    public async Task Unreachable_meter_raises_one_event_per_outage_and_one_on_recovery()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var events = new RecordingQuotaEvents();
+        // The backend answers an unresolved project the same way: allowed, meter unavailable.
+        var meter = new SwitchableQuota(new WorkspaceQuotaVerdict(true, "Project is unknown to the quota meter.", true));
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
-            clock, new ApplicationResultFinalizationSummaryGenerator(), events, null,
-            new UnconfiguredWorkspaceQuotaAdmission());
+            clock, new ApplicationResultFinalizationSummaryGenerator(), events, null, meter);
         await guarded.InitializeAsync();
+
         var claim = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("claimed", claim.Status);
-        Assert.Contains("not configured", claim.Message!, StringComparison.OrdinalIgnoreCase);
-        var timeline = await guarded.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default);
-        Assert.Contains(timeline.Entries, entry =>
-            entry.EventKind == "quota.meter-unavailable"
-            && entry.Summary.Contains("not configured", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(events.Published, evt => evt.Kind == "quota.meter-unavailable");
+        Assert.Equal(["Project"], meter.Asked);
+        Assert.Single(events.Published, evt => evt.Kind == "quota.meter-unavailable");
+        Assert.Single((await guarded.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default)).Entries,
+            entry => entry.EventKind == "quota.meter-unavailable");
+        Assert.Equal(WorkspaceQuotaAdmissionStates.Unreachable, guarded.Status().QuotaAdmission);
+
+        // Still down after the TTL: asked again, no second event.
+        await seed.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Next", "More work", "2-ready"), "test", default);
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal(2, meter.Asked.Count);
+        Assert.Single(events.Published, evt => evt.Kind == "quota.meter-unavailable");
+
+        await seed.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Last", "More work", "2-ready"), "test", default);
+        meter.Verdict = new WorkspaceQuotaVerdict(true, null);
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal(3, meter.Asked.Count);
+        Assert.Single(events.Published, evt => evt.Kind == "quota.meter-recovered");
+        Assert.Equal(WorkspaceQuotaAdmissionStates.On, guarded.Status().QuotaAdmission);
+    }
+
+    [Fact]
+    public async Task Slow_quota_admission_does_not_hold_the_write_gate()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReadyTaskAsync(seed);
+        await seed.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var meter = new BlockingQuota();
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, meter);
+        await guarded.InitializeAsync();
+
+        var claim = guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await meter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        // A write on the same store finishes while the meter is still answering.
+        await guarded.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.False(claim.IsCompleted);
+        meter.Release.SetResult(new WorkspaceQuotaVerdict(true, null));
+        Assert.Equal("claimed", (await claim.WaitAsync(TimeSpan.FromSeconds(30))).Status);
+    }
+
+    private sealed class SwitchableQuota(WorkspaceQuotaVerdict verdict) : IWorkspaceQuotaAdmission
+    {
+        public WorkspaceQuotaVerdict Verdict { get; set; } = verdict;
+        public List<string> Asked { get; } = [];
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+        {
+            Asked.Add(projectId);
+            return Task.FromResult(Verdict);
+        }
+    }
+
+    private sealed class BlockingQuota : IWorkspaceQuotaAdmission
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<WorkspaceQuotaVerdict> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+        {
+            Entered.TrySetResult();
+            return Release.Task;
+        }
     }
 
     private sealed class RecordingQuotaEvents : ITaskServerEventPublisher

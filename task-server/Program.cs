@@ -52,10 +52,9 @@ builder.Services
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddHttpClient(nameof(HttpWorkspaceQuotaAdmission), client =>
     client.Timeout = TimeSpan.FromSeconds(3));
+// Without a meter URL quota admission is off: no admission object, no per-claim event, one startup log line.
 if (!string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
     builder.Services.AddSingleton<IWorkspaceQuotaAdmission, HttpWorkspaceQuotaAdmission>();
-else if (!builder.Environment.IsEnvironment("Testing") && !builder.Environment.IsEnvironment("Test"))
-    builder.Services.AddSingleton<IWorkspaceQuotaAdmission, UnconfiguredWorkspaceQuotaAdmission>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
@@ -199,6 +198,9 @@ if (command.Kind == TaskServerCommandKind.Recovery)
         command.Recovery!, store, app.Services.GetRequiredService<IOptions<TaskServerOptions>>().Value, default);
 
 await store.InitializeAsync(app.Lifetime.ApplicationStopping);
+if (store.QuotaAdmissionState == WorkspaceQuotaAdmissionStates.Off)
+    app.Logger.LogWarning(
+        "quota-admission off: TaskServer:QuotaAdmissionBaseUrl is not configured; coding, review and gate claims are not metered.");
 var bootstrap = app.Services.GetRequiredService<TaskServerBootstrapOptions>();
 if (bootstrap.RequiresAuthentication)
 {

@@ -321,7 +321,7 @@ public sealed class GateAuthorityTests
     }
 
     [Fact]
-    public async Task Missing_meter_warns_on_gate_claim_and_keeps_gate_moving()
+    public async Task Unreachable_meter_warns_on_gate_claim_and_keeps_gate_moving()
     {
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
@@ -330,12 +330,32 @@ public sealed class GateAuthorityTests
         await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
         await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
-            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null,
-            new UnconfiguredWorkspaceQuotaAdmission());
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new UnreachableQuota());
         await guarded.InitializeAsync();
         var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
         Assert.Equal("claimed", claim.Status);
-        Assert.Contains("not configured", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unavailable", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(WorkspaceQuotaAdmissionStates.Unreachable, guarded.Status().QuotaAdmission);
+    }
+
+    [Fact]
+    public async Task Unconfigured_meter_claims_gate_without_quota_message()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
+        await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
+        var claim = await seed.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+    }
+
+    private sealed class UnreachableQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(true, "Quota admission is temporarily unavailable.", true));
     }
 
     private static GateReport Report(string? failure)

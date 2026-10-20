@@ -275,9 +275,16 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         ReviewClaimResponse? response = null;
-        TaskServerOperationalEvent? quotaEvent = null;
         // Every unclaimable attempt, not only the ones the response names.
         IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
+        await RefreshWorkspaceQuotaAsync("""
+            SELECT DISTINCT p.name
+              FROM review_attempts a
+              JOIN tasks t ON t.id = a.task_id
+              JOIN projects p ON p.id = t.project_id
+             WHERE (a.status IN ('queued', 'process-unknown') OR (a.status = 'leased' AND a.expires_at <= $now))
+               AND t.state = '4-auto-review';
+            """, actorId, ct, ("$now", Iso(UtcNow)));
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var executor = await WithProvenRepositoryReadAsync(
@@ -335,6 +342,7 @@ public sealed partial class TaskServerStore
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
             string? selectedQuotaWarning = null;
+            string? selectedQuotaProject = null;
             string? capabilityBlock = null;
             string? capabilityBlockReason = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
@@ -397,7 +405,7 @@ public sealed partial class TaskServerStore
                         ct, transaction, ("$task", candidate.Attempt.TaskId)) as string;
                     var quota = quotaProjectName is null
                         ? new WorkspaceQuotaVerdict(false, "Review project could not be resolved for quota admission.")
-                        : await AdmitWorkspaceQuotaAsync(quotaProjectName, ct);
+                        : CachedWorkspaceQuota(quotaProjectName);
                     if (!quota.Allowed)
                     {
                         capabilityBlock = quota.Message ?? "Workspace quota reached.";
@@ -447,6 +455,7 @@ public sealed partial class TaskServerStore
                     attempt = candidate.Attempt;
                     subject = candidate.Subject;
                     selectedQuotaWarning = quota.MeterUnavailable ? quota.Message : null;
+                    selectedQuotaProject = quotaProjectName;
                     capabilityAdmission = candidateAdmission;
                     break;
                 }
@@ -538,13 +547,10 @@ public sealed partial class TaskServerStore
                     fence,
                     resourceNamespace,
                 }), ct);
-            if (selectedQuotaWarning is not null)
-            {
+            var quotaCardNotice = selectedQuotaProject is null ? null : ConsumeQuotaCardNotice(selectedQuotaProject);
+            if (quotaCardNotice is not null)
                 await AppendLifecycleEventAsync(connection, transaction, subject.SourceRunId,
-                    attempt.TaskId, 0, "quota.meter-unavailable", new { message = selectedQuotaWarning }, ct);
-                quotaEvent = new TaskServerOperationalEvent("quota.meter-unavailable", UtcNow,
-                    actorId, new { attempt.TaskId, message = selectedQuotaWarning });
-            }
+                    attempt.TaskId, 0, "quota.meter-unavailable", new { message = quotaCardNotice }, ct);
             response = new ReviewClaimResponse(
                 "claimed",
                 claimedAttempt,
@@ -554,7 +560,6 @@ public sealed partial class TaskServerStore
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries);
         }, ct);
-        if (quotaEvent is not null) await PublishOperationalEventsAsync([quotaEvent], ct);
         LogUnclaimableReviews(request.ExecutorId, unclaimableToLog);
         return response!;
     }
