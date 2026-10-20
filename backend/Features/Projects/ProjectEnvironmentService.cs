@@ -641,6 +641,10 @@ public sealed class ProjectEnvironmentService
             var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
             if (declaration is null) return false;
             var state = Load(project);
+            // A claimed deploy can still complete after the stop request. Keep
+            // its slot until the host reports or the claim is settled.
+            if (state.Jobs.Any(job => job.EnvironmentId == environmentId && job.Status == "claimed"))
+                return false;
             var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
             if (current is null || current.Status == "stopped") return false;
             var now = _clock.GetUtcNow().UtcDateTime;

@@ -391,6 +391,38 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Stop_during_a_claimed_redeploy_keeps_the_hosting_slot_until_the_claim_settles(bool healthy)
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var redeploy = service.Claim("stage-host")!;
+        Assert.False(redeploy.ReservedSlot);
+
+        Assert.False(service.Stop("demo", "stage", "operator"));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.Throws<InvalidOperationException>(() => quota.ReserveProjectEnvironment("demo", "website"));
+
+        Assert.True(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, healthy,
+            healthy ? "health-ok" : "health-http-failed")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
     [Fact]
     public void Reconciliation_does_not_release_a_newer_healthy_deploys_slot_after_an_older_claim_fails()
     {
