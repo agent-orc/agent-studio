@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
+using AgentStudio.Deploy;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using Microsoft.Extensions.Configuration;
@@ -40,6 +41,59 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(["stage", "production"], declarations!.Select(item => item.Id));
         Assert.Equal(["DATABASE_URL"], declarations[1].SecretRefs);
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
+    }
+
+    [Fact]
+    public void PreviewDeclarationCanSpecifyItsOwnHostAndSecretReferences()
+    {
+        var (service, repo, _) = Build();
+        var file = Path.Combine(repo, "docs", "deployments", "environments", "preview.json");
+        File.WriteAllText(file, JsonSerializer.Serialize(new
+        {
+            id = "preview", name = "Preview", kind = "preview", targetHostId = "preview-host",
+            address = "https://preview.internal", template = "static",
+            destination = "/srv/agent-studio/previews", secretRefs = new[] { "TEST_DATA" },
+        }));
+        Git(repo, "add", "docs/deployments/environments/preview.json");
+        Git(repo, "commit", "-m", "declare preview");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var preview = Assert.Single(service.DeclarationsAtCommit("demo", commit)!,
+            declaration => declaration.Kind == "preview");
+        Assert.Equal("preview-host", preview.TargetHostId);
+        Assert.Equal(["TEST_DATA"], preview.SecretRefs);
+        Assert.Equal("static", preview.Template);
+    }
+
+    [Fact]
+    public void PreviewJobUsesTheNormalLeaseAndRequiresScreenshotAfterDeploy()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var spec = new PreviewJobSpec("demo", "agt-3180", commit, "preview-host",
+            "https://agt-3180.demo.preview.internal", "static", "/srv/agent-studio/previews/demo/agt-3180",
+            ["npm run build"], ["TEST_DATA"], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+        var queued = service.QueuePreview(spec);
+        Assert.Equal("preview", queued.Kind);
+        Assert.Equal(commit, queued.SourceCommit);
+        Assert.Equal(["TEST_DATA"], queued.SecretRefs);
+        var claimed = service.Claim("preview-host")!;
+        Assert.Equal(queued.Id, claimed.Id);
+        Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
+        var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
+        Assert.True(service.Report("demo", claimed.Id,
+            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", png)));
+        var ready = service.PreviewJob("demo", claimed.Id)!;
+        Assert.Equal("healthy", ready.Status);
+        Assert.NotNull(ready.ScreenshotUrl);
+        Assert.NotNull(service.PreviewScreenshotPath("demo", "agt-3180"));
+        var removal = service.QueuePreviewRemoval(spec);
+        Assert.Empty(removal.SecretRefs);
+        var removalClaim = service.Claim("preview-host")!;
+        Assert.Equal(removal.Id, removalClaim.Id);
+        Assert.True(service.Report("demo", removal.Id,
+            new DeployReportRequest(removalClaim.LeaseToken!, true, "health-ok")));
+        Assert.Null(service.PreviewScreenshotPath("demo", "agt-3180"));
     }
 
     [Fact]

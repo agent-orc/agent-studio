@@ -524,6 +524,9 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
 // IP-14: environment health checks run here, in the control plane, not on the app host.
 builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>

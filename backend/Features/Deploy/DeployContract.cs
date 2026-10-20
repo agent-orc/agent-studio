@@ -6,6 +6,7 @@ namespace AgentStudio.Deploy;
 
 public static class EnvironmentKinds
 {
+    public const string Preview = "preview";
     public const string Staging = "staging";
     public const string Production = "production";
 }

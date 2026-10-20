@@ -587,6 +587,7 @@ export interface BetterCandidateNote {
 export interface TaskInfo {
   id: string;
   taskKey: string;
+  preview?: TaskPreview | null;
   reviewPriority?: 'urgent' | 'normal';
   reviewQueuePosition?: number | null;
   olderBriefDelivery?: {
@@ -980,6 +981,16 @@ export interface TaskInfo {
   planningSpawn?: PlanningSpawnSummary | null;
   /** Concept dossier link or deliberate no-dossier decision. Null outside concept mode. */
   conceptDossier?: ConceptDossierSummary | null;
+}
+
+export interface TaskPreview {
+  address: string;
+  status: 'queued' | 'updating' | 'deploying' | 'ready' | 'failed' | 'removing';
+  deliverySha: string;
+  screenshotUrl?: string | null;
+  updatedAtUtc: string;
+  expiresAtUtc: string;
+  jobId?: string | null;
 }
 
 export interface LifecycleCheck {
