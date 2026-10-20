@@ -2373,6 +2373,7 @@ public sealed partial class TaskServerStoreTests
             new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         var key = CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol");
+        var firstProbeAt = clock.GetUtcNow().UtcDateTime;
         await Advertise("ready", 1);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         const string frame = """
@@ -2397,16 +2398,23 @@ public sealed partial class TaskServerStoreTests
             item => item.Kind == "execution.model-capability-held");
 
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Advertise("ready", 2);
+        await Advertise("ready", 2, firstProbeAt);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+        Assert.Equal("unavailable", Assert.Single(
+            (await store.ListRunnerCapabilitySnapshotsAsync(default)).Single().Capabilities).AdvertisedStatus);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Advertise("ready", 3);
         Assert.Equal("claimed", (await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
 
-        Task Advertise(string status, long generation)
+        Task Advertise(string status, long generation, DateTime? observedAt = null)
             => store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
                 "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
                 [new AdvertisedCapabilityDto(key, "model-acceptance", status,
                     CredentialGeneration: $"login-{generation}",
-                    CredentialObservedAt: clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
+                    CredentialObservedAt: observedAt ?? clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
     }
 
     [Fact]
@@ -2440,6 +2448,37 @@ public sealed partial class TaskServerStoreTests
         Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
         Assert.Contains(await store.ListEventsAsync(claim.Run.RunId, 0, default),
             item => item.Kind == "execution.model-capability-held");
+        Assert.Equal("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+    }
+
+    [Fact]
+    public async Task Rejected_same_provider_fallback_does_not_hold_a_blank_primary_route()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        const string frame = """
+            {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The gpt-6-sol model is not supported when using Codex with a ChatGPT account","status":400}}
+            """;
+        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
+            ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
+            EffectiveCliType: "codex", EffectiveModel: "gpt-6-sol", EffectiveThinkingLevel: "medium"));
+        await store.CompleteRunAsync(claim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:same-provider-refusal",
+                Sequence: 1, OutcomeDecision: decision), "runner-a", default);
+
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
         Assert.Equal("claimed", (await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
     }

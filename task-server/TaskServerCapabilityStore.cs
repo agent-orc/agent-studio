@@ -91,6 +91,25 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("stale-capability-advertisement",
                         $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
+                if (key.StartsWith("model-acceptance:", StringComparison.Ordinal)
+                    && advertisedStatus == "ready")
+                {
+                    var rejectionAt = await ScalarAsync(connection, """
+                        SELECT MAX(held.occurred_at) FROM events held
+                         WHERE held.kind = 'execution.model-capability-held'
+                           AND json_extract(held.payload_json, '$.runnerId') = $runner
+                           AND 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
+                               || ':' || json_extract(held.payload_json, '$.model') = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key));
+                    if (rejectionAt is string rejectedAt
+                        && (capability.CredentialObservedAt is not { } observedAt
+                            || observedAt.ToUniversalTime() <= Parse(rejectedAt)))
+                        advertisedStatus = "unavailable";
+                }
+                var advertisedDetail = advertisedStatus == "unavailable" &&
+                                       string.Equals(capability.Status, "ready", StringComparison.OrdinalIgnoreCase)
+                    ? "The provider refused this model for the host login."
+                    : capability.Detail;
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
                 var positiveRecovery = request.CredentialHealthVersion != 2 && tracksProbeHistory
                                        && advertisedStatus == ProviderAuthProbeStatuses.Ready
@@ -204,7 +223,7 @@ public sealed partial class TaskServerStore
                     ("$status", advertisedStatus),
                     ("$version", capability.Version),
                     ("$identity", capability.Identity),
-                    ("$detail", capability.Detail),
+                    ("$detail", advertisedDetail),
                     ("$signal", capability.Signal),
                     ("$expires", capability.ExpiresAt is null ? null : Iso(capability.ExpiresAt.Value.ToUniversalTime())),
                     ("$limited", capability.LimitedUntil is null ? null : Iso(capability.LimitedUntil.Value.ToUniversalTime())),

@@ -170,8 +170,7 @@ public sealed partial class TaskServerStore
                       AND json_extract(held.payload_json, '$.runnerId') = $runner
                       AND COALESCE(NULLIF(lower(primary_route.cli_type), ''), 'claude') =
                           lower(json_extract(held.payload_json, '$.provider'))
-                      AND (primary_route.model IS NULL OR
-                           lower(primary_route.model) = lower(json_extract(held.payload_json, '$.model')))
+                      AND lower(primary_route.model) = lower(json_extract(held.payload_json, '$.model'))
                       AND NOT EXISTS (
                           SELECT 1 FROM runner_capabilities recovery
                            WHERE recovery.runner_id = $runner
@@ -179,7 +178,7 @@ public sealed partial class TaskServerStore
                                  'model-acceptance:' || json_extract(held.payload_json, '$.provider')
                                  || ':' || json_extract(held.payload_json, '$.model')
                              AND recovery.advertised_status = 'ready'
-                             AND recovery.advertised_at > held.occurred_at
+                             AND recovery.credential_observed_at > held.occurred_at
                              AND recovery.fresh_until > $now))
                AND (
                    NOT EXISTS (

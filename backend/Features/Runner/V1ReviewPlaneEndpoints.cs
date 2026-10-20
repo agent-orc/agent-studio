@@ -3579,6 +3579,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     capability.EvidenceId,
                     capability.EvidenceExcerpt,
                     capability.SupportedModels,
+                    CredentialGeneration: capability.CredentialGeneration,
+                    CredentialObservedAt: capability.CredentialObservedAt,
                     HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
                     ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
                     CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
@@ -3655,14 +3657,31 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 Release = request.Release ?? registration.Release,
             };
             _registrations[runnerId] = registration;
+            capabilities = capabilities.Select(capability =>
+            {
+                if (!capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                    return capability;
+                var rejectedKey = $"{runnerId}|{capability.Key}";
+                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejectedAt))
+                    return capability;
+                if (string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal)
+                    && capability.CredentialObservedAt is { } observedAt
+                    && observedAt.ToUniversalTime() > rejectedAt)
+                {
+                    _rejectedModels.Remove(rejectedKey);
+                    return capability;
+                }
+                return capability with
+                {
+                    AdvertisedStatus = "unavailable",
+                    Detail = "The provider refused this model for the host login.",
+                };
+            }).ToArray();
             _capabilityStates[runnerId] = new CapabilityState(
                 request.InstanceId,
                 request.Generation,
                 capabilities,
                 request.Telemetry);
-            foreach (var modelCapability in capabilities.Where(item =>
-                         item.Key.StartsWith("model-acceptance:", StringComparison.Ordinal)))
-                _rejectedModels.Remove($"{runnerId}|{modelCapability.Key}");
             // A generic advertisement is not a recovery verdict. Provider auth
             // is the deliberate exception: an explicit successful status probe
             // is stronger evidence than the earlier run failure and clears only
@@ -4282,7 +4301,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            if (_rejectedModels.Contains($"{runnerId}|{key}")) return false;
+            if (_rejectedModels.ContainsKey($"{runnerId}|{key}")) return false;
             if (string.IsNullOrWhiteSpace(instanceId)
                 || !_registrations.TryGetValue(runnerId, out var registration)
                 || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
@@ -4303,14 +4322,14 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 ? registration.InstanceId : null;
     }
 
-    private readonly HashSet<string> _rejectedModels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _rejectedModels = new(StringComparer.Ordinal);
 
     public void MarkModelRejected(string runnerId, string cliType, string model)
     {
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            _rejectedModels.Add($"{runnerId}|{key}");
+            _rejectedModels[$"{runnerId}|{key}"] = _time.GetUtcNow().UtcDateTime;
             if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
             _capabilityStates[runnerId] = state with
             {
