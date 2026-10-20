@@ -118,7 +118,7 @@ public sealed class EngineContractTests
     }
 
     [Fact]
-    public void Separate_non_loopback_decision_plane_requires_its_own_credential()
+    public void Separate_decision_plane_requires_its_own_credential_even_on_loopback()
     {
         var values = new Dictionary<string, string?>
         {
@@ -131,10 +131,14 @@ public sealed class EngineContractTests
         Assert.Contains("DECISION_PLANE_CLIENT_CREDENTIAL", error.Message);
         values["DECISION_PLANE_URL"] = "https://tasks.example.test/";
         Assert.Null(EngineOptions.Parse(key => values.GetValueOrDefault(key)).DecisionPlaneUrl);
+        // Studio's decision routes always require an engine bearer, so loopback needs one too.
         values["DECISION_PLANE_URL"] = "http://127.0.0.1:5000";
+        Assert.Contains("DECISION_PLANE_CLIENT_CREDENTIAL", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+        values["DECISION_PLANE_CLIENT_CREDENTIAL"] = "studio-engine-secret";
         var loopback = EngineOptions.Parse(key => values.GetValueOrDefault(key));
         Assert.Equal("http://127.0.0.1:5000", loopback.DecisionPlaneUrl);
-        Assert.Null(loopback.DecisionPlaneClientCredential);
+        Assert.Equal("studio-engine-secret", loopback.DecisionPlaneClientCredential);
     }
 
     private sealed class CaptureHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond)

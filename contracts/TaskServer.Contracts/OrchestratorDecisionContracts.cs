@@ -255,13 +255,16 @@ public sealed record DecisionGroundsInputV1(
 /// The frozen grounds plus the deterministic decision the host applies. The
 /// deterministic choice stays outside the grounds and the model prompt so the
 /// shadow comparison does not lead the model; the digest covers grounds only.
+/// <c>AdmittedAt</c> is the receipt plane's clock when it admitted a host
+/// occurrence; the host-day bucket of a waiting occurrence is keyed by it.
 /// </summary>
 public sealed record DecisionShadowInputV1(
     DecisionGroundsInputV1 Grounds,
     string DeterministicAction,
     string DeterministicTarget,
     string DeterministicReason,
-    string Mode = "shadow");
+    string Mode = "shadow",
+    DateTime? AdmittedAt = null);
 
 /// <summary>
 /// Engine-created host occurrence. Studio's receipt plane freezes it with the

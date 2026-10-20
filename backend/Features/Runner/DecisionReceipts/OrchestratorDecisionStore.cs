@@ -74,6 +74,7 @@ public sealed class OrchestratorDecisionStore
             var reason = HostDayReasonLocked(input.Grounds, now, maxInput, maxOutput,
                 EstimatedEnvelopePrice(input.Grounds.ModelRoute.Model, maxInput, maxOutput, now), reserveWaiting: true);
             if (reason is not null) return new(null, reason);
+            input = input with { AdmittedAt = now };
             Save("inputs", occurrenceId, input);
             _inputs.Add(occurrenceId, input);
             return new(input, null);
@@ -565,10 +566,6 @@ public sealed class OrchestratorDecisionStore
     }
 
     /// <summary>
-    /// A call counts once a runner claimed it or while it may still be claimed.
-    /// Settled calls add measured usage; open calls reserve their envelope.
-    /// </summary>
-    /// <summary>
     /// Host-day admission. With <paramref name="reserveWaiting"/>, every frozen
     /// host occurrence that still waits for its job reserves one call and the
     /// full per-call envelope, so admission at submission cannot outrun the cap.
@@ -581,13 +578,17 @@ public sealed class OrchestratorDecisionStore
             && !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(grounds.Scope)
             && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(grounds.Scope, job.Dto.CreatedAt) == day).ToArray();
         bool Scheduled(GroundsTriggerV1 trigger) => MonolithTransitionAdapter.DecisionCostCapPolicyIsScheduled(trigger);
+        // Waiting occurrences are keyed by the same clock as this request: the
+        // plane's admission time. Records frozen before it was stored fall back
+        // to the observation time.
         var waiting = reserveWaiting
-            ? _inputs.Values.Select(item => item.Grounds).Where(grounds =>
-                    !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(grounds.Scope)
-                    && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(grounds.Scope, grounds.Trigger.ObservedAt) == day
-                    && !_receipts.ContainsKey(grounds.OccurrenceId)
-                    && _jobs.Values.All(job => job.Dto.OccurrenceId != grounds.OccurrenceId))
-                .ToArray()
+            ? _inputs.Values.Where(item =>
+                    !MonolithTransitionAdapter.DecisionCostCapPolicyChargesCard(item.Grounds.Scope)
+                    && MonolithTransitionAdapter.DecisionCostCapPolicyHostDayKey(item.Grounds.Scope,
+                        item.AdmittedAt ?? item.Grounds.Trigger.ObservedAt) == day
+                    && !_receipts.ContainsKey(item.Grounds.OccurrenceId)
+                    && _jobs.Values.All(job => job.Dto.OccurrenceId != item.Grounds.OccurrenceId))
+                .Select(item => item.Grounds).ToArray()
             : [];
         DecisionSpendSnapshot Reserve(DecisionSpendSnapshot spend, int calls) => calls == 0 ? spend
             : new(spend.Calls + calls, spend.Tokens.Add(new(maxInput * (long)calls, 0, 0, maxOutput * (long)calls)),
@@ -600,6 +601,10 @@ public sealed class OrchestratorDecisionStore
             Scheduled(input.Trigger), maxInput, maxOutput, estimatedUsd);
     }
 
+    /// <summary>
+    /// A call counts once a runner claimed it or while it may still be claimed.
+    /// Settled calls add measured usage; open calls reserve their envelope.
+    /// </summary>
     private DecisionSpendSnapshot Spend(IEnumerable<JobRecord> jobs)
     {
         var counted = jobs.Where(job => job.Dto.ClaimedAt is not null

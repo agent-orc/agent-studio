@@ -109,6 +109,9 @@
   }
   <section class="rules__history" data-testid="decision-rules-host-history">
     <h4>Host decision history</h4>
+    @if (historyError(); as message) {
+      <p role="alert" data-testid="decision-rules-history-error">{{ message }}</p>
+    }
     @if (spend(); as total) {
       <p>Workspace: {{ total.occurrences }} occurrences · {{ total.inputTokens }} input /
         {{ total.outputTokens }} output tokens · ${{ total.pricedUsd.toFixed(4) }} priced

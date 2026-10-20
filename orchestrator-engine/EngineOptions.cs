@@ -90,11 +90,12 @@ public sealed class EngineOptions
             throw new ArgumentException("Configure only one of DECISION_PLANE_CLIENT_CREDENTIAL or DECISION_PLANE_CLIENT_CREDENTIAL_FILE.");
         if (!string.IsNullOrWhiteSpace(decisionCredentialFile))
             decisionCredential = ReadCredentialFile(decisionCredentialFile, "DECISION_PLANE_CLIENT_CREDENTIAL_FILE");
-        // The Task Server credential is never sent to another origin.
-        if (!string.IsNullOrWhiteSpace(decisionUrl) && !decisionLoopback && string.IsNullOrWhiteSpace(decisionCredential))
+        // The Task Server credential is never sent to another origin, and Studio's
+        // decision routes require an engine bearer even on loopback.
+        if (!string.IsNullOrWhiteSpace(decisionUrl) && string.IsNullOrWhiteSpace(decisionCredential))
             throw new ArgumentException(
                 "DECISION_PLANE_CLIENT_CREDENTIAL or DECISION_PLANE_CLIENT_CREDENTIAL_FILE is required for a "
-                + "non-loopback DECISION_PLANE_URL that differs from SERVER_URL.");
+                + "DECISION_PLANE_URL that differs from SERVER_URL.");
 
         return new EngineOptions
         {

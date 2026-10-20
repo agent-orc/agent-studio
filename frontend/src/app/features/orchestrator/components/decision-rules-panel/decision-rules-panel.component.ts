@@ -90,6 +90,8 @@ export class DecisionRulesPanelComponent implements OnInit {
   readonly hostHistory = signal<HostReceipt[]>([]);
   readonly spend = signal<Spend | null>(null);
   readonly error = signal<string | null>(null);
+  /** Host history or spend failed to load; the rule editor itself stays usable. */
+  readonly historyError = signal<string | null>(null);
   readonly busy = signal(false);
 
   ngOnInit(): void { void this.loadWorkspaces(); }
@@ -134,14 +136,22 @@ export class DecisionRulesPanelComponent implements OnInit {
       this.inherited.set(workspaceView?.versions.find(v =>
         v.versionId === workspaceView.activeVersionId)?.rules ?? []);
       const workspaceQuery = `workspaceId=${encodeURIComponent(this.workspaceId())}`;
+      const failures: string[] = [];
       const [receipts, spend] = await Promise.all([
         firstValueFrom(this.http.get<HostReceipt[]>(
-          `/api/orchestration/decision-receipts?${workspaceQuery}&limit=20`)).catch(() => []),
+          `/api/orchestration/decision-receipts?${workspaceQuery}&limit=20`)).catch((error: unknown) => {
+          failures.push(this.message(error, 'Could not load host decision history.'));
+          return [] as HostReceipt[];
+        }),
         firstValueFrom(this.http.get<Spend>(
-          `/api/orchestration/decision-receipts/spend?${workspaceQuery}`)).catch(() => null),
+          `/api/orchestration/decision-receipts/spend?${workspaceQuery}`)).catch((error: unknown) => {
+          failures.push(this.message(error, 'Could not load workspace decision spend.'));
+          return null;
+        }),
       ]);
       this.hostHistory.set(receipts.filter(row => row.taskId === null));
       this.spend.set(spend);
+      this.historyError.set(failures.length ? failures.join(' ') : null);
       this.view.set(view);
       this.rules.set(view.versions.find(v => v.versionId === view.activeVersionId)?.rules.map(r => ({ ...r })) ?? []);
       this.draftId.set(null);

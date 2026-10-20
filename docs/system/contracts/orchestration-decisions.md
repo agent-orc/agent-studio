@@ -159,10 +159,15 @@ active rule version keeps the unchanged OD-S1 policy version and prompt.
 
 `DecisionRulePolicy.Validate` refuses a rule whose trigger is outside the closed
 list that live paths read (`step-transition` and `CodingCompletion` for cards,
-`capacity-check` for hosts), a rule without candidate actions, and a `hold`
-rule whose fact is not a known fact of its trigger. A card-trigger version,
-and a project overlay merged with its workspace rules, must leave at least one
-available non-ask coding completion alternative within the A0/A1 floor. A rule
+`capacity-check` for hosts), a rule without candidate actions, and an `ask` or
+`hold` rule whose fact is not a known fact of its trigger. `ask` and `hold` may
+not read `review.last-outcome`: it is observed at the last review, not at the
+occurrence, so it is usually stale; a `signal` rule may read it. A card-trigger
+version, and a project overlay merged with its workspace rules, must leave at
+least one available non-ask coding completion alternative within the A0/A1
+floor for every deterministic outcome, with and without a settled envelope, and
+without a verified tree, result SHA or ref; only known facts count as present.
+In practice a card version keeps `retry` allowed at A0/A1. A rule
 model must be one the configured `Orchestration:DecisionModel` CLI serves and
 that the Token Economy model catalogue rates frontier and selectable. The rule
 replaces only the model of the configured route, so its thinking level and the
@@ -185,7 +190,8 @@ runner host; `cadence` (`scheduled` or `event`) is required; `observedAt` must
 be within 10 minutes of the server clock; facts come from the capacity check
 vocabulary. When the host-day bucket of the cadence is exhausted, the route
 answers 429 `host-day-cap-exhausted`; frozen occurrences that still wait for
-their job reserve one call and the full per-call envelope. Studio pins the
+their job reserve one call and the full per-call envelope in the day of their
+`admittedAt`, the server clock at admission. Studio pins the
 workspace rules, builds the configured decision route, bounds source references
 and freezes the grounds with prompt version `od-s6.host-occurrence.v1`.
 
@@ -196,8 +202,8 @@ keeps only the receipt GET routes, the engine receipt routes and
 `/api/runner/orchestrator-decisions` open in that profile; the operator-intent
 POST moves cards through the legacy task store and stays closed. The engine
 keeps stage claims on `SERVER_URL`. `DECISION_PLANE_URL` selects a separate
-receipt plane for pending grounds, frozen input, decision jobs and receipts; a
-non-loopback value that differs from `SERVER_URL` requires
+receipt plane for pending grounds, frozen input, decision jobs and receipts; any
+value that differs from `SERVER_URL`, loopback included, requires
 `DECISION_PLANE_CLIENT_CREDENTIAL` or `DECISION_PLANE_CLIENT_CREDENTIAL_FILE`,
 and the Task Server credential is never sent there. Runner hosts that execute
 decision jobs must reach the receipt plane's `/api/runner/orchestrator-decisions`

@@ -1,11 +1,16 @@
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
+using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using AgentStudio.TestSupport;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -179,15 +184,79 @@ public sealed class DecisionRuleVersionTests : IDisposable
     }
 
     [Fact]
-    public void Card_fact_vocabulary_is_emitted_by_the_coding_completion_collector()
+    public void Ask_and_hold_rules_read_only_facts_observed_at_the_occurrence()
     {
-        var root = RepositoryRoot.Find();
-        var emitted = Regex.Matches(
-                File.ReadAllText(Path.Combine(root, "backend/Features/Runner/DecisionReceipts/DecisionGroundsCollector.cs"))
-                + File.ReadAllText(Path.Combine(root, "orchestration-decisions/PolicySignalProducers.cs")),
-                @"Fact\(""(?<id>[a-z][a-z0-9.-]+)""")
-            .Select(match => match.Groups["id"].Value).ToHashSet(StringComparer.Ordinal);
-        Assert.Empty(DecisionRuleTriggers.CodingCompletionFacts.Where(id => !emitted.Contains(id)));
+        var codex = DecisionRuleModelCatalogueSource.For("codex");
+        var card = Rule("card") with { Trigger = DecisionRuleTriggers.CodingCompletion,
+            FactId = "ledger.tokens", CandidateActions = ["prepare", "retry"] };
+        var refusals = DecisionRulePolicy.Validate(
+        [
+            Rule("ask-unknown") with { FactId = "host.nonexistent", MissingDataBehavior = "ask" },
+            card with { Id = "card-ask-unknown", FactId = "card.nonexistent", MissingDataBehavior = "ask" },
+            card with { Id = "review-ask", FactId = "review.last-outcome", MissingDataBehavior = "ask" },
+            card with { Id = "review-hold", FactId = "review.last-outcome", MissingDataBehavior = "hold" },
+        ], false, codex).Refusals;
+        Assert.Contains(refusals, value => value.Contains(
+            "Ask rule ask-unknown reads host.nonexistent, which is not a known fact of capacity-check"));
+        Assert.Contains(refusals, value => value.Contains(
+            "Ask rule card-ask-unknown reads card.nonexistent, which is not a known fact of CodingCompletion"));
+        Assert.Contains(refusals, value => value.Contains("Ask rule review-ask reads review.last-outcome")
+            && value.Contains("usually stale"));
+        Assert.Contains(refusals, value => value.Contains("Hold rule review-hold reads review.last-outcome")
+            && value.Contains("usually stale"));
+        // A signal rule may still observe the latest review outcome.
+        Assert.True(DecisionRulePolicy.Validate(
+            [card with { FactId = "review.last-outcome", MissingDataBehavior = "signal" }], false, codex).Accepted);
+    }
+
+    [Fact]
+    public void Card_fact_vocabulary_matches_a_frozen_coding_completion_occurrence()
+    {
+        const string project = "agent-studio";
+        const string card = "AGT-FACTS";
+        var projectPath = Path.Combine(_root, "projects", project);
+        var folder = Path.Combine(projectPath, TaskStates.Progress, card);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Coding completion facts", state = TaskStates.Progress,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Freeze the coding completion facts.");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _root,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    ["Runner:RunLiveness:Enabled"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_time);
+            });
+        });
+        var services = factory.Services;
+        var task = services.GetRequiredService<TaskScannerService>().FindJob(card, projectPath)!;
+        var at = _time.GetUtcNow().UtcDateTime;
+        var grounds = services.GetRequiredService<DecisionGroundsCollector>().CodingCompletion(new(
+            "orch_facts", task, "attempt-1", 1, 1, "Done", TaskStates.Progress, new string('c', 40),
+            new string('b', 40), "refs/agent-studio/results/attempt-1", true,
+            new TransitionDecision(TransitionAction.CreateReview, "settled",
+                new DecisionReceipt("facts", "", "", 0, 0, []), [], []), at));
+
+        Assert.Equal(DecisionRuleTriggers.CodingCompletionFacts.Order(StringComparer.Ordinal),
+            grounds.Facts.Select(fact => fact.Id).Order(StringComparer.Ordinal));
+        // Every fact an ask or hold rule may read is observed at the occurrence, so it is fresh.
+        Assert.All(grounds.Facts.Where(fact => DecisionRuleTriggers.EvidenceFacts(
+                DecisionRuleTriggers.CodingCompletion).Contains(fact.Id)),
+            fact => Assert.Equal(at, fact.ObservedAt));
     }
 
     [Fact]
@@ -215,9 +284,31 @@ public sealed class DecisionRuleVersionTests : IDisposable
         var error = Assert.Throws<ArgumentException>(() => store.Draft("workspace", "project",
             new(null, "operator", "overlay", [card with { CandidateActions = ["halt"] }])));
         Assert.Contains("Project overlay project", error.Message);
+        // Checkpoint needs a verified tree, which a first delivery does not have.
+        var checkpoint = Assert.Throws<ArgumentException>(() => store.Draft("workspace", "project",
+            new(null, "operator", "overlay", [card with { CandidateActions = ["checkpoint"] }])));
+        Assert.Contains("Project overlay project", checkpoint.Message);
+        Assert.Contains("no verified tree", checkpoint.Message);
+        // An overlay that adds a checkpoint rule keeps the workspace retry rule in the merged set.
         var overlay = store.Draft("workspace", "project", new(null, "operator", "overlay",
             [card with { Id = "card-checkpoint", CandidateActions = ["checkpoint"] }]));
         store.Activate("workspace", "project", overlay.VersionId, new("operator", "enable overlay"));
+    }
+
+    [Fact]
+    public void Card_versions_that_need_a_settled_envelope_or_verified_tree_are_refused()
+    {
+        var codex = DecisionRuleModelCatalogueSource.For("codex");
+        var card = Rule("card") with { Trigger = DecisionRuleTriggers.StepTransition,
+            FactId = "run.outcome", CandidateActions = ["retry"] };
+        Assert.True(DecisionRulePolicy.Validate([card], false, codex).Accepted);
+        foreach (var only in new[] { "prepare", "checkpoint", "adapt" })
+            Assert.Contains(DecisionRulePolicy.Validate([card with { CandidateActions = [only] }], false, codex).Refusals,
+                value => value.Contains("no available non-ask CodingCompletion alternative"));
+        Assert.Contains(DecisionRulePolicy.Validate([card with { CandidateActions = ["prepare"] }], false, codex)
+            .Refusals, value => value.Contains("the envelope is not settled"));
+        // Retry keeps a non-ask alternative even when the deterministic outcome asks.
+        Assert.Null(DecisionRulePolicy.CardAlternativeRefusal([card with { CandidateActions = ["prepare", "retry"] }]));
     }
 
     [Fact]
@@ -293,15 +384,17 @@ public sealed class DecisionRuleVersionTests : IDisposable
     {
         var at = _time.GetUtcNow().UtcDateTime;
         var store = new OrchestratorDecisionStore((string?)null, _time, TokenTestServices.Pricing());
-        DecisionShadowInputV1 Input(string id, string cadence) => new(new DecisionGroundsInputV1(id,
-                new("capacity-check", "capacity-check", at, cadence),
+        DecisionShadowInputV1 Input(string id, string cadence, DateTime? observedAt = null) => new(new DecisionGroundsInputV1(id,
+                new("capacity-check", "capacity-check", observedAt ?? at, cadence),
                 new("host", null, null, null, null, null, "host-1", "workspace"), null, null, "platform.v1",
                 new("codex", "gpt-6-sol", "medium", DecisionModelCustody.RunnerHostJob), [], [], [],
                 new CardRunLedgerV1(0, 0, 0, DecisionTokenUsageV1.Zero, 0, DecisionTokenUsageV1.Zero, 0, 0, 0, [],
                     DecisionPriceStatuses.NoUsage, "host", []), new("host.v1", "No card rounds", null, 0, 0, 0), []),
             DecisionActionKinds.Observe, "host-1", "host occurrence", DecisionReceiptPolicy.ActiveMode);
+        // Waiting occurrences count in the day the plane admitted them, not the day they were observed.
         for (var index = 0; index < DecisionCostCapPolicy.MaxEventCallsPerHostDay; index++)
-            Assert.NotNull(store.FreezeHostInputs(Input($"event-{index}", "event")).Input);
+            Assert.Equal(at, store.FreezeHostInputs(Input($"event-{index}", "event",
+                index % 2 == 0 ? at.AddDays(-1) : null)).Input!.AdmittedAt);
         var refused = store.FreezeHostInputs(Input("event-over", "event"));
         Assert.Null(refused.Input);
         Assert.Contains("12 event decision calls", refused.CapReason);

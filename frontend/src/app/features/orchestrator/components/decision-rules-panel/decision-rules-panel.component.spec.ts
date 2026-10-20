@@ -92,6 +92,23 @@ describe('DecisionRulesPanelComponent', () => {
     expect(fixture.componentInstance.error()).toBe('The standalone Task Server owns workspaces.');
   });
 
+  it('shows an error when host history or spend cannot load', async () => {
+    const fixture = TestBed.createComponent(DecisionRulesPanelComponent);
+    fixture.detectChanges();
+    await settle();
+    http.expectOne(rulesUrl).flush({ activeVersionId: null, versions: [], hardFloors: [] });
+    await settle();
+    http.expectOne(receiptsUrl).flush({ message: 'Receipt store unavailable.' },
+      { status: 503, statusText: 'Service Unavailable' });
+    http.expectOne(spendUrl).flush({}, { status: 500, statusText: 'Server Error' });
+    await settle();
+    fixture.detectChanges();
+    const alert = fixture.nativeElement.querySelector('[data-testid="decision-rules-history-error"]');
+    expect(alert?.textContent).toContain('Receipt store unavailable.');
+    expect(alert?.textContent).toContain('Could not load workspace decision spend.');
+    expect(fixture.componentInstance.error()).toBeNull();
+  });
+
   it('drafts a new rule from the closed trigger list with the configured model', async () => {
     const fixture = await render({ activeVersionId: null, versions: [], hardFloors: [] });
     const component = fixture.componentInstance;

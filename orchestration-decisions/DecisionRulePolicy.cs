@@ -65,8 +65,18 @@ public static class DecisionRuleTriggers
 
     public static bool IsHost(string? trigger) => trigger is not null && Host.Contains(trigger, StringComparer.Ordinal);
 
+    /// <summary>
+    /// Facts observed at an earlier event rather than at the occurrence. They are
+    /// usually stale, so an ask or hold rule on them would stop most occurrences.
+    /// </summary>
+    public static readonly IReadOnlyList<string> HistoricalFacts = ["review.last-outcome"];
+
     public static IReadOnlyList<string> KnownFacts(string? trigger)
         => IsCard(trigger) ? CodingCompletionFacts : IsHost(trigger) ? CapacityCheckFacts : [];
+
+    /// <summary>Facts an ask or hold rule may read: known facts observed at the occurrence.</summary>
+    public static IReadOnlyList<string> EvidenceFacts(string? trigger)
+        => KnownFacts(trigger).Except(HistoricalFacts, StringComparer.Ordinal).ToArray();
 }
 
 /// <summary>Checks editable rules before the API can persist or activate a version.</summary>
@@ -203,10 +213,14 @@ public static class DecisionRulePolicy
                 refusals.Add($"Rule {rule.Id} has an invalid autonomy class.");
             if (rule.MissingDataBehavior is not ("ask" or "hold" or "signal"))
                 refusals.Add($"Rule {rule.Id} has an invalid missing-data behavior.");
-            // A hold on a fact the trigger never carries would hold every occurrence.
-            if (rule.MissingDataBehavior == "hold"
+            // An ask or hold on a fact the trigger never carries, or carries from an
+            // earlier event, would ask or hold nearly every occurrence.
+            if (rule.MissingDataBehavior is "ask" or "hold"
+                && DecisionRuleTriggers.HistoricalFacts.Contains(rule.FactId, StringComparer.Ordinal))
+                refusals.Add($"{Behavior(rule)} rule {rule.Id} reads {rule.FactId}, which is observed at an earlier event and usually stale; use signal.");
+            else if (rule.MissingDataBehavior is "ask" or "hold"
                 && !DecisionRuleTriggers.KnownFacts(rule.Trigger).Contains(rule.FactId, StringComparer.Ordinal))
-                refusals.Add($"Hold rule {rule.Id} reads {rule.FactId}, which is not a known fact of {rule.Trigger}.");
+                refusals.Add($"{Behavior(rule)} rule {rule.Id} reads {rule.FactId}, which is not a known fact of {rule.Trigger}.");
             if (rule.FreshnessMinutes is < 1 or > 1440)
                 refusals.Add($"Rule {rule.Id} has an unbounded freshness window.");
             if (rule.WarningThreshold is { Length: > 0 } threshold
@@ -224,28 +238,39 @@ public static class DecisionRulePolicy
     }
 
     /// <summary>
-    /// Null when the card rules still leave a non-ask coding completion
-    /// alternative inside the A0/A1 floor once their facts are present.
-    /// Without one, every card falls to ask.
+    /// Null when the card rules leave a non-ask coding completion alternative
+    /// inside the A0/A1 floor for every deterministic outcome, with or without a
+    /// settled envelope, and without a verified tree, result SHA or ref. Only
+    /// facts every coding completion carries are present. Without such an
+    /// alternative, cards fall to ask or hold.
     /// </summary>
     public static string? CardAlternativeRefusal(IReadOnlyList<DecisionRuleV1> rules)
     {
         var card = rules.Where(rule => DecisionRuleTriggers.IsCard(rule.Trigger)).ToArray();
         if (card.Length == 0) return null;
         var at = DateTime.UnixEpoch;
-        var facts = card.Select(rule => rule.FactId).Distinct(StringComparer.Ordinal)
+        var known = DecisionRuleTriggers.EvidenceFacts(DecisionRuleTriggers.CodingCompletion);
+        var facts = card.Select(rule => rule.FactId).Where(id => known.Contains(id, StringComparer.Ordinal))
+            .Distinct(StringComparer.Ordinal)
             .Select(id => new GroundsFactV1(id, "rule", id, "0", null, new("rule-check", id), at,
                 "complete", GroundsReliability.Reliable)).ToArray();
-        var offered = DecisionGroundsPolicy.CodingCompletionAlternatives(
-            new TransitionDecision(TransitionAction.ReturnToReady, "rule check",
-                new DecisionReceipt("rule-check", "", "", 0, 0, []), [], []),
-            hasSettledEnvelope: true, "verified-tree", "result-sha", "result-ref");
-        var applied = Apply(card, DecisionRuleTriggers.StepTransition, DecisionRuleTriggers.CodingCompletion,
-            facts, offered, at);
-        return applied.Any(candidate => candidate.Available && candidate.Action != DecisionActionKinds.Ask
-                && candidate.RequiredApproval is "A0" or "A1")
-            ? null
-            : "Card rules leave no available non-ask CodingCompletion alternative within the A0/A1 floor.";
+        foreach (var outcome in Enum.GetValues<TransitionAction>())
+        foreach (var settled in new[] { false, true })
+        {
+            var offered = DecisionGroundsPolicy.CodingCompletionAlternatives(
+                new TransitionDecision(outcome, "rule check",
+                    new DecisionReceipt("rule-check", "", "", 0, 0, []), [], []),
+                settled, lastVerifiedTreeSha: null, resultSha: null, resultRef: null);
+            var applied = Apply(card, DecisionRuleTriggers.StepTransition, DecisionRuleTriggers.CodingCompletion,
+                facts, offered, at);
+            if (!applied.Any(candidate => candidate.Available && candidate.Action != DecisionActionKinds.Ask
+                    && candidate.RequiredApproval is "A0" or "A1"))
+                return "Card rules leave no available non-ask CodingCompletion alternative within the A0/A1 floor"
+                    + $" when the deterministic outcome is {DecisionGroundsPolicy.Union(outcome)}"
+                    + $" ({outcome}), the envelope is {(settled ? "settled" : "not settled")},"
+                    + " and no verified tree, result SHA or ref exists.";
+        }
+        return null;
     }
 
     /// <summary>Null when the configured decision CLI serves the model at the trusted floor.</summary>
@@ -259,6 +284,9 @@ public static class DecisionRulePolicy
         return option.Trusted ? null
             : $"sets model {model}, which is below the trusted correctness floor.";
     }
+
+    private static string Behavior(DecisionRuleV1 rule)
+        => rule.MissingDataBehavior == "hold" ? "Hold" : "Ask";
 
     private static string ThresholdState(DecisionRuleV1 rule, string value)
     {
