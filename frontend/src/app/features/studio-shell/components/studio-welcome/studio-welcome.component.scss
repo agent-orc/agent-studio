@@ -47,6 +47,8 @@
 
   &__primary {
     display: flex;
+    flex-wrap: wrap;
+    gap: var(--studio-spacing-2);
     align-items: center;
     margin-top: var(--studio-spacing-5);
   }

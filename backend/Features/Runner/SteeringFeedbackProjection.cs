@@ -80,7 +80,9 @@ public sealed class SteeringFeedbackProjection
                     && Root(successor.AttemptId) == Root(run.AttemptId)
                     && successor.State == AttemptLifecycleState.Completed
                     && successor.CreatedAt >= terminal);
-                var state = recovered ? "recovered"
+                var state = string.Equals(run.TerminalOutcome, "stopped", StringComparison.OrdinalIgnoreCase)
+                    ? "stopped"
+                    : recovered ? "recovered"
                     : IsQuarantine(run.TerminalOutcome, run.TerminalReason) ? "quarantined"
                     : outage ? "unresolved"
                     : run.State == AttemptLifecycleState.Completed ? "consumed" : "rejected";
@@ -90,7 +92,11 @@ public sealed class SteeringFeedbackProjection
             }
         }
 
-        foreach (var stop in _stops.ListForTask(task.TaskKey))
+        var authorityKey = TaskIdentity.AuthorityKey(task);
+        var stopReceipts = _stops.ListForTask(authorityKey);
+        if (!string.Equals(authorityKey, task.TaskKey, StringComparison.OrdinalIgnoreCase))
+            stopReceipts = [.. stopReceipts, .. _stops.ListForTask(task.TaskKey)];
+        foreach (var stop in stopReceipts)
         {
             var current = stop.AttemptId == authority.CurrentRunAttempt?.AttemptId
                           && stop.FencingToken == authority.CurrentRunAttempt?.LastFence;

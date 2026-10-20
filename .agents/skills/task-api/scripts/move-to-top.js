@@ -6,7 +6,7 @@
 // Returns { position: 0 } on success. 404 if the task is not found in
 // 2-ready or another promotable lane.
 
-import http from 'node:http';
+import { taskApiRequest } from './access.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.TASKBOARD_PORT ?? 5031);
@@ -20,7 +20,7 @@ if (!taskId) {
 
 function request(method, path) {
   return new Promise(resolve => {
-    const req = http.request({
+    const req = taskApiRequest({
       hostname: HOST,
       port: PORT,
       path,

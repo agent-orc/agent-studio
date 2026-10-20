@@ -12,6 +12,14 @@ public sealed class RunLeaseService
 {
     public static readonly TimeSpan DefaultTtl = TimeSpan.FromSeconds(PickupLockFile.LeaseTtlSeconds);
 
+    // Serializes a local lease release with an HTTP stop acknowledgement. A
+    // request accepted while the lease is held must be visible to release.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _localStopGates =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    internal SemaphoreSlim LocalStopGate(string taskKey)
+        => _localStopGates.GetOrAdd(taskKey, static _ => new SemaphoreSlim(1, 1));
+
     private readonly AttemptAuthorityService _authority;
     private readonly Func<DateTime> _utcNow;
 
@@ -108,6 +116,20 @@ public sealed class RunLeaseService
         if (reference is null)
             return new RunLeaseResponse("NotHeld", false, null, "No canonical RunAttempt is held for this task.");
 
+        if (string.Equals(request.Outcome, "Stopped", StringComparison.OrdinalIgnoreCase))
+        {
+            var settled = _authority.SettleRun(new SettleRunAttemptRequest
+            {
+                Write = reference with { IdempotencyKey = reference.IdempotencyKey + ":settle" },
+                Outcome = "stopped",
+                Reason = "Operator stopped the local run.",
+                ExecutorId = request.RunnerId,
+                LeaseId = request.LeaseId,
+                ExpectedTaskKey = request.TaskKey,
+                RequireResultSha = false,
+            });
+            if (!settled.Accepted) return MapMutation(settled, "Released");
+        }
         var result = _authority.ReleaseRun(reference, request.RunnerId, request.LeaseId);
         var mapped = MapMutation(result, "Released");
         return mapped with { Lease = mapped.Lease ?? ToLease(before) };

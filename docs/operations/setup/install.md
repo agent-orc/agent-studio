@@ -395,6 +395,22 @@ These remote modes accept the Linux options described in
 [multi-machine setup](./multi-machine.md). Every mode translates `native` and
 `systemd` the same way, with or without `--unattended` or `--answer-file`.
 
+## Finish setup in Studio
+
+After the service starts, sign in as the owner using the installer bootstrap
+code. Studio opens the first-run checklist; it is also available later in
+Settings. It reads owner, project, host, provider, and repository status from
+the active authority and host probes. For a standalone Task Server, use the
+checklist to start provider device login on a runner, register the first
+repository, configure GitHub access, issue a remote Linux join token if needed,
+and create the proof card. The GitHub verification button checks both fetch
+and push on the selected host. In the local profile, the same action stores
+credentials under the backend service account, clones the registered origin
+when no checkout exists, and verifies read and write. The card is complete
+only after coding, review,
+and integration are recorded. See [identity and project bootstrap](./identity-and-project-bootstrap.md)
+for credential custody and the host receipt contract.
+
 ## Installer screens
 
 These captures render the executable's actual help output and a dry run with

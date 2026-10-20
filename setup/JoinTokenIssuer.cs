@@ -12,7 +12,7 @@ internal static class JoinTokenIssuer
 {
     internal sealed record Request(string AuthorityUrl, string HostUrl, string Route, string RunnerId,
         string ReleaseVersion, string ManagementTokenFile, string? OwnerSessionFile, string OutputFile,
-        string SshTarget = "agent-runner", string? OwnerName = null, string? OwnerPassword = null);
+        string? OwnerName = null, string? OwnerPassword = null);
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -20,7 +20,7 @@ internal static class JoinTokenIssuer
         {
             if (args.Contains("--help"))
             {
-                Console.WriteLine("join-token --runner-name NAME --join-token-file PATH [--route reverse-tunnel|lan|https] [--server-url URL] [--ssh-target HOST]");
+                Console.WriteLine("join-token --runner-name NAME --join-token-file PATH [--route reverse-tunnel|lan|https] [--server-url URL] [--ssh-target HOST] [--remote-port PORT]");
                 return 0;
             }
             if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
@@ -37,7 +37,7 @@ internal static class JoinTokenIssuer
             var allowed = new HashSet<string>(StringComparer.Ordinal)
             {
                 "--runner-name", "--role", "--token-file", "--owner-session-file", "--join-token-file",
-                "--route", "--server-url", "--authority-url", "--release-version", "--ssh-target",
+                "--route", "--server-url", "--authority-url", "--release-version", "--ssh-target", "--remote-port",
             };
             if (values.Keys.FirstOrDefault(key => !allowed.Contains(key)) is { } unknown)
                 throw new ArgumentException($"Unknown join-token option: {unknown}");
@@ -46,14 +46,15 @@ internal static class JoinTokenIssuer
             if (role is not ("coding" or "review"))
                 throw new ArgumentException("--role must be coding or review.");
             var runnerId = role == "coding" ? hostName : $"{hostName}-review";
+            var sshTarget = ResolveSshTarget(hostName, values.GetValueOrDefault("--ssh-target"));
             var prompter = new ConsolePrompter(false);
             var route = values.GetValueOrDefault("--route")
                 ?? prompter.Ask("Reachability (reverse-tunnel, lan, https)",
                     OperatingSystem.IsWindows() ? "reverse-tunnel" : "https");
-            if (route == "reverse-tunnel" && !OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("Automatic reverse tunnel setup requires the Windows tunnel keeper.");
+            var remotePort = ResolveRemotePort(route, values.GetValueOrDefault("--server-url"),
+                values.GetValueOrDefault("--remote-port"));
             var hostUrl = route == "reverse-tunnel"
-                ? values.GetValueOrDefault("--server-url", "http://127.0.0.1:15031")
+                ? values.GetValueOrDefault("--server-url", $"http://127.0.0.1:{remotePort}")
                 : values.GetValueOrDefault("--server-url")
                   ?? prompter.Ask("Task Server URL visible from the Linux host (https://...)");
             var request = new Request(
@@ -64,7 +65,6 @@ internal static class JoinTokenIssuer
                     ? Path.Combine(WindowsServiceLayout.ForHost(Path.GetTempPath()).ConfigRoot, "studio.token")
                     : Path.Combine(InstallPaths.Load().OrchestratorConfig, "studio.token")),
                 values.GetValueOrDefault("--owner-session-file"), Required("--join-token-file"),
-                values.GetValueOrDefault("--ssh-target", "agent-runner"),
                 values.ContainsKey("--owner-session-file") ? null : prompter.Ask("Studio owner username"),
                 values.ContainsKey("--owner-session-file") ? null : prompter.Secret("Studio owner password"));
             if (route == "reverse-tunnel" && OperatingSystem.IsWindows())
@@ -73,7 +73,7 @@ internal static class JoinTokenIssuer
                     "current", "deploy-windows", "agent-runner-tunnel", "register-tunnel-keeper.ps1");
                 await new ProcessRunner(false).RequireAsync("powershell.exe",
                     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scripts,
-                     "-SshTarget", request.SshTarget, "-RemotePort", "15031", "-OrchestratorPort", "5071",
+                     "-SshTarget", sshTarget, "-RemotePort", remotePort.ToString(), "-OrchestratorPort", "5071",
                      "-TaskName", TunnelTaskName(hostName)]);
             }
             await IssueAsync(request);
@@ -89,6 +89,39 @@ internal static class JoinTokenIssuer
 
     internal static string TunnelTaskName(string hostName)
         => $"AgentRunner-TunnelKeeper-{SetupValidation.RequireSimpleName(hostName, "Agent Host name")}";
+
+    internal static string ResolveSshTarget(string hostName, string? sshTarget)
+    {
+        if (sshTarget is null)
+            return SetupValidation.RequireSimpleName(hostName, "Agent Host name");
+        var parts = sshTarget.Split('@');
+        if (parts.Length is not (1 or 2) || parts.Any(part => part.Length == 0))
+            throw new ArgumentException("--ssh-target must be a host or user@host.");
+        foreach (var part in parts)
+            SetupValidation.RequireSimpleName(part, "SSH target");
+        return sshTarget;
+    }
+
+    internal static int ResolveRemotePort(string route, string? serverUrl, string? requestedPort)
+    {
+        if (route != "reverse-tunnel")
+        {
+            if (requestedPort is not null)
+                throw new ArgumentException("--remote-port applies only to reverse-tunnel joins.");
+            return 0;
+        }
+        var uri = serverUrl is null ? null : SetupValidation.RequireServerUrl(serverUrl, allowLoopbackHttp: true);
+        if (uri is not null && (!uri.IsLoopback || uri.Scheme != "http"))
+            throw new ArgumentException("A reverse tunnel must use its Linux loopback HTTP endpoint.");
+        var urlPort = uri?.Port ?? 15031;
+        if (requestedPort is null)
+            return urlPort;
+        if (!int.TryParse(requestedPort, out var port) || port is < 1 or > 65535)
+            throw new ArgumentException("--remote-port must be between 1 and 65535.");
+        if (serverUrl is not null && port != urlPort)
+            throw new ArgumentException("--remote-port must match the reverse-tunnel server URL port.");
+        return port;
+    }
 
     internal static async Task<JoinPayload> IssueAsync(Request request, HttpClient? client = null,
         TimeProvider? clock = null, CancellationToken cancellationToken = default)
