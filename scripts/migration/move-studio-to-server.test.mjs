@@ -9,6 +9,7 @@ import {
   buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
   readProjectRegistry, runCli, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
+import { relocate } from './relocate-workspace-paths.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/move-studio-workspace.json', import.meta.url), 'utf8'));
 const fixedClock = () => new Date('2026-10-19T08:30:00.000Z');
@@ -179,6 +180,11 @@ test('task storage under a checkout or outside it gets its own copied root', () 
     ['/data/projects/.task-storage/PROJ-011', '/data/projects/.task-storage/PROJ-014']);
   assert.equal(plan.mapping['C:\\Projects\\repo\\.orchestrator\\jobs'], plan.storageRoots[0].target);
   assert.equal(plan.mapping['D:\\Tasks\\jobs'], plan.storageRoots[1].target);
+  const mappings = Object.entries(plan.mapping).sort((a, b) => b[0].length - a[0].length);
+  assert.deepEqual(relocate(projects[0].storageLocation, mappings),
+    { target: '/data/projects/.task-storage/PROJ-011', unresolved: false });
+  assert.deepEqual(relocate(projects[1].storageLocation, mappings),
+    { target: '/data/projects/.task-storage/PROJ-014', unresolved: false });
   assert.deepEqual(plan.issues, []);
 });
 
