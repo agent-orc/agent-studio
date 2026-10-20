@@ -24,6 +24,7 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly AgentMessageBusBridge? _bus;
     private readonly TimeProvider _time;
+    private readonly bool _guardedDelivery;
 
     public AcceptedIntegrationWorker(
         AcceptedIntegrationQueue queue,
@@ -37,7 +38,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         GitService? git = null,
         BranchReclaimTriggerService? branchReclaim = null,
         AgentMessageBusBridge? bus = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IConfiguration? configuration = null)
     {
         _queue = queue;
         _runner = runner;
@@ -51,6 +53,7 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         _branchReclaim = branchReclaim;
         _bus = bus;
         _time = timeProvider ?? TimeProvider.System;
+        _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -225,9 +228,12 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
                 or AcceptedIntegrationFailureCodes.GateEnvironmentFailure
                 or AcceptedIntegrationFailureCodes.GateInterrupted
                 or AcceptedIntegrationFailureCodes.StaleAttempt;
+        // Without guarded delivery a gate failure here can be the acceptance
+        // integration itself; only a published delivery keeps it Completed.
         if (job.State == TaskStates.Completed
-            && (lateGateFailure || AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(
-                job, request.IntegrationBranch, _git)))
+            && (lateGateFailure && _guardedDelivery
+                || AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(
+                    job, request.IntegrationBranch, _git)))
         {
             if (lateGateFailure && failureCode != AcceptedIntegrationFailureCodes.StaleAttempt)
                 _timeline?.Append(job.FolderPath, new TimelineEvent
