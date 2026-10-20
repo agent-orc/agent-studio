@@ -26,6 +26,8 @@ public sealed record SecretRecord
     public SecretScope ParsedScope => SecretScope.Parse(Scope);
     [JsonIgnore]
     public SecretReference Reference => new(ParsedScope, Name);
+    [JsonIgnore]
+    public SecretAdapterBinding? AdapterBinding { get; init; }
 }
 
 /// <summary>Every stored secret the store could verify, plus the items it could not.</summary>

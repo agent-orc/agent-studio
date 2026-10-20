@@ -18,6 +18,33 @@ public static class SecretEndpoints
 
     public static void MapSecretEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/secrets/adapters", (HttpContext context, SecretAdapterSettings settings,
+            ScopedSecretStore stores, AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
+            CancellationToken ct) => Run(async () =>
+        {
+            var caller = Caller.From(context, security, configuration, registry);
+            var bindings = (await settings.ReadAsync(ct)).Where(item => caller.CanSee(SecretScope.Parse(item.Scope))).ToList();
+            var health = new List<SecretAdapterHealth>();
+            foreach (var binding in bindings) health.Add(await stores.HealthAsync(binding, ct));
+            return Results.Ok(new { bindings, health });
+        }));
+
+        app.MapPut("/api/secrets/adapters", (SecretAdapterBinding binding, HttpContext context, SecretAdapterSettings settings,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry, CancellationToken ct) => Run(async () =>
+        {
+            Caller.From(context, security, configuration, registry).RequireConfigure();
+            await settings.SetAsync(binding, ct);
+            return Results.NoContent();
+        }));
+
+        app.MapDelete("/api/secrets/adapters/{**scope}", (string scope, HttpContext context, SecretAdapterSettings settings,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry, CancellationToken ct) => Run(async () =>
+        {
+            Caller.From(context, security, configuration, registry).RequireConfigure();
+            await settings.RemoveAsync(SecretScope.Parse(Uri.UnescapeDataString(scope)), ct);
+            return Results.NoContent();
+        }));
+
         app.MapGet("/api/secrets", (HttpContext context, ISecretProvider secrets, ISecretStore store,
             IKeyEncryptionKeySource keys, AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
             CancellationToken ct) => Run(async () =>
@@ -213,6 +240,7 @@ public static class SecretEndpoints
         catch (CallerUnauthenticatedException ex) { return Error(StatusCodes.Status401Unauthorized, "authentication-required", ex.Message); }
         catch (SecretValidationException ex) { return Error(StatusCodes.Status400BadRequest, ex.Code, ex.Message); }
         catch (SecretKeyUnavailableException ex) { return Error(StatusCodes.Status503ServiceUnavailable, "secret-key-unavailable", ex.Message); }
+        catch (SecretAdapterException ex) { return Error(StatusCodes.Status503ServiceUnavailable, ex.Code, ex.Message); }
         catch (SecretIntegrityException) { return Error(StatusCodes.Status500InternalServerError, "secret-integrity-failed", "A stored secret failed its integrity check."); }
     }
 
@@ -277,6 +305,12 @@ public static class SecretEndpoints
             if (decision.Allowed) return Actor;
             AuditRefusedWrite(context, Actor, decision.Code, name, version);
             throw new SecretAccessDeniedException(decision.Code, decision.Reason);
+        }
+
+        public void RequireConfigure()
+        {
+            if (Role != StudioRoles.Owner)
+                throw new SecretAccessDeniedException("adapter-config-denied", "Only an owner may configure secret adapters.");
         }
 
         private bool Member(string project)

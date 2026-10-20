@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthSessionState, type AuthStatus } from '../../../services/auth.service';
-import { SecretsService, type SecretMetadata, type SecretOverview } from '../secrets.service';
+import { SecretsService, type SecretAdapterBinding, type SecretAdapterHealth, type SecretMetadata, type SecretOverview } from '../secrets.service';
 import { SecretsPanelComponent } from './secrets-panel.component';
 
 function secret(scope: string, name: string, status: 'active' | 'revoked' = 'active'): SecretMetadata {
@@ -27,6 +27,8 @@ function setup(role: 'owner' | 'viewer' = 'owner') {
   });
   const service = {
     overview, state: signal('ready'), error: signal<string | null>(null), load: vi.fn(),
+    adapters: signal<SecretAdapterBinding[]>([]), adapterHealth: signal<SecretAdapterHealth[]>([]), loadAdapters: vi.fn(),
+    setAdapter: vi.fn(() => of(undefined)), removeAdapter: vi.fn(() => of(undefined)),
     environments: vi.fn(() => of(['stage', 'prod'])),
     add: vi.fn(() => of(secret('workspace', 'NEW_KEY'))),
     rotate: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
@@ -110,5 +112,38 @@ describe('SecretsPanelComponent', () => {
     expect(element.querySelector('[data-testid="secrets-add"]')).toBeNull();
     expect(element.querySelector('[data-testid="secrets-rotate"]')).toBeNull();
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
+  });
+
+  it('configures a store for the selected scope without a credential value', () => {
+    const { fixture, service, element } = setup();
+    fixture.componentInstance.adapterKind.set('vault');
+    fixture.componentInstance.adapterEndpoint.set('https://vault.example.com');
+    fixture.componentInstance.adapterContainer.set('secret');
+    fixture.componentInstance.adapterCredential.set('env:SECRET_ADAPTER_TOKEN');
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="secrets-adapter-credential"]')).not.toBeNull();
+    fixture.componentInstance.saveAdapter();
+    expect(service.setAdapter).toHaveBeenCalledWith({ scope: 'workspace', kind: 'vault',
+      endpoint: 'https://vault.example.com', container: 'secret', credential: 'env:SECRET_ADAPTER_TOKEN', cacheSeconds: 30 });
+  });
+
+  it('loads the selected binding and shows reachability for that scope', () => {
+    const { fixture, service, element } = setup();
+    service.adapters.set([{ scope: 'workspace', kind: 'vault', endpoint: 'https://vault.example.com',
+      container: 'secret', credential: 'env:SECRET_ADAPTER_TOKEN', cacheSeconds: 30 }]);
+    service.adapterHealth.set([{ scope: 'workspace', kind: 'vault', reachable: false, problem: 'Credential rejected' }]);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.adapterKind()).toBe('vault');
+    expect(element.querySelector('[data-testid="secrets-adapter-health"]')?.textContent).toContain('Credential rejected');
+  });
+
+  it('names an unavailable adapter separately from an unreadable item', () => {
+    const { fixture, service, element } = setup();
+    service.overview.update(current => current && { ...current, unreadable: [
+      { id: 'adapter:workspace', scope: 'workspace', name: null, problem: 'adapter-unavailable', reason: 'Credential rejected' },
+    ] });
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="secrets-unreadable"]')?.textContent)
+      .toContain('A configured secret store is unavailable');
   });
 });

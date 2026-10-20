@@ -33,12 +33,12 @@ export interface SecretMetadata {
   versions: readonly SecretVersion[];
 }
 
-/** A stored item that failed its key or integrity check. Scope and name are unverified claims. */
+/** A stored item or selected adapter that cannot be read. Scope and name may be unverified claims. */
 export interface UnreadableSecret {
   id: string;
   scope: string | null;
   name: string | null;
-  problem: 'key-unavailable' | 'integrity-failed' | 'read-failed';
+  problem: 'key-unavailable' | 'integrity-failed' | 'read-failed' | 'adapter-unavailable';
   reason: string;
 }
 
@@ -48,6 +48,22 @@ export interface SecretOverview {
   canWriteWorkspace: boolean;
   secrets: readonly SecretMetadata[];
   unreadable: readonly UnreadableSecret[];
+}
+
+export interface SecretAdapterBinding {
+  scope: string;
+  kind: 'vault' | 'onepassword';
+  endpoint: string;
+  container: string;
+  credential: string;
+  cacheSeconds: number;
+}
+
+export interface SecretAdapterHealth {
+  scope: string;
+  kind: string;
+  reachable: boolean;
+  problem: string | null;
 }
 
 /** `workspace`, `<project>` or `<project>/<environment>`. */
@@ -73,6 +89,34 @@ export class SecretsService {
   readonly overview = signal<SecretOverview | null>(null);
   readonly state = signal<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
   readonly error = signal<string | null>(null);
+  readonly adapters = signal<readonly SecretAdapterBinding[]>([]);
+  readonly adapterHealth = signal<readonly SecretAdapterHealth[]>([]);
+
+  loadAdapters(): void {
+    this.http?.get<{ bindings: SecretAdapterBinding[]; health: SecretAdapterHealth[] }>('/api/secrets/adapters').subscribe({
+      next: response => {
+        this.adapters.set(response.bindings);
+        this.adapterHealth.set(response.health);
+      },
+      error: (error: unknown) => this.error.set(messageOf(error)),
+    });
+  }
+
+  setAdapter(binding: SecretAdapterBinding): Observable<void> {
+    return this.http!.put<void>('/api/secrets/adapters', binding).pipe(map(result => {
+      this.loadAdapters();
+      this.load();
+      return result;
+    }));
+  }
+
+  removeAdapter(scope: string): Observable<void> {
+    return this.http!.delete<void>(`/api/secrets/adapters/${scope.split('/').map(encodeURIComponent).join('/')}`).pipe(map(result => {
+      this.loadAdapters();
+      this.load();
+      return result;
+    }));
+  }
 
   load(): void {
     if (!this.http) {

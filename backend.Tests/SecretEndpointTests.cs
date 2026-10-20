@@ -45,6 +45,9 @@ public sealed class SecretEndpointTests : IDisposable
     [
         "GET /api/secrets",
         "GET /api/secrets/audit",
+        "GET /api/secrets/adapters",
+        "PUT /api/secrets/adapters",
+        "DELETE /api/secrets/adapters/{**scope}",
         .. ScopeRoutes("/api/secrets/workspace"),
         .. ScopeRoutes("/api/projects/{project}/secrets"),
         .. ScopeRoutes("/api/projects/{project}/environments/{environment}/secrets"),
@@ -101,6 +104,10 @@ public sealed class SecretEndpointTests : IDisposable
         }
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets", "/api/secrets");
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets/audit", "/api/secrets/audit");
+        await Expect(HttpStatusCode.NoContent, "PUT", "/api/secrets/adapters", "/api/secrets/adapters",
+            new SecretAdapterBinding("workspace", "vault", "http://127.0.0.1:9", "secret", "env:TEST_SECRET_TOKEN", 0));
+        await Expect(HttpStatusCode.OK, "GET", "/api/secrets/adapters", "/api/secrets/adapters");
+        await Expect(HttpStatusCode.NoContent, "DELETE", "/api/secrets/adapters/workspace", "/api/secrets/adapters/{**scope}");
 
         var resolve = await Send(client, "POST", SecretEndpoints.ResolvePath, Resolve($"secret://{Project}/MAIL_KEY"), owner);
         Assert.Equal(HttpStatusCode.Unauthorized, resolve.Status);
@@ -136,6 +143,21 @@ public sealed class SecretEndpointTests : IDisposable
         Assert.Equal([2, 1], secret.GetProperty("versions").EnumerateArray().Select(item => item.GetProperty("version").GetInt32()));
         Assert.Equal("builtin", json.RootElement.GetProperty("store").GetString());
         Assert.DoesNotContain(secret.EnumerateObject(), property => property.Name.Contains("value", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Only_owner_can_bind_an_adapter_and_raw_credentials_are_refused()
+    {
+        using var factory = Networked();
+        using var client = Client(factory);
+        var owner = Owner(factory);
+        var viewer = SignIn(factory, "team.viewer", StudioRoles.Viewer, ["*"]);
+        var valid = new SecretAdapterBinding("workspace", "vault", "https://vault.example.com", "secret", "env:SECRET_ADAPTER_TOKEN");
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(client, "PUT", "/api/secrets/adapters", valid, viewer)).Status);
+        var raw = valid with { Credential = "raw-" + Guid.NewGuid().ToString("N") };
+        var refused = await Send(client, "PUT", "/api/secrets/adapters", raw, owner);
+        Assert.Equal(HttpStatusCode.BadRequest, refused.Status);
+        Assert.DoesNotContain(raw.Credential, refused.Body, StringComparison.Ordinal);
     }
 
     [Fact]

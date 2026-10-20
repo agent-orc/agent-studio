@@ -96,7 +96,9 @@ public sealed class SecretProvider : ISecretProvider
             if (record is null) throw new SecretNotFoundException(reference.ToString());
 
             var version = SecretVersionPolicy.Select(record, reference.Version);
-            var bytes = await _store.ReadValueAsync(record.ParsedScope, record.Name, version.Version, ct);
+            var bytes = _store is ScopedSecretStore scoped
+                ? await scoped.ReadValueForRecordAsync(record, version.Version, ct)
+                : await _store.ReadValueAsync(record.ParsedScope, record.Name, version.Version, ct);
             string value;
             try { value = Encoding.UTF8.GetString(bytes); }
             finally { Array.Clear(bytes); }
@@ -187,6 +189,9 @@ public sealed class SecretProvider : ISecretProvider
                 return "failed:key-unavailable";
             case OperationCanceledException:
                 return "failed:cancelled";
+            case SecretAdapterException adapter:
+                _logger.LogWarning("Secret {Action} for {Reference} failed at its adapter: {Code}", action, reference.Unpinned(), adapter.Code);
+                return "failed:" + adapter.Code;
             default:
                 _logger.LogError(exception, "Secret {Action} for {Reference} failed unexpectedly", action, reference.Unpinned());
                 return "failed:error";

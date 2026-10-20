@@ -83,6 +83,10 @@ async function stub(page: Page, unreadable: readonly object[] = []) {
   const fake = fakeSecrets();
   await page.route('**/api/secrets', route => json({ store: 'builtin', keySource: 'key-file', canWriteWorkspace: true,
     secrets: fake.secrets.map(fake.view), unreadable })(route));
+  await page.route('**/api/secrets/adapters**', route => {
+    if (route.request().method() === 'GET') return json({ bindings: [], health: [] })(route);
+    return route.fulfill({ status: 204 });
+  });
   await page.route('**/api/secrets/workspace**', fake.handle);
   await page.route('**/api/projects/memowikis/**/secrets**', fake.handle);
   await page.route('**/api/projects/memowikis/secrets**', fake.handle);
@@ -96,6 +100,7 @@ test('Secrets section adds, rotates and revokes without ever showing a value', a
   await page.goto('/#/workspace/settings/secrets', { waitUntil: 'domcontentloaded' });
   const panel = page.getByTestId('secrets-panel');
   await expect(panel).toBeVisible();
+  await expect(page.getByTestId('secrets-adapter-kind')).toBeVisible();
   await expect(page.getByTestId('workspace-settings-rail-secrets')).toBeVisible();
   await expect(page.getByTestId('secrets-empty')).toBeVisible();
 
@@ -150,5 +155,33 @@ test('Secrets section warns about items the configured key cannot open and still
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
     await page.screenshot({ path: join(shots, `secrets-unreadable-${theme}--mocked.png`) });
+  }
+});
+
+test('Secrets section saves a scope adapter and shows unreachable health', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stub(page);
+  let binding: Record<string, unknown> | null = null;
+  await page.route('**/api/secrets/adapters**', route => {
+    if (route.request().method() === 'PUT') {
+      binding = route.request().postDataJSON() as Record<string, unknown>;
+      return route.fulfill({ status: 204 });
+    }
+    return json({ bindings: binding ? [binding] : [], health: binding ? [
+      { scope: 'workspace', kind: 'vault', reachable: false, problem: 'The adapter rejected its credential.' },
+    ] : [] })(route);
+  });
+  await page.goto('/#/workspace/settings/secrets', { waitUntil: 'domcontentloaded' });
+  await page.getByTestId('secrets-adapter-kind').selectOption('vault');
+  await page.getByTestId('secrets-adapter-endpoint').fill('https://vault.example.com');
+  await page.getByTestId('secrets-adapter-container').fill('secret');
+  await page.getByTestId('secrets-adapter-credential').fill('env:SECRET_ADAPTER_TOKEN');
+  await page.getByTestId('secrets-adapter-save').click();
+  await expect(page.getByTestId('secrets-adapter-health')).toContainText('Unavailable');
+  expect(binding).toMatchObject({ scope: 'workspace', kind: 'vault', credential: 'env:SECRET_ADAPTER_TOKEN' });
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(shots, `secrets-adapter-${theme}--mocked.png`) });
   }
 });
