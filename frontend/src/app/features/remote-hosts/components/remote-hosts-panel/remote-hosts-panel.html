@@ -1,29 +1,14 @@
 <div class="rh" data-testid="remote-hosts-panel">
-  <header class="rh__head">
-    <div class="rh__intro">
-      <h2 class="rh__title">Execution Hosts</h2>
-      <p class="rh__subtitle">
-        Local and remote execution capacity, current health, and lifecycle controls.
-      </p>
-    </div>
-    <div class="rh__actions">
-      <button class="rh__add" type="button" data-testid="remote-hosts-add" (click)="openWizard()">
-        <span aria-hidden="true">+</span><span>Add execution host</span>
-      </button>
-      @if (retiredCount()) {
-        <button class="rh__refresh" type="button" data-testid="remote-hosts-purge-retired"
-                (click)="openPurgeRetired()">
-          <span>Delete retired…</span>
-        </button>
-      }
-      <button class="rh__refresh" type="button" data-testid="remote-hosts-refresh"
-              [disabled]="loading()" (click)="reload()">
-        {{ loading() ? '⏳' : '↻' }} <span>Reload</span>
-      </button>
-    </div>
-  </header>
+  <app-environment-header [view]="view()" [retiredCount]="retiredCount()" [loading]="loading()"
+                          (viewChange)="setView($event)" (add)="openWizard()"
+                          (purge)="openPurgeRetired()" (reload)="reload()" />
+  @if (view() === 'map') {
+    <app-environment-map [map]="environmentMap()" (selectHost)="selectMapHost($event)" />
+  }
+  @if (view() === 'list') {
   <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
   <app-execution-infrastructure [reloadToken]="infrastructureReload()" />
+  <app-operational-stalls />
   <div class="rh__summary" data-testid="remote-hosts-summary">
     <span class="rh__count"><strong>{{ total() }}</strong> {{ total() === 1 ? 'machine' : 'machines' }}</span>
     <span class="rh__sep" aria-hidden="true">·</span>
@@ -50,6 +35,7 @@
       </button>
     }
   </div>
+  }
   <app-runner-infrastructure-failures />
   @if (readyCandidateTasks().length > 0) {
     <section class="rh__candidates" data-testid="execution-host-candidates">
@@ -157,7 +143,7 @@
   }
 
   @if (total()) {
-    <div class="rh__table-wrap" data-testid="remote-hosts-active">
+    <div class="rh__table-wrap" [class.rh__table-wrap--map]="view() === 'map'" data-testid="remote-hosts-active">
       <table class="rh__table" data-testid="remote-hosts-table">
         <caption>Execution hosts and their current operating state</caption>
         <thead>

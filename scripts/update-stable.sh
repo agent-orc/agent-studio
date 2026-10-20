@@ -20,7 +20,8 @@
 #   ATP_TASK_SERVER_START_SCRIPT host-owned Scheduled Task start wrapper
 #   ATP_TASK_SERVER_DEPLOY_SCRIPT host-owned package/install wrapper
 #   ATP_TASK_SERVER_URL          standalone Task Server origin
-#   ATP_STABLE_BACKEND_URL       Stable API origin used for proxy verification
+#   ATP_STABLE_BACKEND_URL       Stable API origin used for proxy verification;
+#                                use the HTTPS edge in the networked profile
 #   ATP_TASK_SERVER_PROBE_SCRIPT config, readiness, and proxy probe
 
 set -Eeuo pipefail

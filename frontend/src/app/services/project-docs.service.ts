@@ -30,6 +30,7 @@ import {
   WikiTree,
   WorkbenchCatalogue,
   WorkbenchDocument,
+  DossierCardList,
   WorkbenchTaskReferences,
   WorkbenchOverview,
   RecordWorkbenchReviewRequest,
@@ -219,6 +220,12 @@ export class ProjectDocsService {
   getWorkbenchReferences(projectName: string, key: string) {
     return this.http.get<WorkbenchTaskReferences>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/workbenches/${encodeURIComponent(key)}/references`,
+    );
+  }
+
+  getDossierCards(projectName: string, id: string) {
+    return this.http.get<DossierCardList>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/workbenches/${encodeURIComponent(id)}/cards`,
     );
   }
 

@@ -51,6 +51,7 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/tasks', json([]));
   await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/management/credential-inventory', json({ generatedAt: new Date().toISOString(), items: [] }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
@@ -294,7 +295,8 @@ test.describe('Execution Hosts settings section', () => {
     await page.setViewportSize({ width: 1600, height: 950 });
     // Most coverage uses the legacy modal; the scroll ownership regression
     // exercises the editor tab that owns studio-editor__main.
-    const editorLayout = testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields';
+    const editorLayout = testInfo.title === 'keeps settings in one scroll owner and fits actions with real project response fields'
+      || testInfo.title.includes('shows open operational stalls');
     await page.addInitScript((value) => { try { localStorage.setItem('atp.flag.vsCodeLayout', value); } catch { /* ignore */ } }, editorLayout ? '1' : '0');
     await stubBackgroundApis(page);
     await stubOnlineJobsHub(page);
@@ -311,9 +313,98 @@ test.describe('Execution Hosts settings section', () => {
     await page.getByTestId('status-bar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Execution Hosts');
+    await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toContainText('Environment');
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toBeVisible();
-    await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
+    await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Environment');
+  });
+
+  test('Environment map shows configured machines, connections, details, and narrow fallback', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [
+        { id: 'write', category: 'repository', hostId: 'agent-runner-01', kind: 'github_deploy_key',
+          label: 'Coding key', scopes: ['coding:execution'], repository: 'github.com/team/repo', permission: 'write',
+          expiresAt: null, lastUseAt: null, state: 'ok', required: true, detail: '', affectedCards: [] },
+      ] }),
+    }));
+    await page.route('**/api/v1/management/environment', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({
+        controlHost: 'TUFI2', installationId: 'studio', mode: 'reverse-ssh-transition',
+        routes: [{ runnerId: 'agent-runner-01', route: 'reverse-ssh' }],
+        machines: [
+          { id: 'control', name: 'TUFI2', components: [
+            { id: 'studio', name: 'Studio', role: 'control', kind: 'service' },
+          ] },
+          { id: 'agent-runner-01', name: 'agent-runner-01', components: [
+            { id: 'integrator', name: 'Integrator', role: 'integration', kind: 'service' },
+            { id: 'engine', name: 'Engine', role: 'control', kind: 'container' },
+            { id: 'link', name: 'Tunnel service', role: 'link', kind: 'service' },
+          ] },
+          { id: 'kori', name: 'KORI', components: [1, 2, 3].map(index => ({
+            id: `review-${index}`, name: `Review container ${index}`, role: 'review', kind: 'container',
+          })) },
+          { id: 'website-vm', name: 'website-vm', components: [
+            { id: 'website', name: 'Website service', role: 'control', kind: 'service' },
+          ] },
+        ],
+        gateHost: 'KORI', gateSlots: { busy: 1, total: 3 },
+        taskServer: { version: '0.3.0', commit: null },
+        engine: { state: 'ready', lastContact: new Date().toISOString(), engineId: 'engine-1' },
+      }),
+    }));
+    await page.goto('/#/workspace/settings/environment');
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('environment-map-toggle').click();
+    const map = page.getByTestId('environment-map');
+    await expect(map).toBeVisible();
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'TUFI2' })).toBeVisible();
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('1/3 slots');
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'KORI' })).toContainText('Review container 3');
+    await expect(map.getByTestId('environment-machine').filter({ hasText: 'website-vm' })).toBeVisible();
+    await expect(map.getByTestId('environment-repository-access').filter({ hasText: 'writes' })).toBeVisible();
+    await expect(map.getByTestId('environment-connection').filter({ hasText: 'reverse tunnel' })).toBeVisible();
+    await expect(map.getByTestId('environment-connection').filter({ hasText: 'SSH gate transport' })).toBeVisible();
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: 950 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(map).toBeVisible();
+        await page.screenshot({ path: join(SHOT_DIR, `environment-map-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      }
+    }
+    await page.reload();
+    await expect(page.getByTestId('environment-map')).toBeVisible();
+    await map.getByRole('button', { name: 'Open agent-runner-01 details' }).click();
+    await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.getByTestId('environment-map-toggle').evaluate((button: HTMLElement) => button.click());
+    await expect(map).toBeHidden();
+    await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('shows open operational stalls in the Studio header and Execution Hosts', async ({ page }) => {
+    await page.route('**/api/watcher/stalls', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ count: 2, cases: [
+        { id: 'WCH-1', project: '_workspace', subject: 'host:agent-runner-01', severity: 'critical', affectedCards: ['AGT-1'], blockedCount: 1,
+          lastSummary: 'Host exceeds its CPU target.', suggestedAction: 'Reduce admission or move work.', sinceUtc: '2026-10-16T19:00:00Z' },
+        { id: 'WCH-2', project: '_workspace', subject: 'container:engine-host:engine', severity: 'critical', affectedCards: [],
+          lastSummary: 'Engine image differs from the release.', suggestedAction: 'Reconcile the running image.' },
+      ] }),
+    }));
+    await page.reload();
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await expect(page.getByTestId('studio-open-stalls')).toContainText('2');
+    await expect(page.getByTestId('operational-stalls')).toContainText('agent-runner-01');
+    await expect(page.getByTestId('operational-stalls')).toContainText('engine on engine-host');
+    await expect(page.getByTestId('operational-stalls')).toContainText('Reduce admission or move work.');
+    const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(directory, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(directory, `operational-stalls-${theme}.png`), animations: 'disabled' });
+    }
   });
 
   test('local profile avoids Task Server checkpoints and shows gate capacity at three widths in both themes', async ({ page }) => {
@@ -330,8 +421,10 @@ test.describe('Execution Hosts settings section', () => {
     }));
     await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({
-        gate: { host: 'kori-gate', busy: 1, total: 3, reachability: 'reachable',
-          lastReachedAt: '2026-10-16T08:00:00Z', lastFailureAt: null },
+        gate: { host: 'kori-gate', transport: 'pull', busy: 1, total: 3, reachability: 'reachable',
+          lastReachedAt: '2026-10-16T08:00:00Z', lastFailureAt: null,
+          workers: [{ id: 'gate-1', name: 'kori-gate', slots: 3, busy: 1,
+            lastHeartbeat: '2026-10-16T08:00:00Z', currentRun: 'gate-run-1' }] },
         taskServer: 'local monolith', engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
         workstation: 'operator-workstation',
       }),
@@ -351,6 +444,8 @@ test.describe('Execution Hosts settings section', () => {
       await expect(panel).toBeVisible();
       await expect(page.getByTestId('remote-gate-host')).toContainText('kori-gate');
       await expect(page.getByTestId('remote-gate-host')).toContainText('1 / 3 slots');
+      await expect(page.getByTestId('remote-gate-host')).toContainText('outbound pull worker');
+      await expect(page.getByTestId('pull-gate-worker')).toContainText('current run gate-run-1');
       await expect(page.getByTestId('deployment-identity')).toContainText('not applicable in the local profile');
       await expect(page.getByTestId('deployment-recovery')).toContainText('not applicable in the local profile');
       const statusBar = page.getByTestId('status-bar');
@@ -625,6 +720,55 @@ test.describe('Execution Hosts settings section', () => {
       }
     }
   });
+
+  for (const order of ['drift-first', 'capability-first'] as const) {
+    for (const releaseCase of ['new', 'same', 'missing'] as const) {
+      test(`${releaseCase === 'same' ? 'keeps drift for the same release' : 'does not mark a newer host release behind'} when ${order} resolves first (${releaseCase})`, async ({ page }) => {
+        await stubGroupedHostApis(page);
+        const newer = new Date().toISOString();
+        const older = new Date(Date.parse(newer) - 60_000).toISOString();
+        const oldRelease = { releaseId: 'old-build', version: '0.2.7', commit: 'old-commit' };
+        const release = releaseCase === 'missing' ? null : releaseCase === 'same'
+          ? oldRelease : { releaseId: 'new-build', version: '0.3.0', commit: 'new-commit' };
+        let firstDone!: () => void;
+        const firstResponse = new Promise<void>(resolve => { firstDone = resolve; });
+        const fulfill = async (route: Route, body: unknown, first: boolean) => {
+          if (!first) await firstResponse;
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+          if (first) firstDone();
+        };
+
+        await page.unroute('**/api/v1/management/remote-hosts');
+        await page.route('**/api/v1/management/remote-hosts', route => fulfill(route, [{
+          runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+          instanceId: 'agent-runner-01:coding', runnerVersion: release?.version ?? '0.3.0', protocolVersion: 3,
+          status: 'active', registeredAt: older, lastSeenAt: newer,
+          hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+          capabilities: [], release,
+        }], order === 'capability-first'));
+        await page.unroute('**/api/v1/management/host-releases');
+        await page.route('**/api/v1/management/host-releases', route => fulfill(route, {
+          observedAt: older, stable: { version: '0.3.0' }, behindCount: 1,
+          hosts: [{ runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+            role: 'coding', release: oldRelease, state: 'behind', behindByHours: 100,
+            behindForHours: 100, alarmDue: true, reason: 'Old build', lastSeenAt: older,
+            heartbeatStale: false }],
+        }, order === 'drift-first'));
+
+        await page.goto('/#/workspace/settings/execution-hosts');
+        const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+        await expect(machine.getByTestId('remote-host-release')).toContainText(release?.version ?? '0.3.0');
+        await expect(machine.getByTestId('remote-host-release-drift')).toHaveCount(releaseCase === 'same' ? 1 : 0);
+        await expect(page.getByTestId('remote-hosts-release-behind')).toHaveCount(releaseCase === 'same' ? 1 : 0);
+        if (releaseCase === 'missing') {
+          await expect(machine.getByTestId('remote-host-release-id')).toHaveCount(0);
+        }
+        if (order === 'drift-first' && releaseCase !== 'same') {
+          await machine.screenshot({ path: join(SHOT_DIR, `execution-hosts-${releaseCase}-release-no-stale-drift.png`) });
+        }
+      });
+    }
+  }
 
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
@@ -1137,6 +1281,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
     await expect(remote.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'retrying');
     await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toHaveAttribute('data-state', 'limited');
+    await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toContainText('rate limited');
     await expect(remote.getByTestId('remote-host-provider-auth-antigravity')).toHaveAttribute('data-state', 'expiring');
     await expect(remote.getByTestId('remote-host-provider-auth-gemini')).toHaveAttribute('data-state', 'unknown');
     await expect(remote.getByTestId('remote-host-provider-auth-expiry-antigravity')).toContainText('Expires in 10 days');
@@ -1152,6 +1297,7 @@ test.describe('Execution Hosts settings section', () => {
 
   test('completes host-owned Codex device sign-in and waits for the fresh provider probe', async ({ page, devBackend }) => {
     void devBackend;
+    const code = `${'A'.repeat(4)}-${'B'.repeat(4)}`;
     const now = Date.now();
     let allowCompletion = false;
     let signInCompleted = false;
@@ -1183,28 +1329,29 @@ test.describe('Execution Hosts settings section', () => {
     await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()),
     }));
-    await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in', async route => {
+    await page.route('**/api/v1/management/device-logins', async route => {
       requestedBody = route.request().postDataJSON() as Record<string, unknown>;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          handle: 'codex_fake_session', state: 'pending',
-          verificationUrl: 'https://auth.openai.com/codex/device',
-          userCode: 'MOCK-CODE', expiresAt: new Date(now + 900_000).toISOString(),
+          handle: 'codex_fake_session', state: 'queued', sessionKey: 'browser-session',
+          verificationUrl: null,
+          userCode: null, expiresAt: new Date(now + 900_000).toISOString(),
         }),
       });
     });
-    await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in/*', route => {
+    await page.route('**/api/v1/management/device-logins/*', route => {
       signInCompleted = allowCompletion;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          handle: 'codex_fake_session', state: allowCompletion ? 'completed' : 'pending',
+          handle: 'codex_fake_session', state: allowCompletion ? 'completed' : 'running',
           detail: allowCompletion ? 'Codex sign-in completed.' : 'Waiting for browser sign-in.',
-          requestedAt: new Date(now).toISOString(), expiresAt: new Date(now + 900_000).toISOString(),
-          completedAt: allowCompletion ? new Date().toISOString() : null,
+          verificationUrl: allowCompletion ? null : 'https://auth.openai.com/codex/device',
+          userCode: allowCompletion ? null : code,
+          expiresAt: new Date(now + 900_000).toISOString(),
         }),
       });
     });
@@ -1227,10 +1374,9 @@ test.describe('Execution Hosts settings section', () => {
     const dialog = page.getByTestId('codex-sign-in-dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('codex-sign-in-url')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
-    await expect(dialog.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
+    await expect(dialog.getByTestId('codex-sign-in-code')).toContainText(code);
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
-      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
+    expect(requestedBody).toEqual({ hostId: 'agent-runner-01', provider: 'codex' });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'codex-device-sign-in-dark--mocked.png') });
@@ -2064,6 +2210,6 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-rail-remote-hosts')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
-      .toHaveText('Execution Hosts');
+      .toHaveText('Environment');
   });
 });

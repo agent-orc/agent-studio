@@ -7,6 +7,21 @@ Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
 or commit attribution.
 
+## Project onboarding
+
+Studio's project dialog offers an existing repository and a generated GitHub
+repository. The generated mode sends owner, repository name, visibility and
+template to `POST /api/projects`. The backend reads
+`AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN` from the host environment, creates the
+repository through `IProjectRepositoryProvisioner`, installs the selected
+product template on `main` and `develop`, and checks out `develop` under
+`ProjectOnboarding:RepositoryRoot` (or the host's local application data
+directory). The token stays out of the browser, project registry, task storage
+and Git remote URL. The template's `.agent-studio/project.yml` is the
+repository-owned build and test contract. Studio validates the initial local
+build profile before offering the "Hello world change" card. Registration
+failures compensate the registry, task storage and newly created repository.
+
 ## Board read contract
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
@@ -86,15 +101,28 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `frontend/e2e/visual-evidence/presentation-capture.spec.ts`,
   `scripts/stable-frontend-boot-probe.mjs`, and
   `frontend/e2e/fixtures/dev-backend.ts` for the capture and readiness patterns.
-- `references.workbenches` is the canonical typed card-to-Dossier edge.
+- `references.workbenches` carries typed card-to-Dossier links.
+  `task.json.dossier` now identifies the one primary Dossier for board grouping
+  and implementation progress. It stores the repository entry path and optional
+  source section, decision, and zero-based implementation slice index. Other
+  `references.workbenches` entries remain links. Concept promotion and decision
+  apply inherit this primary association. Writable Dossier catalogue discovery
+  backfills unassigned cards only when descriptor keys, legacy
+  `implementationTasks` keys, implementation titles, or the concept promotion
+  ledger identify exactly one Dossier. Ambiguous
+  claims leave the card unassigned. The Dossier read and `/cards` endpoint
+  project assigned cards with lane, state, environment tags, and completed
+  implementation slice count. A decision slice stays incomplete while any
+  implementation card created from its choice remains open. Dossier chat
+  receives the same bounded card list.
   `TaskInfo.ConceptDossier` still detects a repository-relative
   `docs/.../index.html` path from
   `results/deliverables.md` first and `status.md` second. Task detail renders
   that one path only as a compatibility fallback. A concept in `5-human-review` or
   `6-completed` with neither a link nor a deliberate no-dossier explanation
   gets one compact `No dossier linked` notice with the two correction actions.
-  Existing cards are not bulk-migrated. MKT-21 is the reference example and
-  remains a manual backfill rather than an application migration.
+  The legacy Markdown reference is not bulk-migrated. MKT-21 remains a manual
+  correction example for that separate concept delivery contract.
 - The Dossier-key reference reuses the same detail row and operator actions,
   not a second Dossier block. The Markdown detector remains read-only
   compatibility for already-linked cards and never produces a duplicate visible
@@ -138,6 +166,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `delivery-under-review`; clients must not assume only `project-busy`.
 
 ## Entry Points
+
+### Preview feedback continuation
+
+`POST /api/v1/projects/-/tasks/{id}/preview-feedback` accepts a multipart PNG, JPEG, or WebP crop, a comment, the HTTP preview address, and an optional element selector. It saves the crop through the task attachment store and submits a normal continuation on the same card. The next-round prompt names the crop path, selector, address, comment, and before and after screenshot requirement. The Human Review acceptance move attributes a networked person's display name to the existing acceptance evidence; local clients retain their client identity.
 
 ### Runner host placement (AGT-2939, D11)
 

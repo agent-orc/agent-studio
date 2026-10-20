@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "projekt-navigation",
+  "title": "Projekt-Navigation: Deploy und Operations, Dossiers statt Epics",
+  "summary": "Operator-Vorgabe 16.10.2026: neue Hauptstruktur je Projekt mit Deploy und Operations; Epics vollstaendig ausbauen; Dossiers werden die Klammer ueber Karten. Inhalt: heutige Navigation (Board, Deck mit rund 25 Panels, Wiki, Dossiers, Epics, Projekt-Adressen; Deployment, Observability, Pipeline als einzelne Panels; eine Epic-Karte, drei Karten mit Epic-Bezug, 61 Frontend- und 58 Backend-Dateien mit Epic), neue Hauptpunkte Board, Dossiers, Deploy, Operations, Wiki, Deck, Dossiers als Klammer (Karte zu hoechstens einem Dossier, Dossier-Seite mit Karten, Board-Gruppierung nach Dossier), Ausbau der Epics in drei Schritten mit Schutztest, Karten NV-1 bis NV-3, Entscheidungen EP-D1, NV-D1, NV-D2.",
+  "entrypoint": "index.html",
+  "status": "active",
+  "phase": "decision-ready",
+  "pattern": "architecture",
+  "updatedAt": "2026-10-16T21:15:00Z",
+  "sourceTaskKeys": [],
+  "relatedTaskKeys": [],
+  "implementationTasks": [
+    {
+      "id": "NV-1",
+      "title": "Project navigation: Deploy and Operations as main items, Epics removed from the navigation, panels moved out of the Deck",
+      "promptMarkdown": "# Project navigation: Deploy and Operations as main items, Epics removed from the navigation, panels moved out of the Deck\n\nSource: docs/operations/projekt-navigation/index.html with the recorded operator decisions (recommendations apply until decided). Read AGENTS.md first. Robert, 16.10.2026: \u0022In den Projekten brauchen wir eine neue Hauptordner-Struktur: Operations und Deploy. Epics hat sich nicht bewaehrt und kann vollstaendig ausgebaut werden. Die neue Klammer werden Dossiers.\u0022\n\nImplement section 3: in the explorer every project shows Board, Dossiers, Deploy, Operations, Wiki, Deck (order NV-D1 A). Deploy hosts the views of the project area from docs/operations/bereitstellung (card BD-3 builds them; until BD-3 is on develop, Deploy shows the existing Deployment and Pipeline panel content). Operations shows health per environment and hosts the existing Observability panel content that concerns the application, with an invitation to set up environments when there are none. The Deck loses Deployment, Pipeline and Observability. The Epics main item, the board group-by-epic toggle and the Epics orchestrator surface disappear from the UI. Tests: component tests for the explorer and the Deck groups, browser-qa screenshots.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Report the result SHA in status.md."
+    },
+    {
+      "id": "NV-2",
+      "title": "Dossiers as the bracket over cards: card to Dossier reference, Dossier page with its cards and progress, board grouping by Dossier",
+      "promptMarkdown": "# Dossiers as the bracket over cards: card to Dossier reference, Dossier page with its cards and progress, board grouping by Dossier\n\nSource: docs/operations/projekt-navigation/index.html with the recorded operator decisions (recommendations apply until decided). Read AGENTS.md first. Robert, 16.10.2026: \u0022In den Projekten brauchen wir eine neue Hauptordner-Struktur: Operations und Deploy. Epics hat sich nicht bewaehrt und kann vollstaendig ausgebaut werden. Die neue Klammer werden Dossiers.\u0022\n\nImplement section 4: a card has at most one Dossier reference (cards created from a Dossier get it automatically through promote-concept and implementationTasks; further Dossiers only as links); the Dossier page lists its cards with lane, state and environments and the progress of its implementation slices; the board can group by Dossier; the card shows its Dossier and the section or decision it came from; the Dossier chat context includes its cards. Backfill references from sourceTaskKeys, relatedTaskKeys and implementationTasks where unambiguous. Tests for the reference, backfill, grouping and the Dossier card list.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Report the result SHA in status.md."
+    },
+    {
+      "id": "NV-3",
+      "title": "Remove epics completely: data, model, API, runner, supervisor, prompts and tests, with a guard against their return",
+      "promptMarkdown": "# Remove epics completely: data, model, API, runner, supervisor, prompts and tests, with a guard against their return\n\nSource: docs/operations/projekt-navigation/index.html with the recorded operator decisions (recommendations apply until decided). Read AGENTS.md first. Robert, 16.10.2026: \u0022In den Projekten brauchen wir eine neue Hauptordner-Struktur: Operations und Deploy. Epics hat sich nicht bewaehrt und kann vollstaendig ausgebaut werden. Die neue Klammer werden Dossiers.\u0022\n\nImplement section 5 steps 2 and 3 after NV-1 and NV-2 are on develop: assign the cards with an epic reference to a Dossier or archive them per EP-D1 (recommendation A), archive the epic card; remove the task kind epic, the epicId field, epic routes, prompt and supervisor paths and their tests from backend, task-server, runner and frontend; the API ignores an incoming epicId for one version and reports it as deprecated; add an architecture test that fails when epic concepts reappear. Tests: full backend, runner and task-server suites, frontend unit tests.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Report the result SHA in status.md."
+    }
+  ],
+  "key": "AGT-W83"
+}

@@ -225,6 +225,8 @@ public sealed class ConceptPipelineTests : IDisposable
                 {
                     Title = "Implement delivery API",
                     PromptMarkdown = "Add the approved delivery endpoint.",
+                    Section = "§4",
+                    DecisionId = "delivery-mode",
                 },
                 new ConceptImplementationTask
                 {
@@ -279,7 +281,12 @@ public sealed class ConceptPipelineTests : IDisposable
                 File.ReadAllText(Path.Combine(created.FolderPath, "prompt.md")));
             Assert.Contains("Delivery mode [delivery-mode]: A: queued (recommended) [queued] (recommended working assumption)",
                 File.ReadAllText(Path.Combine(created.FolderPath, "prompt.md")));
+            Assert.Equal("docs/delivery-flow/index.html", created.Dossier?.Path);
         }
+        var apiCard = scanner.FindJob(first.Created[0].JobId, taskStore);
+        Assert.Equal("§4", apiCard?.Dossier?.Section);
+        Assert.Equal("delivery-mode", apiCard?.Dossier?.Decision);
+        Assert.Equal(0, apiCard?.Dossier?.ImplementationIndex);
     }
 
     [Fact]

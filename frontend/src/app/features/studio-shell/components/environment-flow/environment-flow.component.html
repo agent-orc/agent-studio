@@ -1,0 +1,75 @@
+<section class="environment-flow" role="dialog" aria-modal="true" aria-labelledby="environment-flow-title" data-testid="environment-flow">
+  <header class="environment-flow__header">
+    <div><p class="environment-flow__eyebrow">Operations / Live environment</p><h1 id="environment-flow-title">Environment</h1>
+      <p>Host capacity, waiting work, and card flow · refreshes every 15 seconds</p></div>
+    <div class="environment-flow__actions">
+      @if (updatedAt(); as at) { <small>Updated {{ at.toLocaleTimeString('en-US') }}</small> }
+      <button type="button" (click)="refresh()">Refresh</button>
+      <button type="button" (click)="closed.emit()" aria-label="Close environment view">Close</button>
+    </div>
+  </header>
+  @if (error()) { <p class="environment-flow__error" role="status">{{ error() }}</p> }
+  <div class="environment-flow__body">
+    @if (flow(); as snapshot) {
+      <section aria-labelledby="environment-throughput-title">
+        <h2 id="environment-throughput-title">Today <small>UTC</small></h2>
+        <div class="environment-flow__metrics">
+          <div><b>{{ snapshot.today.created }}</b><span>Created</span></div>
+          <div><b>{{ snapshot.today.delivered }}</b><span>Delivered</span></div>
+          <div><b>{{ snapshot.today.reviewed }}</b><span>Reviewed</span></div>
+          <div><b>{{ snapshot.today.integrated }}</b><span>Integrated</span></div>
+          <div><b>{{ snapshot.today.deployed ?? '—' }}</b><span>Deployed</span></div>
+          <div><b>{{ snapshot.today.completed }}</b><span>Completed</span></div>
+        </div>
+        <p class="environment-flow__note">Ready to integration median: {{ minutes(snapshot.today.readyToIntegrationMedianMinutes) }}.
+          Deployment count is unavailable until deployment history is connected.</p>
+      </section>
+      <div class="environment-flow__grid">
+        <section aria-labelledby="environment-queues-title"><h2 id="environment-queues-title">Queues</h2>
+          <div class="environment-flow__table-wrap"><table><thead><tr><th>Queue</th><th>Waiting</th><th>Oldest wait</th><th>Out / h</th></tr></thead><tbody>
+            @for (queue of snapshot.queues; track queue.queue) { <tr><th>{{ queue.queue }} @if (queueMarkers(queue.queue)) { <span class="environment-flow__marker">{{ queueMarkers(queue.queue) }} open</span> }</th><td>{{ queue.waiting ?? '—' }}</td><td>{{ minutes(queue.oldestWaitMinutes) }}</td><td>{{ queue.throughputPerHour === null ? '—' : queue.throughputPerHour.toFixed(1) }}</td></tr> }
+          </tbody></table></div>
+        </section>
+        <section aria-labelledby="environment-lanes-title"><h2 id="environment-lanes-title">Lane flow <small>last 24 h</small></h2>
+          <div class="environment-flow__table-wrap"><table><thead><tr><th>Lane</th><th>Entered</th><th>Left</th><th>Median stay</th></tr></thead><tbody>
+            @for (lane of snapshot.lanes; track lane.lane) { <tr><th>{{ lane.lane }} @if (laneMarkers(lane.lane)) { <span class="environment-flow__marker">{{ laneMarkers(lane.lane) }} open</span> }</th><td>{{ lane.entered }}</td><td>{{ lane.left }}</td><td>{{ minutes(lane.medianMinutes) }}</td></tr> }
+          </tbody></table></div>
+        </section>
+      </div>
+      <section aria-labelledby="environment-waits-title"><h2 id="environment-waits-title">Waiting reasons now</h2>
+        <div class="environment-flow__reasons">
+          @for (reason of snapshot.waitingReasons; track reason.reason) { <span>{{ reason.reason }} <b>{{ reason.count }}</b></span> }
+          @if (!snapshot.waitingReasons.length) { <p>No open waits.</p> }
+        </div>
+      </section>
+    } @else { <p role="status">Loading card flow…</p> }
+    <section aria-labelledby="environment-hosts-title"><h2 id="environment-hosts-title">Hosts <small>{{ hosts().length }}</small></h2>
+      <div class="environment-flow__hosts">
+        @for (host of hosts(); track host.id) {
+          <article class="environment-flow__host" [class.environment-flow__host--alert]="host.status === 'offline' || host.status === 'degraded'" [attr.data-host-id]="host.id">
+            <div class="environment-flow__host-head"><h3>{{ host.name }} @if (hostMarkers(host)) { <span class="environment-flow__marker">{{ hostMarkers(host) }} open</span> }</h3><span>{{ host.serviceRole ?? host.role }} · {{ host.status }}</span></div>
+            <dl><div><dt>Load / core</dt><dd>{{ loadPerCore(host) }}</dd></div><div><dt>Memory used</dt><dd>{{ memory(host) }}</dd></div>
+              <div><dt>Slots used / total</dt><dd>{{ usedSlots(host) ?? '—' }} / {{ totalSlots(host) ?? '—' }}</dd></div>
+              <div><dt>Free slots</dt><dd>{{ freeSlots(host) ?? '—' }}</dd></div></dl>
+            <div class="environment-flow__host-detail"><strong>Provider auth</strong>
+              @for (provider of auth(host); track provider.name) { <span>{{ provider.name }}: {{ provider.status }}</span> }
+              @if (!auth(host).length) { <span>Unavailable</span> }
+            </div>
+            <div class="environment-flow__host-detail"><strong>Running attempts</strong>
+              @for (task of running(host); track task.id) { <span>{{ task.taskKey || task.id }} · {{ age(task) }}</span> }
+              @if (!running(host).length) { <span>{{ runningEmptyLabel(host) }}</span> }
+            </div>
+          </article>
+        }
+      </div>
+    </section>
+    <section aria-labelledby="environment-events-title"><h2 id="environment-events-title">Open stall events <small>{{ cases().length }}</small></h2>
+      @for (item of cases(); track item.id) { <article class="environment-flow__event"><b>{{ item.detectorClass }} · {{ item.project }}</b>
+        <span>{{ item.lastSummary }}</span><small>Cards: {{ item.affectedCards.join(', ') || 'not linked' }}</small>
+        @if (latestReceipt(item); as receipt) { <small>AI Operator: {{ receipt.chosenAction }} · {{ receipt.callStatus }}</small> }
+        @else { <small>AI Operator: no receipt linked</small> }
+      </article> }
+      @if (!cases().length) { <p>No open watcher cases.</p> }
+    </section>
+  </div>
+</section>

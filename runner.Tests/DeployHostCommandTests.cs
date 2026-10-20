@@ -72,6 +72,7 @@ public sealed class DeployHostCommandTests
                         ["Logging:BackendFile:LogDirectory"] = Path.Combine(root, "logs"),
                         ["Security:Profile"] = "networked",
                         ["AllowedHosts"] = "studio.test",
+                        ["Deploy:ReleaseEvidenceRoot"] = Path.Combine(root, "release-evidence"),
                         ["WatchPaths:0:Name"] = project,
                         ["WatchPaths:0:Path"] = watch,
                         ["WatchPaths:0:RootPath"] = repo,
@@ -100,6 +101,7 @@ public sealed class DeployHostCommandTests
                 healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
             }));
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+            WriteReleaseEvidence(root, project, image, commit);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
             using var queued = await client.PostAsJsonAsync("/api/deploy/gate-releases",
                 new GateArtifactRequest(project, image, commit));
@@ -117,6 +119,26 @@ public sealed class DeployHostCommandTests
             Docker("rm", "-f", containerName);
             Directory.Delete(root, true);
         }
+    }
+
+    private static void WriteReleaseEvidence(string root, string project, string artifact, string commit)
+    {
+        var directory = Path.Combine(root, "release-evidence", commit);
+        Directory.CreateDirectory(directory);
+        var archive = Encoding.UTF8.GetBytes("gate-built-release-for-" + commit);
+        File.WriteAllBytes(Path.Combine(directory, "release.tar.gz"), archive);
+        var digest = Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant();
+        File.WriteAllText(Path.Combine(directory, "release.sha256"), digest + "\n");
+        File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
+        File.WriteAllText(Path.Combine(directory, "promotion-record.json"), JsonSerializer.Serialize(new
+        {
+            status = "promoted", gate = "passed", candidateSha = commit, atomicPush = true,
+            releasePackage = new { status = "written", sha256 = digest },
+        }));
+        File.WriteAllText(Path.Combine(directory, "deploy-artifact.json"), JsonSerializer.Serialize(new
+        {
+            project, commit, artifact, sourceSha256 = digest,
+        }));
     }
 
     private static string Git(string directory, params string[] args) => Command("git", directory, args);

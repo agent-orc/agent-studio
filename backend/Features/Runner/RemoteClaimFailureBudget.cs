@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -50,7 +51,13 @@ public sealed class RemoteClaimFailureBudget
             attempts,
             MaximumAttempts,
             exhausted,
-            state.Reason);
+            state.Reason)
+        {
+            Signal = MonolithTransitionAdapter.LoopSignal(
+                "remote-claim.environment-preparation-per-task", attempts,
+                MaximumAttempts, "per-cause", task.Id,
+                ["retry on another host", "prepare repair", "ask"]),
+        };
     }
 
     /// <summary>
@@ -113,4 +120,7 @@ public sealed record RemoteClaimFailureDecision(
     int Attempt,
     int MaximumAttempts,
     bool Escalate,
-    string Reason);
+    string Reason)
+{
+    public LoopExhaustionSignalV1? Signal { get; init; }
+}

@@ -40,6 +40,15 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
             }));
 
+        auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+            Execute(() =>
+            {
+                var accepted = store.AcceptInvitation(request);
+                SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
+                    ToResponse(accepted.User), accepted.CsrfToken));
+            }));
+
         // The local profile treats X-Client-Id as attribution only, so it must not
         // become an alternate credential for any auth administration endpoint.
         // A missing human session yields a graceful 401 (never a 500) so the
@@ -89,6 +98,19 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new { user = ToResponse(result.User), temporaryPassword = result.TemporaryPassword, mustChangePassword = true });
             }));
 
+        auth.MapPost("/invitations", (InviteUserRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                var invitation = store.InviteUser(request);
+                return Results.Ok(new
+                {
+                    user = ToResponse(invitation.User),
+                    signInLink = "/?invite=" + Uri.EscapeDataString(invitation.Token),
+                    expiresAt = invitation.ExpiresAt
+                });
+            }));
+
         auth.MapPut("/users/{id}", (string id, UpdateUserRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
@@ -110,6 +132,45 @@ public static class AccessSecurityEndpoints
                 RequireOwner(context, store);
                 var created = store.CreateEnrollment(request);
                 return Results.Ok(new OneTimeEnrollmentResponse(created.Code, created.Enrollment.Name, created.Enrollment.Scopes, created.Enrollment.ExpiresAt));
+            }));
+
+        auth.MapGet("/runner-enrollments", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                return Results.Ok(store.ListEnrollments().Select(x =>
+                    new RunnerEnrollmentResponse(x.Id, x.Name, x.Scopes, x.CreatedAt, x.ExpiresAt, x.UsedAt)));
+            }));
+
+        auth.MapDelete("/runner-enrollments/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                store.RevokeEnrollment(id);
+                return Results.NoContent();
+            }));
+
+        auth.MapGet("/api-tokens", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                return Results.Ok(store.ListApiTokens().Select(ToApiTokenResponse));
+            }));
+
+        auth.MapPost("/api-tokens", (CreateApiTokenRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                var owner = RequireOwner(context, store);
+                var created = store.CreateApiToken(request, owner.User.Id);
+                return Results.Ok(new CreatedApiTokenResponse(ToApiTokenResponse(created.Token), created.Secret));
+            }));
+
+        auth.MapDelete("/api-tokens/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                store.RevokeApiToken(id);
+                return Results.NoContent();
             }));
 
         auth.MapPost("/runner-enroll", (RunnerEnrollRequest request, AccessSecurityStore store,
@@ -176,6 +237,10 @@ public static class AccessSecurityEndpoints
         catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
     }
 
+    private static ApiTokenResponse ToApiTokenResponse(StudioApiToken token)
+        => new(token.Id, token.Name, token.Role, token.Projects, token.CreatedBy,
+            token.CreatedAt, token.ExpiresAt, token.LastUsedAt, token.RevokedAt);
+
     private static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
            ?? store.AuthenticateSession(
@@ -214,7 +279,8 @@ public static class AccessSecurityEndpoints
     }
 
     private static AuthUserResponse ToResponse(StudioUser user)
-        => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword);
+        => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
+            user.ProductionApprovalProjects);
 
     private static object ToRunnerResponse(RunnerServiceIdentity runner) => new
     {

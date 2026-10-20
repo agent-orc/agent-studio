@@ -3013,6 +3013,13 @@
           <td>Completed gate verdicts lacked the ownership check used for cancellations. Remote completion changed the lane after settling an older run without checking for a newer pending continuation.</td>
           <td>The observed terminal was Auto Review on delivery <code>15e940d6e</code>, with the second continuation unrun. The corrected path records superseded gate evidence without moving the card, and keeps a newer queued continuation in Ready when the old run finishes.</td>
         </tr>
+        <tr id="case-engine-defer-to-batch-without-admission">
+          <td>2026-10-17</td>
+          <td><code>AGT-3058</code><br><span class="small">engine-defer-to-batch-without-admission</span></td>
+          <td>No CLI crashed. After the <code>ReviewReport</code> profile switched to Engine on 16.10. at 16:46Z, about 40 engine <code>DeferToBatch</code> decisions completed, and 26 cards sat in <span class="lane">4-auto-review</span> with a passed review, no batch-gate ownership and no pending batch record. Shadow mode had matched every receipt, because it never runs the applier.</td>
+          <td>The applier maps <code>DeferToBatch</code> to no target lane and returned in that branch before its only batch admission, which was unreachable. A completed occurrence is final, so nothing drove the cards on.</td>
+          <td>The observed terminal was Auto Review without an owner. The applier now admits the settled review at its report time in that branch and runs the per-task emergency gate when the queue refuses it. As in the monolith, only a card in <span class="lane">4-auto-review</span> is admitted: a card the report found in another lane, a card that left Auto Review since, or a review that is no longer current completes with an operator-feed reason, and any other failed admission stays <code>applying</code> for retry. The recovery loop re-arms a completed newest decision whose card still waits in Auto Review without a pending record or ownership that records a batch, a passed per-task gate or a containment, at most four per pass; a bare marker or an interrupted per-task gate marker is admitted again, so the gate resumes within its start budget. It also clears wait markers that name a finished occurrence.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -3024,6 +3031,15 @@
   <!-- ============================ 4. THE PLAN ============================ -->
   <section id="plan">
     <h2>4. The plan</h2>
+
+    <h3>Local stop between pipeline steps</h3>
+    <p>A local run keeps its fenced lease after the CLI process exits. The runner checks a
+       recorded stop at each post-run step boundary and before moving the card to review.
+       The stop endpoint serializes process signalling and recording with CLI launch,
+       review moves, and local lease release. After visual QA, the UI completion path
+       checks for an accepted stop before it writes the Human Review marker or moves
+       the card. An accepted stop settles the attempt as <code>Stopped</code>, while a
+       released lease cannot accept a new stop.</p>
 
     <h3>Cancelled verification gates</h3>
     <p>A gate cancellation first checks delivery SHA, lane ownership, and pending continue intent.

@@ -125,7 +125,7 @@ public static class ProjectDocsEndpoints
             return Results.Ok(docs.GetWikiWorkbenchOverview(names, requested));
         });
 
-        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs) =>
+        app.MapGet("/api/projects/{projectName}/workbenches/{id}", (string projectName, string id, ProjectDocsService docs, DossierCardsService cards) =>
         {
             var item = docs.GetWikiWorkbenchCatalogue(projectName, includeHistory: true)?.Items
                 .FirstOrDefault(candidate => candidate.Id == id);
@@ -134,7 +134,7 @@ public static class ProjectDocsEndpoints
             var document = docs.ReadWikiWorkbench(projectName, id);
             return document == null
                 ? Results.NotFound(new { error = "Dossier is not available in the selected Wiki source." })
-                : Results.Ok(document);
+                : Results.Ok(document with { Cards = cards.List(projectName, document.Workbench) });
         });
 
         app.MapGet("/api/projects/{projectName}/workbenches/{key}/references",
@@ -144,6 +144,16 @@ public static class ProjectDocsEndpoints
                 return references == null
                     ? Results.NotFound(new { error = "Document reference key not found" })
                     : Results.Ok(references);
+            });
+
+        app.MapGet("/api/projects/{projectName}/workbenches/{id}/cards",
+            (string projectName, string id, ProjectDocsService docs, DossierCardsService cards) =>
+            {
+                var item = docs.GetWikiWorkbenchCatalogue(projectName, includeHistory: true)?.Items
+                    .FirstOrDefault(candidate => candidate.Valid && candidate.Id == id);
+                return item == null
+                    ? Results.NotFound(new { error = "Dossier not found." })
+                    : Results.Ok(cards.List(projectName, item));
             });
 
         // The Workbench Decision gate (AGT-2375). Prepare validates against

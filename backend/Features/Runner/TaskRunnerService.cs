@@ -55,11 +55,12 @@ public class TaskRunnerService : BackgroundService
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
-    private readonly VisualQaService? _visualQa;
+    private readonly IVisualQaService? _visualQa;
     // Forwarded to each ProjectRunner. DI injects the registered singleton; a
     // project can disable the default-on step through its pipeline convention.
     // Null only when a test fixture builds the service directly.
     private readonly AgentStudio.Runner.PostAbortReviewStepService? _postAbortReview;
+    private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
     // Forwarded to each ProjectRunner for post-hoc Claude token reconstruction
     // from session transcripts. DI injects the registered singleton; null only
     // when a test fixture builds the service directly.
@@ -90,6 +91,7 @@ public class TaskRunnerService : BackgroundService
     // test fixture builds the service directly, in which case no runner badge is
     // surfaced (the card falls back to the plain local-run presentation).
     private readonly RunLeaseService? _runLeases;
+    private readonly RemoteRunStopRequestStore? _runStops;
     private readonly RunnerIdentity? _runnerIdentity;
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly AgentStudio.Clients.ClientIdentityStore? _clients;
@@ -165,7 +167,7 @@ public class TaskRunnerService : BackgroundService
         AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
-        VisualQaService? visualQa = null,
+        IVisualQaService? visualQa = null,
         StartupExecutionAdmission? executionAdmission = null,
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,
@@ -174,7 +176,9 @@ public class TaskRunnerService : BackgroundService
         RemoteDispatchRejectionStore? dispatchRejections = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         AttemptAuthorityService? attemptAuthority = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ReviewInputDecisionGateway? reviewInputDecisions = null,
+        RemoteRunStopRequestStore? runStops = null)
     {
         _config = config;
         _logger = logger;
@@ -216,11 +220,13 @@ public class TaskRunnerService : BackgroundService
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
         _postAbortReview = postAbortReview;
+        _reviewInputDecisions = reviewInputDecisions;
         _sessionInspector = sessionInspector;
         _keepAwake = keepAwake;
         _projectRegistry = projectRegistry;
         _orchestratorDefaults = orchestratorDefaults;
         _runLeases = runLeases;
+        _runStops = runStops;
         _runnerIdentity = runnerIdentity;
         _clients = clients;
         _localCodingAdmission = localCodingAdmission;
@@ -419,7 +425,7 @@ public class TaskRunnerService : BackgroundService
                 pickupLock: _pickupLock,
                 pickupLockOwner: BuildPickupLockOwner(entry.Name),
                 localRunClaims: _runLeases is not null && _runnerIdentity is not null
-                    ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
+                    ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger, _runStops) : null,
                 integrationLeases: _integrationLeases,
                 timeline: _timeline,
                 pipelineLog: _pipelineLog,
@@ -443,7 +449,8 @@ public class TaskRunnerService : BackgroundService
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
                 dispatchRejections: _dispatchRejections,
-                localCodingAdmission: _localCodingAdmission);
+                localCodingAdmission: _localCodingAdmission,
+                reviewInputDecisions: _reviewInputDecisions);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1308,7 +1315,7 @@ public class TaskRunnerService : BackgroundService
     public string ResolvePlacement(string projectName)
         => ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(projectName));
 
-    public string? SuggestedRemoteRunnerId => _clients?.ListAll()
+    public string? SuggestedRemoteRunnerId => _clients?.ListPublished()
         .Where(client => client.Kind != ClientIdentityKind.Retired
             && !string.IsNullOrWhiteSpace(client.RunnerDaemonState)
             && !string.Equals(client.Id, _runnerIdentity?.RunnerId, StringComparison.OrdinalIgnoreCase))
@@ -1795,7 +1802,7 @@ public class TaskRunnerService : BackgroundService
             pickupLock: _pickupLock,
             pickupLockOwner: BuildPickupLockOwner(entry.Name),
             localRunClaims: _runLeases is not null && _runnerIdentity is not null
-                ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
+                ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger, _runStops) : null,
             integrationLeases: _integrationLeases,
             timeline: _timeline,
             pipelineLog: _pipelineLog,
@@ -1817,7 +1824,8 @@ public class TaskRunnerService : BackgroundService
             projectUrls: registryProject?.Urls,
             projectUrlPortInspector: _projectUrlPortInspector,
             dispatchRejections: _dispatchRejections,
-            localCodingAdmission: _localCodingAdmission);
+            localCodingAdmission: _localCodingAdmission,
+            reviewInputDecisions: _reviewInputDecisions);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

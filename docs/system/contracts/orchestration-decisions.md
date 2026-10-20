@@ -190,6 +190,24 @@ card view hides the control until all remote attempt exit paths can hold the car
 A shadow receipt never dispatches itself. The bus projection includes billed alternate attempts, and
 late billed calls emit additional usage evidence.
 
+AGT-3066 adds eight pure signal producers for gate duration, review aspect
+duration, Watcher contingent consumption, coding run elapsed time, salvage
+continuation, review reissue, Git call use, and gate environment retries.
+Coding-completion grounds include the measurements available at settlement;
+missing review-command, Watcher, review-reissue journal, Git-call, and gate-fingerprint evidence is
+named as an omission. The gate signal carries its derivation sentence and
+sample count; an absent cohort is stated rather than presenting a made-up p95.
+Signals do not choose an action. The per-command kill ceilings, finite re-entry,
+fencing and exact-result checks remain mechanical.
+
+The coding process emergency limit resolves project override, workspace default,
+then the 24-hour platform constant. The effective value and source travel in
+the remote run spec and runner log. A Human Operator card limit still wins for
+the next run; Raise and Cut accept 1 through 10,080 minutes so Raise remains
+usable above the 24-hour default. The runner watchdog retains its typed timeout outcome and
+existing salvage ref and SHA publication. RB-S2 stepped shaping budgets are
+superseded and were not implemented.
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled
@@ -281,6 +299,28 @@ any other occurrence cannot be compared and resets the streak. The switch to
 Engine is refused with `orchestration-profile-shadow-unresolved` while an
 earlier shadow occurrence of the profile lacks a receipt, so Ready never
 hides an open comparison.
+
+An engine `DeferToBatch` decision selects no lane; its batch admission is the
+whole application. Like the monolith report path, the applier admits only a
+card in Auto Review, records the review verification minutes, enqueues the
+settled review at the accepted report's receive time, and runs the per-task
+emergency gate when the queue refuses it. The occurrence keeps the lane its
+report found and the decision policy assumes Auto Review, so a card that the
+report found in another lane, a card that left Auto Review since, and a review
+that is no longer current complete the occurrence with an operator-feed reason;
+any other failed admission keeps the occurrence `applying` for recovery to
+retry. Until 17.10.2026 that branch returned before the admission. The recovery
+service therefore re-arms, at most four per pass, a completed non-shadow
+decision that is still its card's newest `ReviewReport` occurrence while the
+card waits in Auto Review on its current review, the batch queue has no entry
+for that review, and no batch-gate ownership records a batch, a passed per-task
+gate or a containment. Ownership alone does not count: a bare marker left by a
+stop before the queue entry, and an active per-task gate marker whose gate was
+interrupted, are admitted again, which re-enqueues the review or resumes the
+gate within its start budget. A pass checks the host stop between admissions,
+and the service waits for a running pass when it stops. It also clears wait
+markers that name a cancelled occurrence or a completed one without an active
+choice, and rereads the occurrence after each marker write.
 
 ## Verification and architecture guard
 

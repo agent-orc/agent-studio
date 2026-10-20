@@ -9,9 +9,11 @@ public sealed class GateSlotUsageTracker
 {
     private readonly ConcurrentDictionary<string, byte> _active = new();
     private readonly TimeProvider _clock;
+    private readonly object _reachabilityLock = new();
     private int _total;
-    private long _lastReachedTicks;
-    private long _lastFailureTicks;
+    private DateTimeOffset? _lastReachedAt;
+    private DateTimeOffset? _lastFailureAt;
+    private bool? _lastSucceeded;
 
     public GateSlotUsageTracker(IConfiguration? configuration = null, TimeProvider? clock = null)
     {
@@ -22,17 +24,39 @@ public sealed class GateSlotUsageTracker
 
     public GateSlotUsage Snapshot() => new(_active.Count, Volatile.Read(ref _total));
 
-    public DateTimeOffset? LastReachedAt => ReadTime(Interlocked.Read(ref _lastReachedTicks));
-    public DateTimeOffset? LastFailureAt => ReadTime(Interlocked.Read(ref _lastFailureTicks));
-    public string Reachability => LastFailureAt is { } failed && (LastReachedAt is null || failed > LastReachedAt)
-        ? "unreachable"
-        : LastReachedAt is { } reached && _clock.GetUtcNow() - reached < TimeSpan.FromMinutes(5)
-            ? "reachable" : "unverified";
+    public DateTimeOffset? LastReachedAt { get { lock (_reachabilityLock) return _lastReachedAt; } }
+    public DateTimeOffset? LastFailureAt { get { lock (_reachabilityLock) return _lastFailureAt; } }
+    public string Reachability
+    {
+        get
+        {
+            lock (_reachabilityLock)
+            {
+                if (_lastSucceeded == false) return "unreachable";
+                return _lastSucceeded == true && _lastReachedAt is { } reached
+                    && _clock.GetUtcNow() - reached < TimeSpan.FromMinutes(5)
+                    ? "reachable" : "unverified";
+            }
+        }
+    }
 
-    public void Reached() => Interlocked.Exchange(ref _lastReachedTicks, _clock.GetUtcNow().UtcTicks);
-    public void Failed() => Interlocked.Exchange(ref _lastFailureTicks, _clock.GetUtcNow().UtcTicks);
+    public void Reached()
+    {
+        lock (_reachabilityLock)
+        {
+            _lastReachedAt = _clock.GetUtcNow();
+            _lastSucceeded = true;
+        }
+    }
 
-    private static DateTimeOffset? ReadTime(long ticks) => ticks == 0 ? null : new DateTimeOffset(ticks, TimeSpan.Zero);
+    public void Failed()
+    {
+        lock (_reachabilityLock)
+        {
+            _lastFailureAt = _clock.GetUtcNow();
+            _lastSucceeded = false;
+        }
+    }
 
     public void Configure(int total) => Volatile.Write(ref _total, total);
 

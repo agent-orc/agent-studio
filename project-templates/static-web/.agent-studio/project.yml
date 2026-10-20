@@ -1,0 +1,18 @@
+schemaVersion: 1
+stack: [node]
+toolVersions: {}
+commands:
+  prepare: .agent-studio/prepare
+  build:
+    - npm run build
+  test:
+    - npm test
+  lint: []
+testSuites:
+  - id: unit
+    category: routine
+    expectedDurationSeconds: 30
+    command: npm test
+cachePaths: [node_modules, dist]
+capabilities: [git, child-process]
+environment: {}

@@ -31,6 +31,19 @@ public sealed partial class TaskServerStore
                 code_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS studio_invitations(
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES studio_users(id),
+                token_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                consumed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS studio_production_approvals(
+                user_id TEXT NOT NULL REFERENCES studio_users(id),
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                PRIMARY KEY(user_id, project_id)
+            );
             CREATE TABLE IF NOT EXISTS service_enrolments(
                 enrolment_id TEXT PRIMARY KEY,
                 code_hash TEXT NOT NULL UNIQUE,
@@ -179,7 +192,7 @@ public sealed partial class TaskServerStore
         var password = RequireStudioPassword(request.Password);
         var role = (request.Role ?? string.Empty).Trim().ToLowerInvariant();
         if (!StudioRolePolicy.IsAssignableRole(role))
-            throw new ArgumentException("Role must be operator or viewer; the owner is created only by bootstrap.");
+            throw new ArgumentException("Role must be operator, contributor, or viewer; the owner is created only by bootstrap.");
         var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim();
         var userId = StableOrGeneratedId(null, "usr");
         var now = UtcNow;
@@ -199,6 +212,129 @@ public sealed partial class TaskServerStore
                 JsonSerializer.Serialize(new { username, role }), ct);
         }, ct);
         return new StudioAuthUserDto(userId, username, displayName, role, [], false, true);
+    }
+
+    public async Task<StudioInviteResult> InviteStudioUserAsync(StudioInviteUserRequest request, string ownerId, CancellationToken ct)
+    {
+        var username = RequireStudioUsername(request.Username);
+        var role = (request.Role ?? string.Empty).Trim().ToLowerInvariant();
+        if (!StudioRolePolicy.IsAssignableRole(role))
+            throw new ArgumentException("Role must be operator, contributor, or viewer.");
+        var projects = request.ProjectIds?.Distinct(StringComparer.Ordinal).ToArray() ?? [];
+        if (projects.Length == 0 || projects.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("At least one project is required.");
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim();
+        var userId = StableOrGeneratedId(null, "usr");
+        var invitationId = StableOrGeneratedId(null, "inv");
+        var secret = RandomNumberGenerator.GetHexString(64).ToLowerInvariant();
+        var token = $"sti_{invitationId}.{secret}";
+        var now = UtcNow;
+        var expires = now.AddHours(24);
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            if (await ReadStudioUserByUsernameAsync(connection, transaction, username, ct) is not null)
+                throw new TaskServerConflictException("studio-user-exists", $"User '{username}' already exists.");
+            foreach (var project in projects)
+            {
+                if (Convert.ToInt64(await ScalarAsync(connection,
+                    "SELECT count(*) FROM projects WHERE id = $project;", ct, transaction, ("$project", project))) != 1)
+                    throw new ArgumentException($"Unknown project '{project}'.");
+            }
+            await ExecuteAsync(connection, """
+                INSERT INTO studio_users(id, username, display_name, role, password_hash, project_ids_json,
+                    disabled, must_change_password, created_at, updated_at)
+                VALUES ($id, $username, $display, $role, $hash, $projects, 0, 1, $now, $now);
+                INSERT INTO studio_invitations(id, user_id, token_hash, created_at, expires_at)
+                VALUES ($invite, $id, $token_hash, $now, $expires);
+                """, ct, transaction,
+                ("$id", userId), ("$username", username), ("$display", displayName), ("$role", role),
+                ("$hash", HashStudioPassword(RandomNumberGenerator.GetHexString(32))),
+                ("$projects", JsonSerializer.Serialize(projects)), ("$now", Iso(now)),
+                ("$invite", invitationId), ("$token_hash", HashOneTimeSecret(token)), ("$expires", Iso(expires)));
+            await AuditAsync(connection, transaction, ownerId, "studio-user.invited", "studio-user", userId,
+                JsonSerializer.Serialize(new { username, role, projects }), ct);
+        }, ct);
+        return new StudioInviteResult(new StudioAuthUserDto(userId, username, displayName, role, projects, false, true),
+            "/?invite=" + Uri.EscapeDataString(token), expires);
+    }
+
+    public async Task<StudioAuthSessionDto> AcceptStudioInvitationAsync(StudioAcceptInvitationRequest request, CancellationToken ct)
+    {
+        var password = RequireStudioPassword(request.NewPassword);
+        StudioAuthSessionDto? result = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var token = request.Token ?? string.Empty;
+            var parts = token.Split('.', 2);
+            if (parts.Length != 2 || !parts[0].StartsWith("sti_inv_", StringComparison.Ordinal)
+                || parts[1].Length != 64)
+                throw new StudioAuthenticationException("invalid-invitation", "Invitation is invalid or expired.");
+            var id = parts[0]["sti_".Length..];
+            await using var command = Command(connection, """
+                SELECT i.user_id, i.token_hash, i.expires_at, i.consumed_at,
+                       u.id, u.username, u.display_name, u.role, u.password_hash,
+                       u.project_ids_json, u.disabled, u.must_change_password, u.created_at, u.updated_at
+                  FROM studio_invitations i JOIN studio_users u ON u.id = i.user_id
+                 WHERE i.id = $id;
+                """, transaction, ("$id", id));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+                throw new StudioAuthenticationException("invalid-invitation", "Invitation is invalid or expired.");
+            var userId = reader.GetString(0);
+            var hash = reader.GetString(1);
+            var expires = Parse(reader.GetString(2));
+            var used = !reader.IsDBNull(3);
+            var user = ReadStudioUser(reader, offset: 4);
+            await reader.DisposeAsync();
+            if (used || expires <= UtcNow || user.Disabled
+                || !FixedTimeEqualsHex(HashOneTimeSecret(token), hash))
+                throw new StudioAuthenticationException("invalid-invitation", "Invitation is invalid or expired.");
+            var now = Iso(UtcNow);
+            await ExecuteAsync(connection, """
+                UPDATE studio_users SET password_hash = $hash, must_change_password = 0, updated_at = $now WHERE id = $id;
+                UPDATE studio_invitations SET consumed_at = $now WHERE id = $invite AND consumed_at IS NULL;
+                """, ct, transaction, ("$hash", HashStudioPassword(password)), ("$now", now),
+                ("$id", userId), ("$invite", id));
+            var (sessionToken, csrf) = await CreateStudioSessionAsync(connection, transaction, userId, ct);
+            await AuditAsync(connection, transaction, userId, "studio-user.invitation-accepted", "studio-user", userId, "{}", ct);
+            result = new StudioAuthSessionDto(sessionToken, csrf,
+                new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user with { MustChangePassword = false })));
+        }, ct);
+        return result!;
+    }
+
+    public async Task SetStudioProductionApprovalAsync(string userId, string projectId, bool approved, string ownerId, CancellationToken ct)
+    {
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            await using var command = Command(connection,
+                "SELECT role, project_ids_json FROM studio_users WHERE id = $user;", transaction, ("$user", userId));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Studio user was not found.");
+            var role = reader.GetString(0);
+            var projects = JsonSerializer.Deserialize<string[]>(reader.GetString(1)) ?? [];
+            await reader.DisposeAsync();
+            if (role != StudioUserRoles.Contributor || !projects.Contains(projectId, StringComparer.Ordinal))
+                throw new ArgumentException("Production approval requires a contributor assigned to the project.");
+            if (approved)
+                await ExecuteAsync(connection, """
+                    INSERT OR IGNORE INTO studio_production_approvals(user_id, project_id) VALUES ($user, $project);
+                    """, ct, transaction, ("$user", userId), ("$project", projectId));
+            else
+                await ExecuteAsync(connection, """
+                    DELETE FROM studio_production_approvals WHERE user_id = $user AND project_id = $project;
+                    """, ct, transaction, ("$user", userId), ("$project", projectId));
+            await AuditAsync(connection, transaction, ownerId, "studio-user.production-approval-set", "studio-user", userId,
+                JsonSerializer.Serialize(new { projectId, approved }), ct);
+        }, ct);
+    }
+
+    public async Task<bool> HasStudioProductionApprovalAsync(string userId, string projectId, CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        return Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM studio_production_approvals WHERE user_id = $user AND project_id = $project;
+            """, ct, null, ("$user", userId), ("$project", projectId))) != 0;
     }
 
     public async Task<IReadOnlyList<StudioAuthUserDto>> ListStudioUsersAsync(CancellationToken ct)
@@ -474,6 +610,33 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         return await ReadProjectRepositoryAsync(connection, null, projectId, ct);
+    }
+
+    public async Task<bool> SetProjectRepositoryVisibilityAsync(
+        SetProjectRepositoryVisibilityRequest request, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        var url = ProjectRepositoryPolicy.Canonicalize(request.RepositoryUrl);
+        var visibility = ReviewRepositoryAccessPolicy.NormalizeVisibility(request.Visibility);
+        if (request.Visibility is not null && visibility is null)
+            throw new ArgumentException("Repository visibility must be public or private.");
+        var found = false;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var projectId = Convert.ToString(await ScalarAsync(connection,
+                "SELECT project_id FROM project_repositories WHERE repository_url = $url;",
+                ct, transaction, ("$url", url)));
+            if (string.IsNullOrEmpty(projectId)) return;
+            found = true;
+            var changed = await ExecuteAsync(connection, """
+                UPDATE project_repositories SET repository_visibility = $visibility
+                 WHERE project_id = $project AND repository_visibility IS NOT $visibility;
+                """, ct, transaction, ("$visibility", visibility), ("$project", projectId));
+            if (changed > 0)
+                await AuditAsync(connection, transaction, actorId, "project.repository-visibility-set", "project",
+                    projectId, JsonSerializer.Serialize(new { visibility }), ct);
+        }, ct);
+        return found;
     }
 
     private static async Task<ProjectRepositoryDto?> ReadProjectRepositoryAsync(

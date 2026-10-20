@@ -180,6 +180,7 @@ public sealed class DecisionCardApplyTests : IDisposable
         {
             Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
             Decision = LockFileDecision(impl.Key!),
+            Dossier = new TaskDossier { Path = "docs/operations/release/index.html", ImplementationIndex = 0 },
         })!;
         var decisionKey = h.Scanner.FindJob(decisionId, _watchPath)!.Key!;
         h.Mutations.SetTaskReferences(implId,
@@ -192,6 +193,9 @@ public sealed class DecisionCardApplyTests : IDisposable
         Assert.Equal(DecisionCardStatus.Success, outcome.Status);
         var moved = h.Scanner.FindJob(implId, _watchPath)!;
         Assert.Equal(TaskStates.Ready, moved.State);
+        Assert.Equal("docs/operations/release/index.html", moved.Dossier?.Path);
+        Assert.Equal(decisionKey, moved.Dossier?.Decision);
+        Assert.Equal(0, moved.Dossier?.ImplementationIndex);
         var prompt = File.ReadAllText(Path.Combine(moved.FolderPath, "prompt.md"));
         Assert.StartsWith("# Stable release gate", prompt);
         Assert.Contains($"## Decision {decisionKey}: Stable release contract", prompt);
@@ -331,6 +335,7 @@ public sealed class DecisionCardApplyTests : IDisposable
         {
             Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
             Decision = LockFileDecision(),
+            Dossier = new TaskDossier { Path = "docs/operations/release/index.html", ImplementationIndex = 0 },
         })!;
         var decisionCard = h.Scanner.FindJob(decisionId, _watchPath)!;
 
@@ -350,6 +355,9 @@ public sealed class DecisionCardApplyTests : IDisposable
             Assert.Equal(TaskKinds.Task, card.Kind);
             Assert.Equal(TaskAcceptanceDeliveryModes.BoundedSlice, card.AcceptanceScope!.DeliveryMode);
             Assert.Contains(decisionCard.Key!, card.References.RelatedTo);
+            Assert.Equal("docs/operations/release/index.html", card.Dossier?.Path);
+            Assert.Equal(decisionCard.Key, card.Dossier?.Decision);
+            Assert.Equal(0, card.Dossier?.ImplementationIndex);
             var prompt = File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md"));
             Assert.Contains($"## Decision {decisionCard.Key}", prompt);
             Assert.Contains("- Chosen option: b · No lock file", prompt);

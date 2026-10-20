@@ -13,8 +13,8 @@ public enum RunStopDispatch
     StoppedLocally,
 
     /// <summary>
-    /// The card runs on a remote host. The request is recorded for the attempt
-    /// and delivered on the owning runner's next lease renewal.
+    /// A held attempt has no local CLI process to signal. The request is
+    /// recorded for its owner and observed before the next pipeline step.
     /// </summary>
     RemoteStopRequested,
 
@@ -24,7 +24,7 @@ public enum RunStopDispatch
 
 /// <summary>
 /// Plain facts the stop decision needs, read once by the endpoint: whether a
-/// local process was actually signalled, and whether a remote runner currently
+/// local process was actually signalled, and whether a runner currently
 /// holds this card's fenced lease.
 /// </summary>
 public sealed record RunStopFacts(bool LocalProcessStopped, bool RemoteLeaseHeld);
@@ -35,9 +35,8 @@ public sealed record RunStopFacts(bool LocalProcessStopped, bool RemoteLeaseHeld
 /// <para>
 /// Before this, the endpoint asked the local CLI backend only, so a card
 /// executing on a remote host answered 404 and an operator had no way to stop
-/// the run other than killing the process on the host by hand. A held remote
-/// lease is the positive evidence that a run exists and that its owner can be
-/// told to end it on the next heartbeat.
+/// the run other than killing the process on the host by hand. A held lease
+/// is positive evidence that an owner can end the run at its next boundary.
 /// </para>
 /// </summary>
 public static class RemoteRunStopPolicy
@@ -103,6 +102,8 @@ public sealed record RemoteRunStopRequest(
 /// Stop receipts are written before the HTTP acknowledgement. A request can only
 /// be observed by the exact attempt and fence it names. Terminal receipts remain
 /// queryable for idempotent command replay, but cannot be delivered again.
+/// The configured root is resolved on first use, so a host without
+/// <c>TaskRepository</c> still starts; it reads no receipts and refuses to record one.
 /// </summary>
 public sealed class RemoteRunStopRequestStore
 {
@@ -110,30 +111,42 @@ public sealed class RemoteRunStopRequestStore
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly TimeSpan RequestLifetime = TimeSpan.FromDays(1);
     private readonly object _gate = new();
-    private readonly string? _path;
+    private readonly Func<string?>? _resolveRoot;
     private readonly IAtomicJsonFileWriter _writer;
     private Dictionary<string, RemoteRunStopRequest> _requests = new(StringComparer.Ordinal);
     private readonly Func<DateTime> _utcNow;
+    private string? _path;
+    private bool _loaded;
 
     public RemoteRunStopRequestStore(IConfiguration configuration, IAtomicJsonFileWriter? writer = null)
-        : this(RequireRoot(configuration), () => DateTime.UtcNow, writer)
+        : this(configuration, () => DateTime.UtcNow, writer)
+    {
+    }
+
+    internal RemoteRunStopRequestStore(IConfiguration configuration, Func<DateTime> utcNow,
+        IAtomicJsonFileWriter? writer = null)
+        : this(() => configuration["TaskRepository"], utcNow, writer)
     {
     }
 
     internal RemoteRunStopRequestStore(Func<DateTime> utcNow)
-        : this(null, utcNow, null) { }
+        : this((Func<string?>?)null, utcNow, null) { }
 
     internal RemoteRunStopRequestStore(string? root, Func<DateTime> utcNow, IAtomicJsonFileWriter? writer = null)
+        : this(string.IsNullOrWhiteSpace(root) ? null : () => root, utcNow, writer)
     {
-        _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
+        lock (_gate) EnsureLoaded();
+    }
+
+    private RemoteRunStopRequestStore(Func<string?>? resolveRoot, Func<DateTime> utcNow, IAtomicJsonFileWriter? writer)
+    {
+        _resolveRoot = resolveRoot;
         _utcNow = utcNow;
         _writer = (writer ?? new AtomicJsonFileWriter()).WithLastGoodBackup();
-        if (_path is null || (!File.Exists(_path) && !File.Exists(_path + ".bak"))) return;
-        var loaded = JsonSerializer.Deserialize<List<RemoteRunStopRequest>>(
-            AtomicJsonFileWriter.ReadAllTextWithBackup(_path), Json)
-            ?? throw new InvalidDataException("Remote stop receipt file is empty.");
-        _requests = loaded.ToDictionary(item => item.CommandId, StringComparer.Ordinal);
     }
+
+    /// <summary>True when receipts are meant to survive a restart, even if the root is still unresolved.</summary>
+    private bool Durable => _resolveRoot is not null;
 
     public RemoteRunStopRequest Record(
         string taskKey,
@@ -149,10 +162,13 @@ public sealed class RemoteRunStopRequestStore
         var normalizedReason = string.IsNullOrWhiteSpace(reason) ? RemoteRunStopReasons.User : reason.Trim();
         var normalizedAttempt = string.IsNullOrWhiteSpace(attemptId) ? null : attemptId.Trim();
         var normalizedBy = string.IsNullOrWhiteSpace(requestedBy) ? null : requestedBy.Trim();
-        if (_path is not null && (normalizedAttempt is null || fencingToken <= 0))
+        if (Durable && (normalizedAttempt is null || fencingToken <= 0))
             throw new ArgumentException("A current attempt and fence are required for a durable stop.");
         lock (_gate)
         {
+            EnsureLoaded();
+            if (Durable && _path is null)
+                throw new InvalidOperationException("TaskRepository is required for durable remote stop receipts.");
             var id = string.IsNullOrWhiteSpace(commandId) ? null : commandId.Trim();
             if (id?.Length > 128) throw new ArgumentException("Stop command id is too long.", nameof(commandId));
             if (id is not null && _requests.TryGetValue(id, out var replay))
@@ -197,13 +213,18 @@ public sealed class RemoteRunStopRequestStore
     public RemoteRunStopRequest? Peek(string? taskKey)
     {
         if (string.IsNullOrWhiteSpace(taskKey)) return null;
-        lock (_gate) return ActiveFor(taskKey.Trim());
+        lock (_gate)
+        {
+            EnsureLoaded();
+            return ActiveFor(taskKey.Trim());
+        }
     }
 
     public RemoteRunStopRequest? GetReceipt(string commandId)
     {
         lock (_gate)
         {
+            EnsureLoaded();
             var receipt = _requests.GetValueOrDefault(commandId);
             if (receipt is not null) _ = ActiveFor(receipt.TaskKey);
             return _requests.GetValueOrDefault(commandId);
@@ -216,6 +237,7 @@ public sealed class RemoteRunStopRequestStore
         if (string.IsNullOrWhiteSpace(taskKey)) return [];
         lock (_gate)
         {
+            EnsureLoaded();
             return _requests.Values
                 .Where(request => string.Equals(request.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(request => request.RequestedAtUtc)
@@ -228,6 +250,7 @@ public sealed class RemoteRunStopRequestStore
     {
         lock (_gate)
         {
+            EnsureLoaded();
             var request = ActiveFor(taskKey);
             if (request is null) return null;
             if (!string.Equals(request.AttemptId, attemptId, StringComparison.Ordinal)
@@ -243,6 +266,7 @@ public sealed class RemoteRunStopRequestStore
     {
         lock (_gate)
         {
+            EnsureLoaded();
             var request = ActiveFor(taskKey);
             // An older acquire callback may run after a successor has already
             // recorded its stop. Only a strictly newer fence can retire it.
@@ -272,6 +296,7 @@ public sealed class RemoteRunStopRequestStore
         if (string.IsNullOrWhiteSpace(taskKey)) return null;
         lock (_gate)
         {
+            EnsureLoaded();
             var request = ActiveFor(taskKey.Trim());
             if (request is null) return null;
             if (attemptId is not null && !string.Equals(request.AttemptId, attemptId, StringComparison.Ordinal)) return null;
@@ -315,8 +340,21 @@ public sealed class RemoteRunStopRequestStore
         if (_path is not null) _writer.Write(_path, JsonSerializer.Serialize(requests.Values.ToList(), Json));
     }
 
-    private static string RequireRoot(IConfiguration configuration)
-        => !string.IsNullOrWhiteSpace(configuration["TaskRepository"])
-            ? configuration["TaskRepository"]!
-            : throw new InvalidOperationException("TaskRepository is required for durable remote stop receipts.");
+    // Caller holds _gate. A missing root leaves the store empty: nothing can
+    // have been recorded without one, so every read is correctly a miss.
+    private void EnsureLoaded()
+    {
+        if (_loaded) return;
+        var root = _resolveRoot?.Invoke();
+        var path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
+        if (path is not null && (File.Exists(path) || File.Exists(path + ".bak")))
+        {
+            var loaded = JsonSerializer.Deserialize<List<RemoteRunStopRequest>>(
+                AtomicJsonFileWriter.ReadAllTextWithBackup(path), Json)
+                ?? throw new InvalidDataException("Remote stop receipt file is empty.");
+            _requests = loaded.ToDictionary(item => item.CommandId, StringComparer.Ordinal);
+        }
+        _path = path;
+        _loaded = true;
+    }
 }

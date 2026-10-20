@@ -428,6 +428,108 @@ public sealed class IdentityBootstrapTests
     }
 
     [Fact]
+    public async Task Contributor_invite_is_single_use_scoped_and_expires()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
+        await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
+        using var edge = Client(factory, StudioToken);
+        var owner = await BootstrapOwnerAsync(edge);
+        using var ownerClient = Client(factory, StudioToken, owner.SessionToken);
+        var workspace = (await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
+            new CreateWorkspaceRequest("Main"))).Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        await ownerClient.PostAsJsonAsync("/api/v1/projects",
+            new CreateProjectRequest(workspace.WorkspaceId, "Assigned", "ASS", "prj-assigned"));
+        await ownerClient.PostAsJsonAsync("/api/v1/projects",
+            new CreateProjectRequest(workspace.WorkspaceId, "Foreign", "FOR", "prj-foreign"));
+
+        var invitedResponse = await ownerClient.PostAsJsonAsync("/api/v1/studio/auth/invitations",
+            new StudioInviteUserRequest("product", StudioUserRoles.Contributor, ["prj-assigned"]));
+        Assert.Equal(HttpStatusCode.Created, invitedResponse.StatusCode);
+        var invited = (await invitedResponse.Content.ReadFromJsonAsync<StudioInviteResult>())!;
+        var token = new Uri("https://studio.example" + invited.SignInLink).Query.Split('=', 2)[1];
+        var accept = await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",
+            new StudioAcceptInvitationRequest(token, "product password long enough"));
+        Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
+        var session = (await accept.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!;
+        Assert.Equal(StudioUserRoles.Contributor, session.Status.User!.Role);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",
+            new StudioAcceptInvitationRequest(token, "another password long enough"))).StatusCode);
+
+        using var product = Client(factory, StudioToken, session.SessionToken);
+        Assert.Single((await (await product.GetAsync("/api/v1/projects")).Content.ReadFromJsonAsync<ProjectDto[]>())!);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-foreign/tasks")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-assigned/placement")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await product.PostAsJsonAsync(
+            "/api/v1/studio/runner/project:prj-assigned/orchestrator-chat",
+            new StudioOrchestratorChatMessageRequest("Please review the preview."))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PostAsJsonAsync(
+            "/api/v1/studio/runner/project:prj-foreign/orchestrator-chat",
+            new StudioOrchestratorChatMessageRequest("This project is private."))).StatusCode);
+        product.DefaultRequestHeaders.Add("X-Actor-Id", "forged-owner");
+        var createdResponse = await product.PostAsJsonAsync("/api/v1/projects/prj-assigned/tasks",
+            new CreateTaskRequest("A product wish"));
+        Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+        var createdTask = (await createdResponse.Content.ReadFromJsonAsync<TaskDto>())!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/agent-work-detail")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history")).StatusCode);
+        foreach (var segment in new[] { "HiStOrY", "AgEnT-WoRk-DeTaIl", "OuTpUt", "LoGs", "RaW-LoGs" })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+                $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/{segment}")).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/results/LoGs/raw.txt")).StatusCode);
+        var history = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
+            .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
+        Assert.Contains(history.Audit, row => row.Action == "task.created" && row.ActorId == invited.User.UserId);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PutAsJsonAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}",
+            new { title = "A product wish", state = StudioTaskLanes.Ready,
+                expectedVersion = createdTask.Version, mechanicalDelta = new { reason = "run control" } })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await product.PostAsJsonAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/preview-comments",
+            new StudioPreviewCommentRequest("preview-1", "Please enlarge the heading."))).StatusCode);
+        var commentedHistory = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
+            .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
+        Assert.Contains(commentedHistory.Audit, row => row.Action == "task.preview-commented"
+            && row.ActorId == invited.User.UserId && row.DetailJson.Contains("preview-1", StringComparison.Ordinal));
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PutAsJsonAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/release",
+            new SetTaskReleaseRequest("approved", 0))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ownerClient.PutAsJsonAsync(
+            $"/api/v1/studio/auth/users/{invited.User.UserId}/projects/prj-assigned/production-approval",
+            new StudioProductionApprovalRequest(true))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await product.PutAsJsonAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/release",
+            new SetTaskReleaseRequest("approved", 0))).StatusCode);
+        var releasedHistory = (await (await ownerClient.GetAsync($"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/history"))
+            .Content.ReadFromJsonAsync<TaskHistoryDto>())!;
+        Assert.Contains(releasedHistory.Audit, row => row.Action == "task.release-set" && row.ActorId == invited.User.UserId);
+        Assert.Equal(HttpStatusCode.OK, (await ownerClient.PutAsJsonAsync(
+            $"/api/v1/studio/auth/users/{invited.User.UserId}/projects/prj-assigned/production-approval",
+            new StudioProductionApprovalRequest(false))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PutAsJsonAsync(
+            $"/api/v1/projects/prj-assigned/tasks/{createdTask.TaskId}/release",
+            new SetTaskReleaseRequest("approved", 1))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PostAsJsonAsync("/api/v1/projects/prj-foreign/tasks",
+            new CreateTaskRequest("Forbidden wish"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/management/credential-view")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PostAsJsonAsync("/api/v1/studio/auth/invitations",
+            new StudioInviteUserRequest("second", StudioUserRoles.Contributor, ["prj-assigned"]))).StatusCode);
+
+        var expiring = (await (await ownerClient.PostAsJsonAsync("/api/v1/studio/auth/invitations",
+            new StudioInviteUserRequest("later", StudioUserRoles.Contributor, ["prj-assigned"])))
+            .Content.ReadFromJsonAsync<StudioInviteResult>())!;
+        clock.Advance(TimeSpan.FromHours(25));
+        var expiredToken = new Uri("https://studio.example" + expiring.SignInLink).Query.Split('=', 2)[1];
+        Assert.Equal(HttpStatusCode.Unauthorized, (await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",
+            new StudioAcceptInvitationRequest(expiredToken, "later password long enough"))).StatusCode);
+    }
+
+    [Fact]
     public async Task Project_registration_owns_one_canonical_repository_and_a_fallback_probe_never_admits_it()
     {
         using var temp = new TempDirectory();
@@ -533,7 +635,11 @@ public sealed class IdentityBootstrapTests
             "/api/v1/runners/other-host/project-probes/prj-alpha",
             new ProjectRepositoryProbeRequest("https://github.com/org/alpha.git", null, true, true, false))).StatusCode);
 
+        var visibility = await ownerClient.PutAsJsonAsync("/api/v1/projects/repository-visibility",
+            new SetProjectRepositoryVisibilityRequest("https://GitHub.com/org/alpha.git/", "private"));
+        Assert.Equal(HttpStatusCode.OK, visibility.StatusCode);
         var status = await ownerClient.GetFromJsonAsync<ProjectRepositoryStatusDto>("/api/v1/projects/prj-alpha/repository");
+        Assert.Equal("private", status!.Registration.RepositoryVisibility);
         Assert.Single(status!.Probes);
         Assert.True(status.Probes[0].Admitted);
     }

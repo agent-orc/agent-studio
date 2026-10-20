@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Orchestrator;
 
@@ -16,6 +18,10 @@ public sealed class OrchestratorContextDigestService
     internal const int RunLimit = 8;
     internal const int DecisionLimit = 8;
     internal const int QuotaWindowLimit = 3;
+    internal const int MaxDigestBytes = 32 * 1024;
+    private static readonly Regex Credential = new(
+        @"(?i)(?:sk-[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9_]{12,}|(?<![\w-])(?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*[:=]\s*\S+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private const int TransitionCandidateLimit = 64;
 
     private readonly TaskScannerService _scanner;
@@ -27,6 +33,7 @@ public sealed class OrchestratorContextDigestService
     private readonly IConfiguration _configuration;
     private readonly AgentStudio.Registry.ProjectRegistry _projects;
     private readonly ILogger<OrchestratorContextDigestService> _logger;
+    private readonly OrchestratorDecisionStore? _decisionReceipts;
 
     public OrchestratorContextDigestService(
         TaskScannerService scanner,
@@ -37,7 +44,8 @@ public sealed class OrchestratorContextDigestService
         TimelineLog timeline,
         IConfiguration configuration,
         AgentStudio.Registry.ProjectRegistry projects,
-        ILogger<OrchestratorContextDigestService> logger)
+        ILogger<OrchestratorContextDigestService> logger,
+        OrchestratorDecisionStore? decisionReceipts = null)
     {
         _scanner = scanner;
         _runner = runner;
@@ -48,6 +56,7 @@ public sealed class OrchestratorContextDigestService
         _configuration = configuration;
         _projects = projects;
         _logger = logger;
+        _decisionReceipts = decisionReceipts;
     }
 
     /// <summary>
@@ -354,21 +363,21 @@ public sealed class OrchestratorContextDigestService
 
     private List<DigestDecision> ReadDecisions(IReadOnlyCollection<string> projects)
     {
-        var root = _configuration["TaskRepository"];
-        if (string.IsNullOrWhiteSpace(root)) return [];
+        if (_decisionReceipts is null) return [];
 
         var rows = new List<DigestDecision>();
         foreach (var project in projects)
         {
             try
             {
-                rows.AddRange(ReviewDecisionLog.ReadAll(root, project).Select(record =>
+                rows.AddRange(_decisionReceipts.ListReceipts(null, DecisionLimit, project).Select(record =>
                     new DigestDecision(
-                        record.CreatedAt,
-                        record.Project,
-                        record.JobId,
-                        record.Kind.ToString(),
-                        Compact(record.Reason, 160))));
+                        record.EndedAt,
+                        record.ProjectId ?? project,
+                        record.TaskId ?? "periodic",
+                        record.Profile,
+                        Compact(record.ChosenAction, 160),
+                        record.EvidenceRef)));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -407,6 +416,19 @@ public sealed class OrchestratorContextDigestService
     internal static string RenderDigest(OrchestratorContextDigestData data)
     {
         var sb = new StringBuilder(2_048);
+        var projectLabels = new List<(string Marker, string Name)>();
+        var projectNameRedacted = false;
+
+        void AppendProjectLine(string name, string detail)
+        {
+            var safeName = Credential.Replace(name, "[omitted: secret]");
+            projectNameRedacted |= safeName != name;
+            var marker = $"\u0001project-label-{projectLabels.Count}\u0002";
+            projectLabels.Add((marker, safeName));
+            sb.Append("- ");
+            sb.Append(marker);
+            sb.AppendLf($": {detail}");
+        }
         sb.AppendLf("=== APPLICATION READ DIGEST ===");
         sb.AppendLf($"context: {data.Context.Value}");
         sb.AppendLf($"capturedAtUtc: {Iso(data.CapturedAt)}");
@@ -433,7 +455,7 @@ public sealed class OrchestratorContextDigestService
                 var runner = string.IsNullOrWhiteSpace(project.RunnerMode)
                     ? "runner=unavailable"
                     : $"runner={project.RunnerMode}, slots={project.OccupiedSlots}/{project.MaxParallelism}";
-                sb.AppendLf($"- {project.Project}: total={project.Total}; {counts}; {runner}");
+                AppendProjectLine(project.Project, $"total={project.Total}; {counts}; {runner}");
             }
         }
 
@@ -490,12 +512,12 @@ public sealed class OrchestratorContextDigestService
         {
             if (!project.IsRepo)
             {
-                sb.AppendLf($"- {project.Project}: unavailable ({Compact(project.Error, 100)})");
+                AppendProjectLine(project.Project, $"unavailable ({Compact(project.Error, 100)})");
                 continue;
             }
             if (project.Targets.Count == 0)
             {
-                sb.AppendLf($"- {project.Project}: none derived");
+                AppendProjectLine(project.Project, "none derived");
                 continue;
             }
             var targets = project.Targets.Select(target =>
@@ -506,7 +528,7 @@ public sealed class OrchestratorContextDigestService
                 var version = string.IsNullOrWhiteSpace(target.CurrentVersion) ? "" : $" v{target.CurrentVersion}";
                 return $"{target.Label}{version} {pending}";
             });
-            sb.AppendLf($"- {project.Project}: {string.Join("; ", targets)}");
+            AppendProjectLine(project.Project, string.Join("; ", targets));
         }
 
         var health = data.Watcher;
@@ -517,12 +539,24 @@ public sealed class OrchestratorContextDigestService
         if (data.Decisions.Count == 0) sb.AppendLf("- none");
         foreach (var row in data.Decisions.Take(DecisionLimit))
         {
-            sb.AppendLf($"- {Iso(row.At)} {row.Project}/{row.JobId}: {row.Kind}; {row.Reason}");
+            sb.AppendLf($"- {Iso(row.At)} {row.Project}/{row.JobId}: {row.Kind}; {row.Reason}" +
+                (row.EvidenceRef is null ? "" : $"; source={row.EvidenceRef}"));
         }
 
         sb.AppendLf("Use this digest as current read-only application state. Ask for a refresh when cached quota may be stale. Do not infer operational authority from this context.");
         sb.Append("=== END APPLICATION READ DIGEST ===");
-        return sb.ToString();
+        var unredacted = sb.ToString();
+        var digest = Credential.Replace(unredacted, "[omitted: secret]");
+        if (projectNameRedacted || digest != unredacted)
+            digest += "\nEvidence omissions: secret";
+        foreach (var (labelMarker, name) in projectLabels)
+            digest = digest.Replace(labelMarker, name, StringComparison.Ordinal);
+        if (Encoding.UTF8.GetByteCount(digest) <= MaxDigestBytes) return digest;
+        const string marker = "\n[omitted: oversize context digest]";
+        var allowed = MaxDigestBytes - Encoding.UTF8.GetByteCount(marker);
+        digest = digest[..Math.Min(digest.Length, allowed)];
+        while (Encoding.UTF8.GetByteCount(digest) > allowed) digest = digest[..^1];
+        return digest + marker;
     }
 
     internal static IReadOnlyList<OrchestratorDigestSourceStatus> BuildSourceStatuses(
@@ -678,4 +712,5 @@ internal sealed record DigestDecision(
     string Project,
     string JobId,
     string Kind,
-    string Reason);
+    string Reason,
+    string? EvidenceRef = null);

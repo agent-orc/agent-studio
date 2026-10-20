@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrierte Plattform: von der Planung bis zum Hosting | Konzept-Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --studio: #0d6f6c; --hosting: #8c3a5a; --new: #6a4cad;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --studio: #43b3ad; --hosting: #d9799d; --new: #a68ce6;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 66ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .box.ok { background: var(--ok-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .tag.new { color: var(--new); border-color: var(--new); border-style: dashed; }
+  figure { margin: 22px 0; }
+  .figscroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 6px; }
+  figure svg { width: 100%; min-width: 860px; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  svg text { font-family: system-ui, "Segoe UI", sans-serif; fill: var(--ink-1); }
+  svg .t-layer { font-size: 22px; font-weight: 700; }
+  svg .t-spec { font: 11.5px ui-monospace, "Cascadia Mono", Consolas, monospace; fill: var(--ink-3); }
+  svg .t-pill { font-size: 13.5px; }
+  svg .t-small { font-size: 12px; fill: var(--ink-2); }
+  svg .t-step { font-size: 15px; font-weight: 700; }
+  svg .t-num { font: 11px ui-monospace, Consolas, monospace; fill: var(--ink-3); }
+  svg .t-tag { font: 11px ui-monospace, Consolas, monospace; }
+  svg .layer { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.4; }
+  svg .pl-studio { fill: color-mix(in srgb, var(--studio) 13%, var(--surface-1)); stroke: var(--studio); stroke-width: 1.3; }
+  svg .pl-platform { fill: color-mix(in srgb, var(--develop) 13%, var(--surface-1)); stroke: var(--develop); stroke-width: 1.3; }
+  svg .pl-hosting { fill: color-mix(in srgb, var(--hosting) 13%, var(--surface-1)); stroke: var(--hosting); stroke-width: 1.3; }
+  svg .step { fill: var(--surface-1); stroke-width: 2; }
+  svg .s-ok { stroke: var(--ok); } svg .s-part { stroke: var(--warn); } svg .s-new { stroke: var(--new); stroke-dasharray: 5 4; }
+  svg .tag-ok { fill: var(--ok); } svg .tag-part { fill: var(--warn); } svg .tag-new { fill: var(--new); }
+  svg .flow { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+  svg .flow-back { stroke: var(--ink-3); stroke-width: 1.4; fill: none; stroke-dasharray: 4 4; }
+  svg .arrowhead { fill: var(--ink-3); }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  @media (max-width: 640px) { main { padding: 0 16px; } .toc { columns: 1; } h1 { font-size: 28px; } }
+  svg .t-zone { font-size: 18px; font-weight: 700; }
+  svg .z-tool { fill: color-mix(in srgb, var(--studio) 8%, var(--surface-1)); stroke: var(--studio); stroke-width: 1.4; }
+  svg .z-ctl { fill: color-mix(in srgb, var(--develop) 8%, var(--surface-1)); stroke: var(--develop); stroke-width: 1.4; }
+  svg .z-trust { fill: color-mix(in srgb, var(--warn) 9%, var(--surface-1)); stroke: var(--warn); stroke-width: 1.4; }
+  svg .z-work { fill: color-mix(in srgb, var(--new) 8%, var(--surface-1)); stroke: var(--new); stroke-width: 1.4; }
+  svg .z-run { fill: color-mix(in srgb, var(--hosting) 8%, var(--surface-1)); stroke: var(--hosting); stroke-width: 1.4; }
+  svg .zp { fill: var(--surface-1); stroke: var(--line); stroke-width: 1.2; }
+  svg .zp-dash { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Konzept-Dossier · Agent Orchestrator</p>
+  <h1>Integrierte Plattform: von der Planung bis zum Hosting</h1>
+  <p class="lede">Eine Plattform für den ganzen Weg einer Anwendung: planen, entwickeln, prüfen, bereitstellen, betreiben und beobachten. Integriert heißt dabei: ein Zustand, eine Identität je Auftrag, ein Artefakt vom Gate bis Prod, ein Budget. Sicher heißt: harte Grenzen zwischen dem Ort, an dem KI-Agenten fremden Code ausführen, und dem Ort, an dem Anwendungen öffentlich laufen.</p>
+  <div class="meta">
+    <span><b>Stand</b> 16.10.2026</span>
+    <span><b>Anlass</b> Operator-Vorgabe 16.10.2026 abends</span>
+    <span><b>Fasst zusammen</b> Anwendungs-Lebenszyklus (<code>docs/operations/application-lifecycle</code>), Dynamic placement (<code>docs/dynamic-placement</code>, AGT-3171), Credentials and logins (AGT-2968), Nordstern (AGT-W14)</span>
+  </div>
+</header>
+
+<div class="box accent">
+  <b>Kernaussage.</b> Die Plattform hat fünf Zonen: Werkzeug, Steuerung, Vertrauen, Arbeit und Laufzeit. Arbeit und Laufzeit nutzen dieselben Bausteine: Host-Agent, Container, Budget, Image-Speicher, Logs. Sie folgen aber getrennten Regeln und laufen auf getrennten Rechnern. Die Übergabe zwischen CI und CD ist genau ein Artefakt mit Digest und Herkunft, sonst nichts. Pipelines und Deploy-Prozesse stehen als YAML im Repo und sind im Werkzeug Bürger erster Klasse: Releases wandern über Lebenszyklen durch die Umgebungen, Hosting ist ein Schritt darin, und jede Karte zeigt, in welchen Umgebungen sie läuft. Für die Arbeit bleibt es beim eigenen Scheduler. Für das Hosting ist eine eigene, schlanke Laufzeit auf Docker und einem TLS-Proxy die Grundlage. Wer schon Kubernetes oder einen Cloud-Dienst hat, bekommt einen Adapter dorthin. Alle Geheimnisse, von Git über Server bis zu den vielen Tokens jeder App, laufen über einen Secret-Provider mit austauschbarem Speicher und ein Rechte-Modell mit Nutzern, Gruppen, Rollen je Bereich und Dienstkonten. Das Modell ist von Anfang an mehrnutzerfähig und wird auf dem Einzelplatz genauso benutzt.
+</div>
+
+<nav class="toc">
+  <a href="#s1">§1 Anlass und Ziel</a><br>
+  <a href="#s2">§2 Das Bild: fünf Zonen</a><br>
+  <a href="#s3">§3 Der durchgehende Fluss</a><br>
+  <a href="#s4">§4 Gleiche Bausteine, getrennte Regeln</a><br>
+  <a href="#s5">§5 Sicher, aber integriert</a><br>
+  <a href="#s6">§6 Pipelines, Releases und Umgebungen</a><br>
+  <a href="#s7">§7 Hosting: was dazukommt</a><br>
+  <a href="#s8">§8 Betrieb: Health, Monitoring, Nutzung, Last, Logs</a><br>
+  <a href="#s9">§9 Geheimnisse und Zugriff</a><br>
+  <a href="#s10">§10 Verhältnis zu Kubernetes</a><br>
+  <a href="#s11">§11 Bestand und Karten</a><br>
+  <a href="#s12">§12 Stufen</a><br>
+  <a href="#s13">§13 Entscheidungen</a><br>
+  <a href="#quellen">§ Quellen</a>
+</nav>
+
+<h2 id="s1"><span class="no">§1</span>Anlass und Ziel</h2>
+<p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Gefragt ist vor allem das Konzept einer voll integrierten Plattform. Eine Container-Plattform ist nur ein Teil. CI/CD gehört dazu, und damit am Ende auch das Hosting. Von der Planung über die Entwicklung bis zum Hosting soll alles in einer Plattform liegen, sicher, aber integriert.</p>
+<p>Dieses Dossier ist die Klammer über die bestehenden Dossiers. Es entscheidet nichts neu, was dort schon entschieden ist. Es legt fest, wie die Teile zusammenpassen, und ergänzt, was für das Hosting fehlt.</p>
+
+<h2 id="s2"><span class="no">§2</span>Das Bild: fünf Zonen</h2>
+<figure>
+  <div class="figscroll">
+  <svg viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fünf Zonen der integrierten Plattform">
+    <defs><marker id="ahp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <rect class="z-tool" x="20" y="20" width="960" height="70" rx="10"/>
+    <text x="36" y="48" class="t-zone">Werkzeug · Agent Studio im Browser</text>
+    <text x="36" y="72" class="t-small">Board, Chat und Dossiers · Vorschau neben dem Chat · Freigaben · Umgebungen · Zugänge · Kontingente</text>
+
+    <rect class="z-trust" x="20" y="120" width="470" height="170" rx="10"/>
+    <text x="36" y="146" class="t-zone">Vertrauenszone</text><text x="190" y="146" class="t-small">Geheimnisse, Identitäten, Artefakte</text>
+    <rect class="zp" x="36" y="158" width="213" height="48" rx="7"/><text x="48" y="178" class="t-pill">Geheimnis-Speicher</text><text x="48" y="196" class="t-small">Wurzeln verschlüsselt</text>
+    <rect class="zp" x="261" y="158" width="213" height="48" rx="7"/><text x="273" y="178" class="t-pill">Ausgabe je Auftrag</text><text x="273" y="196" class="t-small">kurzlebig, an den Lease</text>
+    <rect class="zp" x="36" y="216" width="213" height="48" rx="7"/><text x="48" y="236" class="t-pill">Artefakt-Registry</text><text x="48" y="254" class="t-small">Digest und Herkunft</text>
+    <rect class="zp" x="261" y="216" width="213" height="48" rx="7"/><text x="273" y="236" class="t-pill">Kontingente, Audit</text><text x="273" y="254" class="t-small">je Mandant und Projekt</text>
+
+    <rect class="z-ctl" x="510" y="120" width="470" height="170" rx="10"/>
+    <text x="526" y="146" class="t-zone">Steuerzone</text><text x="650" y="146" class="t-small">eine Wahrheit, ein Entscheider</text>
+    <rect class="zp" x="526" y="158" width="213" height="48" rx="7"/><text x="538" y="178" class="t-pill">Task-Server</text><text x="538" y="196" class="t-small">Zustand, Leases, Bus</text>
+    <rect class="zp" x="751" y="158" width="213" height="48" rx="7"/><text x="763" y="178" class="t-pill">Engine</text><text x="763" y="196" class="t-small">entscheidet Übergänge</text>
+    <rect class="zp" x="526" y="216" width="213" height="48" rx="7"/><text x="538" y="236" class="t-pill">Platzierung</text><text x="538" y="254" class="t-small">Budget je Host, Pull</text>
+    <rect class="zp" x="751" y="216" width="213" height="48" rx="7"/><text x="763" y="236" class="t-pill">Freigaben</text><text x="763" y="254" class="t-small">Mensch oder Regel</text>
+
+    <rect class="z-work" x="20" y="330" width="470" height="222" rx="10"/>
+    <text x="36" y="356" class="t-zone">Arbeitszone</text><text x="160" y="356" class="t-small">kurzlebig · fremder Code und KI-Agenten</text>
+    <rect class="zp" x="36" y="370" width="138" height="40" rx="7"/><text x="48" y="395" class="t-pill">Coding</text>
+    <rect class="zp" x="186" y="370" width="138" height="40" rx="7"/><text x="198" y="395" class="t-pill">Review</text>
+    <rect class="zp" x="336" y="370" width="138" height="40" rx="7"/><text x="348" y="395" class="t-pill">Gate, CI</text>
+    <rect class="zp" x="36" y="420" width="138" height="40" rx="7"/><text x="48" y="445" class="t-pill">Build</text>
+    <rect class="zp" x="186" y="420" width="138" height="40" rx="7"/><text x="198" y="445" class="t-pill">Deploy-Auftrag</text>
+    <rect class="zp-dash" x="336" y="420" width="138" height="40" rx="7"/><text x="348" y="445" class="t-small">frei</text>
+    <text x="36" y="492" class="t-small">Ein Container je Auftrag, danach gelöscht.</text>
+    <text x="36" y="510" class="t-small">Kein Eingang von außen.</text>
+    <text x="36" y="528" class="t-small">Ausgang nur zu Steuerung, Git und Modell-APIs.</text>
+
+    <rect class="z-run" x="510" y="330" width="470" height="222" rx="10"/>
+    <text x="526" y="356" class="t-zone">Laufzeitzone</text><text x="656" y="356" class="t-small">langlebig · Anwendungen der Nutzer</text>
+    <rect class="zp" x="526" y="370" width="438" height="34" rx="7"/><text x="538" y="392" class="t-pill">Eingang: TLS, Domains, Proxy</text>
+    <rect class="zp" x="526" y="414" width="138" height="40" rx="7"/><text x="538" y="439" class="t-pill">Vorschau je Karte</text>
+    <rect class="zp" x="676" y="414" width="138" height="40" rx="7"/><text x="688" y="439" class="t-pill">Stage</text>
+    <rect class="zp" x="826" y="414" width="138" height="40" rx="7"/><text x="838" y="439" class="t-pill">Prod</text>
+    <text x="526" y="492" class="t-small">Eingang nur über den TLS-Proxy.</text>
+    <text x="526" y="510" class="t-small">Kein Weg zu Steuerung und Geheimnis-Speicher.</text>
+    <text x="526" y="528" class="t-small">Eigenes Netz je Mandant, Health und Logs je App.</text>
+
+    <rect class="zp-dash" x="510" y="572" width="470" height="36" rx="8"/>
+    <text x="526" y="595" class="t-small">Nutzer der Anwendungen · Internet</text>
+
+    <path class="flow" d="M745,92 V118" marker-start="url(#ahp)" marker-end="url(#ahp)"/>
+    <text x="755" y="110" class="t-small">HTTPS, Anmeldung</text>
+    <path class="flow" d="M255,330 V292" marker-end="url(#ahp)"/>
+    <text x="265" y="306" class="t-small">Token je Auftrag,</text><text x="265" y="320" class="t-small">Upload nur durch Build</text>
+    <path class="flow" d="M440,330 V310 H560 V292" marker-end="url(#ahp)"/>
+    <text x="570" y="308" class="t-small">holt Aufträge, meldet Ergebnisse</text>
+    <path class="flow" d="M890,330 V292" marker-end="url(#ahp)"/>
+    <text x="900" y="306" class="t-small">Zustand,</text><text x="900" y="320" class="t-small">Fehler</text>
+    <path class="flow" d="M490,440 H508" marker-end="url(#ahp)"/>
+    <text x="482" y="476" class="t-small">Digest</text>
+    <path class="flow" d="M745,572 V554" marker-end="url(#ahp)"/>
+  </svg>
+  </div>
+  <figcaption>Abbildung 1. Fünf Zonen. Pfeile zeigen jede erlaubte Verbindung; alles andere ist gesperrt. Die Arbeitszone hat keinen Eingang. Die Laufzeitzone hat nur den Eingang über den Proxy und keinen Weg zu Steuerung und Geheimnissen.</figcaption>
+</figure>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Zone</th><th>Aufgabe</th><th>Wer läuft dort</th><th>Hat Zugriff auf</th><th>Nie</th></tr></thead>
+  <tbody>
+    <tr><td><b>Werkzeug</b></td><td>Menschen sehen, planen, steuern, geben frei</td><td>Agent Studio im Browser</td><td>Steuerzone über HTTPS mit Anmeldung</td><td>Geheimnis-Werte, direkter Host-Zugriff</td></tr>
+    <tr><td><b>Steuerung</b></td><td>Zustand, Entscheidungen, Platzierung, Freigaben</td><td>Task-Server, Engine</td><td>Metadaten aller Zonen</td><td>fremden Code ausführen</td></tr>
+    <tr><td><b>Vertrauen</b></td><td>Wurzel-Geheimnisse, Ausgabe kurzlebiger Tokens, Artefakte mit Herkunft, Kontingente, Audit</td><td>Geheimnis-Speicher oder Adapter, Registry</td><td>nur was sie ausgibt, an geprüfte Leases</td><td>Wurzeln an Container geben</td></tr>
+    <tr><td><b>Arbeit</b></td><td>Coding, Review, Gates, Builds, Deploy-Aufträge</td><td>kurzlebige Container je Auftrag, auf Windows Prozesse</td><td>Steuerzone (ausgehend), Git und Modelle mit Token je Auftrag</td><td>Eingang von außen, Prod-Geheimnisse vor der Freigabe</td></tr>
+    <tr><td><b>Laufzeit</b></td><td>Anwendungen der Nutzer: Vorschau, Stage, Prod</td><td>langlebige App-Container hinter dem TLS-Proxy</td><td>eigene Umgebungs-Geheimnisse, eigene Daten</td><td>Steuerzone, Geheimnis-Speicher, andere Mandanten</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s3"><span class="no">§3</span>Der durchgehende Fluss</h2>
+<p>Jeder Schritt hat eine Zone und eine feste Übergabe an den nächsten. Was nicht in der Übergabe steht, geht nicht weiter.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Schritt</th><th>Zone</th><th>Baustein</th><th>Übergabe an den nächsten Schritt</th><th>Stand</th></tr></thead>
+  <tbody>
+    <tr><td><b>Planen</b></td><td>Werkzeug, Steuerung</td><td>Chat, Dossiers, Karten; Projekt aus Vorlage</td><td>Karte mit Auftrag, Projekt mit Repo und Build-Profil</td><td><span class="tag ok">vorhanden</span> <span class="tag warn">Vorlage in Arbeit</span></td></tr>
+    <tr><td><b>Entwickeln</b></td><td>Arbeit</td><td>Coding-Container je Karte</td><td>Lieferung: Commit auf einem Task-Zweig</td><td><span class="tag ok">vorhanden</span></td></tr>
+    <tr><td><b>Prüfen</b></td><td>Arbeit</td><td>Review-Container, Karten-Gate</td><td>Urteil und Testbeleg zum Commit</td><td><span class="tag ok">vorhanden</span></td></tr>
+    <tr><td><b>Integrieren (CI)</b></td><td>Arbeit, Steuerung</td><td>Batch-Gate, Integrator</td><td>Commit auf dem Integrationszweig</td><td><span class="tag ok">vorhanden</span></td></tr>
+    <tr><td><b>Bauen</b></td><td>Arbeit, Vertrauen</td><td>Build-Auftrag, Release-Gate, Registry</td><td>Artefakt: Digest, Commit, Gate-Lauf, Vorlage</td><td><span class="tag warn">teilweise</span></td></tr>
+    <tr><td><b>Vorschau</b></td><td>Laufzeit</td><td>Deploy-Auftrag, Vorschau je Karte</td><td>Adresse und Bilder zum Feedback im Chat</td><td><span class="tag new">neu</span></td></tr>
+    <tr><td><b>Bereitstellen (CD)</b></td><td>Arbeit → Laufzeit</td><td>Deploy-Auftrag, Freigabe</td><td>derselbe Digest auf Stage, dann Prod</td><td><span class="tag new">neu</span></td></tr>
+    <tr><td><b>Betreiben</b></td><td>Laufzeit, Steuerung</td><td>Health, Logs, Kosten je App</td><td>Fehler werden Karten, Kosten gehen ins Kontingent</td><td><span class="tag new">neu</span></td></tr>
+  </tbody>
+</table>
+</div>
+<p>Die wichtigste Naht ist die zwischen CI und CD. Sie besteht nur aus dem Artefakt. Ein Deploy-Auftrag nimmt einen Digest aus der Registry an, wenn dessen Herkunft auf einen grünen Gate-Lauf desselben Projekts zeigt. Er baut nichts neu und holt keinen Code. So ist das, was in Prod läuft, nachweisbar das, was geprüft wurde.</p>
+
+<h2 id="s4"><span class="no">§4</span>Gleiche Bausteine, getrennte Regeln</h2>
+<p>Arbeit und Laufzeit teilen den Host-Agenten, die Container-Laufzeit, das Budget in halben Kernen (Fluid capacity, AGT-3019), den Image-Speicher und die Log-Erfassung. Das hält die Plattform klein und gleich bedienbar. Die Regeln unterscheiden sich in jedem Punkt:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th></th><th>Arbeitszone</th><th>Laufzeitzone</th></tr></thead>
+  <tbody>
+    <tr><td><b>Lebensdauer</b></td><td>ein Auftrag, Minuten bis Stunden, danach gelöscht</td><td>bis zur nächsten Version, Tage bis Monate</td></tr>
+    <tr><td><b>Eingang</b></td><td>keiner</td><td>nur über den TLS-Proxy, nur die deklarierten Ports</td></tr>
+    <tr><td><b>Ausgang</b></td><td>Steuerzone, Git, Modell-APIs, Paket-Quellen; sonst gesperrt</td><td>was die Anwendung deklariert; nie Steuerzone oder Geheimnis-Speicher</td></tr>
+    <tr><td><b>Identität</b></td><td>je Auftrag (Attempt und Fence)</td><td>je Deployment (Projekt, Umgebung, Digest)</td></tr>
+    <tr><td><b>Geheimnisse</b></td><td>Repo-Token und Provider-Zugang je Auftrag, als Datei im Speicher</td><td>Umgebungs-Geheimnisse der Anwendung, Prod erst nach Freigabe</td></tr>
+    <tr><td><b>Ausfall</b></td><td>Lease läuft ab, Rettung, neuer Versuch</td><td>Neustart, Health-Check, Rückweg auf die vorige Version</td></tr>
+    <tr><td><b>Budget</b></td><td>Zulassung je Auftrag</td><td>reservierte Kerne und Speicher je App, zählt aufs Hosting-Kontingent</td></tr>
+    <tr><td><b>Rechner</b></td><td>Arbeits-Hosts</td><td>Laufzeit-Hosts, getrennt von den Arbeits-Hosts (D1)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s5"><span class="no">§5</span>Sicher, aber integriert</h2>
+<p>Integriert heißt nicht, dass alles alles darf. Die Plattform kennt einen Zustand und eine Herkunftskette, aber jede Zone hat nur die Rechte, die sie für ihren Schritt braucht. Diese Grenzen fallen nie:</p>
+<ol>
+  <li><b>Wo KI-Agenten fremden Code ausführen, läuft keine öffentliche Anwendung.</b> Arbeits- und Laufzeit-Hosts sind getrennt, mindestens als getrennte VMs (D1).</li>
+  <li><b>Keine Zone hält Wurzel-Geheimnisse außer der Vertrauenszone.</b> Container bekommen kurzlebige Ableitungen, gebunden an Lease oder Deployment.</li>
+  <li><b>Nach Prod geht nur ein geprüftes Artefakt.</b> Digest, Herkunft und Gate-Lauf werden vor dem Transfer geprüft. Ein Neubau je Umgebung gibt es nicht.</li>
+  <li><b>Prod-Geheimnisse gibt es erst nach der Freigabe.</b> Vorschau und Stage bekommen eigene Werte.</li>
+  <li><b>Was nicht ausdrücklich erlaubt ist, ist gesperrt.</b> Das gilt für Netzwerkverbindungen: kein Eingang in die Arbeitszone, kein Weg aus der Laufzeit in die Steuerung, eigene Netze je Mandant.</li>
+  <li><b>Mandanten sind überall getrennt:</b> bei API-Zugriff, Claims, Artefakten, Geheimnissen, Netzwerk und Kontingent, nicht nur in der Anzeige.</li>
+  <li><b>Jede Aktion hat eine Identität und einen Audit-Eintrag:</b> Mensch, Engine, Auftrag oder Deployment.</li>
+  <li><b>Wer eine Installation betreibt, verantwortet sie.</b> So ist es entschieden im Lebenszyklus-Dossier, D2. Die Plattform macht die Grenzen sichtbar und prüfbar, nimmt dem Betreiber die Verantwortung aber nicht ab.</li>
+</ol>
+<p>Integriert heißt umgekehrt: Ein Fehler in Prod ist ohne Medienbruch eine Karte mit Logauszug und Digest. Eine Karte zeigt, in welcher Umgebung ihre Änderung läuft. Ein Token ist im Zugangs-Inventar mit Auftrag, Ablauf und Widerruf zu sehen. Kontingente zählen Modell-Tokens, Rechenzeit und Hosting zusammen.</p>
+
+<h2 id="s6"><span class="no">§6</span>Pipelines, Releases und Umgebungen</h2>
+<p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Hosting kann Docker sein, ist aber vor allem ein Prozessschritt in der Pipeline. Bei CI/CD werden Pipelines über YAML konfiguriert und sind im Tool sichtbar. Das machen wir im Prinzip auch so, nur dass Pipelines Bürger erster Klasse sind und jede Karte weiß, in welchen Umgebungen sie schon deployt ist. Also CI/CD, aber besser integriertes Deployment; Vorbild ist Octopus Deploy.</p>
+
+<h3>6.1 Heute</h3>
+<p><code>.agent-studio/project.yml</code> (Schema 1) beschreibt je Projekt den Stack, die Werkzeug-Versionen, die Befehle für prepare, build, test und lint und die Test-Suiten mit Kategorien (routine, release, machine-bound). Die Karten-Pipeline selbst ist im Code festgelegt (<code>backend/Features/Pipeline/PipelineCatalogue.cs</code>): Qualifizieren, Agent, Git, Build, Test, Aspekte, Bewertung. Entschieden ist seit 12.09.2026 (AGT-W51 D8): Die Pipeline im Werkzeug wird die CI des Projekts, mit Stufen aus <code>project.yml</code> und Deploy als Stufe. Releases, Lebenszyklen, ein Deploy-Prozess und die Zuordnung Karte zu Umgebung fehlen.</p>
+
+<h3>6.2 Begriffe nach dem Octopus-Muster</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Begriff</th><th>Bedeutung</th><th>Bei uns</th></tr></thead>
+  <tbody>
+    <tr><td><b>Pipeline</b></td><td>Stufen vom Vorbereiten bis zum Release-Gate</td><td>aus <code>project.yml</code>, im Tool als Graph mit Läufen, Dauer und Logs je Schritt</td></tr>
+    <tr><td><b>Artefakt</b></td><td>Ergebnis eines Builds</td><td>Container-Image, statisches Bundle oder Paket, mit Digest und Herkunft (§3)</td></tr>
+    <tr><td><b>Release</b></td><td>unveränderlicher Schnappschuss, der durch die Umgebungen wandert</td><td>Artefakt-Digests, Version des Deploy-Prozesses, Version der Variablen, enthaltene Karten, Versionsnummer</td></tr>
+    <tr><td><b>Lebenszyklus</b></td><td>Phasen in fester Reihenfolge mit Regeln</td><td>z. B. Vorschau → Stage → Prod; je Phase automatisch, mit Freigabe, nach Mindestzahl erfolgreicher Deploys oder Wartezeit</td></tr>
+    <tr><td><b>Kanal</b></td><td>verschiedene Lebenszyklen je Art von Release</td><td>z. B. Hotfix: Stage, dann sofort Prod mit Freigabe des Owners</td></tr>
+    <tr><td><b>Deploy-Prozess</b></td><td>Schritte, die ein Release in eine Umgebung bringen</td><td>Datenbank-Migration, Container starten (Hosting), statische Seite hochladen, Skript, manuelle Freigabe, Health-Check, Benachrichtigung; Bedingungen je Umgebung</td></tr>
+    <tr><td><b>Variablen</b></td><td>Werte je Umgebung, Ziel oder Schritt</td><td>einfache Werte im YAML, sensible Werte nur als Verweis auf den Secret-Provider (§9); Variablen-Sets für mehrere Projekte</td></tr>
+    <tr><td><b>Ziele und Worker</b></td><td>wohin deployt wird, wer den Schritt ausführt</td><td>Ziel: Laufzeit-Host mit Docker, VM per SSH, Kubernetes, Cloud (§7); Worker: Deploy-Auftrag in der Arbeitszone</td></tr>
+    <tr><td><b>Runbooks</b></td><td>Betriebsaufgaben ohne neues Release</td><td>Neustart, Sicherung, Wartungsmodus, Rotation; mit denselben Zielen, Variablen und Freigaben</td></tr>
+    <tr><td><b>Dashboard</b></td><td>Projekt × Umgebung</td><td>welches Release wo läuft, seit wann, mit welchem Status</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>6.3 YAML im Repo, sichtbar im Werkzeug</h3>
+<p>Die ganze Definition steht versioniert im Repo, als Erweiterung von <code>project.yml</code> auf Schema 2. Studio zeigt sie als Graph und führt sie aus. Änderungen aus der UI oder dem Chat werden als Karte mit Commit vorgeschlagen und nicht still gespeichert. So ist das Repo die einzige Quelle, und jede Änderung an der Pipeline durchläuft selbst Review und Gate.</p>
+<pre><code>schemaVersion: 2
+pipeline:                      # CI, wie heute commands und testSuites
+  build: [npm ci, npm run build]
+  test:  [npm test]
+artifacts:
+  - name: web
+    type: container            # oder: static, package
+    dockerfile: Dockerfile
+environments: [vorschau, stage, prod]
+lifecycles:
+  standard:
+    - phase: vorschau          # je Karte, automatisch
+      automatic: true
+    - phase: stage             # nach Integration, automatisch
+      automatic: true
+    - phase: prod
+      approval: [Owner, Maintainer]
+      requires: { stage: success, minimumAge: 30m }
+  hotfix:
+    - phase: stage
+    - phase: prod
+      approval: [Owner]
+deploy:
+  - step: migrate-database
+    run: ./scripts/migrate.sh
+    environments: [stage, prod]
+  - step: start-container      # Hosting ist ein Schritt
+    target: run-host
+    artifact: web
+    health: /healthz
+  - step: smoke-test
+    run: npm run smoke -- $APP_URL
+variables:
+  DATABASE_URL: secret://projekt/{environment}/DATABASE_URL
+  STRIPE_KEY:   secret://projekt/{environment}/STRIPE_KEY
+  LOG_LEVEL: { default: info, prod: warn }
+runbooks:
+  - name: neustart
+    steps: [restart-container]</code></pre>
+
+<h3>6.4 Jede Karte weiß, wo sie läuft</h3>
+<p>Die Kette ist durchgehend: Karte → Commit → Build → Artefakt → Release → Deploys je Umgebung.</p>
+<ul>
+  <li>Auf der Karte stehen Abzeichen, z. B. „Vorschau: läuft (Karte)“, „Stage: seit 14:02, Release 1.8.3“, „Prod: wartet auf Freigabe“.</li>
+  <li>Das Board filtert danach, z. B. „in Stage, noch nicht in Prod“ oder „in Prod seit dieser Woche“.</li>
+  <li>Die Release-Notizen entstehen aus den enthaltenen Karten, in Produktsprache.</li>
+  <li>Ein Rückweg in Prod markiert die Karten des zurückgenommenen Releases, ein Fehler in Prod wird eine Karte mit Release, Logauszug und den Karten, die zuletzt dazukamen.</li>
+</ul>
+
+<h3>6.5 Sichtbarkeit im Werkzeug</h3>
+<ul>
+  <li><b>Dashboard</b> je Workspace: Projekte × Umgebungen mit Release, Zeit und Status, Ampel bei Fehlern und offenen Freigaben.</li>
+  <li><b>Release-Seite:</b> enthaltene Karten, Artefakte mit Herkunft, Deploys je Umgebung mit Schritten und Logs, Freigaben mit Person und Zeit.</li>
+  <li><b>Pipeline-Ansicht:</b> der Graph aus dem YAML, die Läufe mit Dauer, Kosten und Fehlerhäufigkeit je Schritt (die Statistik aus AGT-W51).</li>
+  <li><b>Umgebungs-Seite:</b> aktuelles Release, Verlauf, Variablen und Geheimnisse als Metadaten, Runbooks.</li>
+</ul>
+<p>Der Hosting-Teil (§7) ist damit ein Ziel für den Schritt „start-container“ und keine eigene Welt neben der Pipeline.</p>
+
+<h2 id="s7"><span class="no">§7</span>Hosting: was dazukommt</h2>
+<p>Hosting ist ein Schritt im Deploy-Prozess (§6): „start-container“ auf einem Laufzeit-Ziel. Für die Arbeit reicht der Ausschnitt, den das Dossier Dynamic placement beschreibt: kurze Aufträge, die nur ausgehend arbeiten. Ein Laufzeit-Ziel braucht die Teile, die dort bewusst fehlen:</p>
+<ul>
+  <li><b>Eingang:</b> TLS-Zertifikate, Domains je Umgebung, ein Reverse-Proxy, der neue Versionen ohne Ausfall umschaltet.</li>
+  <li><b>Betrieb:</b> Health-Checks, Neustart bei Absturz, Rückweg auf die vorige Version, Logs und einfache Kennzahlen je App.</li>
+  <li><b>Daten:</b> Datenbanken und Dateien, die eine neue Version überleben, dazu Sicherungen.</li>
+  <li><b>Kapazität:</b> reservierte Ressourcen je App, damit eine App nicht die anderen verdrängt.</li>
+</ul>
+<h3>Optionen für die Laufzeitzone</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Option</th><th>Was</th><th>Für</th><th>Gegen</th></tr></thead>
+  <tbody>
+    <tr><td><b>A · Eigene schlanke Laufzeit</b></td><td>Der Host-Agent startet App-Container mit Docker oder Podman. Caddy davor macht TLS, Domains und das Umschalten. Health und Rückweg kommen aus dem Deploy-Auftrag.</td><td>Ein Installer, gleiche Bausteine wie die Arbeitszone, gut für einen Rechner und kleine Teams; Caddy läuft schon auf der Web-VM.</td><td>Mehrere Rechner pro App und automatisches Verschieben bei Ausfall gibt es nicht.</td></tr>
+    <tr><td><b>B · k3s nur für die Laufzeitzone</b></td><td>Ein kleines Kubernetes nur für das Hosting; die Arbeitszone bleibt beim eigenen Scheduler.</td><td>Ausgereift bei Netz, Rollouts und Speicher; Verschieben bei Ausfall.</td><td>Ein Cluster muss laufen und gepflegt werden; Installer und Fehlersuche werden schwerer; für Einzelplatz zu viel.</td></tr>
+    <tr><td><b>C · Adapter zu vorhandener Infrastruktur</b></td><td>Der Deploy-Auftrag stellt dasselbe Artefakt auf eine Zielplattform des Betreibers: vorhandenes Kubernetes, Cloud Run, Fly, eine eigene VM per SSH.</td><td>Firmen behalten ihren Betrieb; passt zur Verantwortung beim Betreiber (D2).</td><td>Je Ziel ein Adapter; Vorschau je Karte braucht ein Ziel, das schnelle kurzlebige Umgebungen kann.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><b>Empfehlung:</b> A als Grundlage, C als Adapter für Betreiber mit eigener Infrastruktur. B nur, wenn ein Betreiber Hochverfügbarkeit über mehrere Rechner braucht; dann ist B ein weiterer Adapter, kein Umbau. Für Daten (D5) zuerst nur zustandslose Anwendungen und statische Seiten, Datenbanken vom Betreiber angebunden. Eine verwaltete Datenbank mit Sicherung folgt als eigener Schnitt.</p>
+
+<h2 id="s8"><span class="no">§8</span>Betrieb: Health, Monitoring, Nutzung, Last, Logs</h2>
+<p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Dazu kommt Operations. Gewünscht sind Zahlen zu den eigenen Anwendungen, also Health, Monitoring, Nutzung, Last und Logs, alles in derselben Plattform.</p>
+
+<h3>8.1 Was ein Nutzer je Anwendung und Umgebung sieht</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Bereich</th><th>Zahlen und Ansichten</th><th>Quelle</th></tr></thead>
+  <tbody>
+    <tr><td><b>Health</b></td><td>erreichbar ja/nein, Verfügbarkeit über 24 h, 7 und 30 Tage, letzter Ausfall mit Dauer</td><td>Prüfungen der Plattform gegen den Health-Pfad aus <code>project.yml</code>, von außerhalb des Laufzeit-Hosts</td></tr>
+    <tr><td><b>Monitoring</b></td><td>Antwortzeiten (Median, p95), Fehlerquote, Neustarts; Markierungen für jedes Deploy und jeden Rückweg</td><td>OpenTelemetry der App, Proxy-Zugriffe, Container-Ereignisse</td></tr>
+    <tr><td><b>Nutzung</b></td><td>Aufrufe, Sitzungen und aktive Nutzer je Tag, meistgenutzte Seiten oder Endpunkte</td><td>Proxy-Zugriffe ohne personenbezogene Daten; eigene Ereignisse der App über OpenTelemetry</td></tr>
+    <tr><td><b>Last</b></td><td>CPU, Speicher, Netzwerk und Plattenplatz je Container und Host, Auslastung gegen die Reservierung</td><td>Host-Agent, dieselbe Messung wie für das Budget der Arbeitszone</td></tr>
+    <tr><td><b>Logs</b></td><td>durchsuchbar nach Zeit, Stufe, Release und Text; Geheimnisse maskiert; Verweis von einer Logzeile auf Release und Karten</td><td>stdout und stderr der Container, OpenTelemetry-Logs</td></tr>
+    <tr><td><b>Kosten</b></td><td>Rechenzeit und Speicher je App gegen das Hosting-Kontingent, neben Modell-Tokens und Kern-Stunden</td><td>Kontingente (Lebenszyklus-Dossier §15)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>8.2 Wie es integriert ist</h3>
+<ul>
+  <li><b>Alarm wird Karte:</b> Ein Ausfall, eine steigende Fehlerquote oder ein Speicher-Engpass legt eine Karte an. Darin stehen Release, Logauszug, die Karten des letzten Releases und ein Vorschlag, ob der Rückweg hilft. Die Engine entscheidet nach Regel, ob sie sofort zurückrollt.</li>
+  <li><b>Deploy-Markierungen:</b> Jede Kurve zeigt, wann welches Release kam. Ein Klick führt zu Release und Karten.</li>
+  <li><b>DORA-Kennzahlen</b> je Projekt aus den eigenen Daten: Deploy-Häufigkeit, Zeit von der Karte bis Prod, Anteil fehlgeschlagener Änderungen, Zeit bis zur Wiederherstellung.</li>
+  <li><b>Ein Ort:</b> Betrieb ist eine Ansicht der Umgebungs-Seite (§6.5) und des Dashboards, kein eigenes Werkzeug mit eigener Anmeldung.</li>
+</ul>
+
+<h3>8.3 Technik</h3>
+<ul>
+  <li><b>Standard für die Aufnahme:</b> OpenTelemetry (OTLP) für Metriken, Logs und Traces. Der Host-Agent der Laufzeitzone betreibt einen Collector. Apps senden an ihn oder werden nur über Proxy- und Container-Daten beobachtet; Instrumentierung ist freiwillig.</li>
+  <li><b>Speicher:</b> eingebaut ein schlanker Speicher für Kennzahlen und Logs mit fester Aufbewahrung je Umgebung; für Firmen ein Export an vorhandene Systeme (Prometheus und Grafana, Loki, Elastic, Datadog und andere) über den Collector.</li>
+  <li><b>Health von außen:</b> Die Prüfungen laufen in der Steuerzone oder auf einem anderen Host als die App, damit ein ausgefallener Host nicht „gesund“ meldet.</li>
+  <li><b>Datenschutz:</b> Nutzung wird aus Proxy-Daten ohne IP-Speicherung über den Tag hinaus gezählt. Logs maskieren Werte des Secret-Providers vor dem Speichern.</li>
+  <li><b>Grenzen der Zonen bleiben:</b> Der Collector schreibt in die Steuerzone; die App bekommt dadurch keinen Weg in die Steuerung.</li>
+</ul>
+
+<h2 id="s9"><span class="no">§9</span>Geheimnisse und Zugriff</h2>
+<p>Operator-Vorgabe vom 16.10.2026, sinngemäß: Wichtig ist das Zugriffs-Management für Tokens, und es geht nicht nur um Git. Anwendungen haben eigene Tokens, jede App viele. Nötig ist ein Secret-Provider, möglichst mit Unterstützung der Industrie-Standards. Das Secret-Management in der App muss mehrnutzerfähig sein. Dazu gehören ein Berechtigungssystem und Nutzer. Das Ganze soll von Anfang an groß gedacht sein, aber sofort von einem einzelnen Nutzer verwendbar.</p>
+
+<h3>7.1 Drei Arten von Geheimnissen</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Art</th><th>Beispiele</th><th>Wer nutzt sie</th><th>Wer setzt sie</th></tr></thead>
+  <tbody>
+    <tr><td><b>Plattform-Zugänge</b></td><td>Git (Tokens, Deploy-Keys, GitHub App), Server (SSH-Schlüssel, Runner-Zugänge), Registry, Modell-Konten (Claude, Codex, Gemini), Deploy-Ziele</td><td>Aufträge der Arbeitszone und Deploy-Aufträge, immer als kurzlebige Ableitung</td><td>Owner, Admin</td></tr>
+    <tr><td><b>App-Geheimnisse</b></td><td>je App und Umgebung viele: Datenbank-Zugänge, API-Keys für Zahlung, Mail und Karten, OAuth-Client-Secrets, Signier-Schlüssel, Webhook-Secrets</td><td>nur die laufende App in ihrer Umgebung; der Deploy-Auftrag ist der Bote</td><td>Maintainer des Projekts, für Prod mit Freigabe</td></tr>
+    <tr><td><b>Menschen-Zugänge</b></td><td>Anmeldung, Sitzungen, persönliche API-Tokens</td><td>der Mensch selbst, Skripte mit seinem Token</td><td>der Mensch selbst; gehören zur Identität, nicht in den Geheimnis-Speicher</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>7.2 Ein Secret-Provider, austauschbare Speicher</h3>
+<p>Alle Teile der Plattform sprechen mit genau einer Schnittstelle: Wert setzen, Metadaten lesen, Versionen, Rotation, Widerruf, Ausgabe an eine Identität, Audit. Dahinter liegt ein Speicher nach Wahl des Betreibers:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Speicher</th><th>Für</th><th>Bemerkung</th></tr></thead>
+  <tbody>
+    <tr><td><b>Eingebaut</b></td><td>Einzelplatz, Abteilung</td><td>verschlüsselt in der Installation: ein Daten-Schlüssel je Geheimnis, ein Haupt-Schlüssel im Schlüsselspeicher des Betriebssystems (DPAPI, Keychain, Secret Service) oder in einer Datei des Betreibers; Teil der Sicherung</td></tr>
+    <tr><td><b>Vault oder OpenBao</b></td><td>Team, Unternehmen</td><td>KV-Speicher mit Versionen; dynamische, kurzlebige Datenbank-Zugänge; Verschlüsselung als Dienst</td></tr>
+    <tr><td><b>Cloud-Secret-Manager</b></td><td>Betreiber in der Cloud</td><td>AWS Secrets Manager, Azure Key Vault, Google Secret Manager</td></tr>
+    <tr><td><b>Passwort-Manager für Teams</b></td><td>kleine Firmen</td><td>1Password (Service Accounts, Connect), Bitwarden Secrets Manager, Infisical</td></tr>
+    <tr><td><b>Verschlüsselte Dateien im Repo</b></td><td>Konfiguration als Code</td><td>SOPS, nur lesend eingebunden</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Für die Anbindung nach außen gelten verbreitete Standards: OIDC für die Anmeldung, SCIM für den Abgleich von Nutzern und Gruppen, OIDC-Föderation und Token-Austausch (RFC 8693) für Deploy-Ziele ohne gespeicherte Cloud-Schlüssel. Workload-Identitäten werden im SPIFFE-Format benannt. Die Adapter folgen dem Muster des External Secrets Operator: Die Projekt-Konfiguration nennt nur einen Verweis, der Provider liefert den Wert.</p>
+
+<h3>7.3 Bereiche und Verweise</h3>
+<p>Jedes Geheimnis gehört genau einem Bereich: Installation → Organisation (Mandant) → Workspace → Projekt → Umgebung (Vorschau, Stage, Prod) → App oder Dienst. Tiefere Bereiche erben und dürfen überschreiben. So gilt etwa ein Mail-Key für alle Umgebungen, aber Prod hat einen eigenen Datenbank-Zugang. In Repo und Projekt-Konfiguration steht nur ein Verweis wie <code>secret://projekt/stage/DATABASE_URL</code>, nie der Wert. Fehlt ein Verweis, sagt der Deploy-Auftrag vor dem Start, welcher und in welchem Bereich.</p>
+
+<h3>7.4 Rechte an Geheimnissen</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Recht</th><th>Typisch für</th><th>Regel</th></tr></thead>
+  <tbody>
+    <tr><td><b>Metadaten sehen</b></td><td>alle mit Zugriff auf den Bereich</td><td>Name, Bereich, Version, Ablauf, letzte Nutzung, wer zuletzt geändert hat</td></tr>
+    <tr><td><b>Wert setzen, rotieren</b></td><td>Owner, Admin, Maintainer des Bereichs</td><td>schreiben ohne lesen: Wer setzt, sieht den Wert danach nicht mehr</td></tr>
+    <tr><td><b>Wert anzeigen</b></td><td>standardmäßig niemand</td><td>nur mit eigenem Recht, Begründung und Audit; für Prod optional mit zweiter Person</td></tr>
+    <tr><td><b>An Umgebung binden</b></td><td>Maintainer</td><td>erlaubt dem Deploy-Auftrag die Nutzung; Prod erst nach Freigabe</td></tr>
+    <tr><td><b>Zur Laufzeit nutzen</b></td><td>nur Workload-Identitäten</td><td>die App in ihrer Umgebung, der Auftrag mit gültigem Lease</td></tr>
+    <tr><td><b>Widerrufen</b></td><td>Owner, Admin, Sicherheitsrolle</td><td>wirkt sofort auf neue Ausgaben, laufende Apps bekommen ein Signal oder einen Neustart</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>7.5 Nutzer, Gruppen, Rollen, Dienstkonten</h3>
+<p>Ein Rechte-Modell für die ganze Plattform, nicht nur für Geheimnisse:</p>
+<ul>
+  <li><b>Nutzer</b> sind Menschen mit eigener Anmeldung: lokal mit Passwort, wahlweise Passkey oder zweitem Faktor, in Firmen über OIDC-SSO.</li>
+  <li><b>Gruppen</b> bündeln Nutzer, etwa „Team Website“ oder „Prüfer“, später per SCIM aus dem Firmenverzeichnis.</li>
+  <li><b>Rollen</b> gelten immer in einem Bereich. Vorschlag: Owner, Admin, Maintainer, Entwickler, Produkt (AGT-3182), Betrachter, Prüfer (nur lesen, inklusive Audit-Log). Eine Zuweisung ist Nutzer oder Gruppe × Rolle × Bereich.</li>
+  <li><b>Dienstkonten</b> sind die Nicht-Menschen: Runner, Engine, Deploy-Aufträge, Skripte mit API-Token (AGT-3186). Sie haben eigene Scopes, Ablauf und Widerruf.</li>
+  <li><b>Heute vorhanden:</b> die Rollen owner, operator und viewer mit Projektliste, Runner-Anmeldung über Einmal-Code, das Zugangs-Inventar (AGT-3170). Das neue Modell übernimmt sie: owner wird Owner auf der Installation, operator wird Admin, viewer bleibt Betrachter.</li>
+</ul>
+
+<h3>7.6 Ein Nutzer, dasselbe Modell</h3>
+<p>Bei der Installation entstehen eine Organisation, ein Workspace, der Owner und der eingebaute Speicher. Es gibt keine Gruppen und keine Pflicht zur Zweit-Freigabe. Diese ist abschaltbar, wird aber für Prod empfohlen. Der einzelne Nutzer sieht dieselben Ansichten mit weniger Inhalt. Wachsen geht ohne Umbau: Nutzer einladen, eine Gruppe anlegen, einen externen Speicher anbinden, SSO einschalten. Vorhandene Verweise und Rechte bleiben gültig.</p>
+
+<h3>7.7 Lieferweg zur App</h3>
+<p>Der Deploy-Auftrag löst die Verweise erst auf dem Laufzeit-Host auf, nicht in der Steuerzone. Die Werte kommen als Datei im Arbeitsspeicher oder als Umgebungsvariablen in den Container, nie in Image, Registry, Logs oder Karten. Nach einer Rotation folgt ein neuer Deploy oder ein Neulade-Signal. Alternativ holt die App ihre Werte selbst beim Provider, mit ihrer Workload-Identität; dann sieht auch der Deploy-Auftrag sie nicht.</p>
+
+<h2 id="s10"><span class="no">§10</span>Verhältnis zu Kubernetes</h2>
+<div class="box ok"><b>Entschieden am 16.10.2026 (Operator).</b> Für die Arbeitszone gilt E1: eigener Scheduler, Hosts holen sich Arbeit, ein Agent je Rechner, Container je Auftrag (Dossier Dynamic placement, Empfehlung A). Kubernetes kommt nur als zusätzlicher Ausführer für Betreiber mit vorhandenem Cluster.</div>
+<p>Die Plattform übernimmt die Muster von Kubernetes, nicht das System:</p>
+<ul>
+  <li>Workload-Identität je Pod wird Identität je Auftrag oder je Deployment.</li>
+  <li>Requests und Limits werden das Budget in halben Kernen.</li>
+  <li>Projizierte, rotierende Tokens werden die Ausgabe je Auftrag aus der Vertrauenszone.</li>
+  <li>Ingress und Rollouts werden Caddy plus Deploy-Auftrag mit Health und Rückweg.</li>
+  <li>Namespaces und Netzwerk-Regeln werden Mandantengrenzen und Netze je Mandant.</li>
+</ul>
+<p>Nicht übernommen wird der Cluster als Pflicht. Der Grund ist die Installation auf einem Rechner oder in einer Abteilung, mit Windows-Arbeitsplätzen und ohne Betriebsteam. Wer einen Cluster hat, nutzt ihn über die Adapter in der Arbeitszone (Kubernetes-Jobs, AGT-3171) und in der Laufzeitzone (Option C).</p>
+
+<h2 id="s11"><span class="no">§11</span>Bestand und Karten</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Teil</th><th>Wo ausgearbeitet</th><th>Karten</th></tr></thead>
+  <tbody>
+    <tr><td>Planen, Projekt aus Vorlage, Kontingente, Mandanten</td><td>Anwendungs-Lebenszyklus §11, §15, §16</td><td>AGT-3175, AGT-3177</td></tr>
+    <tr><td>Werkzeug im Browser ohne Installation</td><td>Anwendungs-Lebenszyklus §19</td><td>AGT-3184 bis AGT-3187</td></tr>
+    <tr><td>Arbeitszone: Agent je Rechner, Container je Auftrag, Gates holen</td><td>Dynamic placement (AGT-3171)</td><td>Schnitte im Dossier, AGT-3192</td></tr>
+    <tr><td>Vertrauenszone: Inventar, Token je Auftrag, Wurzeln</td><td>Credentials and logins, Dynamic placement, Lebenszyklus §14</td><td>AGT-3170, AGT-3197</td></tr>
+    <tr><td>Artefakte und Umgebungen (CD)</td><td>Anwendungs-Lebenszyklus §12, §13</td><td>AGT-3176</td></tr>
+    <tr><td>Vorschau je Karte, Produkt-Chat, Rolle Produkt</td><td>Anwendungs-Lebenszyklus §18</td><td>AGT-3180 bis AGT-3183, AGT-3196</td></tr>
+    <tr><td>Laufzeitzone: Eingang, Betrieb, Daten, Adapter</td><td>dieses Dossier, §7</td><td>Schnitte IP-1 bis IP-4 nach Entscheidung</td></tr>
+    <tr><td>Zonen und Netzwerk-Regeln</td><td>dieses Dossier, §5</td><td>Schnitt IP-2 nach Entscheidung</td></tr>
+    <tr><td>Pipelines als YAML, Releases, Lebenszyklen, Karten-Status je Umgebung, Runbooks</td><td>dieses Dossier, §6; AGT-W51 D8</td><td>Schnitte IP-10 bis IP-13 nach Entscheidung; AGT-3176 liefert Umgebungen und Deploy-Auftrag als Grundlage</td></tr>
+    <tr><td>Betrieb: Health, Monitoring, Nutzung, Last, Logs, Alarme als Karten, DORA</td><td>dieses Dossier, §8</td><td>Schnitte IP-14 bis IP-16 nach Entscheidung</td></tr>
+    <tr><td>Secret-Provider, App-Geheimnisse, Rechte-Modell</td><td>dieses Dossier, §9</td><td>Schnitte IP-6 bis IP-9 nach Entscheidung; berührt AGT-3170, AGT-3176, AGT-3182, AGT-3186</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s12"><span class="no">§12</span>Stufen</h2>
+<ol>
+  <li><b>S1 · Ein Rechner, alles drin.</b>
+    <ul>
+      <li>Zum Durchspielen: Studio als Webseite, Projekt aus Vorlage, Stage und Prod für statische Web-Apps, Kontingent. Alles läuft auf V1 (Lebenszyklus §7).</li>
+      <li>Die Zonen sind dabei getrennte Container-Netze auf demselben Rechner. Für einen Probe-Betrieb ist das ausreichend, öffentlich betreiben lässt sich so nicht.</li>
+    </ul>
+  </li>
+  <li><b>S2 · Arbeitszone in Containern:</b> Agent je Rechner, Container je Auftrag, Gates werden geholt (Dynamic placement, Schnitte 1 bis 7).</li>
+  <li><b>S3 · Laufzeitzone getrennt:</b> eigener Laufzeit-Host, Caddy mit Domains und TLS, Container-Apps mit Health und Rückweg, Vorschau je Karte, Logs je App als Karten-Belege.</li>
+  <li><b>S4 · Vertrauenszone und Rechte voll:</b> Secret-Provider mit Adaptern (Vault/OpenBao, Cloud, 1Password, Infisical), Rechte-Modell mit Gruppen, Rollen je Bereich und Dienstkonten, OIDC-SSO; Registry mit Herkunft und Signatur, Geheimnis-Speicher mit Adaptern, Tokens je Auftrag statt Zugang am Host, Prod-Geheimnisse nach Freigabe.</li>
+  <li><b>S5 · Mandanten und Adapter:</b> harte Mandantengrenzen in allen Zonen, Anmeldung mit Firmenkonto, Adapter für vorhandenes Kubernetes und Cloud-Ziele, verwaltete Datenbank.</li>
+</ol>
+<p>Ab S3 ist eine öffentliche Installation vertretbar, wenn S4 für Prod-Geheimnisse und Registry gilt.</p>
+<h3>Erster echter Fall: MemoWikis</h3>
+<p>MemoWikis soll demnächst ein Projekt in der Plattform werden (Operator, 16.10.2026). Es ist ein guter Prüfstein, weil es alles braucht, was dieses Dossier beschreibt: eine Web-Anwendung mit Datenbank, Suche, Echtzeit-Kollaboration, Zahlungen, Anmeldung über Dritte, Modell-APIs und Logging. Dazu kommt rund ein Dutzend Arten von App-Geheimnissen je Umgebung.</p>
+<ul>
+  <li>Alle Geheimnisse von MemoWikis werden für die Plattform neu erzeugt und nur über den Secret-Provider eingetragen; alte Werte werden nicht übernommen.</li>
+  <li>Durchspielen: Projekt anlegen, Geheimnisse je Umgebung als Verweise, Vorschau je Karte, Stage, Freigabe, Prod; ein zweiter Nutzer mit Rolle Produkt; eine Rotation während des Betriebs.</li>
+  <li>Daten: MemoWikis hat eine Datenbank. Nach IP-D5 A wird sie vom Betreiber angebunden, bis eine verwaltete Datenbank existiert.</li>
+</ul>
+
+<h2 id="s13"><span class="no">§13</span>Entscheidungen</h2>
+
+<div class="decision" data-decision-id="ip-zonen-trennen" data-decision-kind="single" data-decision-label="IP-D1 Arbeit und Laufzeit trennen">
+  <h3>IP-D1 · Wie streng werden Arbeits- und Laufzeitzone getrennt?</h3>
+  <label data-option-id="getrennte-hosts" data-option-label="A · Getrennte Rechner oder VMs ab S3, bis dahin getrennte Container-Netze (Empfehlung)"><input type="radio" name="ip-zonen-trennen" value="getrennte-hosts"><span><b>A · Getrennte Rechner oder VMs ab S3</b><span class="d">Ein ausbrechender Agent erreicht keine öffentliche Anwendung und deren Daten. Kostet einen weiteren Host.</span></span></label>
+  <label data-option-id="netze-reichen" data-option-label="B · Getrennte Container-Netze auf denselben Rechnern dauerhaft"><input type="radio" name="ip-zonen-trennen" value="netze-reichen"><span><b>B · Getrennte Netze reichen</b><span class="d">Günstiger, aber ein Container-Ausbruch auf einem Arbeits-Host trifft dann auch Prod.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-laufzeit" data-decision-kind="single" data-decision-label="IP-D2 Technik der Laufzeitzone">
+  <h3>IP-D2 · Womit läuft das Hosting?</h3>
+  <label data-option-id="eigen-plus-adapter" data-option-label="A · Eigene schlanke Laufzeit (Docker/Podman + Caddy) plus Adapter zu vorhandener Infrastruktur (Empfehlung)"><input type="radio" name="ip-laufzeit" value="eigen-plus-adapter"><span><b>A · Eigene Laufzeit plus Adapter</b><span class="d">Ein Installer, gleiche Bausteine; Firmen stellen über Adapter auf ihr eigenes Ziel.</span></span></label>
+  <label data-option-id="k3s" data-option-label="B · k3s für die Laufzeitzone"><input type="radio" name="ip-laufzeit" value="k3s"><span><b>B · k3s</b><span class="d">Hochverfügbarkeit und Netzwerk-Regeln fertig; Cluster-Betrieb nötig.</span></span></label>
+  <label data-option-id="nur-adapter" data-option-label="C · Nur Adapter, kein eigenes Hosting"><input type="radio" name="ip-laufzeit" value="nur-adapter"><span><b>C · Nur Adapter</b><span class="d">Kein eigener Betrieb; Vorschau je Karte und Einzelplatz-Hosting fehlen dann.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-registry" data-decision-kind="single" data-decision-label="IP-D3 Artefakt-Registry">
+  <h3>IP-D3 · Wo liegen die Artefakte?</h3>
+  <label data-option-id="eingebaut-plus-extern" data-option-label="A · Eingebaute Registry in der Installation, externe Registry (GHCR u. a.) wahlweise (Empfehlung)"><input type="radio" name="ip-registry" value="eingebaut-plus-extern"><span><b>A · Eingebaut, extern wahlweise</b><span class="d">Funktioniert ohne Cloud-Konto; Herkunft bleibt in der Installation.</span></span></label>
+  <label data-option-id="nur-extern" data-option-label="B · Nur externe Registry"><input type="radio" name="ip-registry" value="nur-extern"><span><b>B · Nur extern</b><span class="d">Weniger eigener Betrieb; jede Installation braucht ein Registry-Konto und dessen Token.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-ausgang" data-decision-kind="single" data-decision-label="IP-D4 Ausgang der Arbeitscontainer">
+  <h3>IP-D4 · Wohin dürfen Arbeitscontainer Verbindungen aufbauen?</h3>
+  <label data-option-id="erlaubnisliste" data-option-label="A · Erlaubnisliste: Steuerzone, Git-Remote, Modell-APIs, Paket-Quellen je Projekt (Empfehlung)"><input type="radio" name="ip-ausgang" value="erlaubnisliste"><span><b>A · Erlaubnisliste</b><span class="d">Begrenzt, was ein entgleister Agent erreichen kann; Projekte erweitern die Liste begründet.</span></span></label>
+  <label data-option-id="offen" data-option-label="B · Offen wie heute, nur protokolliert"><input type="radio" name="ip-ausgang" value="offen"><span><b>B · Offen, protokolliert</b><span class="d">Keine Reibung; Datenabfluss bleibt möglich.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-daten" data-decision-kind="single" data-decision-label="IP-D5 Daten gehosteter Anwendungen">
+  <h3>IP-D5 · Wie gehen gehostete Anwendungen mit Daten um?</h3>
+  <label data-option-id="zustandslos-zuerst" data-option-label="A · Zuerst zustandslose Apps und statische Seiten, Datenbanken vom Betreiber angebunden; verwaltete Datenbank später (Empfehlung)"><input type="radio" name="ip-daten" value="zustandslos-zuerst"><span><b>A · Zustandslos zuerst</b><span class="d">Kleiner Einstieg ohne Sicherungs- und Wiederherstellungsfragen.</span></span></label>
+  <label data-option-id="verwaltet-sofort" data-option-label="B · Verwaltete Datenbank mit Sicherung von Anfang an"><input type="radio" name="ip-daten" value="verwaltet-sofort"><span><b>B · Verwaltete Datenbank sofort</b><span class="d">Vollständiger für echte Anwendungen; deutlich mehr Betrieb und Verantwortung.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-reihenfolge" data-decision-kind="single" data-decision-label="IP-D6 Reihenfolge der Stufen">
+  <h3>IP-D6 · In welcher Reihenfolge?</h3>
+  <label data-option-id="s1-s3-s2" data-option-label="A · S1, dann S3 vor S2, S4 parallel zu S3 (Empfehlung)"><input type="radio" name="ip-reihenfolge" value="s1-s3-s2"><span><b>A · S1, S3, S2, S4 parallel</b><span class="d">Hosting und Durchspielen früh sichtbar; Container je Auftrag folgt, sobald die Startzeit gemessen ist.</span></span></label>
+  <label data-option-id="der-reihe-nach" data-option-label="B · S1 bis S5 der Reihe nach"><input type="radio" name="ip-reihenfolge" value="der-reihe-nach"><span><b>B · Der Reihe nach</b><span class="d">Erst die Arbeitszone härten, dann hosten; Hosting kommt später.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+
+<div class="decision" data-decision-id="ip-secret-provider" data-decision-kind="single" data-decision-label="IP-D7 Secret-Provider">
+  <h3>IP-D7 · Wie sieht der Secret-Provider aus?</h3>
+  <label data-option-id="eingebaut-plus-adapter" data-option-label="A · Eine Schnittstelle, eingebauter verschlüsselter Speicher als Standard, Adapter für Vault/OpenBao, Cloud-Secret-Manager, 1Password, Infisical, SOPS (Empfehlung)"><input type="radio" name="ip-secret-provider" value="eingebaut-plus-adapter"><span><b>A · Eingebaut plus Adapter</b><span class="d">Läuft auf dem Einzelplatz ohne weiteren Dienst; Firmen binden ihren vorhandenen Speicher an.</span></span></label>
+  <label data-option-id="vault-pflicht" data-option-label="B · Vault oder OpenBao als Pflicht"><input type="radio" name="ip-secret-provider" value="vault-pflicht"><span><b>B · Vault/OpenBao als Pflicht</b><span class="d">Ein ausgereifter Speicher für alle; jede Installation muss ihn betreiben.</span></span></label>
+  <label data-option-id="nur-eingebaut" data-option-label="C · Nur eingebauter Speicher"><input type="radio" name="ip-secret-provider" value="nur-eingebaut"><span><b>C · Nur eingebaut</b><span class="d">Am einfachsten; Firmen mit eigenem Speicher müssen doppelt pflegen.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-werte-lesen" data-decision-kind="single" data-decision-label="IP-D8 Werte für Menschen">
+  <h3>IP-D8 · Dürfen Menschen Geheimnis-Werte wieder lesen?</h3>
+  <label data-option-id="schreiben-ohne-lesen" data-option-label="A · Schreiben ja, anzeigen nur mit eigenem Recht, Begründung und Audit, für Prod optional mit zweiter Person (Empfehlung)"><input type="radio" name="ip-werte-lesen" value="schreiben-ohne-lesen"><span><b>A · Schreiben ohne Lesen</b><span class="d">Ein übernommenes Konto liest keine Werte aus; Anzeigen bleibt möglich und nachvollziehbar.</span></span></label>
+  <label data-option-id="admins-lesen" data-option-label="B · Owner und Admin dürfen immer lesen"><input type="radio" name="ip-werte-lesen" value="admins-lesen"><span><b>B · Admins lesen immer</b><span class="d">Bequemer; ein übernommenes Admin-Konto sieht alle Werte.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-rechte-modell" data-decision-kind="single" data-decision-label="IP-D9 Rechte-Modell">
+  <h3>IP-D9 · Welches Rechte-Modell?</h3>
+  <label data-option-id="rollen-je-bereich" data-option-label="A · Nutzer, Gruppen, Rollen je Bereich und Dienstkonten; lokale Anmeldung und OIDC-SSO, SCIM später (Empfehlung)"><input type="radio" name="ip-rechte-modell" value="rollen-je-bereich"><span><b>A · Rollen je Bereich</b><span class="d">Trägt vom Einzelplatz bis zur Firma; owner, operator und viewer werden übernommen.</span></span></label>
+  <label data-option-id="feste-rollen" data-option-label="B · Feste Rollen ohne Bereiche, wie heute erweitert"><input type="radio" name="ip-rechte-modell" value="feste-rollen"><span><b>B · Feste Rollen</b><span class="d">Schnell; reicht nicht für Mandanten und App-Geheimnisse je Umgebung.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-workload-identitaet" data-decision-kind="single" data-decision-label="IP-D10 Workload-Identität">
+  <h3>IP-D10 · Wie weisen sich Aufträge und Apps aus?</h3>
+  <label data-option-id="eigene-identitaet" data-option-label="A · Eigene signierte Identität je Auftrag und Deployment im SPIFFE-Format; OIDC-Föderation zu Cloud-Zielen statt gespeicherter Schlüssel (Empfehlung)"><input type="radio" name="ip-workload-identitaet" value="eigene-identitaet"><span><b>A · Signierte Identität, Föderation</b><span class="d">Keine dauerhaften Schlüssel in Aufträgen und Apps; Cloud-Ziele vertrauen der Plattform direkt.</span></span></label>
+  <label data-option-id="gespeicherte-schluessel" data-option-label="B · Gespeicherte Schlüssel je Ziel"><input type="radio" name="ip-workload-identitaet" value="gespeicherte-schluessel"><span><b>B · Gespeicherte Schlüssel</b><span class="d">Einfach; jeder Schlüssel muss rotiert und geschützt werden.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+
+<div class="decision" data-decision-id="ip-pipeline-definition" data-decision-kind="single" data-decision-label="IP-D11 Pipeline-Definition">
+  <h3>IP-D11 · Wo ist die Pipeline definiert?</h3>
+  <label data-option-id="project-yml-v2" data-option-label="A · Im Repo als project.yml Schema 2; Studio zeigt sie und schlägt Änderungen als Karte vor (Empfehlung)"><input type="radio" name="ip-pipeline-definition" value="project-yml-v2"><span><b>A · project.yml Schema 2 im Repo</b><span class="d">Eine Quelle, versioniert, mit Review; passt zu AGT-W51 D5 und D8.</span></span></label>
+  <label data-option-id="in-studio" data-option-label="B · In Studio gespeichert und bearbeitet"><input type="radio" name="ip-pipeline-definition" value="in-studio"><span><b>B · In Studio gespeichert</b><span class="d">Schnell zu ändern; Pipeline und Commit laufen auseinander.</span></span></label>
+  <label data-option-id="actions-yaml" data-option-label="C · Vorhandenes GitHub-Actions-YAML lesen und übersetzen"><input type="radio" name="ip-pipeline-definition" value="actions-yaml"><span><b>C · GitHub-Actions-YAML übernehmen</b><span class="d">Vertraut für viele; Umgebungen, Lebenszyklen und Karten-Bezug fehlen dort.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-release-modell" data-decision-kind="single" data-decision-label="IP-D12 Release-Modell">
+  <h3>IP-D12 · Wie wandert eine Version durch die Umgebungen?</h3>
+  <label data-option-id="octopus" data-option-label="A · Octopus-Muster: unveränderliches Release, Lebenszyklen mit Phasen und Regeln, Kanäle, Runbooks (Empfehlung)"><input type="radio" name="ip-release-modell" value="octopus"><span><b>A · Release, Lebenszyklus, Kanal, Runbook</b><span class="d">Nachvollziehbar, was wo läuft; Freigaben und Regeln je Phase; Betriebsaufgaben ohne neues Release.</span></span></label>
+  <label data-option-id="kette" data-option-label="B · Einfache Kette Stage → Prod ohne eigenes Release-Objekt"><input type="radio" name="ip-release-modell" value="kette"><span><b>B · Einfache Kette</b><span class="d">Schneller gebaut; mehrere Projekte, Hotfixes und Runbooks passen nicht hinein.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="ip-karten-umgebung" data-decision-kind="single" data-decision-label="IP-D13 Karte und Umgebung">
+  <h3>IP-D13 · Wie sichtbar ist der Stand einer Karte in den Umgebungen?</h3>
+  <label data-option-id="karte-zeigt" data-option-label="A · Jede Karte zeigt ihre Umgebungen und Releases, das Board filtert danach, Release-Notizen entstehen aus den Karten (Empfehlung)"><input type="radio" name="ip-karten-umgebung" value="karte-zeigt"><span><b>A · Auf der Karte und im Board</b><span class="d">Wer an einer Karte arbeitet oder sie abnimmt, sieht sofort, wo sie läuft.</span></span></label>
+  <label data-option-id="nur-release" data-option-label="B · Nur auf der Release-Seite"><input type="radio" name="ip-karten-umgebung" value="nur-release"><span><b>B · Nur auf der Release-Seite</b><span class="d">Weniger Aufwand; der Weg von der Karte zur Umgebung bleibt ein Umweg.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+
+<div class="decision" data-decision-id="ip-betrieb" data-decision-kind="single" data-decision-label="IP-D14 Speicher für Kennzahlen und Logs">
+  <h3>IP-D14 · Wo liegen Kennzahlen und Logs der Anwendungen?</h3>
+  <label data-option-id="eingebaut-plus-export" data-option-label="A · OpenTelemetry als Aufnahme, eingebauter schlanker Speicher, Export an vorhandene Systeme (Empfehlung)"><input type="radio" name="ip-betrieb" value="eingebaut-plus-export"><span><b>A · Eingebaut plus Export</b><span class="d">Funktioniert auf dem Einzelplatz ohne weiteren Dienst; Firmen behalten Grafana, Loki, Elastic oder Datadog.</span></span></label>
+  <label data-option-id="grafana-stack" data-option-label="B · Grafana-Stack (Prometheus, Loki, Tempo) als feste Beigabe"><input type="radio" name="ip-betrieb" value="grafana-stack"><span><b>B · Grafana-Stack mitliefern</b><span class="d">Ausgereift und mächtig; drei weitere Dienste je Installation, eigene Oberfläche neben Studio.</span></span></label>
+  <label data-option-id="nur-extern" data-option-label="C · Nur Weiterleitung an externe Systeme"><input type="radio" name="ip-betrieb" value="nur-extern"><span><b>C · Nur extern</b><span class="d">Kein eigener Speicher; ohne externes System gibt es keine Zahlen.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="quellen">§ Quellen</h2>
+<ul>
+  <li>Dossiers: <code>docs/operations/application-lifecycle</code> (§1 bis §19), <code>docs/dynamic-placement</code> (AGT-3171), <code>docs/credentials-and-logins</code> (AGT-2968), <code>docs/fluid-capacity</code> (AGT-3019), <code>docs/operations/nordstern</code> (AGT-W14).</li>
+  <li>Code: <code>backend/Features/Security/AccessSecurityMiddleware.cs</code> (Profil networked), <code>deploy/compose/</code> (Monolith, Edge), <code>backend/Features/Projects/ProjectDeploymentSummaryService.cs</code>, <code>backend/Features/Pipeline/</code>, <code>task-server/TaskServerCredentialRegistryStore.cs</code>.</li>
+  <li>Betrieb 16.10.2026: Probe des Profils networked auf agent-runner-01, Deploys 13 und 14, Lastmessungen auf agent-runner-01 und kori-gate.</li>
+</ul>
+</main>
+</body>
+</html>

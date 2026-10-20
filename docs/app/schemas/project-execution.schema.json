@@ -2,24 +2,67 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned preparation, verification, release identity, cache-path, capability, environment, development-server, and optional image composition read from .agent-studio/project.yml at the subject commit.",
+  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds project metadata and the P1 deployment definition.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "stack", "toolVersions", "commands", "testSuites", "cachePaths", "capabilities", "environment"],
+  "required": [
+    "schemaVersion",
+    "stack",
+    "toolVersions",
+    "commands",
+    "testSuites",
+    "cachePaths",
+    "capabilities",
+    "environment"
+  ],
   "properties": {
-    "schemaVersion": { "description": "Contract version.", "const": 1 },
-    "stack": { "description": "Technology building blocks used by the project.", "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-    "toolVersions": { "description": "Tool names mapped to repository-relative version manifests such as .nvmrc or global.json.", "type": "object", "additionalProperties": { "$ref": "#/$defs/relativePath" } },
+    "schemaVersion": {
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "stack": {
+      "description": "Technology building blocks used by the project.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "toolVersions": {
+      "description": "Tool names mapped to repository-relative version manifests such as .nvmrc or global.json.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/relativePath"
+      }
+    },
     "commands": {
       "description": "Preparation and verification commands shared by coding runs and build-test gates.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["prepare", "build", "test", "lint"],
+      "required": [
+        "prepare",
+        "build",
+        "test",
+        "lint"
+      ],
       "properties": {
-        "prepare": { "description": "Repository-relative POSIX prepare script. Windows runs a sibling '<prepare>.ps1' when the repository ships one, otherwise the POSIX script through Git Bash; a Windows host with neither fails with the named reason 'prepare:windows-entry-missing'.", "$ref": "#/$defs/relativePath" },
-        "build": { "$ref": "#/$defs/commands" },
-        "test": { "$ref": "#/$defs/commands" },
-        "lint": { "$ref": "#/$defs/commands" }
+        "prepare": {
+          "description": "Repository-relative POSIX prepare script. Windows runs a sibling '<prepare>.ps1' when the repository ships one, otherwise the POSIX script through Git Bash; a Windows host with neither fails with the named reason 'prepare:windows-entry-missing'.",
+          "$ref": "#/$defs/relativePath"
+        },
+        "build": {
+          "$ref": "#/$defs/commands"
+        },
+        "test": {
+          "$ref": "#/$defs/commands"
+        },
+        "lint": {
+          "$ref": "#/$defs/commands"
+        }
       }
     },
     "testSuites": {
@@ -28,71 +71,583 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "category", "expectedDurationSeconds", "command"],
+        "required": [
+          "id",
+          "category",
+          "expectedDurationSeconds",
+          "command"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "category": { "type": "string", "minLength": 1 },
-          "expectedDurationSeconds": { "type": "integer", "minimum": 1 },
-          "command": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedDurationSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
-    "cachePaths": { "description": "Repository-relative generated paths that preparation may populate.", "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } },
-    "capabilities": { "description": "Executor capabilities required by the project.", "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-    "environment": { "description": "Non-secret preparation environment values. Executor profiles supply secrets.", "type": "object", "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }, "additionalProperties": { "type": "string" } },
+    "cachePaths": {
+      "description": "Repository-relative generated paths that preparation may populate.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/relativePath"
+      }
+    },
+    "capabilities": {
+      "description": "Executor capabilities required by the project.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "environment": {
+      "description": "Non-secret preparation environment values. Executor profiles supply secrets.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "devServer": {
       "description": "Optional bounded development-server lifecycle owned by the run.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["command", "startupTimeoutSeconds", "stopWithRun"],
+      "required": [
+        "command",
+        "startupTimeoutSeconds",
+        "stopWithRun"
+      ],
       "properties": {
-        "command": { "type": "string", "minLength": 1 },
-        "workingDirectory": { "$ref": "#/$defs/relativePath" },
-        "healthUrl": { "type": "string", "format": "uri" },
-        "startupTimeoutSeconds": { "type": "integer", "minimum": 1 },
-        "stopWithRun": { "const": true }
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "healthUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "startupTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stopWithRun": {
+          "const": true
+        }
       }
     },
-    "image": { "description": "Optional repository-relative container image definition used only by a container executor profile.", "$ref": "#/$defs/relativePath" },
+    "image": {
+      "description": "Optional repository-relative container image definition used only by a container executor profile.",
+      "$ref": "#/$defs/relativePath"
+    },
     "release": {
       "description": "Optional Stable release contract. Stable release tooling refuses a project when this section is absent.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["identity", "restore"],
+      "required": [
+        "identity",
+        "restore"
+      ],
       "properties": {
         "identity": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/releaseIdentity" }
+          "items": {
+            "$ref": "#/$defs/releaseIdentity"
+          }
         },
         "restore": {
           "description": "Ordered, fail-fast restore commands executed from the tagged checkout.",
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "path"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "quality": {
+      "type": "object"
+    },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "build": {
+          "$ref": "#/$defs/commands"
+        },
+        "test": {
+          "$ref": "#/$defs/commands"
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "type",
+              "path"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "const": "static"
+              },
+              "path": {
+                "$ref": "#/$defs/relativePath"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "type",
+              "dockerfile"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "const": "container"
+              },
+              "dockerfile": {
+                "$ref": "#/$defs/relativePath"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "environments": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "const": "staging"
+        },
+        {
+          "const": "production"
+        }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "lifecycles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "standard"
+      ],
+      "properties": {
+        "standard": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "object",
+              "required": [
+                "phase",
+                "automatic"
+              ],
+              "properties": {
+                "phase": {
+                  "const": "staging"
+                },
+                "automatic": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "phase",
+                "approval",
+                "requires"
+              ],
+              "properties": {
+                "phase": {
+                  "const": "production"
+                },
+                "approval": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "enum": [
+                      "Owner",
+                      "Maintainer"
+                    ]
+                  }
+                },
+                "requires": {
+                  "enum": [
+                    "staging",
+                    "{ staging: success }",
+                    "{staging: success}"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "deploy": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "step"
+        ],
+        "properties": {
+          "step": {
+            "enum": [
+              "publish-static",
+              "start-container",
+              "run",
+              "health",
+              "approval"
+            ]
+          },
+          "artifact": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          },
+          "health": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "approval": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "Owner",
+                "Maintainer"
+              ]
+            }
+          },
+          "environments": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "staging",
+                "production"
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "publish-static"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "artifact",
+                "target",
+                "branch"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "start-container"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "artifact",
+                "target"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "run"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "run"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "health"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "health"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "approval"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "approval"
+              ]
+            }
+          }
+        ]
       }
     }
   },
   "$defs": {
-    "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?![~/\\\\])(?!.*(?:^|/|\\\\)\\.\\.(?:/|\\\\|$)).+$" },
-    "commands": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![~/\\\\])(?!.*(?:^|/|\\\\)\\.\\.(?:/|\\\\|$)).+$"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "releaseIdentity": {
       "description": "One package identity, sourced either from a committed lock file or from an exact version plus registry integrity.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["package", "ecosystem"],
+      "required": [
+        "package",
+        "ecosystem"
+      ],
       "properties": {
-        "package": { "type": "string", "minLength": 1 },
-        "ecosystem": { "enum": ["nuget", "npm"] },
-        "source": { "type": "string", "minLength": 1, "pattern": "^(?![~/\\\\])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
-        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
-        "integrity": { "type": "string", "pattern": "^sha(?:256|512)-[A-Za-z0-9+/=_-]+$" }
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ecosystem": {
+          "enum": [
+            "nuget",
+            "npm"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![~/\\\\])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "integrity": {
+          "type": "string",
+          "pattern": "^sha(?:256|512)-[A-Za-z0-9+/=_-]+$"
+        }
       },
       "oneOf": [
-        { "required": ["source"], "not": { "anyOf": [{ "required": ["version"] }, { "required": ["integrity"] }] } },
-        { "required": ["version", "integrity"], "not": { "required": ["source"] } }
+        {
+          "required": [
+            "source"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "version"
+                ]
+              },
+              {
+                "required": [
+                  "integrity"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "version",
+            "integrity"
+          ],
+          "not": {
+            "required": [
+              "source"
+            ]
+          }
+        }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "project"
+              ]
+            },
+            {
+              "required": [
+                "quality"
+              ]
+            },
+            {
+              "required": [
+                "pipeline"
+              ]
+            },
+            {
+              "required": [
+                "artifacts"
+              ]
+            },
+            {
+              "required": [
+                "environments"
+              ]
+            },
+            {
+              "required": [
+                "lifecycles"
+              ]
+            },
+            {
+              "required": [
+                "deploy"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "project"
+        ],
+        "dependentRequired": {
+          "artifacts": [
+            "environments",
+            "lifecycles",
+            "deploy"
+          ],
+          "environments": [
+            "artifacts",
+            "lifecycles",
+            "deploy"
+          ],
+          "lifecycles": [
+            "artifacts",
+            "environments",
+            "deploy"
+          ],
+          "deploy": [
+            "artifacts",
+            "environments",
+            "lifecycles"
+          ]
+        }
+      }
+    }
+  ]
 }

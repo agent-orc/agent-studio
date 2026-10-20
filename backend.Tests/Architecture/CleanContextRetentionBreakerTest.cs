@@ -40,6 +40,30 @@ public sealed class CleanContextRetentionBreakerTest : IDisposable
         Assert.True(Directory.Exists(current.HomePath));
     }
 
+    [Fact]
+    public void Engine_sweep_failure_raises_a_hold_until_an_operator_resumes_it()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Orchestration:Transitions:ReviewDecision"] = "Engine",
+                ["CleanContext:Root"] = "\0",
+            }).Build();
+        var service = new CleanContextRetentionHostedService(
+            configuration, NullLogger<CleanContextRetentionHostedService>.Instance);
+
+        service.SweepSafely();
+        Assert.True(service.DecisionPending);
+
+        configuration["CleanContext:Root"] = Path.Combine(_root, "empty");
+        service.SweepSafely();
+        Assert.True(service.DecisionPending);
+
+        configuration["CleanContext:ResumeSignal"] = "operator-1";
+        service.SweepSafely();
+        Assert.False(service.DecisionPending);
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }

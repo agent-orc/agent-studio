@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
@@ -45,6 +47,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     {
         var (service, repo, _) = Build(project: "Operator Demo");
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("Operator Demo", _artifact, commit);
         Assert.True(service.RegisterGateArtifact("Operator Demo", _artifact, commit));
         Assert.True(service.QueueRelease("Operator Demo", _artifact, commit));
         Assert.Equal("stage", Assert.Single(service.Read("Operator Demo")!.Environments
@@ -59,9 +62,28 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
         Assert.False(service.QueueRelease("demo", _artifact, commit));
         Assert.False(service.RegisterGateArtifact("demo", _artifact + "\n", commit));
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
+        WriteReleaseEvidence("demo", _artifact, commit);
         Assert.True(service.RegisterGateArtifact("demo", _artifact, commit));
         Assert.False(service.QueueRelease("demo", "registry.example/other@sha256:" + new string('b', 64), commit));
         Assert.True(service.QueueRelease("demo", _artifact, commit));
+    }
+
+    [Fact]
+    public void ReleaseCredentialCannotAttestImageWithoutIndependentBuildAndGateEvidence()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var directory = Path.Combine(_root, "release-evidence", commit);
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
+        WriteReleaseEvidence("demo", _artifact, commit);
+        File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=failed\n");
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
+        File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
+        File.WriteAllText(Path.Combine(directory, "release.tar.gz"), "different bytes");
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
+        WriteReleaseEvidence("demo", _artifact, commit);
+        Assert.True(service.RegisterGateArtifact("demo", _artifact, commit));
     }
 
     [Theory]
@@ -268,7 +290,30 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private bool QueueGateRelease(ProjectEnvironmentService service, string artifact, string commit)
-        => service.RegisterGateArtifact("demo", artifact, commit) && service.QueueRelease("demo", artifact, commit);
+    {
+        WriteReleaseEvidence("demo", artifact, commit);
+        return service.RegisterGateArtifact("demo", artifact, commit) && service.QueueRelease("demo", artifact, commit);
+    }
+
+    private void WriteReleaseEvidence(string project, string artifact, string commit)
+    {
+        var directory = Path.Combine(_root, "release-evidence", commit);
+        Directory.CreateDirectory(directory);
+        var archive = Encoding.UTF8.GetBytes("gate-built-release-for-" + commit);
+        File.WriteAllBytes(Path.Combine(directory, "release.tar.gz"), archive);
+        var digest = Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant();
+        File.WriteAllText(Path.Combine(directory, "release.sha256"), digest + "\n");
+        File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
+        File.WriteAllText(Path.Combine(directory, "promotion-record.json"), JsonSerializer.Serialize(new
+        {
+            status = "promoted", gate = "passed", candidateSha = commit, atomicPush = true,
+            releasePackage = new { status = "written", sha256 = digest },
+        }));
+        File.WriteAllText(Path.Combine(directory, "deploy-artifact.json"), JsonSerializer.Serialize(new
+        {
+            project, commit, artifact, sourceSha256 = digest,
+        }));
+    }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
         string project = "demo")
@@ -301,6 +346,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Deploy:ReleaseEvidenceRoot"] = Path.Combine(_root, "release-evidence"),
             ["WatchPaths:0:Name"] = project, ["WatchPaths:0:Path"] = watch,
             ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
         }).Build();

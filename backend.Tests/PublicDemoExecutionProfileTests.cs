@@ -88,6 +88,49 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     }
 
     [Fact]
+    public async Task Access_administration_routes_are_registered_and_denied_in_public_demo()
+    {
+        var endpoints = shared.Factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToList();
+        using var client = shared.Factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+        });
+        foreach (var (method, path, requestPath) in new[]
+        {
+            ("GET", "/api/auth/api-tokens", "/api/auth/api-tokens"),
+            ("POST", "/api/auth/api-tokens", "/api/auth/api-tokens"),
+            ("DELETE", "/api/auth/api-tokens/{id}", "/api/auth/api-tokens/token"),
+            ("GET", "/api/auth/runner-enrollments", "/api/auth/runner-enrollments"),
+            ("DELETE", "/api/auth/runner-enrollments/{id}", "/api/auth/runner-enrollments/code"),
+        })
+        {
+            Assert.Single(endpoints, endpoint => endpoint.RoutePattern.RawText == path
+                && endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(method) == true);
+            using var request = new HttpRequestMessage(new HttpMethod(method), requestPath);
+            if (method == "POST") request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public void Every_mapped_api_route_declares_its_token_project_scope()
+    {
+        var routes = shared.Factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>()
+            .Where(route => (route.RoutePattern.RawText ?? string.Empty)
+                .StartsWith("/api/", StringComparison.OrdinalIgnoreCase)).ToArray();
+        Assert.NotEmpty(routes);
+        Assert.All(routes, route => Assert.NotNull(route.Metadata.GetMetadata<ApiTokenRouteScope>()));
+        Assert.Equal(ProjectRouteScope.WorkspaceWide, Assert.Single(routes,
+            route => route.RoutePattern.RawText == "/api/workspace/screenshots")
+            .Metadata.GetMetadata<ApiTokenRouteScope>()!.Scope);
+        Assert.Contains(routes, route => route.RoutePattern.RawText?.StartsWith("/api/projects/{", StringComparison.Ordinal) == true
+            && route.Metadata.GetMetadata<ApiTokenRouteScope>()?.Scope == ProjectRouteScope.Addressed);
+    }
+
+    [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
         output.WriteLine($"PublicDemoExecutionProfile fixture initialization: {shared.InitializationDuration.TotalSeconds:F3} s");
@@ -119,6 +162,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             turns.Enqueue("global", new OrchestratorTurnRequest("forged chat")));
 
         var routes = ExecutionRoutes(factory.Services);
+        var allRoutes = factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/auth/invitations");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/auth/invite/accept");
+        Assert.Contains(allRoutes, route => route.RoutePattern.RawText == "/api/tasks/{jobId}/preview-comments");
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
         // AGT-2817 added POST /api/projects/{projectId}/delivery-claims/reconcile
@@ -141,9 +189,12 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3055 added the claimed batch gate under /api/v1/gates: claims (Claim),
         // attempts/{attemptId}/renew and /phase (Continue), /report and /containment
         // (PostStep). Gate hosts drive suites through them, so all five are denied.
+        // AGT-3181 preview feedback queues a same-card continuation, so it is
+        // denied on the Continue path before form data or attachments are read.
+        // AGT-3175 adds one Start route for new projects from a template.
         // AGT-3176 added the gate release handoff on Start. It records the
         // artifact digest and queues stage, so public demo must deny it.
-        Assert.Equal(110, routes.Count);
+        Assert.Equal(112, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -158,7 +209,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
-            ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue)
+            ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
+            ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue)
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
@@ -169,6 +221,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
         Assert.Equal(ExecutionAdmissionPath.Preview,
             migrationRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        var onboardingRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/projects");
+        Assert.Equal(ExecutionAdmissionPath.Start,
+            onboardingRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Contains("POST", onboardingRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         Assert.Equal(
             ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
             routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -178,8 +235,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 9,
-                [ExecutionAdmissionPath.Start] = 18,
-                [ExecutionAdmissionPath.Continue] = 21,
+                [ExecutionAdmissionPath.Start] = 19,
+                [ExecutionAdmissionPath.Continue] = 22,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,

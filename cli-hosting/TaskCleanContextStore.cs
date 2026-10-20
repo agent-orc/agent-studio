@@ -245,9 +245,12 @@ public static class TaskCleanContextStore
     }
 
     /// <summary>
-    /// Acquire or adopt the task's durable home. Existing task state is never
-    /// reseeded; a valid marker is required before an on-disk directory can be
-    /// reused, preventing accidental cross-task adoption.
+    /// Acquire or adopt the task's durable home. Existing task state and the
+    /// copied base config are never reseeded; only a shared credential link
+    /// that is missing or dangling while its source exists is linked again, so
+    /// a login made after the home was created reaches it (AGT-3216). A valid
+    /// marker is required before an on-disk directory can be reused,
+    /// preventing accidental cross-task adoption.
     /// </summary>
     public static TaskCleanContextLease Acquire(
         string cliType,
@@ -276,7 +279,8 @@ public static class TaskCleanContextStore
                 if (MarkerMatches(existing, recipe.CliType, taskIdentityHash))
                 {
                     WriteMarker(home, existing! with { LastUsedAtUtc = now });
-                    return BuildLease(recipe, root, home, taskIdentityHash, reused: true, resolvedUserHome);
+                    var relinked = RelinkSharedCredentials(recipe, resolvedUserHome, home);
+                    return BuildLease(recipe, root, home, taskIdentityHash, reused: true, resolvedUserHome, relinked);
                 }
 
                 if (Directory.EnumerateFileSystemEntries(home).Any())
@@ -506,11 +510,13 @@ public static class TaskCleanContextStore
         string home,
         string taskIdentityHash,
         bool reused,
-        string userHome)
+        string userHome,
+        IReadOnlyList<CleanContextSeededFile> relinked)
     {
         var sourceRoot = Path.Combine(userHome, recipe.SourceDirectoryName);
         var seeded = recipe.LinkedSeedFiles
-            .Select(path => ExistingSeed(path, shared: true))
+            .Select(path => relinked.FirstOrDefault(seed => seed.RelativePath == path)
+                ?? ExistingSeed(path, shared: true))
             .Concat(recipe.CopiedSeedFiles.Select(path => ExistingSeed(path, shared: false)))
             .Where(seed => File.Exists(seed.DestinationPath))
             .ToList();
@@ -562,6 +568,47 @@ public static class TaskCleanContextStore
                     shared));
             }
         }
+    }
+
+    /// <summary>
+    /// Link each shared credential whose destination is missing or a dangling
+    /// symbolic link while the source exists. A present destination, including
+    /// a hard link that a native refresh detached, is left to
+    /// <see cref="RebindProviderCredential"/>, which needs drained workers.
+    /// </summary>
+    private static IReadOnlyList<CleanContextSeededFile> RelinkSharedCredentials(
+        CleanContextRecipe recipe,
+        string userHome,
+        string home)
+    {
+        var sourceRoot = Path.Combine(userHome, recipe.SourceDirectoryName);
+        var relinked = new List<CleanContextSeededFile>();
+        foreach (var relativePath in recipe.LinkedSeedFiles)
+        {
+            var source = Path.Combine(sourceRoot, relativePath);
+            if (!File.Exists(source)) continue;
+            var destination = Path.Combine(home, relativePath);
+            var info = new FileInfo(destination);
+            if (info.LinkTarget is not null)
+            {
+                if (info.ResolveLinkTarget(returnFinalTarget: true) is { Exists: true }) continue;
+                File.Delete(destination);
+            }
+            else if (info.Exists)
+            {
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            relinked.Add(new CleanContextSeededFile(
+                relativePath,
+                source,
+                destination,
+                LinkOrCopy(source, destination),
+                SharedCredential: true));
+        }
+
+        return relinked;
     }
 
     private static CleanContextSeedMethod Copy(string source, string destination)

@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "integrierte-plattform",
+  "title": "Integrierte Plattform: von der Planung bis zum Hosting",
+  "summary": "Operator-Vorgaben 16.10.2026 abends: eine voll integrierte Plattform von Planung ueber Entwicklung, CI/CD bis Hosting, sicher aber integriert; E1 (eigener Scheduler fuer die Arbeitszone) entschieden; Zugriffs-Management fuer alle Tokens, nicht nur Git; Secret-Provider mit Industrie-Standards; mehrnutzerfaehiges Secret-Management mit Nutzern und Berechtigungen; gross gedacht, sofort als Einzelner nutzbar; MemoWikis als erster echter Fall. Inhalt: fuenf Zonen (Werkzeug, Steuerung, Vertrauen, Arbeit, Laufzeit) mit erlaubten Verbindungen, durchgehender Fluss mit dem Artefakt als einziger Naht zwischen CI und CD, gleiche Bausteine mit getrennten Regeln fuer Arbeit und Laufzeit, acht feste Sicherheitsgrenzen, Hosting-Optionen (eigene Laufzeit plus Adapter empfohlen), Geheimnisse und Zugriff (drei Arten, Secret-Provider mit eingebautem Speicher und Adaptern, Bereiche und Verweise, Rechte an Geheimnissen, Nutzer, Gruppen, Rollen je Bereich, Dienstkonten, Einzelplatz im selben Modell, Lieferweg zur App), Verhaeltnis zu Kubernetes, Bestand und Karten, Stufen S1 bis S5, Entscheidungen IP-D1 bis IP-D10. Ergaenzt 16.10.: §6 Pipelines, Releases und Umgebungen nach dem Octopus-Muster (project.yml Schema 2 mit pipeline, artifacts, environments, lifecycles, deploy, variables, runbooks; Release, Lebenszyklus, Kanal, Deploy-Prozess, Runbook, Dashboard; Hosting als Schritt; jede Karte zeigt ihre Umgebungen) mit IP-D11 bis IP-D13 und IP-10 bis IP-13. Ergaenzt 16.10.: §8 Betrieb (Health, Monitoring, Nutzung, Last, Logs, Kosten je App; Alarm wird Karte, Deploy-Markierungen, DORA; OpenTelemetry, eingebauter Speicher plus Export; IP-D14; IP-14 bis IP-16).",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "architecture",
+  "updatedAt": "2026-10-16T20:30:00Z",
+  "sourceTaskKeys": [],
+  "relatedTaskKeys": [
+    "AGT-3171",
+    "AGT-3170",
+    "AGT-3175",
+    "AGT-3176",
+    "AGT-3177",
+    "AGT-3180",
+    "AGT-3181",
+    "AGT-3182",
+    "AGT-3184",
+    "AGT-3185",
+    "AGT-3186",
+    "AGT-3187",
+    "AGT-3196",
+    "AGT-3197"
+  ],
+  "implementationTasks": [
+    {
+      "id": "IP-1",
+      "title": "Run zone: host agent runs long-lived app containers behind Caddy with domains, TLS, health checks, restart and rollback",
+      "promptMarkdown": "# Run zone: host agent runs long-lived app containers behind Caddy with domains, TLS, health checks, restart and rollback\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the run-zone basics of section 6 option A: the host agent starts long-lived app containers (Docker or Podman) for an environment, Caddy terminates TLS and routes per environment domain, a deploy switches traffic only after the health check passes and keeps the previous version for rollback, crashes restart with backoff, logs and basic metrics per app are collected and linked from the environment. Reuse the deploy job of AGT-3176. Tests: deploy, failed health keeps the old version, crash restart, rollback, routing per domain.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-2",
+      "title": "Zone boundaries: no inbound to work containers, egress allowlist, no path from the run zone to control and secret store, network per tenant",
+      "promptMarkdown": "# Zone boundaries: no inbound to work containers, egress allowlist, no path from the run zone to control and secret store, network per tenant\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the zone rules of section 5: work containers have no inbound ports and an egress allowlist (control zone, Git remote, model APIs, package sources per project); run-zone containers reach only what the app declares and never the control zone or the secret store; separate networks per tenant. Provide a verification command that proves each rule on a host. Tests for the policy model and the generated host rules.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-3",
+      "title": "Release registry with provenance: built-in registry, digest bound to the gate run, optional external registry",
+      "promptMarkdown": "# Release registry with provenance: built-in registry, digest bound to the gate run, optional external registry\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 3 and IP-D3: a registry in the installation (or an external one) that stores release artifacts by digest with provenance (project, commit, gate run, template, builder identity); only the build job may push; the deploy job verifies provenance before transfer. Tests for push permission, provenance check and refusal of unverified digests.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-4",
+      "title": "Deploy adapters to existing infrastructure: a VM over SSH, Kubernetes and one cloud target",
+      "promptMarkdown": "# Deploy adapters to existing infrastructure: a VM over SSH, Kubernetes and one cloud target\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 6 option C: the deploy job can place the same verified artifact on an operator target through an adapter interface; first adapters: a VM over SSH with Docker, an existing Kubernetes namespace, and one managed container service. Credentials come from the secret provider. Tests with fake targets.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-5",
+      "title": "Persistent data for hosted apps: bring-your-own database binding and backups of declared volumes",
+      "promptMarkdown": "# Persistent data for hosted apps: bring-your-own database binding and backups of declared volumes\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement IP-D5 option A: an app declares its database as a secret reference to an operator-provided database; declared volumes are kept across versions and backed up on a schedule with a tested restore. Tests for binding, volume retention across deploys, backup and restore.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-6",
+      "title": "Secret provider core: one interface, built-in encrypted store, references, versions, rotation, revocation, audit",
+      "promptMarkdown": "# Secret provider core: one interface, built-in encrypted store, references, versions, rotation, revocation, audit\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 7.2 to 7.4: a provider interface (set, metadata, versions, rotate, revoke, issue to identity, audit) with the built-in store (envelope encryption, master key in the OS key store or an operator file, included in backups); scopes from installation to app; references secret://scope/name resolved only at the consumer; write without read for humans; reveal needs its own permission, a reason and an audit entry. Migrate the existing credential registry metadata. Tests for encryption at rest, scope inheritance, write-only behaviour, reveal audit, and that no API response or log contains a value.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-7",
+      "title": "App secrets per project and environment in Studio: many secrets per app, multi-user, bound to environments",
+      "promptMarkdown": "# App secrets per project and environment in Studio: many secrets per app, multi-user, bound to environments\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 7.3, 7.4 and 7.7 in Studio: a Secrets page per project with environments (preview, stage, prod) and inheritance, add or rotate values (write only), bind to an environment, show missing references before a deploy, production binding after approval; the deploy job resolves references on the run host and delivers them as in-memory files or environment variables. Tests for the page, the missing-reference check and delivery without values in logs.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-8",
+      "title": "Identity and access model: users, groups, roles per scope, service accounts; migrate owner, operator and viewer",
+      "promptMarkdown": "# Identity and access model: users, groups, roles per scope, service accounts; migrate owner, operator and viewer\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 7.5 and 7.6: users with local sign-in and an optional second factor, groups, role assignments per scope (Owner, Admin, Maintainer, Developer, Product, Viewer, Auditor), service accounts for runners, engine, deploy jobs and API tokens with scopes, expiry and revocation; migrate owner to Owner, operator to Admin, viewer to Viewer; a single-user installation works without creating anything extra. Tests: authorization matrix per route group and scope, migration, service account scopes.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-9",
+      "title": "Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in",
+      "promptMarkdown": "# Secret store adapters and SSO: Vault or OpenBao, 1Password, OIDC sign-in\n\nSource: docs/operations/integrierte-plattform/index.html with the recorded operator decisions. Read AGENTS.md first.\n\nImplement the adapters of section 7.2 and sign-in: the provider interface backed by Vault/OpenBao KV v2 and by 1Password service accounts, selected per scope; OIDC single sign-on for users with group mapping. Tests with fake servers for each adapter and the OIDC flow.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-10",
+      "title": "project.yml schema 2: pipeline, artifacts, environments, lifecycles, deploy steps, variables and runbooks; pipeline graph in Studio",
+      "promptMarkdown": "# project.yml schema 2: pipeline, artifacts, environments, lifecycles, deploy steps, variables and runbooks; pipeline graph in Studio\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nExtend .agent-studio/project.yml to schema 2 as in section 6.3 (schema 1 stays valid and maps to the pipeline part), with a validator and clear errors; the pipeline engine runs build and test stages from the file; Studio shows the pipeline as a graph with runs, duration, cost and logs per step; edits from the UI or chat create a card with a commit instead of saving silently. Tests for parsing, validation, schema 1 compatibility and the graph view.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-11",
+      "title": "Releases, lifecycles and channels: immutable releases promoted through environments with phase rules, approvals and a project by environment dashboard",
+      "promptMarkdown": "# Releases, lifecycles and channels: immutable releases promoted through environments with phase rules, approvals and a project by environment dashboard\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 6.2 and 6.5: a release is an immutable snapshot (artifact digests, deploy process version, variable version, included cards, version number); lifecycles with ordered phases and rules (automatic, approval by role, required success in the previous phase, minimum age); channels; deploys per environment through the deploy job of AGT-3176; a dashboard of projects by environments with release, time and status. Tests for promotion rules, approvals, channel selection and immutability.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-12",
+      "title": "Card status per environment and release notes from cards",
+      "promptMarkdown": "# Card status per environment and release notes from cards\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 6.4: every card shows in which environments and releases its delivery runs, the board filters by environment state, release notes are generated from the included cards in product language, a rollback marks the cards of the withdrawn release, a production failure creates a card linked to the release. Tests for the card-to-release mapping across merges and rebases, the filters and the generated notes.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-13",
+      "title": "Runbooks: operational tasks with the same targets, variables and approvals as deploys",
+      "promptMarkdown": "# Runbooks: operational tasks with the same targets, variables and approvals as deploys\n\nSource: docs/operations/integrierte-plattform/index.html section 6 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement runbooks from section 6.2: named step lists from project.yml (restart, backup, maintenance mode, rotation) run against an environment without a new release, with approvals per environment, audit and logs; visible on the environment page. Tests for execution, approval and audit.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-14",
+      "title": "Health checks and uptime per environment from outside the run host, with alerts that become cards",
+      "promptMarkdown": "# Health checks and uptime per environment from outside the run host, with alerts that become cards\n\nSource: docs/operations/integrierte-plattform/index.html section 8 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 8.1 Health and 8.2 alerts: the platform probes the health path from project.yml for every environment from the control zone or another host, records availability over 24 h, 7 and 30 days, and on failure or a rising error rate creates a card with release, log excerpt and the cards of the last release; optional automatic rollback by rule. Tests with a fake app and an injected clock.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-15",
+      "title": "OpenTelemetry intake, built-in store for metrics and logs, export to existing systems",
+      "promptMarkdown": "# OpenTelemetry intake, built-in store for metrics and logs, export to existing systems\n\nSource: docs/operations/integrierte-plattform/index.html section 8 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement section 8.3: an OpenTelemetry collector run by the run-zone host agent, a built-in store for metrics and logs with retention per environment, secret values masked before storage, export through the collector to Prometheus, Loki or another OTLP endpoint. Tests for intake, retention, masking and export configuration.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    },
+    {
+      "id": "IP-16",
+      "title": "Operations views: monitoring, usage, load and log search per environment with deploy markers and DORA metrics",
+      "promptMarkdown": "# Operations views: monitoring, usage, load and log search per environment with deploy markers and DORA metrics\n\nSource: docs/operations/integrierte-plattform/index.html section 8 with the recorded operator decisions. Read AGENTS.md first.\n\nImplement sections 8.1 and 8.2 in Studio: per app and environment the response time, error rate, restarts, requests and active users without personal data, CPU, memory and disk against the reservation, log search by time, level, release and text, deploy and rollback markers linking to release and cards, and DORA metrics per project. Tests for the views and the metric calculations.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites. Report the result SHA in status.md."
+    }
+  ],
+  "key": "AGT-W81"
+}

@@ -2051,6 +2051,14 @@ export class TaskService {
     );
   }
 
+  sendPreviewFeedback(jobId: string, watchPath: string, data: FormData) {
+    return this.http.post<ContinueTaskResponse>(
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/preview-feedback`,
+      data,
+      this.withWatchPath(watchPath),
+    );
+  }
+
   setJobModel(jobId: string, model: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
@@ -2270,6 +2278,12 @@ export class TaskService {
   getGlobalOrchestratorFeed() {
     return this.http.get<import('../features/orchestrator').GlobalOrchestratorFeedResponse>(
       `${this.baseUrl}/runner/orchestrator-feed`,
+    );
+  }
+
+  getOperationalStalls() {
+    return this.http.get<{ count: number; cases: import('../features/orchestrator').OperationalStallCase[] }>(
+      `${this.baseUrl}/watcher/stalls`,
     );
   }
 

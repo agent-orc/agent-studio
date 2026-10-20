@@ -38,6 +38,11 @@
     <InternalsVisibleTo Include="OrchestratorApi.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="../project-templates/**" Link="project-templates/%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Block 6: the extracted public library, consumed as the published NuGet
        package. For co-development against a local checkout, temporarily swap
        back to the ProjectReference:

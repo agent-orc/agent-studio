@@ -161,6 +161,7 @@ EOF
   esac
   chmod +x "$seed/scripts/release/promotion-full-gate.sh"
   printf '%s\n' base > "$seed/payload.txt"
+  printf 'FROM scratch\nARG SHA\nLABEL org.opencontainers.image.revision="$SHA"\n' > "$seed/Dockerfile"
   printf '%s\n' 'frontend/dist/' > "$seed/.gitignore"
   git -C "$seed" add .
   git -C "$seed" commit --quiet -m 'base'
@@ -434,7 +435,43 @@ auto_digest=$(cat "$auto_root/releases/$auto_sha/release.sha256")
 test "$(sha256sum "$auto_store/$auto_digest" | cut -d ' ' -f1)" = "$auto_digest"
 grep -Fq "\"artifact\":\"release-package@sha256:$auto_digest\",\"commit\":\"$auto_sha\"" \
   "$auto_root/deploy-call.json"
+grep -Fq "\"artifact\":\"release-package@sha256:$auto_digest\",\"sourceSha256\":\"$auto_digest\"" \
+  "$auto_root/releases/$auto_sha/deploy-artifact.json"
+grep -Fq '"gate":"passed"' "$auto_root/releases/$auto_sha/promotion-record.json"
 printf '%s\n' 'gate-built artifact queued to stage passed'
+
+# The image handoff builds from the gated checkout and uses the build output
+# digest. A caller-supplied image reference is only a destination tag.
+image_operator=$(make_fixture image-auto pass)
+image_root="$test_root/image-auto"
+image_sha=$(git --git-dir="$image_root/remote.git" rev-parse refs/heads/develop)
+image_docker_bin="$image_root/fake-docker-bin"
+mkdir -p "$image_docker_bin"
+cat > "$image_docker_bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" > "${FAKE_DOCKER_LOG:?}"
+test "$1" = buildx && test "$2" = build
+metadata=
+while (($#)); do
+  if [[ "$1" == --metadata-file ]]; then metadata=$2; shift 2; else shift; fi
+done
+printf '{"containerimage.digest":"sha256:%s"}\n' "${FAKE_DOCKER_DIGEST:?}" > "$metadata"
+FAKE
+chmod +x "$image_docker_bin/docker"
+image_digest=$(printf 'b%.0s' {1..64})
+FAKE_DOTNET_LOG="$image_root/dotnet.log" FAKE_DEPLOY_LOG="$image_root/deploy-call.json" \
+  FAKE_DOCKER_LOG="$image_root/docker-call.log" FAKE_DOCKER_DIGEST="$image_digest" \
+  PATH="$auto_curl_bin:$image_docker_bin:$fake_dotnet_bin:$PATH" \
+  "$image_operator/scripts/release/promote-develop-to-main.sh" --execute \
+  --tag release/test-image-auto --evidence-dir "$image_root/evidence" \
+  --release-dir "$image_root/releases" --deploy-token-file "$auto_token" \
+  --deploy-image-ref registry.example/app:release --deploy-dockerfile Dockerfile \
+  --project Demo >/dev/null
+grep -Fq -- "--build-arg SHA=$image_sha" "$image_root/docker-call.log"
+grep -Fq "\"artifact\":\"registry.example/app:release@sha256:$image_digest\"" \
+  "$image_root/releases/$image_sha/deploy-artifact.json"
+printf '%s\n' 'gate-built image queued to stage passed'
 
 # A red gate with --release-dir leaves no package and publishes nothing.
 red_package_operator=$(make_fixture package-red fail)

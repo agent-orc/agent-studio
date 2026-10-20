@@ -16,6 +16,8 @@ frontend/build_log.txt
 tools/*
 !tools/remote-test-suite/
 !tools/remote-test-suite/**
+!tools/project-deployment-import/
+!tools/project-deployment-import/**
 # Whitelisted: idempotent self-heal script that start.sh runs as a hard
 # pre-flight before the backend boots. Tracked so stable picks it up via
 # update-stable.sh; everything else under tools/ stays local.

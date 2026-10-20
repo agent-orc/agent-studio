@@ -19,12 +19,23 @@ authenticate anything and are ignored by every route on this page.
 |---|---|---|---|
 | Installation | First store start | `installationId` (`ins_*`, public) | Never; migration preserves it |
 | Owner | First login with the installer code | Password and one recovery code (`rcv_*`) | Recovery replaces both |
-| Operator / viewer | Owner (`POST /api/v1/studio/auth/users`) | Password, change on first login | Owner |
+| Operator / contributor / viewer | Owner (`POST /api/v1/studio/auth/invitations`) | One-time link, password chosen on acceptance | Owner |
 | Studio edge, engine, each runner host | One-time enrolment (`enr_*`) or Compose bootstrap file | Principal bearer (`ats_*`) in a restricted host file | `POST /api/v1/management/principals/{id}/revoke` |
 
 Every one-time secret is shown once and stored only as a SHA-256 hash.
 The browser never receives an `ats_*` bearer: the Studio BFF keeps its own
 bearer in-process and relays only the human session cookie.
+
+An owner invites a user with a role and an explicit project ID list. The
+response returns a relative `signInLink`; send that link through the chosen
+channel without putting a password in the message. The link expires after
+24 hours and is consumed when the recipient sets a password through
+`POST /api/v1/studio/auth/invite/accept`. A contributor is displayed as
+**Product** and can work only in assigned projects. To grant production
+approval for one of those projects, the owner uses
+`PUT /api/v1/studio/auth/users/{userId}/projects/{projectId}/production-approval`
+with `{ "approved": true }`; revocation uses `false`. This grant does not
+provide host, credential, merge, or promotion access.
 
 ## First owner
 
@@ -69,6 +80,13 @@ consumes the code and returns a new one once. `POST
 password confirmation. Nothing rotates it implicitly.
 
 ## Enrol a host principal
+
+In Studio Settings, the first-run checklist can issue a one-time host join file.
+Download `join.token`, transfer it to the Linux host with owner-only permissions,
+then run the displayed `agent-studio-setup --mode agent-host --join-token-file`
+command. The file contains a single-use enrolment code and no management bearer.
+The installer exchanges it for the host's bound runner credential. A new token
+must be issued if the file expires or is spent.
 
 Owner session required (`403 owner-role-required` for operators and viewers;
 `401` for the edge bearer without a session):
@@ -141,6 +159,29 @@ POST /api/v1/projects/registrations
 
 ## Prove the repository from the host
 
+For a GitHub repository, the first-run checklist can send a token to the selected
+runner once or ask that runner to generate a deploy key. Copy the public key to
+GitHub with write access, then select **Verify read and write**. The runner
+fetches the registered origin, pushes a temporary ref, removes it, and reports
+only the read/write verdict. The runner also reports a project receipt to the
+Task Server. Tokens are kept in owner-only host files and supplied through a
+repository-scoped Git helper, so clone URLs and status responses remain
+credential-free. Private keys also stay on the execution host; Studio receives
+neither secret after setup. Deploy-key verification and project Git operations
+select the private key only for the registered repository, using a direct SSH URL.
+The runner keeps the recorded origin URL for comparison and receipts. It does not
+write a global Git URL rewrite or the runner's SSH configuration, which may be
+mounted read-only in Docker.
+On a local install, verification first clones the registered URL when the
+project has no checkout. The backend persists the checkout path and sets its
+repository-local SSH command for a deploy key, or includes the scoped token
+helper there. The local read/write probe runs in a temporary Git repository
+with clean URL configuration and the explicit registered transport, so a URL
+rewrite in the checkout cannot verify a different repository.
+Device login for Codex or Claude runs inside the selected
+runner process, including Compose containers, and Studio shows only the
+provider's verification URL and a code when the provider supplies one.
+
 ```bash
 scripts/probe-project-repository.sh https://tasks.example.com build-02 prj-alpha \
     /etc/agent-runner/runner-auth-token
@@ -173,5 +214,5 @@ edge's upstream timeout (default 100 seconds, clamped to 1 through 600 seconds).
 
 ## Known limits
 
-- No Studio screen presents these flows yet. Any UI claim needs pinned
-  screenshots (I09) before it enters the installation guide.
+The standalone first-run GitHub action covers GitHub origins. Other Git hosts
+continue to use host-managed credentials and the repository probe script.

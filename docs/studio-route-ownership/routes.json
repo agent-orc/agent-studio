@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "studio-route-ownership-2026-10-13",
+  "id": "studio-route-ownership-2026-10-16",
   "title": "Studio route ownership inventory",
-  "updatedAt": "2026-10-13",
+  "updatedAt": "2026-10-16",
   "sourceTaskKeys": [
     "AGT-2731",
     "AGT-2754",
@@ -10,7 +10,8 @@
     "AGT-2757",
     "AGT-2758",
     "AGT-2835",
-    "AGT-2983"
+    "AGT-2983",
+    "AGT-3156"
   ],
   "countingUnit": "A route is one distinct frontend method plus normalized path template. Query combinations are variants on that route, not additional routes. WS and SSE transports are counted once each.",
   "scope": {
@@ -21,21 +22,22 @@
     "exclusions": [
       "Comments and models without a runtime call site",
       "The cross-origin UpdateService /update surface on port 5039",
-      "Runner-only and management-only individual routes not called by Angular"
+      "Runner-only and management-only individual routes not called by Angular",
+      "Local-profile-only first-run paths; they are not published by the installed connector"
     ]
   },
   "counts": {
-    "frontendOperations": 457,
-    "frontendApiOperations": 456,
+    "frontendOperations": 467,
+    "frontendApiOperations": 466,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 347,
+      "task-server": 357,
       "dev-seat": 110,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
-    "frontendV1Operations": 70,
-    "frontendV1OperationsExistingInStandaloneTaskServer": 296,
+    "frontendV1Operations": 80,
+    "frontendV1OperationsExistingInStandaloneTaskServer": 306,
     "d4bRoutesToAdd": 51
   },
   "d4bEstimate": {
@@ -141,6 +143,266 @@
     ]
   },
   "frontendRoutes": [
+    {
+      "id": "fe-465",
+      "method": "POST",
+      "path": "/api/v1/management/runner-git-setups",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/management/runner-git-setups",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server owns host credential handoff and runner-reported repository verification.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-466",
+      "method": "GET",
+      "path": "/api/v1/management/runner-git-setups/{id}",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/management/runner-git-setups/{id}",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server owns host credential handoff and runner-reported repository verification.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-467",
+      "method": "POST",
+      "path": "/api/v1/management/runner-git-setups/{id}/verify",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/management/runner-git-setups/{id}/verify",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server owns host credential handoff and runner-reported repository verification.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-464",
+      "method": "POST",
+      "path": "/api/v1/management/host-join-tokens",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/management/host-join-tokens",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server issues one-time runner enrolment codes and owns host identity.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-462",
+      "method": "POST",
+      "path": "/api/v1/management/runner-device-logins",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server owns the bounded runner device-login request and status.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/management/runner-device-logins"
+    },
+    {
+      "id": "fe-463",
+      "method": "GET",
+      "path": "/api/v1/management/runner-device-logins/{id}",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server owns the bounded runner device-login request and status.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/management/runner-device-logins/{id}"
+    },
+    {
+      "id": "fe-458",
+      "method": "POST",
+      "path": "/api/v1/projects/registrations",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The route reads or mutates durable project and task state owned by the Task Server.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/projects/registrations"
+    },
+    {
+      "id": "fe-459",
+      "method": "POST",
+      "path": "/api/v1/projects/{projectId}/tasks",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The route reads or mutates durable project and task state owned by the Task Server.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/projects/{projectId}/tasks"
+    },
+    {
+      "id": "fe-460",
+      "method": "GET",
+      "path": "/api/v1/projects/{projectId}/tasks/{taskId}/attempts",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The route reads or mutates durable project and task state owned by the Task Server.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/attempts"
+    },
+    {
+      "id": "fe-461",
+      "method": "GET",
+      "path": "/api/v1/integrations",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "First-run checklist",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The route reads or mutates durable project and task state owned by the Task Server.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/integrations"
+    },
     {
       "id": "fe-001",
       "method": "GET",

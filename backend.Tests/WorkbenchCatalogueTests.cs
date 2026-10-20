@@ -28,6 +28,21 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_KeepsLegacyImplementationTaskKeysAsDossierSlices()
+    {
+        WriteWorkbench("legacy-slices", "Legacy slices", "active", "2026-07-10T10:00:00Z");
+        var descriptorPath = Path.Combine(_root, "docs", "workbenches", "legacy-slices", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(descriptorPath))!.AsObject();
+        descriptor["implementationTasks"] = new JsonArray(JsonValue.Create("AGT-1"), JsonValue.Create("AGT-2"));
+        File.WriteAllText(descriptorPath, descriptor.ToJsonString());
+
+        var item = Assert.Single(Service().List("Project")!.Items);
+
+        Assert.True(item.Valid);
+        Assert.Equal(["AGT-1", "AGT-2"], item.ImplementationTaskKeys);
+    }
+
+    [Fact]
     public void List_ValidatesSortsAndKeepsInvalidEntriesVisible()
     {
         WriteWorkbench("older", "Older", "active", "2026-07-10T10:00:00Z");
@@ -672,6 +687,55 @@ public sealed class WorkbenchCatalogueTests : IDisposable
         Assert.Equal(after, push!.Sha);
         Assert.Equal("develop", push.TargetBranch);
         Assert.Equal("Project", push.Project);
+    }
+
+    [Fact]
+    public void List_LeavesAKeylessDescriptorInAnUntrackedFolderUntouched()
+    {
+        WriteWorkbench("seed", "Seed", "active", "2026-08-10T08:00:00Z");
+        SetWorkbenchKey("seed", "PRO-W1");
+        RunGit("init", "-b", "develop");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "test: seed keyed workbench");
+        var before = RunGit("rev-parse", "HEAD").Trim();
+        WriteWorkbench("omgai-dev", "Draft", "active", "2026-08-11T08:00:00Z");
+        var draftPath = Path.Combine(_root, "docs", "workbenches", "omgai-dev", "workbench.json");
+        var draft = File.ReadAllBytes(draftPath);
+
+        Service().List("Project", includeHistory: true);
+
+        Assert.Equal(draft, File.ReadAllBytes(draftPath));
+        Assert.Equal(before, RunGit("rev-parse", "HEAD").Trim());
+        Assert.Equal("?? docs/workbenches/omgai-dev/", RunGit("status", "--porcelain").Trim());
+    }
+
+    [Fact]
+    public void List_AssignsMissingKeysInTheDescriptorsOwnLineEndings()
+    {
+        WriteWorkbench("crlf", "Crlf", "active", "2026-08-10T08:00:00Z");
+        var path = Path.Combine(_root, "docs", "workbenches", "crlf", "workbench.json");
+        var indented = JsonNode.Parse(File.ReadAllText(path))!
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true, NewLine = "\r\n" });
+        File.WriteAllText(path, indented + "\r\n");
+        RunGit("init", "-b", "develop");
+        RunGit("config", "core.autocrlf", "false");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "test: seed CRLF workbench without a key");
+
+        var item = Assert.Single(Service().List("Project", includeHistory: true)!.Items);
+
+        Assert.Equal("PRO-W1", item.Key);
+        var written = File.ReadAllText(path);
+        Assert.EndsWith("}\r\n", written);
+        Assert.DoesNotMatch("(?<!\r)\n", written);
+        Assert.Contains("\"key\": \"PRO-W1\"", written);
+        Assert.Equal(string.Empty, RunGit("status", "--porcelain"));
+        var diff = RunGit("show", "--numstat", "--pretty=format:", "HEAD").Trim();
+        Assert.StartsWith("2\t1\t", diff);
     }
 
     [Fact]

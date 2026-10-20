@@ -325,6 +325,8 @@ public record CreateTaskRequest
     public DecisionContent? Decision { get; init; }
     /// <summary>Optional parent epic id (assignment way 1: at create time). The new card is created as a sub-task of this epic.</summary>
     public string? EpicId { get; init; }
+    /// <summary>The one Dossier that owns this card and its source location.</summary>
+    public TaskDossier? Dossier { get; init; }
     /// <summary>Execution mode: <c>coding</c> (default) | <c>planning</c> | <c>research</c> | <c>concept</c>. See <see cref="TaskModes"/>.</summary>
     public string? Mode { get; init; }
     /// <summary>Allow web search/fetch for this run. When null, defaults by mode (research = on, else off).</summary>
