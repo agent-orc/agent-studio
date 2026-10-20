@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Deploy;
 
@@ -36,9 +37,11 @@ public sealed class DeployService
     private readonly TaskScannerService _scanner;
     private readonly TimeProvider _clock;
     private readonly ILogger<DeployService> _logger;
+    private readonly TaskMutationService? _mutations;
 
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
-        TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger)
+        TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
+        TaskMutationService? mutations)
     {
         _environments = environments;
         _store = store;
@@ -46,6 +49,7 @@ public sealed class DeployService
         _scanner = scanner;
         _clock = clock;
         _logger = logger;
+        _mutations = mutations;
     }
 
     public static IReadOnlyList<DeployEnvironment> MapEnvironments(string project,
@@ -237,6 +241,68 @@ public sealed class DeployService
                 StringComparer.Ordinal);
             return EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases,
                 snapshot.Deployments(project), hostHealth);
+        }
+    }
+
+    public IReadOnlyList<CardDeploymentView>? Cards(string project)
+        => Cards(project, _scanner.ScanAllJobsWithArchive()
+            .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
+            .Select(item => string.IsNullOrWhiteSpace(item.Key) ? item.Id : item.Key!));
+
+    private IReadOnlyList<CardDeploymentView>? Cards(string project, IEnumerable<string> cardKeys)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            return snapshot is null ? null : CardDeploymentProjection.Project(project, snapshot.Environments,
+                snapshot.Releases, snapshot.Deployments(project), cardKeys);
+        }
+    }
+
+    public IReadOnlyList<CardDeploymentView> CardMatrix()
+    {
+        var cards = new List<CardDeploymentView>();
+        var byProject = _scanner.ScanAllJobsWithArchive()
+            .ToLookup(item => item.ProjectName, StringComparer.OrdinalIgnoreCase);
+        foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (_environments.Declarations(project) is not { Count: > 0 }) continue;
+                if (Cards(project, byProject[project].Select(item => string.IsNullOrWhiteSpace(item.Key)
+                        ? item.Id : item.Key!)) is { } projected) cards.AddRange(projected);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Deploy card matrix skipped project {Project}: invalid deployment state", project);
+            }
+        }
+        return cards;
+    }
+
+    public ReleaseNotesResponse? Notes(string project, string releaseId)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            var record = snapshot?.Records.GetValueOrDefault(releaseId);
+            var release = record?.Release;
+            if (release is null) return null;
+            var currentTitles = _scanner.ScanAllJobsWithArchive()
+                .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
+                .Where(item => !string.IsNullOrWhiteSpace(item.Key))
+                .GroupBy(item => item.Key!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+            var cards = record!.CardTitles is { } captured
+                ? captured.Concat(currentTitles.Where(item => !captured.ContainsKey(item.Key)))
+                    .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase)
+                : currentTitles;
+            var production = snapshot!.Environments.Where(item => item.Kind == EnvironmentKinds.Production)
+                .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            var preview = !snapshot.Deployments(project).Any(item => item.ReleaseId == releaseId
+                && production.Contains(item.EnvironmentId) && item.State == DeploymentStates.Succeeded);
+            return ReleaseNotesProjection.Project(release, cards, preview);
         }
     }
 
@@ -687,18 +753,24 @@ public sealed class DeployService
         var existing = _store.ReadReleaseRecords(project);
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
         var previous = existing.LastOrDefault()?.Release;
+        var priorKeys = existing.SelectMany(item => item.Release.CardKeys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var cardKeys = repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated, priorKeys);
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
-            repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated), now, ReleaseSnapshot.DefaultChannel);
-        return _store.AppendRelease(project, new(release, declarations));
+            cardKeys, now, ReleaseSnapshot.DefaultChannel);
+        var titles = integrated.Where(card => cardKeys.Contains(card.Key, StringComparer.OrdinalIgnoreCase))
+            .GroupBy(card => card.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+        return _store.AppendRelease(project, new(release, declarations, titles));
     }
 
     private ProjectDeploymentDefinition? ReadDefinition(string repo, string commit)
         => _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is { } yaml
             ? ProjectDefinitionReader.Parse(yaml).Definition?.Deployment : null;
 
-    private sealed record IntegratedCard(string Key, IReadOnlyList<string> Shas);
+    private sealed record IntegratedCard(string Key, string Title, IReadOnlyList<string> Shas);
 
     /// <summary>Cards of the project with an integration verification and the commits it names.</summary>
     private IReadOnlyList<IntegratedCard> IntegratedCards(string project)
@@ -708,6 +780,7 @@ public sealed class DeployService
             .Where(item => item.Record is not null)
             .Select(item => new IntegratedCard(
                 string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key,
+                item.Task.Title,
                 [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas]))
             .ToArray();
 
@@ -716,13 +789,17 @@ public sealed class DeployService
     /// reachable from the release commit and not from the previous release.
     /// </summary>
     private IReadOnlyList<string> CardKeys(string repo, string commit, string? previousCommit,
-        IReadOnlyList<IntegratedCard> integrated)
+        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys)
     {
         var revisions = _git.ListRevisions(repo, commit, previousCommit,
                 previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (revisions.Count == 0) return [];
-        return integrated.Where(card => card.Shas.Any(revisions.Contains))
+        var messages = _git.ListRevisionMessages(repo, commit, previousCommit,
+            previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow);
+        var mentioned = ReleaseCardAttribution.FindKeys(messages);
+        return integrated.Where(card => ReleaseCardAttribution.Includes(card.Key, card.Shas,
+                revisions, mentioned, priorKeys))
             .Select(card => card.Key)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.Ordinal)
@@ -754,7 +831,63 @@ public sealed class DeployService
         var result = DeploymentReconciler.Reconcile(new(environments, records, _store.ReadDeployments(project),
             view.Jobs, view.Promotions));
         if (result.Changed) Persist(project, result.Deployments, result.Log, result.Audit);
+        CreateProductionFailureCards(project, environments, records, result.Deployments);
         return new(environments, records, result.Deployments, view);
+    }
+
+    private void CreateProductionFailureCards(string project, IReadOnlyList<DeployEnvironment> environments,
+        IReadOnlyList<ReleaseRecord> records, IReadOnlyList<DeploymentRecord> runs)
+    {
+        if (_mutations is null)
+        {
+            _logger.LogWarning("Production failure card creation is unavailable without task mutations");
+            return;
+        }
+        var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
+            .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var watchPath = _scanner.GetWatchPaths()
+            .FirstOrDefault(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase))?.Path;
+        if (watchPath is null)
+        {
+            _logger.LogWarning("Production failure card creation has no watch path for {Project}", project);
+            return;
+        }
+        foreach (var run in runs.Where(item => item.State == DeploymentStates.Failed
+                     && production.Contains(item.EnvironmentId)))
+        {
+            var slug = "production-deploy-failed-" + run.Id;
+            // The published task index can lag a new card. Read storage for this rare
+            // failure path so a second reconciliation cannot mint a duplicate.
+            if (_scanner.ScanAllJobsRaw().Any(item => item.Id == slug
+                    && WatchPathComparison.PathsEqual(item.WatchPath, watchPath))) continue;
+            var release = records.FirstOrDefault(item => item.Release.Id == run.ReleaseId)?.Release;
+            if (release is null) continue;
+            var cards = string.Join(", ", release.CardKeys);
+            var excerpt = string.Join("\n", _store.ReadLog(project, run.Id).TakeLast(5)
+                .Select(item => $"- {item.Step}: {item.Message}"));
+            try
+            {
+                var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+                {
+                    Id = slug,
+                    Title = $"Investigate Production deployment of release {release.Version}",
+                    PromptMarkdown = $"# Production deployment failed\n\nRelease: {release.Version} (`{release.Id}`)"
+                        + $"\nDeployment: `{run.Id}`\nIncluded cards: {cards}\n\nRecent deployment log:\n{excerpt}\n",
+                    WatchPath = watchPath,
+                    TargetState = TaskStates.Backlog,
+                    TaskType = TaskTypes.Bug,
+                    Tags = ["production-deployment"],
+                    CreationSource = "deployment",
+                    CreatedBy = "system",
+                });
+                if (cardId is null)
+                    _logger.LogWarning("Could not create Production failure card for deployment {DeploymentId}", run.Id);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                _logger.LogWarning(ex, "Could not create Production failure card for deployment {DeploymentId}", run.Id);
+            }
+        }
     }
 
     private void Persist(string project, IReadOnlyList<DeploymentRecord> runs,

@@ -8170,6 +8170,19 @@ public partial class GitService
             : [];
     }
 
+    /// <summary>Commit messages in a release delta. Card references survive rebase and squash.</summary>
+    public IReadOnlyList<string> ListRevisionMessages(string repoRoot, string tip, string? exclusiveBase, int maxCount)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(tip)
+            || exclusiveBase is not null && !ReviewSubjectStore.IsValidResultSha(exclusiveBase)) return [];
+        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", "--format=%B%x00", tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(repoRoot, [.. arguments]);
+        return code == 0 ? output.Split('\0', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+    }
+
     /// <summary>
     /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
     /// <paramref name="descendant"/>, or null when git cannot answer. Unlike

@@ -8,7 +8,8 @@ describe('ProjectDeployOverviewComponent', () => {
   it('shows one status per environment and keeps fixture actions inert', async () => {
     await TestBed.configureTestingModule({ imports: [ProjectDeployOverviewComponent], providers: [provideZonelessChangeDetection()] }).compileComponents();
     const fixture = TestBed.createComponent(ProjectDeployOverviewComponent);
-    new ProjectDeployDataService().load('demo').subscribe(data => fixture.componentRef.setInput('snapshot', data));
+    TestBed.runInInjectionContext(() => new ProjectDeployDataService()).fixture('demo')
+      .subscribe(data => fixture.componentRef.setInput('snapshot', data));
     fixture.detectChanges();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelectorAll('[data-testid^="deploy-environment-"]')).toHaveLength(2);

@@ -12,6 +12,7 @@
     <button type="button" disabled title="Planned for P2">Runbooks · P2</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
+  @if (loadError()) { <p role="alert">Deployment data is unavailable. Try again when the project API is ready.</p> }
   @if (snapshot(); as data) {
     @switch (view()) {
       @case ('overview') { <app-project-deploy-overview [snapshot]="data" (openTools)="show('tools')" (openReleases)="show('releases')" /> }

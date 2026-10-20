@@ -8,7 +8,8 @@ describe('ProjectDeployPipelineComponent', () => {
   it('connects project.yml CI stages to approval and Production steps', async () => {
     await TestBed.configureTestingModule({ imports: [ProjectDeployPipelineComponent], providers: [provideZonelessChangeDetection()] }).compileComponents();
     const fixture = TestBed.createComponent(ProjectDeployPipelineComponent);
-    new ProjectDeployDataService().load('demo').subscribe(data => fixture.componentRef.setInput('snapshot', data));
+    TestBed.runInInjectionContext(() => new ProjectDeployDataService()).fixture('demo')
+      .subscribe(data => fixture.componentRef.setInput('snapshot', data));
     fixture.detectChanges();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelectorAll('.deploy-flow__stage')).toHaveLength(6);

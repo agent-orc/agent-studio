@@ -108,6 +108,19 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void SquashedCommitMessage_KeepsIntegratedCardMapping()
+    {
+        var (deploy, _, _) = Build();
+        var commit = Commit("feat(DEMO-4) improve the product");
+        Card("DEMO-4", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('d'), commit);
+
+        Assert.Equal(["DEMO-4"], release.CardKeys);
+        Assert.Equal(release.CardKeys, Assert.Single(deploy.Releases("demo")!).CardKeys);
+    }
+
+    [Fact]
     public void Production_WaitsForApproval_ByOwnerOrMaintainerOnly()
     {
         var (deploy, environments, _) = Build();
@@ -698,6 +711,7 @@ public sealed class DeployServiceTests : IDisposable
         Build();
         var older = Head();
         var commit = Commit("second");
+        Card("DEMO-1", commit, title: "Faster page loading");
         WriteReleaseEvidence(Artifact('a'), commit);
         WriteReleaseEvidence(Artifact('b'), older);
         await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
@@ -764,6 +778,14 @@ public sealed class DeployServiceTests : IDisposable
                      "variablesVersion", "cardKeys", "createdAtUtc", "channel" })
             Assert.True(release.RootElement.GetProperty("release").TryGetProperty(name, out _), name);
 
+        using var notes = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/demo/deploy/releases/{releaseId}/notes"));
+        Assert.Equal("Faster page loading", notes.RootElement.GetProperty("notes")[0].GetProperty("text").GetString());
+        using var cards = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/cards"));
+        Assert.Equal("DEMO-1", cards.RootElement[0].GetProperty("cardKey").GetString());
+        Assert.Equal("not-deployed", cards.RootElement[0].GetProperty("environments")[1]
+            .GetProperty("state").GetString());
+
         var deploymentId = run.GetProperty("id").GetString();
         using var approve = await client.PostAsync($"/api/projects/demo/deploy/deployments/{deploymentId}/approve", null);
         Assert.Equal(HttpStatusCode.Conflict, approve.StatusCode);
@@ -795,6 +817,17 @@ public sealed class DeployServiceTests : IDisposable
         using var approved = await client.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
+
+        var productionJob = hosts.Claim("prod-host")!;
+        Assert.True(hosts.Report("demo", productionJob.Id,
+            new(productionJob.LeaseToken!, false, "deploy-step-failed")));
+        service.SyncAfterHostCall("demo");
+        service.SyncAfterHostCall("demo");
+        var failures = factory.Services.GetRequiredService<TaskScannerService>().ScanAllJobsRaw()
+            .Where(item => item.Id == "production-deploy-failed-" + production.Id).ToArray();
+        var failure = Assert.Single(failures);
+        Assert.Equal("bug", failure.TaskType);
+        Assert.Contains(releaseId!, File.ReadAllText(Path.Combine(failure.FolderPath, "prompt.md")));
     }
 
     private void DeployThroughProduction(DeployService deploy, ProjectEnvironmentService environments,
@@ -830,13 +863,13 @@ public sealed class DeployServiceTests : IDisposable
 
     private static string Artifact(char fill) => "registry.example/app@sha256:" + new string(fill, 64);
 
-    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null)
+    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null, string? title = null)
     {
         var folder = Path.Combine(_watch, "6-completed", key.ToLowerInvariant());
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = key.ToLowerInvariant(), key, title = "Card " + key, state = "6-completed", agent = "claude",
+            id = key.ToLowerInvariant(), key, title = title ?? "Card " + key, state = "6-completed", agent = "claude",
             createdAt = _clock.GetUtcNow(),
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "fixture");
@@ -900,7 +933,7 @@ public sealed class DeployServiceTests : IDisposable
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         var store = new DeployStore(config);
         _environments = environments;
-        return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance),
+        return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance, null),
             environments, store);
     }
 
