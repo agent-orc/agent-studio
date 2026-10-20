@@ -118,20 +118,29 @@ public sealed class HostedVolumeBackupService(
         string actor, CancellationToken cancellationToken)
     {
         ValidateVolume(project, environment, volume);
-        await _gate.WaitAsync(cancellationToken);
+        var key = new HostedVolumeKey(project, environment, volume);
+        var volumeGate = _volumeGates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await volumeGate.WaitAsync(cancellationToken);
         try
         {
-            var state = ReadState(project);
-            var backup = state.Schedules.SelectMany(item => item.Backups)
-                .SingleOrDefault(item => item.Volume == new HostedVolumeKey(project, environment, volume) && item.Id == backupId);
-            if (backup is null)
+            HostedVolumeBackup backup;
+            await _gate.WaitAsync(cancellationToken);
+            try
             {
+                var state = ReadState(project);
+                backup = state.Schedules.SelectMany(item => item.Backups)
+                    .SingleOrDefault(item => item.Volume == key && item.Id == backupId)!;
+                if (backup is null)
+                {
+                    WriteState(project, state with { Audit = Append(state.Audit,
+                        new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "not-found")) });
+                    throw new FileNotFoundException("Backup is not registered for this declared volume.");
+                }
                 WriteState(project, state with { Audit = Append(state.Audit,
-                    new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "not-found")) });
-                throw new FileNotFoundException("Backup is not registered for this declared volume.");
+                    new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "started")) });
             }
-            WriteState(project, state with { Audit = Append(state.Audit,
-                new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "started")) });
+            finally { _gate.Release(); }
+
             try
             {
                 await engine.RestoreAsync(backup, cancellationToken);
@@ -140,10 +149,8 @@ public sealed class HostedVolumeBackupService(
             {
                 try
                 {
-                    var failed = ReadState(project);
-                    WriteState(project, failed with { Audit = Append(failed.Audit,
-                        new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId,
-                            ex is OperationCanceledException ? "cancelled" : "failed")) });
+                    await RecordRestoreOutcomeAsync(project, environment, volume, backupId, actor,
+                        ex is OperationCanceledException ? "cancelled" : "failed");
                 }
                 catch (Exception auditError)
                 {
@@ -154,9 +161,7 @@ public sealed class HostedVolumeBackupService(
             }
             try
             {
-                var completed = ReadState(project);
-                WriteState(project, completed with { Audit = Append(completed.Audit,
-                    new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, "succeeded")) });
+                await RecordRestoreOutcomeAsync(project, environment, volume, backupId, actor, "succeeded");
             }
             catch (Exception auditError)
             {
@@ -164,6 +169,19 @@ public sealed class HostedVolumeBackupService(
                 logger.LogError(auditError, "Hosted volume restored, but audit could not be recorded for {Project}/{Environment}/{Volume}",
                     project, environment, volume);
             }
+        }
+        finally { volumeGate.Release(); }
+    }
+
+    private async Task RecordRestoreOutcomeAsync(string project, string environment, string volume,
+        string backupId, string actor, string outcome)
+    {
+        await _gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            var state = ReadState(project);
+            WriteState(project, state with { Audit = Append(state.Audit,
+                new(clock.GetUtcNow(), actor, "restore", environment, volume, backupId, outcome)) });
         }
         finally { _gate.Release(); }
     }

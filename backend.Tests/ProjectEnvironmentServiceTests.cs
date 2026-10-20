@@ -152,6 +152,47 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StalledRestoreDoesNotBlockOtherVolumeOrStateOperations()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var engine = new BlockingRestoreEngine();
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var backup = await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var restore = service.RestoreAsync(key.Project, key.Environment, key.Volume, backup.Id,
+            "owner", cancellation.Token);
+        await engine.RestoreEntered;
+
+        Task<HostedVolumeBackup>? sameVolume = null;
+        try
+        {
+            var otherVolume = service.BackupAsync(key.Project, key.Environment, "logs", "owner", CancellationToken.None);
+            Assert.True(otherVolume.IsCompleted, "A stalled restore held the project state lock.");
+            Assert.Equal("logs", (await otherVolume).Volume.Volume);
+
+            var schedule = service.SetScheduleAsync(key.Project, key.Environment, key.Volume, 8,
+                "owner", CancellationToken.None);
+            Assert.True(schedule.IsCompleted, "A stalled restore blocked schedule changes.");
+            await schedule;
+            var state = service.ReadAsync(key.Project, CancellationToken.None);
+            Assert.True(state.IsCompleted, "A stalled restore blocked state reads.");
+            Assert.Contains((await state)!.Audit, entry => entry.Action == "restore" && entry.Outcome == "started");
+
+            sameVolume = service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+            Assert.False(sameVolume.IsCompleted, "A backup must wait for a restore of the same volume.");
+        }
+        finally { cancellation.Cancel(); }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restore);
+        Assert.NotNull(sameVolume);
+        await sameVolume;
+        var completed = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.Contains(completed.Audit, entry => entry.Action == "restore" && entry.Outcome == "cancelled");
+        Assert.Single(completed.Schedules.Single(item => item.Volume == "logs").Backups);
+    }
+
+    [Fact]
     public void ConsecutiveDeployJobsRetainVolumeIdentityAndDatabaseBinding()
     {
         var (service, repo, _) = Build();
@@ -558,6 +599,29 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             await Task.Delay(Timeout.InfiniteTimeSpan, _clock, cancellationToken);
             return 0;
         }
+    }
+
+    private sealed class BlockingRestoreEngine : IHostedVolumeBackupEngine
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task RestoreEntered => _entered.Task;
+
+        public Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new HostedVolumeBackup(Guid.NewGuid().ToString("N"), key, now, "digest", 0));
+        }
+
+        public Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken)
+        {
+            _entered.TrySetResult();
+            return _never.Task.WaitAsync(cancellationToken);
+        }
+
+        public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
+            CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,

@@ -43,6 +43,9 @@ directory. Each volume retains its 14 newest backup records and archives.
 Archive pruning is retried on the next backup if storage cleanup fails. A
 backup has a 10-minute limit; scheduled backups use at most four concurrent
 operations so a stalled volume does not hold up another project's backup.
+Backup and restore operations serialize per volume. A restore in progress does
+not hold the Studio state lock, so schedules, audit reads, and operations on
+other volumes can continue while the host restores data.
 The app must be quiescent for a consistent backup and restore.
 
 ## Studio HTTP contract
