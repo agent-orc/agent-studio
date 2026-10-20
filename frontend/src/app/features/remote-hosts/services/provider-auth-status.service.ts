@@ -5,8 +5,9 @@ import { NotificationService } from '../../../services/notification.service';
 import {
   providerAuthBadgesForSnapshot,
   type ProviderAuthBadge,
-  type CodexSignInStartResponse,
-  type CodexSignInStatusResponse,
+  type DeviceLoginProvider,
+  type DeviceLoginStartResponse,
+  type DeviceLoginStatusResponse,
   type ClaudeSignInMode,
   type ClaudeSignInStartResponse,
   type ClaudeSignInStatusResponse,
@@ -118,24 +119,25 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  startCodexSignIn(hostId: string): Observable<CodexSignInStartResponse> {
-    if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
-    return this.http.post<CodexSignInStartResponse>(
+  /** The one device sign-in API: the first-run checklist and the Access and Execution Hosts actions call it. */
+  startDeviceLogin(hostId: string, provider: DeviceLoginProvider): Observable<DeviceLoginStartResponse> {
+    if (!this.http) throw new Error('Device sign-in requires the Studio HTTP client.');
+    return this.http.post<DeviceLoginStartResponse>(
       '/api/v1/management/device-logins',
-      { hostId, provider: 'codex' },
+      { hostId, provider },
     );
   }
 
-  codexSignInStatus(handle: string, sessionKey: string): Observable<CodexSignInStatusResponse> {
-    if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
-    return this.http.get<CodexSignInStatusResponse>(
+  deviceLoginStatus(handle: string, sessionKey: string): Observable<DeviceLoginStatusResponse> {
+    if (!this.http) throw new Error('Device sign-in requires the Studio HTTP client.');
+    return this.http.get<DeviceLoginStatusResponse>(
       `/api/v1/management/device-logins/${encodeURIComponent(handle)}`,
       { headers: { 'X-Device-Login-Session': sessionKey } },
     );
   }
 
-  cancelCodexSignIn(handle: string, sessionKey: string): Observable<void> {
-    if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
+  cancelDeviceLogin(handle: string, sessionKey: string): Observable<void> {
+    if (!this.http) throw new Error('Device sign-in requires the Studio HTTP client.');
     return this.http.post<void>(
       `/api/v1/management/device-logins/${encodeURIComponent(handle)}/cancel`,
       {},

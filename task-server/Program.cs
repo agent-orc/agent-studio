@@ -55,7 +55,6 @@ builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationRe
 builder.Services.AddSingleton<TaskServerStore>();
 builder.Services.AddSingleton<DeviceLoginSessions>();
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
-builder.Services.AddSingleton<RunnerDeviceLoginStore>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
@@ -273,7 +272,6 @@ app.MapStudioP2Endpoints();
 // reads a table a P0-P2 bundle already owns.
 app.MapStudioP3AdministrationEndpoints();
 app.MapIdentityBootstrapEndpoints();
-app.MapRunnerDeviceLoginEndpoints();
 app.MapRunnerGitSetupEndpoints();
 app.MapHostJoinTokenEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")

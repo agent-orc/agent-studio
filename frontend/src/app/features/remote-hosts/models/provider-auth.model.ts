@@ -88,7 +88,10 @@ export interface CodexSignInTarget {
   baselineAdvertisedAt: string | null;
 }
 
-export interface CodexSignInStartResponse {
+/** Providers the one Task Server device sign-in service runs on an execution host. */
+export type DeviceLoginProvider = 'codex' | 'claude';
+
+export interface DeviceLoginStartResponse {
   handle: string;
   state: 'queued' | 'running' | 'completed' | 'failed';
   verificationUrl: string | null;
@@ -97,7 +100,7 @@ export interface CodexSignInStartResponse {
   expiresAt: string;
 }
 
-export interface CodexSignInStatusResponse {
+export interface DeviceLoginStatusResponse {
   handle: string;
   state: 'queued' | 'running' | 'completed' | 'failed';
   detail: string | null;

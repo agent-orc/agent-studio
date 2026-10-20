@@ -455,7 +455,6 @@ public sealed class RemoteRunnerDaemon
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(shutdown);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
             new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(shutdown);
-        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log).PollAsync(shutdown);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(shutdown);
         while (!shutdown.IsCancellationRequested)
         {
@@ -948,7 +947,6 @@ public sealed class RemoteRunnerDaemon
         await interactivePoll;
         await decisionPoll;
         await repositoryProbePoll;
-        await deviceLoginPoll;
         await gitSetupPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }

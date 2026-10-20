@@ -1032,34 +1032,6 @@ public sealed class TaskServerClient : IDisposable
                request, ct)
            ?? throw new TaskServerException(500, "Empty repository probe response.");
 
-    public async Task<Contract.RunnerDeviceLoginWork?> ClaimDeviceLoginAsync(
-        string runnerId, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/claim", new { }, ct);
-        if (response.StatusCode == HttpStatusCode.NoContent) return null;
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<Contract.RunnerDeviceLoginWork>(
-            TaskServerContractJson, ct);
-    }
-
-    public async Task ReportDeviceLoginInstructionsAsync(string runnerId, string id,
-        Contract.ReportRunnerDeviceInstructionsRequest request, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/instructions",
-            request, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task ReportDeviceLoginResultAsync(string runnerId, string id, bool verified, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/result",
-            new Contract.ReportRunnerDeviceResultRequest(verified), ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<Contract.RunnerGitSetupWork?> ClaimGitSetupAsync(string runnerId, CancellationToken ct)
     {
         using var response = await _http.PostAsJsonAsync(

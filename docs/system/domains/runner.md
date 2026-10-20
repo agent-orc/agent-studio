@@ -7,20 +7,28 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
-## Host-owned Codex device login
+## Host-owned provider device login
 
-The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
-Codex login session for a registered host. Task Server holds the browser URL and
-one-time code only in memory. A random session key is returned solely to the
-initiating browser session and is required to read or cancel those instructions.
-The runner claims the command through its outbound Task Server channel, holds a
-local provider login lock, starts `codex login --device-auth` in its own service
-account, and reports the URL and
-code without logging them. A changed local `auth.json` and a successful real
-provider probe are required before completion. Terminal results are audited
-with actor, host, provider and outcome, without the code. Timeout and cancel
-clear the instructions. Each runner keeps its own native credential store;
-neither Task Server nor Studio distributes ChatGPT login files.
+One device-login service serves the first-run checklist and the Access and
+Execution Hosts sign-in actions (AGT-3225 merged the AGT-3214 and AGT-3156
+paths). Both surfaces call `/api/v1/management/device-logins`; runners poll
+`/api/v1/runners/{runnerId}/device-login`. `DeviceLoginRouteTests` fails if a
+second device-login route appears. A start creates a 15-minute Codex or Claude
+login session for a registered host, one at a time per host and provider. Task
+Server holds the browser URL and one-time code only in memory. A random session
+key is returned solely to the initiating browser session and is required to
+read or cancel those instructions. A runner on that host claims the command
+through its outbound Task Server channel, holds a local provider login lock and
+starts `codex login --device-auth` or `claude setup-token` in its own service
+account through `DeviceLoginExecutor`, the only device-login launcher. It
+reports the URL and code without logging child output. Completion requires a
+changed credential file and a successful real provider probe: Codex must
+rewrite its `auth.json`; for Claude the runner probes with the new setup token
+and only then replaces its `provider-auth/claude-token` file, which it restores
+into `CLAUDE_CODE_OAUTH_TOKEN` at start. Terminal results are audited with
+actor, host, provider and outcome, without the code. Timeout and cancel clear
+the instructions. Each runner keeps its own native credential store; neither
+Task Server nor Studio distributes ChatGPT login files.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

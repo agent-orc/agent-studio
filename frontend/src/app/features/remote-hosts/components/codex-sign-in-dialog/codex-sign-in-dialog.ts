@@ -4,9 +4,9 @@ import { DialogComponent } from '../../../../components/dialog/dialog.component'
 import { NotificationService } from '../../../../services/notification.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import type {
-  CodexSignInStartResponse,
-  CodexSignInStatusResponse,
   CodexSignInTarget,
+  DeviceLoginStartResponse,
+  DeviceLoginStatusResponse,
 } from '../../models/provider-auth.model';
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ProviderAuthStatusService } from '../../services/provider-auth-status.service';
@@ -30,7 +30,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
 
   readonly request = this.dialog.request;
   readonly phase = signal<CodexSignInPhase>('starting');
-  readonly session = signal<CodexSignInStartResponse | null>(null);
+  readonly session = signal<DeviceLoginStartResponse | null>(null);
   readonly detail = signal('Starting Codex on the execution host…');
   readonly copyLabel = signal('Copy code');
   readonly secondsRemaining = signal(0);
@@ -55,7 +55,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
     const session = this.session();
     const target = this.request();
     if (session && target && this.phase() !== 'verifying')
-      this.providerAuth.cancelCodexSignIn(session.handle, session.sessionKey).subscribe();
+      this.providerAuth.cancelDeviceLogin(session.handle, session.sessionKey).subscribe();
     this.polling?.unsubscribe();
     this.polling = null;
     this.dialog.close();
@@ -81,7 +81,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
     this.copyLabel.set('Copy code');
     this.phase.set('starting');
     this.detail.set(`Starting a host-owned Codex device sign-in on ${request.hostName}…`);
-    this.providerAuth.startCodexSignIn(request.hostId).subscribe({
+    this.providerAuth.startDeviceLogin(request.hostId, 'codex').subscribe({
       next: session => {
         this.session.set(session);
         this.detail.set('Waiting for the execution host to start Codex…');
@@ -91,9 +91,9 @@ export class CodexSignInDialogComponent implements OnDestroy {
     });
   }
 
-  private poll(request: CodexSignInTarget, session: CodexSignInStartResponse): void {
+  private poll(request: CodexSignInTarget, session: DeviceLoginStartResponse): void {
     this.polling = timer(500, 1_000).pipe(
-      switchMap(() => this.providerAuth.codexSignInStatus(session.handle, session.sessionKey)),
+      switchMap(() => this.providerAuth.deviceLoginStatus(session.handle, session.sessionKey)),
       takeWhile(status => status.state === 'queued' || status.state === 'running', true),
     ).subscribe({
       next: status => this.acceptStatus(request, status),
@@ -101,7 +101,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
     });
   }
 
-  private acceptStatus(request: CodexSignInTarget, status: CodexSignInStatusResponse): void {
+  private acceptStatus(request: CodexSignInTarget, status: DeviceLoginStatusResponse): void {
     this.detail.set(status.detail ?? 'Waiting for the execution host…');
     this.secondsRemaining.set(Math.max(0, Math.ceil(
       (new Date(status.expiresAt).getTime() - Date.now()) / 1_000)));
@@ -151,7 +151,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
     const session = this.session();
     const target = this.request();
     if (session && target)
-      this.providerAuth.cancelCodexSignIn(session.handle, session.sessionKey).subscribe();
+      this.providerAuth.cancelDeviceLogin(session.handle, session.sessionKey).subscribe();
     this.session.set(null);
     this.phase.set('failed');
     this.detail.set(detail);

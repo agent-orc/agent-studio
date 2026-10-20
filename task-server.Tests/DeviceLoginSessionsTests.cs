@@ -58,4 +58,103 @@ public sealed class DeviceLoginSessionsTests
         Assert.Equal("timeout", Assert.Single(audit));
         Assert.NotNull(sessions.Start("host-a", "codex", "operator"));
     }
+
+    [Fact]
+    public async Task Runner_claim_and_verified_result_are_bound_to_one_host()
+    {
+        var sessions = Sessions(Clock());
+        var code = new string('A', 4) + "-" + new string('B', 4);
+        var login = sessions.Start("host-a", "codex", "owner");
+        Assert.Null(sessions.Claim("host-b", "runner-b"));
+        Assert.Equal(login.Handle, sessions.Claim("host-a", "runner-a")?.Handle);
+        Assert.False(sessions.Instructions(login.Handle, "runner-b",
+            new DeviceLoginInstructionsRequest("https://auth.openai.com/device", code)));
+        Assert.True(sessions.Instructions(login.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest("https://auth.openai.com/device", code)));
+        Assert.False(await sessions.CompleteAsync(login.Handle, "runner-b",
+            new DeviceLoginCompletionRequest("completed", "Probe succeeded."), default));
+        Assert.True(await sessions.CompleteAsync(login.Handle, "runner-a",
+            new DeviceLoginCompletionRequest("completed", "Probe succeeded."), default));
+        var completed = sessions.Get(login.Handle, login.SessionKey!);
+        Assert.Equal("completed", completed?.State);
+        Assert.Null(completed?.UserCode);
+        Assert.Null(completed?.VerificationUrl);
+    }
+
+    [Theory]
+    [InlineData("codex", "https://evil.example/device")]
+    [InlineData("codex", "https://claude.ai/oauth/authorize")]
+    [InlineData("claude", "https://auth.openai.com/device")]
+    [InlineData("codex", "http://auth.openai.com/device")]
+    [InlineData("codex", "https://auth.openai.com/device#fragment")]
+    public void Rejects_untrusted_or_credential_bearing_urls(string provider, string url)
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", provider, "owner");
+        sessions.Claim("host-a", "runner-a");
+        Assert.Throws<ArgumentException>(() => sessions.Instructions(login.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest(url, "ABCD-EFGH")));
+    }
+
+    [Fact]
+    public void Rejects_urls_with_embedded_credentials()
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", "codex", "owner");
+        sessions.Claim("host-a", "runner-a");
+        var secret = "test-" + new string('x', 24);
+        foreach (var url in new[] {
+            $"https://auth.openai.com/device?token={secret}",
+            $"https://user:{secret}@auth.openai.com/device",
+        })
+            Assert.Throws<ArgumentException>(() => sessions.Instructions(login.Handle, "runner-a",
+                new DeviceLoginInstructionsRequest(url, "ABCD-EFGH")));
+    }
+
+    [Fact]
+    public void Claude_accepts_url_only_instructions_and_codex_requires_a_code()
+    {
+        var sessions = Sessions(Clock());
+        var claude = sessions.Start("host-a", "claude", "owner");
+        var codex = sessions.Start("host-a", "codex", "owner");
+        Assert.Throws<InvalidOperationException>(() => sessions.Start("host-a", "claude", "owner"));
+        Assert.Equal("claude", sessions.Claim("host-a", "runner-a")?.Provider);
+        Assert.Equal("codex", sessions.Claim("host-a", "runner-a")?.Provider);
+        Assert.Throws<ArgumentException>(() => sessions.Instructions(claude.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest("https://claude.ai/oauth/authorize?code=grant-value", null)));
+        Assert.True(sessions.Instructions(claude.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest("https://claude.ai/oauth/authorize?code=true&client_id=studio", null)));
+        Assert.Throws<ArgumentException>(() => sessions.Instructions(codex.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest("https://auth.openai.com/device", null)));
+        var view = sessions.Get(claude.Handle, claude.SessionKey!);
+        Assert.Equal(("host-a", "claude"), (view?.HostId, view?.Provider));
+        Assert.Equal("https://claude.ai/oauth/authorize?code=true&client_id=studio", view?.VerificationUrl);
+        Assert.Throws<ArgumentException>(() => sessions.Start("host-a", "gemini", "owner"));
+    }
+
+    [Fact]
+    public async Task Pending_login_expires_with_injected_clock()
+    {
+        var clock = Clock();
+        var audit = new List<(string Provider, string Result)>();
+        var sessions = new DeviceLoginSessions(clock, (evt, _, _) =>
+        {
+            audit.Add((evt.Provider, evt.Status));
+            return Task.CompletedTask;
+        });
+        var login = sessions.Start("host-a", "claude", "owner");
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Null(sessions.Claim("host-a", "runner-a"));
+        var expired = sessions.Get(login.Handle, login.SessionKey!);
+        Assert.Equal("failed", expired?.State);
+        Assert.Equal("The sign-in timed out.", expired?.Detail);
+        await sessions.SweepAsync(default);
+        Assert.Equal(("claude", "timeout"), Assert.Single(audit));
+    }
+
+    private static DeviceLoginSessions Sessions(ManualTimeProvider clock)
+        => new(clock, (_, _, _) => Task.CompletedTask);
+
+    private static ManualTimeProvider Clock()
+        => new(new DateTimeOffset(2026, 10, 16, 0, 0, 0, TimeSpan.Zero));
 }

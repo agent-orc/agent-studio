@@ -3,10 +3,19 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.TaskServer;
 
-/// <summary>Volatile device instructions. The Task Server persists only the code-free audit.</summary>
+/// <summary>
+/// The single device sign-in service for the first-run checklist and the Access and
+/// Execution Hosts actions. Device instructions are volatile; the Task Server persists
+/// only the code-free audit.
+/// </summary>
 public sealed class DeviceLoginSessions
 {
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
+    private static readonly HashSet<string> SafeQueryKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "client_id", "redirect_uri", "response_type", "scope", "state",
+        "code_challenge", "code_challenge_method",
+    };
     private readonly TimeProvider clock;
     private readonly Func<StudioProviderAuthEventRequest, string, CancellationToken, Task> audit;
     private readonly object _gate = new();
@@ -26,7 +35,7 @@ public sealed class DeviceLoginSessions
 
     public DeviceLoginSessionDto Start(string hostId, string provider, string actor)
     {
-        if (string.IsNullOrWhiteSpace(hostId) || provider != "codex")
+        if (string.IsNullOrWhiteSpace(hostId) || provider is not ("codex" or "claude"))
             throw new ArgumentException("A host and supported provider are required.");
         lock (_gate)
         {
@@ -67,19 +76,28 @@ public sealed class DeviceLoginSessions
         }
     }
 
+    /// <summary>
+    /// Returns false when the session is not running for this runner. Throws
+    /// <see cref="ArgumentException"/> for a URL outside the provider's sign-in origin,
+    /// a URL that could carry a credential, or a malformed code.
+    /// </summary>
     public bool Instructions(string handle, string runnerId, DeviceLoginInstructionsRequest request)
     {
         if (!Uri.TryCreate(request.VerificationUrl, UriKind.Absolute, out var url)
             || url.Scheme != Uri.UriSchemeHttps
-            || url.Host is not ("auth.openai.com" or "login.openai.com")
-            || request.UserCode.Length is < 4 or > 32
-            || request.UserCode.Any(character => !char.IsAsciiLetterUpper(character)
-                && !char.IsAsciiDigit(character) && character != '-')) return false;
+            || url.UserInfo.Length > 0 || url.Fragment.Length > 0 || !SafeQuery(url.Query)
+            || request.UserCode is { } code && (code.Length is < 4 or > 32
+                || code.Any(character => !char.IsAsciiLetterUpper(character)
+                    && !char.IsAsciiDigit(character) && character != '-')))
+            throw new ArgumentException("Device sign-in instructions are invalid.");
         lock (_gate)
         {
             ExpireLocked();
             if (!_sessions.TryGetValue(handle, out var session) || session.RunnerId != runnerId
                 || session.State != "running") return false;
+            if (!ProviderOrigin(session.Provider, url.Host)
+                || session.Provider == "codex" && request.UserCode is null)
+                throw new ArgumentException("Device sign-in instructions are invalid.");
             session.VerificationUrl = request.VerificationUrl;
             session.UserCode = request.UserCode;
             return true;
@@ -165,10 +183,27 @@ public sealed class DeviceLoginSessions
             new StudioProviderAuthEventRequest(session.HostId, session.Provider, result),
             session.Actor, ct);
 
+    private static bool ProviderOrigin(string provider, string host) => provider switch
+    {
+        "codex" => host is "auth.openai.com" or "login.openai.com",
+        "claude" => host is "claude.ai" or "console.anthropic.com",
+        _ => false,
+    };
+
+    private static bool SafeQuery(string query)
+    {
+        if (query.Length > 2048) return false;
+        // Claude's authorize URL carries the flag `code=true`; any other `code` value could be a grant.
+        return query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .All(pair => SafeQueryKeys.Contains(Uri.UnescapeDataString(pair.Split('=', 2)[0]))
+                || string.Equals(pair, "code=true", StringComparison.Ordinal));
+    }
+
     private static DeviceLoginSessionDto View(Session session, bool includeCode)
         => new(session.Handle, session.State, session.ExpiresAt,
             includeCode ? session.VerificationUrl : null,
-            includeCode ? session.UserCode : null, session.Detail);
+            includeCode ? session.UserCode : null, session.Detail,
+            HostId: session.HostId, Provider: session.Provider);
 
     private sealed class Session(string handle, string sessionKey, string hostId,
         string provider, string actor, DateTime expiresAt)

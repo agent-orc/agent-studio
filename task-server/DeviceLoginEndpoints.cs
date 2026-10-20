@@ -2,6 +2,10 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.TaskServer;
 
+/// <summary>
+/// The only device sign-in routes. The first-run checklist and the Access and Execution
+/// Hosts actions use the management group; every runner polls the runner group.
+/// </summary>
 public static class DeviceLoginEndpoints
 {
     public static void MapDeviceLoginEndpoints(this WebApplication app)
@@ -52,7 +56,10 @@ public static class DeviceLoginEndpoints
         });
         runner.MapPost("/{handle}/instructions", (string runnerId, string handle,
             DeviceLoginInstructionsRequest request, DeviceLoginSessions sessions) =>
-            sessions.Instructions(handle, runnerId, request) ? Results.Ok() : Results.Conflict());
+        {
+            try { return sessions.Instructions(handle, runnerId, request) ? Results.Ok() : Results.Conflict(); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-instructions", ex.Message)); }
+        });
         runner.MapPost("/{handle}/completion", async (string runnerId, string handle,
             DeviceLoginCompletionRequest request, DeviceLoginSessions sessions, CancellationToken ct) =>
             await sessions.CompleteAsync(handle, runnerId, request, ct) ? Results.Ok() : Results.Conflict());
