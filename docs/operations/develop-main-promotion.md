@@ -73,12 +73,6 @@ removed before retrying the same marker.
      --tag "release/$(date -u +%Y%m%d-%H%M%SZ)"
    ```
 
-   After any operator candidate push that advances `develop`, open Project
-   Settings and use **Sync checkout** when the observed checkout is behind.
-   The action fetches origin and fast-forwards only a clean checkout. If the
-   checkout is dirty or locked, resolve that condition first. This also applies
-   when a candidate is pushed outside the promotion train.
-
    The command supplies a tagger identity for the annotated marker and does not
    depend on the host's Git identity. Override the defaults when an operator or
    automation-specific identity is required:
@@ -114,6 +108,48 @@ removed before retrying the same marker.
    **Agent Studio was updated – reload to continue** when they next receive an
    API response or reconnect to SignalR. Use Reload in that notice to load the
    new frontend; unsent composer drafts persist per tab.
+
+### Recording verified operator candidates
+
+After any operator candidate push that advances `develop`, open Project
+Settings and use **Sync checkout** when the observed checkout is behind. The
+action fetches origin and fast-forwards only a clean checkout. If the checkout
+is dirty or locked, resolve that condition first. This also applies when a
+candidate is pushed outside the promotion train.
+
+After the verification host passes the full suite and the candidate is
+published to `develop`, record its evidence for every covered card. Use an
+Operator API token with the all-projects (`*`) grant; a coding agent or Runner
+credential cannot post this evidence. The summary file is JSON with the
+published candidate SHA, card keys, verification host, suite commands and
+totals, UTC start and end times, and the verification log path:
+
+```json
+{
+  "candidateSha": "0123456789abcdef0123456789abcdef01234567",
+  "cards": ["AGT-3166", "AGT-3171"],
+  "verificationHost": "gate-host-01",
+  "suites": [
+    {"command": "dotnet test agent-taskboard.sln", "passed": 1200, "failed": 0, "skipped": 4},
+    {"command": "npm --prefix frontend run test:ci", "passed": 230, "failed": 0, "skipped": 0}
+  ],
+  "startedAtUtc": "2026-10-20T09:00:00Z",
+  "endedAtUtc": "2026-10-20T09:40:00Z",
+  "logFile": "verification.log"
+}
+```
+
+```sh
+STUDIO_OPERATOR_TOKEN=<operator-token> python3 scripts/record-operator-candidate.py \
+  verification-summary.json --url https://studio.example --project AGT
+```
+
+The script computes the log SHA-256 and posts the summary. The route checks
+that the candidate is on the published integration branch and that each
+card's reviewed delivery is an ancestor or patch-equivalent. It returns a
+reason for each refused card. Successful card records and their timeline
+audit events are append-only; reposting identical evidence is a no-op. A
+changed summary for the same candidate and delivery is refused.
 
 ### Detached launch
 
