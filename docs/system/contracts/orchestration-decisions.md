@@ -327,8 +327,8 @@ and its stage result (`DecisionReceipt`).
 |---|---|---|---|
 | CreateReview | CodingCompletion | payload lane (Auto Review) | Lane move; a review request creates the review attempt and the review subject |
 | FindingRound, ConcernRound | ReviewReport | Ready | Lane move, keyed continuation prompt, quality-loop timeline receipt |
-| AcceptAndIntegrate | ReviewReport | Human Review | Delivery settlement journal at `IntegrationSettled`, lane move, park verdict |
-| DeferToBatch | ReviewReport | none | Batch admission: ownership and pending record, a per-task gate that settled the card, or an operator-feed reason why none was owed |
+| AcceptAndIntegrate | ReviewReport | Human Review | Delivery settlement journal at `IntegrationSettled`, lane move, park verdict; after an agent round handoff the journal at `LaneSettled` and no lane move |
+| DeferToBatch | ReviewReport | none | Batch admission: ownership and pending record, the per-task gate's keyed lane write to Human Review (`batch-fallback:<review>`) or its escalation after a recorded run with that review's fallback evidence, or an operator-feed reason why none was owed |
 | HumanReview | CodingCompletion, ReviewReport | Human Review | Lane move; a review occurrence records its park verdict |
 | Escalate | CodingCompletion, ReviewReport, GateResult | Escalated | Lane move |
 | ReviewInfrastructureRetry | ReviewReport | none | Scheduled review infrastructure retry; lane kept |
@@ -350,7 +350,16 @@ integration of an accepted or degraded review raised a review-input decision,
 the applier stops before the lane move and the park verdict, which that
 decision owns: the decision then owes its follow-up and settlement journal and
 the `ReviewInputHandoff` (the wait marker names the review-input occurrence, or
-that occurrence was raised for the card while the decision applied).
+that occurrence was raised for the card while the decision applied). When the
+integration ended in `Conflict` or `AgentRoundRequired` and started the
+automatic agent round, `IntegrationAgentRoundService` has already moved the
+card to Ready inside `EnqueueAsync`. The applier reads the card again after the
+integration, finds the round's `integration_recovery_queued` row for the
+reviewed result SHA (the settlement journal must name the review), settles the
+journal to `LaneSettled`, clears the wait marker and completes; a retry finds
+the same handoff before the source-state check. The decision then owes its
+follow-up, journal and the `AgentRoundHandoff`, and the next delivery is
+reviewed again.
 `EngineApplierEffectProbe` reads these effects without writing and without a
 scanner rescan. A lane move counts when the card is in the lane or its
 timeline holds the keyed `LaneChanged` row of the decision, so a card that a
@@ -361,9 +370,13 @@ both.
 The contract tests (`BatchGateEngineApplierContractTests`, partial
 `BatchGatePilotServiceTests`) run the real applier on an engine-completed
 occurrence for every profile action, assert each owed effect directly, and
-check that the probe agrees; the review-input handoff has its own case. The
+check that the probe agrees; the review-input handoff and the agent round
+after a conflict (`AcceptAndIntegrate`, real `IntegrationAgentRoundService`)
+have their own cases, and a retried accept proves the handoff completes. The
 gate case records the handler's dispatch receipt after the applier ran,
-because the test host does not run the review orchestrator.
+because the test host does not run the review orchestrator;
+`ReviewDecisionOrchestratorCompletionGateTests` drives the real gate
+handler's second pass in engine mode and asserts the receipt.
 `EngineApplierContractGuardTests`
 (`Category=Guard`) fails when a transition action has no row, when a row's lane
 differs from the applier's lane rule, or when a profile action has no contract
@@ -382,15 +395,25 @@ The canary rule:
   when the engine completes it, before the applier runs, so a decision that
   never applies is watched too; `engine_rollback` completions do not count.
   Every switch to `canary` or `engine` starts a new watch.
-- `EngineApplierCanaryService` probes each watched decision every five seconds;
-  one decision that fails to probe leaves the others checked and stays
-  unverified. Only a verified row check counts toward the required number. An
-  ask, a checkpoint, a review-input handoff, and a decision whose card a
-  person moved out of the source lane (the applier then refuses it with
-  `orchestration-source-state-mismatch` on purpose) are `not-counted`, and the
-  next engine decision takes their place. When the required decisions show
-  their effects, the canary passes on this instance and a `canary` profile
-  becomes `engine` with an `applier-canary` switch receipt.
+- `EngineApplierCanaryService` probes each watched decision every five
+  seconds. Only a verified row check counts toward the required number. These
+  are `not-counted`, and the next engine decision takes their place:
+  - an ask, a checkpoint, a review-input handoff and an agent round handoff;
+  - a refusal by design: the card left the source lane by a move this
+    decision's write key did not write (a person, a runner, an integration
+    round; the evidence names the actor and the lane-change cause), so the
+    applier refuses it with `orchestration-source-state-mismatch`. A
+    DeferToBatch admission refuses no lane and is exempt;
+  - a passed gate decision whose card left Auto Review, got a pending intent
+    or a new run attempt before the gate handler's next pass, which therefore
+    never records `engine_gate_dispatched`;
+  - a decision the probe fails on: the probe exception is no applier defect,
+    so the operator feed gets an `applier-canary-probe` alert and the profile
+    keeps its state. One failing observation leaves the others checked.
+
+  When the required decisions show their effects, the canary passes on this
+  instance and a `canary` profile becomes `engine` with an `applier-canary`
+  switch receipt.
 - A decision the applier has not completed waits until
   `Orchestration:ApplierCanary:ApplyDeadlineSeconds` (default 10800, three
   hours) after it was observed: AcceptAndIntegrate and DegradeWithFollowUp
@@ -399,6 +422,17 @@ The canary rule:
   must show within `Orchestration:ApplierCanary:WindowSeconds` (default 120)
   after `CompletedAt`; an effect that a later pass writes (the gate dispatch)
   gets the apply deadline after `CompletedAt` instead.
+- Some checks wait on something that is no applier defect (`waitingOn`): an
+  integration in flight (the card's integration lane shows the delivery
+  `enqueued`, `agent-round-re-entry` or `dequeued` since the observation, and
+  no `ready-to-publish` or `ejected` row; the per-project queue is serial and
+  every delivery runs its gate) and a card missing from the scanner snapshot.
+  They wait, and at the apply deadline they are `not-counted`, never missing.
+- Restart safety: after a start the canary judges nothing until the recovery
+  service finished one pass over the applying occurrences
+  (`MonolithOrchestrationStore.ApplyingRecoveryPasses`), and every deadline
+  counts from the later of the observation (or `CompletedAt`) and the process
+  start, so downtime is left out.
 - When a decision misses its deadline, the canary fails, this instance loses
   any earlier pass (a direct switch back to engine needs a new canary), the
   profile rolls back (`rolled-back`, so the monolith decides pending
@@ -424,6 +458,13 @@ Transition decisions panel on the engine settings page shows the same fields
 and offers Start applier canary for a Ready profile; Switch to engine appears
 only after a canary passed on this instance. Force engine (emergency override)
 asks for confirmation before it sends `force-engine`.
+
+The engine batch plan intent is written and taken under one lock, and the
+batch tick claims the intent file by an atomic rename, so a plan the applier
+writes while the tick takes the older one stays for the next tick (or gets a
+`superseded` receipt) and is never deleted unread. Tick receipts in
+`engine-intent-receipts/` are kept for seven days and pruned when a new
+receipt is recorded.
 
 ## Verification and architecture guard
 

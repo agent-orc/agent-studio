@@ -3167,7 +3167,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     // follows review CreatedAt into upcoming ETAs needs it on the test clock,
     // or every ETA lies outside the look-ahead window of the fixed clock.
     private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false,
-        IReadOnlyDictionary<string, string?>? configuration = null)
+        IReadOnlyDictionary<string, string?>? configuration = null, Action<IServiceCollection>? testServices = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -3224,6 +3224,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                     descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationType == typeof(EngineApplierCanaryService)));
             });
+            if (testServices is not null) builder.ConfigureTestServices(testServices);
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
         return factory;

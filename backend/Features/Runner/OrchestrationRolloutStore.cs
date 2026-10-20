@@ -39,8 +39,8 @@ public sealed record OrchestrationCanaryObservation(string Occurrence, string Ac
 /// after a switch, <c>passed</c>, <c>failed</c> (rolled back unless
 /// <paramref name="Override"/>), or <c>stopped</c> by an operator rollback.
 /// An observation is <c>pending</c>, <c>verified</c>, <c>not-counted</c> (an
-/// ask, a checkpoint, a review-input handoff, or a card a person moved), or
-/// <c>missing</c>.
+/// ask, a checkpoint, a handoff, a refusal by design, a failed probe, or a
+/// wait that reached the apply deadline), or <c>missing</c>.
 /// </summary>
 /// <param name="Override">An operator forced the engine; a failed canary alerts but does not roll back.</param>
 public sealed record OrchestrationCanaryStatus(string Status, int Required, int Verified, string InstanceId,

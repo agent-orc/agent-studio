@@ -36,7 +36,10 @@ test('transition profiles show comparison state and require an operator reason',
           applierContract: { status: 'covered', actions: ['Continue', 'ReturnToReady', 'Escalate'], uncovered: [] },
           canary: { status: 'passed', required: 3, verified: 3, instanceId: 'studio/abc123',
             passedOnThisInstance: true },
-          lastEffectCheck: null },
+          lastEffectCheck: { occurrence: 'orch_gate', action: 'Continue', verified: false,
+            missing: ['GateDispatch'], evidence: 'DOC-2 left 4-auto-review for 1-ready.',
+            checkedAt: '2026-10-20T07:00:00Z', basis: 'gate-superseded', completedAt: '2026-10-20T06:59:00Z',
+            awaitingDownstream: true, waitingOn: null } },
       ] });
     } else await route.continue();
   });
@@ -76,6 +79,9 @@ test('transition profiles show comparison state and require an operator reason',
   // A long integration is not a missing effect while the applier still runs.
   await expect(panel.getByTestId('effect-check-CodingCompletion')).toContainText('CreateReview · applier still running');
   await expect(panel.getByTestId('applier-canary-GateResult')).toContainText('passed on this instance');
+  // A gate decision whose card moved on before the dispatch is a refusal by design, not a missing effect.
+  await expect(panel.getByTestId('effect-check-GateResult'))
+    .toContainText('Continue · not counted, card moved on before the gate dispatch');
   await expect(panel.getByTestId('force-engine-GateResult')).toHaveCount(0);
   await panel.getByTestId('transition-rollout-reason').fill('Shadow receipts matched');
   await expect(review.getByRole('button', { name: 'Start applier canary' })).toBeEnabled();

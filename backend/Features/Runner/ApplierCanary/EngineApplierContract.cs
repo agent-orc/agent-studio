@@ -68,6 +68,13 @@ public enum EngineApplierEffectKind
     /// verdict, which that decision owns.
     /// </summary>
     ReviewInputHandoff,
+
+    /// <summary>
+    /// The integration ended in Conflict or AgentRoundRequired and started the
+    /// automatic agent round, which moved the card to Ready; the applier
+    /// settles the journal and owes no lane move and no park verdict.
+    /// </summary>
+    AgentRoundHandoff,
 }
 
 /// <summary>What an effect check verified; only <see cref="Row"/> checks count toward a canary.</summary>
@@ -85,11 +92,39 @@ public static class EngineEffectBasis
     /// <summary>The applier handed the card to a review-input decision.</summary>
     public const string ReviewInputHandoff = "review-input-handoff";
 
+    /// <summary>The integration handed the card to an automatic agent round.</summary>
+    public const string AgentRoundHandoff = "agent-round-handoff";
+
     /// <summary>
-    /// A person moved the card out of the source lane before the applier ran;
-    /// the applier refuses the decision on purpose, so this is no applier defect.
+    /// The card left the source lane by a move this decision's write key did
+    /// not write (a person, a runner, an integration round) before the applier
+    /// completed; the applier refuses the decision on purpose, so this is no
+    /// applier defect.
     /// </summary>
-    public const string ManualMove = "manual-move";
+    public const string SourceExit = "source-exit";
+
+    /// <summary>
+    /// A passed gate's card left Auto Review, got a pending intent or a new
+    /// attempt before the gate handler's next pass, which therefore never
+    /// dispatches this decision's aspect review.
+    /// </summary>
+    public const string GateSuperseded = "gate-superseded";
+
+    /// <summary>The effect probe failed on the decision; the canary alerts and does not count it.</summary>
+    public const string ProbeFailed = "probe-failed";
+
+    /// <summary>The bases that never count toward a canary, whatever the effects show.</summary>
+    public static bool Refused(string basis) => basis is SourceExit or GateSuperseded or ProbeFailed;
+}
+
+/// <summary>Why a check waits on something that is not an applier defect.</summary>
+public static class EngineEffectWait
+{
+    /// <summary>The card of the occurrence is not in the scanner snapshot (a rescan, a move, a restart).</summary>
+    public const string CardNotFound = "card-not-found";
+
+    /// <summary>The integration lane shows this delivery enqueued or dequeued without a terminal event.</summary>
+    public const string IntegrationInFlight = "integration-in-flight";
 }
 
 /// <summary>The effect the applier owes one engine decision action.</summary>
@@ -171,15 +206,18 @@ public static class EngineApplierContract
     /// payload. With <paramref name="reviewInputHandoff"/> the applier stopped
     /// at the review-input decision that holds the card: it owes what it did
     /// before (follow-up, integration journal) and the handoff, and the lane
-    /// move, park verdict and prompts belong to that decision. The effect probe
-    /// and the contract tests both read this.
+    /// move, park verdict and prompts belong to that decision. With
+    /// <paramref name="agentRoundHandoff"/> the integration started an agent
+    /// round, which owns the card in the same way. The effect probe and the
+    /// contract tests both read this.
     /// </summary>
     public static IReadOnlyList<EngineApplierEffectKind> Owed(EngineApplierEffect row, string? lane,
-        bool gateStage, bool reviewPayload, bool reviewRequest, bool reviewInputHandoff = false)
+        bool gateStage, bool reviewPayload, bool reviewRequest, bool reviewInputHandoff = false,
+        bool agentRoundHandoff = false)
         => row.Effects
             .Select(effect => effect == EngineApplierEffectKind.LaneMove && lane is null
                 ? EngineApplierEffectKind.LaneKept : effect)
-            .Where(effect => reviewInputHandoff
+            .Where(effect => reviewInputHandoff || agentRoundHandoff
                 ? effect is EngineApplierEffectKind.LinkedFollowUp or EngineApplierEffectKind.IntegrationJournal
                     or EngineApplierEffectKind.ReviewRetryScheduled or EngineApplierEffectKind.WaitMarkerCleared
                     or EngineApplierEffectKind.DecisionReceipt
@@ -190,7 +228,8 @@ public static class EngineApplierContract
                     EngineApplierEffectKind.ReviewAttempt => lane == TaskStates.AutoReview && reviewRequest,
                     _ => true,
                 })
-            .Concat(reviewInputHandoff ? [EngineApplierEffectKind.ReviewInputHandoff] : [])
+            .Concat(reviewInputHandoff ? [EngineApplierEffectKind.ReviewInputHandoff]
+                : agentRoundHandoff ? [EngineApplierEffectKind.AgentRoundHandoff] : [])
             .Distinct().ToArray();
 
     // CS8524 asks for an arm for unnamed enum values; those cannot come from a

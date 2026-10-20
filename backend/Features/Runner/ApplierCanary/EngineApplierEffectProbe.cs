@@ -16,15 +16,21 @@ namespace AgentStudio.Runner;
 /// Every missing effect is one that a later pass of another loop writes
 /// (<see cref="EngineApplierContract.Downstream"/>).
 /// </param>
+/// <param name="WaitingOn">
+/// One of <see cref="EngineEffectWait"/> when the check waits on something
+/// that is no applier defect; at the apply deadline it is not counted.
+/// </param>
 public sealed record EngineEffectCheck(string Occurrence, string Action, bool Verified,
     IReadOnlyList<string> Missing, string Evidence, DateTime CheckedAt,
-    string Basis = EngineEffectBasis.Row, DateTime? CompletedAt = null, bool AwaitingDownstream = false);
+    string Basis = EngineEffectBasis.Row, DateTime? CompletedAt = null, bool AwaitingDownstream = false,
+    string? WaitingOn = null);
 
 /// <summary>
 /// AGT-3218: reads what an applied engine decision left behind and compares it
 /// with <see cref="EngineApplierContract"/>. It writes nothing, runs no Git,
 /// rescans nothing, and reads the cached card, the attempt authority, the
-/// occurrence journal, the batch queue and a few small card files. The applier
+/// occurrence journal, the batch queue and a few small card files (timeline,
+/// integration lane, settlement journal). The applier
 /// canary calls it for the first engine decisions after a switch; the
 /// contract tests call it after the real applier ran.
 /// </summary>
@@ -40,13 +46,19 @@ public sealed class EngineApplierEffectProbe(
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public EngineEffectCheck Check(MonolithOrchestrationOccurrence occurrence)
+    /// <param name="since">
+    /// When the canary started to watch the decision, or this process started
+    /// when that is later; an integration enqueued before it is not in flight.
+    /// </param>
+    /// <param name="applying">The applier of the occurrence runs in this process right now.</param>
+    public EngineEffectCheck Check(MonolithOrchestrationOccurrence occurrence, DateTime? since = null,
+        bool applying = false)
     {
         var runId = occurrence.Run.RunId;
         var completion = occurrence.Completion;
         var action = occurrence.EngineReceipt?.Action ?? completion?.Action.ToString() ?? "unknown";
         if (occurrence.Run.Status != "completed" || completion is null || occurrence.EngineReceipt is null)
-            return NotApplied(occurrence, action);
+            return NotApplied(occurrence, action, since ?? occurrence.Run.CreatedAt, applying);
         if (occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan)
             return Result(occurrence, EngineApplierContract.BatchPlanAction,
                 BatchPlanStored(occurrence, out var planEvidence) ? [] : [nameof(EngineApplierEffectKind.BatchPlanIntent)],
@@ -58,8 +70,7 @@ public sealed class EngineApplierEffectProbe(
                 EngineEffectBasis.Ask);
 
         var task = Card(occurrence);
-        if (task is null)
-            return Result(occurrence, action, ["card"], "The card of the occurrence was not found.");
+        if (task is null) return CardNotFound(occurrence, action);
         using var output = JsonDocument.Parse(completion.OutputJson);
         var root = output.RootElement;
         if (root.TryGetProperty("activeChoice", out var activeChoice)
@@ -80,52 +91,131 @@ public sealed class EngineApplierEffectProbe(
             payloadRoot.TryGetProperty("targetState", out var target) && target.ValueKind == JsonValueKind.String
                 ? target.GetString() : null,
             completion.Action);
+        // The integration started an agent round, which moved the card to Ready.
+        var agentRound = row.Effects.Contains(EngineApplierEffectKind.IntegrationJournal)
+            ? AgentRound(occurrence, task) : null;
         // The applier stops at a review-input decision only after it chose a lane.
-        var handoff = lane is null ? null : ReviewInputHandoff(occurrence, task);
+        var handoff = lane is null || agentRound is not null ? null : ReviewInputHandoff(occurrence, task);
         var owed = EngineApplierContract.Owed(row, lane,
             occurrence.Run.CurrentStage == OrchestrationStage.GateDispatch,
             payloadRoot.TryGetProperty("reviewOutcome", out _),
             payloadRoot.TryGetProperty("reviewAttemptRequest", out var request)
                 && request.ValueKind == JsonValueKind.Object,
-            handoff is not null);
-        var writeKey = $"engine-decision:{runId}:{completion.IdempotencyKey}";
-        var missing = owed.Where(effect => !Applied(effect, occurrence, task, lane, writeKey, handoff))
+            handoff is not null, agentRound is not null);
+        var writeKey = WriteKey(occurrence);
+        var missing = owed.Where(effect => !Applied(effect, occurrence, task, lane, writeKey, handoff, agentRound))
             .ToArray();
-        return Result(occurrence, row.Action, missing.Select(effect => effect.ToString()).ToArray(),
-            $"{task.Key ?? task.Id} is in {task.State}; owed {string.Join(", ", owed)}"
+        var evidence = $"{task.Key ?? task.Id} is in {task.State}; owed {string.Join(", ", owed)}"
             + (handoff is null ? "" : $"; review-input decision {handoff} holds the card")
-            + (missing.Length == 0 ? "." : $"; missing {string.Join(", ", missing)}."),
-            handoff is null ? EngineEffectBasis.Row : EngineEffectBasis.ReviewInputHandoff,
+            + (agentRound is null ? "" : $"; the integration started an agent round at {agentRound.Ts:u}")
+            + (missing.Length == 0 ? "." : $"; missing {string.Join(", ", missing)}.");
+        if (missing.Contains(EngineApplierEffectKind.GateDispatch) && GateSuperseded(occurrence, task) is { } gone)
+            return Result(occurrence, row.Action, missing.Select(effect => effect.ToString()).ToArray(),
+                $"{evidence} {gone} before the gate handler's next pass, so that pass never dispatches this "
+                + "decision's aspect review; the decision does not count.", EngineEffectBasis.GateSuperseded);
+        return Result(occurrence, row.Action, missing.Select(effect => effect.ToString()).ToArray(), evidence,
+            handoff is not null ? EngineEffectBasis.ReviewInputHandoff
+                : agentRound is not null ? EngineEffectBasis.AgentRoundHandoff : EngineEffectBasis.Row,
             missing.Length > 0 && missing.All(EngineApplierContract.Downstream));
     }
 
     /// <summary>
-    /// An occurrence the applier has not completed. A card that a person moved
-    /// out of the source lane is no applier defect: the applier refuses the
-    /// decision with orchestration-source-state-mismatch on purpose.
+    /// An occurrence the applier has not completed. A card that left the
+    /// source lane by a move this decision did not write is no applier defect:
+    /// the applier refuses the decision with orchestration-source-state-mismatch
+    /// on purpose. An integration in flight and a card missing from the
+    /// snapshot wait; neither is an applier defect either.
     /// </summary>
-    private EngineEffectCheck NotApplied(MonolithOrchestrationOccurrence occurrence, string action)
+    private EngineEffectCheck NotApplied(MonolithOrchestrationOccurrence occurrence, string action,
+        DateTime since, bool applying)
     {
-        var task = occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan ? null : Card(occurrence);
-        if (task is not null && task.State != occurrence.ExpectedSourceState
-            && ManualExit(task, occurrence.ExpectedSourceState) is { } move)
+        var receipt = nameof(EngineApplierEffectKind.DecisionReceipt);
+        if (occurrence.Run.CurrentStage == OrchestrationStage.BatchPlan)
+            return Result(occurrence, action, [receipt], Unapplied(occurrence, applying));
+        var task = Card(occurrence);
+        if (task is null) return CardNotFound(occurrence, action);
+        var key = task.Key ?? task.Id;
+        // A DeferToBatch admission refuses no lane: it records why none was
+        // owed, and its per-task gate moves the card while the applier runs.
+        if (action != nameof(TransitionAction.DeferToBatch) && task.State != occurrence.ExpectedSourceState
+            && SourceExit(task, occurrence) is { } exit)
             return Result(occurrence, action, [],
-                $"{task.Key ?? task.Id} left {occurrence.ExpectedSourceState} for {task.State} by {move.Actor} at "
-                + $"{move.Ts:u} before the applier ran; the applier refuses the source-state mismatch on purpose, "
-                + "so the decision does not count.", EngineEffectBasis.ManualMove);
-        return Result(occurrence, action, [nameof(EngineApplierEffectKind.DecisionReceipt)],
-            $"The occurrence is {occurrence.Run.Status} since {occurrence.Run.UpdatedAt:u}; "
-            + "the applier has not completed it.");
+                $"{key} left {occurrence.ExpectedSourceState} for {task.State} {exit} before the applier "
+                + "completed; the applier refuses the source-state mismatch on purpose, so the decision does "
+                + "not count.", EngineEffectBasis.SourceExit);
+        if (action is nameof(TransitionAction.AcceptAndIntegrate) or nameof(TransitionAction.DegradeWithFollowUp)
+            && IntegrationInFlight(task, since) is { } flight)
+            return Result(occurrence, action, [receipt],
+                $"The integration of {key} is in flight: the lane shows delivery {flight.Sequence} "
+                + $"{flight.Kind} at {flight.AtUtc:u} and no terminal event. The per-project queue is serial "
+                + "and every delivery runs its gate, so the applier completes when it returns.",
+                waitingOn: EngineEffectWait.IntegrationInFlight);
+        return Result(occurrence, action, [receipt], Unapplied(occurrence, applying));
     }
 
-    // The last move out of the source lane, when a person made it.
-    private TimelineEvent? ManualExit(TaskInfo task, string sourceLane)
-        => timeline.ReadAll(task.FolderPath).LastOrDefault(entry => entry.Kind == TimelineEventKinds.LaneChanged
-            && entry.Details?.GetValueOrDefault("from") == sourceLane) is { } exit
-            && TimelineActors.IsHuman(exit.Actor) ? exit : null;
+    private static string Unapplied(MonolithOrchestrationOccurrence occurrence, bool applying)
+        => $"The occurrence is {occurrence.Run.Status} since {occurrence.Run.UpdatedAt:u}; the applier "
+            + (applying ? "is applying it." : "has not completed it.");
+
+    private EngineEffectCheck CardNotFound(MonolithOrchestrationOccurrence occurrence, string action)
+        => Result(occurrence, action, ["card"],
+            $"The card {occurrence.Run.TaskId} is not in the scanner snapshot; the check waits for it.",
+            waitingOn: EngineEffectWait.CardNotFound);
+
+    private static string WriteKey(MonolithOrchestrationOccurrence occurrence)
+        => $"engine-decision:{occurrence.Run.RunId}:{occurrence.Completion?.IdempotencyKey}";
+
+    /// <summary>
+    /// The last move out of the source lane, as evidence, when this decision's
+    /// write key did not write it. A missing ledger row is no write of this
+    /// decision either.
+    /// </summary>
+    private string? SourceExit(TaskInfo task, MonolithOrchestrationOccurrence occurrence)
+    {
+        var exit = timeline.ReadAll(task.FolderPath).LastOrDefault(entry =>
+            entry.Kind == TimelineEventKinds.LaneChanged
+            && entry.Details?.GetValueOrDefault("from") == occurrence.ExpectedSourceState);
+        if (exit is null) return "with no lane ledger row";
+        if (exit.Details?.GetValueOrDefault("idempotencyKey") == WriteKey(occurrence)) return null;
+        var cause = exit.Details?.GetValueOrDefault(LaneChangeCauses.DetailKey);
+        return $"by {exit.Actor}{(string.IsNullOrWhiteSpace(cause) ? "" : $" (cause {cause})")} at {exit.Ts:u}";
+    }
+
+    /// <summary>
+    /// The newest coordinator delivery of the card that was enqueued, re-entered
+    /// or dequeued since <paramref name="since"/> and has no terminal event.
+    /// </summary>
+    private static IntegrationLaneEvent? IntegrationInFlight(TaskInfo task, DateTime since)
+        => IntegrationLaneEvents.Read(task.FolderPath).GroupBy(entry => entry.Sequence)
+            .Where(delivery => !delivery.Any(entry => entry.Kind is "ready-to-publish" or "ejected"))
+            .Select(delivery => delivery.LastOrDefault(entry =>
+                entry.Kind is "enqueued" or "agent-round-re-entry" or "dequeued"
+                && entry.AtUtc.UtcDateTime >= since))
+            .Where(entry => entry is not null)
+            .MaxBy(entry => entry!.Sequence);
+
+    private TimelineEvent? AgentRound(MonolithOrchestrationOccurrence occurrence, TaskInfo task)
+        => authority.GetReview(occurrence.AuthorityAttemptId) is { } review
+            ? IntegrationAgentRoundHandoff.Find(timeline, task.FolderPath, review.AttemptId,
+                review.Subject.ExpectedResultSha)
+            : null;
+
+    /// <summary>Why the gate handler's next pass will not dispatch this gate decision, if it will not.</summary>
+    private string? GateSuperseded(MonolithOrchestrationOccurrence occurrence, TaskInfo task)
+    {
+        var key = task.Key ?? task.Id;
+        if (task.State != occurrence.ExpectedSourceState)
+            return $"{key} left {occurrence.ExpectedSourceState} for {task.State}";
+        if (task.PendingIntent is { } intent)
+            return $"{key} got a pending {intent.Mode} intent ({intent.SavedReason})";
+        var current = authority.GetTaskProjection(key).CurrentRunAttempt?.AttemptId;
+        return current is not null && current != occurrence.AuthorityAttemptId
+            ? $"run attempt {current} replaced the gated attempt {occurrence.AuthorityAttemptId}"
+            : null;
+    }
 
     private bool Applied(EngineApplierEffectKind effect, MonolithOrchestrationOccurrence occurrence,
-        TaskInfo task, string? lane, string writeKey, string? handoff) => effect switch
+        TaskInfo task, string? lane, string writeKey, string? handoff, TimelineEvent? agentRound) => effect switch
     {
         EngineApplierEffectKind.LaneMove => task.State == lane || LaneWrites(task, writeKey)
             .Any(entry => entry.Details?.GetValueOrDefault("to") == lane),
@@ -155,6 +245,7 @@ public sealed class EngineApplierEffectProbe(
         EngineApplierEffectKind.DecisionReceipt => occurrence.EngineReceipt is not null
             && occurrence.Run.StageResults is { Count: > 0 },
         EngineApplierEffectKind.ReviewInputHandoff => handoff is not null,
+        EngineApplierEffectKind.AgentRoundHandoff => agentRound is not null,
         _ => false,
     };
 
@@ -166,16 +257,29 @@ public sealed class EngineApplierEffectProbe(
 
     /// <summary>
     /// The three outcomes of <see cref="EngineBatchAdmission"/>: the queue owns
-    /// the review, the per-task gate settled the card, or the feed records why
-    /// no admission was owed.
+    /// the review, the per-task gate of that review settled the card, or the
+    /// feed records why no admission was owed. A green per-task gate leaves its
+    /// keyed lane write (<c>batch-fallback:&lt;review&gt;</c>) to Human Review;
+    /// a red one escalates after it recorded the run with that review's
+    /// fallback evidence. A card in either lane without them did not get there
+    /// through this admission.
     /// </summary>
     private bool BatchAdmitted(MonolithOrchestrationOccurrence occurrence, TaskInfo task)
-        => batchQueue.ReadPending(occurrence.AuthorityAttemptId) is not null
-            && BatchGateOwnershipStore.Read(task.FolderPath)?.ReviewAttemptId == occurrence.AuthorityAttemptId
-            || task.State is TaskStates.HumanReview or TaskStates.Escalated
-                && occurrence.ExpectedSourceState == TaskStates.AutoReview
-            || operatorLog.Read(task.WatchPath).Any(entry =>
-                entry.Topic == "engine-batch-admission:" + occurrence.Run.RunId);
+    {
+        var review = occurrence.AuthorityAttemptId;
+        if (batchQueue.ReadPending(review) is not null
+            && BatchGateOwnershipStore.Read(task.FolderPath)?.ReviewAttemptId == review) return true;
+        if (operatorLog.Read(task.WatchPath).Any(entry => entry.Topic == "engine-batch-admission:" + occurrence.Run.RunId))
+            return true;
+        var exits = timeline.ReadAll(task.FolderPath).Where(entry => entry.Kind == TimelineEventKinds.LaneChanged
+            && entry.Details?.GetValueOrDefault("from") == TaskStates.AutoReview).ToArray();
+        if (exits.Any(entry => entry.Actor == "batch-fallback:" + review
+                && entry.Details?.GetValueOrDefault("to") == TaskStates.HumanReview)) return true;
+        var evidence = $"batch-fallback-{review}.json";
+        return exits.Any(entry => entry.Details?.GetValueOrDefault("to") == TaskStates.Escalated)
+            && batchQueue.ListExecutions(task.ProjectName).Any(fact =>
+                Path.GetFileName(fact.EvidencePath) == evidence);
+    }
 
     /// <summary>
     /// The durable intent of the plan's scope names the plan, or the batch tick
@@ -245,8 +349,9 @@ public sealed class EngineApplierEffectProbe(
 
     private EngineEffectCheck Result(MonolithOrchestrationOccurrence occurrence, string action,
         IReadOnlyList<string> missing, string evidence, string basis = EngineEffectBasis.Row,
-        bool awaitingDownstream = false)
-        => new(occurrence.Run.RunId, action, missing.Count == 0 && basis != EngineEffectBasis.ManualMove,
+        bool awaitingDownstream = false, string? waitingOn = null)
+        => new(occurrence.Run.RunId, action, missing.Count == 0 && !EngineEffectBasis.Refused(basis),
             missing, evidence, time.GetUtcNow().UtcDateTime, basis,
-            occurrence.Run.Status == "completed" ? occurrence.Run.CompletedAt : null, awaitingDownstream);
+            occurrence.Run.Status == "completed" ? occurrence.Run.CompletedAt : null, awaitingDownstream,
+            waitingOn);
 }

@@ -49,6 +49,7 @@ public sealed class MonolithOrchestrationStore
     private readonly Dictionary<string, MonolithOrchestrationOccurrence> _runs = new(StringComparer.Ordinal);
     private long _nextCreationSequence;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _completionGates = new(StringComparer.Ordinal);
+    private int _applyingRecoveryPasses;
 
     public MonolithOrchestrationStore(IConfiguration configuration, TimeProvider time,
         IMonolithOrchestrationApplier applier, OrchestrationRolloutStore rollout)
@@ -625,6 +626,17 @@ public sealed class MonolithOrchestrationStore
             item.Run.PayloadJson, action, reason, decider);
     }
 
+    /// <summary>
+    /// AGT-3218: recovery passes over applying occurrences that ran to their
+    /// end in this process. The applier canary judges nothing before the first
+    /// one, so a restart does not count as a missing effect.
+    /// </summary>
+    public int ApplyingRecoveryPasses => Volatile.Read(ref _applyingRecoveryPasses);
+
+    /// <summary>True while the applier of the occurrence runs in this process.</summary>
+    public bool IsApplying(string runId)
+        => _completionGates.TryGetValue(runId, out var gate) && gate.CurrentCount == 0;
+
     public async Task RecoverApplyingAsync(CancellationToken ct)
     {
         MonolithOrchestrationOccurrence[] pending;
@@ -637,6 +649,7 @@ public sealed class MonolithOrchestrationStore
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception exception) { failures.Add(exception); }
         }
+        Interlocked.Increment(ref _applyingRecoveryPasses);
         if (failures.Count > 0) throw new AggregateException(
             "One or more orchestration decisions still need application.", failures);
     }

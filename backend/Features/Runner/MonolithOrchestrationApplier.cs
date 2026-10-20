@@ -115,6 +115,14 @@ public sealed class MonolithOrchestrationApplier(
 
         var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
             TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
+        // AGT-3218: a retry after the integration started an agent round finds
+        // the card in Ready; the handoff is the decision's effect, not a mismatch.
+        if (decision?.Action is TransitionAction.AcceptAndIntegrate or TransitionAction.DegradeWithFollowUp
+            && HandedToAgentRound(task, occurrence))
+        {
+            SettleAgentRoundHandoff(task, occurrence);
+            return;
+        }
         // A batch admission has no lane effect. A card outside Auto Review owes
         // none, as in the report path; the admission records the skip.
         if (task.State != occurrence.ExpectedSourceState && task.State != target
@@ -209,6 +217,10 @@ public sealed class MonolithOrchestrationApplier(
                 < RemoteDeliverySettlementStage.IntegrationSettled)
             {
                 var result = await integration.EnqueueAsync(request);
+                // The integration can move the card, an agent round to Ready,
+                // and its folder with it; read the card it left.
+                scanner.InvalidateCache();
+                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 var reviewInputs = services.GetRequiredService<ReviewInputDecisionGateway>();
                 if (reviewInputs.EngineDecides
                     && result.AutomaticRecoveryBudgetUsed is { } used
@@ -239,6 +251,11 @@ public sealed class MonolithOrchestrationApplier(
                 RemoteDeliverySettlementStore.Advance(task.FolderPath,
                     RemoteDeliverySettlementStage.IntegrationSettled,
                     result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
+                if (HandedToAgentRound(task, occurrence))
+                {
+                    SettleAgentRoundHandoff(task, occurrence);
+                    return;
+                }
             }
         }
         if (EngineDecisionWaitMarker.Read(task.FolderPath) is { } waitingRunId
@@ -362,6 +379,23 @@ public sealed class MonolithOrchestrationApplier(
                     ["cause"] = decision.Action == TransitionAction.ConcernRound
                         ? "multi-aspect-concern" : "multi-aspect-block",
                 });
+        scanner.InvalidateCache();
+    }
+
+    private bool HandedToAgentRound(AgentStudio.Shared.TaskInfo task, MonolithOrchestrationOccurrence occurrence)
+        => authority.GetReview(occurrence.AuthorityAttemptId) is { } review
+            && IntegrationAgentRoundHandoff.Find(timeline, task.FolderPath, review.AttemptId,
+                review.Subject.ExpectedResultSha) is not null;
+
+    /// <summary>
+    /// The agent round owns the card now: the delivery left Auto Review, so the
+    /// journal settles and the wait marker clears, as at a review-input handoff.
+    /// </summary>
+    private void SettleAgentRoundHandoff(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence)
+    {
+        RemoteDeliverySettlementStore.Advance(task.FolderPath, RemoteDeliverySettlementStage.LaneSettled);
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         scanner.InvalidateCache();
     }
 

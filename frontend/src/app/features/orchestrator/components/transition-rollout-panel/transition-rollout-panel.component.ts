@@ -44,10 +44,24 @@ interface EffectCheck {
   missing: string[];
   evidence: string;
   checkedAt: string;
-  basis?: 'row' | 'ask' | 'checkpoint' | 'review-input-handoff' | 'manual-move';
+  basis?: 'row' | 'ask' | 'checkpoint' | 'review-input-handoff' | 'agent-round-handoff'
+    | 'source-exit' | 'gate-superseded' | 'probe-failed';
   completedAt?: string | null;
   awaitingDownstream?: boolean;
+  waitingOn?: 'card-not-found' | 'integration-in-flight' | null;
 }
+
+/** Why a check is not counted although it is no applier defect. */
+const REFUSED: Partial<Record<NonNullable<EffectCheck['basis']>, string>> = {
+  'source-exit': 'not counted, card left the source lane',
+  'gate-superseded': 'not counted, card moved on before the gate dispatch',
+  'probe-failed': 'not counted, probe failed',
+};
+
+const WAITS: Record<NonNullable<EffectCheck['waitingOn']>, string> = {
+  'card-not-found': 'waiting for the card',
+  'integration-in-flight': 'integration in flight',
+};
 
 interface CanaryStatus {
   status: 'watching' | 'passed' | 'failed' | 'stopped';
@@ -141,11 +155,16 @@ export class TransitionRolloutPanelComponent implements OnInit {
   }
 
   effectText(check: EffectCheck): string {
-    const result = check.basis === 'manual-move' ? 'not counted, card moved by a person'
-      : check.verified ? (check.basis && check.basis !== 'row' ? `not counted, ${check.basis}` : 'applied')
-      : !check.completedAt && check.missing.includes('DecisionReceipt') ? 'applier still running'
-      : `${check.awaitingDownstream ? 'waiting for' : 'missing'} ${check.missing.join(', ')}`;
-    return `${check.action} · ${result} · ${check.checkedAt.slice(0, 16).replace('T', ' ')} UTC`;
+    return `${check.action} · ${this.effectResult(check)} · ${check.checkedAt.slice(0, 16).replace('T', ' ')} UTC`;
+  }
+
+  private effectResult(check: EffectCheck): string {
+    const refused = check.basis ? REFUSED[check.basis] : undefined;
+    if (refused) return refused;
+    if (check.verified) return check.basis && check.basis !== 'row' ? `not counted, ${check.basis}` : 'applied';
+    if (check.waitingOn) return WAITS[check.waitingOn];
+    if (!check.completedAt && check.missing.includes('DecisionReceipt')) return 'applier still running';
+    return `${check.awaitingDownstream ? 'waiting for' : 'missing'} ${check.missing.join(', ')}`;
   }
 
   async switch(profile: Profile,

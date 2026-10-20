@@ -98,20 +98,38 @@ public sealed class EngineApplierContractGuardTests
             "ReviewInputHandoff"], Owed(TransitionAction.DegradeWithFollowUp));
     }
 
-    public static TheoryData<string, string, bool, bool, int, bool, string> CanaryVerdicts() => new()
+    [Fact]
+    public void An_agent_round_handoff_owes_the_settled_journal_and_no_lane_move()
+        => Assert.Equal(["IntegrationJournal", "WaitMarkerCleared", "DecisionReceipt", "AgentRoundHandoff"],
+            EngineApplierContract.Owed(EngineApplierContract.For(TransitionAction.AcceptAndIntegrate),
+                TaskStates.HumanReview, false, true, false, agentRoundHandoff: true)
+                .Select(effect => effect.ToString()));
+
+    public static TheoryData<string, string, bool, bool, int, bool, string?, string> CanaryVerdicts() => new()
     {
-        // case, basis, verified, completed, minutes since completion (or since the observation), downstream, verdict
-        { "verified row", EngineEffectBasis.Row, true, true, 0, false, "Verified" },
-        { "ask", EngineEffectBasis.Ask, true, true, 0, false, "NotCounted" },
-        { "checkpoint", EngineEffectBasis.Checkpoint, true, true, 0, false, "NotCounted" },
-        { "review-input handoff", EngineEffectBasis.ReviewInputHandoff, true, true, 0, false, "NotCounted" },
-        { "manual move", EngineEffectBasis.ManualMove, false, false, 600, false, "NotCounted" },
-        { "applying within the deadline", EngineEffectBasis.Row, false, false, 170, false, "Waiting" },
-        { "applying past the deadline", EngineEffectBasis.Row, false, false, 180, false, "Missing" },
-        { "completed within the window", EngineEffectBasis.Row, false, true, 1, false, "Waiting" },
-        { "completed past the window", EngineEffectBasis.Row, false, true, 2, false, "Missing" },
-        { "downstream within the deadline", EngineEffectBasis.Row, false, true, 170, true, "Waiting" },
-        { "downstream past the deadline", EngineEffectBasis.Row, false, true, 180, true, "Missing" },
+        // case, basis, verified, completed, minutes since completion (or since the observation), downstream,
+        // waiting on, verdict
+        { "verified row", EngineEffectBasis.Row, true, true, 0, false, null, "Verified" },
+        { "ask", EngineEffectBasis.Ask, true, true, 0, false, null, "NotCounted" },
+        { "checkpoint", EngineEffectBasis.Checkpoint, true, true, 0, false, null, "NotCounted" },
+        { "review-input handoff", EngineEffectBasis.ReviewInputHandoff, true, true, 0, false, null, "NotCounted" },
+        { "agent-round handoff", EngineEffectBasis.AgentRoundHandoff, true, true, 0, false, null, "NotCounted" },
+        { "source exit", EngineEffectBasis.SourceExit, false, false, 600, false, null, "NotCounted" },
+        { "gate superseded", EngineEffectBasis.GateSuperseded, false, true, 600, true, null, "NotCounted" },
+        { "probe failed", EngineEffectBasis.ProbeFailed, false, false, 600, false, null, "NotCounted" },
+        { "applying within the deadline", EngineEffectBasis.Row, false, false, 170, false, null, "Waiting" },
+        { "applying past the deadline", EngineEffectBasis.Row, false, false, 180, false, null, "Missing" },
+        { "integration in flight", EngineEffectBasis.Row, false, false, 170, false,
+            EngineEffectWait.IntegrationInFlight, "Waiting" },
+        { "integration in flight at the deadline", EngineEffectBasis.Row, false, false, 180, false,
+            EngineEffectWait.IntegrationInFlight, "NotCounted" },
+        { "card not found", EngineEffectBasis.Row, false, true, 170, false, EngineEffectWait.CardNotFound, "Waiting" },
+        { "card not found at the deadline", EngineEffectBasis.Row, false, true, 180, false,
+            EngineEffectWait.CardNotFound, "NotCounted" },
+        { "completed within the window", EngineEffectBasis.Row, false, true, 1, false, null, "Waiting" },
+        { "completed past the window", EngineEffectBasis.Row, false, true, 2, false, null, "Missing" },
+        { "downstream within the deadline", EngineEffectBasis.Row, false, true, 170, true, null, "Waiting" },
+        { "downstream past the deadline", EngineEffectBasis.Row, false, true, 180, true, null, "Missing" },
     };
 
     /// <summary>
@@ -123,14 +141,37 @@ public sealed class EngineApplierContractGuardTests
     [Theory]
     [MemberData(nameof(CanaryVerdicts))]
     public void Canary_policy_judges_each_check(string name, string basis, bool verified, bool completed,
-        int minutes, bool downstream, string expected)
+        int minutes, bool downstream, string? waitingOn, string expected)
     {
         var observedAt = new DateTime(2026, 10, 19, 10, 0, 0, DateTimeKind.Utc);
         var completedAt = observedAt.AddHours(1);
         var now = (completed ? completedAt : observedAt).AddMinutes(minutes);
         var check = new EngineEffectCheck("orch_run", "AcceptAndIntegrate", verified,
-            verified ? [] : ["IntegrationJournal"], name, now, basis, completed ? completedAt : null, downstream);
+            verified ? [] : ["IntegrationJournal"], name, now, basis, completed ? completedAt : null, downstream,
+            waitingOn);
         Assert.Equal(Enum.Parse<ApplierCanaryVerdict>(expected), ApplierCanaryPolicy.Judge(check, observedAt, now,
             TimeSpan.FromMinutes(2), TimeSpan.FromHours(3)));
+    }
+
+    /// <summary>
+    /// Downtime is left out: the apply deadline and the effect window start no
+    /// earlier than the process start, so a host that was down for longer than
+    /// the remaining deadline does not roll back at its first check.
+    /// </summary>
+    [Theory]
+    [InlineData(false, 179, "Waiting")]
+    [InlineData(false, 180, "Missing")]
+    [InlineData(true, 1, "Waiting")]
+    [InlineData(true, 2, "Missing")]
+    public void Canary_policy_counts_deadlines_from_the_process_start(bool completed, int minutesSinceStart,
+        string expected)
+    {
+        var observedAt = new DateTime(2026, 10, 19, 10, 0, 0, DateTimeKind.Utc);
+        var startedAt = observedAt.AddHours(5);
+        var now = startedAt.AddMinutes(minutesSinceStart);
+        var check = new EngineEffectCheck("orch_run", "HumanReview", false, ["LaneMove"], "restart", now,
+            CompletedAt: completed ? observedAt.AddMinutes(1) : null);
+        Assert.Equal(Enum.Parse<ApplierCanaryVerdict>(expected), ApplierCanaryPolicy.Judge(check, observedAt, now,
+            TimeSpan.FromMinutes(2), TimeSpan.FromHours(3), startedAt));
     }
 }
