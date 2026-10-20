@@ -42,7 +42,8 @@ public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, 
         return new HostAdmissionReading(identity.Id, identity.DisplayName,
             identity.RunnerDesiredMaxParallelism ?? identity.RunnerEffectiveMaxParallelism,
             last?.CpuCores ?? 0, last?.Load1, last?.CpuPercent, memory, target, last?.ActiveSlots ?? 0,
-            last is null ? null : PerCore(last), calmSince);
+            last is null ? null : PerCore(last), calmSince, last?.Timestamp,
+            last is null ? null : (last.SwapInBytesPerSecond ?? 0) + (last.SwapOutBytesPerSecond ?? 0));
     }
 
     public int? SetAdmission(string clientId, int maxParallelism)
@@ -52,6 +53,10 @@ public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, 
         clients.SetRunnerCapacity(identity.Id, maxParallelism, null, null);
         return clients.Find(identity.Id)?.RunnerDesiredMaxParallelism;
     }
+
+    public bool TrySetAdmission(string clientId, int expected, int replacement)
+        => Find(clientId) is { } identity
+            && clients.TrySetRunnerCapacity(identity.Id, expected, replacement);
 
     private ClientIdentity? Find(string clientId)
         => clients.Find(clientId) is { } identity && identity.Kind != ClientIdentityKind.Retired ? identity : null;
@@ -78,11 +83,17 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
             case "review":
                 var snapshots = registry.ListCapabilitySnapshots().Where(item => item.HostId == host).ToArray();
                 if (snapshots.Length == 0) return null;
-                int? busy = snapshots.All(item => item.Telemetry is not null)
+                int? busy = snapshots.All(item => item.Telemetry is { } sample
+                    && sample.ObservedAt <= nowUtc
+                    && nowUtc - sample.ObservedAt <= TimeSpan.FromMinutes(10))
                     ? snapshots.Sum(item => item.Telemetry!.ActiveSlots) : null;
+                // The slot advertisement can say zero after an attempt acquired a lease.
+                // Authority is the current owner of running review work.
+                var leased = attempts.ListActiveReviewAttempts().Any(attempt =>
+                    attempt.Lease?.HostId == host);
                 var claimable = attempts.ListPendingReviewAttempts()
                     .Count(attempt => snapshots.Any(snapshot => OperationalStallProbe.CanClaim(registry, snapshot, attempt)));
-                return new ServiceWorkloadReading(busy, false, claimable);
+                return new ServiceWorkloadReading(busy, leased, claimable);
             case "gate":
                 var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
                 if (string.IsNullOrWhiteSpace(gateHost) || !string.Equals(gateHost, host, StringComparison.OrdinalIgnoreCase))

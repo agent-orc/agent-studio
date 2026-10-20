@@ -16,7 +16,9 @@ public sealed record HostAdmissionReading(
     double TargetPercent,
     int ActiveSlots,
     double? LoadPerCore,
-    DateTime? CalmSinceUtc);
+    DateTime? CalmSinceUtc,
+    DateTime? SampleUtc = null,
+    double? SwapBytesPerSecond = null);
 
 /// <summary>
 /// Coding host admission (Settings &gt; Capacity), addressed by the host's
@@ -28,6 +30,9 @@ public interface IHostAdmissionControl
 
     /// <summary>Sets the host's maximum parallel runs and returns the value read back afterwards.</summary>
     int? SetAdmission(string clientId, int maxParallelism);
+
+    /// <summary>Changes admission only while it still equals the value set by this intervention.</summary>
+    bool TrySetAdmission(string clientId, int expected, int replacement);
 }
 
 /// <summary>

@@ -63,10 +63,15 @@ public static class WatcherEndpoints
 
         // AGT-3207: AI Operator interventions on stall events, newest first.
         // The host view, the stall list and the card detail read the receipts here.
-        group.MapGet("/interventions", (StallInterventionStore store, StallInterventionService service,
+        group.MapGet("/interventions", (HttpContext context, ProjectRegistry projects,
+            StallInterventionStore store, StallInterventionService service,
             string? subject, string? card, int? limit) =>
         {
+            bool Allowed(string? project) => project is not null
+                && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+                    || ProjectAccessAuthorization.Allows(human.User, project, projects));
             var records = store.All()
+                .Where(item => Allowed(item.Project))
                 .Where(item => string.IsNullOrWhiteSpace(subject) || item.Subject == subject
                     || item.Host == subject)
                 .Where(item => string.IsNullOrWhiteSpace(card) || item.AffectedCards.Contains(card, StringComparer.OrdinalIgnoreCase)
@@ -90,11 +95,17 @@ public static class WatcherEndpoints
                     headline = StallInterventionReceipts.Headline(item),
                 })
                 .ToArray();
-            return Results.Ok(new { count = records.Length, interventions = records, decisions = service.LatestDecisions() });
+            return Results.Ok(new { count = records.Length, interventions = records,
+                decisions = service.LatestDecisions().Where(item => Allowed(item.Project)).ToArray() });
         });
 
-        group.MapPost("/interventions/{id}/undo", (string id, HttpContext context, StallInterventionService service) =>
+        group.MapPost("/interventions/{id}/undo", (string id, HttpContext context,
+            ProjectRegistry projects, StallInterventionStore store, StallInterventionService service) =>
         {
+            var record = store.Find(id);
+            if (record is null || context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal
+                && !ProjectAccessAuthorization.Allows(principal.User, record.Project, projects))
+                return Results.NotFound(new { error = "intervention-not-found" });
             var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? human.User.Username : context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "operator";
             var result = service.Undo(id, actor);

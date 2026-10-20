@@ -138,7 +138,7 @@ public sealed class StallInterventionService(
         // nothing and is never sent to the engine.
         var decision = decisions.EngineDecides ? decisions.Preview(payload) : decisions.Submit(request).MonolithDecision!;
         _latest[stall.Subject] = new StallInterventionDecisionView(stall.Subject, stall.Kind,
-            decision.Disposition.ToString(), decision.Effect, decision.ReasonCode, decision.Detail, now);
+            decision.Disposition.ToString(), decision.Effect, decision.ReasonCode, decision.Detail, now, project);
         if (decision.Disposition == AiOperatorDisposition.Hold) return new Outcome(false, false, true);
         var action = decision.Intervention?.Action ?? decision.Effect;
         var writeKey = StallInterventionEffect.WriteKey(stall, action,

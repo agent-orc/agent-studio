@@ -2149,9 +2149,9 @@ Proposals and escalations are recorded in every mode except `off`.
 
 | Stall | Intervention | Class | Effect measured afterwards |
 |---|---|---|---|
-| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter of the person's baseline (8 to 6), floor `MinAdmission` (1). The host is addressed by its client identity id (`clientId` on the case), never by display name. An admission the AI Operator already lowered is never lowered again: a new episode becomes a proposal | A1 | The identity store reads the new value back |
+| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter of the person's baseline (8 to 6), floor `MinAdmission` (1), only when telemetry from the last 10 minutes still shows overload or memory pressure. The host is addressed by its client identity id (`clientId` on the case), never by display name. An admission the AI Operator already lowered is never lowered again: a new episode becomes a proposal | A1 | The identity store reads the new value back |
 | Load back after a lowering | Restore the baseline once the load per core stayed under target x `RestoreBelowTargetFraction` (0.8) for `CalmMinutesBeforeRestore` (15). This also runs for a reduction whose follow-up already escalated, as long as the live admission still reads the lowered value; a value a person changed is never restored over | A1 | Same |
-| `host-offline`, `idle-capacity` of a review daemon | Restart the allowlisted service through the Operations Server (`service.restart`), only while it runs no work (busy slots 0, no active batch or per-task gate) and some waiting item is claimable by that worker | A1 | The Operations Server attempt reports `restarted` |
+| `host-offline`, `idle-capacity` of a review daemon | Restart the allowlisted service through the Operations Server (`service.restart`), only while fresh slot telemetry reports 0 busy, the attempt authority has no active host-owned review lease, no batch or per-task gate runs, and some waiting item is claimable by that worker | A1 | The Operations Server attempt reports `restarted` |
 | The same with running or unknown work, or nothing claimable (pending batch gate members wait for the batch plan, not for the gate worker) | Proposal to restart once the work finished or to check the worker | A2 | None |
 | Gate host reports every slot busy while this Studio holds none and runs no batch or per-task gate (orphaned gate workers after a Studio restart) | Proposal to stop the orphaned workers (`propose-release-gate-slots`; the automatic release is AGT-3237) | A2 | None |
 | `provider-auth-invalid` on a review host with healthy hosts | Route the provider away from the host until its login works again, and propose the renewal | A1 + A2 | The review registry no longer admits `provider-auth:<provider>` on the host |
@@ -2180,6 +2180,9 @@ second pending intervention on the subject and compares the live value
 (admission, route, the worker's running work) with the plan's before-value; on
 a mismatch it records `superseded` and does nothing. Cards and gate members are
 re-checked at apply time as well.
+An admission reduction also checks fresh overload or memory pressure immediately
+before the side effect. The restart path re-reads slot telemetry and active
+review leases immediately before recreating the container.
 
 An action whose effect cannot be measured right after it ran is escalated at
 once and not reported as done; an admission change, a reroute or a pinned base
@@ -2207,6 +2210,10 @@ claim refusal; a case in `decision-required` belongs to a person and is left
 alone. `POST /api/watcher/interventions/{id}/undo` reverts an admission change
 (also an escalated one that is still in force), a reroute or a pinned base; a
 restart, a gate reconciliation and an escalation have nothing to undo.
+Admission Undo uses an atomic compare-and-set against the AI-set value, so a
+later change by a person stays in force. The intervention list and decision
+views include only projects assigned to the signed-in account; an Undo for
+another project's receipt returns not found.
 
 Restarts need `Operations:Url`, `Operations:ServiceTokenFile` (a service
 principal with `service.restart`, `maintenance.execute` and `operations.read`),

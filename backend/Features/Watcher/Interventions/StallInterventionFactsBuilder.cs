@@ -14,8 +14,25 @@ public sealed partial class StallInterventionFactsBuilder(
     IServiceWorkload workloads,
     IProviderRouteControl routes,
     IBatchGateControl gate,
-    IContinuationControl continuations)
+    IContinuationControl continuations,
+    IConfiguration configuration)
 {
+    public static readonly TimeSpan TelemetryFreshness = TimeSpan.FromMinutes(10);
+
+    public static bool IsCurrentPressure(string kind, HostAdmissionReading? reading,
+        DateTime nowUtc, OperationalStallThresholds thresholds)
+    {
+        if (reading?.SampleUtc is not { } sampled || sampled > nowUtc
+            || nowUtc - sampled > TelemetryFreshness) return false;
+        return kind switch
+        {
+            StallKinds.HostOverload => reading.CpuPercent > reading.TargetPercent
+                || reading.LoadPerCore * 100 > reading.TargetPercent,
+            StallKinds.MemoryPressure => reading.MemoryUsedPercent > thresholds.MemoryUsedPercent
+                || reading.SwapBytesPerSecond > thresholds.SwapBytesPerSecond,
+            _ => false,
+        };
+    }
     public static string? KindOf(WatcherCase item) => item.LastDetails.GetValueOrDefault("stallKind");
 
     /// <summary>The stall is still there, whether or not a person was asked to decide it.</summary>
@@ -153,12 +170,14 @@ public sealed partial class StallInterventionFactsBuilder(
     /// detail); without one the host has no admission control. A reduction of
     /// the AI Operator that is still in force names the person's baseline.
     /// </summary>
-    private StallHostFacts HostFacts(WatcherCase item, string host, IReadOnlyList<StallInterventionRecord> records,
+    private StallHostFacts? HostFacts(WatcherCase item, string host, IReadOnlyList<StallInterventionRecord> records,
         StallInterventionOptions options, DateTime nowUtc)
     {
         var clientId = item.LastDetails.GetValueOrDefault("clientId");
         var reading = string.IsNullOrWhiteSpace(clientId) ? null
             : admission.Read(clientId, options.Limits.RestoreBelowTargetFraction, nowUtc);
+        if (!IsCurrentPressure(KindOf(item) ?? string.Empty, reading, nowUtc,
+            WatcherOptions.FromConfiguration(configuration).OperationalThresholds)) return null;
         double? Detail(string key) => item.LastDetails.TryGetValue(key, out var value)
             && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) ? number : null;
         var target = reading?.TargetPercent ?? Detail("targetPercent") ?? 85;

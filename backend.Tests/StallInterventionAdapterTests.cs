@@ -76,6 +76,10 @@ public sealed class StallInterventionAdapterTests : IDisposable
         Assert.Null(control.SetAdmission("KORI Runner 01", 4));
         Assert.Equal(6, control.SetAdmission(runner.Id, 6));
         Assert.Equal(6, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
+        Assert.False(control.TrySetAdmission(runner.Id, 8, 4));
+        Assert.Equal(6, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
+        Assert.True(control.TrySetAdmission(runner.Id, 6, 8));
+        Assert.Equal(8, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
     }
 
     [Fact]
@@ -104,6 +108,34 @@ public sealed class StallInterventionAdapterTests : IDisposable
         control.Restore("kori-review-01", "codex");
         Assert.False(control.IsRerouted("kori-review-01", "codex"));
         Assert.Contains("provider-auth:codex", registry.AdmittedReviewCapabilities("kori-review-01-runner", "kori-review-01:1"));
+    }
+
+    [Fact]
+    public void Review_restart_reader_sees_a_lease_started_after_the_last_zero_slot_sample()
+    {
+        var registry = new V1ReviewExecutorRegistry(_clock);
+        Register(registry, "kori-review-01");
+        registry.AdvertiseCapabilities("kori-review-01-runner", new Contract.CapabilityAdvertisementRequest(
+            "kori-review-01-runner", "kori-review-01:1", Contract.CapabilityProtocol.CurrentSchemaVersion,
+            Now, 900, 1,
+            [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.ReviewExecutor, "executor")],
+            new Contract.HostTelemetrySnapshotDto(Now, 0, 0, 0, 0, null, null, null, null,
+                null, null, 12, 0)));
+        var authority = Authority();
+        var run = Deliver(authority, "AGT-9201", reviewed: false);
+        var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest("AGT-9201", RepositoryId,
+            ResultSha, run.AttemptId, "requirements", "policy", [], "create-AGT-9201")).ReviewAttempt!;
+        authority.ClaimReview(review.AttemptId, "kori-review-01-runner", "kori-review-01", 3600,
+            "claim-AGT-9201");
+        var reader = new ServiceWorkloadReader(registry, authority, new BatchGateStore(Path.Combine(_root, "gates")),
+            new GateSlotUsageTracker(_configuration, _clock), _configuration);
+
+        var reading = reader.Read("kori-review-01", "review", Now);
+
+        Assert.Equal(0, reading!.BusySlots);
+        Assert.True(reading.RunningWork);
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        Assert.Null(reader.Read("kori-review-01", "review", Now)!.BusySlots);
     }
 
     [Fact]

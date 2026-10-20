@@ -162,4 +162,4 @@ public sealed record StallInterventionOptions
 
 /// <summary>The latest decision per subject, including holds, for the Studio view.</summary>
 public sealed record StallInterventionDecisionView(string Subject, string Kind, string Disposition,
-    string Action, string ReasonCode, string Detail, DateTime DecidedAtUtc);
+    string Action, string ReasonCode, string Detail, DateTime DecidedAtUtc, string? Project = null);

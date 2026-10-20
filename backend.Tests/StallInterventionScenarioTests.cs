@@ -578,6 +578,54 @@ public sealed class StallInterventionScenarioTests : IDisposable
         Assert.Contains("Superseded by a person: the admission of agent-runner-01 reads 5, the plan expected 8", record.Outcome);
     }
 
+    [Theory]
+    [InlineData(11, 46.7)]
+    [InlineData(0, 2.0)]
+    public async Task Persisted_overload_case_needs_fresh_current_pressure_before_lowering(int sampleAgeMinutes, double load)
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, load, 95,
+            SampleUtc: _h.Now.AddMinutes(-sampleAgeMinutes));
+        _h.Raise(Overload());
+
+        await _h.Service.RunOnceAsync();
+
+        Assert.Empty(_h.Admission.Writes);
+        Assert.DoesNotContain(_h.Store.All(), item => item.Action == StallInterventionActions.LowerAdmission);
+    }
+
+    [Fact]
+    public async Task Pressure_that_clears_after_decision_supersedes_the_admission_change()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        var stall = Facts().Stall(_h.Cases.All(_h.Root).Single(), _h.Cases.All(_h.Root).ToArray(), [],
+            StallInterventionOptions.FromConfiguration(_h.Configuration), _h.Now);
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with
+        { SampleUtc = _h.Now.AddMinutes(-11) };
+
+        await _h.Effect.ApplyAsync(Application(stall, "engine-run-stale"), default);
+
+        Assert.Empty(_h.Admission.Writes);
+        Assert.Equal(StallInterventionStatuses.Superseded, Assert.Single(_h.Store.All()).Status);
+    }
+
+    [Fact]
+    public async Task Undo_preserves_a_later_human_capacity_change()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        await _h.Service.RunOnceAsync();
+        var lowered = Assert.Single(_h.Store.All());
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with { Admission = 5 };
+
+        var undo = _h.Service.Undo(lowered.Id, "robert");
+
+        Assert.False(undo.Undone);
+        Assert.Equal(5, _h.Admission.Hosts[ClientId].Admission);
+        Assert.Single(_h.Admission.Writes);
+        Assert.Null(_h.Store.Find(lowered.Id)!.UndoneAtUtc);
+    }
+
     [Fact]
     public async Task Observe_mode_is_the_default_and_writes_one_would_do_receipt_without_acting()
     {
@@ -659,7 +707,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     private StallInterventionFactsBuilder Facts()
-        => new(_h.Admission, _h.Restarts, _h.Workload, _h.Routes, _h.Gate, _h.Continuations);
+        => new(_h.Admission, _h.Restarts, _h.Workload, _h.Routes, _h.Gate, _h.Continuations, _h.Configuration);
 
     /// <summary>An engine receipt for the frozen facts: the engine runs the same decision library.</summary>
     private static AiOperatorApplication Application(StallInterventionFacts facts, string runId)
@@ -735,7 +783,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
             var projector = new WatcherActivityProjector(Log, scanner, configuration, NullLogger<WatcherActivityProjector>.Instance);
             var receipts = new StallInterventionReceipts(Log, projector, scanner, new TimelineLog(NullLogger<TimelineLog>.Instance),
                 NullLogger<StallInterventionReceipts>.Instance);
-            var facts = new StallInterventionFactsBuilder(Admission, Restarts, Workload, Routes, Gate, Continuations);
+            var facts = new StallInterventionFactsBuilder(Admission, Restarts, Workload, Routes, Gate, Continuations, configuration);
             var effect = new StallInterventionEffect(Store, Cases, facts, Admission, Restarts, Workload, Routes, Gate,
                 Continuations, receipts, configuration, Clock, NullLogger<StallInterventionEffect>.Instance);
             return (new StallInterventionService(Store, Cases, facts, effect,
@@ -789,7 +837,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     private sealed record HostState(int Admission, int Cores, double Load1, double Target, DateTime? CalmSince = null,
-        int? ActiveSlots = null);
+        int? ActiveSlots = null, DateTime? SampleUtc = null);
 
     /// <summary>Hosts keyed by client identity id; the display name is <see cref="HostName"/>.</summary>
     private sealed class FakeAdmission : IHostAdmissionControl
@@ -803,8 +851,14 @@ public sealed class StallInterventionScenarioTests : IDisposable
         public HostAdmissionReading? Read(string clientId, double restoreFraction, DateTime nowUtc)
             => Hosts.TryGetValue(clientId, out var state)
                 ? new HostAdmissionReading(clientId, HostName, state.Admission, state.Cores, state.Load1, null, null, state.Target,
-                    state.ActiveSlots ?? state.Admission, state.Load1 / state.Cores, state.CalmSince)
+                    state.ActiveSlots ?? state.Admission, state.Load1 / state.Cores, state.CalmSince, state.SampleUtc ?? nowUtc)
                 : null;
+
+        public bool TrySetAdmission(string clientId, int expected, int replacement)
+        {
+            if (!Hosts.TryGetValue(clientId, out var state) || state.Admission != expected) return false;
+            return SetAdmission(clientId, replacement) == replacement;
+        }
 
         public int? SetAdmission(string clientId, int maxParallelism)
         {

@@ -157,7 +157,9 @@ public sealed class StallInterventionEffect(
                 ResolvedAtUtc = now,
                 FollowUpDueUtc = null,
                 EffectEvidence = mismatch,
-                Outcome = $"Superseded by a person: {mismatch}. I did not act.",
+                Outcome = mismatch.StartsWith("the overload or memory pressure", StringComparison.Ordinal)
+                    ? $"Superseded: {mismatch}. I did not act."
+                    : $"Superseded by a person: {mismatch}. I did not act.",
             };
             store.Save(superseded);
             if (original is not null) Settle(original, superseded, now);
@@ -264,10 +266,12 @@ public sealed class StallInterventionEffect(
         switch (record.Action)
         {
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
-                if (record.HostClientId is not { } clientId || record.PreviousAdmission is not { } previousAdmission)
+                if (record.HostClientId is not { } clientId || record.PreviousAdmission is not { } previousAdmission
+                    || record.TargetAdmission is not { } aiAdmission)
                     return new(false, "intervention-not-undoable", record);
-                var value = admission.SetAdmission(clientId, previousAdmission);
-                undone = value == previousAdmission;
+                undone = admission.TrySetAdmission(clientId, aiAdmission, previousAdmission);
+                var value = admission.Read(clientId, StallInterventionOptions.FromConfiguration(configuration)
+                    .Limits.RestoreBelowTargetFraction, now)?.Admission;
                 evidence = $"admission of {record.Host} reads {value?.ToString() ?? "unknown"}";
                 break;
             case StallInterventionActions.RerouteProvider:
@@ -328,7 +332,12 @@ public sealed class StallInterventionEffect(
         {
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
                 if (record.HostClientId is not { } clientId) return "the host has no client identity to set the admission on";
-                var live = admission.Read(clientId, options.Limits.RestoreBelowTargetFraction, now)?.Admission;
+                var reading = admission.Read(clientId, options.Limits.RestoreBelowTargetFraction, now);
+                if (record.Action == StallInterventionActions.LowerAdmission
+                    && !StallInterventionFactsBuilder.IsCurrentPressure(record.Kind, reading, now,
+                        WatcherOptions.FromConfiguration(configuration).OperationalThresholds))
+                    return "the overload or memory pressure has no fresh confirming telemetry";
+                var live = reading?.Admission;
                 return live == record.PreviousAdmission ? null
                     : $"the admission of {record.Host} reads {live?.ToString() ?? "unknown"}, the plan expected {record.PreviousAdmission}";
             case StallInterventionActions.RerouteProvider:
@@ -353,10 +362,14 @@ public sealed class StallInterventionEffect(
         switch (record.Action)
         {
             case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
+                if (record.Action == StallInterventionActions.LowerAdmission && LiveMismatch(record) is { } admissionMismatch)
+                    return Superseded(record, now, admissionMismatch);
                 admission.SetAdmission(record.HostClientId!, record.TargetAdmission
                     ?? throw new InvalidDataException("The admission plan has no target."));
                 break;
             case StallInterventionActions.RestartService or StallInterventionActions.RetryEngineStart:
+                if (record.Action == StallInterventionActions.RestartService && LiveMismatch(record) is { } restartMismatch)
+                    return Superseded(record, now, restartMismatch);
                 var outcome = await restarts.RestartAsync(record.Host, record.Service ?? "unknown", record.WriteKey, record.Done, ct);
                 record = record with { EffectObserved = outcome.Succeeded, EffectEvidence = outcome.Evidence };
                 break;

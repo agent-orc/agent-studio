@@ -510,6 +510,19 @@ public class ClientIdentityStore
         }
     }
 
+    /// <summary>Atomically restore capacity only if nobody changed the AI-set value.</summary>
+    public bool TrySetRunnerCapacity(string id, int expected, int replacement)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (!_byId.TryGetValue(id, out var existing)
+                || existing.Kind == ClientIdentityKind.Retired
+                || existing.RunnerDesiredMaxParallelism != expected) return false;
+            return SetRunnerCapacity(id, replacement, null, null)?.RunnerDesiredMaxParallelism == replacement;
+        }
+    }
+
     private static int? PositiveCeiling(int? value)
         => value is > 0 ? HostCapacityPolicy.ClampCeiling(value.Value) : null;
 
