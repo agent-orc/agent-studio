@@ -47,6 +47,7 @@ export interface ProjectEnvironmentDeclaration {
   destination: string;
   containerPort: number;
   healthUrl: string | null;
+  healthChecks?: { id: string }[];
   approval: 'person' | 'stage-healthy-10m';
   secretRefs: string[];
 }
