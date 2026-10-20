@@ -170,6 +170,10 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         repeated.EnsureSuccessStatusCode();
         using var replay = JsonDocument.Parse(await repeated.Content.ReadAsStringAsync());
         Assert.Equal("Already recorded.", replay.RootElement.GetProperty("results")[0].GetProperty("reason").GetString());
+        string originalActor;
+        using (var beforeReplay = JsonDocument.Parse(File.ReadAllText(Path.Combine(cardFolder, "task.json"))))
+            originalActor = beforeReplay.RootElement.GetProperty("integrationRecords")[0]
+                .GetProperty("actor").GetString()!;
         var secondOperator = store.CreateUser(new CreateUserRequest(
             "candidate.reviewer", "Candidate reviewer", StudioRoles.Operator, ["*"],
             "temporary candidate phrase!"));
@@ -199,12 +203,12 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         Assert.Equal(candidate, record.GetProperty("integrationSha").GetString());
         Assert.Equal(delivery, record.GetProperty("sourceSha").GetString());
         Assert.Equal("gate-host", record.GetProperty("verificationHost").GetString());
-        Assert.Equal(TimelineActors.Human(owner.User.Id), record.GetProperty("actor").GetString());
+        Assert.Equal(originalActor, record.GetProperty("actor").GetString());
         Assert.False(factory.Services.GetRequiredService<TaskMutationService>()
             .RemoveIntegrationRecordOnFolder(cardFolder, record.GetProperty("id").GetString()!));
         var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder);
         Assert.Single(timeline, item => item.Details?.GetValueOrDefault("recordId") == record.GetProperty("id").GetString());
-        Assert.Equal(TimelineActors.Human(owner.User.Id), Assert.Single(timeline,
+        Assert.Equal(originalActor, Assert.Single(timeline,
             item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded).Actor);
         File.Delete(Path.Combine(cardFolder, "logs", "timeline.jsonl"));
         var auditRepair = factory.Services.GetRequiredService<OperatorCandidateAuditRepair>();

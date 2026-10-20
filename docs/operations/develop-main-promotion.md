@@ -149,14 +149,16 @@ that origin can be fetched and the candidate is an ancestor of the refreshed
 published integration branch. It checks that each
 card's reviewed delivery is an ancestor or patch-equivalent. It returns a
 reason for each refused card. Successful card records and their timeline
-audit events are append-only; reposting identical evidence is a no-op. A
-changed summary for the same candidate and delivery is refused, including
-when two posts race. Patch-equivalent records bind the reviewed result and
+audit events are append-only; reposting identical evidence is a no-op, even
+when a different authorized operator posts it. The original record and actor
+remain unchanged. A changed summary for the same candidate and delivery is
+refused, including when two posts race. Patch-equivalent records bind the reviewed result and
 attempt. The board and reconciliation check later commit attribution against
 the recorded candidate tree, so a late attribution does not change the
-immutable receipt. A missing timeline audit event is repaired from the
-receipt when Studio restarts; lane moves and audit repair share the project
-lane mutex.
+immutable receipt. A missing timeline audit event is repaired on the exact
+record-bearing card when Studio restarts, including archived cards. The repair
+checks the full timeline even when the event has fallen beyond the regular
+16 MB read tail. Lane moves and audit repair share the project lane mutex.
 
 ### Detached launch
 
