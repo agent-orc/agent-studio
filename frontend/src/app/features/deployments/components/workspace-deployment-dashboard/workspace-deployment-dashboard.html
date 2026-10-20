@@ -31,7 +31,7 @@
           <tr [attr.data-testid]="'deployment-project-' + row.id">
             <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }}</button></th>
             @for (environment of visibleEnvironments(); track environment.id) {
-              <td>
+              <td [attr.data-environment]="environment.name">
                 @if (statusFor(row, environment.id); as status) {
                   <button type="button" class="deployment-dashboard__cell"
                           [attr.data-state]="status.currentDeployment?.state ?? 'unknown'"

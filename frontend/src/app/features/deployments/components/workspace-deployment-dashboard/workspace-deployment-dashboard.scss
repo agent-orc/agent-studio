@@ -76,3 +76,19 @@ tbody tr { background: var(--studio-bg-surface); }
 @media (max-width: 800px) {
   table { min-width: 700px; }
 }
+
+@media (max-width: 760px) {
+  .deployment-dashboard__table-wrap { overflow-x: visible; }
+  table, tbody, tbody tr, tbody th, tbody td { display: block; width: 100%; min-width: 0; }
+  thead { display: none; }
+  tbody tr { margin-bottom: var(--studio-spacing-3); background: transparent; }
+  tbody th, tbody td { box-sizing: border-box; padding: var(--studio-spacing-1) 0; }
+  tbody td[data-environment]::before {
+    content: attr(data-environment);
+    display: block;
+    margin-bottom: var(--studio-spacing-1);
+    color: var(--studio-fg-muted);
+    font-size: 12px;
+  }
+  .deployment-dashboard__cell { box-sizing: border-box; }
+}
